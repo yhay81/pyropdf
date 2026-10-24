@@ -172,7 +172,31 @@ A document is a base and a chain of versions.
 - A **transaction** starts from the current version, collects writes, and
   commits by publishing the new version. A refusal or an error drops the
   transaction; nothing is cloned and nothing needs rolling back. Undo
-  republishes an earlier version, within a memory budget.
+  republishes an earlier version, within the history budget below.
+- **Allocation** never returns an object number twice during a document's
+  lifetime, including after undo or a dropped transaction. The document
+  keeps a high-water mark above every number successfully allocated or
+  written; an older version's next number cannot lower it. Unused reserved
+  numbers leave gaps. A refused write does not advance the mark unless the
+  number was already reserved by an allocation.
+- **History** is one line of immutable versions, with undo and redo. Every
+  committed edit is one step, including an edit outside an explicit Python
+  transaction. A commit that writes anything discards the redo steps; a
+  dropped transaction or one that writes nothing keeps them.
+
+  The budget counts what each retained version holds beyond its neighbor
+  toward the current version: unshared chunks and branches, written objects
+  and trailers, the version record and its change set, and a history entry.
+  Parsed-value caches and unused collection capacity are excluded. The
+  Python default is 256 MiB; `None` removes the limit and zero retains no
+  steps. The store takes the limit explicitly and sets no default. Programs
+  with tighter memory limits, including Workers, should lower it.
+
+  First discard the farthest redo steps while redo alone exceeds the limit.
+  Then discard the oldest undo steps until the whole history fits. This
+  preserves undo steps when a large undone addition cannot remain as redo.
+  Apply the same rule after commit, undo, redo, and a limit change. These
+  choices were accepted in #12.
 - The **change set** between two versions is the union of the object numbers
   that their transactions wrote. Saving, invalidation, and reports all read
   it.
@@ -233,9 +257,11 @@ plaintext in memory until a save encrypts them.
 
 ### 4.6 Concurrency
 
-A `Document` holds its current version behind an atomic pointer. A read takes
-the current version and works on it without locks. Writes serialize through
-one writer lock and publish new versions. On every runtime with threads,
+A `Document` holds its current version behind a short-lived lock. A read
+holds it only to clone the version's shared pointer, and a commit only to
+replace that pointer; the previous version is dropped outside this lock.
+A read then works on its version without locks. Writes serialize through
+one writer lock and publish complete versions atomically. On every runtime with threads,
 free-threaded CPython included, reads on one document can run in parallel,
 and a long render keeps reading the version it started with while edits
 publish newer ones.
@@ -386,11 +412,18 @@ instead of revisiting every structural operation.
 
 pylopdf's API rules carry over. The foundation changes these behaviors:
 
-- **Handles.** A handle is a document and an object number. Its facts are
-  cached per version, and when the version moves it reads its own object
-  again, never the whole structure around it. A `Page` names its page
-  object, so it stays valid when other pages are inserted, moved, or deleted,
-  and `page.index` costs constant time.
+- **Handles.** A handle names a document and a reference (object number and
+  generation), with a path for a direct container. Its facts are cached per
+  version, and when the version moves it reads its own object again, never
+  the whole structure around it. Handle and memo caches do not keep a
+  version alive; they remember it by a weak reference or serial number.
+  A handle raises `StaleObjectError` while its reference is absent from the
+  current version, and works again if undo or redo restores that reference.
+  A generation mismatch is stale, and allocation never reissues a number
+  after undo (section 4.1), so an old handle cannot silently name a new object.
+  A `Page` names its page object and raises `StalePageError` while it is
+  absent from the current page tree. It stays valid when other pages are
+  inserted, moved, or deleted, and `page.index` costs constant time.
 - **Transactions.** `with doc.transaction():` groups edits into one version
   and one undo step, at a cost that does not depend on the document's size.
 - **Revisions.** `save(incremental=True)` writes only the change set, and the
@@ -603,4 +636,3 @@ Exit: pylopdf's v1.0 criteria.
 - How the bridge handles encrypted bases before I1.
 - What the change report is: a method, a value that `save` returns, or a
   refusal that an option turns into a report.
-- The memory budget of undo, and how handles behave across undo.
