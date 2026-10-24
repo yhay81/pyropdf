@@ -111,6 +111,10 @@ impl<'b, T> BudgetVec<'b, T> {
             self.uncount(1);
             return Err(refusal);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "`grow` has made room for the item and charged the budget for it"
+        )]
         self.items.push(item);
         Ok(())
     }
@@ -126,6 +130,10 @@ impl<'b, T> BudgetVec<'b, T> {
             self.uncount(items.len());
             return Err(refusal);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "`grow` has made room for the items and charged the budget for them"
+        )]
         self.items.extend_from_slice(items);
         Ok(())
     }
@@ -213,11 +221,12 @@ impl<'b, T> BudgetVec<'b, T> {
             Err(_) if target > needed => (needed, self.charge_for(needed)?),
             Err(refusal) => return Err(refusal),
         };
-        if self
-            .items
-            .try_reserve_exact(target - self.items.len())
-            .is_err()
-        {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the budget has been charged for the new capacity, and a failed reservation releases the charge"
+        )]
+        let reserved = self.items.try_reserve_exact(target - self.items.len());
+        if reserved.is_err() {
             self.budget.release(LimitCode::MemorySize, extra);
             let used = self.budget.used(LimitCode::MemorySize);
             return Err(
