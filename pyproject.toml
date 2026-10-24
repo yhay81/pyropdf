@@ -63,9 +63,9 @@ cache-keys = [
 testpaths = ["tests"]
 
 [tool.ty.src]
-# Check the package and its tests. ty reads the Python 3.11 floor from
-# project.requires-python.
-include = ["python", "tests"]
+# Check the package, its tests, and the repository's tools. ty reads the
+# Python 3.11 floor from project.requires-python.
+include = ["python", "tests", "tools"]
 
 [tool.ruff]
 line-length = 120
@@ -95,3 +95,5 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["INP001", "S101", "D103", "PLR2004"]
+# The tools are scripts, not a package.
+"tools/**" = ["INP001"]
