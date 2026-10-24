@@ -2,6 +2,11 @@ Closes #
 
 ## What changed
 
+## Validation and next action
+
+Checks and evidence, any remaining owner decision, and whether this is
+ready for review or still being worked on. Link the issue handoff.
+
 ## Checklist
 
 - [ ] The issue's acceptance criteria hold

@@ -31,4 +31,8 @@ The files and crates this issue owns.
 
 ## Notes
 
-Pitfalls, and the pylopdf code to read or port.
+Pitfalls, the pylopdf code to read or port, and links to accepted decisions.
+
+Set the parent tracker, phase milestone, labels, and blocked-by links in
+GitHub. Progress and handoff go in comments: branch/PR, completed work,
+checks, exact next action, and any dependency or owner decision needed.
