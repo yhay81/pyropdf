@@ -4,5 +4,7 @@
 
 pub mod budget;
 mod error;
+pub mod value;
+pub mod write;
 
 pub use error::{Error, ErrorKind, LimitExceeded, Password, Result};
