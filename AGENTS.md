@@ -123,6 +123,19 @@ cargo test --workspace --all-features
 `uv run pytest` includes `tests/test_crate_dependencies.py`, which fails
 when a crate's dependencies point against DESIGN.md section 11.
 
+The audit job of CI checks `Cargo.lock` against the RustSec advisory
+database and the workflows with actionlint. An unmaintained, unsound, or
+yanked crate fails the audit as a vulnerability does.
+`tools/install_audit_tools.sh` installs the versions that the job pins, on
+Linux or macOS. Run these too when a change touches `Cargo.lock` or
+`.github/workflows/`:
+
+```bash
+bash tools/install_audit_tools.sh target/audit-tools
+target/audit-tools/cargo-audit audit --deny warnings
+target/audit-tools/actionlint -shellcheck= -pyflakes=
+```
+
 ## Tests and evidence
 
 - Python tests in `tests/` are the public contract.
