@@ -1,0 +1,14 @@
+# Broken on purpose to show the audit job failing (#40); the next commit
+# removes it. The second step reads the output of a step that does not exist:
+# the first step's id is "greet", not "greeting".
+name: Broken on purpose
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  greet:
+    runs-on: ubuntu-latest
+    steps:
+      - id: greet
+        run: echo "greeting=hello" >> "$GITHUB_OUTPUT"
+      - run: echo "${{ steps.greeting.outputs.greeting }}"
