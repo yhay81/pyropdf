@@ -62,8 +62,8 @@ gh api repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by --jq '.[] | 
   English. Other languages appear only in test data.
 - Do not depend on lopdf. hayro-syntax parses every object (F5).
 - No recursion over input-derived structure without a bound, and no
-  collection that grows from input outside the operation's budget (F6, once
-  the budget exists).
+  collection that grows from input outside the operation's budget (F6). In
+  the store, `crates/pyropdf-store/clippy.toml` checks the collections.
 - A pull request that claims a performance effect commits the measurement
   and its script under `evidence/`.
 - When DESIGN.md is wrong or unclear for your issue, do not deviate silently:
@@ -122,6 +122,19 @@ cargo test --workspace --all-features
 
 `uv run pytest` includes `tests/test_crate_dependencies.py`, which fails
 when a crate's dependencies point against DESIGN.md section 11.
+
+The audit job of CI checks `Cargo.lock` against the RustSec advisory
+database and the workflows with actionlint. An unmaintained, unsound, or
+yanked crate fails the audit as a vulnerability does.
+`tools/install_audit_tools.sh` installs the versions that the job pins, on
+Linux or macOS. Run these too when a change touches `Cargo.lock` or
+`.github/workflows/`:
+
+```bash
+bash tools/install_audit_tools.sh target/audit-tools
+target/audit-tools/cargo-audit audit --deny warnings
+target/audit-tools/actionlint -shellcheck= -pyflakes=
+```
 
 ## Tests and evidence
 

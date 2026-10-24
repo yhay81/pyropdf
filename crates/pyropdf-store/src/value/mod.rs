@@ -354,6 +354,10 @@ impl Array {
     /// Appends `value`, and forgets the lexeme.
     pub fn push(&mut self, value: Value) {
         self.lexeme = None;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "clippy.toml checks the store's calls of `Array::push` instead"
+        )]
         self.items.push(value);
     }
 
@@ -364,6 +368,10 @@ impl Array {
             return Err(value);
         }
         self.lexeme = None;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "clippy.toml checks the store's calls of `Array::insert` instead"
+        )]
         self.items.insert(index, value);
         Ok(())
     }
@@ -395,6 +403,10 @@ impl From<Vec<Value>> for Array {
 }
 
 impl FromIterator<Value> for Array {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "clippy.toml checks the store's calls of `collect` and `from_iter` instead"
+    )]
     fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
         Self::from(iter.into_iter().collect::<Vec<_>>())
     }
@@ -499,6 +511,10 @@ impl Dict {
         match self.entries.iter_mut().find(|(name, _)| *name == key) {
             Some((_, old)) => Some(std::mem::replace(old, value)),
             None => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "clippy.toml checks the store's calls of `Dict::insert` instead"
+                )]
                 self.entries.push((key, value));
                 None
             }
@@ -532,6 +548,10 @@ impl FromIterator<(Name, Value)> for Dict {
     fn from_iter<I: IntoIterator<Item = (Name, Value)>>(iter: I) -> Self {
         let mut dict = Self::new();
         for (key, value) in iter {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "clippy.toml checks the store's calls of `collect` and `from_iter` instead"
+            )]
             dict.insert(key, value);
         }
         dict
@@ -591,6 +611,10 @@ impl Stream {
     fn set_length(&mut self) {
         let length = length_value(self.data.len());
         if self.dict.get(LENGTH) != Some(&length) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a stream's dictionary gains one entry here, its `/Length`"
+            )]
             self.dict.insert(Name::new(LENGTH), length);
         }
     }
