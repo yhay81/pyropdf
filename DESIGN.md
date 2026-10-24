@@ -161,7 +161,14 @@ A document is a base and a chain of versions.
   - the object numbers that its transaction wrote.
 
   Versions share structure, so a new version costs time and memory in
-  proportion to what its transaction wrote.
+  proportion to what its transaction wrote. The map is pyropdf's own chunk
+  table (decided in #9; measured in `evidence/persistent-map`): copy-on-write
+  chunks of 16 slots, indexed by object number, under 32-way branches. A
+  write copies one chunk and the branches above it, at most six levels for
+  32-bit object numbers, so its cost grows with the height of the table and
+  not with the number of objects. The budget charges every chunk and branch
+  before it is allocated, which bounds a write into scattered numbers at one
+  chunk and six branches.
 - A **transaction** starts from the current version, collects writes, and
   commits by publishing the new version. A refusal or an error drops the
   transaction; nothing is cloned and nothing needs rolling back. Undo
@@ -590,8 +597,6 @@ Exit: pylopdf's v1.0 criteria.
 
 - Whether the store's write side belongs upstream in hayro-syntax or stays
   in pyropdf.
-- The persistent map: a library such as `rpds` or `im`, or copy-on-write
-  chunks of a flat table.
 - How Python sees reals whose lexemes are kept: a `float` subclass, or a
   plain `float` with the lexeme kept behind it.
 - Which Arlington predicates the structural check implements first.
