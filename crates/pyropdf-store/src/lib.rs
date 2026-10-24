@@ -4,6 +4,7 @@
 
 pub mod budget;
 mod error;
+pub mod index;
 pub mod value;
 pub mod write;
 
