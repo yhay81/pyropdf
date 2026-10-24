@@ -344,6 +344,7 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
     let mut position = 0;
     let mut open: Option<Open> = None;
     let mut writes = 0;
+    let mut next_number = BASE_NEXT;
     let mut numbers: BTreeSet<u32> = NUMBERS.into_iter().chain([0, 6, 7, 10, 19]).collect();
     for op in ops {
         let current = history[position];
@@ -356,7 +357,8 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                         .try_begin()
                         .ok_or_else(|| TestCaseError::fail("the writer lock is held"))?;
                     prop_assert!(Arc::ptr_eq(transaction.parent(), &published[current].0));
-                    let state = published[current].1.clone();
+                    let mut state = published[current].1.clone();
+                    state.next = state.next.max(next_number);
                     open = Some(Open { transaction, state });
                 }
             }
@@ -454,6 +456,9 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
             }
             Op::Undo | Op::Redo => {}
         }
+        if let Some(open) = &open {
+            next_number = next_number.max(open.state.next);
+        }
         let (version, state) = &published[history[position]];
         prop_assert!(Arc::ptr_eq(&document.current(), version));
         check(version, state, &numbers)?;
@@ -546,9 +551,18 @@ impl Line {
             + newer.iter().map(|&(_, added, _)| added).sum::<u64>()
     }
 
-    /// Drops the oldest versions, then the newest, until the size fits the
-    /// limit.
+    /// Retains as much redo as can fit on its own, then spends the remaining
+    /// budget on the most recent undo steps.
     fn fit(&mut self) {
+        while let Some(limit) = self.limit
+            && self.versions[self.position + 1..]
+                .iter()
+                .map(|(_, added, _)| *added)
+                .sum::<u64>()
+                > limit
+        {
+            self.versions.pop();
+        }
         while let Some(limit) = self.limit
             && self.size() > limit
         {
@@ -1288,4 +1302,95 @@ fn cached_reads_honor_cancellation() {
         panic!("missing write")
     };
     assert!(object.value(&cancelled).is_err());
+}
+
+#[test]
+fn allocations_never_repeat_after_undo_drop_or_empty_commit() {
+    let document = Document::new(Arc::new(MemoryBase::default()), None);
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    let first = transaction.allocate().unwrap();
+    transaction
+        .write(first.number(), &Value::Null, &budget)
+        .unwrap();
+    transaction.commit(&budget).unwrap();
+    document.undo().unwrap();
+    let mut transaction = document.begin();
+    let second = transaction.allocate().unwrap();
+    assert!(second.number() > first.number());
+    drop(transaction);
+    let mut transaction = document.begin();
+    let third = transaction.allocate().unwrap();
+    assert!(third.number() > second.number());
+    transaction.commit(&budget).unwrap();
+    assert_eq!(document.history().redo, 1);
+    let mut transaction = document.begin();
+    let fourth = transaction.allocate().unwrap();
+    assert!(fourth.number() > third.number());
+    transaction
+        .write(fourth.number(), &Value::Null, &budget)
+        .unwrap();
+    transaction.commit(&budget).unwrap();
+    assert_eq!(document.history().redo, 0);
+    assert!(
+        document
+            .current()
+            .get(first.number(), &budget)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[test]
+fn written_numbers_remain_reserved_after_a_refused_commit() {
+    let document = document(None);
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(1000, &Value::Null, &budget).unwrap();
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    assert!(transaction.commit(&tight).is_err());
+    let mut transaction = document.begin();
+    assert_eq!(transaction.allocate().unwrap().number(), 1001);
+    assert!(transaction.write(2000, &Value::Null, &tight).is_err());
+    drop(transaction);
+    assert_eq!(document.begin().allocate().unwrap().number(), 1002);
+}
+
+#[test]
+fn allocation_exhaustion_survives_undo() {
+    let document = document(None);
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(u32::MAX, &Value::Null, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    document.undo().unwrap();
+    assert!(document.begin().allocate().is_err());
+}
+
+#[test]
+fn an_oversized_redo_does_not_discard_the_undo_steps() {
+    let document = Document::new(Arc::new(MemoryBase::default()), Some(8192));
+    let budget = Budget::default();
+    for marker in 1..=4 {
+        let mut transaction = document.begin();
+        transaction
+            .write(1, &Value::Integer(marker), &budget)
+            .unwrap();
+        transaction.commit(&budget).unwrap();
+    }
+    let before = document.current();
+    let mut transaction = document.begin();
+    transaction
+        .write(
+            2,
+            &Value::String(PdfString::literal(vec![b'x'; 16384])),
+            &budget,
+        )
+        .unwrap();
+    transaction.commit(&budget).unwrap();
+    document.undo().unwrap();
+    assert!(Arc::ptr_eq(&before, &document.current()));
+    assert_eq!(document.history().undo, 4);
+    assert_eq!(document.history().redo, 0);
+    assert!(document.history().size <= 8192);
 }

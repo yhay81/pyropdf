@@ -32,7 +32,8 @@ pub struct Transaction {
 impl Transaction {
     /// Returns a transaction that holds `lock` and starts from `parent`.
     pub(super) fn new(lock: WriterLock, parent: Arc<Version>) -> Self {
-        let draft = parent.draft();
+        let mut draft = parent.draft();
+        draft.next = draft.next.max(lock.next_number());
         Self {
             lock,
             parent,
@@ -55,7 +56,8 @@ impl Transaction {
 
     /// Returns a reference to a new object: the next free object number,
     /// with generation 0. The number holds no object until the transaction
-    /// writes one there.
+    /// writes one there. The document never issues this number again, even
+    /// after undo, an empty commit, or dropping this transaction.
     ///
     /// Refuses with a malformed input error when the document uses the
     /// largest object number, 4294967295, so that no number is left.
@@ -66,6 +68,7 @@ impl Transaction {
             )
         })?;
         self.draft.next += 1;
+        self.lock.reserve_through(self.draft.next);
         Ok(Reference::new(number, 0))
     }
 
@@ -121,6 +124,7 @@ impl Transaction {
             .table
             .insert(number, Slot::Written(object), budget)?;
         self.draft.next = self.draft.next.max(u64::from(number) + 1);
+        self.lock.reserve_through(self.draft.next);
         Ok(Reference::new(number, generation))
     }
 

@@ -68,17 +68,17 @@ bytes kept alive at heights 2, 3, and 6 on every run of `cargo test`.
 [results/macos-arm64.csv](results/macos-arm64.csv) ran on 2026-10-24 on an
 Apple M2 Pro (8 performance and 4 efficiency cores, 32 GiB) under macOS
 27.0.1, with Rust 1.99.1. These results were regenerated after the review
-fixes for history accounting and cancellation. They replace the original
+fixes for history accounting, cancellation, lifetime allocation, and redo eviction. They replace the original
 run, whose history count omitted version records and history entries.
 
 | Numbers | Objects | Height | Chunks and branches copied | Kept alive | Allocated | Allocations | Time, median | Time, 90th percentile |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| dense | 10,000 | 2 | 3 | 1,045 B | 1,021 B | 8 | 874 ns | 891 ns |
-| dense | 100,000 | 3 | 4 | 1,325 B | 1,301 B | 9 | 1.20 µs | 1.24 µs |
-| dense | 1,000,000 | 4 | 5 | 1,605 B | 1,581 B | 10 | 1.87 µs | 1.93 µs |
-| scattered | 10,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 1.91 µs | 1.96 µs |
-| scattered | 100,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 2.53 µs | 2.60 µs |
-| scattered | 1,000,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 2.87 µs | 3.00 µs |
+| dense | 10,000 | 2 | 3 | 1,045 B | 1,021 B | 8 | 811 ns | 839 ns |
+| dense | 100,000 | 3 | 4 | 1,325 B | 1,301 B | 9 | 1.25 µs | 1.63 µs |
+| dense | 1,000,000 | 4 | 5 | 1,605 B | 1,581 B | 10 | 1.79 µs | 1.85 µs |
+| scattered | 10,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 1.96 µs | 2.06 µs |
+| scattered | 100,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 2.40 µs | 2.54 µs |
+| scattered | 1,000,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 2.68 µs | 3.14 µs |
 
 What the results show:
 
@@ -89,8 +89,8 @@ What the results show:
   transaction that writes one object keeps more than one chunk, six
   branches, the object it replaced, and the retained version record alive.
 - **Time grows with the height, and with the size through the cache.** A
-  transaction takes 0.87 µs at two levels and 1.87 µs at four. At the same
-  height, scattered numbers take 1.91 µs at 10,000 objects and 2.87 µs at
+  transaction takes 0.81 µs at two levels and 1.79 µs at four. At the same
+  height, scattered numbers take 1.96 µs at 10,000 objects and 2.68 µs at
   1,000,000: the work is the same seven copies, but fewer of the nodes on a
   random path are in the processor's caches when the table is larger. Issue
   #9 measured the same effect for every candidate map, which is why the

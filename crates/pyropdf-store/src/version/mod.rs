@@ -224,8 +224,10 @@ impl Version {
             .map_or_else(|| self.base().trailer(), |trailer| &trailer.value)
     }
 
-    /// Returns the object number that the next new object takes: above every
-    /// number of the base and every number that a transaction wrote.
+    /// Returns the next-number bound recorded in this version, above every
+    /// number of the base and every number that this version reserved or
+    /// wrote. A new transaction also respects the document's lifetime
+    /// allocation high-water mark, which undo never lowers.
     ///
     /// The largest object number is 4294967295, so the result is at most
     /// 4294967296, when no number is left.

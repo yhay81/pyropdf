@@ -40,6 +40,8 @@ struct Shared {
 struct Writer {
     /// Whether a transaction holds the writer lock.
     open: bool,
+    /// The lifetime allocation high-water mark, never restored by undo.
+    next: u64,
     history: History,
 }
 
@@ -73,6 +75,7 @@ impl Document {
                 current: RwLock::new(Arc::clone(&first)),
                 writer: Mutex::new(Writer {
                     open: false,
+                    next: first.next_number(),
                     history: History::new(first, history_limit),
                 }),
                 idle: Condvar::new(),
@@ -116,10 +119,12 @@ impl Document {
     fn start(&self, mut writer: MutexGuard<'_, Writer>) -> Transaction {
         writer.open = true;
         let parent = Arc::clone(writer.history.current());
+        let next = writer.next;
         drop(writer);
         let lock = WriterLock {
             shared: Arc::clone(&self.shared),
             held: true,
+            next,
         };
         Transaction::new(lock, parent)
     }
@@ -217,9 +222,19 @@ impl Shared {
 pub(super) struct WriterLock {
     shared: Arc<Shared>,
     held: bool,
+    /// Reserved by the sole writer, including numbers in a dropped draft.
+    next: u64,
 }
 
 impl WriterLock {
+    pub(super) const fn next_number(&self) -> u64 {
+        self.next
+    }
+
+    pub(super) fn reserve_through(&mut self, next: u64) {
+        self.next = self.next.max(next);
+    }
+
     /// Publishes `version`, which the transaction made, as the current
     /// version, records it in the history, and releases the lock.
     ///
@@ -230,6 +245,7 @@ impl WriterLock {
         let mut writer = self.shared.writer();
         self.shared.publish(&version);
         writer.history.commit(version, added, released);
+        writer.next = writer.next.max(self.next);
         writer.open = false;
         self.held = false;
         self.shared.idle.notify_all();
@@ -239,7 +255,9 @@ impl WriterLock {
 impl Drop for WriterLock {
     fn drop(&mut self) {
         if self.held {
-            self.shared.writer().open = false;
+            let mut writer = self.shared.writer();
+            writer.next = writer.next.max(self.next);
+            writer.open = false;
             self.shared.idle.notify_all();
         }
     }
@@ -258,9 +276,9 @@ impl Drop for WriterLock {
 /// branches that the transaction between them copied, the objects and
 /// trailers that it replaced or wrote, and each retained version's record,
 /// change set, and history entry. Parsed-value caches and unused deque
-/// capacity are not counted. When these bytes pass the limit, the
-/// oldest versions go first, then the newest: pylopdf's `doc.history` drops
-/// its steps so (yhay81/pyropdf#12 decides the limit and what it counts).
+/// capacity are not counted. When redo alone exceeds the limit, its farthest
+/// steps go first. Then the oldest undo steps go until the history fits,
+/// preserving undo steps that an oversized redo cannot use (#12).
 #[derive(Debug)]
 struct History {
     steps: VecDeque<Step>,
@@ -268,6 +286,8 @@ struct History {
     position: usize,
     /// The bytes that the versions keep alive.
     size: u64,
+    /// What redo alone retains, maintained without scanning the history.
+    redo_size: u64,
     limit: Option<u64>,
 }
 
@@ -295,6 +315,7 @@ impl History {
             }]),
             position: 0,
             size: 0,
+            redo_size: 0,
             limit,
         }
     }
@@ -310,6 +331,7 @@ impl History {
         for step in self.steps.drain(self.position + 1..) {
             self.size = self.size.saturating_sub(step.added);
         }
+        self.redo_size = 0;
         // Each non-current version owns its record and one history entry,
         // even when a transaction changed only the trailer.
         let added = added
@@ -344,6 +366,7 @@ impl History {
             .size
             .saturating_sub(current.released)
             .saturating_add(current.added);
+        self.redo_size = self.redo_size.saturating_add(current.added);
         self.position -= 1;
         let version = Arc::clone(self.current());
         self.fit();
@@ -357,6 +380,7 @@ impl History {
             .size
             .saturating_sub(next.added)
             .saturating_add(next.released);
+        self.redo_size = self.redo_size.saturating_sub(next.added);
         self.position += 1;
         let version = Arc::clone(self.current());
         self.fit();
@@ -369,12 +393,18 @@ impl History {
         self.fit();
     }
 
-    /// Drops the oldest versions, then the newest, until the history keeps
-    /// no more bytes alive than its limit allows.
+    /// Drops redo steps that cannot fit even on their own, then the oldest
+    /// undo steps, until the retained memory fits the limit.
     fn fit(&mut self) {
         let Some(limit) = self.limit else {
             return;
         };
+        while self.redo_size > limit {
+            if let Some(newest) = self.steps.pop_back() {
+                self.redo_size = self.redo_size.saturating_sub(newest.added);
+                self.size = self.size.saturating_sub(newest.added);
+            }
+        }
         while self.size > limit {
             if self.position > 0 {
                 self.steps.pop_front();
@@ -384,10 +414,6 @@ impl History {
                     self.size = self.size.saturating_sub(oldest.released);
                     oldest.added = 0;
                     oldest.released = 0;
-                }
-            } else if self.steps.len() > 1 {
-                if let Some(newest) = self.steps.pop_back() {
-                    self.size = self.size.saturating_sub(newest.added);
                 }
             } else {
                 break;
