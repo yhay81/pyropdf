@@ -1,0 +1,43 @@
+# The measurements behind issue #9: the persistent map that versions use
+# (DESIGN.md sections 4.1 and 16). The empty table below makes this directory
+# a workspace of its own, so it is no member of the repository's workspace
+# and the root Cargo.toml and Cargo.lock stay unchanged.
+[workspace]
+
+[package]
+name = "persistent-map-bench"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+im = "15.1.0"
+# The maintained fork of im, measured because im is unmaintained.
+imbl = "7.0.2"
+rpds = "1.2.1"
+
+[features]
+# examples/probe.rs builds one map into a shared library, so that run.sh can
+# measure the code that each map adds. Each `probe-*` feature selects a map.
+probe = []
+probe-baseline = ["probe"]
+probe-rpds-hash = ["probe"]
+probe-rpds-tree = ["probe"]
+probe-im-hash = ["probe"]
+probe-im-ord = ["probe"]
+probe-imbl-hash = ["probe"]
+probe-imbl-ord = ["probe"]
+probe-chunks = ["probe"]
+
+[[example]]
+name = "probe"
+crate-type = ["cdylib"]
+required-features = ["probe"]
+
+# The release profile of the repository's workspace, so that the timings and
+# the code sizes are those of the code that a wheel would ship.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
