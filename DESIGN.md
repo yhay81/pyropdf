@@ -254,7 +254,8 @@ rules that classify each editing method, with one mechanism that is correct
 for a new editing method without any declaration. Versions (section 4), read
 sets (this section), document resources (section 7), and identity handles
 (section 10) together make each workload of section 2.1 cost in proportion to
-what it changes or reads, not to the size of the document.
+what it changes or reads, not to the size of the document, once hayro reads
+versions directly (I1 in section 6).
 
 ## 6. Interpretation contract
 
@@ -274,13 +275,22 @@ analysis goes into upstream patches, not into pyropdf.
 | I7 Spans | The byte span of every parsed object and dictionary entry, which F3 needs. yhay81/pylopdf#405 already keeps each content operation's bytes over hayro's tokenizer. |
 | I8 Object numbers | Object numbers read as `u32`. |
 
+hayro-syntax 0.8 keeps its cross-reference reader, its repair, and its
+decryption crate-private (`root_xref`, `fallback`, `repair`, and the `crypto`
+module), and `Pdf::new` resolves the whole page tree. Its `FromBytes` trait,
+which parses an object from a byte slice, is public. Until I1, the store
+therefore reads cross-reference data and decrypts on its own, and parses
+every object through `FromBytes`.
+
 Until I1 lands, the store hands hayro its current version as an in-memory
 incremental update: the base bytes, followed by the written objects (already
 serialized) and a cross-reference section. hayro-syntax reads that format
-natively. A new version then costs hayro a fresh read of the cross-reference
-data and the page tree, but no serialization or parse of unchanged objects.
-For an encrypted base, this bridge must encrypt the written objects with the
-document's key.
+natively. When the base was repaired, that section lists every object at the
+offsets the store chose, so hayro never repairs on its own. A new version
+then costs hayro a fresh read of the cross-reference data and the page tree,
+but no serialization or parse of unchanged objects. That remaining cost still
+grows with the document; I1 removes it. For an encrypted base, this bridge
+must encrypt the written objects with the document's key.
 
 No pyropdf release claims safety for untrusted input before I2 is released.
 If the upstream patch cannot land, pylopdf's guards come over as a listed
@@ -461,8 +471,10 @@ Scope:
 Exit:
 - without edits, saves reproduce every corpus document: incremental saves
   byte for byte, full saves in every value;
-- the cost of an edit followed by a page read does not grow with document
-  size at 110, 440, and 1,760 pages;
+- an edit followed by a page read serializes and parses only the objects
+  the edit wrote, apart from hayro's re-read of the cross-reference data and
+  the page tree (section 6), and the benchmark publishes its cost at 110,
+  440, and 1,760 pages;
 - a failed transaction leaves the current version unchanged without copying
   the document;
 - the fuzz targets run in CI;
