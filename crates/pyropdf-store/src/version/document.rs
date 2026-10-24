@@ -52,7 +52,9 @@ pub struct HistoryStatus {
     /// How many steps redo can take.
     pub redo: usize,
     /// The bytes that the versions of the steps keep alive: what each holds
-    /// and its neighbor toward the current version does not share.
+    /// and its neighbor toward the current version does not share, including
+    /// written trailers, version records, change sets, and history entries.
+    /// Parsed-value caches and unused deque capacity are not counted.
     pub size: u64,
     /// The most bytes that the versions of the steps may keep alive, if the
     /// history has a limit.
@@ -253,8 +255,10 @@ impl Drop for WriterLock {
 ///
 /// Each version but the current one keeps alive the bytes that it holds and
 /// its neighbor toward the current version does not share: the chunks and
-/// branches that the transaction between them copied, and the objects that
-/// the transaction replaced or wrote. When these bytes pass the limit, the
+/// branches that the transaction between them copied, the objects and
+/// trailers that it replaced or wrote, and each retained version's record,
+/// change set, and history entry. Parsed-value caches and unused deque
+/// capacity are not counted. When these bytes pass the limit, the
 /// oldest versions go first, then the newest: pylopdf's `doc.history` drops
 /// its steps so (yhay81/pyropdf#12 decides the limit and what it counts).
 #[derive(Debug)]
@@ -306,6 +310,18 @@ impl History {
         for step in self.steps.drain(self.position + 1..) {
             self.size = self.size.saturating_sub(step.added);
         }
+        // Each non-current version owns its record and one history entry,
+        // even when a transaction changed only the trailer.
+        let added = added
+            .saturating_add(version.record_size())
+            .saturating_add(size_of::<Step>() as u64);
+        let released = released
+            .saturating_add(self.current().record_size())
+            .saturating_add(size_of::<Step>() as u64);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "each commit adds one history entry, counted with the version against the history limit"
+        )]
         self.steps.push_back(Step {
             version,
             added,

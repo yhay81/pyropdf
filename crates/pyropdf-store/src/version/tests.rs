@@ -405,7 +405,7 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                     writes += 1;
                     let dict = trailer(i64::try_from(writes).unwrap());
                     open.state.trailer = Some((writes, dict.clone()));
-                    open.transaction.set_trailer(dict);
+                    open.transaction.set_trailer(dict, &budget).map_err(fail)?;
                 }
             }
             Op::Commit => {
@@ -597,7 +597,9 @@ proptest! {
                     let difference = difference(&parent, &version, &budget)
                         .map_err(|refusal| fail(refusal.into()))?;
                     line.versions.truncate(line.position + 1);
-                    line.versions.push((version, difference.second, difference.first));
+                    let added = difference.second + version.record_size() + (size_of::<Arc<Version>>() + 2 * size_of::<u64>()) as u64;
+                    let released = difference.first + parent.record_size() + (size_of::<Arc<Version>>() + 2 * size_of::<u64>()) as u64;
+                    line.versions.push((version, added, released));
                     line.position += 1;
                 }
                 Step::Undo => {
@@ -772,7 +774,7 @@ fn a_dropped_or_refused_transaction_publishes_nothing() {
     let first = document.current();
     let mut transaction = document.begin();
     transaction.write(1, &Value::Null, &budget).unwrap();
-    transaction.set_trailer(trailer(5));
+    transaction.set_trailer(trailer(5), &budget).unwrap();
     drop(transaction);
     assert!(Arc::ptr_eq(&document.current(), &first));
     assert_eq!(document.history().undo, 0);
@@ -841,10 +843,16 @@ fn the_history_counts_what_its_versions_keep_alive() {
     let document = Document::new(Arc::new(MemoryBase::default()), None);
     let nodes = Table::<Slot>::BRANCH_BYTES + Table::<Slot>::CHUNK_BYTES;
     let object = |length: u64| Written::OVERHEAD + length;
+    let empty_record =
+        Version::OVERHEAD + (size_of::<Arc<Version>>() + 2 * size_of::<u64>()) as u64;
+    let record = empty_record + 4;
     for (marker, size) in [
-        (7, 0),
-        (42, nodes + object(1)),
-        (100, 2 * nodes + object(1) + object(2)),
+        (7, empty_record),
+        (42, empty_record + record + nodes + object(1)),
+        (
+            100,
+            empty_record + 2 * record + 2 * nodes + object(1) + object(2),
+        ),
     ] {
         let mut transaction = document.begin();
         transaction
@@ -860,16 +868,19 @@ fn the_history_counts_what_its_versions_keep_alive() {
     document.undo().unwrap();
     assert_eq!(
         document.history().size,
-        (nodes + object(1)) + (nodes + object(3))
+        empty_record + 2 * record + (nodes + object(1)) + (nodes + object(3))
     );
     document.undo().unwrap();
-    assert_eq!(document.history().size, 2 * nodes + object(2) + object(3));
+    assert_eq!(
+        document.history().size,
+        empty_record + 2 * record + 2 * nodes + object(2) + object(3)
+    );
     // A limit drops the oldest versions first, here the first, which keeps
     // nothing alive, and then the newest.
-    document.set_history_limit(Some(nodes + object(2)));
+    document.set_history_limit(Some(record + nodes + object(2)));
     let status = document.history();
     assert_eq!((status.undo, status.redo), (0, 1));
-    assert_eq!(status.size, nodes + object(2));
+    assert_eq!(status.size, record + nodes + object(2));
     assert!(document.undo().is_none());
     // A limit too small for any step keeps the current version only.
     document.set_history_limit(Some(0));
@@ -898,21 +909,27 @@ fn one_write_keeps_one_chunk_and_the_branches_above_it_alive() {
                 .unwrap();
         }
         transaction.commit(&budget).unwrap();
-        assert_eq!(document.history().size, 0);
+        let entry = (size_of::<Arc<Version>>() + 2 * size_of::<u64>()) as u64;
+        assert_eq!(document.history().size, Version::OVERHEAD + entry);
         for &number in numbers.iter().step_by(997) {
             let before = document.history().size;
+            let record = document.current().record_size() + entry;
             let mut transaction = document.begin();
             transaction
                 .write(number, &Value::Integer(2), &budget)
                 .unwrap();
             transaction.commit(&budget).unwrap();
             let kept = height * Table::<Slot>::BRANCH_BYTES + Table::<Slot>::CHUNK_BYTES + object;
-            assert_eq!(document.history().size - before, kept, "{number}");
+            assert_eq!(document.history().size - before, kept + record, "{number}");
             document.undo().unwrap();
             document.redo().unwrap();
             document.undo().unwrap();
             // Undone, the version after keeps its own copies and object.
-            assert_eq!(document.history().size - before, kept, "{number}");
+            assert_eq!(
+                document.history().size - before,
+                kept + Version::OVERHEAD + 4 + entry,
+                "{number}"
+            );
             document.redo().unwrap();
         }
     }
@@ -1091,7 +1108,9 @@ fn readers_on_other_threads_see_only_complete_versions() {
                     .write(number, &Value::Integer(marker), &budget)
                     .unwrap();
             }
-            transaction.set_trailer(trailer(marker));
+            transaction
+                .set_trailer(trailer(marker), &Budget::default())
+                .unwrap();
             transaction.commit(&budget).unwrap();
         }
         done.store(true, Ordering::Release);
@@ -1159,4 +1178,114 @@ fn undo_waits_for_the_transaction_that_holds_the_writer_lock() {
     });
     assert!(Arc::ptr_eq(&document.current(), &first));
     assert_eq!(document.history().redo, 1);
+}
+
+#[test]
+fn a_cancelled_trailer_only_commit_publishes_nothing() {
+    let document = document(None);
+    let before = document.current();
+    let mut transaction = document.begin();
+    transaction
+        .set_trailer(trailer(10), &Budget::default())
+        .unwrap();
+    let token = CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let error = transaction.commit(&budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    assert!(Arc::ptr_eq(&before, &document.current()));
+    assert!(document.try_begin().is_some());
+}
+
+#[test]
+fn trailer_only_history_is_bounded() {
+    let document = document(Some(0));
+    for marker in 0..10 {
+        let mut transaction = document.begin();
+        transaction
+            .set_trailer(trailer(marker), &Budget::default())
+            .unwrap();
+        transaction.commit(&Budget::default()).unwrap();
+        assert_eq!(document.history().undo, 0);
+    }
+}
+
+#[test]
+fn writes_respect_free_entries_in_the_base() {
+    let mut base = MemoryBase::default();
+    base.insert_free(Reference::new(10, 8));
+    base.insert_free(Reference::new(11, u16::MAX));
+    let document = Document::new(Arc::new(base), None);
+    let budget = Budget::default();
+    assert_eq!(document.current().generation(10), None);
+    assert_eq!(document.current().get(10, &budget).unwrap(), None);
+    let mut transaction = document.begin();
+    assert_eq!(transaction.allocate().unwrap(), Reference::new(12, 0));
+    assert_eq!(
+        transaction.write(10, &Value::Null, &budget).unwrap(),
+        Reference::new(10, 8)
+    );
+    assert!(transaction.write(11, &Value::Null, &budget).is_err());
+    assert!(transaction.version().slot(11).is_none());
+}
+
+#[test]
+fn replacing_a_large_trailer_evicts_it_from_history() {
+    let document = document(Some(4096));
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    let large = Dict::from_iter([(
+        Name::from("Large"),
+        Value::String(PdfString::literal(vec![b'x'; 16384])),
+    )]);
+    transaction.set_trailer(large, &budget).unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let old = Arc::downgrade(&version);
+    drop(version);
+    let mut transaction = document.begin();
+    transaction.set_trailer(Dict::new(), &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    assert!(old.upgrade().is_none());
+    assert_eq!(document.history().undo, 0);
+}
+
+#[test]
+fn a_refused_trailer_change_preserves_the_draft() {
+    let document = document(None);
+    let mut transaction = document.begin();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    assert!(transaction.set_trailer(trailer(99), &budget).is_err());
+    assert_eq!(
+        transaction.version().trailer(),
+        document.current().trailer()
+    );
+}
+
+#[test]
+fn cached_reads_honor_cancellation() {
+    let document = document(None);
+    let budget = Budget::default();
+    let first = document.current();
+    first.get(1, &budget).unwrap();
+    let mut transaction = document.begin();
+    transaction.write(2, &Value::Null, &budget).unwrap();
+    let written = transaction.commit(&budget).unwrap();
+    written.get(2, &budget).unwrap();
+    let token = CancellationToken::new();
+    token.cancel();
+    let cancelled = Budget::default().with_cancellation(token);
+    for (version, number) in [(&first, 1), (&written, 2)] {
+        let error = version.get(number, &cancelled).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
+        );
+    }
+    let Some(Slot::Written(object)) = written.slot(2) else {
+        panic!("missing write")
+    };
+    assert!(object.value(&cancelled).is_err());
 }

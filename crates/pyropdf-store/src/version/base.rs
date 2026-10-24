@@ -24,6 +24,11 @@ pub trait Base: fmt::Debug + Send + Sync {
     /// object in use.
     fn generation(&self, number: u32) -> Option<u16>;
 
+    /// Returns the generation to use if a free number is reused. Generation
+    /// 65535 is retired and must never be reused. Returns `None` for an
+    /// in-use number or a number absent from the base.
+    fn free_generation(&self, number: u32) -> Option<u16>;
+
     /// Returns the bytes that the value of the object that `reference`
     /// names begins with, or `None` if the base has no such object.
     ///
@@ -45,7 +50,7 @@ pub trait Base: fmt::Debug + Send + Sync {
 /// A new document starts from an empty one.
 #[derive(Debug, Default)]
 pub struct MemoryBase {
-    objects: BTreeMap<u32, (u16, Bytes)>,
+    objects: BTreeMap<u32, (u16, Option<Bytes>)>,
     trailer: Dict,
 }
 
@@ -62,14 +67,37 @@ impl MemoryBase {
     /// Adds the object that `reference` names, whose value `bytes` begin
     /// with, in place of any object of the same number.
     pub fn insert(&mut self, reference: Reference, bytes: Bytes) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the caller adds each entry; the map grows with explicit calls, not parsed input"
+        )]
         self.objects
-            .insert(reference.number(), (reference.generation(), bytes));
+            .insert(reference.number(), (reference.generation(), Some(bytes)));
+    }
+
+    /// Adds a free entry with the generation of its next use. A generation
+    /// of 65535 permanently retires the number.
+    pub fn insert_free(&mut self, reference: Reference) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the caller adds each entry; the map grows with explicit calls, not parsed input"
+        )]
+        self.objects
+            .insert(reference.number(), (reference.generation(), None));
     }
 }
 
 impl Base for MemoryBase {
     fn generation(&self, number: u32) -> Option<u16> {
-        self.objects.get(&number).map(|&(generation, _)| generation)
+        self.objects
+            .get(&number)
+            .and_then(|(generation, bytes)| bytes.as_ref().map(|_| *generation))
+    }
+
+    fn free_generation(&self, number: u32) -> Option<u16> {
+        self.objects
+            .get(&number)
+            .and_then(|(generation, bytes)| bytes.is_none().then_some(*generation))
     }
 
     fn object(&self, reference: Reference, _budget: &Budget) -> Result<Option<Bytes>> {
@@ -77,7 +105,7 @@ impl Base for MemoryBase {
             .objects
             .get(&reference.number())
             .filter(|(generation, _)| *generation == reference.generation())
-            .map(|(_, bytes)| bytes.clone()))
+            .and_then(|(_, bytes)| bytes.clone()))
     }
 
     fn trailer(&self) -> &Dict {

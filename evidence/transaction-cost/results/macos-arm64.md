@@ -14,10 +14,10 @@ Each transaction rewrites one object drawn at random from a document whose objec
 
 | Numbers | Objects | Height | Chunks and branches copied | Kept alive | Allocated | Allocations | Time, median | Time, 90th percentile |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| dense | 10,000 | 2 | 3 | 937 B | 1,021 B | 8 | 782 ns | 820 ns |
-| dense | 100,000 | 3 | 4 | 1,217 B | 1,301 B | 9 | 1.13 µs | 1.22 µs |
-| dense | 1,000,000 | 4 | 5 | 1,497 B | 1,581 B | 10 | 1.87 µs | 1.97 µs |
-| scattered | 10,000 | 6 | 7 | 2,057 B | 2,141 B | 12 | 1.89 µs | 2.05 µs |
-| scattered | 100,000 | 6 | 7 | 2,057 B | 2,141 B | 12 | 2.52 µs | 3.21 µs |
-| scattered | 1,000,000 | 6 | 7 | 2,057 B | 2,141 B | 12 | 2.94 µs | 3.81 µs |
+| dense | 10,000 | 2 | 3 | 1,045 B | 1,021 B | 8 | 874 ns | 891 ns |
+| dense | 100,000 | 3 | 4 | 1,325 B | 1,301 B | 9 | 1.20 µs | 1.24 µs |
+| dense | 1,000,000 | 4 | 5 | 1,605 B | 1,581 B | 10 | 1.87 µs | 1.93 µs |
+| scattered | 10,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 1.91 µs | 1.96 µs |
+| scattered | 100,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 2.53 µs | 2.60 µs |
+| scattered | 1,000,000 | 6 | 7 | 2,165 B | 2,141 B | 12 | 2.87 µs | 3.00 µs |
 

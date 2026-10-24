@@ -63,11 +63,26 @@ pub struct Version {
     /// What transactions wrote, by object number.
     table: Table<Slot>,
     /// The trailer that a transaction wrote, if one did.
-    trailer: Option<Arc<Dict>>,
+    trailer: Option<Arc<Trailer>>,
     /// The number that the next new object takes.
     next: u64,
     /// What the transaction that made the version wrote.
     written: ChangeSet,
+}
+
+/// A written trailer, retained as bytes and a parsed dictionary.
+struct Trailer {
+    value: Dict,
+    bytes: Bytes,
+}
+
+impl Trailer {
+    const OVERHEAD: u64 =
+        (size_of::<Self>() + 4 * size_of::<usize>() + size_of::<Box<[u8]>>()) as u64;
+
+    fn size(&self) -> u64 {
+        Self::OVERHEAD.saturating_add(self.bytes.len() as u64)
+    }
 }
 
 /// An object that a version reads: its generation and its value.
@@ -112,6 +127,13 @@ pub struct ChangeSet {
 }
 
 impl Version {
+    const OVERHEAD: u64 = (size_of::<Self>() + 2 * size_of::<usize>()) as u64;
+
+    /// The version record and its change set, excluding shared objects.
+    fn record_size(&self) -> u64 {
+        Self::OVERHEAD + self.written.objects.len() as u64 * size_of::<u32>() as u64
+    }
+
     /// Returns the first version of a document from `origin`: its base,
     /// before any transaction.
     fn first(origin: Arc<Origin>) -> Self {
@@ -153,6 +175,7 @@ impl Version {
     /// value holds. A refusal or an error is not kept, so a later read tries
     /// again.
     pub fn get(&self, number: u32, budget: &Budget) -> Result<Option<Object>> {
+        budget.poll()?;
         match self.table.get(number) {
             Some(Slot::Written(object)) => {
                 let value = object.value(budget).map_err(|error| {
@@ -197,8 +220,8 @@ impl Version {
     #[must_use]
     pub fn trailer(&self) -> &Dict {
         self.trailer
-            .as_deref()
-            .unwrap_or_else(|| self.base().trailer())
+            .as_ref()
+            .map_or_else(|| self.base().trailer(), |trailer| &trailer.value)
     }
 
     /// Returns the object number that the next new object takes: above every
@@ -306,6 +329,7 @@ impl Written {
     ///
     /// Refuses as [`Value::parse`] does. A refusal or an error is not kept.
     pub fn value(&self, budget: &Budget) -> Result<Arc<Value>> {
+        budget.poll()?;
         if let Some(value) = self.value.get() {
             return Ok(Arc::clone(value));
         }
@@ -375,6 +399,7 @@ fn difference(
     second: &Version,
     budget: &Budget,
 ) -> Result<Difference, LimitExceeded> {
+    budget.poll()?;
     let mut objects = BudgetVec::new(budget);
     let (mut first_bytes, mut second_bytes) = (0_u64, 0_u64);
     let mut steps = 0_u32;
@@ -398,6 +423,10 @@ fn difference(
         (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
         _ => true,
     };
+    if trailer {
+        first_bytes = first_bytes.saturating_add(first.trailer.as_ref().map_or(0, |t| t.size()));
+        second_bytes = second_bytes.saturating_add(second.trailer.as_ref().map_or(0, |t| t.size()));
+    }
     Ok(Difference {
         changes: ChangeSet {
             objects: objects.into_vec().into_boxed_slice(),

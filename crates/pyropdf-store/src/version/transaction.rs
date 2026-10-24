@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::document::WriterLock;
-use super::{Slot, Version, Written, difference};
+use super::{Slot, Trailer, Version, Written, difference};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Bytes, Dict, Reference, Value};
 use crate::{Error, Result, write};
@@ -89,6 +89,7 @@ impl Transaction {
                 "object number 0 heads the list of free objects and is never in use",
             ));
         }
+        let base_free = self.draft.base().free_generation(number);
         let generation = match self.draft.table.get(number) {
             Some(Slot::Written(object)) => object.generation,
             Some(&Slot::Free(u16::MAX)) => {
@@ -97,7 +98,18 @@ impl Transaction {
                 )));
             }
             Some(&Slot::Free(generation)) => generation,
-            None => self.draft.base().generation(number).unwrap_or(0),
+            None => {
+                if base_free == Some(u16::MAX) {
+                    return Err(Error::malformed(format!(
+                        "object {number} is free with generation 65535, which PDF never uses again"
+                    )));
+                }
+                self.draft
+                    .base()
+                    .generation(number)
+                    .or(base_free)
+                    .unwrap_or(0)
+            }
         };
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, value)
@@ -133,9 +145,18 @@ impl Transaction {
         Ok(true)
     }
 
-    /// Replaces the trailer.
-    pub fn set_trailer(&mut self, trailer: Dict) {
-        self.draft.trailer = Some(Arc::new(trailer));
+    /// Replaces the trailer, retaining its serialized bytes for lossless
+    /// writing and history accounting. A refusal leaves the draft unchanged.
+    pub fn set_trailer(&mut self, trailer: Dict, budget: &Budget) -> Result<()> {
+        let mut out = BudgetVec::new(budget);
+        write::value(&mut out, &Value::Dict(trailer))?;
+        budget.charge(LimitCode::MemorySize, Trailer::OVERHEAD)?;
+        let bytes = Bytes::new(out.into_vec().into_boxed_slice());
+        let Value::Dict(value) = Value::parse(&bytes, budget)? else {
+            return Err(Error::malformed("the written trailer is not a dictionary"));
+        };
+        self.draft.trailer = Some(Arc::new(Trailer { value, bytes }));
+        Ok(())
     }
 
     /// Publishes what the transaction wrote as the document's current
@@ -156,6 +177,7 @@ impl Transaction {
         if difference.changes.is_empty() {
             return Ok(parent);
         }
+        budget.charge(LimitCode::MemorySize, Version::OVERHEAD)?;
         draft.written = difference.changes;
         let version = Arc::new(draft);
         lock.publish(Arc::clone(&version), difference.second, difference.first);
