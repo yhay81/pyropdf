@@ -132,6 +132,10 @@ impl Budget {
     /// is cancelled.
     #[must_use]
     pub fn with_cancellation(mut self, token: CancellationToken) -> Self {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the caller adds each token, so the list grows with its calls, not with input"
+        )]
         self.cancellation.push(token);
         self
     }

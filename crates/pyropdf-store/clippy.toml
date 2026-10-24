@@ -1,0 +1,101 @@
+# The clippy configuration of pyropdf-store. Clippy reads the configuration
+# of the crate that it checks, so this file binds this crate alone.
+#
+# A collection that grows from input grows through the operation's budget
+# (DESIGN.md F6 and section 9): a `BudgetVec`, whose growth is fallible and
+# charged to the budget. The methods below grow a collection or size a new
+# one, so the store uses none of them. Where something else bounds the
+# growth, such as the caller or a constant, the use expects the lint, and the
+# reason says what bounds it:
+#
+#     #[expect(clippy::disallowed_methods, reason = "...")]
+#
+# The unit tests grow collections freely: lib.rs allows the lint under
+# `cfg(test)`. A test target with a crate root of its own allows it there.
+disallowed-methods = [
+    # Vec, and `vec![value; n]`, which calls `from_elem`.
+    { path = "std::vec::Vec::with_capacity", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::push", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::insert", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::append", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::extend_from_slice", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::extend_from_within", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::splice", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::resize", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::resize_with", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::try_reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::Vec::try_reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::vec::from_elem", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # Slices and strings copied or repeated into new collections.
+    { path = "slice::to_vec", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "slice::repeat", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "str::repeat", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # String
+    { path = "std::string::String::with_capacity", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::push", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::push_str", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::insert", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::insert_str", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::extend_from_within", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::try_reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::string::String::try_reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # VecDeque
+    { path = "std::collections::VecDeque::with_capacity", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::push_back", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::push_front", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::insert", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::append", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::resize", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::resize_with", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::try_reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::VecDeque::try_reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # BinaryHeap and LinkedList
+    { path = "std::collections::BinaryHeap::with_capacity", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BinaryHeap::push", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BinaryHeap::append", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BinaryHeap::reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BinaryHeap::reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BinaryHeap::try_reserve", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BinaryHeap::try_reserve_exact", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::LinkedList::push_back", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::LinkedList::push_front", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::LinkedList::append", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # Maps and sets. The store has no budgeted map yet: input-derived
+    # entries go in a `BudgetVec`, sorted for lookup.
+    { path = "std::collections::HashMap::with_capacity", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashMap::with_capacity_and_hasher", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashMap::insert", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashMap::entry", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashMap::reserve", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashMap::try_reserve", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashSet::with_capacity", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashSet::with_capacity_and_hasher", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashSet::insert", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashSet::replace", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashSet::reserve", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::HashSet::try_reserve", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BTreeMap::insert", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BTreeMap::entry", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BTreeMap::append", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BTreeSet::insert", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BTreeSet::replace", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "std::collections::BTreeSet::append", reason = "input-derived entries go in a sorted `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # Iterators collected or extended into any collection.
+    { path = "core::iter::Iterator::collect", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "core::iter::Iterator::unzip", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "core::iter::Iterator::partition", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "core::iter::FromIterator::from_iter", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "core::iter::Extend::extend", reason = "input-derived growth goes through `BudgetVec` (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    # The methods that grow the store's own values. They expect the lint for
+    # the vectors that they grow, so the store's calls of them are checked
+    # instead.
+    { path = "pyropdf_store::value::Array::push", reason = "values that input sizes grow through `BudgetVec`, as `Value::parse` builds them (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "pyropdf_store::value::Array::insert", reason = "values that input sizes grow through `BudgetVec`, as `Value::parse` builds them (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+    { path = "pyropdf_store::value::Dict::insert", reason = "values that input sizes grow through `BudgetVec`, as `Value::parse` builds them (DESIGN.md F6); expect this lint with a reason where growth is bounded otherwise" },
+]

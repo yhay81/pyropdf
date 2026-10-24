@@ -458,6 +458,10 @@ impl Choice<'_> {
         if chosen.is_none()
             && let Some(root) = self.catalog()?
         {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the trailer that the scan makes has one entry, its `/Root`"
+            )]
             let trailer = Dict::from_iter([(Name::from("Root"), Value::Reference(root))]);
             return Ok((trailer, None));
         }
