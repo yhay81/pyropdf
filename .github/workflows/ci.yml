@@ -1,6 +1,7 @@
-# Rust and Python checks on Linux, for every pull request and every push to
-# main. Other systems join only when an issue needs them: Actions minutes are
-# limited, and macOS and Windows runners count several times as much.
+# Rust and Python checks, and an audit of the dependencies and the workflows,
+# on Linux, for every pull request and every push to main. Other systems join
+# only when an issue needs them: Actions minutes are limited, and macOS and
+# Windows runners count several times as much.
 name: CI
 
 on:
@@ -78,3 +79,25 @@ jobs:
         # The tests include the check that the crates' dependencies follow
         # DESIGN.md section 11, which runs cargo metadata.
         run: uv run --no-sync pytest
+
+  audit:
+    name: Audit
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned cargo-audit and actionlint
+        id: tools
+        run: bash tools/install_audit_tools.sh
+      - name: Audit Cargo.lock against the RustSec advisory database
+        # Only the workspace's Cargo.lock, which pins what ships: no release
+        # builds the measurement workspaces under evidence/. Warnings fail
+        # too, such as an unmaintained, unsound, or yanked crate. Through
+        # `cargo audit`, rustup would first install the toolchain of
+        # rust-toolchain.toml, which the audit does not need.
+        run: cargo-audit audit --deny warnings
+      - name: Validate the workflows
+        # Run after a failed audit too, so that one run reports both. The
+        # shellcheck and pyflakes that actionlint would call are not pinned.
+        if: ${{ !cancelled() && steps.tools.outcome == 'success' }}
+        run: actionlint -shellcheck= -pyflakes=
