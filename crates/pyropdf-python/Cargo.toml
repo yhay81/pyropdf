@@ -1,0 +1,24 @@
+[package]
+name = "pyropdf-python"
+description = "The Python binding of pyropdf"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+# Python tests in tests/ cover the binding. A Rust test harness would have to
+# link libpython, which the extension module never does.
+test = false
+doctest = false
+
+[dependencies]
+pyropdf-engine.workspace = true
+pyropdf-schema.workspace = true
+pyropdf-store.workspace = true
+# maturin sets PYO3_BUILD_EXTENSION_MODULE, which replaces PyO3's deprecated
+# extension-module feature.
+pyo3 = { version = "0.30.1", features = ["abi3-py311"] }

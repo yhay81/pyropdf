@@ -1,0 +1,9 @@
+[package]
+name = "pyropdf-store"
+description = "The versioned object store of pyropdf"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true

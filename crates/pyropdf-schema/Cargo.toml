@@ -1,0 +1,9 @@
+[package]
+name = "pyropdf-schema"
+description = "Typed PDF object descriptors generated from the Arlington PDF Model"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true

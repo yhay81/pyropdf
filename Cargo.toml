@@ -1,0 +1,29 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+authors = ["Yusuke Hayashi <yusuke8h@gmail.com>"]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/yhay81/pyropdf"
+publish = false
+
+# The crates of DESIGN.md section 11. A crate depends only on the crates that
+# section lists before it; tests/test_crate_dependencies.py checks the graph.
+[workspace.dependencies]
+pyropdf-store = { path = "crates/pyropdf-store" }
+pyropdf-schema = { path = "crates/pyropdf-schema" }
+pyropdf-engine = { path = "crates/pyropdf-engine" }
+
+# The release profile of pylopdf, where thin LTO kept most of fat LTO's gains
+# in size and speed without the regressions that fat LTO showed there.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# PyO3 converts Rust panics into Python exceptions only when they unwind.
+panic = "unwind"
+# Leave `strip` unset so Cargo removes only debug information. Symbol tables
+# name frames in panic backtraces, debuggers, and profilers; in pylopdf,
+# stripping them saved only 0.34 to 0.49 MiB per Linux or macOS wheel.

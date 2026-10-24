@@ -1,0 +1,13 @@
+[package]
+name = "pyropdf-engine"
+description = "Interpretation, rendering, writing, and understanding over the pyropdf store"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Every engine reads the document through the store (DESIGN.md F1).
+pyropdf-store.workspace = true
