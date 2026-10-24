@@ -1,0 +1,22 @@
+# The measurements behind issue #25: what a transaction that writes one
+# object costs (DESIGN.md section 4.1). The empty table below makes this
+# directory a workspace of its own, so it is no member of the repository's
+# workspace and the root Cargo.toml and Cargo.lock stay unchanged.
+[workspace]
+
+[package]
+name = "transaction-cost-bench"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+pyropdf-store = { path = "../../crates/pyropdf-store" }
+
+# The release profile of the repository's workspace, so that the timings are
+# those of the code that a wheel would ship.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"

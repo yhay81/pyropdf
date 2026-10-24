@@ -15,6 +15,7 @@ pub mod budget;
 mod error;
 pub mod index;
 pub mod value;
+pub mod version;
 pub mod write;
 
 pub use error::{Error, ErrorKind, LimitExceeded, Password, Result};
