@@ -1,0 +1,8 @@
+.pytest_cache
+.ruff_cache
+.venv
+/dist
+/python/pyropdf/*.pyd
+/python/pyropdf/*.so
+/target
+__pycache__

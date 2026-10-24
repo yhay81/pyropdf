@@ -102,6 +102,27 @@ replacements for lopdf's helpers, and the rules of pylopdf's AGENTS.md.
 pylopdf's checkout may be in use by other agents: read it, and never commit
 to it from pyropdf work.
 
+## Commands
+
+`uv sync` builds the extension with maturin and installs the tools, and
+`uv run` rebuilds the extension when a Rust source or manifest changes. Run
+these before pushing. CI runs the same commands, with `--locked` added to
+`uv sync` and to the cargo commands.
+
+```bash
+uv sync
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run ty check
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
+
+`uv run pytest` includes `tests/test_crate_dependencies.py`, which fails
+when a crate's dependencies point against DESIGN.md section 11.
+
 ## Tests and evidence
 
 - Python tests in `tests/` are the public contract.
@@ -128,8 +149,9 @@ to it from pyropdf work.
 - The repository is private. GitHub Actions minutes are limited, and macOS
   and Windows runners count several times as much as Linux, so CI runs on
   Linux unless an issue needs another system.
-- Commands are listed here once the workspace exists; the scaffold, #20,
-  adds them.
+- `rust-toolchain.toml` pins the one Rust toolchain, and `uv.lock` pins the
+  Python tools. `.github/workflows/ci.yml` runs the commands above on every
+  pull request and on `main`.
 
 ## Keeping this file short
 

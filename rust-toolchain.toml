@@ -1,0 +1,6 @@
+# The one Rust toolchain of the repository. rustup installs it on first use,
+# and CI installs it with `rustup toolchain install`.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
