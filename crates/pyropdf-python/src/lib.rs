@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 
 mod document;
 mod errors;
+mod pages;
 mod source;
 
 /// The extension module of pyropdf, which `python/pyropdf` imports.
@@ -16,6 +17,11 @@ mod _core {
     use super::errors::{
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, PasswordError,
         PdfError, StaleObjectError,
+    };
+    #[pymodule_export]
+    use super::pages::{
+        new_page, page_count, page_geometry, page_index, page_object, page_objects,
+        set_page_rotation, set_pages,
     };
 
     /// The version of pyropdf: the version of its crates.

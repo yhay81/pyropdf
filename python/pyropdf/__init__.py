@@ -10,10 +10,13 @@ from pyropdf._errors import (
     PasswordError,
     PdfError,
     StaleObjectError,
+    StalePageError,
 )
 from pyropdf._limits import DocumentLimits
+from pyropdf._page import Page
+from pyropdf._pages import Pages
 
-for _public in (Document, Probe, DocumentLimits, open, probe):
+for _public in (Document, Probe, DocumentLimits, Page, Pages, open, probe):
     _public.__module__ = "pyropdf"
 
 __all__ = [
@@ -23,10 +26,13 @@ __all__ = [
     "EncryptedDocumentError",
     "LimitError",
     "MalformedPdfError",
+    "Page",
+    "Pages",
     "PasswordError",
     "PdfError",
     "Probe",
     "StaleObjectError",
+    "StalePageError",
     "__version__",
     "open",
     "probe",

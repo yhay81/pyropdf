@@ -17,6 +17,15 @@ from pyropdf._core import (
 if TYPE_CHECKING:
     from typing import Any
 
+
+class StalePageError(StaleObjectError):
+    """Use of a :class:`Page` whose page object the page tree no longer lists.
+
+    Other pages' edits never make a page stale; deleting it does, and undo
+    can make it valid again. Fetch a current page with ``doc.pages[i]``.
+    """
+
+
 _LIMIT_ERROR_STR = LimitError.__str__
 _LIMIT_ERROR_ARG_COUNT = 2
 
@@ -48,6 +57,7 @@ for _public in (
     EncryptedDocumentError,
     LimitError,
     StaleObjectError,
+    StalePageError,
     DocumentClosedError,
 ):
     _public.__module__ = "pyropdf"
@@ -60,4 +70,5 @@ __all__ = [
     "PasswordError",
     "PdfError",
     "StaleObjectError",
+    "StalePageError",
 ]
