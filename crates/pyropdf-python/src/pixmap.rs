@@ -17,7 +17,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyInt};
 use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::render::{self, Raster, RasterError};
-use pyropdf_store::pages::PageIndex;
 use pyropdf_store::value::Reference;
 
 use crate::document::_Document;
@@ -390,11 +389,8 @@ pub fn render_page(
     matrix: (f64, f64, f64, f64),
     alpha: bool,
 ) -> PyResult<Pixmap> {
-    let version = document.current()?;
-    let budget = document.budget();
+    let (version, index, budget) = crate::pages::index(document)?;
     let raster = py.detach(|| -> PyResult<Raster> {
-        let index =
-            PageIndex::memoized(&document.pages, &version, &budget).map_err(|e| store_error(&e))?;
         let at = index
             .index_of(Reference::new(number, generation))
             .ok_or_else(|| {

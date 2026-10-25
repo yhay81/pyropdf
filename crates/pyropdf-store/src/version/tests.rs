@@ -1394,3 +1394,33 @@ fn an_oversized_redo_does_not_discard_the_undo_steps() {
     assert_eq!(document.history().redo, 0);
     assert!(document.history().size <= 8192);
 }
+
+#[test]
+fn a_rollback_discards_writes_since_its_savepoint_and_keeps_numbers_used() {
+    let budget = Budget::default();
+    let document = document(None);
+    let mut transaction = document.begin();
+    transaction.write(1, &Value::Integer(100), &budget).unwrap();
+    let savepoint = transaction.savepoint();
+    transaction.write(2, &Value::Integer(200), &budget).unwrap();
+    let allocated = transaction.allocate().unwrap();
+    transaction
+        .write(allocated.number(), &Value::Integer(1), &budget)
+        .unwrap();
+    let snapshot = transaction.snapshot();
+    assert_eq!(value_of(&snapshot, 2), Some(Value::Integer(200)));
+    transaction.rollback(savepoint);
+    assert_eq!(
+        value_of(transaction.version(), 1),
+        Some(Value::Integer(100))
+    );
+    assert_eq!(
+        value_of(transaction.version(), 2),
+        value_of(&document.current(), 2)
+    );
+    assert_eq!(value_of(transaction.version(), allocated.number()), None);
+    let next = transaction.allocate().unwrap();
+    assert!(next.number() > allocated.number());
+    let committed = transaction.commit(&budget).unwrap();
+    assert_eq!(committed.written().objects(), &[1]);
+}

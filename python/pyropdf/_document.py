@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._errors import DocumentClosedError, PdfError
+from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._pages import Pages
 
@@ -68,6 +69,17 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    def transaction(self, name: str = "") -> Transaction:
+        """Return a context manager that groups the edits of its block into one step named ``name``."""
+        self._ensure_open()
+        return Transaction(self, name)
+
+    @property
+    def history(self) -> History:
+        """Return the steps that undo and redo walk."""
+        self._ensure_open()
+        return History(self)
 
     def _core(self) -> _Document:
         """Return the core document, refusing a closed one."""

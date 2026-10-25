@@ -12,12 +12,13 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
+from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Pixmap
 
-for _public in (Document, Probe, DocumentLimits, Page, Pages, open, probe):
+for _public in (Document, Probe, DocumentLimits, History, Page, Pages, Transaction, open, probe):
     _public.__module__ = "pyropdf"
 
 __all__ = [
@@ -25,6 +26,7 @@ __all__ = [
     "DocumentClosedError",
     "DocumentLimits",
     "EncryptedDocumentError",
+    "History",
     "LimitError",
     "MalformedPdfError",
     "Page",
@@ -35,6 +37,7 @@ __all__ = [
     "Probe",
     "StaleObjectError",
     "StalePageError",
+    "Transaction",
     "__version__",
     "open",
     "probe",

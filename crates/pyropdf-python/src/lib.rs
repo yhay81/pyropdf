@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 
 mod document;
 mod errors;
+mod history;
 mod pages;
 mod pixmap;
 mod source;
@@ -18,6 +19,11 @@ mod _core {
     use super::errors::{
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, PasswordError,
         PdfError, StaleObjectError,
+    };
+    #[pymodule_export]
+    use super::history::{
+        begin_transaction, end_transaction, history_clear, history_redo, history_state,
+        history_undo, set_history_limit,
     };
     #[pymodule_export]
     use super::pages::{
