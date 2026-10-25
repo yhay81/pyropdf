@@ -215,6 +215,14 @@ impl Version {
         self.table.iter()
     }
 
+    /// Whether any object or trailer was written since the base. Undo to
+    /// the initial version makes this false again, permitting an exact
+    /// no-edit incremental save without reading any objects.
+    #[must_use]
+    pub fn has_changes(&self) -> bool {
+        self.trailer.is_some() || self.slots().next().is_some()
+    }
+
     /// Returns the trailer: the one that a transaction wrote last, or the
     /// base's.
     #[must_use]
