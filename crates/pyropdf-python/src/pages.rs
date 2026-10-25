@@ -1,0 +1,370 @@
+//! The pages of a document for `python/pyropdf/_pages.py` and `_page.py`:
+//! the page index (DESIGN.md section 10), page geometry, and the edits of
+//! the page tree, each one transaction.
+//!
+//! A structural edit flattens the tree, as pylopdf's edits do: the root
+//! node lists every page, and a page whose parent changes, or whose
+//! inherited attributes would change under the root, is rewritten with
+//! `/Parent` naming the root and its inherited attributes written out.
+
+use std::sync::Arc;
+
+use pyo3::exceptions::{PyIndexError, PyValueError};
+use pyo3::prelude::*;
+use pyropdf_store::budget::Budget;
+use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
+use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
+use pyropdf_store::version::{Transaction, Version};
+
+use crate::document::_Document;
+use crate::errors::{MalformedPdfError, store_error};
+
+/// The attributes that pages inherit (ISO 32000-2 table 31).
+const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
+
+/// hayro's default page, A4 in points, for a page without a usable box.
+const A4: (f64, f64) = (595.0, 842.0);
+
+fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
+    let version = document.current()?;
+    let budget = document.budget();
+    let index =
+        PageIndex::memoized(&document.pages, &version, &budget).map_err(|e| store_error(&e))?;
+    Ok((version, index, budget))
+}
+
+/// Returns the number of pages.
+#[pyfunction]
+pub fn page_count(document: &_Document) -> PyResult<usize> {
+    Ok(index(document)?.1.len())
+}
+
+/// Returns the object of page `at`, counted from 0, as a number and a
+/// generation.
+#[pyfunction]
+pub fn page_object(document: &_Document, at: usize) -> PyResult<(u32, u16)> {
+    let (_, index, _) = index(document)?;
+    let page = index
+        .get(at)
+        .ok_or_else(|| PyIndexError::new_err(format!("page {at} is out of range")))?;
+    let object = indirect(page, at)?;
+    Ok((object.number(), object.generation()))
+}
+
+/// Returns the index of the page whose object is `number` and
+/// `generation`, or `None` when the page tree no longer lists it.
+#[pyfunction]
+pub fn page_index(document: &_Document, number: u32, generation: u16) -> PyResult<Option<usize>> {
+    Ok(index(document)?
+        .1
+        .index_of(Reference::new(number, generation)))
+}
+
+/// Returns the objects of every page, in order.
+#[pyfunction]
+pub fn page_objects(document: &_Document) -> PyResult<Vec<(u32, u16)>> {
+    let (_, index, _) = index(document)?;
+    index
+        .pages()
+        .iter()
+        .enumerate()
+        .map(|(at, page)| indirect(page, at).map(|r| (r.number(), r.generation())))
+        .collect()
+}
+
+/// Returns the rotation of a page, normalized to 0, 90, 180, or 270, and
+/// its display width and height: the crop box clipped to the media box,
+/// rotated, with hayro's A4 for an empty box. `None` for a stale page.
+#[pyfunction]
+pub fn page_geometry(
+    document: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<(i64, f64, f64)>> {
+    let (_, index, _) = index(document)?;
+    let Some(at) = index.index_of(Reference::new(number, generation)) else {
+        return Ok(None);
+    };
+    let page = &index.pages()[at];
+    let rotation = rotation(page.rotate());
+    let media = page
+        .media_box()
+        .and_then(rect)
+        .unwrap_or((0.0, 0.0, A4.0, A4.1));
+    let crop = page.crop_box().and_then(rect).unwrap_or(media);
+    let (x0, y0) = (crop.0.max(media.0), crop.1.max(media.1));
+    let (x1, y1) = (crop.2.min(media.2), crop.3.min(media.3));
+    let (mut width, mut height) = if x1 - x0 < 1e-6 || y1 - y0 < 1e-6 {
+        A4
+    } else {
+        ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
+    };
+    if rotation % 180 == 90 {
+        std::mem::swap(&mut width, &mut height);
+    }
+    Ok(Some((rotation, width, height)))
+}
+
+/// Sets the `/Rotate` of a page, a multiple of 90 that the caller
+/// normalized, in one transaction. Returns `false` for a stale page.
+#[pyfunction]
+pub fn set_page_rotation(
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    rotation: i64,
+) -> PyResult<bool> {
+    let (_, index, budget) = index(document)?;
+    let reference = Reference::new(number, generation);
+    let Some(at) = index.index_of(reference) else {
+        return Ok(false);
+    };
+    let mut dict = index.pages()[at].dict().clone();
+    dict.insert(Name::from("Rotate"), Value::Integer(rotation));
+    let store = document.document()?;
+    let mut transaction = store.begin();
+    transaction
+        .write(number, &Value::Dict(dict), &budget)
+        .map_err(|e| store_error(&e))?;
+    transaction.commit(&budget).map_err(|e| store_error(&e))?;
+    Ok(true)
+}
+
+/// Lists `pages`, objects of current pages, as the document's pages in
+/// order, in one transaction.
+#[pyfunction]
+pub fn set_pages(document: &_Document, pages: Vec<(u32, u16)>) -> PyResult<()> {
+    let (version, index, budget) = index(document)?;
+    let store = document.document()?;
+    let mut transaction = store.begin();
+    let order = pages
+        .into_iter()
+        .map(|(number, generation)| Reference::new(number, generation))
+        .collect::<Vec<_>>();
+    rewrite(&mut transaction, &version, &index, &order, &budget)?;
+    transaction.commit(&budget).map_err(|e| store_error(&e))?;
+    Ok(())
+}
+
+/// Adds a blank page of `width` by `height` points at `at`, counted from
+/// 0 and at most the page count, in one transaction, and returns its
+/// object.
+#[pyfunction]
+pub fn new_page(document: &_Document, at: usize, width: f64, height: f64) -> PyResult<(u32, u16)> {
+    let (version, index, budget) = index(document)?;
+    let (root, root_dict) = root(&version, &budget)?;
+    let mut page = Dict::new();
+    page.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+    page.insert(Name::from("Parent"), Value::Reference(root));
+    let media = Value::Array(Array::from(vec![
+        Value::Integer(0),
+        Value::Integer(0),
+        number(width),
+        number(height),
+    ]));
+    page.insert(Name::from("MediaBox"), media.clone());
+    // What the page would otherwise inherit from the root.
+    if root_dict.get("CropBox").is_some() {
+        page.insert(Name::from("CropBox"), media);
+    }
+    if root_dict.get("Rotate").is_some() {
+        page.insert(Name::from("Rotate"), Value::Integer(0));
+    }
+    page.insert(Name::from("Resources"), Value::Dict(Dict::new()));
+    let store = document.document()?;
+    let mut transaction = store.begin();
+    let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+    transaction
+        .write(reference.number(), &Value::Dict(page), &budget)
+        .map_err(|e| store_error(&e))?;
+    let mut order = current_order(&index)?;
+    order.insert(at.min(order.len()), reference);
+    rewrite_with(
+        &mut transaction,
+        &version,
+        &index,
+        &order,
+        Some(reference),
+        &budget,
+    )?;
+    transaction.commit(&budget).map_err(|e| store_error(&e))?;
+    Ok((reference.number(), reference.generation()))
+}
+
+fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
+    index
+        .pages()
+        .iter()
+        .enumerate()
+        .map(|(at, page)| indirect(page, at))
+        .collect()
+}
+
+fn rewrite(
+    transaction: &mut Transaction,
+    version: &Version,
+    index: &PageIndex,
+    order: &[Reference],
+    budget: &Budget,
+) -> PyResult<()> {
+    rewrite_with(transaction, version, index, order, None, budget)
+}
+
+/// Writes the root node with `order` as its kids, and each page that the
+/// flattening changes. `added` is a page that the transaction wrote, which
+/// the index does not list yet.
+fn rewrite_with(
+    transaction: &mut Transaction,
+    version: &Version,
+    index: &PageIndex,
+    order: &[Reference],
+    added: Option<Reference>,
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let (root, mut root_dict) = root(version, budget)?;
+    let inherited_root: Vec<Option<Value>> = INHERITABLE
+        .iter()
+        .map(|key| resolve(version, root_dict.get(key), budget))
+        .collect::<PyResult<_>>()?;
+    for &reference in order {
+        if Some(reference) == added {
+            continue;
+        }
+        let at = index.index_of(reference).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "object {} {} is not a page of the document",
+                reference.number(),
+                reference.generation()
+            ))
+        })?;
+        let page = &index.pages()[at];
+        let parent_is_root = page.dict().get("Parent") == Some(&Value::Reference(root));
+        let mut changes = !parent_is_root;
+        for (key, under_root) in INHERITABLE.iter().zip(&inherited_root) {
+            let own = resolve(version, page.dict().get(key), budget)?;
+            if own.is_none() && page.inherited(key) != under_root.as_ref() {
+                changes = true;
+            }
+        }
+        if !changes {
+            continue;
+        }
+        let mut dict = page.dict().clone();
+        dict.insert(Name::from("Parent"), Value::Reference(root));
+        for key in INHERITABLE {
+            match page.inherited(key) {
+                Some(value) => {
+                    dict.insert(Name::from(key), value.clone());
+                }
+                None => {
+                    dict.remove(key);
+                }
+            }
+        }
+        transaction
+            .write(reference.number(), &Value::Dict(dict), budget)
+            .map_err(store)?;
+    }
+    let kids = order
+        .iter()
+        .map(|&r| Value::Reference(r))
+        .collect::<Vec<_>>();
+    root_dict.insert(Name::from("Kids"), Value::Array(Array::from(kids)));
+    root_dict.insert(Name::from("Count"), Value::Integer(order.len() as i64));
+    transaction
+        .write(root.number(), &Value::Dict(root_dict), budget)
+        .map_err(store)?;
+    Ok(())
+}
+
+/// Returns the root node of the page tree, which must be indirect.
+fn root(version: &Version, budget: &Budget) -> PyResult<(Reference, Dict)> {
+    let catalog = resolve(version, version.trailer().get("Root"), budget)?;
+    let Some(Value::Dict(catalog)) = catalog else {
+        return Err(MalformedPdfError::new_err(
+            "the trailer names no catalog dictionary",
+        ));
+    };
+    let Some(&Value::Reference(root)) = catalog.get("Pages") else {
+        return Err(MalformedPdfError::new_err(
+            "the catalog's /Pages is not an indirect page tree",
+        ));
+    };
+    match resolve(version, Some(&Value::Reference(root)), budget)? {
+        Some(Value::Dict(dict)) => Ok((root, dict)),
+        _ => Err(MalformedPdfError::new_err("the catalog names no page tree")),
+    }
+}
+
+/// Follows references from `value`, at most [`MAX_CHAIN`]; a null, an
+/// absent object, or a missing entry is `None`.
+fn resolve(version: &Version, value: Option<&Value>, budget: &Budget) -> PyResult<Option<Value>> {
+    let mut current = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Reference(reference)) => *reference,
+        Some(value) => return Ok(Some(value.clone())),
+    };
+    for _ in 0..MAX_CHAIN {
+        let Some(object) = version
+            .get(current.number(), budget)
+            .map_err(|e| store_error(&e))?
+            .filter(|object| object.generation() == current.generation())
+        else {
+            return Ok(None);
+        };
+        match &**object.value() {
+            Value::Null => return Ok(None),
+            Value::Reference(next) => current = *next,
+            value => return Ok(Some(value.clone())),
+        }
+    }
+    Err(MalformedPdfError::new_err(
+        "a reference chain is longer than 16 references",
+    ))
+}
+
+fn indirect(page: &Page, at: usize) -> PyResult<Reference> {
+    page.object()
+        .ok_or_else(|| MalformedPdfError::new_err(format!("page {at} is not an indirect object")))
+}
+
+/// Normalizes `/Rotate` to 0, 90, 180, or 270, as hayro reads it.
+fn rotation(value: Option<&Value>) -> i64 {
+    match value {
+        Some(&Value::Integer(rotate)) => match rotate.rem_euclid(360) {
+            r @ (0 | 90 | 180 | 270) => r,
+            _ => 0,
+        },
+        _ => 0,
+    }
+}
+
+/// Reads a rectangle of four numbers, normalized.
+fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
+    let Value::Array(array) = value else {
+        return None;
+    };
+    let mut numbers = [0.0; 4];
+    if array.len() != 4 {
+        return None;
+    }
+    for (slot, item) in numbers.iter_mut().zip(array.iter()) {
+        *slot = match item {
+            Value::Integer(n) => *n as f64,
+            Value::Real(r) => r.value(),
+            _ => return None,
+        };
+    }
+    let [a, b, c, d] = numbers;
+    Some((a.min(c), b.min(d), a.max(c), b.max(d)))
+}
+
+/// Returns `value` as an integer when it is one, else as a real.
+fn number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        Value::Integer(value as i64)
+    } else {
+        Value::from(value)
+    }
+}

@@ -11,6 +11,8 @@ use std::time::Duration;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
+use pyropdf_store::memo::Memo;
+use pyropdf_store::pages::{PageIndex, PageTree};
 use pyropdf_store::save::{self, FileBase};
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Document, MemoryBase, Version};
@@ -27,6 +29,8 @@ const MAX_PROBE_METADATA_SIZE: usize = 1024 * 1024;
 pub struct _Document {
     document: RwLock<Option<Arc<Document>>>,
     limits: DocumentLimits,
+    /// The page index, memoized by what its walk read.
+    pub(crate) pages: Memo<PageTree, PageIndex>,
 }
 
 impl _Document {
@@ -34,16 +38,26 @@ impl _Document {
         Self {
             document: RwLock::new(Some(Arc::new(document))),
             limits,
+            pages: Memo::new(1),
         }
     }
 
-    fn current(&self) -> PyResult<Arc<Version>> {
+    /// Returns the store's document, or refuses a closed one.
+    pub(crate) fn document(&self) -> PyResult<Arc<Document>> {
         self.document
             .read()
             .unwrap_or_else(PoisonError::into_inner)
-            .as_ref()
-            .map(|document| document.current())
+            .clone()
             .ok_or_else(|| DocumentClosedError::new_err("document closed"))
+    }
+
+    pub(crate) fn current(&self) -> PyResult<Arc<Version>> {
+        Ok(self.document()?.current())
+    }
+
+    /// Returns a budget of one operation from the document's limits.
+    pub(crate) fn budget(&self) -> Budget {
+        Budget::new(&self.limits)
     }
 }
 
@@ -175,6 +189,7 @@ impl _Document {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        self.pages.clear();
     }
 }
 

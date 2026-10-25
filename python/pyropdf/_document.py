@@ -16,6 +16,7 @@ from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
+from pyropdf._pages import Pages
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -61,6 +62,17 @@ class Document:
     def limits(self) -> DocumentLimits:
         """Return the limits that the document's operations start from."""
         return self._limits
+
+    @property
+    def pages(self) -> Pages:
+        """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
+        self._ensure_open()
+        return Pages(self)
+
+    def _core(self) -> _Document:
+        """Return the core document, refusing a closed one."""
+        self._ensure_open()
+        return self._doc
 
     @property
     def is_closed(self) -> bool:
