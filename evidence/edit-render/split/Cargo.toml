@@ -1,0 +1,24 @@
+# The split of evidence/edit-render (issue #38): where an edit followed by a render goes
+# through the hayro bridge (DESIGN.md section 6), split between the store and
+# hayro. The empty table below makes this directory a workspace of its own,
+# so it is no member of the repository's workspace and the root Cargo.toml
+# and Cargo.lock stay unchanged.
+[workspace]
+
+[package]
+name = "edit-render-split"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+pyropdf-engine = { path = "../../../crates/pyropdf-engine" }
+pyropdf-store = { path = "../../../crates/pyropdf-store" }
+
+# The release profile of the repository's workspace, so that the timings are
+# those of the code that a wheel would ship.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
