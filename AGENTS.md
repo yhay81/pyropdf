@@ -6,14 +6,43 @@ imports it; update this file instead.
 pyropdf rebuilds [pylopdf](https://github.com/yhay81/pylopdf)'s concept on one
 versioned object store that every engine reads. [DESIGN.md](DESIGN.md) is the
 design: its principles F1 to F9 (section 3) bind every change. This file says
-how to work. The current phase is Phase 0 (Foundation); nothing is
-implemented yet.
+how to work. GitHub's issue tree and merged pull requests record progress;
+status text in a design document is not a work queue.
 
-## Start here
+## Start or resume here
 
-1. Read DESIGN.md sections 3 and 4, and every section your issue names.
-2. Pick a ready issue (below) and claim it.
-3. Work on a branch of its own and open a pull request that closes it.
+1. Follow an explicit user assignment first. Inspect `git status` and the
+   branch before touching files; preserve existing work.
+2. Run `python3 tools/next_work.py` (authenticated `gh` required). It reads
+   live GitHub state: current default-branch CI, PRs, claims, ready work,
+   decisions, upstream work, and blockers. `--json` emits the same report.
+   A failed read is unknown, never an empty queue. Inspect failed main CI
+   before starting unrelated work; pending CI does not prevent investigation.
+3. For an existing task, read its issue **and comments**, the claim's branch,
+   and its PR's diff, checks, and review threads. Continue its unfinished
+   acceptance criteria before selecting another issue. A matching branch
+   is a clue to inspect, not permission to take over another agent's claim.
+4. For new work, use the earliest open phase tracker. The report suggests
+   ordinary ready tasks by most direct open dependents, then issue number;
+   this is a tie-breaker, not product priority. Read the selected issue's
+   Context, Scope, Paths, Acceptance, and Notes, then DESIGN.md sections 3
+   and 4 and the sections it names. Recheck dependencies and claims before
+   claiming: the report is a snapshot, not a reservation.
+
+| Question | Source of truth |
+| --- | --- |
+| What is allowed and how do agents work? | This file and the user's instructions |
+| What must the implementation preserve? | DESIGN.md, especially F1 to F9 |
+| What is next, owned, or blocked? | Issue state, labels, milestone, parent, and blocked-by links |
+| What was decided or left unfinished? | Issue comments and the linked PR; approvals come from the owner, not an agent using the same account |
+| Is the change ready to land? | Acceptance evidence, review threads, and CI on the current PR head; merge authorization is separate |
+
+When no ordinary task is ready, inspect decision recommendations, upstream
+release/adoption status, and claims. Prepare missing evidence or a local
+patch where allowed; do not repeat a finished recommendation or infer an
+approval. If these are all waiting, report the exact dependency or owner
+choice and the work already prepared. An empty ready list does not mean
+that a phase's exit criteria hold.
 
 ## Choosing work
 
@@ -21,17 +50,18 @@ All work comes from issues. The pinned issue #1 is the root of the tree:
 phase trackers and engine trackers are its sub-issues, and tasks are
 sub-issues of a tracker. The milestone of an issue is its phase.
 
-An issue is ready when it is open, not a `tracker`, not `in-progress`, and
-has no open blocking issue. List the ready issues of the repository:
+An ordinary implementation issue is ready when it is open, belongs to the
+active phase, is neither `tracker` nor `in-progress`, has no open blocker
+or linked open PR, and is neither `decision` nor `upstream`/`scope-question`. The report keeps
+those other kinds separate because their next action differs. Missing phase
+or dependency metadata needs triage, not an assumption of readiness.
+
+Read the issue with `gh issue view <number>`, then its discussion with
+`gh issue view <number> --comments`.
+To inspect its direct blockers, including their state:
 
 ```bash
-gh api 'repos/yhay81/pyropdf/issues?state=open&per_page=100' --jq '.[] | select(.pull_request == null and .issue_dependencies_summary.blocked_by == 0) | select([.labels[].name] | (index("tracker") or index("in-progress")) | not) | "#\(.number) [\(.milestone.title // "-")] \(.title)"'
-```
-
-To see what still blocks one issue:
-
-```bash
-gh api repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by --jq '.[] | select(.state == "open") | "#\(.number) \(.title)"'
+gh api --paginate repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by
 ```
 
 - **Claim before starting.** Every agent works through the owner's GitHub
@@ -76,6 +106,22 @@ gh api repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by --jq '.[] | 
 gh issue create --repo yhay81/pyropdf --parent <tracker> --milestone "Phase 0: Foundation" \
   --label area:store --blocked-by <issue> --title "..." --body-file body.md
 ```
+
+## Finish or hand off
+
+Before leaving work, record a short comment on its issue: branch and PR,
+what changed, checks and evidence, the exact next action, and any dependency
+or owner decision still needed. Link an existing recommendation instead of
+copying it. Keep the claim while actively working; release it as above if
+stopping. Open PR links still keep an issue out of the new-work queue. A PR
+awaiting owner review should say so and link its issue.
+
+Before merge, check the **current head's** CI, acceptance criteria, unresolved
+reviews, and authorization for this work. After merge, verify the issue
+closed, remove its `in-progress` label, and inspect the main CI and newly
+unblocked work with the report. A failed main check gets an issue or an
+explicit handoff. Close a phase tracker only after verifying its exit
+criteria, not merely because its implementation tasks are closed.
 
 ## Writing an issue
 
