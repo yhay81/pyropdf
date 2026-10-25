@@ -25,11 +25,18 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 /// hayro's default page, A4 in points, for a page without a usable box.
 const A4: (f64, f64) = (595.0, 842.0);
 
-fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    let version = document.current()?;
+pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
+    let (version, parent) = document.reading_parent()?;
     let budget = document.budget();
-    let index =
-        PageIndex::memoized(&document.pages, &version, &budget).map_err(|e| store_error(&e))?;
+    let index = match &parent {
+        // An open transaction that has written nothing reads its parent.
+        Some(parent) => PageIndex::memoized(&document.pages, parent, &budget),
+        None if document.in_transaction() => {
+            PageIndex::memoized(&document.draft_pages, &version, &budget)
+        }
+        None => PageIndex::memoized(&document.pages, &version, &budget),
+    }
+    .map_err(|e| store_error(&e))?;
     Ok((version, index, budget))
 }
 
@@ -109,48 +116,53 @@ pub fn page_geometry(
 /// normalized, in one transaction. Returns `false` for a stale page.
 #[pyfunction]
 pub fn set_page_rotation(
+    py: Python<'_>,
     document: &_Document,
     number: u32,
     generation: u16,
     rotation: i64,
 ) -> PyResult<bool> {
-    let (_, index, budget) = index(document)?;
+    let (_, index, _) = index(document)?;
     let reference = Reference::new(number, generation);
     let Some(at) = index.index_of(reference) else {
         return Ok(false);
     };
     let mut dict = index.pages()[at].dict().clone();
     dict.insert(Name::from("Rotate"), Value::Integer(rotation));
-    let store = document.document()?;
-    let mut transaction = store.begin();
-    transaction
-        .write(number, &Value::Dict(dict), &budget)
-        .map_err(|e| store_error(&e))?;
-    transaction.commit(&budget).map_err(|e| store_error(&e))?;
+    document.edit(py, |transaction, budget| {
+        transaction
+            .write(number, &Value::Dict(dict), budget)
+            .map_err(|e| store_error(&e))
+    })?;
     Ok(true)
 }
 
 /// Lists `pages`, objects of current pages, as the document's pages in
 /// order, in one transaction.
 #[pyfunction]
-pub fn set_pages(document: &_Document, pages: Vec<(u32, u16)>) -> PyResult<()> {
-    let (version, index, budget) = index(document)?;
-    let store = document.document()?;
-    let mut transaction = store.begin();
+pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -> PyResult<()> {
+    let (_, index, _) = index(document)?;
     let order = pages
         .into_iter()
         .map(|(number, generation)| Reference::new(number, generation))
         .collect::<Vec<_>>();
-    rewrite(&mut transaction, &version, &index, &order, &budget)?;
-    transaction.commit(&budget).map_err(|e| store_error(&e))?;
-    Ok(())
+    document.edit(py, |transaction, budget| {
+        let view = transaction.snapshot();
+        rewrite_with(transaction, &view, &index, &order, None, budget)
+    })
 }
 
 /// Adds a blank page of `width` by `height` points at `at`, counted from
 /// 0 and at most the page count, in one transaction, and returns its
 /// object.
 #[pyfunction]
-pub fn new_page(document: &_Document, at: usize, width: f64, height: f64) -> PyResult<(u32, u16)> {
+pub fn new_page(
+    py: Python<'_>,
+    document: &_Document,
+    at: usize,
+    width: f64,
+    height: f64,
+) -> PyResult<(u32, u16)> {
     let (version, index, budget) = index(document)?;
     let (root, root_dict) = root(&version, &budget)?;
     let mut page = Dict::new();
@@ -171,24 +183,18 @@ pub fn new_page(document: &_Document, at: usize, width: f64, height: f64) -> PyR
         page.insert(Name::from("Rotate"), Value::Integer(0));
     }
     page.insert(Name::from("Resources"), Value::Dict(Dict::new()));
-    let store = document.document()?;
-    let mut transaction = store.begin();
-    let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-    transaction
-        .write(reference.number(), &Value::Dict(page), &budget)
-        .map_err(|e| store_error(&e))?;
     let mut order = current_order(&index)?;
-    order.insert(at.min(order.len()), reference);
-    rewrite_with(
-        &mut transaction,
-        &version,
-        &index,
-        &order,
-        Some(reference),
-        &budget,
-    )?;
-    transaction.commit(&budget).map_err(|e| store_error(&e))?;
-    Ok((reference.number(), reference.generation()))
+    document.edit(py, |transaction, budget| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let reference = transaction.allocate().map_err(store)?;
+        transaction
+            .write(reference.number(), &Value::Dict(page), budget)
+            .map_err(store)?;
+        order.insert(at.min(order.len()), reference);
+        let view = transaction.snapshot();
+        rewrite_with(transaction, &view, &index, &order, Some(reference), budget)?;
+        Ok((reference.number(), reference.generation()))
+    })
 }
 
 fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
@@ -198,16 +204,6 @@ fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
         .enumerate()
         .map(|(at, page)| indirect(page, at))
         .collect()
-}
-
-fn rewrite(
-    transaction: &mut Transaction,
-    version: &Version,
-    index: &PageIndex,
-    order: &[Reference],
-    budget: &Budget,
-) -> PyResult<()> {
-    rewrite_with(transaction, version, index, order, None, budget)
 }
 
 /// Writes the root node with `order` as its kids, and each page that the

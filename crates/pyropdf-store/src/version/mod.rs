@@ -42,7 +42,7 @@ use table::Table;
 
 pub use base::{Base, MemoryBase};
 pub use document::{Document, HistoryStatus};
-pub use transaction::Transaction;
+pub use transaction::{Savepoint, Transaction};
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Bytes, Dict, Value};

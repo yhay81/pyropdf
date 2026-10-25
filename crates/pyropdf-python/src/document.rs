@@ -19,6 +19,7 @@ use pyropdf_store::version::{Document, MemoryBase, Version};
 use pyropdf_store::{Error, write};
 
 use crate::errors::{DocumentClosedError, MalformedPdfError, save_error, store_error};
+use crate::history::DEFAULT_HISTORY_LIMIT;
 use crate::source;
 
 /// The metadata text that `probe` returns, in UTF-8 bytes at most.
@@ -31,8 +32,14 @@ pub struct _Document {
     limits: DocumentLimits,
     /// The page index, memoized by what its walk read.
     pub(crate) pages: Memo<PageTree, PageIndex>,
+    /// The page index of what an open transaction has written, kept apart
+    /// so that the snapshots of transactions never displace the index of
+    /// committed versions.
+    pub(crate) draft_pages: Memo<PageTree, PageIndex>,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
+    /// The open transaction and the names of the history's steps.
+    pub(crate) history: crate::history::State,
 }
 
 impl _Document {
@@ -41,7 +48,9 @@ impl _Document {
             document: RwLock::new(Some(Arc::new(document))),
             limits,
             pages: Memo::new(1),
+            draft_pages: Memo::new(1),
             bridge: pyropdf_engine::bridge::Cache::new(),
+            history: crate::history::State::default(),
         }
     }
 
@@ -86,7 +95,7 @@ impl _Document {
             Bytes::new(&b"<</Type/Pages/Kids[]/Count 0>>"[..]),
         );
         Ok(Self::new(
-            Document::new(Arc::new(base), None),
+            Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)),
             document_limits(limits)?,
         ))
     }
@@ -127,7 +136,7 @@ impl _Document {
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
     fn save_path(&self, py: Python<'_>, path: PathBuf, incremental: bool) -> PyResult<()> {
-        let version = self.current()?;
+        let version = self.reading()?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
         py.detach(|| {
             let target = path.display().to_string();
@@ -149,7 +158,7 @@ impl _Document {
         incremental: bool,
         max_size: Option<u64>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let version = self.current()?;
+        let version = self.reading()?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
         let out = py.detach(|| {
             let mut out = Vec::new();
@@ -164,7 +173,7 @@ impl _Document {
     /// data lists, as its number, generation, and canonical syntax. Tests
     /// compare documents in value with it.
     fn _objects<'py>(&self, py: Python<'py>) -> PyResult<Vec<(u32, u16, Bound<'py, PyBytes>)>> {
-        let version = self.current()?;
+        let version = self.reading()?;
         let budget = Budget::new(&self.limits);
         let mut objects = Vec::new();
         let numbers: Vec<u32> = match version.base().file() {
@@ -193,6 +202,8 @@ impl _Document {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         self.pages.clear();
+        self.draft_pages.clear();
+        self.history.clear();
     }
 }
 
@@ -205,7 +216,7 @@ fn open(
     budget: &Budget,
 ) -> PyResult<_Document> {
     let base = FileBase::open(bytes, budget).map_err(|e| store_error(&e))?;
-    let document = Document::new(Arc::new(base), None);
+    let document = Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT));
     if complete {
         check_every_object(&document.current(), budget).map_err(|e| store_error(&e))?;
     }

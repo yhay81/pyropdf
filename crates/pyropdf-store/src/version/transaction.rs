@@ -163,6 +163,30 @@ impl Transaction {
         Ok(())
     }
 
+    /// Returns what the transaction has written so far as a version of its
+    /// own, sharing everything with the draft, for reads that need to own
+    /// a version. It is no version of the document's history.
+    #[must_use]
+    pub fn snapshot(&self) -> Arc<Version> {
+        Arc::new(self.draft.draft())
+    }
+
+    /// Returns a point that [`Transaction::rollback`] returns the
+    /// transaction to, discarding what it writes after it. Taking one
+    /// copies nothing: it shares the draft's chunks and branches.
+    #[must_use]
+    pub fn savepoint(&self) -> Savepoint {
+        Savepoint(self.draft.draft())
+    }
+
+    /// Discards what the transaction wrote since `savepoint`. Object
+    /// numbers allocated since stay used: no number is issued twice.
+    pub fn rollback(&mut self, savepoint: Savepoint) {
+        let next = self.draft.next;
+        self.draft = savepoint.0;
+        self.draft.next = self.draft.next.max(next);
+    }
+
     /// Publishes what the transaction wrote as the document's current
     /// version, and returns that version.
     ///
@@ -186,6 +210,15 @@ impl Transaction {
         let version = Arc::new(draft);
         lock.publish(Arc::clone(&version), difference.second, difference.first);
         Ok(version)
+    }
+}
+
+/// A point of a transaction to roll back to: [`Transaction::savepoint`].
+pub struct Savepoint(Version);
+
+impl fmt::Debug for Savepoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_tuple("Savepoint").field(&self.0).finish()
     }
 }
 
