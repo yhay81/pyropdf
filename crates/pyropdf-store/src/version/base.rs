@@ -7,7 +7,8 @@ use std::sync::{Arc, OnceLock};
 
 use super::Object;
 use super::table::{CHUNK, FANOUT, capacity, child, height_for, slot};
-use crate::budget::{Budget, LimitCode};
+use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::index::Index;
 use crate::value::{Bytes, Dict, Reference, Value};
 use crate::{LimitExceeded, Result};
 
@@ -16,8 +17,8 @@ use crate::{LimitExceeded, Result};
 ///
 /// A version reads through this interface every object that no transaction
 /// wrote, and parses the bytes that it returns. The cross-reference index of
-/// a file is the base of an opened document (yhay81/pyropdf#27 connects
-/// them), and [`MemoryBase`] holds objects in memory. A base never changes,
+/// a file is connected by [`FileBase`](crate::save::FileBase), and
+/// [`MemoryBase`] holds objects in memory. A base never changes,
 /// and several threads may read it at once.
 pub trait Base: fmt::Debug + Send + Sync {
     /// Returns the generation of object `number`, if the base has the
@@ -42,6 +43,17 @@ pub trait Base: fmt::Debug + Send + Sync {
     /// Returns the first object number above every number that the base
     /// lists, in use or free: where new objects take their numbers.
     fn next_number(&self) -> u64;
+
+    /// Appends the numbers listed by the base, in use or free. A number may
+    /// occur more than once; full save sorts and deduplicates them. Growth
+    /// and polling use the output's budget. Incremental save never calls it.
+    fn numbers(&self, out: &mut BudgetVec<'_, u32>) -> Result<()>;
+
+    /// Returns the original file index, when this base came from a file.
+    /// Incremental save uses its bytes, revision offsets, and repair state.
+    fn file(&self) -> Option<&Index> {
+        None
+    }
 }
 
 /// A base held in memory: the bytes of each object's value by object number,
@@ -116,6 +128,14 @@ impl Base for MemoryBase {
         self.objects
             .last_key_value()
             .map_or(1, |(&number, _)| u64::from(number) + 1)
+    }
+
+    fn numbers(&self, out: &mut BudgetVec<'_, u32>) -> Result<()> {
+        for &number in self.objects.keys() {
+            out.budget().poll()?;
+            out.try_push(number)?;
+        }
+        Ok(())
     }
 }
 
