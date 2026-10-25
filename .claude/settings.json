@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "vercel@claude-plugins-official": false,
+    "matsuo-slides@matsuo-slides": false
+  }
+}

@@ -166,6 +166,11 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
+`python3 tools/check.py` runs these in order and prints one line per
+check, with the lines of a failed check's log that name its failures; the
+full logs stay in `target/check/`. Name checks, or `python` or `rust`, to
+run fewer, and add `--locked` to match CI.
+
 `uv run pytest` includes `tests/test_crate_dependencies.py`, which fails
 when a crate's dependencies point against DESIGN.md section 11.
 
@@ -188,6 +193,23 @@ target/audit-tools/actionlint -shellcheck= -pyflakes=
 - Rust tests are for invariants of the store and the engines that no public
   API exposes: property tests, differential oracles, and fuzz targets (F9).
 - Every pull request adds or updates tests for its acceptance criteria.
+
+## Keeping context small
+
+Whatever an agent reads stays in its context and is paid for again on
+every later turn, so read only what the task needs:
+
+- Check with `python3 tools/check.py`, and search a failed check's log
+  instead of rerunning the command to see more of it.
+- Read DESIGN.md by section: `grep -n '^##' DESIGN.md` lists them, and
+  `sed -n '/^## 3\./,/^## 5\./p' DESIGN.md` prints sections 3 and 4.
+- Search before reading, and read a long file by line range. Do not read
+  a lockfile, `target/`, or `.venv/` whole.
+- Ask `gh` for the fields you need with `--json` and `--jq`, and list a
+  PR's files with `gh pr diff <number> --name-only` before reading its diff.
+- Work one issue per session. Record the handoff as in "Finish or hand
+  off", then start the next issue in a fresh session instead of carrying
+  the old context.
 
 ## Labels
 
