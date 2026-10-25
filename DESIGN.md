@@ -318,8 +318,11 @@ every object through `FromBytes`.
 Until I1 lands, the store hands hayro its current version as an in-memory
 incremental update: the base bytes, followed by the written objects (already
 serialized) and a cross-reference section. hayro-syntax reads that format
-natively. When the base was repaired, that section lists every object at the
-offsets the store chose, so hayro never repairs on its own. A new version
+natively. That section lists every object at the store's locations and has
+no `/Prev`, whether or not the base was repaired: hayro then never reads the
+file's own cross-reference data, which it can read differently from the
+store, and never repairs on its own. An object that the store reads as
+absent is listed free, which hayro reads as null. A new version
 then costs hayro a fresh read of the cross-reference data and the page tree,
 but no serialization or parse of unchanged objects. That remaining cost still
 grows with the document; I1 removes it. For an encrypted base, this bridge
