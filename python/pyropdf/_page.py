@@ -5,10 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pyropdf import _core
-from pyropdf._errors import StalePageError
+from pyropdf._errors import StaleObjectError, StalePageError
+from pyropdf._pixmap import _render_matrix
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyropdf._document import Document
+    from pyropdf._pixmap import Pixmap
 
 
 class Page:
@@ -76,6 +80,30 @@ class Page:
         """
         _, width, height = self._geometry()
         return (0.0, 0.0, width, height)
+
+    def pixmap(
+        self,
+        *,
+        dpi: float | None = None,
+        matrix: Sequence[float] | None = None,
+        alpha: bool = False,
+    ) -> Pixmap:
+        """Render the current version of the page to a :class:`Pixmap`.
+
+        ``dpi`` scales the page uniformly, 72 by default; ``matrix`` is a
+        linear map ``(a, b, c, d)``, or six entries whose translation is
+        dropped, since the raster covers the transformed page. Without
+        ``alpha`` the page lies on white. The GIL is released while hayro
+        renders.
+        """
+        linear = _render_matrix(matrix, dpi)
+        if not isinstance(alpha, bool):
+            msg = f"alpha must be a bool: {alpha!r}"
+            raise TypeError(msg)
+        try:
+            return _core.render_page(self._document._core(), self._number, self._generation, linear, alpha)  # noqa: SLF001
+        except StaleObjectError as error:
+            raise self._stale() from error
 
     def _geometry(self) -> tuple[int, float, float]:
         """Return the rotation, width, and height, or raise for a deleted page."""

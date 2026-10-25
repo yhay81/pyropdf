@@ -31,6 +31,8 @@ pub struct _Document {
     limits: DocumentLimits,
     /// The page index, memoized by what its walk read.
     pub(crate) pages: Memo<PageTree, PageIndex>,
+    /// hayro's reading of the latest version rendered.
+    pub(crate) bridge: pyropdf_engine::bridge::Cache,
 }
 
 impl _Document {
@@ -39,6 +41,7 @@ impl _Document {
             document: RwLock::new(Some(Arc::new(document))),
             limits,
             pages: Memo::new(1),
+            bridge: pyropdf_engine::bridge::Cache::new(),
         }
     }
 

@@ -19,6 +19,8 @@ doctest = false
 pyropdf-engine.workspace = true
 pyropdf-schema.workspace = true
 pyropdf-store.workspace = true
+# PNG output of Pixmap, the version that hayro already pulls in.
+png = "0.18.1"
 # maturin sets PYO3_BUILD_EXTENSION_MODULE, which replaces PyO3's deprecated
 # extension-module feature.
 pyo3 = { version = "0.30.1", features = ["abi3-py311"] }
