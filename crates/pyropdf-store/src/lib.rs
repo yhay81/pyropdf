@@ -14,6 +14,7 @@
 pub mod budget;
 mod error;
 pub mod index;
+pub mod memo;
 pub mod save;
 pub mod value;
 pub mod version;
