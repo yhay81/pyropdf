@@ -11,3 +11,8 @@ publish.workspace = true
 [dependencies]
 # Every engine reads the document through the store (DESIGN.md F1).
 pyropdf-store.workspace = true
+hayro = "0.8.0"
+
+[dev-dependencies]
+# Property tests of the bridge (DESIGN.md F9).
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
