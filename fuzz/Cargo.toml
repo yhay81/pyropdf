@@ -1,0 +1,52 @@
+# cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9).
+# The empty table below makes this directory a workspace of its own, built
+# with a nightly toolchain, so the root workspace and its lockfile stay
+# unchanged.
+[workspace]
+
+[package]
+name = "pyropdf-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.12"
+pyropdf-engine = { path = "../crates/pyropdf-engine" }
+pyropdf-store = { path = "../crates/pyropdf-store" }
+
+[[bin]]
+name = "index"
+path = "fuzz_targets/index.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "value"
+path = "fuzz_targets/value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "save"
+path = "fuzz_targets/save.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "bridge"
+path = "fuzz_targets/bridge.rs"
+test = false
+doc = false
+bench = false
+
+# Debug assertions and overflow checks find more, as cargo-fuzz builds them.
+[profile.release]
+debug = 1
