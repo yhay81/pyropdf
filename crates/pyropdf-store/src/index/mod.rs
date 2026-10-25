@@ -38,7 +38,7 @@ mod read;
 mod scan;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::borrow::Cow;
 use std::fmt;

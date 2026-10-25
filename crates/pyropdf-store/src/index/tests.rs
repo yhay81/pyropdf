@@ -23,7 +23,7 @@ use crate::value::{Name, Value};
 
 /// A PDF written object by object, which records where each object begins.
 struct Pdf {
-    bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
     /// The objects written since the last section, with their positions.
     objects: Vec<(u32, usize)>,
 }
@@ -914,7 +914,7 @@ fn the_index_is_shared_between_threads() {
 
 /// The real-document corpus (tests/assets/real_world): each file's name and
 /// bytes.
-fn corpus() -> Vec<(String, Vec<u8>)> {
+pub(crate) fn corpus() -> Vec<(String, Vec<u8>)> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/real_world");
     let mut files: Vec<PathBuf> = fs::read_dir(&dir)
         .unwrap_or_else(|error| panic!("{}: {error}", dir.display()))
@@ -1042,13 +1042,13 @@ fn a_rebuild_finds_every_object_that_the_corpus_cross_reference_data_locates() {
 }
 
 /// A damaged input of the corpus helper.
-struct Damaged {
-    kind: String,
-    file: String,
+pub(crate) struct Damaged {
+    pub(crate) kind: String,
+    pub(crate) file: String,
     /// Whether the kind is one of the 8 of the measurement that DESIGN.md
     /// section 2.2 cites.
     measured: bool,
-    bytes: Vec<u8>,
+    pub(crate) bytes: Vec<u8>,
 }
 
 /// The Python that writes every damaged input of tests/corpus.py, after
@@ -1074,7 +1074,7 @@ for kind in DAMAGE:
 
 /// Returns every damaged input of the corpus helper, which the Python
 /// interpreter that `PYTHON` names, or `python3`, writes.
-fn damaged_inputs() -> Vec<Damaged> {
+pub(crate) fn damaged_inputs() -> Vec<Damaged> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let python = std::env::var_os("PYTHON").unwrap_or_else(|| "python3".into());
     let output = Command::new(&python)
