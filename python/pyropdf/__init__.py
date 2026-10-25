@@ -15,6 +15,7 @@ from pyropdf._errors import (
 from pyropdf._limits import DocumentLimits
 from pyropdf._page import Page
 from pyropdf._pages import Pages
+from pyropdf._pixmap import Pixmap
 
 for _public in (Document, Probe, DocumentLimits, Page, Pages, open, probe):
     _public.__module__ = "pyropdf"
@@ -30,6 +31,7 @@ __all__ = [
     "Pages",
     "PasswordError",
     "PdfError",
+    "Pixmap",
     "Probe",
     "StaleObjectError",
     "StalePageError",

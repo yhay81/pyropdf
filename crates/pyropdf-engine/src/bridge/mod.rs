@@ -148,6 +148,16 @@ impl Bridged {
         })
     }
 
+    /// Returns hayro's own reading of `bytes`, for tests that compare the
+    /// bridge with it.
+    #[cfg(test)]
+    pub(crate) fn of_bytes(bytes: Vec<u8>) -> Self {
+        Self {
+            pdf: Pdf::new(bytes).expect("hayro reads the test file"),
+            stats: Stats::default(),
+        }
+    }
+
     /// Returns hayro's document.
     #[must_use]
     pub const fn pdf(&self) -> &Pdf {

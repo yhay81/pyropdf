@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 mod document;
 mod errors;
 mod pages;
+mod pixmap;
 mod source;
 
 /// The extension module of pyropdf, which `python/pyropdf` imports.
@@ -23,6 +24,8 @@ mod _core {
         new_page, page_count, page_geometry, page_index, page_object, page_objects,
         set_page_rotation, set_pages,
     };
+    #[pymodule_export]
+    use super::pixmap::{Pixmap, render_page};
 
     /// The version of pyropdf: the version of its crates.
     #[pymodule_export]
