@@ -8,6 +8,7 @@ use hayro_syntax::object as syntax;
 
 use super::{Entry, Location, Source, Ticker, decoded, find, lex};
 use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::security::{Handler, Kind};
 use crate::value::{Bytes, Dict, Reference, Value};
 use crate::{Error, Result};
 
@@ -215,7 +216,15 @@ impl Container {
 /// The table holds `/N` pairs of unsigned integers, separated by white
 /// space and comments: an object number, and the member's offset from
 /// `/First`.
-pub(super) fn decode(source: &Source<'_>, number: u32, budget: &Budget) -> Result<Decoded> {
+///
+/// With `security`, the stream's data is decrypted before its filters
+/// decode it (ISO 32000-2 section 7.6.2).
+pub(super) fn decode(
+    source: &Source<'_>,
+    number: u32,
+    security: Option<&Handler>,
+    budget: &Budget,
+) -> Result<Decoded> {
     let reference = Reference::new(number, 0);
     let bytes = source.uncompressed(reference).ok_or_else(|| {
         Error::malformed("no entry locates it as an uncompressed object of generation 0")
@@ -231,7 +240,13 @@ pub(super) fn decode(source: &Source<'_>, number: u32, budget: &Budget) -> Resul
         Some(&Value::Reference(length)) => resolve(source, length, budget)?,
         _ => None,
     };
-    let data = data(&bytes, &stream, length, budget)?;
+    let decrypt = |raw: &[u8]| match security {
+        Some(handler) => handler
+            .decrypt(Kind::Stream, reference, raw, budget)
+            .map(Some),
+        None => Ok(None),
+    };
+    let data = data(&bytes, &stream, length, &decrypt, budget)?;
     let mut members = BudgetVec::new(budget);
     let mut ticker = Ticker::default();
     let mut pos = 0;
@@ -269,6 +284,10 @@ fn dictionary(bytes: &Bytes, stream: &syntax::Stream<'_>, budget: &Budget) -> Re
     }
 }
 
+/// Decrypts a stream's raw data, or returns `None` for a stream that is not
+/// encrypted.
+type Decrypt<'a> = dyn Fn(&[u8]) -> Result<Option<Vec<u8>>> + 'a;
+
 /// Returns the decoded data of `stream`, which hayro-syntax parsed from
 /// `bytes` and whose `/Length` names `length`, and charges it to `budget`.
 ///
@@ -276,11 +295,13 @@ fn dictionary(bytes: &Bytes, stream: &syntax::Stream<'_>, budget: &Budget) -> Re
 /// it, read other data, the stream decodes from a copy whose dictionary
 /// ends with the length as a direct value, which hayro-syntax reads in
 /// place of the reference: of a key that a dictionary repeats, it keeps the
-/// last value.
+/// last value. A stream that `decrypt` decrypts decodes from such a copy
+/// of its decrypted data.
 fn data(
     bytes: &Bytes,
     stream: &syntax::Stream<'_>,
     length: Option<u64>,
+    decrypt: &Decrypt<'_>,
     budget: &Budget,
 ) -> Result<Bytes> {
     let raw = stream.raw_data();
@@ -294,20 +315,23 @@ fn data(
             end <= bytes.len()
                 && lex::keyword(bytes, lex::skip_white(bytes, end), b"endstream").is_some()
         });
+    let end = declared.unwrap_or(start + raw.len());
+    let decrypted = decrypt(&bytes[start..end])?;
     let decoded = match declared {
-        Some(end) if end != start + raw.len() => {
+        _ if decrypted.is_some() || end != start + raw.len() => {
+            let data = decrypted.as_deref().unwrap_or(&bytes[start..end]);
             let dict = stream.dict().data();
             let entries = dict
                 .strip_prefix(b"<<")
                 .and_then(|dict| dict.strip_suffix(b">>"))
                 .ok_or_else(|| Error::malformed("its dictionary is not in its bytes"))?;
-            let length = format!(" /Length {} >>\nstream\n", end - start);
+            let length = format!(" /Length {} >>\nstream\n", data.len());
             let mut copy = BudgetVec::new(budget);
-            copy.try_reserve_exact(2 + entries.len() + length.len() + end - start + 10)?;
+            copy.try_reserve_exact(2 + entries.len() + length.len() + data.len() + 10)?;
             copy.try_extend_from_slice(b"<<")?;
             copy.try_extend_from_slice(entries)?;
             copy.try_extend_from_slice(length.as_bytes())?;
-            copy.try_extend_from_slice(&bytes[start..end])?;
+            copy.try_extend_from_slice(data)?;
             copy.try_extend_from_slice(b"\nendstream")?;
             let stream = super::stream(&copy)
                 .ok_or_else(|| Error::malformed("it does not read with its length"))?;

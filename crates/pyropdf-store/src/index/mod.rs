@@ -47,6 +47,7 @@ use std::panic::{self, AssertUnwindSafe};
 use hayro_syntax::object::{self as syntax, FromBytes};
 
 use crate::budget::{Budget, BudgetVec, LimitCode, StreamKind};
+use crate::security::Handler;
 use crate::value::{Bytes, Dict, Reference};
 use crate::{Error, LimitExceeded, Password, Result};
 
@@ -85,6 +86,9 @@ pub struct Index {
     revisions: Vec<Revision>,
     repair: Option<Repair>,
     streams: objstm::Streams,
+    /// The security handler that [`Index::unlock`] gave an encrypted
+    /// document, which decrypts its object streams.
+    security: Option<Handler>,
 }
 
 /// Where an in-use object is, and its generation.
@@ -247,6 +251,7 @@ impl Index {
             revisions: chain.revisions,
             repair: None,
             streams,
+            security: None,
         })
     }
 
@@ -274,6 +279,7 @@ impl Index {
                 trailer: rebuilt.trailer_at,
             }),
             streams,
+            security: None,
         })
     }
 
@@ -354,6 +360,19 @@ impl Index {
         self.repair.is_some()
     }
 
+    /// Gives an encrypted document the security handler that decrypts its
+    /// object streams. Unlock before the first read of a member: a stream
+    /// that a locked read refused is decoded again, but nothing else is.
+    pub fn unlock(&mut self, handler: Handler) {
+        self.security = Some(handler);
+    }
+
+    /// Returns the security handler that [`Index::unlock`] gave.
+    #[must_use]
+    pub const fn security(&self) -> Option<&Handler> {
+        self.security.as_ref()
+    }
+
     /// Returns whether the trailer names a security handler in `/Encrypt`.
     #[must_use]
     pub fn is_encrypted(&self) -> bool {
@@ -396,8 +415,8 @@ impl Index {
     /// so a later read with a larger budget decodes the stream. Refuses with
     /// the limits of decoded streams a stream that decodes to more bytes
     /// than the budget allows, and with [`Password::Required`] the object
-    /// streams of an encrypted document, which the store cannot decrypt yet
-    /// (yhay81/pyropdf#28).
+    /// streams of an encrypted document that [`Index::unlock`] has not
+    /// unlocked.
     pub fn object_stream(&self, number: u32, budget: &Budget) -> Result<Option<&ObjectStream>> {
         let Some(container) = self.streams.container(number) else {
             return Ok(None);
@@ -405,10 +424,10 @@ impl Index {
         if let Some(outcome) = container.outcome() {
             return outcome.as_ref().map(Some).map_err(Clone::clone);
         }
-        if self.is_encrypted() {
+        if self.is_encrypted() && self.security.is_none() {
             return Err(Error::from(Password::Required).context(format!("object stream {number}")));
         }
-        let decoded = objstm::decode(&self.source(), number, budget)
+        let decoded = objstm::decode(&self.source(), number, self.security.as_ref(), budget)
             .and_then(|decoded| ObjectStream::new(decoded, self.streams.named(container), budget));
         let computed = match decoded {
             Err(error) if error.limit().is_some() => return Err(error),

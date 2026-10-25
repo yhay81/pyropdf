@@ -1,10 +1,11 @@
 //! The original file index as the base of immutable versions.
 
-use crate::Result;
 use crate::budget::{Budget, BudgetVec};
-use crate::index::{Index, Listing};
+use crate::index::{Index, Listing, Location};
+use crate::security::{self, Handler};
 use crate::value::{Bytes, Dict, Reference, Value};
 use crate::version::Base;
+use crate::{Error, Password, Result, write};
 
 /// An indexed file shared by every version of an opened document.
 /// Opening parses the index, not all the objects. Object streams remain
@@ -13,12 +14,32 @@ use crate::version::Base;
 pub struct FileBase {
     index: Index,
     next: u64,
+    /// The object that holds the `/Encrypt` dictionary, which is never
+    /// encrypted itself.
+    encrypt: Option<Reference>,
 }
 
 impl FileBase {
-    /// Opens `bytes` and retains them without a second copy.
+    /// Opens `bytes` and retains them without a second copy. An encrypted
+    /// document opens with the empty user password when it has one, and
+    /// stays locked otherwise: its objects then refuse with
+    /// [`Password::Required`].
     pub fn open(bytes: Bytes, budget: &Budget) -> Result<Self> {
-        Self::new(Index::open(bytes, budget)?, budget)
+        Self::open_with_password(bytes, None, budget)
+    }
+
+    /// Opens `bytes` as [`FileBase::open`] does, unlocking an encrypted
+    /// document with `password`, which refuses with
+    /// [`Password::Incorrect`] when it is neither the user nor the owner
+    /// password. An unencrypted document ignores it.
+    pub fn open_with_password(
+        bytes: Bytes,
+        password: Option<&[u8]>,
+        budget: &Budget,
+    ) -> Result<Self> {
+        let mut index = Index::open(bytes, budget)?;
+        unlock(&mut index, password, budget)?;
+        Self::new(index, budget)
     }
 
     /// Connects an already-open index to versions. The high-water mark
@@ -43,7 +64,21 @@ impl FileBase {
                     .min(u64::from(u32::MAX) + 1),
             );
         }
-        Ok(Self { index, next })
+        let encrypt = match index.trailer().get("Encrypt") {
+            Some(Value::Reference(reference)) => Some(*reference),
+            _ => None,
+        };
+        Ok(Self {
+            index,
+            next,
+            encrypt,
+        })
+    }
+
+    /// Returns the security handler of an unlocked encrypted document.
+    #[must_use]
+    pub const fn security(&self) -> Option<&Handler> {
+        self.index.security()
     }
 
     /// Returns the original index, including its repair report.
@@ -83,7 +118,34 @@ impl Base for FileBase {
     }
 
     fn object(&self, reference: Reference, budget: &Budget) -> Result<Option<Bytes>> {
-        self.index.object(reference, budget)
+        if !self.index.is_encrypted() || Some(reference) == self.encrypt {
+            return self.index.object(reference, budget);
+        }
+        let Some(handler) = self.index.security() else {
+            if self.index.get(reference.number()).is_none() {
+                return Ok(None);
+            }
+            return Err(Error::from(Password::Required).context(format!(
+                "object {} {}",
+                reference.number(),
+                reference.generation()
+            )));
+        };
+        let Some(bytes) = self.index.object(reference, budget)? else {
+            return Ok(None);
+        };
+        // Members of object streams were decrypted with their stream.
+        if matches!(
+            self.index.get(reference.number()).map(|e| e.location()),
+            Some(Location::Member { .. })
+        ) {
+            return Ok(Some(bytes));
+        }
+        let value = Value::parse(&bytes, budget)?;
+        let plain = security::decrypt_value(handler, reference, &value, budget)?;
+        let mut out = BudgetVec::new(budget);
+        write::value(&mut out, &plain)?;
+        Ok(Some(Bytes::new(out.into_vec())))
     }
 
     fn trailer(&self) -> &Dict {
@@ -111,4 +173,48 @@ impl Base for FileBase {
     fn file(&self) -> Option<&Index> {
         Some(&self.index)
     }
+}
+
+/// Unlocks an encrypted `index` with `password`, or else with the empty
+/// password, which leaves the index locked when it does not match.
+fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result<()> {
+    if !index.is_encrypted() {
+        return Ok(());
+    }
+    let encrypt = match index.trailer().get("Encrypt") {
+        Some(Value::Dict(dict)) => Some(dict.clone()),
+        Some(&Value::Reference(reference)) => match index.object(reference, budget)? {
+            Some(bytes) => match Value::parse(&bytes, budget)? {
+                Value::Dict(dict) => Some(dict),
+                _ => None,
+            },
+            None => None,
+        },
+        _ => None,
+    };
+    let id = match index.trailer().get("ID") {
+        Some(Value::Array(id)) => match id.get(0) {
+            Some(Value::String(first)) => first.as_bytes(),
+            _ => &[],
+        },
+        _ => &[],
+    };
+    let handler = match (encrypt, password) {
+        (Some(encrypt), Some(password)) => Some(Handler::open(&encrypt, id, password, budget)?),
+        (Some(encrypt), None) => match Handler::open(&encrypt, id, b"", budget) {
+            Ok(handler) => Some(handler),
+            Err(error) if error.limit().is_some() => return Err(error),
+            Err(_) => None,
+        },
+        (None, Some(_)) => {
+            return Err(Error::malformed(
+                "the trailer's /Encrypt is not a dictionary",
+            ));
+        }
+        (None, None) => None,
+    };
+    if let Some(handler) = handler {
+        index.unlock(handler);
+    }
+    Ok(())
 }
