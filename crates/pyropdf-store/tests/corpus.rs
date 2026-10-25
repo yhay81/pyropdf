@@ -264,6 +264,15 @@ fn apply(document: &Document, steps: &[Vec<Edit>]) -> BTreeMap<u32, Option<Value
             .copied()
             .unwrap_or_else(|| past + (slot - numbers.len()) as u32)
     };
+    let trailer: Vec<u32> = document
+        .current()
+        .trailer()
+        .iter()
+        .filter_map(|(_, value)| match value {
+            Value::Reference(reference) => Some(reference.number()),
+            _ => None,
+        })
+        .collect();
     let mut touched = BTreeMap::new();
     for step in steps {
         let mut transaction = document.begin();
@@ -277,6 +286,11 @@ fn apply(document: &Document, steps: &[Vec<Edit>]) -> BTreeMap<u32, Option<Value
                 }
                 Edit::Free(at) => {
                     let number = pick(*at);
+                    // A file whose trailer names a free object is damaged,
+                    // and reading it repairs it: keep what the trailer names.
+                    if trailer.contains(&number) {
+                        continue;
+                    }
                     if transaction.free(number, &budget).unwrap_or(false) {
                         touched.insert(number, None);
                     }
@@ -318,6 +332,12 @@ fn random_edits_keep_untouched_bytes_and_read_back_written_values() {
                 for (mode, saved) in saves {
                     let reopened = open(&saved);
                     let reread = reopened.current();
+                    prop_assert!(
+                        !reread.base().file().unwrap().is_repaired() || repaired,
+                        "{} {}: the save reads back without repair",
+                        name,
+                        mode
+                    );
                     let budget = Budget::default();
                     for (number, object) in &before {
                         if touched.contains_key(number) {
