@@ -356,7 +356,7 @@ fn decode_streams<'b>(
     order.sort_unstable();
     let mut streams = BudgetVec::new(budget);
     for &(pos, number) in order.iter() {
-        match objstm::decode(source, number, budget) {
+        match objstm::decode(source, number, None, budget) {
             Ok(decoded) => streams.try_push((pos, number, decoded))?,
             Err(error) if error.limit().is_some() => return Err(error),
             Err(_) => {}

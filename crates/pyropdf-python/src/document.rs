@@ -326,20 +326,21 @@ fn read_probe(bytes: Bytes, budget: &Budget) -> PyResult<ProbeData> {
     let header = header_version(&index.bytes()[index.origin()..])
         .ok_or_else(|| MalformedPdfError::new_err("the file has no %PDF- header"))?;
     let (encrypted, repaired) = (index.is_encrypted(), index.is_repaired());
-    let document = Document::new(Arc::new(base), None);
-    let version = document.current();
+    // The catalog and the page tree's /Count read as they are in the file,
+    // so that a locked encrypted document reports its pages too.
     let resolve = |value: Option<&Value>| -> Result<Option<Arc<Value>>, Error> {
         match value {
-            Some(Value::Reference(reference)) => Ok(version
-                .get(reference.number(), budget)?
-                .filter(|object| object.generation() == reference.generation())
-                .map(|object| Arc::clone(object.value()))),
+            Some(Value::Reference(reference)) => Ok(index
+                .object(*reference, budget)?
+                .map(|bytes| Value::parse(&bytes, budget))
+                .transpose()?
+                .map(Arc::new)),
             Some(value) => Ok(Some(Arc::new(value.clone()))),
             None => Ok(None),
         }
     };
     let malformed = || MalformedPdfError::new_err("the document has no page tree with a /Count");
-    let root = resolve(version.trailer().get("Root")).map_err(store)?;
+    let root = resolve(index.trailer().get("Root")).map_err(store)?;
     let Some(Value::Dict(root)) = root.as_deref() else {
         return Err(malformed());
     };
@@ -355,7 +356,7 @@ fn read_probe(bytes: Bytes, budget: &Budget) -> PyResult<ProbeData> {
     // The strings of an encrypted document's Info dictionary are encrypted;
     // the security handler (issue #28) decrypts them.
     if !encrypted {
-        let info = resolve(version.trailer().get("Info")).map_err(store)?;
+        let info = resolve(index.trailer().get("Info")).map_err(store)?;
         if let Some(Value::Dict(info)) = info.as_deref() {
             let mut size = 0;
             for key in PROBE_KEYS {

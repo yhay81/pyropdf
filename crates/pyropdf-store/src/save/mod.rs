@@ -15,7 +15,9 @@ use std::fmt;
 use std::io::{self, Write};
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
-use crate::value::{Dict, Reference, Value};
+use crate::index::{Index, Location};
+use crate::security::{self, Encryption, Handler};
+use crate::value::{Bytes, Dict, PdfString, Reference, Value};
 use crate::version::{Slot, Version};
 use crate::{Error as StoreError, LimitExceeded, write};
 
@@ -106,7 +108,28 @@ struct Row {
 /// Returns the number of bytes written. On an error, discard partial
 /// output. The caller owns flushing, closing, and atomic file replacement.
 pub fn full(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
-    check_encryption(version)?;
+    full_with(version, target, budget, None)
+}
+
+/// Writes all live objects to `target` as [`full`] does, encrypting every
+/// string and stream with `encryption` (DESIGN.md section 4.5), whatever
+/// the version's own encryption is.
+pub fn full_encrypted(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    encryption: &Encryption,
+) -> Result<u64> {
+    full_with(version, target, budget, Some(encryption))
+}
+
+fn full_with(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    encryption: Option<&Encryption>,
+) -> Result<u64> {
+    let mode = Mode::of(version, encryption, budget)?;
     budget.poll()?;
     let mut numbers = BudgetVec::new(budget);
     version.base().numbers(&mut numbers)?;
@@ -122,7 +145,7 @@ pub fn full(version: &Version, target: &mut dyn Write, budget: &Budget) -> Resul
         numbers.try_push(last)?;
     }
     numbers.sort_unstable();
-    let mut rows = BudgetVec::new(budget);
+    let mut rows: BudgetVec<'_, Row> = BudgetVec::new(budget);
     for &number in &numbers {
         budget.poll()?;
         if rows.last().is_some_and(|row: &Row| row.number == number) {
@@ -148,14 +171,31 @@ pub fn full(version: &Version, target: &mut dyn Write, budget: &Budget) -> Resul
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
-        write_object(version, &mut rows[at], &mut out)?;
+        write_object(version, &mut rows[at], &mut out, &mode)?;
     }
     for row in &mut rows {
         if Some(row.number) != root {
-            write_object(version, row, &mut out)?;
+            write_object(version, row, &mut out, &mode)?;
         }
     }
-    finish(version, &mut rows, None, &mut out)?;
+    if let Mode::New { dict, number, .. } = &mode {
+        // The new /Encrypt dictionary, which is never encrypted, takes the
+        // number after every other.
+        let mut row = Row {
+            number: *number,
+            generation: 0,
+            offset: Some(out.offset()?),
+            next_free: 0,
+        };
+        let mut bytes = BudgetVec::new(budget);
+        write::value(&mut bytes, &Value::Dict(dict.clone()))?;
+        out.display(format_args!("{number} 0 obj\n"))?;
+        out.bytes(&bytes)?;
+        out.bytes(b"\nendobj\n")?;
+        row.next_free = 0;
+        rows.try_push(row)?;
+    }
+    finish(version, &mut rows, None, &mut out, &mode)?;
     Ok(out.position)
 }
 
@@ -174,7 +214,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
     if file.is_repaired() {
         return Err(Error::Refused(Refusal::RepairedBase));
     }
-    check_encryption(version)?;
+    let mode = Mode::of(version, None, budget)?;
     let previous = file
         .revisions()
         .last()
@@ -195,7 +235,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
         budget.poll()?;
         if number != 0 {
             let mut row = row(version, number);
-            write_object(version, &mut row, &mut out)?;
+            write_object(version, &mut row, &mut out, &mode)?;
             rows.try_push(row)?;
         }
     }
@@ -205,17 +245,94 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
     {
         rows.try_push(row(version, last))?;
     }
-    finish(version, &mut rows, Some(previous as u64), &mut out)?;
+    finish(version, &mut rows, Some(previous as u64), &mut out, &mode)?;
     Ok(out.position)
 }
 
-fn check_encryption(version: &Version) -> Result<()> {
-    if version.trailer().get("Encrypt").is_some()
-        || version.base().trailer().get("Encrypt").is_some()
-    {
-        return Err(Error::Refused(Refusal::Encryption));
+/// How a save treats encryption.
+enum Mode<'a> {
+    /// No encryption: the version's trailer names no `/Encrypt`. An
+    /// unlocked encrypted base reads decrypted.
+    Plain,
+    /// The base's own encryption: untouched objects of the file keep their
+    /// encrypted bytes, and the rest are encrypted with its handler.
+    Keep {
+        handler: &'a Handler,
+        index: &'a Index,
+        /// The object of the `/Encrypt` dictionary.
+        encrypt: Option<u32>,
+    },
+    /// A new encryption, of every object.
+    New {
+        handler: Handler,
+        dict: Dict,
+        id: Vec<u8>,
+        /// The number of the new `/Encrypt` dictionary.
+        number: u32,
+    },
+}
+
+impl<'a> Mode<'a> {
+    fn of(version: &'a Version, encryption: Option<&Encryption>, budget: &Budget) -> Result<Self> {
+        if let Some(encryption) = encryption {
+            let id = match version.trailer().get("ID") {
+                Some(Value::Array(id)) => match id.get(0) {
+                    Some(Value::String(first)) => Some(first.as_bytes()),
+                    _ => None,
+                },
+                _ => None,
+            };
+            let (dict, id, handler) = encryption.build(id, budget)?;
+            let number = u32::try_from(version.next_number())
+                .map_err(|_| StoreError::malformed("no object number is left for /Encrypt"))?;
+            return Ok(Self::New {
+                handler,
+                dict,
+                id,
+                number,
+            });
+        }
+        let Some(encrypt) = version.trailer().get("Encrypt") else {
+            return Ok(Self::Plain);
+        };
+        let file = version.base().file();
+        match file.and_then(|index| Some((index, index.security()?))) {
+            Some((index, handler)) if version.base().trailer().get("Encrypt") == Some(encrypt) => {
+                Ok(Self::Keep {
+                    handler,
+                    index,
+                    encrypt: match encrypt {
+                        Value::Reference(reference) => Some(reference.number()),
+                        _ => None,
+                    },
+                })
+            }
+            _ => Err(Error::Refused(Refusal::Encryption)),
+        }
     }
-    Ok(())
+
+    fn handler(&self) -> Option<&Handler> {
+        match self {
+            Self::Plain => None,
+            Self::Keep { handler, .. } => Some(handler),
+            Self::New { handler, .. } => Some(handler),
+        }
+    }
+}
+
+/// Returns the bytes of a value, `bytes`, of the object that `reference`
+/// names, with its strings and streams encrypted.
+fn encrypted(
+    handler: &Handler,
+    reference: Reference,
+    bytes: &Bytes,
+    budget: &Budget,
+) -> std::result::Result<Bytes, StoreError> {
+    let value = Value::parse(bytes, budget)?;
+    let value = security::encrypt_value(handler, reference, &value, budget)?;
+    let mut out = BudgetVec::new(budget);
+    write::value(&mut out, &value)?;
+    Ok(Bytes::new(out.into_vec()))
 }
 
 fn row(version: &Version, number: u32) -> Row {
@@ -240,19 +357,41 @@ fn row(version: &Version, number: u32) -> Row {
     }
 }
 
-fn write_object(version: &Version, row: &mut Row, out: &mut Output<'_>) -> Result<()> {
+fn write_object(
+    version: &Version,
+    row: &mut Row,
+    out: &mut Output<'_>,
+    mode: &Mode<'_>,
+) -> Result<()> {
     out.budget.poll()?;
     if row.offset.is_none() {
         return Ok(());
     }
-    let bytes = match version.slot(row.number) {
-        Some(Slot::Written(object)) => object.bytes().clone(),
-        _ => raw::body(
-            &**version.base(),
-            Reference::new(row.number, row.generation),
-            out.budget,
-        )
-        .map_err(|e| e.context(format!("saving object {} {}", row.number, row.generation)))?,
+    let reference = Reference::new(row.number, row.generation);
+    let budget = out.budget;
+    let context =
+        |e: StoreError| e.context(format!("saving object {} {}", row.number, row.generation));
+    let bytes = match (version.slot(row.number), mode) {
+        (Some(Slot::Written(object)), Mode::Plain) => object.bytes().clone(),
+        (Some(Slot::Written(object)), _) => {
+            let handler = mode.handler().expect("an encrypting mode has a handler");
+            encrypted(handler, reference, object.bytes(), budget).map_err(context)?
+        }
+        (_, Mode::Keep { index, encrypt, .. })
+            if Some(row.number) == *encrypt
+                || matches!(
+                    index.get(row.number).map(|entry| entry.location()),
+                    Some(Location::Offset(_))
+                ) =>
+        {
+            raw::file_body(index, reference, budget).map_err(context)?
+        }
+        (_, Mode::Plain) => raw::body(&**version.base(), reference, budget).map_err(context)?,
+        (_, _) => {
+            let handler = mode.handler().expect("an encrypting mode has a handler");
+            let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
+            encrypted(handler, reference, &plain, budget).map_err(context)?
+        }
     };
     row.offset = Some(out.offset()?);
     out.display(format_args!("{} {} obj\n", row.number, row.generation))?;
@@ -265,6 +404,7 @@ fn finish(
     rows: &mut [Row],
     previous: Option<u64>,
     out: &mut Output<'_>,
+    mode: &Mode<'_>,
 ) -> Result<()> {
     let mut next_free = 0;
     for row in rows.iter_mut().rev() {
@@ -305,8 +445,24 @@ fn finish(
         start = end;
     }
     out.bytes(b"trailer\n<<")?;
-    trailer(version.trailer(), out)?;
-    out.display(format_args!(" /Size {}", version.next_number()))?;
+    let mut size = version.next_number();
+    if let Mode::New { id, number, .. } = mode {
+        trailer(version.trailer(), out, &[b"Encrypt", b"ID"])?;
+        out.display(format_args!(" /Encrypt {number} 0 R /ID ["))?;
+        for _ in 0..2 {
+            let mut bytes = BudgetVec::new(out.budget);
+            write::value(
+                &mut bytes,
+                &Value::String(PdfString::hexadecimal(id.as_slice())),
+            )?;
+            out.bytes(&bytes)?;
+        }
+        out.bytes(b"]")?;
+        size = u64::from(*number) + 1;
+    } else {
+        trailer(version.trailer(), out, &[])?;
+    }
+    out.display(format_args!(" /Size {size}"))?;
     if let Some(previous) = previous {
         out.display(format_args!(" /Prev {previous}"))?;
     }
@@ -315,8 +471,11 @@ fn finish(
 
 /// Write each original trailer entry separately, avoiding a clone of its
 /// input-derived dictionary. Layout-only entries are rebuilt for this save.
-fn trailer(dict: &Dict, out: &mut Output<'_>) -> Result<()> {
+fn trailer(dict: &Dict, out: &mut Output<'_>, replaced: &[&[u8]]) -> Result<()> {
     for (name, value) in dict.iter() {
+        if replaced.contains(&name.as_bytes()) {
+            continue;
+        }
         if matches!(
             name.as_bytes(),
             b"Size"

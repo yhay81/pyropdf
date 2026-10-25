@@ -17,6 +17,7 @@ pub mod index;
 pub mod memo;
 pub mod pages;
 pub mod save;
+pub mod security;
 pub mod value;
 pub mod version;
 pub mod write;

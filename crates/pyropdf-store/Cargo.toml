@@ -13,6 +13,12 @@ publish.workspace = true
 # so the `images` feature and its decoders stay off.
 hayro-syntax = { version = "0.8.0", default-features = false, features = ["std"] }
 
+# The primitives of the standard security handler (DESIGN.md section 4.5),
+# MIT OR Apache-2.0 as the repository's license allows.
+aes = "0.9.3"
+md-5 = "0.11.0"
+sha2 = "0.11.1"
+
 [dev-dependencies]
 # Property tests of the store's invariants (DESIGN.md F9).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
