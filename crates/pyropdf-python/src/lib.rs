@@ -11,6 +11,8 @@ mod pages;
 mod pixmap;
 mod security;
 mod source;
+#[cfg(windows)]
+mod windows_permissions;
 
 /// The extension module of pyropdf, which `python/pyropdf` imports.
 #[pymodule]
@@ -38,6 +40,10 @@ mod _core {
     use super::pixmap::{Pixmap, render_page};
     #[pymodule_export]
     use super::security::{security_state, unlock};
+
+    #[cfg(windows)]
+    #[pymodule_export]
+    use super::windows_permissions::_copy_windows_dacl;
 
     /// The version of pyropdf: the version of its crates.
     #[pymodule_export]
