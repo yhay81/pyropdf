@@ -2,6 +2,7 @@
 
 from pyropdf._core import __version__
 from pyropdf._document import Document, Probe, open, probe  # noqa: A004 - pyropdf.open is the entry point.
+from pyropdf._encryption import Access, Encryption, Permissions
 from pyropdf._errors import (
     DocumentClosedError,
     EncryptedDocumentError,
@@ -22,10 +23,12 @@ for _public in (Document, Probe, DocumentLimits, History, Page, Pages, Transacti
     _public.__module__ = "pyropdf"
 
 __all__ = [
+    "Access",
     "Document",
     "DocumentClosedError",
     "DocumentLimits",
     "EncryptedDocumentError",
+    "Encryption",
     "History",
     "LimitError",
     "MalformedPdfError",
@@ -33,6 +36,7 @@ __all__ = [
     "Pages",
     "PasswordError",
     "PdfError",
+    "Permissions",
     "Pixmap",
     "Probe",
     "StaleObjectError",

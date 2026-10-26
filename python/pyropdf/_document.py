@@ -12,8 +12,10 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from pyropdf import _core
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
+from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
@@ -47,7 +49,7 @@ class Document:
     empty one. Documents are context managers that close on exit.
     """
 
-    __slots__ = ("_closed", "_doc", "_limits")
+    __slots__ = ("_access", "_closed", "_doc", "_limits")
 
     def __init__(self, *, limits: DocumentLimits | None = None) -> None:
         """Create an empty document without pages; :func:`open` opens an existing one."""
@@ -58,6 +60,7 @@ class Document:
         self._doc = load(limits)
         self._limits = limits
         self._closed = False
+        self._access: Access | None = None
 
     @property
     def limits(self) -> DocumentLimits:
@@ -97,7 +100,79 @@ class Document:
         self._ensure_open()
         return self._doc.is_repaired()
 
-    def save(self, path: str | os.PathLike[str], /, *, incremental: bool = False) -> None:
+    @property
+    def needs_password(self) -> bool:
+        """Return whether the document is locked until :meth:`unlock` receives its password."""
+        self._ensure_open()
+        encrypted, unlocked, _, _, _ = _core.security_state(self._doc)
+        return encrypted and not unlocked
+
+    @property
+    def access(self) -> Access | None:
+        """Return what opened an unlocked encrypted document, or ``None`` for a locked one.
+
+        An unencrypted document grants :attr:`Access.OWNER`.
+        """
+        self._ensure_open()
+        encrypted, unlocked, opened, _, _ = _core.security_state(self._doc)
+        if not encrypted:
+            return Access.OWNER
+        if not unlocked:
+            return None
+        access = Access.OWNER if opened == "owner" else Access.USER
+        return max(access, self._access) if self._access is not None else access
+
+    @property
+    def encryption_method(self) -> str | None:
+        """Return the security handler of an unlocked encrypted document, such as ``"Standard V5 R6 256-bit AES"``.
+
+        ``None`` for an unencrypted or locked document.
+        """
+        self._ensure_open()
+        return _core.security_state(self._doc)[4]
+
+    @property
+    def permissions(self) -> Permissions:
+        """Return what the document permits, as :class:`Permissions` flags.
+
+        A locked document permits nothing. An unencrypted document, or one
+        unlocked with its owner password, permits everything. Otherwise the
+        flags are those that the encryption grants the user password.
+        """
+        access = self.access
+        if access is None:
+            return Permissions(0)
+        if access is Access.OWNER:
+            return Permissions.ALL
+        _, _, _, flags, _ = _core.security_state(self._doc)
+        return Permissions((flags or 0) & Permissions.ALL)
+
+    def unlock(self, password: str) -> Access:
+        """Unlock the document with a password and return the access that it grants.
+
+        The owner password grants :attr:`Access.OWNER` and the user password
+        :attr:`Access.USER`; a password that matches neither raises
+        :class:`PasswordError`. An unencrypted document grants
+        :attr:`Access.OWNER` to any password. Unlocking a locked document
+        reads it again, which starts its history over; unlocking an unlocked
+        one only checks the password, and keeps the history. Passwords are
+        capped at 127 UTF-8 bytes.
+        """
+        self._ensure_open()
+        opened = _core.unlock(self._doc, _password_bytes(password))
+        access = Access.OWNER if opened == "owner" else Access.USER
+        if self._access is None or access > self._access:
+            self._access = access
+        return access
+
+    def save(
+        self,
+        path: str | os.PathLike[str],
+        /,
+        *,
+        incremental: bool = False,
+        encryption: Encryption | None = None,
+    ) -> None:
         """Write the document to a file.
 
         The document is written completely to a new file beside ``path``,
@@ -107,13 +182,26 @@ class Document:
         changed to the bytes of the opened file, so that a save without
         edits reproduces it byte for byte; a full save rewrites every object
         and keeps the values of untouched ones.
+
+        Without ``encryption``, a full save writes an encrypted document
+        decrypted and an incremental save keeps its encryption;
+        :attr:`Encryption.KEEP` keeps it in a full save too, copying its
+        untouched encrypted bytes, and an :class:`Encryption` encrypts a full
+        save anew.
         """
         self._ensure_open()
         _validate_bool("incremental", incremental)
-        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental))
+        arg = _encryption_arg(encryption)
+        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg))
 
-    def to_bytes(self, *, incremental: bool = False, max_size: int | None = _DEFAULT_MAX_PDF_OUTPUT_SIZE) -> bytes:
-        """Return the document as PDF bytes, as :meth:`save` writes them.
+    def to_bytes(
+        self,
+        *,
+        incremental: bool = False,
+        encryption: Encryption | None = None,
+        max_size: int | None = _DEFAULT_MAX_PDF_OUTPUT_SIZE,
+    ) -> bytes:
+        """Return the document as PDF bytes, as :meth:`save` writes them, with its ``encryption``.
 
         ``max_size`` bounds the output, 512 MiB by default, and refuses the
         write that would pass it with :class:`LimitError` code
@@ -122,7 +210,7 @@ class Document:
         self._ensure_open()
         _validate_bool("incremental", incremental)
         _validate_optional_positive_int("max_size", max_size)
-        return self._doc.to_bytes(incremental, max_size)
+        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption))
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""
@@ -190,9 +278,15 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
     source: str | os.PathLike[str] | bytes | bytearray | memoryview,
     /,
     *,
+    password: str | None = None,
     limits: DocumentLimits | None = None,
 ) -> Document:
     """Open a PDF from a file path or from the bytes of a document.
+
+    A document with an empty user password decrypts on its own; any other
+    encrypted document needs ``password``, or :meth:`Document.unlock` after
+    opening, and refuses to read its objects until then. A wrong password
+    raises :class:`PasswordError`. Passwords are capped at 127 UTF-8 bytes.
 
     Opening reads the cross-reference data only; ``bytes`` are read in place,
     without a copy, and other buffers are copied. ``limits`` bounds the work,
@@ -202,14 +296,15 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
     :class:`FileNotFoundError`.
     """
     path, data = _open_source(source)
+    secret = None if password is None else _password_bytes(password)
     resolved = _resolve_limits(limits)
     document = Document.__new__(Document)
     if data is not None:
         buffer = data
-        document._setup(lambda lim: _Document.open_buffer(buffer, lim), resolved)  # noqa: SLF001
+        document._setup(lambda lim: _Document.open_buffer(buffer, lim, secret), resolved)  # noqa: SLF001
     elif path is not None:
         file = path
-        document._setup(lambda lim: _Document.open_path(file, lim), resolved)  # noqa: SLF001
+        document._setup(lambda lim: _Document.open_path(file, lim, secret), resolved)  # noqa: SLF001
     return document
 
 
@@ -221,14 +316,14 @@ class Probe:
     page_count: int
     #: The PDF version of the header, such as ``"1.7"``.
     version: str
-    #: Whether the document is encrypted.
+    #: Whether the document is encrypted and the password given, if any, did not unlock it.
     needs_password: bool
     #: Whether reading it needed cross-reference recovery.
     is_repaired: bool
     #: The Info dictionary's text entries that are present: ``title``,
     #: ``author``, ``subject``, ``keywords``, ``creator``, ``producer``,
     #: ``created``, and ``modified``, the last two as PDF date strings.
-    #: An encrypted document reports none.
+    #: A locked document reports none.
     metadata: Mapping[str, str]
 
 
@@ -236,17 +331,20 @@ def probe(
     source: str | os.PathLike[str] | bytes | bytearray | memoryview,
     /,
     *,
+    password: str | None = None,
     max_file_size: int | None = None,
 ) -> Probe:
     """Read the page count, version, encryption, and metadata without loading the whole document.
 
     This suits scanning many files. ``max_file_size`` refuses larger input
     before parsing with :class:`LimitError` code ``file_size``; ``None``, the
-    default, leaves it unbounded. The metadata text is capped at 1 MiB.
+    default, leaves it unbounded. The metadata text is capped at 1 MiB, and
+    passwords at 127 UTF-8 bytes; a wrong password raises :class:`PasswordError`.
     """
     path, data = _open_source(source)
     _validate_optional_positive_int("max_file_size", max_file_size)
-    page_count, version, encrypted, repaired, raw = _probe(path, data, max_file_size)
+    secret = None if password is None else _password_bytes(password)
+    page_count, version, encrypted, repaired, raw = _probe(path, data, max_file_size, secret)
     return Probe(
         page_count=page_count,
         version=version,

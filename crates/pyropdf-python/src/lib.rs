@@ -8,6 +8,7 @@ mod errors;
 mod history;
 mod pages;
 mod pixmap;
+mod security;
 mod source;
 
 /// The extension module of pyropdf, which `python/pyropdf` imports.
@@ -32,6 +33,8 @@ mod _core {
     };
     #[pymodule_export]
     use super::pixmap::{Pixmap, render_page};
+    #[pymodule_export]
+    use super::security::{security_state, unlock};
 
     /// The version of pyropdf: the version of its crates.
     #[pymodule_export]

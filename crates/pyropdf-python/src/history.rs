@@ -120,6 +120,30 @@ impl _Document {
         Ok(value)
     }
 
+    /// Runs `write` in a transaction whose writes are then discarded: in a
+    /// savepoint of the open transaction, or in a transaction of its own
+    /// that is dropped. `write` returns what it read, such as a snapshot.
+    pub(crate) fn scratch<T>(
+        &self,
+        py: Python<'_>,
+        write: impl FnOnce(&mut Transaction, &Budget) -> PyResult<T>,
+    ) -> PyResult<T> {
+        let store = self.document()?;
+        let budget = self.budget();
+        {
+            let mut open = lock(&self.history.open);
+            if let Some(open) = open.as_mut() {
+                let savepoint = open.transaction.savepoint();
+                let result = write(&mut open.transaction, &budget);
+                open.transaction.rollback(savepoint);
+                open.snapshot = None;
+                return result;
+            }
+        }
+        let mut transaction = py.detach(|| store.begin());
+        write(&mut transaction, &budget)
+    }
+
     /// Commits `transaction`, and names the step it records.
     fn commit(
         &self,
