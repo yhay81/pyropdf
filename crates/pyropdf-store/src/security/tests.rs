@@ -389,3 +389,57 @@ fn the_base_reads_decrypted_values_and_the_encrypt_dictionary_as_it_is() {
         .unwrap();
     assert_eq!(raw.as_slice(), read.as_slice());
 }
+
+/// Breaks the final `startxref` value, so that opening rebuilds the index.
+fn broken_offset(bytes: &[u8]) -> Vec<u8> {
+    let at = bytes.windows(9).rposition(|w| w == b"startxref").unwrap() + 9;
+    let mut out = bytes.to_vec();
+    let digits = out[at..].iter().position(|b| b.is_ascii_digit()).unwrap() + at;
+    out[digits] = if out[digits] == b'9' {
+        b'1'
+    } else {
+        out[digits] + 1
+    };
+    out
+}
+
+#[test]
+fn a_repaired_encrypted_file_locates_its_compressed_objects_with_the_password() {
+    let damaged = broken_offset(&fixture("user-aes-256-object-streams.pdf"));
+    let locked = open(&damaged, None).unwrap();
+    let locked_version = locked.current();
+    let locked_index = locked_version.base().file().unwrap();
+    assert!(
+        locked_index.is_repaired(),
+        "the damage makes opening repair the index"
+    );
+    let report = locked_index.repair().cloned();
+    let is_member = |(_, e): &(u32, crate::index::Entry)| {
+        matches!(e.location(), crate::index::Location::Member { .. })
+    };
+    // Without the key, the scan decodes no object stream.
+    assert_eq!(locked_index.entries().filter(is_member).count(), 0);
+    let unlocked = open(&damaged, Some("userpw")).unwrap();
+    let version = unlocked.current();
+    let index = version.base().file().unwrap();
+    assert!(index.is_repaired());
+    // The repair report is the one without the password.
+    assert_eq!(index.repair().cloned(), report);
+    // The members that the object streams hold now resolve: both pages read.
+    assert_plain_text(
+        &full(&without_encryption(&unlocked)),
+        "repaired object streams",
+    );
+    assert!(index.entries().filter(is_member).count() > 0);
+    // The same input and password rebuild the same index.
+    let again = open(&damaged, Some("userpw")).unwrap();
+    let entries = |d: &Document| {
+        d.current()
+            .base()
+            .file()
+            .unwrap()
+            .entries()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(entries(&unlocked), entries(&again));
+}

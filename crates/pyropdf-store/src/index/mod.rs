@@ -214,7 +214,7 @@ impl Index {
             Err(error) if error.limit().is_some() => return Err(error),
             Err(error) => Damage::Unreadable(error.to_string().into_boxed_str()),
         };
-        let rebuilt = scan::rebuild(&bytes, budget)?;
+        let rebuilt = scan::rebuild(&bytes, None, budget)?;
         Self::from_rebuilt(bytes, origin, rebuilt, damage, budget)
     }
 
@@ -363,8 +363,24 @@ impl Index {
     /// Gives an encrypted document the security handler that decrypts its
     /// object streams. Unlock before the first read of a member: a stream
     /// that a locked read refused is decoded again, but nothing else is.
-    pub fn unlock(&mut self, handler: Handler) {
+    ///
+    /// A repaired index scans the bytes again with the handler, since its
+    /// first scan could decode no object stream of an encrypted document:
+    /// the scan is the same, and the streams that now decode add their
+    /// members, so the repair report stays what it was.
+    pub fn unlock(&mut self, handler: Handler, budget: &Budget) -> Result<()> {
+        if let Some(repair) = &self.repair {
+            let rebuilt = scan::rebuild(&self.bytes, Some(&handler), budget)?;
+            *self = Self::from_rebuilt(
+                self.bytes.clone(),
+                self.origin,
+                rebuilt,
+                repair.damage.clone(),
+                budget,
+            )?;
+        }
         self.security = Some(handler);
+        Ok(())
     }
 
     /// Returns the security handler that [`Index::unlock`] gave.

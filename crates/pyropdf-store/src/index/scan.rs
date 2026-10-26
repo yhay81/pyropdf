@@ -35,6 +35,7 @@ use super::lex::{self, Header, Tokens};
 use super::objstm::{self, Decoded};
 use super::{Entry, Location, Source, Ticker, find, guard, sorted};
 use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::security::Handler;
 use crate::value::{Bytes, Dict, Name, Reference, Value};
 use crate::{Error, Result};
 
@@ -81,10 +82,15 @@ enum Kind {
 }
 
 /// Rebuilds the index of `bytes` by scanning them for object headers.
+/// An encrypted document's object streams decode only with `security`.
 ///
 /// Refuses with a malformed input error bytes that hold no object header,
 /// and with the budget's limits.
-pub(super) fn rebuild(bytes: &Bytes, budget: &Budget) -> Result<Rebuilt> {
+pub(super) fn rebuild(
+    bytes: &Bytes,
+    security: Option<&Handler>,
+    budget: &Budget,
+) -> Result<Rebuilt> {
     let Marks { headers, keywords } = marks(bytes, budget)?;
     if headers.is_empty() {
         return Err(Error::malformed(
@@ -118,10 +124,11 @@ pub(super) fn rebuild(bytes: &Bytes, budget: &Budget) -> Result<Rebuilt> {
     let encrypted = candidates
         .iter()
         .any(|(_, trailer)| trailer.get("Encrypt").is_some());
-    let streams = if encrypted {
+    // Without a key, an encrypted document's object streams are ciphertext.
+    let streams = if encrypted && security.is_none() {
         BudgetVec::new(budget)
     } else {
-        decode_streams(&source, &winners, budget)?
+        decode_streams(&source, &winners, security, budget)?
     };
     let entries = entries(&uncompressed, &streams, budget)?;
     let mut by_number = BudgetVec::new(budget);
@@ -345,6 +352,7 @@ fn winners<'b>(
 fn decode_streams<'b>(
     source: &Source<'_>,
     winners: &[Found],
+    security: Option<&Handler>,
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, (usize, u32, Decoded)>> {
     let mut order = BudgetVec::new(budget);
@@ -356,7 +364,7 @@ fn decode_streams<'b>(
     order.sort_unstable();
     let mut streams = BudgetVec::new(budget);
     for &(pos, number) in order.iter() {
-        match objstm::decode(source, number, None, budget) {
+        match objstm::decode(source, number, security, budget) {
             Ok(decoded) => streams.try_push((pos, number, decoded))?,
             Err(error) if error.limit().is_some() => return Err(error),
             Err(_) => {}
