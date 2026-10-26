@@ -368,6 +368,31 @@ def _temporary_sibling_path(target: Path) -> Path:
     raise FileExistsError(msg)
 
 
+def _save_target_path(requested: Path) -> Path:
+    """Return the file that a save replaces: the target of a final symlink, with Windows long paths supported.
+
+    On Windows the path takes the verbatim prefix, after lexical
+    normalization, which the prefix does not do, so that paths beyond 260
+    characters save. Errors keep naming the caller's path.
+    """
+    target = requested
+    if sys.platform == "win32":
+        absolute = os.path.abspath(requested)  # noqa: PTH100 - lexical normalization must precede the prefix.
+        if not absolute.startswith(("\\\\?\\", "\\\\.\\")):
+            absolute = "\\\\?\\UNC\\" + absolute[2:] if absolute.startswith("\\\\") else "\\\\?\\" + absolute
+        target = Path(absolute)
+    return target.resolve(strict=False) if target.is_symlink() else target
+
+
+def _copy_access_control(target: Path, temporary: Path, requested: Path) -> None:
+    """Give a Windows sibling the target's access control list before any PDF data is written."""
+    try:
+        _core._copy_windows_dacl(target, temporary)  # noqa: SLF001
+    except OSError as exc:
+        msg = f"failed to save {requested}: {exc}"
+        raise PdfError(msg) from exc
+
+
 def _remove_temporary_output(temporary: Path) -> None:
     """Remove a temporary output, best effort, including a Windows file made read-only."""
     if sys.platform == "win32":
@@ -381,7 +406,7 @@ def _atomic_save_file(filename: str | os.PathLike[str], writer: Callable[[str], 
     """Write a sibling file completely before atomically replacing the target."""
     requested = Path(filename)
     try:
-        target = requested.resolve(strict=False) if requested.is_symlink() else requested
+        target = _save_target_path(requested)
         try:
             target_metadata = target.stat()
         except FileNotFoundError:
@@ -394,6 +419,8 @@ def _atomic_save_file(filename: str | os.PathLike[str], writer: Callable[[str], 
         raise PdfError(msg) from exc
     replaced = False
     try:
+        if sys.platform == "win32" and target_mode is not None:
+            _copy_access_control(target, temporary, requested)
         try:
             writer(str(temporary))
         except PdfError as exc:
