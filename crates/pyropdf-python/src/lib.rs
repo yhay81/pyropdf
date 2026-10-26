@@ -3,6 +3,7 @@
 
 use pyo3::prelude::*;
 
+mod cancel;
 mod document;
 mod errors;
 mod history;
@@ -14,6 +15,8 @@ mod source;
 /// The extension module of pyropdf, which `python/pyropdf` imports.
 #[pymodule]
 mod _core {
+    #[pymodule_export]
+    use super::cancel::CancellationToken;
     #[pymodule_export]
     use super::document::{_Document, probe, web_limits};
     #[pymodule_export]

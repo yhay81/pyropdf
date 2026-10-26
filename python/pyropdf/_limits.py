@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from pyropdf._core import web_limits
+from pyropdf._core import CancellationToken, web_limits
 
 _COUNTED_FIELDS = (
     "max_file_size",
@@ -60,6 +60,9 @@ class DocumentLimits:
     max_interpretation_size: int | None = None
     #: The time that one operation may take, in seconds (``deadline``).
     max_duration: float | None = None
+    #: A token that cancels every operation of the documents whose limits
+    #: carry it (``cancelled``), from any thread.
+    cancellation: CancellationToken | None = None
     #: Whether opening reads every object, so that damage and the limits of
     #: objects surface at open.
     check_at_open: bool = False
@@ -76,6 +79,9 @@ class DocumentLimits:
             if not (math.isfinite(duration) and duration > 0):
                 msg = f"max_duration must be a positive number of seconds or None: {duration!r}"
                 raise ValueError(msg)
+        if self.cancellation is not None and not isinstance(self.cancellation, CancellationToken):
+            msg = f"cancellation must be a CancellationToken or None: {self.cancellation!r}"
+            raise TypeError(msg)
         if not isinstance(self.check_at_open, bool):
             msg = f"check_at_open must be a bool: {self.check_at_open!r}"
             raise TypeError(msg)
@@ -86,4 +92,6 @@ class DocumentLimits:
         return cls(**web_limits(), check_at_open=True)
 
 
-__all__ = ["DocumentLimits"]
+CancellationToken.__module__ = "pyropdf"
+
+__all__ = ["CancellationToken", "DocumentLimits"]

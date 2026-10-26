@@ -14,16 +14,17 @@ from pyropdf._errors import (
     StalePageError,
 )
 from pyropdf._history import History, Transaction
-from pyropdf._limits import DocumentLimits
+from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Pixmap
 
-for _public in (Document, Probe, DocumentLimits, History, Page, Pages, Transaction, open, probe):
+for _public in (Document, Probe, DocumentLimits, CancellationToken, History, Page, Pages, Transaction, open, probe):
     _public.__module__ = "pyropdf"
 
 __all__ = [
     "Access",
+    "CancellationToken",
     "Document",
     "DocumentClosedError",
     "DocumentLimits",
