@@ -19,6 +19,7 @@ from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
+from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._pages import Pages
 
 if TYPE_CHECKING:
@@ -72,6 +73,29 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def objects(self) -> Objects:
+        """Return the indirect objects, a mapping by object number.
+
+        A locked encrypted document raises :class:`EncryptedDocumentError`.
+        """
+        self._ensure_open()
+        objects = Objects(self)
+        objects._core()  # noqa: SLF001 - refuses a locked document now.
+        return objects
+
+    @property
+    def trailer(self) -> Dictionary:
+        """Return the trailer dictionary, which names the catalog as ``/Root``."""
+        self._ensure_open()
+        return _trailer(self)
+
+    @property
+    def catalog(self) -> Dictionary:
+        """Return the catalog, the indirect dictionary that the trailer's ``/Root`` names."""
+        self._ensure_open()
+        return _catalog(self)
 
     def transaction(self, name: str = "") -> Transaction:
         """Return a context manager that groups the edits of its block into one step named ``name``."""
