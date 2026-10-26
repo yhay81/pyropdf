@@ -17,7 +17,7 @@ use std::io::{self, Write};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::index::{Index, Location};
 use crate::security::{self, Encryption, Handler};
-use crate::value::{Bytes, Dict, PdfString, Reference, Value};
+use crate::value::{Dict, PdfString, Reference, Value};
 use crate::version::{Slot, Version};
 use crate::{Error as StoreError, LimitExceeded, write};
 
@@ -320,21 +320,6 @@ impl<'a> Mode<'a> {
     }
 }
 
-/// Returns the bytes of a value, `bytes`, of the object that `reference`
-/// names, with its strings and streams encrypted.
-fn encrypted(
-    handler: &Handler,
-    reference: Reference,
-    bytes: &Bytes,
-    budget: &Budget,
-) -> std::result::Result<Bytes, StoreError> {
-    let value = Value::parse(bytes, budget)?;
-    let value = security::encrypt_value(handler, reference, &value, budget)?;
-    let mut out = BudgetVec::new(budget);
-    write::value(&mut out, &value)?;
-    Ok(Bytes::new(out.into_vec()))
-}
-
 fn row(version: &Version, number: u32) -> Row {
     if number == 0 {
         return Row {
@@ -375,7 +360,7 @@ fn write_object(
         (Some(Slot::Written(object)), Mode::Plain) => object.bytes().clone(),
         (Some(Slot::Written(object)), _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
-            encrypted(handler, reference, object.bytes(), budget).map_err(context)?
+            security::encrypt_bytes(handler, reference, object.bytes(), budget).map_err(context)?
         }
         (_, Mode::Keep { index, encrypt, .. })
             if Some(row.number) == *encrypt
@@ -390,7 +375,7 @@ fn write_object(
         (_, _) => {
             let handler = mode.handler().expect("an encrypting mode has a handler");
             let plain = raw::body(&**version.base(), reference, budget).map_err(context)?;
-            encrypted(handler, reference, &plain, budget).map_err(context)?
+            security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
         }
     };
     row.offset = Some(out.offset()?);

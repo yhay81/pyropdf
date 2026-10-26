@@ -419,7 +419,9 @@ pub fn render_page(
 fn bridge_error(error: &BridgeError) -> PyErr {
     match error {
         BridgeError::Store(error) => store_error(error),
-        BridgeError::EditedEncrypted => EncryptedDocumentError::new_err(error.to_string()),
+        BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 => {
+            EncryptedDocumentError::new_err(error.to_string())
+        }
         _ => PdfError::new_err(error.to_string()),
     }
 }

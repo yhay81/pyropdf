@@ -19,7 +19,7 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::value::{Dict, Name, PdfString, Reference, StringForm, Value};
 use crate::{Error, Password, Result};
 
-pub use value::{decrypt_value, encrypt_value};
+pub use value::{decrypt_value, encrypt_bytes, encrypt_value};
 
 /// The 32 bytes that pad a password (ISO 32000-2 section 7.6.4.3.2).
 const PADDING: [u8; 32] = [
@@ -61,11 +61,12 @@ pub enum Kind {
     Stream,
 }
 
-/// An authenticated standard security handler: the file key and how
-/// strings and streams are encrypted.
+/// An authenticated standard security handler: the file key, the
+/// password that opened it, and how strings and streams are encrypted.
 #[derive(Clone)]
 pub struct Handler {
     key: Box<[u8]>,
+    password: Box<[u8]>,
     revision: u8,
     version: u8,
     strings: Method,
@@ -77,7 +78,7 @@ pub struct Handler {
 
 impl std::fmt::Debug for Handler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The key stays out of debug output.
+        // The key and the password stay out of debug output.
         f.debug_struct("Handler")
             .field("revision", &self.revision)
             .field("strings", &self.strings)
@@ -88,6 +89,15 @@ impl std::fmt::Debug for Handler {
 }
 
 impl Handler {
+    /// Returns the password that authenticated the handler, which a reader
+    /// of the file's bytes needs to decrypt them as the store does: the
+    /// bridge gives it to hayro until hayro reads the store's versions
+    /// (DESIGN.md section 6). It is never written or shown.
+    #[must_use]
+    pub fn password(&self) -> &[u8] {
+        &self.password
+    }
+
     /// Authenticates `password` against `encrypt`, the `/Encrypt`
     /// dictionary, with `id`, the first element of the trailer's `/ID`:
     /// as the owner password first, and then as the user password.
@@ -115,6 +125,7 @@ impl Handler {
         } = Params::read(encrypt)?;
         let make = |key: Box<[u8]>, access| Self {
             key,
+            password: Box::from(password),
             revision,
             version,
             strings,
@@ -554,6 +565,7 @@ impl Encryption {
             put("Perms", string(&perms));
             Handler {
                 key: Box::from(key),
+                password: Box::from(self.owner.as_slice()),
                 revision: 6,
                 version: 5,
                 strings: Method::Aes256,
@@ -583,6 +595,7 @@ impl Encryption {
             put("U", string(&u));
             Handler {
                 key,
+                password: Box::from(self.owner.as_slice()),
                 revision: 4,
                 version: 4,
                 strings: Method::Aes128,

@@ -12,6 +12,11 @@
 //! free, which hayro reads as null. Unchanged objects are neither
 //! serialized nor parsed; the bytes are copied once.
 //!
+//! For an encrypted base, the written objects are encrypted with the
+//! base's security handler, as a save that keeps the encryption writes
+//! them, and hayro opens the bytes with the password that unlocked the
+//! base (yhay81/pyropdf#13).
+//!
 //! The bridge checks that hayro's page list is the store's page index, so
 //! that a page number names the same page in both.
 
@@ -23,9 +28,11 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
 use hayro::hayro_syntax::Pdf;
+use pyropdf_store::Password;
 use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::index::Location;
 use pyropdf_store::pages::PageIndex;
+use pyropdf_store::security::{self, Handler};
 use pyropdf_store::value::{Dict, Name, Reference, Value};
 use pyropdf_store::version::{Slot, Version};
 use pyropdf_store::write;
@@ -35,9 +42,11 @@ use pyropdf_store::write;
 pub enum Error {
     /// The store refused: a malformed object, a limit, or a password.
     Store(pyropdf_store::Error),
-    /// An edited encrypted document, which needs the decision of
-    /// yhay81/pyropdf#13 on how hayro reads it.
-    EditedEncrypted,
+    /// An encrypted version whose `/Encrypt` is not the base's, or that
+    /// wrote the `/Encrypt` dictionary, which a save would encrypt anew.
+    EncryptionChanged,
+    /// A password that is not UTF-8, which hayro cannot take.
+    PasswordNotUtf8,
     /// hayro could not read the bridged version.
     Unreadable,
     /// hayro's page list differs from the store's page index.
@@ -70,8 +79,11 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Store(error) => error.fmt(f),
-            Self::EditedEncrypted => {
-                f.write_str("an edited encrypted document cannot be interpreted yet")
+            Self::EncryptionChanged => f.write_str(
+                "a version whose encryption differs from the file's cannot be interpreted before it is saved",
+            ),
+            Self::PasswordNotUtf8 => {
+                f.write_str("a document opened with a password that is not UTF-8 cannot be interpreted")
             }
             Self::Unreadable => f.write_str("hayro cannot read the document"),
             Self::PageMismatch { store, hayro } => write!(
@@ -117,25 +129,25 @@ impl Bridged {
     /// Builds hayro's reading of `version`, whose page index is `pages`.
     ///
     /// An unedited encrypted document goes to hayro as its original bytes,
-    /// which hayro decrypts; an edited one is refused until
-    /// yhay81/pyropdf#13 decides how the bridge encrypts what it writes.
+    /// and an edited one with its written objects encrypted; hayro opens
+    /// both with the password that unlocked the base.
     pub fn new(version: &Version, pages: &PageIndex, budget: &Budget) -> Result<Self> {
         let started = Instant::now();
-        let file = version.base().file();
-        let encrypted = version.trailer().get("Encrypt").is_some();
-        let (bytes, update) = if encrypted {
-            if version.has_changes() {
-                return Err(Error::EditedEncrypted);
+        let handler = handler(version)?;
+        let password = match handler {
+            Some(handler) => {
+                std::str::from_utf8(handler.password()).map_err(|_| Error::PasswordNotUtf8)?
             }
-            let file = file.ok_or(Error::EditedEncrypted)?;
-            (copy(file.bytes(), budget)?, 0)
-        } else {
-            update(version, budget)?
+            None => "",
+        };
+        let (bytes, update) = match (handler, version.base().file()) {
+            (Some(_), Some(file)) if !version.has_changes() => (copy(file.bytes(), budget)?, 0),
+            _ => update(version, handler, budget)?,
         };
         let store = started.elapsed();
         let started = Instant::now();
         let len = bytes.len();
-        let pdf = Pdf::new(bytes).map_err(|_| Error::Unreadable)?;
+        let pdf = Pdf::new_with_password(bytes, password).map_err(|_| Error::Unreadable)?;
         check_pages(&pdf, pages)?;
         Ok(Self {
             pdf,
@@ -235,6 +247,24 @@ fn check_pages(pdf: &Pdf, pages: &PageIndex) -> Result<()> {
     Ok(())
 }
 
+/// Returns the security handler of an encrypted version: the base's, when
+/// the version keeps the base's `/Encrypt`.
+fn handler(version: &Version) -> Result<Option<&Handler>> {
+    let Some(encrypt) = version.trailer().get("Encrypt") else {
+        return Ok(None);
+    };
+    let base = version.base();
+    let file = base.file().ok_or(Error::EncryptionChanged)?;
+    if base.trailer().get("Encrypt") != Some(encrypt)
+        || matches!(encrypt, Value::Reference(r) if matches!(version.slot(r.number()), Some(Slot::Written(_))))
+    {
+        return Err(Error::EncryptionChanged);
+    }
+    file.security()
+        .map(Some)
+        .ok_or_else(|| pyropdf_store::Error::from(Password::Required).into())
+}
+
 fn copy(bytes: &[u8], budget: &Budget) -> Result<Vec<u8>> {
     let mut out = BudgetVec::new(budget);
     out.try_extend_from_slice(bytes)?;
@@ -248,7 +278,11 @@ const WIDTHS: [usize; 3] = [1, 8, 4];
 /// Returns the original bytes, or a header for a document without a file,
 /// followed by the written objects and the complete cross-reference
 /// stream; and the length of what follows the original bytes.
-fn update(version: &Version, budget: &Budget) -> Result<(Vec<u8>, usize)> {
+fn update(
+    version: &Version,
+    handler: Option<&Handler>,
+    budget: &Budget,
+) -> Result<(Vec<u8>, usize)> {
     let file = version.base().file();
     let mut out = BudgetVec::new(budget);
     match file {
@@ -269,7 +303,15 @@ fn update(version: &Version, budget: &Budget) -> Result<(Vec<u8>, usize)> {
             Some(Slot::Written(written)) => {
                 let offset = out.len() as u64;
                 header(&mut out, number, written.generation())?;
-                out.try_extend_from_slice(written.bytes())?;
+                match handler {
+                    Some(handler) => {
+                        let reference = Reference::new(number, written.generation());
+                        let bytes =
+                            security::encrypt_bytes(handler, reference, written.bytes(), budget)?;
+                        out.try_extend_from_slice(&bytes)?;
+                    }
+                    None => out.try_extend_from_slice(written.bytes())?,
+                }
                 out.try_extend_from_slice(b"\nendobj\n")?;
                 row(1, offset, u32::from(written.generation()))
             }

@@ -5,9 +5,6 @@ The cases of pylopdf's tests/test_encrypted.py at 884af0db, ported. Text
 extraction comes in Phase 1, so content is checked by rendering a decrypted
 save: every fixture holds the same two pages. Intended differences:
 
-- Rendering an encrypted document itself waits for the decision of #13: the
-  bridge hands hayro the original bytes, which hayro decrypts only with an
-  empty user password. A decrypted save renders.
 - An incremental save without ``encryption`` keeps the document's encryption,
   since an update cannot decrypt the file it appends to.
 - ``object_streams``, page selection, and object handles come later.
@@ -141,6 +138,21 @@ def test_a_decrypted_save_produces_a_plain_pdf(reference: list[bytes]) -> None:
         assert not reopened.needs_password
         assert len(reopened.pages) == 1
         assert bytes(memoryview(reopened.pages[0].pixmap(dpi=36))) == reference[0]
+
+
+@pytest.mark.parametrize("name", [*HANDLERS, "owneronly-aes-256.pdf"])
+def test_an_encrypted_document_renders_unedited_and_edited(name: str) -> None:
+    password = "" if name.startswith("owneronly") else "userpw"
+    doc = pyropdf.open(ASSETS / name, password=password)
+    pixels = [bytes(memoryview(page.pixmap(dpi=36))) for page in doc.pages]
+    assert pixels == rendered(doc)
+    doc.pages[0].rotation = 90
+    edited = doc.pages[0].pixmap(dpi=36)
+    with pyropdf.open(doc.to_bytes()) as plain:
+        expected = plain.pages[0].pixmap(dpi=36)
+        assert (edited.width, edited.height) == (expected.width, expected.height)
+        assert edited.width > edited.height
+        assert bytes(memoryview(edited)) == bytes(memoryview(expected))
 
 
 def test_keep_copies_the_encryption() -> None:
