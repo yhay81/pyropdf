@@ -325,8 +325,17 @@ store, and never repairs on its own. An object that the store reads as
 absent is listed free, which hayro reads as null. A new version
 then costs hayro a fresh read of the cross-reference data and the page tree,
 but no serialization or parse of unchanged objects. That remaining cost still
-grows with the document; I1 removes it. For an encrypted base, this bridge
-must encrypt the written objects with the document's key.
+grows with the document; I1 removes it.
+
+For an encrypted base (yhay81/pyropdf#13), the bridge encrypts the written
+objects with the base's security handler, as a save that keeps the
+encryption does, and copies untouched objects' encrypted bytes. The cost
+stays that of the written objects, and no decrypted copy of the document
+is made. hayro-syntax accepts a password, not a file key, so the base keeps
+the password that opened it: private to the store, never written or shown
+to Python, and dropped with the base. A version whose `/Encrypt` is not
+the base's is refused, as a save refuses it. I1 makes the password
+unnecessary.
 
 No pyropdf release claims safety for untrusted input before I2 is released.
 If the upstream patch cannot land, pylopdf's guards come over as a listed
@@ -644,6 +653,5 @@ Exit: pylopdf's v1.0 criteria.
 - Whether the store's write side belongs upstream in hayro-syntax or stays
   in pyropdf.
 - Which Arlington predicates the structural check implements first.
-- How the bridge handles encrypted bases before I1.
 - What the change report is: a method, a value that `save` returns, or a
   refusal that an option turns into a report.
