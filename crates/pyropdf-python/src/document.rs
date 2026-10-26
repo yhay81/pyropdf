@@ -350,7 +350,10 @@ fn document_limits(limits: &Bound<'_, PyAny>) -> PyResult<DocumentLimits> {
             .map(Duration::try_from_secs_f64)
             .transpose()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
-        cancellation: None,
+        cancellation: limits
+            .getattr("cancellation")?
+            .extract::<Option<PyRef<'_, crate::cancel::CancellationToken>>>()?
+            .map(|token| token.0.clone()),
     })
 }
 
