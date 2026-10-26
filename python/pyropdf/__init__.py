@@ -15,16 +15,37 @@ from pyropdf._errors import (
 )
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
+from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Pixmap
 
-for _public in (Document, Probe, DocumentLimits, CancellationToken, History, Page, Pages, Transaction, open, probe):
+for _public in (
+    Array,
+    Dictionary,
+    Name,
+    Objects,
+    Real,
+    Stream,
+    String,
+    Document,
+    Probe,
+    DocumentLimits,
+    CancellationToken,
+    History,
+    Page,
+    Pages,
+    Transaction,
+    open,
+    probe,
+):
     _public.__module__ = "pyropdf"
 
 __all__ = [
     "Access",
+    "Array",
     "CancellationToken",
+    "Dictionary",
     "Document",
     "DocumentClosedError",
     "DocumentLimits",
@@ -33,6 +54,8 @@ __all__ = [
     "History",
     "LimitError",
     "MalformedPdfError",
+    "Name",
+    "Objects",
     "Page",
     "Pages",
     "PasswordError",
@@ -40,8 +63,11 @@ __all__ = [
     "Permissions",
     "Pixmap",
     "Probe",
+    "Real",
     "StaleObjectError",
     "StalePageError",
+    "Stream",
+    "String",
     "Transaction",
     "__version__",
     "open",

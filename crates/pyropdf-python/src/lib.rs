@@ -7,6 +7,7 @@ mod cancel;
 mod document;
 mod errors;
 mod history;
+mod objects;
 mod pages;
 mod pixmap;
 mod security;
@@ -30,6 +31,12 @@ mod _core {
     use super::history::{
         begin_transaction, end_transaction, history_clear, history_redo, history_state,
         history_undo, set_history_limit,
+    };
+    #[pymodule_export]
+    use super::objects::{
+        decode_text_string, object_add, object_add_stream, object_delete, object_get,
+        object_insert, object_keys, object_len, object_lookup, object_numbers, object_replace,
+        object_set, stream_read, stream_write,
     };
     #[pymodule_export]
     use super::pages::{

@@ -514,7 +514,7 @@ fn header_version(bytes: &[u8]) -> Option<String> {
 
 /// Decodes a text string: UTF-16BE or UTF-8 after their byte order marks,
 /// and PDFDocEncoding otherwise (ISO 32000-2 section 7.9.2.2).
-fn text_string(bytes: &[u8]) -> String {
+pub(crate) fn text_string(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let units = rest
             .as_chunks::<2>()

@@ -2,7 +2,7 @@
 //! the lexemes that hayro-syntax 0.8 reports (DESIGN.md section 4.2).
 
 use super::*;
-use crate::budget::{Budget, CancellationToken, LimitCode};
+use crate::budget::{Budget, BudgetVec, CancellationToken, LimitCode};
 use crate::{ErrorKind, LimitExceeded};
 
 /// Parses `bytes` with the default budget.
@@ -422,5 +422,48 @@ fn the_deepest_object_that_hayro_syntax_parses_converts_and_writes_back() {
     crate::write::canonical(&mut out, &deepest).unwrap();
     assert_eq!(out.as_slice(), nested(64));
     let error = Value::parse(&Bytes::from(nested(65)), &budget).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
+}
+
+#[test]
+fn a_real_keeps_the_lexeme_it_is_made_from() {
+    let real = Real::from_lexeme(Bytes::from(b"35.68123456789012345".to_vec())).unwrap();
+    assert_eq!(real.value(), 35.681_234_567_890_12);
+    let budget = Budget::default();
+    let mut out = BudgetVec::new(&budget);
+    crate::write::value(&mut out, &Value::Real(real)).unwrap();
+    assert_eq!(out.as_slice(), b"35.68123456789012345");
+    for lexeme in [&b"-.5"[..], b"+1.", b"0.000"] {
+        assert!(
+            Real::from_lexeme(Bytes::from(lexeme.to_vec())).is_some(),
+            "{lexeme:?}"
+        );
+    }
+    for lexeme in [&b"1"[..], b"1e5", b".", b"1.2.3", b"--1.0", b"", b"1.0 "] {
+        assert!(
+            Real::from_lexeme(Bytes::from(lexeme.to_vec())).is_none(),
+            "{lexeme:?}"
+        );
+    }
+}
+
+#[test]
+fn streams_decode_through_their_filters_within_the_budget() {
+    let value =
+        parse(b"<</Length 15/Filter/ASCIIHexDecode>>stream\n68656C6C6F20776F726C64>\nendstream");
+    assert_eq!(
+        stream(&value).decoded(&Budget::default()).unwrap(),
+        b"hello world"
+    );
+    let budget = Budget::default().with_limit(LimitCode::DecompressedSize, Some(4));
+    let error = stream(&value).decoded(&budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::DecompressedSize)
+    );
+    let plain = parse(b"<</Length 2>>stream\nab\nendstream");
+    assert_eq!(stream(&plain).decoded(&Budget::default()).unwrap(), b"ab");
+    let image = parse(b"<</Length 2/Filter/JBIG2Decode>>stream\nab\nendstream");
+    let error = stream(&image).decoded(&Budget::default()).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
 }

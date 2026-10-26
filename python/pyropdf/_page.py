@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pyropdf import _core
 from pyropdf._errors import StaleObjectError, StalePageError
+from pyropdf._objects import Dictionary
 from pyropdf._pixmap import _render_matrix
 
 if TYPE_CHECKING:
@@ -42,6 +43,11 @@ class Page:
     def xref(self) -> int:
         """Return the object number of the page dictionary."""
         return self._number
+
+    @property
+    def obj(self) -> Dictionary:
+        """Return the page dictionary as a handle of the low-level object model."""
+        return Dictionary(self._document, (self._number, self._generation))
 
     @property
     def index(self) -> int:

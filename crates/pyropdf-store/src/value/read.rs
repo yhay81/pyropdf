@@ -18,7 +18,7 @@ use super::{
     Array, Bytes, Dict, LENGTH, Name, PdfString, Real, Reference, Stream, StringForm, Value,
     length_value,
 };
-use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::budget::{Budget, BudgetVec, LimitCode, StreamKind};
 use crate::{Error, LimitExceeded, Result};
 
 /// How many values the conversion converts between two polls of the budget.
@@ -55,6 +55,64 @@ impl Value {
         budget: &Budget,
     ) -> Result<Self> {
         guard(|| Converter::new(source, budget).convert(MaybeRef::NotRef(object.clone())))
+    }
+}
+
+impl Real {
+    /// Returns the real that `lexeme` writes, keeping `lexeme`, or `None`
+    /// when `lexeme` is not a real of PDF syntax: an optional sign, digits,
+    /// and one decimal point, with at least one digit.
+    ///
+    /// The value is the `f64` that hayro-syntax reads from `lexeme`, as it
+    /// reads the real back from a saved file.
+    #[must_use]
+    pub fn from_lexeme(lexeme: Bytes) -> Option<Self> {
+        let text = lexeme.as_slice();
+        let unsigned = text
+            .strip_prefix(b"+")
+            .or_else(|| text.strip_prefix(b"-"))
+            .unwrap_or(text);
+        let points = unsigned.iter().filter(|&&byte| byte == b'.').count();
+        let digits = unsigned.iter().filter(|byte| byte.is_ascii_digit()).count();
+        if points != 1 || digits == 0 || points + digits != unsigned.len() {
+            return None;
+        }
+        let number = panic::catch_unwind(|| syntax::Number::from_bytes(text)).ok()??;
+        let value = number.as_f64();
+        value.is_finite().then_some(Self {
+            value,
+            lexeme: Some(lexeme),
+        })
+    }
+}
+
+impl Stream {
+    /// Returns the data decoded through the stream's filters, by
+    /// hayro-syntax, charging its decoded size to `budget` as one stream.
+    ///
+    /// Refuses with a malformed input error a stream whose filters
+    /// hayro-syntax does not decode, such as an image filter, and with a
+    /// limit what the budget does not allow. hayro-syntax 0.8 decodes a
+    /// stream whole and without a bound (yhay81/pyropdf#48), so the budget
+    /// counts the decoded bytes once they are decoded.
+    pub fn decoded(&self, budget: &Budget) -> Result<Vec<u8>> {
+        if self.dict.get("Filter").is_none() {
+            return copy(&self.data, budget).map(Vec::from).map_err(Into::into);
+        }
+        let mut source = BudgetVec::new(budget);
+        crate::write::value(&mut source, &Value::Stream(Box::new(self.clone())))?;
+        let data = panic::catch_unwind(AssertUnwindSafe(|| {
+            match Object::from_bytes(source.as_slice())? {
+                Object::Stream(stream) => stream.decoded().ok().map(|data| data.into_owned()),
+                _ => None,
+            }
+        }))
+        .ok()
+        .flatten()
+        .ok_or_else(|| Error::malformed("the stream's filters cannot be decoded"))?;
+        let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
+        budget.decode(StreamKind::Any).charge(size)?;
+        Ok(data)
     }
 }
 
