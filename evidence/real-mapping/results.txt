@@ -1,0 +1,37 @@
+== A float subclass
+isinstance(x, float)                   True
+x == float(source)                     True
+hash(x) == hash(float(source))         True
+x + 1                                  36.68123456789012
+json.dumps(x)                          35.68123456789012
+pickle round trip keeps the lexeme     True
+np.array([x]).dtype                    float64
+Decimal view                           35.68123456789012345
+assigned back to the same slot         b'35.68123456789012345'
+copied to another slot                 b'35.68123456789012345'
+== B plain float
+isinstance(x, float)                   True
+x == float(source)                     True
+hash(x) == hash(float(source))         True
+x + 1                                  36.68123456789012
+json.dumps(x)                          35.68123456789012
+pickle round trip keeps the lexeme     False
+np.array([x]).dtype                    float64
+Decimal view                           35.68123456789012237777569680474698543548583984375
+assigned back to the same slot         b'35.68123456789012345'
+copied to another slot                 b'35.68123456789012'
+== C value type
+isinstance(x, float)                   False
+x == float(source)                     True
+hash(x) == hash(float(source))         True
+x + 1                                  raises TypeError: unsupported operand type(s) for +: 'RealValue' and 'int'
+json.dumps(x)                          raises TypeError: Object of type RealValue is not JSON serializable
+pickle round trip keeps the lexeme     True
+np.array([x]).dtype                    object
+Decimal view                           35.68123456789012345
+assigned back to the same slot         b'35.68123456789012345'
+copied to another slot                 b'35.68123456789012345'
+== assigning other values
+0.1                                    b'0.1'
+Decimal('35.68123456789012345')        b'35.68123456789012345'
+Decimal('1E-7')                        b'0.0000001'
