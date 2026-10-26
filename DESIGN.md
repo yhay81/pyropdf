@@ -299,7 +299,7 @@ analysis goes into upstream patches, not into pyropdf.
 
 | Item | Requirement |
 | --- | --- |
-| I1 Object source | hayro-syntax resolves objects through a source that the caller supplies (a store version), not only through file bytes. |
+| I1 Object source | hayro-syntax resolves objects through a source that the caller supplies (a store version), not only through file bytes: object bytes by identifier, with object-stream members resolved and decryption applied, and the trailer. It needs no public cross-reference reader, repair, or decryption. |
 | I2 Bounded construction | Colour spaces, functions, Type 4 programs, and nested content and objects are built and read without unbounded recursion, and refuse with an error beyond their bounds instead of truncating. |
 | I3 No panics | Malformed input yields errors, not panics (LaurenzV/hayro#1546 and the rest). |
 | I4 Provenance | Begin and end of every content stream, Form XObject, annotation appearance, tiling pattern, and Type 3 glyph procedure; the operator index and byte span of every painted item; the resource names it used; a callback for `sh`; marked-content properties; colour spaces and components; font and image identity; image-mask streams. |
@@ -311,9 +311,16 @@ analysis goes into upstream patches, not into pyropdf.
 hayro-syntax 0.8 keeps its cross-reference reader, its repair, and its
 decryption crate-private (`root_xref`, `fallback`, `repair`, and the `crypto`
 module), and `Pdf::new` resolves the whole page tree. Its `FromBytes` trait,
-which parses an object from a byte slice, is public. Until I1, the store
-therefore reads cross-reference data and decrypts on its own, and parses
-every object through `FromBytes`.
+which parses an object from a byte slice, is public. The store therefore
+reads cross-reference data and decrypts on its own, and parses every object
+through `FromBytes`.
+
+The write side stays in pyropdf (decided in #10): versions, the writer, the
+cross-reference reader and repair, and the security handler. hayro-syntax
+stays a reader, and I1 and I7 are the whole interface between them. The
+store's repair runs once on open and does not depend on the order of reads
+(section 4.3), where hayro-syntax repairs on the first read that fails; with
+I1, hayro reads the store's objects and its own repair is not used.
 
 Until I1 lands, the store hands hayro its current version as an in-memory
 incremental update: the base bytes, followed by the written objects (already
@@ -650,8 +657,6 @@ Exit: pylopdf's v1.0 criteria.
 
 ## 16. Open questions
 
-- Whether the store's write side belongs upstream in hayro-syntax or stays
-  in pyropdf.
 - Which Arlington predicates the structural check implements first.
 - What the change report is: a method, a value that `save` returns, or a
   refusal that an option turns into a report.
