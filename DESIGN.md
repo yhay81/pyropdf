@@ -427,6 +427,16 @@ pylopdf's API rules carry over. The foundation changes these behaviors:
   A `Page` names its page object and raises `StalePageError` while it is
   absent from the current page tree. It stays valid when other pages are
   inserted, moved, or deleted, and `page.index` costs constant time.
+- **Reals.** A real reaches Python as `pyropdf.Real`, an immutable `float`
+  subclass with `lexeme` (the bytes it was read from, or `None`) and
+  `to_decimal()`, the exact decimal that it writes. Equality and hashing
+  are the `float`'s, as the store compares `f64` values, and arithmetic
+  returns a plain `float`. Assigning a `Real` writes its lexeme, or its
+  `f64` in shortest form when it has none; a `float` writes its shortest
+  form; a `Decimal` writes its exact digits in positional form; a
+  non-finite value raises. The lexeme travels with the value, through
+  copies, other documents, and `pickle`
+  ([evidence](evidence/real-mapping/README.md)).
 - **Transactions.** `with doc.transaction():` groups edits into one version
   and one undo step, at a cost that does not depend on the document's size.
 - **Revisions.** `save(incremental=True)` writes only the change set, and the
@@ -633,8 +643,6 @@ Exit: pylopdf's v1.0 criteria.
 
 - Whether the store's write side belongs upstream in hayro-syntax or stays
   in pyropdf.
-- How Python sees reals whose lexemes are kept: a `float` subclass, or a
-  plain `float` with the lexeme kept behind it.
 - Which Arlington predicates the structural check implements first.
 - How the bridge handles encrypted bases before I1.
 - What the change report is: a method, a value that `save` returns, or a
