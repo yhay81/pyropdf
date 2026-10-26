@@ -292,12 +292,38 @@ fn update(
     let original = out.len();
     out.try_extend_from_slice(b"\n")?;
     let size = u32::try_from(version.next_number()).unwrap_or(u32::MAX);
+    // Rows cover the numbers that the base lists or a transaction wrote, in
+    // runs that /Index names: a document whose highest number is far above
+    // its object count does not get a row for every number in between.
+    let mut numbers: BudgetVec<'_, u32> = BudgetVec::new(budget);
+    version.base().numbers(&mut numbers)?;
+    for (number, _) in version.slots() {
+        budget.poll()?;
+        numbers.try_push(number)?;
+    }
+    numbers.try_push(0)?;
+    numbers.sort_unstable();
     let mut rows: BudgetVec<'_, [u8; 13]> = BudgetVec::new(budget);
-    rows.try_reserve_exact(size as usize)?;
-    rows.try_push(row(0, 0, 65535))?;
-    for number in 1..size {
-        if number % 4096 == 0 {
-            budget.poll()?;
+    let mut index: BudgetVec<'_, Value> = BudgetVec::new(budget);
+    let mut run: Option<(u32, u32)> = None;
+    for &number in numbers.iter() {
+        budget.poll()?;
+        if number >= size || run.is_some_and(|(start, count)| number < start + count) {
+            continue;
+        }
+        run = match run {
+            Some((start, count)) if start + count == number => Some((start, count + 1)),
+            _ => {
+                if let Some((start, count)) = run {
+                    index.try_push(Value::Integer(i64::from(start)))?;
+                    index.try_push(Value::Integer(i64::from(count)))?;
+                }
+                Some((number, 1))
+            }
+        };
+        if number == 0 {
+            rows.try_push(row(0, 0, 65535))?;
+            continue;
         }
         let entry = match version.slot(number) {
             Some(Slot::Written(written)) => {
@@ -319,6 +345,11 @@ fn update(
             None => base_row(version, number, &mut out, budget)?,
         };
         rows.try_push(entry)?;
+    }
+    drop(numbers);
+    if let Some((start, count)) = run {
+        index.try_push(Value::Integer(i64::from(start)))?;
+        index.try_push(Value::Integer(i64::from(count)))?;
     }
     let offset = out.len() as u64;
     let mut trailer = Dict::new();
@@ -347,6 +378,11 @@ fn update(
         &mut trailer,
         Name::from("Size"),
         Value::Integer(i64::from(size)),
+    );
+    insert(
+        &mut trailer,
+        Name::from("Index"),
+        Value::Array(index.into_vec().into()),
     );
     let widths = WIDTHS.map(|w| Value::Integer(w as i64));
     insert(

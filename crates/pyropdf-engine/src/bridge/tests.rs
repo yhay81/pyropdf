@@ -283,6 +283,26 @@ fn an_edited_file_renders_as_its_full_save() {
 }
 
 #[test]
+fn a_high_object_number_adds_one_row_not_every_number_below_it() {
+    let budget = Budget::default();
+    let document = three_pages();
+    let high = 200_000_000;
+    let mut transaction = document.begin();
+    transaction.write(high, &content(77), &budget).unwrap();
+    transaction
+        .write(3, &page_value(high, None), &budget)
+        .unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    assert!(version.next_number() > u64::from(high));
+    let bridged = bridge(&version);
+    // Ten rows of 13 bytes, not one for each number below `high`.
+    assert!(bridged.stats().update < 4096, "{}", bridged.stats().update);
+    let mut saved = Vec::new();
+    save::full(&version, &mut saved, &budget).unwrap();
+    assert_eq!(bridge_renders(&bridged), hayro_renders(saved));
+}
+
+#[test]
 fn the_cache_keeps_one_version_and_no_version_alive() {
     let budget = Budget::default();
     let document = three_pages();
