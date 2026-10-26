@@ -1,0 +1,54 @@
+# ./run.sh inline-image-end-bench <main> <patch>
+== b2f4d68a hayro-interpret: Cache the converted colors of DeviceN images (#1664)
+(EI) Tj after the image
+       KiB          ms     ops
+        64       0.365    8191
+       128       0.732   16383
+       256       1.480   32767
+       512       2.867   65535
+      1024       5.903  131071
+EI before one binary byte
+       KiB          ms     ops
+        64    2673.238       3
+EI ( before one binary byte
+       KiB          ms     ops
+        64     501.388       3
+       128    2014.679       3
+EI ] (not content)
+       KiB          ms     ops
+        64     195.738       3
+       128     799.818       3
+       256    3163.960       3
+== 61086912 hayro-syntax: Find the end of inline image data in linear time
+(EI) Tj after the image
+       KiB          ms     ops
+        64       0.290    8191
+       128       0.565   16383
+       256       1.173   32767
+       512       2.276   65535
+      1024       4.596  131071
+EI before one binary byte
+       KiB          ms     ops
+        64       0.273       3
+       128       0.563       3
+       256       1.139       3
+       512       2.262       3
+      1024       4.590       3
+EI ( before one binary byte
+       KiB          ms     ops
+        64     302.379       3
+       128    1206.349       3
+       256    4854.747       3
+EI ] (not content)
+       KiB          ms     ops
+        64       0.339       3
+       128       0.692       3
+       256       1.417       3
+       512       2.898       3
+      1024       5.794       3
+
+# ./run.sh differential <main> <patch>
+== b2f4d68a hayro-interpret: Cache the converted colors of DeviceN images (#1664)
+20000000 streams, 22573759 inline images, digest fb1bf78201c5e427
+== 61086912 hayro-syntax: Find the end of inline image data in linear time
+20000000 streams, 22573759 inline images, digest fb1bf78201c5e427

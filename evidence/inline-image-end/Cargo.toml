@@ -1,0 +1,12 @@
+[package]
+name = "inline-image-end-bench"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Not a member of pyropdf's workspace: run.sh points hayro-syntax at a
+# checkout of hayro with `--config patch...`.
+[workspace]
+
+[dependencies]
+hayro-syntax = { version = "0.8.0", default-features = false, features = ["std"] }
