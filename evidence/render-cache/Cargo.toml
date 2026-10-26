@@ -1,0 +1,18 @@
+# The profile behind issue #75: a fresh hayro RenderCache per page against
+# one cache for every page of a version. The empty table below makes this
+# directory a workspace of its own.
+[workspace]
+[package]
+name = "render-cache-bench"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+[dependencies]
+pyropdf-engine = { path = "../../crates/pyropdf-engine" }
+pyropdf-store = { path = "../../crates/pyropdf-store" }
+hayro = "0.8.0"
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"

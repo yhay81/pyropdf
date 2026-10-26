@@ -35,13 +35,15 @@ checkout's `.venv/bin/python`.
 ## Results
 
 `results/macos-arm64.md`. At 1,760 pages, rotating and rendering every page
-takes 11.1 s on pyropdf against 22.8 s on pylopdf: 2.3 times rendering
-alone, against 7.1. Rendering without edits is slower on pyropdf (4.8 s
-against 3.2 s), which this loop does not explain; it is not the edit cost.
+takes 11.5 s on pyropdf against 22.7 s on pylopdf: 3.6 times rendering
+alone, against 7.2. Rendering without edits now takes as long as on pylopdf,
+3.19 s against 3.17 s; before the per-version render cache of #75
+(evidence/render-cache), it took 4.8 s. The rotate loop gains nothing from
+that cache, since every edit makes a new version.
 
 The split shows where pyropdf's remaining growth is: at 1,760 pages, of
-5.8 ms per page, hayro's re-read of the version takes 2.7 ms, building its
+6.4 ms per page, hayro's re-read of the version takes 2.9 ms, building its
 bytes 0.4 ms, and the page index walk 0.6 ms, all of which grow with the
-document, while the transaction (7 µs) and the render (2.1 ms) do not. I1
+document, while the transaction (7 µs) and the render (2.5 ms) do not. I1
 (#14) removes the re-read and the bytes; a page-tree edit that kept the
 walk's read set elsewhere would remove the walk.
