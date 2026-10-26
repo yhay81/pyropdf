@@ -54,7 +54,7 @@ fn main() {
             let started = Instant::now();
             let index = PageIndex::memoized(&memo, &version, &budget).unwrap();
             totals[1] += started.elapsed();
-            let bridged = Bridged::new(&version, &index, &budget).unwrap();
+            let bridged = Arc::new(Bridged::new(&version, &index, &budget).unwrap());
             totals[2] += bridged.stats().store;
             totals[3] += bridged.stats().hayro;
             let started = Instant::now();

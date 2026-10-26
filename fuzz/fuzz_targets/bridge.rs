@@ -32,7 +32,7 @@ fuzz_target!(
     let Ok(pages) = PageIndex::build(&mut Reads::new(&version, &budget)) else {
         return;
     };
-    let Ok(bridged) = Bridged::new(&version, &pages, &budget) else {
+    let Ok(bridged) = Bridged::new(&version, &pages, &budget).map(Arc::new) else {
         return;
     };
     if !pages.is_empty() {

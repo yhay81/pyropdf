@@ -5,6 +5,11 @@ use hayro::hayro_interpret::InterpreterSettings;
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 
+use std::cell::RefCell;
+use std::sync::Arc;
+
+use hayro::hayro_syntax::Pdf;
+
 use crate::bridge::{Bridged, Error, Result};
 
 #[cfg(test)]
@@ -100,11 +105,64 @@ impl std::fmt::Display for RasterError {
 
 impl std::error::Error for RasterError {}
 
+/// The render cache of the bridge that this thread rendered last: fonts,
+/// images, and glyph outlines, which every page of one version shares, as
+/// pylopdf keeps one cache per snapshot. hayro's cache is not `Send`, so
+/// each thread keeps its own, and the bridge that it borrows from, until it
+/// renders another version.
+struct Cached {
+    // Declared first, so that it drops before the bridge that it borrows.
+    cache: RenderCache<'static>,
+    bridged: Arc<Bridged>,
+}
+
+thread_local! {
+    static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
+}
+
+/// Runs `render` with hayro's document of `bridged` and this thread's cache
+/// for it.
+fn with_cache<T>(
+    bridged: &Arc<Bridged>,
+    render: impl FnOnce(&'static Pdf, &RenderCache<'static>) -> T,
+) -> T {
+    CACHE.with(|cell| {
+        let mut held = cell.borrow_mut();
+        if !held
+            .as_ref()
+            .is_some_and(|cached| Arc::ptr_eq(&cached.bridged, bridged))
+        {
+            // Drop the old cache before its bridge, then start one for this bridge.
+            *held = None;
+            *held = Some(Cached {
+                cache: RenderCache::new(),
+                bridged: Arc::clone(bridged),
+            });
+        }
+        let cached = held.as_ref().expect("the cache was just set");
+        // SAFETY: the cache borrows from this `Pdf`, which `cached.bridged`
+        // keeps alive and never moves or changes; the cache drops first.
+        // Neither reference outlives this call.
+        let pdf: &'static Pdf = unsafe { &*std::ptr::from_ref(cached.bridged.pdf()) };
+        render(pdf, &cached.cache)
+    })
+}
+
 /// Renders page `index` through `matrix`, as pylopdf's `page.pixmap`
 /// renders it: the raster covers the whole pixels inside the transformed
 /// page, on white without `alpha` and on transparency with it.
 pub fn raster(
-    bridged: &Bridged,
+    bridged: &Arc<Bridged>,
+    index: usize,
+    matrix: Matrix,
+    alpha: bool,
+) -> std::result::Result<Raster, RasterError> {
+    with_cache(bridged, |pdf, cache| draw(pdf, cache, index, matrix, alpha))
+}
+
+fn draw<'a>(
+    pdf: &'a Pdf,
+    cache: &RenderCache<'a>,
     index: usize,
     matrix: Matrix,
     alpha: bool,
@@ -114,7 +172,7 @@ pub fn raster(
     use hayro::vello_cpu::peniko::ImageAlphaType;
     use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
 
-    let pages = bridged.pdf().pages();
+    let pages = pdf.pages();
     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
     let (a, b, c, d) = matrix;
     if ![a, b, c, d].into_iter().all(f64::is_finite) || a * d - b * c == 0.0 {
@@ -167,7 +225,7 @@ pub fn raster(
     let mut context = RenderContext::new(raster_width, raster_height);
     hayro::render_into(
         page,
-        &RenderCache::new(),
+        cache,
         &InterpreterSettings::default(),
         &RenderSettings::default(),
         &mut context,
