@@ -214,7 +214,7 @@ fn unlock(index: &mut Index, password: Option<&[u8]>, budget: &Budget) -> Result
         (None, None) => None,
     };
     if let Some(handler) = handler {
-        index.unlock(handler);
+        index.unlock(handler, budget)?;
     }
     Ok(())
 }
