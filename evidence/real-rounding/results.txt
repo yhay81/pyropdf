@@ -1,0 +1,13 @@
+$ evidence/real-rounding/run.sh <hayro main> <patched hayro>   # Apple M-series, arm64, rustc 1.99.1 (58cf8f9c3 2026-10-13)
+== a553afcb Remove logging (#1648)
+input                          ns/num  ns/op'd   misread
+integers below 2000              8.27    15.20         -
+{:.3} in +-1000                  7.27    16.66         -
+shortest, uniform in +-1e6      15.31    22.64    10.33%
+shortest, random bits          401.79   580.70    44.09%
+== a9560d8e hayro-syntax: Read reals as the correctly rounded f64
+input                          ns/num  ns/op'd   misread
+integers below 2000              8.30    14.60         -
+{:.3} in +-1000                  7.17    16.35         -
+shortest, uniform in +-1e6      31.47    46.96     0.00%
+shortest, random bits          482.90   669.47     0.00%
