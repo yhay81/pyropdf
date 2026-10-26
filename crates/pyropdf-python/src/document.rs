@@ -14,6 +14,7 @@ use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
 use pyropdf_store::memo::Memo;
 use pyropdf_store::pages::{PageIndex, PageTree};
 use pyropdf_store::save::{self, FileBase};
+use pyropdf_store::security::Encryption;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Document, MemoryBase, Version};
 use pyropdf_store::{Error, write};
@@ -67,6 +68,18 @@ impl _Document {
         Ok(self.document()?.current())
     }
 
+    /// Replaces the store's document, as unlocking does, and forgets what
+    /// was derived from the old one.
+    pub(crate) fn replace(&self, document: Document) {
+        *self
+            .document
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(document));
+        self.pages.clear();
+        self.draft_pages.clear();
+        self.history.clear();
+    }
+
     /// Returns a budget of one operation from the document's limits.
     pub(crate) fn budget(&self) -> Budget {
         Budget::new(&self.limits)
@@ -100,28 +113,50 @@ impl _Document {
         ))
     }
 
-    /// Opens the file at `path`.
+    /// Opens the file at `path`, unlocking it with `password`.
     #[staticmethod]
-    fn open_path(py: Python<'_>, path: PathBuf, limits: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (path, limits, password=None))]
+    fn open_path(
+        py: Python<'_>,
+        path: PathBuf,
+        limits: &Bound<'_, PyAny>,
+        password: Option<Vec<u8>>,
+    ) -> PyResult<Self> {
         let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
         py.detach(|| {
             let budget = Budget::new(&limits);
             let bytes = source::file(&path, &budget)?;
-            open(bytes, limits.clone(), complete, &budget)
+            open(
+                bytes,
+                password.as_deref(),
+                limits.clone(),
+                complete,
+                &budget,
+            )
         })
     }
 
     /// Opens the bytes of a buffer: `bytes` without a copy, other buffers
     /// with one.
     #[staticmethod]
+    #[pyo3(signature = (data, limits, password=None))]
     fn open_buffer(
         py: Python<'_>,
         data: &Bound<'_, PyAny>,
         limits: &Bound<'_, PyAny>,
+        password: Option<Vec<u8>>,
     ) -> PyResult<Self> {
         let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
         let bytes = source::buffer(data, &Budget::new(&limits))?;
-        py.detach(|| open(bytes, limits.clone(), complete, &Budget::new(&limits)))
+        py.detach(|| {
+            open(
+                bytes,
+                password.as_deref(),
+                limits.clone(),
+                complete,
+                &Budget::new(&limits),
+            )
+        })
     }
 
     /// Returns whether opening recovered damaged cross-reference data.
@@ -135,14 +170,27 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    fn save_path(&self, py: Python<'_>, path: PathBuf, incremental: bool) -> PyResult<()> {
-        let version = self.reading()?;
+    #[pyo3(signature = (path, incremental, encryption=None))]
+    fn save_path(
+        &self,
+        py: Python<'_>,
+        path: PathBuf,
+        incremental: bool,
+        encryption: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
         py.detach(|| {
             let target = path.display().to_string();
             let result = (|| {
                 let mut out = BufWriter::new(File::create(&path)?);
-                write_version(&version, &mut out, incremental, &budget)?;
+                write_version(
+                    &version,
+                    &mut out,
+                    incremental,
+                    encryption.as_ref(),
+                    &budget,
+                )?;
                 let file = out.into_inner().map_err(|e| e.into_error())?;
                 file.sync_all()?;
                 Ok(())
@@ -152,18 +200,26 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
+    #[pyo3(signature = (incremental, max_size, encryption=None))]
     fn to_bytes<'py>(
         &self,
         py: Python<'py>,
         incremental: bool,
         max_size: Option<u64>,
+        encryption: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let version = self.reading()?;
+        let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
         let out = py.detach(|| {
             let mut out = Vec::new();
-            write_version(&version, &mut out, incremental, &budget)
-                .map_err(|error| save_error(&error, "PDF bytes"))?;
+            write_version(
+                &version,
+                &mut out,
+                incremental,
+                encryption.as_ref(),
+                &budget,
+            )
+            .map_err(|error| save_error(&error, "PDF bytes"))?;
             Ok::<_, PyErr>(out)
         })?;
         Ok(PyBytes::new(py, &out))
@@ -211,16 +267,40 @@ impl _Document {
 /// `budget`.
 fn open(
     bytes: Bytes,
+    password: Option<&[u8]>,
     limits: DocumentLimits,
     complete: bool,
     budget: &Budget,
 ) -> PyResult<_Document> {
-    let base = FileBase::open(bytes, budget).map_err(|e| store_error(&e))?;
+    let base = open_base(bytes, password, budget).map_err(|e| store_error(&e))?;
+    // A locked document's objects cannot be read until it is unlocked.
+    let locked = base.index().is_encrypted() && base.security().is_none();
     let document = Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT));
-    if complete {
+    if complete && !locked {
         check_every_object(&document.current(), budget).map_err(|e| store_error(&e))?;
     }
     Ok(_Document::new(document, limits))
+}
+
+/// Opens `bytes` with `password`. A wrong password still opens a document
+/// whose user password is empty, as MuPDF and pylopdf open it.
+pub(crate) fn open_base(
+    bytes: Bytes,
+    password: Option<&[u8]>,
+    budget: &Budget,
+) -> Result<FileBase, Error> {
+    match FileBase::open_with_password(bytes.clone(), password, budget) {
+        Err(error)
+            if error.kind()
+                == &pyropdf_store::ErrorKind::Password(pyropdf_store::Password::Incorrect) =>
+        {
+            match FileBase::open(bytes, budget) {
+                Ok(base) if base.security().is_some() => Ok(base),
+                _ => Err(error),
+            }
+        }
+        result => result,
+    }
 }
 
 /// Parses every object that the index lists, which surfaces damage and the
@@ -240,10 +320,13 @@ fn write_version(
     version: &Version,
     out: &mut dyn Write,
     incremental: bool,
+    encryption: Option<&Encryption>,
     budget: &Budget,
 ) -> save::Result<()> {
     if incremental {
         save::incremental(version, out, budget)?;
+    } else if let Some(encryption) = encryption {
+        save::full_encrypted(version, out, budget, encryption)?;
     } else {
         save::full(version, out, budget)?;
     }
@@ -308,12 +391,13 @@ type Probe<'py> = (u64, String, bool, bool, Bound<'py, PyDict>);
 /// Reads the index of the file at `path` or of the buffer `data`, and the
 /// few objects that a probe needs.
 #[pyfunction]
-#[pyo3(signature = (path, data, max_file_size))]
+#[pyo3(signature = (path, data, max_file_size, password=None))]
 pub fn probe<'py>(
     py: Python<'py>,
     path: Option<PathBuf>,
     data: Option<&Bound<'py, PyAny>>,
     max_file_size: Option<u64>,
+    password: Option<Vec<u8>>,
 ) -> PyResult<Probe<'py>> {
     let limits = DocumentLimits {
         max_file_size,
@@ -326,7 +410,7 @@ pub fn probe<'py>(
         (None, None) => return Err(pyo3::exceptions::PyTypeError::new_err("no source")),
     };
     let (count, version, encrypted, repaired, metadata) =
-        py.detach(|| read_probe(bytes, &budget))?;
+        py.detach(|| read_probe(bytes, password.as_deref(), &budget))?;
     let dict = PyDict::new(py);
     for (key, value) in metadata {
         dict.set_item(key, value)?;
@@ -348,19 +432,28 @@ const PROBE_KEYS: [&str; 8] = [
 
 type ProbeData = (u64, String, bool, bool, Vec<(&'static str, String)>);
 
-fn read_probe(bytes: Bytes, budget: &Budget) -> PyResult<ProbeData> {
+fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResult<ProbeData> {
+    use pyropdf_store::version::Base as _;
     let store = |e: Error| store_error(&e);
-    let base = FileBase::open(bytes, budget).map_err(store)?;
+    let base = open_base(bytes, password, budget).map_err(store)?;
     let index = base.index();
     let header = header_version(&index.bytes()[index.origin()..])
         .ok_or_else(|| MalformedPdfError::new_err("the file has no %PDF- header"))?;
-    let (encrypted, repaired) = (index.is_encrypted(), index.is_repaired());
-    // The catalog and the page tree's /Count read as they are in the file,
-    // so that a locked encrypted document reports its pages too.
+    let encrypted = index.is_encrypted() && base.security().is_none();
+    let repaired = index.is_repaired();
+    // A locked document's catalog and page tree's /Count read as they are
+    // in the file, so that it reports its pages too; an unlocked one reads
+    // decrypted.
     let resolve = |value: Option<&Value>| -> Result<Option<Arc<Value>>, Error> {
+        let read = |reference| {
+            if encrypted {
+                index.object(reference, budget)
+            } else {
+                base.object(reference, budget)
+            }
+        };
         match value {
-            Some(Value::Reference(reference)) => Ok(index
-                .object(*reference, budget)?
+            Some(Value::Reference(reference)) => Ok(read(*reference)?
                 .map(|bytes| Value::parse(&bytes, budget))
                 .transpose()?
                 .map(Arc::new)),
