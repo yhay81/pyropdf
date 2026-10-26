@@ -2,9 +2,9 @@
 //! value (ISO 32000-2 section 7.6.2).
 
 use super::{Handler, Kind};
-use crate::budget::Budget;
+use crate::budget::{Budget, BudgetVec};
 use crate::value::{Bytes, PdfString, Reference, Value};
-use crate::{Error, Result};
+use crate::{Error, Result, write};
 
 /// The deepest nesting that the walk follows. Parsed values are shallower:
 /// hayro-syntax reads 64 levels at most.
@@ -31,6 +31,22 @@ pub fn encrypt_value(
     budget: &Budget,
 ) -> Result<Value> {
     transform(handler, reference, value, budget, true)
+}
+
+/// Returns the bytes of a value, `bytes`, of the object that `reference`
+/// names, with its strings and stream data encrypted: the bytes that a
+/// file encrypted with `handler` holds for it.
+pub fn encrypt_bytes(
+    handler: &Handler,
+    reference: Reference,
+    bytes: &Bytes,
+    budget: &Budget,
+) -> Result<Bytes> {
+    let value = Value::parse(bytes, budget)?;
+    let value = encrypt_value(handler, reference, &value, budget)?;
+    let mut out = BudgetVec::new(budget);
+    write::value(&mut out, &value)?;
+    Ok(Bytes::new(out.into_vec()))
 }
 
 fn transform(

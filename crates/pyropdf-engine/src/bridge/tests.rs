@@ -314,8 +314,122 @@ fn a_page_list_that_differs_from_the_index_refuses() {
     ));
 }
 
+/// Opens an encrypted fixture with its user password, or with none when
+/// the user password is empty, and returns it with that password.
+fn open_encrypted(path: &Path) -> (Document, &'static str) {
+    let budget = Budget::default();
+    let password = if path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("owneronly")
+    {
+        ""
+    } else {
+        "userpw"
+    };
+    let bytes = Bytes::new(fs::read(path).unwrap());
+    let base = FileBase::open_with_password(bytes, Some(password.as_bytes()), &budget).unwrap();
+    (Document::new(Arc::new(base), None), password)
+}
+
+/// Returns a plain full save of `version`, which a transaction decrypts by
+/// dropping `/Encrypt`.
+fn decrypted(document: &Document, budget: &Budget) -> Vec<u8> {
+    let mut transaction = document.begin();
+    let mut trailer = transaction.version().trailer().clone();
+    trailer.remove("Encrypt");
+    transaction.set_trailer(trailer, budget).unwrap();
+    let plain = transaction.commit(budget).unwrap();
+    document.undo();
+    let mut saved = Vec::new();
+    save::full(&plain, &mut saved, budget).unwrap();
+    saved
+}
+
 #[test]
-fn an_edited_encrypted_document_is_refused() {
+fn encrypted_files_render_unedited_and_edited_as_their_decrypted_saves() {
+    let budget = Budget::default();
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/encrypted");
+    let mut files: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 9);
+    for path in files {
+        let (document, password) = open_encrypted(&path);
+        let version = document.current();
+        let unedited = bridge(&version);
+        assert_eq!(unedited.stats().update, 0, "{}", path.display());
+        assert_eq!(
+            bridge_renders(&unedited),
+            hayro_renders(decrypted(&document, &budget)),
+            "{}",
+            path.display()
+        );
+
+        // A rotated page and a new content stream, whose data hayro
+        // decrypts only if the bridge encrypted it.
+        let pages = page_index(&version);
+        let first = pages.get(0).unwrap().object().unwrap();
+        let mut page = pages.get(0).unwrap().dict().clone();
+        let mut transaction = document.begin();
+        let contents = transaction.allocate().unwrap();
+        transaction
+            .write(contents.number(), &content(7), &budget)
+            .unwrap();
+        page.insert(Name::from("Rotate"), 90.into());
+        page.insert(Name::from("Contents"), Value::Reference(contents));
+        transaction
+            .write(first.number(), &Value::Dict(page), &budget)
+            .unwrap();
+        let edited = transaction.commit(&budget).unwrap();
+        let bridged = bridge(&edited);
+        assert!(bridged.stats().update > 0);
+        assert_eq!(
+            bridge_renders(&bridged),
+            hayro_renders(decrypted(&document, &budget)),
+            "{} with password {password:?}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn a_version_that_changes_the_encryption_is_refused() {
+    let budget = Budget::default();
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/encrypted");
+    let (document, _) = open_encrypted(&dir.join("user-aes-128.pdf"));
+    let version = document.current();
+    let Some(Value::Reference(encrypt)) = version.trailer().get("Encrypt").cloned() else {
+        panic!("the fixture's /Encrypt is a reference");
+    };
+    let rewritten = version.get(encrypt.number(), &budget).unwrap().unwrap();
+    let mut transaction = document.begin();
+    transaction
+        .write(encrypt.number(), rewritten.value(), &budget)
+        .unwrap();
+    let edited = transaction.commit(&budget).unwrap();
+    assert_eq!(
+        Bridged::new(&edited, &page_index(&edited), &budget).unwrap_err(),
+        Error::EncryptionChanged
+    );
+    let mut transaction = document.begin();
+    let mut trailer = transaction.version().trailer().clone();
+    trailer.insert(Name::from("Encrypt"), Value::Integer(0));
+    transaction.set_trailer(trailer, &budget).unwrap();
+    let edited = transaction.commit(&budget).unwrap();
+    assert_eq!(
+        Bridged::new(&edited, &page_index(&edited), &budget).unwrap_err(),
+        Error::EncryptionChanged
+    );
+}
+
+#[test]
+fn an_encrypted_version_without_a_file_is_refused() {
     let budget = Budget::default();
     let mut base = MemoryBase::new(
         [
@@ -334,11 +448,9 @@ fn an_edited_encrypted_document_is_refused() {
         Bytes::new(&b"<</Type/Pages/Kids[]/Count 0>>"[..]),
     );
     let document = Document::new(Arc::new(base), None);
-    let mut transaction = document.begin();
-    transaction.write(4, &Value::Integer(1), &budget).unwrap();
-    let edited = transaction.commit(&budget).unwrap();
+    let version = document.current();
     assert_eq!(
-        Bridged::new(&edited, &page_index(&edited), &budget).unwrap_err(),
-        Error::EditedEncrypted
+        Bridged::new(&version, &page_index(&version), &budget).unwrap_err(),
+        Error::EncryptionChanged
     );
 }

@@ -107,9 +107,12 @@ fn fixtures_open_with_either_password_and_refuse_wrong_ones() {
         let user = open(&bytes, Some("userpw")).unwrap();
         let handler = security(&user).unwrap();
         assert_eq!(handler.access(), Access::User, "{name}");
+        assert_eq!(handler.password(), b"userpw", "{name}");
+        assert!(!format!("{handler:?}").contains("userpw"), "{name}");
         assert_eq!(handler.description(), description, "{name}");
         let owner = open(&bytes, Some("ownerpw")).unwrap();
         assert_eq!(security(&owner).unwrap().access(), Access::Owner, "{name}");
+        assert_eq!(security(&owner).unwrap().password(), b"ownerpw", "{name}");
         let wrong = open(&bytes, Some("wrong")).map(|_| ()).unwrap_err();
         assert_eq!(
             wrong.kind(),
