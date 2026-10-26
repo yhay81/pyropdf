@@ -24,6 +24,12 @@ use crate::{Error, LimitExceeded, Result};
 /// How many values the conversion converts between two polls of the budget.
 const POLL_INTERVAL: u32 = 1024;
 
+#[cfg(test)]
+thread_local! {
+    /// The calls of [`Value::parse`] on this thread, which tests count.
+    pub(crate) static PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl Value {
     /// Parses the value that `source` begins with, through hayro-syntax.
     ///
@@ -34,6 +40,8 @@ impl Value {
     /// nested deeper than it allows, or `memory_size` for what the value
     /// holds.
     pub fn parse(source: &Bytes, budget: &Budget) -> Result<Self> {
+        #[cfg(test)]
+        PARSES.with(|parses| parses.set(parses.get() + 1));
         guard(|| {
             let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice())
                 .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;

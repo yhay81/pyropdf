@@ -462,3 +462,50 @@ fn damaged_inputs_index_as_hayro_lists_their_pages_or_refuse() {
     assert!(equal > 0, "{equal} equal, {refused} refused");
     eprintln!("damaged inputs: {equal} equal to hayro, {refused} refused");
 }
+
+/// Phase 0's exit asks that an edit followed by a page read parse only the
+/// objects the edit wrote: every other value comes from the base's cache or
+/// the version's, which the first index filled.
+#[test]
+fn an_edit_and_a_page_read_parse_only_the_written_page() {
+    let budget = Budget::default();
+    let parses = || crate::value::PARSES.with(std::cell::Cell::get);
+    let mut checked = 0;
+    for (file, bytes) in corpus() {
+        let index = Index::open(Bytes::new(bytes), &budget).unwrap();
+        let document = Document::new(Arc::new(FileBase::new(index, &budget).unwrap()), None);
+        let Ok(pages) = index_with(&document, &budget) else {
+            continue;
+        };
+        let Some(page) = pages.pages().last() else {
+            continue;
+        };
+        let Some(reference) = page.object() else {
+            continue;
+        };
+        let version = document.current();
+        let Value::Dict(mut dict) = (**version
+            .get(reference.number(), &budget)
+            .unwrap()
+            .unwrap()
+            .value())
+        .clone() else {
+            panic!("{file}: a page that is not a dictionary");
+        };
+        dict.insert(Name::from("Rotate"), Value::Integer(90));
+
+        let before = parses();
+        let mut transaction = document.begin();
+        transaction
+            .write(reference.number(), &Value::Dict(dict), &budget)
+            .unwrap();
+        let edited = transaction.commit(&budget).unwrap();
+        let rebuilt = PageIndex::build(&mut Reads::new(&edited, &budget)).unwrap();
+        let last = rebuilt.pages().last().unwrap();
+        assert_eq!(integer(last.dict().get("Rotate")), Some(90), "{file}");
+        edited.get(reference.number(), &budget).unwrap().unwrap();
+        assert_eq!(parses() - before, 1, "{file}");
+        checked += 1;
+    }
+    assert!(checked >= 10, "{checked} corpus files checked");
+}

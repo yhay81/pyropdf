@@ -30,6 +30,8 @@ mod tests;
 use std::fmt;
 
 pub use bytes::Bytes;
+#[cfg(test)]
+pub(crate) use read::PARSES;
 pub(crate) use read::is_integer;
 
 /// A PDF value: an object, or an element of one.
