@@ -2,8 +2,9 @@
 
 Ported from pylopdf 036be111 ``tests/test_extraction_records.py`` and the
 record tests of ``tests/test_layout.py``, lines 61 to 320. ``to_dict``
-belongs to #100; the page content and links have their own tests; and the
-tests that draw with ``page.draw`` or OCR are not ported.
+has its tests in ``tests/test_layout_serializations.py``; the page content
+and links have their own tests; and the tests that draw with ``page.draw``
+or OCR are not ported.
 """
 
 from __future__ import annotations
