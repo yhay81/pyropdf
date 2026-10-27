@@ -19,7 +19,11 @@ mod source;
 mod windows_permissions;
 
 /// The extension module of pyropdf, which `python/pyropdf` imports.
-#[pymodule]
+///
+/// It runs without the GIL on free-threaded CPython: a document's state is
+/// behind its own locks, and reads work on immutable versions (DESIGN.md
+/// section 4.6; tests/test_threads.py).
+#[pymodule(gil_used = false)]
 mod _core {
     #[pymodule_export]
     use super::cancel::CancellationToken;
