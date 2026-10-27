@@ -129,6 +129,7 @@ def test_dict_reports_transformed_baseline_direction() -> None:
     page = pyropdf.open(pdf).pages[0]
     assert page.text() == "Vertical\n"
     assert [word.text for word in page.words()] == ["Vertical"]
+    assert len(page.search("Vertical")) == 1
 
     line = page.layout().to_dict()["blocks"][0]["lines"][0]
     direction_x, direction_y = line["dir"]
