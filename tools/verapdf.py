@@ -45,6 +45,10 @@ REJECTED: dict[str, str] = {
     for part in ("1b", "2b", "2u", "3b", "4")
     for edit in ("add", "write", "delete")
     for mode in ("full", "incremental")
+} | {
+    # Deleting the last attachment leaves an empty EmbeddedFiles tree.
+    f"arlington1.4 pdfa-1b-delete_attachment-{mode}.pdf": "#301"
+    for mode in ("full", "incremental")
 }
 
 
@@ -90,7 +94,8 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
     verdicts: dict[str, bool] = {}
     for line in result.stdout.splitlines():
         verdict, _, rest = line.partition(" ")
-        if verdict in {"PASS", "FAIL"}:
+        # The Arlington profiles report a deviation from the model as DEVIATION.
+        if verdict in {"PASS", "FAIL", "DEVIATION"}:
             verdicts[Path(rest.split(" ")[0]).name] = verdict == "PASS"
     missing = [path.name for path in paths if path.name not in verdicts]
     if missing:
