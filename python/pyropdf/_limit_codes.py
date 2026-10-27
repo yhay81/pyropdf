@@ -66,7 +66,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "content_stream_size": (
             "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them."
         ),
-        "content_input_size": "The content that `Operations.parse` reads is larger than the call's `max_size`.",
+        "content_input_size": (
+            "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an "
+            "assignment to `Page.operations` writes is larger than 64 MiB."
+        ),
         "content_element_count": (
             "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's "
             "`max_elements`."

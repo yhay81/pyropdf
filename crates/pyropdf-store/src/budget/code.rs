@@ -45,7 +45,8 @@ pub enum LimitCode {
     /// when `Page.operations` reads them.
     ContentStreamSize,
     /// The content that `Operations.parse` reads is larger than the call's
-    /// `max_size`.
+    /// `max_size`, or the content that an assignment to `Page.operations`
+    /// writes is larger than 64 MiB.
     ContentInputSize,
     /// `Page.content` reads more glyphs, path and clip segments, dash lengths,
     /// and items than the call's `max_elements`.

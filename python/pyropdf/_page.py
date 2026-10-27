@@ -3,21 +3,23 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
 from pyropdf._content import Content, _content_from_core
-from pyropdf._errors import StaleObjectError, StalePageError
+from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Rect
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
-from pyropdf._operations import Operations, _from_core
+from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyropdf._document import Document
+    from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
 
 #: Elements that one ``Page.content()`` reads by default (``content_element_count``).
@@ -257,6 +259,14 @@ class Page:
         that rendering interprets. Each operation keeps its bytes, so
         ``page.operations.to_bytes()`` is that content.
 
+        Assigning a sequence of :class:`Operation` and :class:`InlineImage`
+        values writes them as one new Flate-compressed content stream that
+        replaces ``/Contents``, in one transaction, so a stream that other
+        pages share stays theirs. Operations that a read produced write
+        their bytes back, so ``page.operations = page.operations`` keeps
+        what renders. More than 64 MiB of written content raises
+        :class:`LimitError` code ``content_input_size``.
+
         Reading refuses more than 1,048,576 operations
         (``content_operation_count``) and more than 64 MiB of joined content
         (``content_stream_size``), besides the decoding limits of
@@ -268,6 +278,25 @@ class Page:
         if raw is None:
             raise self._stale()
         return _from_core(raw)
+
+    @operations.setter
+    def operations(self, operations: Iterable[Operation | InlineImage]) -> None:
+        if not isinstance(operations, Operations):
+            if isinstance(operations, (str, bytes, bytearray, memoryview)) or not isinstance(operations, Iterable):
+                msg = f"assign a sequence of Operation and InlineImage values: {type(operations).__name__}"
+                raise TypeError(msg)
+            operations = Operations(operations)
+        data = operations.to_bytes()
+        if len(data) > _DEFAULT_MAX_CONTENT_SIZE:
+            code = "content_input_size"
+            msg = f"page content of {len(data)} bytes exceeds the {_DEFAULT_MAX_CONTENT_SIZE}-byte limit"
+            raise LimitError(code, msg)
+        document = self._document
+        with document.transaction():
+            # The page must still be a page when its content changes.
+            _ = self.index
+            number = document.objects.add_stream(data)
+            self.obj["Contents"] = document.objects[number]
 
     def _geometry(self) -> tuple[int, float, float]:
         """Return the rotation, width, and height, or raise for a deleted page."""
