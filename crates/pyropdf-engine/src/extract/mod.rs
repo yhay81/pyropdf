@@ -18,9 +18,9 @@ use pyropdf_store::budget::Budget;
 use crate::bridge::Bridged;
 
 mod model;
-mod text;
 #[cfg(test)]
 mod tests;
+mod text;
 
 pub use model::{
     BBox, ClipTuple, ContentItem, ContentSink, FontTuple, GlyphStyle, GlyphsTuple, GroupTuple,

@@ -179,8 +179,7 @@ fn text_charges_its_glyphs_and_text_and_a_refusal_keeps_nothing() {
     for (code, limit) in [(LimitCode::TextGlyphCount, 7), (LimitCode::TextSize, 8)] {
         let budget = Budget::default().with_limit(code, Some(limit));
         let mut out = String::from("before ");
-        let Err(Error::Limit(refusal)) = page_text(&bridged, 0, &options, &budget, &mut out)
-        else {
+        let Err(Error::Limit(refusal)) = page_text(&bridged, 0, &options, &budget, &mut out) else {
             panic!("{limit} should not hold the text");
         };
         assert_eq!(refusal.code(), code);

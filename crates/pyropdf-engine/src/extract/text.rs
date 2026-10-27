@@ -10,16 +10,15 @@
 
 use std::collections::HashMap;
 
+use hayro::hayro_interpret::DrawMode;
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
-use hayro::hayro_interpret::DrawMode;
 use hayro::kurbo::{Affine, BezPath, Point, Rect};
 use pyropdf_store::budget::{Budget, LimitCode};
 use unicode_bidi::{BidiClass, bidi_class};
 
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;
-
 
 /// The line metrics of a font, which box its glyphs.
 #[derive(Clone, Copy)]
@@ -144,9 +143,9 @@ impl GlyphText {
             return Ok(Self::Char(ch));
         }
         let mut owned = String::new();
-        owned.try_reserve_exact(text.len()).map_err(|error| {
-            Error::Allocation(format!("failed to copy glyph text: {error}"))
-        })?;
+        owned
+            .try_reserve_exact(text.len())
+            .map_err(|error| Error::Allocation(format!("failed to copy glyph text: {error}")))?;
         owned.push_str(text);
         Ok(Self::Heap(owned.into_boxed_str()))
     }
@@ -306,9 +305,9 @@ struct GlyphRecord {
 
 fn try_push_text<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
     if values.len() == values.capacity() {
-        values.try_reserve(1).map_err(|error| {
-            Error::Allocation(format!("failed to grow {label}: {error}"))
-        })?;
+        values
+            .try_reserve(1)
+            .map_err(|error| Error::Allocation(format!("failed to grow {label}: {error}")))?;
     }
     values.push(value);
     Ok(())
@@ -322,16 +321,12 @@ fn try_push_str_text(value: &mut String, text: &str, label: &str) -> Result<(), 
     Ok(())
 }
 
-fn try_push_glyph_text(
-    value: &mut String,
-    text: &GlyphText,
-    label: &str,
-) -> Result<(), Error> {
+fn try_push_glyph_text(value: &mut String, text: &GlyphText, label: &str) -> Result<(), Error> {
     match text {
         GlyphText::Char(c) => {
-            value.try_reserve(c.len_utf8()).map_err(|error| {
-                Error::Allocation(format!("failed to grow {label}: {error}"))
-            })?;
+            value
+                .try_reserve(c.len_utf8())
+                .map_err(|error| Error::Allocation(format!("failed to grow {label}: {error}")))?;
             value.push(*c);
             Ok(())
         }
@@ -1241,9 +1236,7 @@ fn materialize_lines(
 }
 
 /// Split one owned physical line without cloning its glyph strings or metadata.
-fn split_line_segments_owned(
-    line: Vec<GlyphRecord>,
-) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+fn split_line_segments_owned(line: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     let mut segments: Vec<Vec<GlyphRecord>> = Vec::new();
     let mut previous_end: Option<f64> = None;
     let mut previous_size = 0.0_f64;
@@ -1284,9 +1277,7 @@ fn line_segment_count(line: &[GlyphRecord]) -> usize {
 }
 
 /// Split baseline bands only when a sustained page-level column gutter exists.
-fn order_page_lines(
-    clustered: Vec<Vec<GlyphRecord>>,
-) -> Result<Vec<Vec<GlyphRecord>>, Error> {
+fn order_page_lines(clustered: Vec<Vec<GlyphRecord>>) -> Result<Vec<Vec<GlyphRecord>>, Error> {
     if let Some(orientation) = uniform_axis_orientation(&clustered) {
         return order_axis_page_lines(clustered, orientation);
     }
@@ -2059,10 +2050,7 @@ fn bisected_band_segment_median(
     Ok(Some(band_counts[band_counts.len() / 2]))
 }
 
-fn valid_geometry_column_split(
-    lines: &[LineGeometry],
-    boundary: f64,
-) -> Result<bool, Error> {
+fn valid_geometry_column_split(lines: &[LineGeometry], boundary: f64) -> Result<bool, Error> {
     let Some((left_y0, left_y1, left_count)) = geometry_side_extent(lines, boundary, true) else {
         return Ok(false);
     };
@@ -2200,8 +2188,15 @@ pub fn page_text(
         options: *options,
         page_box,
     };
-    let (_, mut collector) =
-        super::page_content_into(bridged, index, collector, ItemKinds::NONE, true, None, budget)?;
+    let (_, mut collector) = super::page_content_into(
+        bridged,
+        index,
+        collector,
+        ItemKinds::NONE,
+        true,
+        None,
+        budget,
+    )?;
     let glyph_count = collector.glyphs.len();
     let text_size = collector.text_size;
     let release = || {
@@ -2700,7 +2695,6 @@ fn assemble_text<L: AsRef<[GlyphRecord]>>(
     }
     Ok(out)
 }
-
 
 /// One glyph bbox from its advance and the font's ascender and descender,
 /// which reading order uses whatever the box options.

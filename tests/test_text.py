@@ -191,7 +191,9 @@ def test_the_glyph_budget_counts_the_glyphs_of_one_page() -> None:
     assert error.value.code == "text_glyph_count"
     assert page.text(max_glyphs=None) == "Seen\n"
     # Each page of a document's text has the whole glyph budget.
-    document = pyropdf.open(build_text_pdf("BT /F1 20 Tf 72 700 Td (Seen) Tj ET", "BT /F1 20 Tf 72 700 Td (Also) Tj ET"))
+    document = pyropdf.open(
+        build_text_pdf("BT /F1 20 Tf 72 700 Td (Seen) Tj ET", "BT /F1 20 Tf 72 700 Td (Also) Tj ET")
+    )
     assert document.text(max_glyphs=4) == "Seen\nAlso\n"
 
 
