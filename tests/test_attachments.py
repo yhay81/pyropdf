@@ -72,6 +72,7 @@ def _compressed_attachment_pdf(
     )
 
 
+@pytest.mark.spec("embedded-files", "read", "create")
 def test_attachment_add_get_roundtrip() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     payload = b"\x00\x01binary\xff\xfe" * 100
@@ -114,6 +115,7 @@ def test_attachment_add_rejects_non_positive_size_limits(max_size: int) -> None:
         doc.attachments.add("x", b"x", max_size=max_size)
 
 
+@pytest.mark.spec("embedded-files", "preserve")
 def test_attachment_survives_compressed_and_garbage_save() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     payload = b"repetitive " * 1000
@@ -123,6 +125,7 @@ def test_attachment_survives_compressed_and_garbage_save() -> None:
     assert reopened.attachments["data.txt"].read() == payload
 
 
+@pytest.mark.spec("name-trees", "read", "create")
 def test_attachment_multiple_names_sorted() -> None:
     doc = pyropdf.Document()
     doc.pages.new()
@@ -133,6 +136,7 @@ def test_attachment_multiple_names_sorted() -> None:
     assert doc.attachments["b.txt"].read() == b"B"
 
 
+@pytest.mark.spec("file-specifications", "read")
 def test_inline_filespec_reads_do_not_mutate_document() -> None:
     """Read a valid inline FileSpec without creating orphan objects."""
     pdf = build_raw_pdf(
@@ -161,6 +165,7 @@ def test_inline_filespec_reads_do_not_mutate_document() -> None:
     assert list(doc.attachments) == ["y.txt"]
 
 
+@pytest.mark.spec("name-trees", "edit")
 def test_attachment_del_removes() -> None:
     doc = pyropdf.Document()
     doc.pages.new()
@@ -249,6 +254,7 @@ def test_attachment_get_rejects_non_positive_size_limits(max_size: int) -> None:
         doc.attachments["x"].read(max_size=max_size)
 
 
+@pytest.mark.spec("name-dictionary", "read")
 def test_attachment_name_tree_reference_cycle_is_visited_once() -> None:
     pdf = build_raw_pdf(
         {
@@ -424,6 +430,7 @@ def test_attachment_handles_report_pymupdf_metadata() -> None:
     assert repr(doc.attachments) == "Attachments(['data'])"
 
 
+@pytest.mark.spec("file-specifications", "create")
 def test_added_attachments_report_their_metadata() -> None:
     doc = pyropdf.Document()
     doc.pages.new()
@@ -439,6 +446,7 @@ def test_added_attachments_report_their_metadata() -> None:
         doc.attachments.add(name="c.txt", data=b"")  # ty: ignore[positional-only-parameter-as-kwarg]
 
 
+@pytest.mark.spec("embedded-files", "edit")
 def test_attachment_write_replaces_the_data_and_keeps_the_metadata() -> None:
     doc = pyropdf.open(_described_pdf())
     attachment = doc.attachments["data"]
@@ -457,6 +465,7 @@ def test_attachment_write_replaces_the_data_and_keeps_the_metadata() -> None:
     assert b"CheckSum" not in doc.to_bytes()
 
 
+@pytest.mark.spec("file-specifications", "edit")
 def test_attachment_write_updates_an_inline_file_specification() -> None:
     pdf = build_raw_pdf(
         {

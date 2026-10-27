@@ -93,6 +93,7 @@ def _joined_content(page: pyropdf.Page) -> bytes:
 
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
+@pytest.mark.spec("content-streams", "read", "preserve")
 def test_every_corpus_content_stream_round_trips(path: Path) -> None:
     doc = pyropdf.open(path)
     streams = _content_streams(doc)
@@ -138,6 +139,7 @@ def test_comments_and_white_space_stay_with_the_operation_that_follows() -> None
     assert Operations([operations[0], operations[2]], tail=operations.tail).to_bytes() == b"% header\nq\n\nQ\n% end\n"
 
 
+@pytest.mark.spec("inline-images", "read", "preserve")
 def test_inline_images_keep_their_dictionary_and_data() -> None:
     data = bytes(range(256))[:12]
     content = b"q 12 0 0 1 0 0 cm BI /W 4 /H 1 /BPC 8 /CS /RGB ID " + data + b" EI Q"
@@ -151,6 +153,7 @@ def test_inline_images_keep_their_dictionary_and_data() -> None:
     assert operations.to_bytes() == content
 
 
+@pytest.mark.spec("inline-images", "read")
 def test_filtered_inline_images_are_read() -> None:
     # lopdf's strict parse refuses filtered inline images; hayro reads them.
     encoded = b'8;Z]"!!~>'
@@ -397,6 +400,7 @@ def test_writing_back_every_corpus_page_keeps_its_pixels(path: Path) -> None:
     assert [bytes(reopened.pages[at].pixmap(dpi=36)) for at in pages] == before
 
 
+@pytest.mark.spec("content-streams", "edit")
 def test_assigning_operations_edits_the_page() -> None:
     doc = pyropdf.open(_page(b"BT /F1 12 Tf 20 250 Td (Keep) Tj 0 -20 Td (Drop) Tj ET", filtered=True))
     page = doc.pages[0]
@@ -409,6 +413,7 @@ def test_assigning_operations_edits_the_page() -> None:
     assert list(pyropdf.open(doc.to_bytes()).pages[0].operations) == kept
 
 
+@pytest.mark.spec("content-streams", "create")
 def test_new_operations_draw_on_the_page() -> None:
     doc = pyropdf.open(_page(b""))
     page = doc.pages[0]

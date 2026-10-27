@@ -61,6 +61,7 @@ def test_the_catalog_and_its_page_tree_read_as_declared() -> None:
     assert catalog.obj == doc.catalog
 
 
+@pytest.mark.spec("page-objects", "read")
 def test_a_page_its_font_and_its_annotations_read_as_declared() -> None:
     doc = pyropdf.open(ASSETS / "pdfium-links-highlights-annots.pdf")
     page = typed.PageObject(doc.pages[0].obj)

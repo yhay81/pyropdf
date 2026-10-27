@@ -110,6 +110,7 @@ def test_values_map_to_python_types() -> None:
     assert len(values) == 11
 
 
+@pytest.mark.spec("document-catalog", "read")
 def test_trailer_catalog_and_page_objects() -> None:
     doc = _two_pages()
 
@@ -290,6 +291,7 @@ def test_direct_handles_are_copied() -> None:
     assert list(doc.pages[0].obj["MediaBox"]) == [0, 0, 300, 792]
 
 
+@pytest.mark.spec("basic-objects", "read", "edit")
 def test_scalar_objects_read_as_values_and_can_be_replaced() -> None:
     doc = pyropdf.Document()
     xref = doc.objects.add(42)
@@ -301,6 +303,7 @@ def test_scalar_objects_read_as_values_and_can_be_replaced() -> None:
         doc.objects[10_000] = 1
 
 
+@pytest.mark.spec("text-strings", "read", "create")
 def test_text_strings() -> None:
     doc = pyropdf.Document()
     doc.trailer["Info"] = {"Title": "日本語のタイトル", "Author": "ASCII", "Raw": b"\x00\xff"}
@@ -316,6 +319,7 @@ def test_text_strings() -> None:
     assert String(b"caf\xe9").text == "café"
 
 
+@pytest.mark.spec("basic-objects", "create")
 def test_names_round_trip_and_reject_a_leading_slash() -> None:
     doc = pyropdf.Document()
     xref = doc.objects.add([Name("A#B"), Name("日本"), Name("a\udcff")])
@@ -477,6 +481,7 @@ def test_objects_are_readable_after_unlocking() -> None:
     assert encrypted.catalog["Pages"]["Count"] == 2
 
 
+@pytest.mark.spec("lexical-conventions", "read")
 def test_real_world_object_graph_reads() -> None:
     doc = pyropdf.open(REAL_WORLD / "f1040.pdf")
     fonts = 0
