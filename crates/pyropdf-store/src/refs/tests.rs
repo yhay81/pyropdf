@@ -681,3 +681,287 @@ fn unreferenced_frees_a_candidate_with_what_refers_only_to_it() {
     let freed = unreferenced(&index, &[], &[3, 5], &budget).unwrap();
     assert_eq!(&*freed, &[2, 3, 6]);
 }
+
+/// One element of a generated tagged document: the position of its
+/// parent among the elements before it (none for the root), its page, its
+/// content, and the element that its `/Ref` names.
+#[derive(Clone, Debug)]
+struct Element {
+    parent: Option<usize>,
+    page: Option<usize>,
+    content: Vec<Content>,
+    refers: Option<usize>,
+}
+
+/// A content item of a generated element: a marked-content identifier on
+/// its page, a marked-content reference to a page, or an object reference
+/// to an annotation.
+#[derive(Clone, Debug)]
+enum Content {
+    Mcid,
+    Mcr(usize),
+    Objr(usize),
+}
+
+fn content() -> impl Strategy<Value = Content> {
+    prop_oneof![
+        Just(Content::Mcid),
+        (0..8usize).prop_map(Content::Mcr),
+        (0..8usize).prop_map(Content::Objr),
+    ]
+}
+
+fn elements() -> impl Strategy<Value = Vec<Element>> {
+    proptest::collection::vec(
+        (
+            proptest::option::of(0..16usize),
+            proptest::option::of(0..8usize),
+            proptest::collection::vec(content(), 0..3),
+            proptest::option::of(0..16usize),
+        ),
+        1..12,
+    )
+    .prop_map(|raw| {
+        raw.into_iter()
+            .enumerate()
+            .map(|(at, (parent, page, content, refers))| Element {
+                parent: parent.filter(|_| at > 0).map(|parent| parent % at),
+                page,
+                content,
+                refers,
+            })
+            .collect()
+    })
+}
+
+/// Returns a tagged document of `pages` pages, the annotations whose pages
+/// `annotations` gives, and `elements`, with each element's `/P` naming
+/// the parent whose `/K` holds it. Pages are objects 10 and on,
+/// annotations 30 and on, elements 50 and on. The parent tree lists the
+/// annotations that an element holds, and is one dictionary, or when
+/// `leaf` is given, object 69 whose kids are leaves of `leaf` pairs at
+/// most, objects 70 and on.
+fn tagged_of(
+    pages: usize,
+    annotations: &[usize],
+    elements: &[Element],
+    leaf: Option<usize>,
+) -> Document {
+    let page = |at: usize| u32::try_from(10 + at % pages).unwrap();
+    let annotation = |at: usize| u32::try_from(30 + at % annotations.len()).unwrap();
+    let element = |at: usize| u32::try_from(50 + at).unwrap();
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![
+                ("Type", name("Catalog")),
+                ("Pages", reference(2)),
+                ("StructTreeRoot", reference(3)),
+            ]),
+        ),
+        (
+            2,
+            dict(vec![
+                ("Type", name("Pages")),
+                (
+                    "Kids",
+                    array((0..pages).map(|at| reference(page(at))).collect()),
+                ),
+                ("Count", Value::Integer(i64::try_from(pages).unwrap())),
+            ]),
+        ),
+    ];
+    let mut kids = vec![Vec::new(); elements.len()];
+    let mut top = Vec::new();
+    let mut on_page = vec![Vec::new(); pages];
+    let mut holder = vec![None; annotations.len()];
+    let mut mcid = 0;
+    for (at, spec) in elements.iter().enumerate() {
+        match spec.parent {
+            Some(parent) => kids[parent].push(reference(element(at))),
+            None => top.push(reference(element(at))),
+        }
+        for item in &spec.content {
+            mcid += 1;
+            let item = match item {
+                Content::Mcid => Value::Integer(mcid),
+                Content::Mcr(target) => {
+                    on_page[*target % pages].push(reference(element(at)));
+                    dict(vec![
+                        ("Type", name("MCR")),
+                        ("Pg", reference(page(*target))),
+                        ("MCID", Value::Integer(mcid)),
+                    ])
+                }
+                Content::Objr(_) if annotations.is_empty() => continue,
+                Content::Objr(target) => {
+                    holder[*target % annotations.len()] = Some(element(at));
+                    dict(vec![
+                        ("Type", name("OBJR")),
+                        ("Obj", reference(annotation(*target))),
+                    ])
+                }
+            };
+            kids[at].push(item);
+        }
+        if let Some(target) = spec.page
+            && spec
+                .content
+                .iter()
+                .any(|item| matches!(item, Content::Mcid))
+        {
+            on_page[target % pages].push(reference(element(at)));
+        }
+    }
+    for at in 0..pages {
+        let listed: Vec<Value> = (0..annotations.len())
+            .filter(|&listed| annotations[listed] % pages == at)
+            .map(|listed| reference(annotation(listed)))
+            .collect();
+        let mut entries = vec![
+            ("Type", name("Page")),
+            ("Parent", reference(2)),
+            ("StructParents", Value::Integer(i64::try_from(at).unwrap())),
+        ];
+        if !listed.is_empty() {
+            entries.push(("Annots", array(listed)));
+        }
+        objects.push((page(at), dict(entries)));
+    }
+    let mut pairs = Vec::new();
+    for (at, elements) in on_page.into_iter().enumerate() {
+        pairs.push((i64::try_from(at).unwrap(), array(elements)));
+    }
+    for (at, holder) in holder.into_iter().enumerate() {
+        if let Some(holder) = holder {
+            pairs.push((i64::try_from(100 + at).unwrap(), reference(holder)));
+        }
+    }
+    let nums = |pairs: &[(i64, Value)]| {
+        array(
+            pairs
+                .iter()
+                .flat_map(|(key, value)| [Value::Integer(*key), value.clone()])
+                .collect(),
+        )
+    };
+    let parent_tree = match leaf {
+        None => dict(vec![("Nums", nums(&pairs))]),
+        Some(leaf) => {
+            let mut kids = Vec::new();
+            for (at, chunk) in pairs.chunks(leaf).enumerate() {
+                let number = 70 + u32::try_from(at).unwrap();
+                let limits = vec![
+                    Value::Integer(chunk[0].0),
+                    Value::Integer(chunk[chunk.len() - 1].0),
+                ];
+                objects.push((
+                    number,
+                    dict(vec![("Limits", array(limits)), ("Nums", nums(chunk))]),
+                ));
+                kids.push(reference(number));
+            }
+            objects.push((69, dict(vec![("Kids", array(kids))])));
+            reference(69)
+        }
+    };
+    for (at, &on) in annotations.iter().enumerate() {
+        objects.push((
+            annotation(at),
+            dict(vec![
+                ("Type", name("Annot")),
+                ("Subtype", name("Square")),
+                ("P", reference(page(on))),
+                (
+                    "StructParent",
+                    Value::Integer(i64::try_from(100 + at).unwrap()),
+                ),
+            ]),
+        ));
+    }
+    objects.push((
+        3,
+        dict(vec![
+            ("Type", name("StructTreeRoot")),
+            ("K", array(top)),
+            ("ParentTree", parent_tree),
+        ]),
+    ));
+    for (at, (spec, kids)) in elements.iter().zip(kids).enumerate() {
+        let parent = spec.parent.map_or(3, element);
+        let mut entries = vec![
+            ("Type", name("StructElem")),
+            ("S", name("P")),
+            ("P", reference(parent)),
+            ("K", array(kids)),
+        ];
+        if let Some(target) = spec.page {
+            entries.push(("Pg", reference(page(target))));
+        }
+        if let Some(target) = spec.refers {
+            entries.push((
+                "Ref",
+                array(vec![reference(element(target % elements.len()))]),
+            ));
+        }
+        objects.push((element(at), dict(entries)));
+    }
+    let Value::Dict(trailer) = dict(vec![("Root", reference(1))]) else {
+        unreachable!()
+    };
+    document_of(&objects, trailer)
+}
+
+/// Plans the rules for removing the pages `removed` of `document` with the
+/// structure rules of `reach`, and returns the reach that planned them,
+/// the values of the objects that the edits leave, and the orphans.
+fn planned_with(
+    document: &Document,
+    removed: &[u32],
+    retained: &[u32],
+    reach: structure::Reach,
+) -> (structure::Reach, Vec<Option<Value>>, Vec<u32>) {
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    navigation::plan(&mut reads, &index, removed, retained, &mut edits).unwrap();
+    let used = structure::plan(&mut reads, &index, removed, retained, &mut edits, reach).unwrap();
+    let orphans = edits.orphans().to_vec();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let after = transaction.snapshot();
+    let values = (1..80)
+        .map(|number| {
+            after
+                .get(number, &budget)
+                .unwrap()
+                .map(|object| (**object.value()).clone())
+        })
+        .collect();
+    (used, values, orphans)
+}
+
+proptest! {
+    #[test]
+    fn the_affected_walk_plans_what_the_whole_walk_plans(
+        pages in 1..5usize,
+        annotations in proptest::collection::vec(0..8usize, 0..4),
+        elements in elements(),
+        removed in proptest::collection::vec(any::<bool>(), 4),
+        leaf in proptest::option::of(1..4usize),
+    ) {
+        let document = tagged_of(pages, &annotations, &elements, leaf);
+        let page = |at: usize| u32::try_from(10 + at).unwrap();
+        // The first page leaves when no other does.
+        let leaves = |at: usize| removed[at] || (at == 0 && !removed[..pages].contains(&true));
+        let removed_pages: Vec<u32> = (0..pages).filter(|&at| leaves(at)).map(page).collect();
+        let retained: Vec<u32> = (0..pages).filter(|&at| !leaves(at)).map(page).collect();
+        let affected = planned_with(&document, &removed_pages, &retained, structure::Reach::Affected);
+        let whole = planned_with(&document, &removed_pages, &retained, structure::Reach::Whole);
+        prop_assert_eq!(affected.0, structure::Reach::Affected);
+        prop_assert_eq!(&affected.1, &whole.1);
+        prop_assert_eq!(&affected.2, &whole.2);
+    }
+}
