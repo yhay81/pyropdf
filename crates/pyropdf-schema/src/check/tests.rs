@@ -207,3 +207,85 @@ fn a_cycle_is_visited_once_and_a_deep_chain_meets_the_budget() {
     assert!(check(&deep).is_err());
     assert_eq!(deep.visits.get(), 101);
 }
+
+fn invariants(objects: Vec<V>) -> Vec<(Option<u32>, String, String)> {
+    let report = check(&doc(objects)).unwrap();
+    report
+        .defects
+        .into_iter()
+        .filter(|defect| defect.kind == DefectKind::Invariant)
+        .map(|defect| (defect.object, defect.path, defect.clause))
+        .collect()
+}
+
+#[test]
+fn a_page_count_that_differs_from_the_kids_is_found() {
+    let mut objects = valid();
+    objects[2] = V::Dict(vec![
+        ("Type", V::Name("Pages")),
+        ("Kids", V::Array(vec![V::Ref(3)])),
+        ("Count", V::Int(2)),
+    ]);
+    assert_eq!(
+        invariants(objects),
+        vec![(Some(2), "Count".into(), "PageTreeNode/Count".into())]
+    );
+    assert_eq!(invariants(valid()), vec![]);
+}
+
+#[test]
+fn a_kid_whose_parent_is_another_object_is_found() {
+    let mut objects = valid();
+    let V::Dict(entries) = &mut objects[3] else {
+        unreachable!()
+    };
+    entries[1].1 = V::Ref(1);
+    assert_eq!(
+        invariants(objects),
+        vec![(Some(3), "Parent".into(), "PageTreeNode/Kids".into())]
+    );
+}
+
+#[test]
+fn tree_keys_out_of_order_and_wrong_limits_are_found() {
+    let label = || V::Dict(vec![("S", V::Name("D"))]);
+    let mut objects = valid();
+    objects[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "PageLabels",
+            V::Dict(vec![
+                (
+                    "Nums",
+                    V::Array(vec![
+                        V::Int(0),
+                        label(),
+                        V::Int(4),
+                        label(),
+                        V::Int(2),
+                        label(),
+                    ]),
+                ),
+                ("Limits", V::Array(vec![V::Int(0), V::Int(4)])),
+            ]),
+        ),
+    ]);
+    let found = invariants(objects);
+    assert!(
+        found.contains(&(
+            Some(1),
+            "PageLabels/Nums/4".into(),
+            "NumberTree/Nums".into()
+        )),
+        "{found:?}"
+    );
+    assert!(
+        found.contains(&(
+            Some(1),
+            "PageLabels/Limits".into(),
+            "NumberTree/Limits".into()
+        )),
+        "{found:?}"
+    );
+}

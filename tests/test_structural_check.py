@@ -115,8 +115,13 @@ def test_the_check_holds_a_file_to_its_declared_version() -> None:
 def test_a_cyclic_page_tree_is_walked_once() -> None:
     report = pyropdf.open(BROKEN / "cycle.pdf").check()
     assert report.objects <= 4
-    # The root reached again as a kid lacks the /Parent a kid needs.
-    assert [(d.xref, d.clause) for d in report.defects] == [(2, "PageTreeNode/Parent")]
+    # The root reached again as a kid lacks the /Parent a kid needs, and it
+    # counts its own page twice.
+    assert sorted((d.xref, d.clause) for d in report.defects) == [
+        (2, "PageTreeNode/Count"),
+        (2, "PageTreeNode/Kids"),
+        (2, "PageTreeNode/Parent"),
+    ]
 
 
 def test_a_deep_page_tree_is_walked_without_recursion() -> None:
