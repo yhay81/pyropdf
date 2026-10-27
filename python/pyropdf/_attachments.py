@@ -24,8 +24,6 @@ _MAX_INPUT_TEXT_SIZE = 1024 * 1024
 _MAX_TREE_DEPTH = 32
 _MAX_TREE_ENTRIES = 4096
 _MAX_INLINE_OBJECTS = 4096
-# Stream.read does not count filters yet (#228).
-_MAX_FILTERS = 16
 #: The longest date string that a file's ``created`` and ``modified`` take.
 _MAX_DATE_SIZE = 64
 
@@ -225,10 +223,6 @@ class Attachment:
         if filters is not None and not isinstance(filters, Name | Array):
             msg = f"the attachment {self._name!r} has an invalid Filter"
             raise PdfError(msg)
-        if isinstance(filters, Array) and len(filters) > _MAX_FILTERS:
-            code = "stream_filter_count"
-            msg = f"the attachment {self._name!r} chains {len(filters)} filters, more than the {_MAX_FILTERS} allowed"
-            raise LimitError(code, msg)
         try:
             return stream.read(max_size=max_size)
         except LimitError as error:
