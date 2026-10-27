@@ -2236,9 +2236,20 @@ fn order_columns(
     Ok(top)
 }
 
+/// The most of the budget that reading one page's text held at once: its
+/// glyphs against `text_glyph_count`, and UTF-8 against `text_size`. A
+/// later call whose limits these fit reads the same page without refusal,
+/// so a memoized result can stand in for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextPeak {
+    pub glyphs: u64,
+    pub size: u64,
+}
+
 /// Appends the text of page `index`, counted from 0, to `out` in reading
 /// order, as pylopdf's `TextPage::text` assembles it, and returns the number
-/// of glyphs without a Unicode mapping that [`Unmapped::Skip`] left out.
+/// of glyphs without a Unicode mapping that [`Unmapped::Skip`] left out, and
+/// the most of the budget that the page held.
 ///
 /// The page's glyphs count against `text_glyph_count` while it is read, and
 /// its glyph text and then its assembled text against `text_size`, which
@@ -2250,7 +2261,7 @@ pub fn page_text(
     options: &TextOptions,
     budget: &Budget,
     out: &mut String,
-) -> Result<usize, Error> {
+) -> Result<(usize, TextPeak), Error> {
     let viewed = viewed_page_lines(bridged, index, options, budget)?;
     // The glyphs and their text give way to the text assembled from them.
     viewed.charge.release(budget);
@@ -2269,7 +2280,11 @@ pub fn page_text(
         budget.release(LimitCode::TextSize, as_u64(size));
         return Err(error);
     }
-    Ok(viewed.skipped)
+    let peak = TextPeak {
+        glyphs: as_u64(viewed.charge.glyphs),
+        size: as_u64(viewed.charge.text_size.max(size)),
+    };
+    Ok((viewed.skipped, peak))
 }
 
 /// What a page's glyphs hold of the budget: their count against

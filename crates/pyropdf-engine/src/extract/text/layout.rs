@@ -15,8 +15,9 @@ use hayro::kurbo::{Affine, BezPath, PathSeg};
 use pyropdf_store::budget::{Budget, LimitCode};
 
 use super::{
-    BBox, Error, GlyphRecord, TextOptions, as_u64, glyph_bbox, glyph_is_nonspacing_mark, needs_gap,
-    starts_block, try_push_glyph_text, try_push_str_text, try_push_text, viewed_page_lines,
+    BBox, Error, GlyphRecord, TextOptions, TextPeak, as_u64, glyph_bbox, glyph_is_nonspacing_mark,
+    needs_gap, starts_block, try_push_glyph_text, try_push_str_text, try_push_text,
+    viewed_page_lines,
 };
 use crate::bridge::Bridged;
 
@@ -63,6 +64,7 @@ pub type LineTuple = (
 pub type BlockTuple = (BBox, Vec<LineTuple>);
 
 /// The layout of one page's text.
+#[derive(Clone)]
 pub struct PageLayout {
     /// The size of the page in display space, which every box is in.
     pub width: f64,
@@ -70,6 +72,9 @@ pub struct PageLayout {
     pub blocks: Vec<BlockTuple>,
     /// The glyphs without Unicode that [`super::Unmapped::Skip`] left out.
     pub skipped: usize,
+    /// The most of the budget that the page held: its glyphs, and their
+    /// text together with the layout's strings.
+    pub peak: TextPeak,
 }
 
 /// Returns the layout of the page at `index`, each span with its characters
@@ -94,11 +99,16 @@ pub fn page_layout(
     // The glyphs give way to the layout built from them.
     viewed.charge.release(budget);
     let blocks = blocks.inspect_err(|_| meter.release())?;
+    let peak = TextPeak {
+        glyphs: as_u64(viewed.charge.glyphs),
+        size: as_u64(viewed.charge.text_size.saturating_add(meter.charged)),
+    };
     Ok(PageLayout {
         width: viewed.page_box.width(),
         height: viewed.page_box.height(),
         blocks,
         skipped: viewed.skipped,
+        peak,
     })
 }
 

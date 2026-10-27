@@ -18,6 +18,7 @@ use pyropdf_store::budget::Budget;
 use crate::bridge::Bridged;
 
 mod model;
+mod reads;
 #[cfg(test)]
 mod tests;
 mod text;
@@ -28,9 +29,10 @@ pub use model::{
     PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE, SoftMaskTuple,
     StateTuple, StrokeTuple, TextRunTuple,
 };
+pub use reads::read_page;
 pub use text::{
     BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SpanStyleTuple, SpanTuple,
-    TextOptions, Unmapped, WordTuple, page_layout, page_text,
+    TextOptions, TextPeak, Unmapped, WordTuple, page_layout, page_text,
 };
 
 /// Why reading a page's content stopped.
