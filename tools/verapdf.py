@@ -38,7 +38,14 @@ FIXTURES: dict[Path, str] = {
 }
 
 #: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
-REJECTED: dict[str, str] = {}
+REJECTED: dict[str, str] = {
+    # PDF/A restricts embedded files, and attachment edits do not yet keep or
+    # report the claim.
+    f"{part} pdfa-{part}-{edit}_attachment-{mode}.pdf": "#301"
+    for part in ("1b", "2b", "2u", "3b", "4")
+    for edit in ("add", "write", "delete")
+    for mode in ("full", "incremental")
+}
 
 
 def saves(directory: Path) -> dict[Path, str]:
