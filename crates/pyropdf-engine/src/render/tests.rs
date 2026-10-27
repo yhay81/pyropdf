@@ -41,8 +41,11 @@ fn corpus_pages_raster_at_1x_as_pylopdf_renders_the_original() {
                 let original = Arc::new(Bridged::of_bytes(bytes));
                 for at in 0..pages.len() {
                     for alpha in [false, true] {
-                        let ours = raster(&bridged, at, (1.0, 0.0, 0.0, 1.0), alpha).unwrap();
-                        let theirs = raster(&original, at, (1.0, 0.0, 0.0, 1.0), alpha).unwrap();
+                        let ours = raster(&bridged, at, &Options::new((1.0, 0.0, 0.0, 1.0), alpha))
+                            .unwrap();
+                        let theirs =
+                            raster(&original, at, &Options::new((1.0, 0.0, 0.0, 1.0), alpha))
+                                .unwrap();
                         assert!(ours == theirs, "{} page {at} alpha={alpha}", path.display());
                         assert_eq!(ours.resolution, (72, 72));
                         assert_eq!(
@@ -84,12 +87,12 @@ fn a_shared_render_cache_renders_as_a_fresh_one() {
                 let identity = (0.5, 0.0, 0.0, 0.5);
                 // Every page in turn through one cache, which earlier pages filled.
                 let cached: Vec<_> = (0..pages)
-                    .map(|at| raster(&shared, at, identity, true).unwrap())
+                    .map(|at| raster(&shared, at, &Options::new(identity, true)).unwrap())
                     .collect();
                 for (at, cached) in cached.iter().enumerate() {
                     // Rendering another bridge first makes this one start a new cache.
-                    raster(&other, 0, identity, true).unwrap();
-                    let fresh = raster(&shared, at, identity, true).unwrap();
+                    raster(&other, 0, &Options::new(identity, true)).unwrap();
+                    let fresh = raster(&shared, at, &Options::new(identity, true)).unwrap();
                     assert!(*cached == fresh, "{} page {at}", path.display());
                 }
             });

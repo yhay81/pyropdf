@@ -3,6 +3,8 @@
 from os import PathLike
 from typing import Any, TypeAlias, final
 
+from pyropdf._pixmap import Colorspace
+
 __version__: str
 
 class PdfError(Exception): ...
@@ -51,6 +53,8 @@ class Pixmap:
     @property
     def alpha(self) -> bool: ...
     @property
+    def colorspace(self) -> Colorspace: ...
+    @property
     def stride(self) -> int: ...
     @property
     def resolution(self) -> tuple[int, int]: ...
@@ -59,7 +63,16 @@ class Pixmap:
     def __buffer__(self, flags: int, /) -> memoryview: ...
 
 def render_page(
-    document: _Document, number: int, generation: int, matrix: tuple[float, float, float, float], alpha: bool, /
+    document: _Document,
+    number: int,
+    generation: int,
+    matrix: tuple[float, float, float, float],
+    alpha: bool,
+    gray: bool,
+    background: tuple[int, int, int, int],
+    clip: tuple[float, float, float, float] | None,
+    annotations: bool,
+    /,
 ) -> Pixmap: ...
 def web_limits() -> dict[str, Any]: ...
 def probe(

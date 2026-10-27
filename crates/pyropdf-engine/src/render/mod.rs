@@ -69,7 +69,7 @@ pub const MAX_PIXELS: u64 = 64_000_000;
 const EDGE_TOLERANCE: f64 = 0.001;
 
 /// A rendered page as pylopdf's `Pixmap` holds it: straight-alpha RGBA, or
-/// RGB on white without alpha, row by row from the top.
+/// RGB without alpha, or their gray counterparts, row by row from the top.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Raster {
     /// The width in pixels.
@@ -78,10 +78,46 @@ pub struct Raster {
     pub height: u16,
     /// Whether each pixel ends with an alpha byte.
     pub alpha: bool,
-    /// Three or four bytes per pixel.
+    /// Whether each pixel holds one gray byte instead of three color bytes.
+    pub gray: bool,
+    /// One to four bytes per pixel.
     pub data: Vec<u8>,
     /// The dots per inch along each axis, which encoded images record.
     pub resolution: (u32, u32),
+}
+
+/// How [`raster`] renders a page: pylopdf's options of `page.pixmap`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Options {
+    /// The linear map from display points to pixels.
+    pub matrix: Matrix,
+    /// Whether the raster keeps a straight alpha channel.
+    pub alpha: bool,
+    /// Whether the raster holds the ITU-R BT.601 luma of each color.
+    pub gray: bool,
+    /// The straight RGBA color beneath the page, which must be opaque
+    /// without `alpha`.
+    pub background: [u8; 4],
+    /// The display rectangle `(x0, y0, x1, y1)` to rasterize, or the whole
+    /// page.
+    pub clip: Option<(f64, f64, f64, f64)>,
+    /// Whether annotation appearances are drawn.
+    pub annotations: bool,
+}
+
+impl Options {
+    /// Renders through `matrix` in RGB, on white without `alpha` and on
+    /// transparency with it, with annotations and no clip.
+    pub const fn new(matrix: Matrix, alpha: bool) -> Self {
+        Self {
+            matrix,
+            alpha,
+            gray: false,
+            background: if alpha { [0; 4] } else { [255; 4] },
+            clip: None,
+            annotations: true,
+        }
+    }
 }
 
 /// Why a raster was refused.
@@ -90,15 +126,18 @@ pub enum RasterError {
     /// The document has no such page.
     NoPage(usize),
     /// The matrix or the page size gives no raster, or one above the
-    /// limits: 65,535 pixels a side and [`MAX_PIXELS`] in all.
+    /// limits: 65,535 pixels a side and [`MAX_PIXELS`] in all; or the
+    /// options are inconsistent.
     Geometry(String),
+    /// The clip leaves no pixel of the page.
+    Clip(String),
 }
 
 impl std::fmt::Display for RasterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPage(index) => write!(f, "the document has no page {index}"),
-            Self::Geometry(message) => f.write_str(message),
+            Self::Geometry(message) | Self::Clip(message) => f.write_str(message),
         }
     }
 }
@@ -148,24 +187,68 @@ fn with_cache<T>(
     })
 }
 
-/// Renders page `index` through `matrix`, as pylopdf's `page.pixmap`
-/// renders it: the raster covers the whole pixels inside the transformed
-/// page, on white without `alpha` and on transparency with it.
+/// Renders page `index` as pylopdf's `page.pixmap` renders it: the raster
+/// covers the whole pixels inside the page transformed by the matrix, or
+/// those of them inside the clip.
 pub fn raster(
     bridged: &Arc<Bridged>,
     index: usize,
-    matrix: Matrix,
-    alpha: bool,
+    options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
-    with_cache(bridged, |pdf, cache| draw(pdf, cache, index, matrix, alpha))
+    with_cache(bridged, |pdf, cache| draw(pdf, cache, index, options))
+}
+
+/// The smallest rectangle `(x0, y0, x1, y1)` holding `corners`.
+fn bounds(corners: [hayro::kurbo::Point; 4]) -> (f64, f64, f64, f64) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for corner in corners {
+        x0 = x0.min(corner.x);
+        y0 = y0.min(corner.y);
+        x1 = x1.max(corner.x);
+        y1 = y1.max(corner.y);
+    }
+    (x0, y0, x1, y1)
+}
+
+/// The pixels of a `width` by `height` raster that the display rectangle
+/// `clip` covers under `linear`: its bounding box rounded outward to pixel
+/// boundaries and intersected with the raster, as an origin and a size.
+fn clip_viewport(
+    linear: hayro::kurbo::Affine,
+    width: u16,
+    height: u16,
+    clip: (f64, f64, f64, f64),
+) -> std::result::Result<(f64, f64, u16, u16), RasterError> {
+    use hayro::kurbo::Point;
+
+    let (cx0, cy0, cx1, cy1) = clip;
+    if ![cx0, cy0, cx1, cy1].into_iter().all(f64::is_finite) || cx0 >= cx1 || cy0 >= cy1 {
+        return Err(RasterError::Geometry(
+            "clip must be a finite rectangle with x0 < x1 and y0 < y1".to_owned(),
+        ));
+    }
+    let corners =
+        [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)].map(|(x, y)| linear * Point::new(x, y));
+    let (x0, y0, x1, y1) = bounds(corners);
+    let (width, height) = (f64::from(width), f64::from(height));
+    let x0 = x0.floor().clamp(0.0, width);
+    let y0 = y0.floor().clamp(0.0, height);
+    let x1 = x1.ceil().clamp(0.0, width);
+    let y1 = y1.ceil().clamp(0.0, height);
+    if x0 >= x1 || y0 >= y1 {
+        return Err(RasterError::Clip(
+            "clip does not intersect the rendered page".to_owned(),
+        ));
+    }
+    // Both extents lie within the u16 raster, so the casts are exact.
+    Ok((x0, y0, (x1 - x0) as u16, (y1 - y0) as u16))
 }
 
 fn draw<'a>(
     pdf: &'a Pdf,
     cache: &RenderCache<'a>,
     index: usize,
-    matrix: Matrix,
-    alpha: bool,
+    options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
     use hayro::hayro_interpret::TransformExt;
     use hayro::kurbo::{Affine, Point};
@@ -174,10 +257,15 @@ fn draw<'a>(
 
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
-    let (a, b, c, d) = matrix;
+    let (a, b, c, d) = options.matrix;
     if ![a, b, c, d].into_iter().all(f64::is_finite) || a * d - b * c == 0.0 {
         return Err(RasterError::Geometry(
             "matrix must be finite and invertible".to_owned(),
+        ));
+    }
+    if !options.alpha && options.background[3] != u8::MAX {
+        return Err(RasterError::Geometry(
+            "alpha=False needs an opaque background".to_owned(),
         ));
     }
     let (width, height) = page.render_dimensions();
@@ -189,13 +277,7 @@ fn draw<'a>(
         (f64::from(width), f64::from(height)),
     ]
     .map(|(x, y)| linear * Point::new(x, y));
-    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    for corner in corners {
-        x0 = x0.min(corner.x);
-        y0 = y0.min(corner.y);
-        x1 = x1.max(corner.x);
-        y1 = y1.max(corner.y);
-    }
+    let (x0, y0, x1, y1) = bounds(corners);
     let (x0, y0) = ((x0 - EDGE_TOLERANCE).ceil(), (y0 - EDGE_TOLERANCE).ceil());
     let pixel_width = (x1 + EDGE_TOLERANCE).floor() - x0;
     let pixel_height = (y1 + EDGE_TOLERANCE).floor() - y0;
@@ -219,48 +301,86 @@ fn draw<'a>(
             "render size {pixel_width:.0}x{pixel_height:.0} ({pixels} pixels) exceeds the {MAX_PIXELS}-pixel limit"
         )));
     }
-    let (raster_width, raster_height) = (pixel_width as u16, pixel_height as u16);
+    let page_to_raster = Affine::translate((-x0, -y0)) * linear;
+    let (left, top, raster_width, raster_height) = match options.clip {
+        Some(clip) => clip_viewport(
+            page_to_raster,
+            pixel_width as u16,
+            pixel_height as u16,
+            clip,
+        )?,
+        None => (0.0, 0.0, pixel_width as u16, pixel_height as u16),
+    };
     let transform =
-        Affine::translate((-x0, -y0)) * linear * page.initial_transform(true).to_kurbo();
+        Affine::translate((-left, -top)) * page_to_raster * page.initial_transform(true).to_kurbo();
+    let settings = InterpreterSettings {
+        render_annotations: options.annotations,
+        ..InterpreterSettings::default()
+    };
     let mut context = RenderContext::new(raster_width, raster_height);
     hayro::render_into(
         page,
         cache,
-        &InterpreterSettings::default(),
+        &settings,
         &RenderSettings::default(),
         &mut context,
         transform,
     );
     context.flush();
-    let background = if alpha {
-        AlphaColor::TRANSPARENT
-    } else {
-        AlphaColor::from_rgba8(255, 255, 255, 255)
-    };
+    let [red, green, blue, opacity] = options.background;
     let mut pixmap = hayro::vello_cpu::Pixmap::new(raster_width, raster_height);
     context.render_with(
         &mut pixmap,
         &mut Resources::default(),
         RasterizerSettings {
-            target_init: TargetInit::Clear(background),
+            target_init: TargetInit::Clear(AlphaColor::from_rgba8(red, green, blue, opacity)),
             ..Default::default()
         },
     );
     let mut data = pixmap.take_rgba8(ImageAlphaType::Alpha);
-    if !alpha {
-        let count = data.len() / 4;
-        for at in 0..count {
-            data.copy_within(at * 4..at * 4 + 3, at * 3);
-        }
-        data.truncate(count * 3);
-    }
+    to_layout(&mut data, options.gray, options.alpha);
     Ok(Raster {
         width: raster_width,
         height: raster_height,
-        alpha,
+        alpha: options.alpha,
+        gray: options.gray,
         data,
-        resolution: resolution(matrix),
+        resolution: resolution(options.matrix),
     })
+}
+
+/// The ITU-R BT.601 luma of an RGBA pixel's color, rounded, as pylopdf
+/// computes it.
+fn luma(pixel: &[u8]) -> u8 {
+    ((77 * u32::from(pixel[0]) + 150 * u32::from(pixel[1]) + 29 * u32::from(pixel[2]) + 128) >> 8)
+        as u8
+}
+
+/// Narrows straight-alpha RGBA samples in place: without `alpha` the alpha
+/// bytes go, and with `gray` the color components become their luma. Each
+/// pixel is read before its narrower replacement is written, which never
+/// reaches a later pixel.
+fn to_layout(data: &mut Vec<u8>, gray: bool, alpha: bool) {
+    let count = data.len() / 4;
+    let channels = usize::from(!gray) * 2 + 1 + usize::from(alpha);
+    if channels == 4 {
+        return;
+    }
+    for at in 0..count {
+        let pixel: [u8; 4] = data[at * 4..at * 4 + 4]
+            .try_into()
+            .expect("four bytes per pixel");
+        let out = &mut data[at * channels..at * channels + channels];
+        if gray {
+            out[0] = luma(&pixel);
+        } else {
+            out[..3].copy_from_slice(&pixel[..3]);
+        }
+        if alpha {
+            out[channels - 1] = pixel[3];
+        }
+    }
+    data.truncate(count * channels);
 }
 
 /// The pixels per inch of the page along each raster axis, rounded, from 1
