@@ -668,9 +668,20 @@ fn stream(bytes: &[u8]) -> Option<syntax::Stream<'_>> {
 /// Decodes `stream`, which hayro-syntax parsed, and charges its decoded size
 /// to `budget` as one stream of any kind.
 ///
-/// hayro-syntax 0.8 decodes a stream whole and without a bound, so the
-/// budget counts the decoded bytes once they are decoded.
+/// Refuses a chain of more filters than the budget's `stream_filter_count`
+/// before decoding. hayro-syntax 0.8 decodes a stream whole and without a
+/// bound, so the budget counts the decoded bytes once they are decoded.
 fn decoded<'a>(stream: &syntax::Stream<'a>, budget: &Budget) -> Result<Cow<'a, [u8]>> {
+    if let Some(filters) = guard(|| stream.dict().get::<syntax::Array<'_>>(b"Filter")) {
+        let limit = budget
+            .limit(LimitCode::StreamFilterCount)
+            .unwrap_or(u64::MAX);
+        let bound = usize::try_from(limit)
+            .unwrap_or(usize::MAX)
+            .saturating_add(1);
+        let filters = guard(|| Some(filters.raw_iter().take(bound).count())).unwrap_or(0);
+        budget.check(LimitCode::StreamFilterCount, count(filters))?;
+    }
     let data = guard(|| stream.decoded().ok())
         .ok_or_else(|| Error::malformed("the stream's data cannot be decoded"))?;
     budget.decode(StreamKind::Any).charge(count(data.len()))?;
