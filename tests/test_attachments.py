@@ -114,6 +114,48 @@ def test_deleting_the_last_attachment_removes_the_tree() -> None:
     assert [defect for defect in reopened.check().defects if "Names" in defect.path] == []
 
 
+def _claiming_pdfa(part: str) -> pyropdf.Document:
+    """Return the test document with metadata that claims PDF/A part ``part``."""
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    xmp = f'<rdf:Description pdfaid:part="{part}" pdfaid:conformance="B"/>'.encode()
+    metadata = doc.objects.add_stream(xmp, {"Type": pyropdf.Name("Metadata"), "Subtype": pyropdf.Name("XML")})
+    doc.catalog["Metadata"] = doc.objects[metadata]
+    return doc
+
+
+@pytest.mark.parametrize("part", ["3", "4"])
+def test_attachments_of_a_pdfa_3_or_4_document_are_associated_files(part: str) -> None:
+    doc = _claiming_pdfa(part)
+    doc.attachments.add("a.txt", b"data")
+    doc.attachments.add("b.txt", b"data")
+    reopened = pyropdf.open(doc.to_bytes())
+    files = list(reopened.catalog["Names"]["EmbeddedFiles"]["Names"])[1::2]
+    assert [file.xref for file in reopened.catalog["AF"]] == [file.xref for file in files]
+    for file in files:
+        assert file["AFRelationship"] == "Unspecified"
+        assert file["EF"]["F"]["Subtype"] == "application/octet-stream"
+        assert file["EF"]["F"]["Params"]["ModDate"].text.startswith("D:")
+    attached = {file.xref for file in files} | {file["EF"]["F"].xref for file in files}
+    assert [defect for defect in reopened.check().defects if defect.xref in attached] == []
+
+    del reopened.attachments["a.txt"]
+    assert [file.xref for file in reopened.catalog["AF"]] == [files[1].xref]
+    del reopened.attachments["b.txt"]
+    emptied = pyropdf.open(reopened.to_bytes())
+    assert "AF" not in emptied.catalog
+    assert "Names" not in emptied.catalog
+
+
+@pytest.mark.parametrize("part", [None, "1", "2"])
+def test_attachments_of_other_documents_are_not_associated_files(part: str | None) -> None:
+    doc = pyropdf.open(build_pdf(["Hello"])) if part is None else _claiming_pdfa(part)
+    doc.attachments.add("a.txt", b"data")
+    filespec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+    assert "AF" not in doc.catalog
+    assert "AFRelationship" not in filespec
+    assert "Subtype" not in filespec["EF"]["F"]
+
+
 @pytest.mark.parametrize("header", ["1.3", "1.4", "1.5", "1.6", "1.7"])
 @pytest.mark.parametrize("description", ["", "An attached file"])
 @pytest.mark.parametrize("incremental", [False, True])
