@@ -138,6 +138,12 @@ unit = "bytes"
 default = 67_108_864
 reached = "Encoding a pixmap writes more bytes than the call's `max_size`."
 
+[codes.svg_output_size]
+message = "the SVG document is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "A page's SVG holds more UTF-8 bytes than the call's `max_size`."
+
 # Input to the API.
 
 [codes.password_input_size]

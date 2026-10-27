@@ -59,6 +59,8 @@ pub enum LimitCode {
     PdfOutputSize,
     /// Encoding a pixmap writes more bytes than the call's `max_size`.
     PixmapOutputSize,
+    /// A page's SVG holds more UTF-8 bytes than the call's `max_size`.
+    SvgOutputSize,
     /// A password is longer in UTF-8 than PDF 2.0 allows.
     PasswordInputSize,
     /// The collections of one operation would hold more memory than it allows,
@@ -73,7 +75,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -93,6 +95,7 @@ impl LimitCode {
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
         Self::PixmapOutputSize,
+        Self::SvgOutputSize,
         Self::PasswordInputSize,
         Self::MemorySize,
         Self::Deadline,
@@ -122,6 +125,7 @@ impl LimitCode {
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
             Self::PixmapOutputSize => "pixmap_output_size",
+            Self::SvgOutputSize => "svg_output_size",
             Self::PasswordInputSize => "password_input_size",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
@@ -153,6 +157,7 @@ impl LimitCode {
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
             Self::PixmapOutputSize => "the encoded image is too large",
+            Self::SvgOutputSize => "the SVG document is too large",
             Self::PasswordInputSize => "the password is too long",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
@@ -184,6 +189,7 @@ impl LimitCode {
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
             Self::PixmapOutputSize => Some("bytes"),
+            Self::SvgOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
@@ -215,6 +221,7 @@ impl LimitCode {
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),
             Self::PixmapOutputSize => Some(67_108_864),
+            Self::SvgOutputSize => Some(67_108_864),
             Self::PasswordInputSize => Some(127),
             Self::MemorySize => None,
             Self::Deadline => None,

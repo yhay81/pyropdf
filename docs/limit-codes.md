@@ -22,6 +22,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |
 | `pixmap_output_size` | 64 MiB | Encoding a pixmap writes more bytes than the call's `max_size`. |
+| `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
