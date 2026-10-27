@@ -6,9 +6,14 @@
 //! walk copies only the objects that the pages reach, each once, under a
 //! number of the receiving document. A reference to a page that is not
 //! imported, to a page-tree node, or to a catalog becomes null, so that
-//! the source's page tree never comes along.
+//! the source's page tree never comes along. The structure elements of
+//! the pages come along too ([`graft`]).
 
+mod graft;
+
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::mem::size_of;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -18,8 +23,8 @@ use pyropdf_store::{Error, Result};
 
 /// The deepest nesting of arrays and dictionaries that the walk copies.
 const MAX_DEPTH: usize = 1024;
-/// The keys that lead into the source's structure tree, which the imported
-/// objects leave behind until their elements are grafted.
+/// The keys that lead into the source's structure tree: the parent-tree
+/// keys of pages and annotations.
 const STRUCTURE_KEYS: [&str; 2] = ["StructParent", "StructParents"];
 
 /// Imports `pages`, each a source page with the dictionary that the
@@ -29,7 +34,9 @@ const STRUCTURE_KEYS: [&str; 2] = ["StructParent", "StructParents"];
 /// `overrides`, sorted by number, replaces source objects, such as links
 /// that now lead elsewhere: `Some` with the value to copy instead, `None`
 /// with null. The pages' `/Parent` becomes `root`; the caller
-/// adds the pages to `root`'s kids.
+/// adds the pages to `root`'s kids. A tagged source's elements join the
+/// receiving document's structure tree, which `overrides` should leave
+/// without the structure content of the source pages that stay behind.
 pub fn import(
     transaction: &mut Transaction,
     source: &Version,
@@ -41,7 +48,9 @@ pub fn import(
     let mut walk = Walk {
         source,
         overrides,
-        numbers: Numbers::new(budget),
+        edited: BudgetVec::new(budget),
+        keys: Keys::Strip,
+        numbers: Charged::new(budget),
         pending: BudgetVec::new(budget),
         budget,
     };
@@ -49,13 +58,17 @@ pub fn import(
     added.try_reserve_exact(pages.len())?;
     for (page, _) in pages {
         let new = transaction.allocate()?;
-        walk.numbers.insert(page.number(), new)?;
+        walk.numbers.insert(page.number(), new, 0)?;
         added.try_push(new)?;
     }
+    let mut graft = graft::Graft::plan(transaction, &mut walk, budget)?;
     for ((_, dict), &new) in pages.iter().zip(added.iter()) {
         let mut page = walk.dict(transaction, dict, 0)?;
         page.insert(Name::from("Parent"), Value::Reference(root));
         transaction.write(new.number(), &Value::Dict(page), budget)?;
+    }
+    if let Some(graft) = &mut graft {
+        graft.copy(transaction, &mut walk)?;
     }
     while let Some((number, new)) = walk.pending.pop() {
         let value = match walk.object(number)? {
@@ -70,18 +83,20 @@ pub fn import(
         };
         transaction.write(new.number(), &value, budget)?;
     }
+    if let Some(graft) = graft {
+        graft.finish(transaction, budget)?;
+    }
     Ok(added.into_vec())
 }
 
-/// The source numbers that the import gave numbers of the receiving
-/// document, charged to the budget as they grow.
-struct Numbers<'b> {
-    map: HashMap<u32, Reference>,
+/// A hash map charged to the budget as it grows.
+struct Charged<'b, K, V> {
+    map: HashMap<K, V>,
     budget: &'b Budget,
     charged: u64,
 }
 
-impl<'b> Numbers<'b> {
+impl<'b, K: Eq + Hash, V> Charged<'b, K, V> {
     fn new(budget: &'b Budget) -> Self {
         Self {
             map: HashMap::new(),
@@ -90,30 +105,54 @@ impl<'b> Numbers<'b> {
         }
     }
 
-    fn get(&self, number: u32) -> Option<Reference> {
-        self.map.get(&number).copied()
+    fn get<Q: Eq + Hash + ?Sized>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+    {
+        self.map.get(key)
     }
 
-    fn insert(&mut self, number: u32, new: Reference) -> Result<()> {
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Inserts `value` at `key`, charging the entry and `extra` bytes that
+    /// it owns, and returns the value that `key` had.
+    fn insert(&mut self, key: K, value: V, extra: u64) -> Result<Option<V>> {
         // A hash map holds about twice its entries.
-        let amount = 2 * (size_of::<u32>() + size_of::<Reference>()) as u64;
+        let amount = 2 * (size_of::<K>() + size_of::<V>()) as u64 + extra;
         self.budget.charge(LimitCode::MemorySize, amount)?;
         self.charged += amount;
-        self.map.insert(number, new);
-        Ok(())
+        Ok(self.map.insert(key, value))
     }
 }
 
-impl Drop for Numbers<'_> {
+impl<K, V> Drop for Charged<'_, K, V> {
     fn drop(&mut self) {
         self.budget.release(LimitCode::MemorySize, self.charged);
     }
 }
 
+/// What the walk does with the parent-tree keys that copied dictionaries
+/// hold.
+#[derive(Clone, Copy)]
+enum Keys {
+    /// Removes them: the source's structure tree stays behind.
+    Strip,
+    /// Adds this to them, past the receiving tree's keys.
+    Shift(i64),
+}
+
 struct Walk<'s, 'b> {
     source: &'s Version,
     overrides: &'s [(u32, Option<Value>)],
-    numbers: Numbers<'b>,
+    /// The source elements that the graft changes, by number ascending,
+    /// which replace both the source and `overrides`.
+    edited: BudgetVec<'b, (u32, Value)>,
+    keys: Keys,
+    /// The source numbers that the import gave numbers of the receiving
+    /// document.
+    numbers: Charged<'b, u32, Reference>,
     /// The source objects that have a new number and wait to be written.
     pending: BudgetVec<'b, (u32, Reference)>,
     budget: &'b Budget,
@@ -122,6 +161,12 @@ struct Walk<'s, 'b> {
 impl Walk<'_, '_> {
     /// Returns source object `number`, or what replaces it.
     fn object(&self, number: u32) -> Result<Option<Value>> {
+        if let Ok(at) = self
+            .edited
+            .binary_search_by_key(&number, |(number, _)| *number)
+        {
+            return Ok(Some(self.edited[at].1.clone()));
+        }
         if let Ok(at) = self
             .overrides
             .binary_search_by_key(&number, |(number, _)| *number)
@@ -137,7 +182,7 @@ impl Walk<'_, '_> {
     /// Returns what `reference` becomes: the new number of an object that
     /// the import copies, or null.
     fn reference(&mut self, transaction: &mut Transaction, reference: Reference) -> Result<Value> {
-        if let Some(new) = self.numbers.get(reference.number()) {
+        if let Some(&new) = self.numbers.get(&reference.number()) {
             return Ok(Value::Reference(new));
         }
         let Some(value) = self.object(reference.number())? else {
@@ -154,7 +199,7 @@ impl Walk<'_, '_> {
             return Ok(Value::Null);
         }
         let new = transaction.allocate()?;
-        self.numbers.insert(reference.number(), new)?;
+        self.numbers.insert(reference.number(), new, 0)?;
         self.pending.try_push((reference.number(), new))?;
         Ok(Value::Reference(new))
     }
@@ -165,7 +210,16 @@ impl Walk<'_, '_> {
         }
         let mut copy = dict.clone();
         for key in STRUCTURE_KEYS {
-            copy.remove(key);
+            match self.keys {
+                Keys::Strip => {
+                    copy.remove(key);
+                }
+                Keys::Shift(shift) => {
+                    if let Some(Value::Integer(value)) = copy.get_mut(key) {
+                        *value = value.saturating_add(shift);
+                    }
+                }
+            }
         }
         if !holds_references(dict, depth)? {
             return Ok(copy);

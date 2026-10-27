@@ -9,8 +9,8 @@
 use crate::budget::{Budget, BudgetVec};
 use crate::memo::Reads;
 use crate::value::{Reference, Value};
-use crate::version::Transaction;
 use crate::version::table::Table;
+use crate::version::{Transaction, Version};
 use crate::{Error, Result};
 
 use super::{Found, References, Referrer, Role, Step, find_where};
@@ -179,13 +179,29 @@ impl<'b> Edits<'b> {
     /// deepest and last entries of a container removed first, so that the
     /// positions of the others hold.
     pub fn write(&mut self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
+        for (number, value) in self.values(transaction.version(), budget)?.into_vec() {
+            transaction.write(number, &value, budget)?;
+        }
+        Ok(())
+    }
+
+    /// Returns, by number ascending, the values that the edits give the
+    /// objects of `version` that they change, as [`Edits::write`] would
+    /// write them, so that a reader of `version` can see the edits without
+    /// a transaction.
+    pub fn values<'a>(
+        &mut self,
+        version: &Version,
+        budget: &'a Budget,
+    ) -> Result<BudgetVec<'a, (u32, Value)>> {
         self.edits
             .sort_unstable_by(|a, b| a.number.cmp(&b.number).then_with(|| b.path.cmp(&a.path)));
+        let mut out = BudgetVec::new(budget);
         let mut at = 0;
         while at < self.edits.len() {
             budget.poll()?;
             let number = self.edits[at].number;
-            let Some(object) = transaction.version().get(number, budget)? else {
+            let Some(object) = version.get(number, budget)? else {
                 while at < self.edits.len() && self.edits[at].number == number {
                     at += 1;
                 }
@@ -208,10 +224,10 @@ impl<'b> Edits<'b> {
                 last = Some(&edit.path);
                 at += 1;
             }
-            transaction.write(number, &value, budget)?;
+            out.try_push((number, value))?;
         }
         self.edits.clear();
-        Ok(())
+        Ok(out)
     }
 }
 

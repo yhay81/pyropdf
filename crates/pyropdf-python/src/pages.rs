@@ -16,7 +16,7 @@ use pyropdf_engine::pages::import;
 use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
-use pyropdf_store::refs::{self, Edits};
+use pyropdf_store::refs::{self, Edits, Rule};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -342,6 +342,20 @@ pub fn import_pages(
     // A link that two pages share is prepared once per page, alike.
     overrides.sort_by_key(|(number, _)| *number);
     overrides.dedup_by_key(|(number, _)| *number);
+    let pruned = pruned(
+        source,
+        &version,
+        &source_index,
+        &imported,
+        &overrides,
+        &budget,
+    )?;
+    if !pruned.is_empty() {
+        // The links' own overrides come first and win.
+        overrides.extend(pruned);
+        overrides.sort_by_key(|(number, _)| *number);
+        overrides.dedup_by_key(|(number, _)| *number);
+    }
     let mut order = current_order(&index)?;
     document.edit(py, |transaction, budget| {
         let savepoint = transaction.savepoint();
@@ -359,6 +373,57 @@ pub fn import_pages(
         }
         result
     })
+}
+
+/// Returns the overrides that leave the structure content of the source
+/// pages other than `imported` out of a tagged `source`, as deleting those
+/// pages would, with the links that `links` removes. Empty for an untagged
+/// source, or when every page comes along.
+fn pruned(
+    source: &_Document,
+    version: &Arc<Version>,
+    index: &PageIndex,
+    imported: &[u32],
+    links: &[(u32, Option<Value>)],
+    budget: &Budget,
+) -> PyResult<Vec<(u32, Option<Value>)>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let catalog = resolve(version, version.trailer().get("Root"), budget)?;
+    let tagged =
+        matches!(&catalog, Some(Value::Dict(catalog)) if catalog.get("StructTreeRoot").is_some());
+    let mut removed = index
+        .pages()
+        .iter()
+        .filter_map(Page::object)
+        .map(|page| page.number())
+        .filter(|number| imported.binary_search(number).is_err())
+        .collect::<Vec<_>>();
+    if !tagged || removed.is_empty() {
+        return Ok(Vec::new());
+    }
+    removed.sort_unstable();
+    removed.dedup();
+    let references = source.references.get(version, budget).map_err(store)?;
+    let mut reads = Reads::new(version, budget);
+    let mut edits = Edits::new(budget);
+    for &(number, ref value) in links {
+        if value.is_none() {
+            edits
+                .apply(&mut reads, &references, number, &[], Rule::RemoveReferrer)
+                .map_err(store)?;
+        }
+    }
+    refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
+        .map_err(store)?;
+    let mut out = edits
+        .orphans()
+        .iter()
+        .map(|&number| (number, None))
+        .collect::<Vec<_>>();
+    for (number, value) in edits.values(version, budget).map_err(store)?.into_vec() {
+        out.push((number, Some(value)));
+    }
+    Ok(out)
 }
 
 /// The media box that a page without one gets: A4, as the renderer draws it.
