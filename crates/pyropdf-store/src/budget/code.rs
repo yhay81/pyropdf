@@ -47,6 +47,9 @@ pub enum LimitCode {
     /// The content that `Operations.parse` reads is larger than the call's
     /// `max_size`.
     ContentInputSize,
+    /// `Page.content` reads more glyphs, path and clip segments, dash lengths,
+    /// and items than the call's `max_elements`.
+    ContentElementCount,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -70,7 +73,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -85,6 +88,7 @@ impl LimitCode {
         Self::ContentOperationCount,
         Self::ContentStreamSize,
         Self::ContentInputSize,
+        Self::ContentElementCount,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
@@ -113,6 +117,7 @@ impl LimitCode {
             Self::ContentOperationCount => "content_operation_count",
             Self::ContentStreamSize => "content_stream_size",
             Self::ContentInputSize => "content_input_size",
+            Self::ContentElementCount => "content_element_count",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
@@ -143,6 +148,7 @@ impl LimitCode {
             Self::ContentOperationCount => "the content holds too many operations",
             Self::ContentStreamSize => "the page's content is too large",
             Self::ContentInputSize => "the content is too large to parse",
+            Self::ContentElementCount => "the page paints too many items",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
@@ -173,6 +179,7 @@ impl LimitCode {
             Self::ContentOperationCount => Some("operations"),
             Self::ContentStreamSize => Some("bytes"),
             Self::ContentInputSize => Some("bytes"),
+            Self::ContentElementCount => Some("elements"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
@@ -203,6 +210,7 @@ impl LimitCode {
             Self::ContentOperationCount => Some(1_048_576),
             Self::ContentStreamSize => Some(67_108_864),
             Self::ContentInputSize => Some(67_108_864),
+            Self::ContentElementCount => Some(262_144),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),

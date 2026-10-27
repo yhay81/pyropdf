@@ -50,6 +50,7 @@ PYLOPDF_CODES = (
     "content_operation_count",
     "content_stream_size",
     "content_input_size",
+    "content_element_count",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",

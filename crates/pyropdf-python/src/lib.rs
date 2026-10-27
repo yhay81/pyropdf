@@ -8,6 +8,7 @@ mod content;
 mod document;
 mod errors;
 mod history;
+mod items;
 mod objects;
 mod pages;
 mod pixmap;
@@ -35,6 +36,8 @@ mod _core {
         begin_transaction, end_transaction, history_clear, history_redo, history_state,
         history_undo, set_history_limit,
     };
+    #[pymodule_export]
+    use super::items::page_content;
     #[pymodule_export]
     use super::objects::{
         decode_text_string, object_add, object_add_stream, object_delete, object_get,
