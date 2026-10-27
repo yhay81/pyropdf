@@ -5,7 +5,7 @@ its SHA-256:
 
     uv run python tools/verapdf.py --jar greenfield-apps-1.28.1.jar
 
-Each fixture of tests/assets/pdfa is validated under its claimed flavour, as
+Each fixture of tests/assets/pdfa and tests/assets/pdfua is validated under its claimed flavour, as
 is each edit of the preservation harness's EDITS applied to it and saved in
 full and incrementally. A save that veraPDF rejects must be listed in
 ``REJECTED`` with the issue that tracks it; the script exits with status 1
@@ -28,8 +28,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests"))
 EDITS = runpy.run_path(str(ROOT / "tests" / "test_preservation.py"))["EDITS"]
 
-PDFA = ROOT / "tests" / "assets" / "pdfa"
-FLAVOURS: dict[str, tuple[str, str, str]] = runpy.run_path(str(PDFA / "generate.py"))["FLAVOURS"]
+#: Each fixture, by path, with veraPDF's flavour, from the generator of each corpus.
+FIXTURES: dict[Path, str] = {
+    corpus / name: flavour
+    for corpus in (ROOT / "tests" / "assets" / "pdfa", ROOT / "tests" / "assets" / "pdfua")
+    for name, (_, _, flavour) in runpy.run_path(str(corpus / "generate.py"))["FLAVOURS"].items()
+}
 
 #: Saves that veraPDF rejects, by file name, with the issue that tracks each.
 REJECTED: dict[str, str] = {}
@@ -38,8 +42,7 @@ REJECTED: dict[str, str] = {}
 def saves(directory: Path) -> dict[str, list[Path]]:
     """Write every fixture and every save of every edit of it into ``directory``, by flavour."""
     out: dict[str, list[Path]] = {}
-    for name, (_, _, flavour) in FLAVOURS.items():
-        source = PDFA / name
+    for source, flavour in FIXTURES.items():
         paths = [source]
         for edit, apply in sorted(EDITS.items()):
             for incremental in (False, True):
