@@ -119,8 +119,9 @@ def add_attachment(doc: pyropdf.Document) -> set[int]:
     # older than PDF 1.4, its name dictionary, and its EmbeddedFiles root.
     touched = {number(doc.catalog)}
     names = doc.catalog.get("Names")
-    if names is not None and names.xref is not None:
-        touched.add(names.xref)
+    if names is not None:
+        if names.xref is not None:
+            touched.add(names.xref)
         files = names.get("EmbeddedFiles")
         if files is not None and files.xref is not None:
             touched.add(files.xref)
@@ -225,6 +226,24 @@ def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *,
     if state is not None:
         index = next(at for at, page in enumerate(reopened.pages) if number(page.obj) == untouched)
         assert page_state(reopened, index) == state
+
+
+@pytest.mark.parametrize("edit", ["add_attachment", "write_attachment", "delete_attachment"])
+@pytest.mark.parametrize("indirect_names", [False, True])
+def test_attachment_edits_record_an_indirect_tree_root(edit: str, *, indirect_names: bool) -> None:
+    doc = pyropdf.open(synthetic())
+    doc.attachments.add("existing", b"kept")
+    entries = list(doc.catalog["Names"]["EmbeddedFiles"]["Names"])
+    root = doc.objects[doc.objects.add({"Names": entries})]
+    names = {"EmbeddedFiles": root}
+    doc.catalog["Names"] = doc.objects[doc.objects.add(names)] if indirect_names else names
+    before = snapshot(doc)
+
+    touched = EDITS[edit](doc)
+
+    assert number(root) in touched
+    after = snapshot(pyropdf.open(doc.to_bytes()))
+    assert all(after.get(xref) == value for xref, value in before.items() if xref not in touched)
 
 
 #: Reals that a float cannot hold exactly, as the synthetic document writes them.
