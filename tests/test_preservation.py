@@ -17,7 +17,7 @@ from corpus import ASSETS, NAMES
 from test_pages import build_raw_pdf
 
 import pyropdf
-from pyropdf import Array, Dictionary, Name, Real, Stream
+from pyropdf import Array, Dictionary, Name, Operation, Real, Stream, typed
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -73,12 +73,17 @@ def catalog_entry(doc: pyropdf.Document) -> set[int]:
     return {number(doc.catalog)}
 
 
-def new_page(doc: pyropdf.Document) -> set[int]:
-    # Adding a page flattens the page tree: it writes the root and every page
-    # that is not already the root's kid (#272 narrows what those pages keep).
+def flattened(doc: pyropdf.Document) -> set[int]:
+    """Return the page-tree objects that writing the page list rewrites."""
+    # Writing the page list flattens the page tree: it writes the root and
+    # every page that is not already the root's kid (#272 narrows what those
+    # pages keep).
     root = doc.catalog["Pages"]
-    touched = {number(root)}
-    touched |= {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
+    return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
+
+
+def new_page(doc: pyropdf.Document) -> set[int]:
+    touched = flattened(doc)
     doc.pages.new((200, 300))
     return touched
 
@@ -95,6 +100,57 @@ def rewrite_stream(doc: pyropdf.Document) -> set[int]:
     return set()
 
 
+def move_page(doc: pyropdf.Document) -> set[int]:
+    if len(doc.pages) == 1:
+        doc.pages.new((200, 300))
+    touched = flattened(doc)
+    doc.pages.move(0, -1)
+    return touched
+
+
+def assign_operations(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    page.operations = [*page.operations, Operation("q"), Operation("Q")]
+    return {number(page.obj)}
+
+
+def delete_entry(doc: pyropdf.Document) -> set[int]:
+    doc.catalog["Preserved"] = Name("Gone")
+    del doc.catalog["Preserved"]
+    return {number(doc.catalog)}
+
+
+def array_insert_delete(doc: pyropdf.Document) -> set[int]:
+    array = doc.objects[doc.objects.add([1, 2, 3])]
+    array.insert(0, Real("0.1"))
+    del array[2]
+    return set()
+
+
+def typed_set(doc: pyropdf.Document) -> set[int]:
+    typed.Catalog(doc.catalog)["PageLayout"] = Name("OneColumn")
+    return {number(doc.catalog)}
+
+
+def typed_delete(doc: pyropdf.Document) -> set[int]:
+    typed_set(doc)
+    del typed.Catalog(doc.catalog)["PageLayout"]
+    return {number(doc.catalog)}
+
+
+def undo(doc: pyropdf.Document) -> set[int]:
+    catalog_entry(doc)
+    doc.history.undo()
+    return set()
+
+
+def redo(doc: pyropdf.Document) -> set[int]:
+    touched = catalog_entry(doc)
+    doc.history.undo()
+    doc.history.redo()
+    return touched
+
+
 #: Each edit, which returns the object numbers it touched among those that existed before it.
 EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "none": lambda _: set(),
@@ -104,6 +160,14 @@ EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "new_page": new_page,
     "replace_object": replace_object,
     "rewrite_stream": rewrite_stream,
+    "move_page": move_page,
+    "assign_operations": assign_operations,
+    "delete_entry": delete_entry,
+    "array_insert_delete": array_insert_delete,
+    "typed_set": typed_set,
+    "typed_delete": typed_delete,
+    "undo": undo,
+    "redo": redo,
 }
 
 
@@ -119,16 +183,19 @@ def page_state(doc: pyropdf.Document, index: int) -> tuple[str, bytes]:
 def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *, incremental: bool) -> None:
     doc = pyropdf.open(ASSETS / name)
     before = snapshot(doc)
-    # The last page, which no edit of the table touches unless it is the first.
-    untouched = len(doc.pages) - 1
-    state = page_state(doc, untouched) if untouched else None
+    # The last page, which no edit of the table touches unless it is the
+    # first; it is found again by its object number, since edits move pages.
+    last = len(doc.pages) - 1
+    untouched = number(doc.pages[last].obj)
+    state = page_state(doc, last) if last else None
     touched = EDITS[edit](doc)
     reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
     after = snapshot(reopened)
-    changed = [number for number, value in before.items() if number not in touched and after.get(number) != value]
+    changed = [xref for xref, value in before.items() if xref not in touched and after.get(xref) != value]
     assert changed == []
     if state is not None:
-        assert page_state(reopened, untouched) == state
+        index = next(at for at, page in enumerate(reopened.pages) if number(page.obj) == untouched)
+        assert page_state(reopened, index) == state
 
 
 #: Reals that a float cannot hold exactly, as the synthetic document writes them.
