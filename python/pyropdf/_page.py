@@ -14,7 +14,17 @@ from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
-from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
+from pyropdf._text import (
+    _DEFAULT_MAX_TEXT_GLYPHS,
+    _DEFAULT_MAX_TEXT_SIZE,
+    Layout,
+    Unmapped,
+    Word,
+    _warn_skipped,
+    build_layout,
+    build_words,
+    text_options,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -22,6 +32,7 @@ if TYPE_CHECKING:
     from pyropdf._document import Document
     from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
+    from pyropdf._text import _CoreBlock, _TextOptions
 
 #: Elements that one ``Page.content()`` reads by default (``content_element_count``).
 _DEFAULT_MAX_CONTENT_ELEMENTS = 262_144
@@ -310,6 +321,108 @@ class Page:
             raise self._stale() from error
         _warn_skipped(skipped)
         return text
+
+    def words(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        exact_bboxes: bool = False,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> list[Word]:
+        """Return the words of the current version of the page in reading order, as :class:`Word` records.
+
+        Boxes are in display space and span the glyphs' advances and the
+        font's ascender and descender, or their outlines with
+        ``exact_bboxes=True``. The other options are those of :meth:`text`; a
+        word that dehyphenation joins is one :class:`Word` on its first line
+        whose box spans both parts.
+        """
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+            exact_bboxes=exact_bboxes,
+        )
+        _, _, blocks = self._layout(options, chars=False, max_glyphs=max_glyphs, max_size=max_size)
+        return build_words(blocks)
+
+    def layout(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        chars: bool = False,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        exact_bboxes: bool = False,
+        styles: bool = False,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> Layout:
+        """Return the text of the current version of the page as blocks, lines, and spans, in reading order.
+
+        With ``chars=True``, every span also lists its characters as
+        :class:`Char` records: each glyph keeps its complete Unicode mapping,
+        ligatures included, and each space that pyropdf infers from a gap is a
+        char with ``is_synthetic`` set, so that a span's chars join to its
+        text. Boxes are in display space and span the glyphs' advances and the
+        font's ascender and descender, or their outlines with
+        ``exact_bboxes=True``. Dehyphenation removes the hyphen from the end
+        of the line and keeps both lines. ``styles=True`` also reads the
+        page's vector rules and sets :attr:`Span.is_underlined` and
+        :attr:`Span.is_struck` where a horizontal rule underlines or strikes
+        out horizontal text, as pymupdf's ``TEXT_COLLECT_STYLES`` does. The
+        other options are those of :meth:`text`, and ``max_size`` also bounds
+        the UTF-8 of the layout's strings.
+        """
+        if not isinstance(chars, bool):
+            msg = f"chars must be True or False: {chars!r}"
+            raise TypeError(msg)
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+            exact_bboxes=exact_bboxes,
+            styles=styles,
+        )
+        return build_layout(*self._layout(options, chars=chars, max_glyphs=max_glyphs, max_size=max_size))
+
+    def _layout(
+        self, options: _TextOptions, *, chars: bool, max_glyphs: int | None, max_size: int | None
+    ) -> tuple[float, float, list[_CoreBlock]]:
+        """Return the core's layout of the page and warn of the glyphs it skipped."""
+        try:
+            width, height, blocks, skipped = _core.page_layout(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                options,
+                chars,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return width, height, blocks
 
     @property
     def operations(self) -> Operations:

@@ -220,6 +220,22 @@ def test_stream_read_is_bounded() -> None:
         stream.read(max_size=0)
 
 
+def test_stream_read_refuses_a_chain_of_more_filters_than_the_limit() -> None:
+    doc = pyropdf.Document()
+    data = b"x"
+    for _ in range(16):
+        data = zlib.compress(data)
+    stream = doc.objects[doc.objects.add_stream(data, filter=None)]
+    assert isinstance(stream, Stream)
+
+    stream["Filter"] = [Name("FlateDecode")] * 16
+    assert stream.read() == b"x"
+    stream["Filter"] = [Name("FlateDecode")] * 17
+    with pytest.raises(pyropdf.LimitError) as error:
+        stream.read()
+    assert error.value.code == "stream_filter_count"
+
+
 def test_unsupported_filters_raise_instead_of_returning_encoded_bytes() -> None:
     doc = pyropdf.Document()
     xref = doc.objects.add_stream(b"data", filter=None)
