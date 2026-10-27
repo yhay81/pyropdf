@@ -8,18 +8,18 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 36 | 0 | 0 | 0 | 185 | 580 |
-| interpret | 0 | 1 | 0 | 0 | 798 | 2 |
-| create | 36 | 0 | 0 | 577 | 185 | 3 |
-| edit | 36 | 0 | 0 | 577 | 186 | 2 |
-| preserve | 0 | 0 | 0 | 0 | 800 | 1 |
+| read | 36 | 0 | 0 | 0 | 167 | 598 |
+| interpret | 0 | 1 | 0 | 0 | 783 | 17 |
+| create | 36 | 0 | 0 | 577 | 176 | 12 |
+| edit | 36 | 0 | 0 | 577 | 180 | 8 |
+| preserve | 0 | 0 | 0 | 0 | 795 | 6 |
 
 ## Clauses
 
 | Clause | Title | Features | read | interpret | create | edit | preserve |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 7.2 | Lexical conventions | `lexical-conventions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.3 | Objects | `basic-objects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.2 | Lexical conventions | `lexical-conventions` | 1 done | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.3 | Objects | `basic-objects` | 1 done | 1 planned | 1 done | 1 done | 1 planned |
 | 7.4.2 | ASCIIHexDecode filter | `asciihex-filter` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.4.3 | ASCII85Decode filter | `ascii85-filter` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.4.4 | LZWDecode and FlateDecode filters | `flate-filter`, `lzw-filter` | 1 done, 1 planned | 1 n/a, 1 planned | 1 done, 1 planned | 2 planned | 2 planned |
@@ -29,34 +29,34 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.4.8 | DCTDecode filter | `dct-filter` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.4.9 | JPXDecode filter | `jpx-filter` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.4.10 | Crypt filter | `crypt-filter` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.5.2 | File header | `file-header` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.5.4 | Cross-reference table | `xref-table` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.5.6 | Incremental updates | `incremental-update` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.5.2 | File header | `file-header` | 1 done | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.5.4 | Cross-reference table | `xref-table` | 1 done | 1 planned | 1 planned | 1 planned | 1 done |
+| 7.5.6 | Incremental updates | `incremental-update` | 1 planned | 1 planned | 1 done | 1 planned | 1 done |
 | 7.5.7 | Object streams | `object-streams` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.5.8 | Cross-reference streams | `xref-streams` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.6.3 | General encryption algorithm | `encryption-dictionary` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.7.2 | Document catalog | `document-catalog` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.7.3 | Page tree | `page-tree`, `page-objects` | 1 done, 1 planned | 1 done, 1 planned | 1 done, 1 planned | 1 done, 1 planned | 2 planned |
-| 7.7.4 | Name dictionary | `name-dictionary` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.8 | Content streams and resources | `content-streams` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.9.2 | String object types | `text-strings` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 1 done, 1 planned | 2 done | 2 done | 2 planned |
+| 7.7.4 | Name dictionary | `name-dictionary` | 1 done | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.8 | Content streams and resources | `content-streams` | 1 done | 1 planned | 1 done | 1 done | 1 done |
+| 7.9.2 | String object types | `text-strings` | 1 done | 1 planned | 1 done | 1 planned | 1 planned |
 | 7.9.4 | Dates | `dates` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.9.6 | Name trees | `name-trees` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.9.6 | Name trees | `name-trees` | 1 done | 1 planned | 1 done | 1 done | 1 planned |
 | 7.9.7 | Number trees | `number-trees` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.10.2 | Type 0 sampled functions | `sampled-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.10.3 | Type 2 exponential interpolation functions | `exponential-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.10.4 | Type 3 stitching functions | `stitching-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.11 | File specifications | `file-specifications` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.11.4 | Embedded file streams | `embedded-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.11 | File specifications | `file-specifications` | 1 done | 1 planned | 1 done | 1 done | 1 planned |
+| 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 7.11.4.2 | Related files arrays | `related-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.11.6 | Collection items | `collection-items` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.4 | Graphics state | `graphics-state` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.5 | Path construction and painting | `paths` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.5 | Path construction and painting | `paths` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.6.5.2 | CalGray colour spaces | `calgray-color-space` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.6.5.3 | CalRGB colour spaces | `calrgb-color-space` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -68,7 +68,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 8.6.6.5 | DeviceN colour spaces | `devicen-color-space` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.6.7 | Overprint control | `overprint` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.7.3 | Tiling patterns | `tiling-patterns` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.7.4 | Shading patterns | `shading-patterns` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.7.4 | Shading patterns | `shading-patterns` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 8.7.4.5.2 | Type 1 function-based shadings | `function-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.7.4.5.3 | Type 2 axial shadings | `axial-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.7.4.5.4 | Type 3 radial shadings | `radial-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -77,32 +77,32 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 8.7.4.5.7 | Type 6 Coons patch meshes | `coons-patch-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.7.4.5.8 | Type 7 tensor-product patch meshes | `tensor-patch-shading` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.8 | External objects | `xobjects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.9.5 | Image dictionaries | `images` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.9.6 | Masked images | `image-masks` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.9.7 | Inline images | `inline-images` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.9.5 | Image dictionaries | `images` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
+| 8.9.6 | Masked images | `image-masks` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
+| 8.9.7 | Inline images | `inline-images` | 1 done | 1 planned | 1 planned | 1 planned | 1 done |
 | 8.10 | Form XObjects | `form-xobjects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.10.4 | Reference XObjects | `reference-xobjects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.11 | Optional content | `optional-content` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 9.3 | Text state parameters and operators | `text-state` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 9.4 | Text objects | `text-objects` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 9.3 | Text state parameters and operators | `text-state` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
+| 9.4 | Text objects | `text-objects` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 9.6.2 | Type 1 fonts | `type1-fonts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 9.6.3 | TrueType fonts | `truetype-fonts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 9.6.4 | Type 3 fonts | `type3-fonts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 9.6.4 | Type 3 fonts | `type3-fonts` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 9.6.5 | Character encoding | `simple-font-encodings` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 9.7.4 | CIDFonts | `cid-fonts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 9.7.5 | CMaps | `cmaps` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 9.7.6 | Type 0 fonts | `type0-fonts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 9.8 | Font descriptors | `font-descriptors` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 9.9 | Embedded font programs | `embedded-fonts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 9.10 | Extraction of text content | `text-extraction` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 9.10 | Extraction of text content | `text-extraction` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
 | 10.3 | CIE-based colour to device colour | `color-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 10.4 | Conversions among device colour spaces | `device-color-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 10.5 | Transfer functions | `transfer-functions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 10.6 | Halftones | `halftones` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 10.7 | Scan conversion details | `scan-conversion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 11.3.5 | Blend mode | `blend-modes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 11.3.5 | Blend mode | `blend-modes` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 11.5 | Soft masks | `soft-masks` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 11.7 | Colour and transparency | `transparency-color` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.2 | Viewer preferences | `viewer-preferences` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.3.2 | Destinations | `destinations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -113,7 +113,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.4.3 | Articles | `articles` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.4.4 | Presentations | `presentations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.2 | Annotation dictionaries | `annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.5 | Appearance streams | `appearance-streams` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.5.5 | Appearance streams | `appearance-streams` | 1 planned | 1 done | 1 planned | 1 planned | 1 planned |
 | 12.5.6.4 | Text annotations | `text-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.5 | Link annotations | `link-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.6 | Free text annotations | `free-text-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -163,7 +163,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.7.6 | Form actions | `form-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.7.8 | Forms data format | `fdf` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.8 | Digital signatures | `digital-signatures` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
 | 12.8.2 | Transform methods | `signature-transforms` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.8.4.3 | Document security store | `document-security-store` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -187,18 +187,18 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.9 | Accessibility support | `accessibility` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.11.2 | Page boundaries | `page-boundaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.11.2 | Page boundaries | `page-boundaries` | 1 planned | 1 done | 1 done | 1 planned | 1 planned |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.11.5 | Output intents | `output-intents` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.11.5 | Output intents | `output-intents` | 1 done | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.6 | Trapping support | `trapping` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.7 | Open prepress interface | `opi` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex F | Linearized PDF | `linearization` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO 14289 | PDF/UA | `pdfua` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
 | ISO 15930 | PDF/X | `pdfx` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| ISO 19005 | PDF/A | `pdfa` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |

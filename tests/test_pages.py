@@ -178,6 +178,7 @@ def test_new_inserts_a_blank_page_where_list_insert_would(index: int | None, exp
     assert numbers(pyropdf.open(doc.to_bytes())) == expected
 
 
+@pytest.mark.spec("page-boundaries", "create")
 def test_new_defaults_to_a4_and_validates_the_size() -> None:
     doc = Document()
     assert doc.pages.new().rect == (0.0, 0.0, 595.0, 842.0)
@@ -212,6 +213,7 @@ def test_new_page_preserves_indirect_root_kids() -> None:
     assert len(pyropdf.open(doc.to_bytes()).pages) == 1
 
 
+@pytest.mark.spec("page-objects", "create")
 def test_new_page_uses_requested_geometry_under_cropped_rotated_parent() -> None:
     doc = pyropdf.open(
         build_raw_pdf(
@@ -232,6 +234,7 @@ def test_new_page_uses_requested_geometry_under_cropped_rotated_parent() -> None
 
 
 @pytest.mark.parametrize("operation", ["delete_pages", "move"])
+@pytest.mark.spec("page-objects", "edit")
 def test_page_edits_inherit_past_attributes_that_name_missing_objects(operation: str) -> None:
     attributes = " ".join(f"/{key} 99 0 R" for key in ("MediaBox", "CropBox", "Rotate", "Resources"))
     doc = pyropdf.open(

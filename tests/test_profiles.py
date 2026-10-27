@@ -63,6 +63,7 @@ def test_a_part_that_is_not_a_number_is_not_a_claim() -> None:
     assert doc.profiles.pdfua is None
 
 
+@pytest.mark.spec("output-intents", "read")
 def test_output_intents() -> None:
     intents = (
         "/OutputIntents [<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB IEC61966-2.1)"
