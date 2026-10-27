@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pyropdf import _core
 from pyropdf._errors import StaleObjectError, StalePageError
+from pyropdf._geometry import Rect
 from pyropdf._objects import Dictionary
 from pyropdf._operations import Operations, _from_core
 from pyropdf._pixmap import _render_matrix
@@ -79,14 +80,14 @@ class Page:
             raise self._stale()
 
     @property
-    def rect(self) -> tuple[float, float, float, float]:
-        """Return the display rectangle ``(0, 0, width, height)``, with the rotation applied.
+    def rect(self) -> Rect:
+        """Return the display :class:`Rect` ``(0, 0, width, height)``, with the rotation applied.
 
         The visible page is the CropBox clipped to the MediaBox; a box that
         leaves nothing visible gives the A4 page that the renderer draws.
         """
         _, width, height = self._geometry()
-        return (0.0, 0.0, width, height)
+        return Rect(0.0, 0.0, width, height)
 
     def pixmap(
         self,
@@ -98,10 +99,10 @@ class Page:
         """Render the current version of the page to a :class:`Pixmap`.
 
         ``dpi`` scales the page uniformly, 72 by default; ``matrix`` is a
-        linear map ``(a, b, c, d)``, or six entries whose translation is
-        dropped, since the raster covers the transformed page. Without
-        ``alpha`` the page lies on white. The GIL is released while hayro
-        renders.
+        :class:`Matrix` or six entries, whose translation is dropped, since
+        the raster covers the transformed page, or a linear map
+        ``(a, b, c, d)``. Without ``alpha`` the page lies on white. The GIL
+        is released while hayro renders.
         """
         linear = _render_matrix(matrix, dpi)
         if not isinstance(alpha, bool):

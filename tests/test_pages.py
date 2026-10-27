@@ -7,7 +7,6 @@ differences from pylopdf:
 
 - A page taken before an edit of other pages keeps naming its page, with its
   new index; pylopdf made every earlier page stale.
-- ``page.rect`` is a ``(x0, y0, x1, y1)`` tuple until a geometry type exists.
 - Flattening repairs a page whose ``/Parent`` names a cycle instead of
   refusing the edit, since the walk of ``/Kids``, not ``/Parent``, decides
   the pages.
