@@ -10,9 +10,8 @@ Intended differences:
   interpreter, so ``max_interpretation_size`` does not refuse rendering a
   filled button; the two ``test_state_appearance_*`` cases become one that
   renders under both limits.
-- pyropdf has no renumbering save and no field removal on page deletion,
-  so a handle goes stale when its object leaves ``/Fields``, and undo
-  restores it.
+- pyropdf has no renumbering save, so a handle goes stale when page
+  deletion removes its field, and undo restores it.
 - a refused read leaves the document as it was by construction, so the
   ``to_bytes`` comparisons around refused reads are gone.
 - a test checks that reading every field costs one walk of the tree.
@@ -244,7 +243,7 @@ def test_field_choices_read_options_and_pairs() -> None:
 def test_field_handles_go_stale() -> None:
     doc = pyropdf.open(_build_form_pdf())
     field = doc.form["customer"]
-    del doc.catalog["AcroForm"]["Fields"][0]
+    del doc.pages[0]
 
     assert "customer" not in doc.form
     with pytest.raises(pyropdf.StaleObjectError, match="no longer a field"):

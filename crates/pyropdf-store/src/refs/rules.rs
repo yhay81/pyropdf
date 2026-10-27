@@ -194,8 +194,14 @@ impl<'b> Edits<'b> {
         version: &Version,
         budget: &'a Budget,
     ) -> Result<BudgetVec<'a, (u32, Value)>> {
-        self.edits
-            .sort_unstable_by(|a, b| a.number.cmp(&b.number).then_with(|| b.path.cmp(&a.path)));
+        // Where rules disagree about one entry, pointing it elsewhere wins
+        // over removing it: the first edit of a path applies.
+        self.edits.sort_unstable_by(|a, b| {
+            a.number
+                .cmp(&b.number)
+                .then_with(|| b.path.cmp(&a.path))
+                .then_with(|| b.to.is_some().cmp(&a.to.is_some()))
+        });
         let mut out = BudgetVec::new(budget);
         let mut at = 0;
         while at < self.edits.len() {

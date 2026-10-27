@@ -21,6 +21,7 @@
 //! that the store cannot read refers to nothing. The index records edges
 //! and never follows them, so reference chains and cycles cost nothing.
 
+mod forms;
 mod labels;
 mod navigation;
 mod roles;
@@ -47,10 +48,12 @@ pub use rules::{Edits, Rule, unreferenced};
 /// version that `reads` reads, whose index is `index`. `retained` lists
 /// the pages that stay. Both are ascending.
 ///
-/// The navigation to a removed page goes or keeps no destination, and the
-/// structure content that lay only on removed pages goes. Refuses, before
-/// writing anything, navigation that is a page, a page tree node, or the
-/// catalog, and a structure tree past its limits.
+/// The navigation to a removed page goes or keeps no destination, the
+/// structure content that lay only on removed pages goes, and so do the
+/// widgets of removed pages and the form fields that keep no widget.
+/// Refuses, before writing anything, navigation that is a page, a page
+/// tree node, or the catalog, and a structure tree or a field tree past its
+/// limits.
 pub fn remove_pages(
     reads: &mut Reads<'_>,
     index: &References,
@@ -67,6 +70,7 @@ pub fn remove_pages(
         edits,
         structure::Reach::Affected,
     )?;
+    forms::plan(reads, index, removed, retained, edits)?;
     Ok(())
 }
 
