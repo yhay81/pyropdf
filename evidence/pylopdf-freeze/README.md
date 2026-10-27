@@ -15,7 +15,8 @@ checkout's origin and reads GitHub with `gh`; it changes nothing else.
 ## Results on 2026-10-27
 
 Candidate `ebb01d3c4c742046e8ce7fd72957cd15a2933321`, pylopdf's main
-since 2026-10-25 (yhay81/pylopdf#447).
+since 2026-10-25 (yhay81/pylopdf#447). The owner chose it as the freeze
+commit on 2026-10-27 (#95).
 
 - **Tested.** pylopdf's CI runs on pull requests only. Each of the five
   commits from the base to the candidate (yhay81/pylopdf#443 to #447) has
