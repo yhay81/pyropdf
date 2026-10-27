@@ -10,12 +10,13 @@ use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{
     self, BBox, BlockTuple, Error, QuadTuple, SearchHits, TextOptions, TextPeak, Unmapped,
 };
+use pyropdf_store::ErrorKind;
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::Reference;
 
 use crate::document::{_Document, PageKey, PageKind, PageResult};
-use crate::errors::{PdfError, StaleObjectError, limit_error};
+use crate::errors::{PdfError, StaleObjectError, limit_error, store_error};
 use crate::pixmap::bridge_error;
 
 /// The text options as `python/pyropdf/_text.py` passes them: `(clip, keep
@@ -252,11 +253,19 @@ pub fn page_layout(
                     .bridge
                     .get(&version, &index, &budget)
                     .map_err(|e| bridge_error(&e))?;
-                // A content that the store cannot read as operations leaves
-                // the chars without sources.
-                let content = chars
-                    .then(|| PageContent::read(&mut Reads::new(&version, &budget), page).ok())
-                    .flatten();
+                // Malformed content may leave chars without sources, but a
+                // budget refusal must stop the operation (F5 and F6).
+                let content = if chars {
+                    match PageContent::read(&mut Reads::new(&version, &budget), page) {
+                        Ok(content) => Some(content),
+                        Err(error) if matches!(error.kind(), ErrorKind::Limit(_)) => {
+                            return Err(store_error(&error));
+                        }
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                };
                 extract::page_layout(&bridged, at, &options, chars, content.as_ref(), &budget)
                     .map(PageResult::Layout)
                     .map_err(text_error)
