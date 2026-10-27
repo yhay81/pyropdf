@@ -7,7 +7,7 @@ objects that it read, so reading every field of a form costs about one walk.
 from __future__ import annotations
 
 import enum
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 
 #: The deepest field tree that the core's walk reads.
 _MAX_FIELD_DEPTH = 64
+#: The most options that a choice field takes.
+_MAX_FIELD_CHOICES = 4096
+#: The longest maximum length that a text field takes.
+_MAX_FIELD_LENGTH = 1_000_000
 
 
 class FieldType(enum.StrEnum):
@@ -131,21 +135,112 @@ class Field:
         """Return the field's kind."""
         return FieldType(self._read()[1])
 
+    def _edit(self, *, clear: list[str] | None = None, **entries: object) -> None:
+        """Change the field in one edit and draw its widgets again."""
+        _core.form_field_edit(self._core(), self._id, {"clear": clear or [], **entries})
+
     @property
     def flags(self) -> FieldFlags:
-        """Return the field flags, inherited from ancestors that set ``/Ff``; undefined bits are dropped."""
+        """Return or set the field flags, inherited from ancestors that set ``/Ff``; undefined bits are dropped.
+
+        Assigning writes the field's own ``/Ff``; the bits that decide its kind
+        (``RADIO``, ``PUSHBUTTON``, and ``COMBO``) cannot change.
+        """
         return FieldFlags(self._read()[2] & _DEFINED_FIELD_FLAGS)
+
+    @flags.setter
+    def flags(self, flags: FieldFlags) -> None:
+        if isinstance(flags, bool) or not isinstance(flags, int):
+            msg = f"flags is a FieldFlags value: {flags!r}"
+            raise TypeError(msg)
+        self._edit(flags=int(flags))
 
     @property
     def choices(self) -> tuple[FieldChoice, ...]:
-        """Return a choice field's options in ``/Opt`` order, or ``()`` without them.
+        """Return or set a choice field's options in ``/Opt`` order, or ``()`` without them.
 
         ``/Opt`` is inherited from the fields above. Reads stop at 4,096
-        options or 1 MiB of option text.
+        options or 1 MiB of option text. Assigning takes ``FieldChoice``
+        records or strings, at most 4,096, and writes the field's own
+        ``/Opt``.
         """
         return tuple(
             FieldChoice(value=value, label=label) for value, label in _core.form_field_choices(self._core(), self._id)
         )
+
+    @choices.setter
+    def choices(self, choices: Iterable[FieldChoice | str]) -> None:
+        if isinstance(choices, (str, bytes)) or not isinstance(choices, Iterable):
+            msg = f"choices is an iterable of FieldChoice records or strings: {choices!r}"
+            raise TypeError(msg)
+        pairs: list[tuple[str, str]] = []
+        for choice in choices:
+            if len(pairs) >= _MAX_FIELD_CHOICES:
+                msg = f"a choice field has at most {_MAX_FIELD_CHOICES} choices"
+                raise ValueError(msg)
+            if isinstance(choice, str):
+                pairs.append((choice, choice))
+            elif isinstance(choice, FieldChoice):
+                pairs.append((choice.value, choice.label))
+            else:
+                msg = f"a choice is a FieldChoice or a str: {choice!r}"
+                raise TypeError(msg)
+        self._edit(choices=pairs)
+
+    def _details(self) -> tuple[str | None, int | None, str | None]:
+        return _core.form_field_details(self._core(), self._id)
+
+    @property
+    def label(self) -> str | None:
+        """Return or set the field's description for users, ``/TU``; ``del`` removes it."""
+        return self._details()[0]
+
+    @label.setter
+    def label(self, label: str) -> None:
+        self._edit(label=_field_text(label, "label"))
+
+    @label.deleter
+    def label(self) -> None:
+        self._edit(clear=["label"])
+
+    @property
+    def max_length(self) -> int | None:
+        """Return or set the most characters that a text field holds, ``/MaxLen``; ``del`` removes it.
+
+        ``/MaxLen`` is inherited from the fields above.
+        """
+        return self._details()[1]
+
+    @max_length.setter
+    def max_length(self, length: int) -> None:
+        if isinstance(length, bool) or not isinstance(length, int) or not 0 <= length <= _MAX_FIELD_LENGTH:
+            msg = f"max_length is an int from 0 to {_MAX_FIELD_LENGTH}: {length!r}"
+            raise ValueError(msg)
+        self._edit(max_length=length)
+
+    @max_length.deleter
+    def max_length(self) -> None:
+        self._edit(clear=["max_length"])
+
+    @property
+    def default_value(self) -> str | None:
+        """Return or set the value that :meth:`reset` restores, ``/DV``; ``del`` removes it."""
+        return self._details()[2]
+
+    @default_value.setter
+    def default_value(self, value: str) -> None:
+        self._edit(default_value=_field_text(value, "default_value"))
+
+    @default_value.deleter
+    def default_value(self) -> None:
+        self._edit(clear=["default_value"])
+
+    def reset(self) -> None:
+        """Restore the field's default value, or clear its value, and draw its widgets again.
+
+        A check box or radio button without a default value turns off.
+        """
+        self._edit(reset=True)
 
     @property
     def is_signed(self) -> bool:
@@ -227,6 +322,14 @@ class Field:
         return f"<Field {name!r} {self._id[0]}>"
 
 
+def _field_text(value: object, name: str) -> str:
+    """Check a field text property before the core copies it."""
+    if not isinstance(value, str):
+        msg = f"{name} must be a str: {type(value).__name__}"
+        raise TypeError(msg)
+    return value
+
+
 class Form(Mapping[str, Field]):
     """The terminal fields of a document's interactive form, as ``doc.form`` returns them.
 
@@ -277,14 +380,24 @@ class Form(Mapping[str, Field]):
 
     @property
     def need_appearances(self) -> bool:
-        """Return the AcroForm's ``/NeedAppearances``, which asks viewers to draw the widgets again.
+        """Return or set the AcroForm's ``/NeedAppearances``, which asks viewers to draw the widgets again.
 
-        A document without fields reads ``False``.
+        Filling a field draws its widgets and clears the flag once every
+        widget that shows a value has an appearance. A document without
+        fields reads ``False``, and one without a form refuses the
+        assignment.
         """
         if not _core.form_fields(self._core()):
             return False
         form = self._document.catalog.get("AcroForm")
         return isinstance(form, Dictionary) and form.get("NeedAppearances") is True
+
+    @need_appearances.setter
+    def need_appearances(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            msg = f"need_appearances is a bool: {value!r}"
+            raise TypeError(msg)
+        _core.form_set_need_appearances(self._core(), value)
 
     def __getitem__(self, name: str) -> Field:
         """Return the field named ``name``; another name raises :class:`KeyError`."""
