@@ -114,13 +114,13 @@ reached = "`Page.content` reads more glyphs, path and clip segments, dash length
 message = "the page holds too many glyphs to read as text"
 unit = "glyphs"
 default = 262_144
-reached = "`Page.text` or `Document.text` collects more glyphs of one page than the call's `max_glyphs`."
+reached = "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`."
 
 [codes.text_size]
 message = "the text is too large"
 unit = "bytes"
 default = 67_108_864
-reached = "The UTF-8 of a page's glyphs, or of the text that `Page.text` or `Document.text` returns, is larger than the call's `max_size`."
+reached = "The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`."
 
 # The low-level object model.
 
@@ -169,6 +169,18 @@ message = "the password is too long"
 unit = "bytes"
 default = 127
 reached = "A password is longer in UTF-8 than PDF 2.0 allows."
+
+[codes.embedded_file_size]
+message = "the attachment is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`."
+
+[codes.embedded_file_input_size]
+message = "the attachment's text is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "An attachment's name, file name, or description is longer in UTF-8 than 1 MiB."
 
 [codes.page_entry_count]
 message = "the list of pages is too long"

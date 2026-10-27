@@ -28,7 +28,10 @@ pub use model::{
     PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE, SoftMaskTuple,
     StateTuple, StrokeTuple, TextRunTuple,
 };
-pub use text::{TextOptions, Unmapped, page_text};
+pub use text::{
+    BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SpanStyleTuple, SpanTuple,
+    TextOptions, Unmapped, WordTuple, page_layout, page_text,
+};
 
 /// Why reading a page's content stopped.
 #[derive(Clone, Debug, PartialEq, Eq)]
