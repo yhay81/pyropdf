@@ -368,14 +368,6 @@ fn the_joined_content_is_bounded() {
     assert_eq!(content.unwrap().operations().len(), 4);
 }
 
-/// Returns `data` without its white space.
-fn tokens(data: &[u8]) -> Vec<u8> {
-    data.iter()
-        .copied()
-        .filter(|byte| !WHITE_SPACE.contains(byte))
-        .collect()
-}
-
 #[test]
 fn every_corpus_page_reads_the_content_that_hayro_reads() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/real_world");
@@ -386,7 +378,7 @@ fn every_corpus_page_reads_the_content_that_hayro_reads() {
         .collect();
     files.sort();
     assert_eq!(files.len(), 14);
-    let (mut operations_read, mut pages_read, mut pages_alike) = (0, 0, 0);
+    let (mut operations_read, mut pages_read) = (0, 0);
     for path in &files {
         let bytes = fs::read(path).unwrap();
         let theirs = Pdf::new(bytes.clone()).unwrap();
@@ -397,11 +389,7 @@ fn every_corpus_page_reads_the_content_that_hayro_reads() {
             let operations = content.operations();
             let data = operations.data().as_slice();
             let expected = page.page_stream().unwrap_or_default();
-            // The store reads a stream whose `/Length` is indirect without
-            // the white space that ends its data, which hayro keeps
-            // (yhay81/pyropdf#106): the white space may differ.
-            assert_eq!(tokens(data), tokens(expected), "{at}");
-            pages_alike += usize::from(data == expected);
+            assert_eq!(data, expected, "{at}");
             assert_eq!(joined(operations), data, "{at}");
             let mut iter = UntypedIter::new(expected);
             let mut theirs = Vec::new();
@@ -425,10 +413,7 @@ fn every_corpus_page_reads_the_content_that_hayro_reads() {
             pages_read += 1;
         }
     }
-    // 151 of the 155 pages are alike, with 80,233 operations.
-    assert!(
-        pages_alike >= 151,
-        "{pages_alike} of {pages_read} pages alike"
-    );
+    // 155 pages, with 80,233 operations.
+    assert_eq!(pages_read, 155);
     assert!(operations_read > 80_000, "{operations_read}");
 }

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::budget::{Budget, BudgetVec, CancellationToken, LimitCode};
-use crate::{ErrorKind, LimitExceeded};
+use crate::{Error, ErrorKind, LimitExceeded};
 
 /// Parses `bytes` with the default budget.
 fn parse(bytes: &'static [u8]) -> Value {
@@ -288,6 +288,83 @@ fn a_stream_whose_length_is_wrong_or_missing_gets_the_length_of_its_data() {
         assert_eq!(keys(stream.dict()), keys_read, "{}", source.escape_ascii());
         assert_eq!(stream.dict().lexeme(), None, "{}", source.escape_ascii());
     }
+}
+
+/// A stream whose `/Length` refers to object 5, with data that hayro-syntax
+/// alone reads as `abc`.
+const INDIRECT: &[u8] = b"<< /Length 5 0 R >>\nstream\nabc\n\nendstream";
+
+/// Parses `source`, whose length's object 5 begins with `length`.
+fn with_length(source: &'static [u8], length: &'static [u8]) -> Value {
+    let fetch = |reference| Ok((reference == Reference::new(5, 0)).then(|| Bytes::from(length)));
+    Value::parse_with_lengths(&Bytes::from(source), &Budget::default(), &fetch)
+        .unwrap_or_else(|error| panic!("{}: {error}", length.escape_ascii()))
+}
+
+#[test]
+fn a_stream_reads_the_data_that_its_indirect_length_gives() {
+    let cases: [(&'static [u8], &[u8]); 3] = [
+        (b"4\nendobj", b"abc\n"),
+        (b"5", b"abc\n\n"),
+        (b"3 endobj", b"abc"),
+    ];
+    for (length, data) in cases {
+        let value = with_length(INDIRECT, length);
+        let stream = stream(&value);
+        assert_eq!(stream.data().as_slice(), data, "{}", length.escape_ascii());
+        assert_eq!(
+            stream.dict().get("Length"),
+            Some(&Value::Reference(Reference::new(5, 0)))
+        );
+        assert_eq!(
+            stream.dict().lexeme().map(Bytes::as_slice),
+            Some(&b"<< /Length 5 0 R >>"[..])
+        );
+        // The writer writes the length of the data.
+        let budget = Budget::default();
+        let mut written = BudgetVec::new(&budget);
+        crate::write::value(&mut written, &value).unwrap();
+        let expected = [&b"<</Length "[..], data.len().to_string().as_bytes()].concat();
+        assert!(written.starts_with(&expected), "{}", written.escape_ascii());
+    }
+    let empty = with_length(b"<< /Length 5 0 R >>\nstream\n\nendstream", b"0");
+    assert_eq!(stream(&empty).data().as_slice(), b"");
+    assert!(stream(&empty).dict().lexeme().is_some());
+}
+
+#[test]
+fn a_stream_whose_indirect_length_does_not_fit_reads_what_hayro_syntax_finds() {
+    // Too long, ending before `endstream`, not an integer from 0, a
+    // reference, and the stream itself.
+    let lengths: [&'static [u8]; 7] = [b"99", b"2", b"-1", b"4.0", b"/Four", b"4 0 R", INDIRECT];
+    for length in lengths {
+        let value = with_length(INDIRECT, length);
+        let stream = stream(&value);
+        assert_eq!(
+            stream.data().as_slice(),
+            b"abc",
+            "{}",
+            length.escape_ascii()
+        );
+        assert_eq!(stream.dict().get("Length"), Some(&Value::Integer(3)));
+        assert_eq!(stream.dict().lexeme(), None);
+    }
+    let missing = with_length(b"<< /Length 6 0 R >>\nstream\nabc\n\nendstream", b"4");
+    assert_eq!(stream(&missing).data().as_slice(), b"abc");
+}
+
+#[test]
+fn reading_an_indirect_length_is_within_the_budget() {
+    let source = Bytes::from(INDIRECT);
+    let unreadable = |_| Err(Error::malformed("unreadable"));
+    let value = Value::parse_with_lengths(&source, &Budget::default(), &unreadable).unwrap();
+    assert_eq!(stream(&value).data().as_slice(), b"abc");
+    let refused = |_| Err(LimitExceeded::new(LimitCode::MemorySize).into());
+    let error = Value::parse_with_lengths(&source, &Budget::default(), &refused).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
 }
 
 #[test]

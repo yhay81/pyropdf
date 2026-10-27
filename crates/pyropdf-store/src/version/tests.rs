@@ -1424,3 +1424,94 @@ fn a_rollback_discards_writes_since_its_savepoint_and_keeps_numbers_used() {
     let committed = transaction.commit(&budget).unwrap();
     assert_eq!(committed.written().objects(), &[1]);
 }
+
+/// Returns the stream of object `number` of `version`, if it is one whose
+/// `/Length` refers to an object.
+fn indirect_stream(version: &Version, number: u32) -> Option<Stream> {
+    let object = version.get(number, &Budget::default()).unwrap()?;
+    match &**object.value() {
+        Value::Stream(stream)
+            if matches!(stream.dict().get("Length"), Some(Value::Reference(_))) =>
+        {
+            Some((**stream).clone())
+        }
+        _ => None,
+    }
+}
+
+#[test]
+fn every_corpus_stream_with_an_indirect_length_reads_the_data_that_hayro_reads() {
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/real_world");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
+        .collect();
+    files.sort();
+    assert_eq!(files.len(), 14);
+    let budget = Budget::default();
+    let mut streams = BTreeMap::new();
+    for path in &files {
+        let bytes = std::fs::read(path).unwrap();
+        let base = crate::save::FileBase::open(Bytes::new(bytes.clone()), &budget).unwrap();
+        let version = Document::new(Arc::new(base), None).current();
+        let pdf = hayro_syntax::Pdf::new(bytes).unwrap();
+        let mut numbers = BudgetVec::new(&budget);
+        version.base().numbers(&mut numbers).unwrap();
+        let numbers: BTreeSet<u32> = numbers.into_vec().into_iter().collect();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        for number in numbers {
+            let Some(stream) = indirect_stream(&version, number) else {
+                continue;
+            };
+            let generation = version.generation(number).unwrap();
+            let id = hayro_syntax::object::ObjectIdentifier::new(
+                i32::try_from(number).unwrap(),
+                i32::from(generation),
+            );
+            let theirs = pdf
+                .xref()
+                .get::<hayro_syntax::object::Stream<'_>>(id)
+                .unwrap();
+            assert_eq!(
+                stream.data().as_slice(),
+                &*theirs.raw_data(),
+                "{name} object {number}"
+            );
+            assert!(stream.dict().lexeme().is_some(), "{name} object {number}");
+            *streams.entry(name.clone()).or_insert(0) += 1;
+        }
+    }
+    // Every `/Length N G R` of the corpus is in these files.
+    let streams: Vec<_> = streams.into_iter().collect();
+    assert_eq!(
+        streams,
+        [
+            ("nics-background-checks-2015-11.pdf".to_owned(), 7),
+            ("patent-us223898.pdf".to_owned(), 12)
+        ]
+    );
+}
+
+#[test]
+fn a_stream_keeps_the_data_and_the_reference_of_its_indirect_length() {
+    // Object 4 of the patent is `<< /Length 5 0 R ... >>`, and object 5 is
+    // `36`, with a last `\n` that hayro-syntax alone would trim.
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/patent-us223898.pdf");
+    let budget = Budget::default();
+    let base =
+        crate::save::FileBase::open(Bytes::new(std::fs::read(path).unwrap()), &budget).unwrap();
+    let version = Document::new(Arc::new(base), None).current();
+    let stream = indirect_stream(&version, 4).unwrap();
+    assert_eq!(stream.data().len(), 36);
+    assert_eq!(stream.data().last(), Some(&b'\n'));
+    assert_eq!(
+        stream.dict().get("Length"),
+        Some(&Value::Reference(Reference::new(5, 0)))
+    );
+    let lexeme = stream.dict().lexeme().unwrap();
+    assert!(lexeme.windows(10).any(|window| window == b"/Length 5 "));
+    assert_eq!(value_of(&version, 5), Some(Value::Integer(36)));
+}

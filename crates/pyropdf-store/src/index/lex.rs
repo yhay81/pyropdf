@@ -4,7 +4,7 @@
 //! section 7.2.
 
 /// Whether `byte` is white space (ISO 32000-2 Table 1).
-pub(super) const fn is_white(byte: u8) -> bool {
+pub(crate) const fn is_white(byte: u8) -> bool {
     matches!(byte, b'\0' | b'\t' | b'\n' | b'\x0C' | b'\r' | b' ')
 }
 

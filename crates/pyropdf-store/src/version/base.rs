@@ -162,8 +162,10 @@ impl Origin {
     /// Returns object `number` of the base, which its first read parses and
     /// every later read shares.
     ///
-    /// Refuses as [`Base::object`] and [`Value::parse`] do. A refusal or an
-    /// error is not kept, so a later read tries again.
+    /// A stream whose `/Length` refers to an object reads the data that the
+    /// base's object gives ([`Value::parse_with_lengths`]). Refuses as
+    /// [`Base::object`] and [`Value::parse`] do. A refusal or an error is not
+    /// kept, so a later read tries again.
     pub(super) fn object(&self, number: u32, budget: &Budget) -> Result<Option<Object>> {
         let Some(generation) = self.base.generation(number) else {
             return Ok(None);
@@ -180,7 +182,11 @@ impl Origin {
         else {
             return Ok(None);
         };
-        let value = Value::parse(&bytes, budget).map_err(|error| error.context(context()))?;
+        // The length of a stream is read from the base, whose bytes hold
+        // the stream, whatever a version wrote since.
+        let fetch = |reference| self.base.object(reference, budget);
+        let value = Value::parse_with_lengths(&bytes, budget, &fetch)
+            .map_err(|error| error.context(context()))?;
         let value = self.cache.keep(number, value, budget)?;
         Ok(Some(Object { generation, value }))
     }
