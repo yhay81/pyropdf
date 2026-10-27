@@ -7,16 +7,16 @@ objects that it read, so reading every field of a form costs about one walk.
 from __future__ import annotations
 
 import enum
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, TypeAlias
 
 from pyropdf import _core
 from pyropdf._annotations import _BORDER_STYLE_NAMES, Border, _opaque_color, _rect
 from pyropdf._content import Color
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._geometry import Rect
-from pyropdf._objects import Dictionary
+from pyropdf._objects import Array, Dictionary, Name, Stream, String
 from pyropdf._page import Page
 from pyropdf._widgets import Widget
 
@@ -86,6 +86,248 @@ class FieldFlags(enum.IntFlag):
 
 
 _DEFINED_FIELD_FLAGS = sum(flag.value for flag in FieldFlags)
+
+
+class ScriptTrigger(enum.StrEnum):
+    """When a viewer runs a form script: the field triggers of ``field.scripts``, the widget ones of ``widget.scripts``.
+
+    pyropdf stores scripts and never runs them.
+    """
+
+    KEYSTROKE = "keystroke"
+    """A field's text changes (``/AA /K``)."""
+    FORMAT = "format"
+    """A field's value is displayed (``/AA /F``)."""
+    VALIDATE = "validate"
+    """A field's value is committed (``/AA /V``)."""
+    CALCULATE = "calculate"
+    """Another field changes and this one is recalculated (``/AA /C``, listed in ``/CO``)."""
+    FOCUS = "focus"
+    """A widget receives the focus (``/AA /Fo``)."""
+    BLUR = "blur"
+    """A widget loses the focus (``/AA /Bl``)."""
+    ENTER = "enter"
+    """The pointer enters a widget (``/AA /E``)."""
+    EXIT = "exit"
+    """The pointer leaves a widget (``/AA /X``)."""
+    DOWN = "down"
+    """A mouse button is pressed in a widget (``/AA /D``)."""
+    UP = "up"
+    """A mouse button is released in a widget (``/AA /U``)."""
+    ACTIVATE = "activate"
+    """A widget, such as a pushbutton, is activated (``/A``)."""
+
+
+#: The ``/AA`` key of each trigger, and ``A`` for activation.
+_TRIGGER_KEYS = {
+    ScriptTrigger.KEYSTROKE: "K",
+    ScriptTrigger.FORMAT: "F",
+    ScriptTrigger.VALIDATE: "V",
+    ScriptTrigger.CALCULATE: "C",
+    ScriptTrigger.FOCUS: "Fo",
+    ScriptTrigger.BLUR: "Bl",
+    ScriptTrigger.ENTER: "E",
+    ScriptTrigger.EXIT: "X",
+    ScriptTrigger.DOWN: "D",
+    ScriptTrigger.UP: "U",
+    ScriptTrigger.ACTIVATE: "A",
+}
+_FIELD_TRIGGERS = frozenset(
+    {ScriptTrigger.KEYSTROKE, ScriptTrigger.FORMAT, ScriptTrigger.VALIDATE, ScriptTrigger.CALCULATE}
+)
+_WIDGET_TRIGGERS = frozenset(ScriptTrigger) - _FIELD_TRIGGERS
+#: Scripts stop at 1 MiB of UTF-8, read or written (``script_size``).
+_MAX_SCRIPT_SIZE = 1024 * 1024
+#: UTF-16BE takes up to two bytes for each byte of UTF-8, plus its byte-order mark.
+_MAX_ENCODED_SCRIPT_SIZE = 2 * _MAX_SCRIPT_SIZE + 3
+#: The most entries of the calculation order, the field walk's edge limit.
+_MAX_CALCULATION_ORDER = 8192
+
+
+def _script_size(source: str) -> int:
+    return len(source.encode("utf-8", "surrogatepass"))
+
+
+def _refuse_script(subject: str) -> NoReturn:
+    code = "script_size"
+    msg = f"{subject} exceed the {_MAX_SCRIPT_SIZE}-byte safety limit"
+    raise LimitError(code, msg)
+
+
+def _javascript(action: object) -> str | None:
+    """Return the source of a JavaScript action, or ``None`` for another action."""
+    if not isinstance(action, Dictionary) or action.get("S") != "JavaScript":
+        return None
+    source = action.get("JS")
+    if isinstance(source, Stream):
+        try:
+            data = source.read(max_size=_MAX_ENCODED_SCRIPT_SIZE)
+        except LimitError as error:
+            if error.code != "stream_data_size":
+                raise
+            _refuse_script("a script's bytes")
+        source = String(data)
+    elif not isinstance(source, String):
+        return None
+    elif len(source) > _MAX_ENCODED_SCRIPT_SIZE:
+        _refuse_script("a script's bytes")
+    text = source.text
+    if _script_size(text) > _MAX_SCRIPT_SIZE:
+        _refuse_script("a script's UTF-8 bytes")
+    return text
+
+
+def _scripts(holder: Dictionary, triggers: frozenset[ScriptTrigger]) -> dict[ScriptTrigger, str]:
+    """Read the JavaScript of ``holder`` for ``triggers``, in trigger order."""
+    additional = holder.get("AA")
+    items: dict[ScriptTrigger, str] = {}
+    total = 0
+    for trigger in ScriptTrigger:
+        if trigger not in triggers:
+            continue
+        key = _TRIGGER_KEYS[trigger]
+        if trigger is ScriptTrigger.ACTIVATE:
+            action = holder.get("A")
+        else:
+            action = additional.get(key) if isinstance(additional, Dictionary) else None
+        source = _javascript(action)
+        if source is not None:
+            total += _script_size(source)
+            if total > _MAX_SCRIPT_SIZE:
+                _refuse_script("scripts")
+            items[trigger] = source
+    return items
+
+
+class Scripts(MutableMapping[ScriptTrigger, str]):
+    """The JavaScript of a field or widget by trigger, as ``field.scripts`` and ``widget.scripts`` return them.
+
+    Keys are :class:`ScriptTrigger` members and values the script source;
+    assigning sets a JavaScript action, and ``del`` removes it, each in one
+    transaction. Actions of other kinds are not listed. A field takes the
+    keystroke, format, validate, and calculate triggers, and a widget the
+    others. pyropdf never runs the scripts. Each script and the mapping's
+    scripts together stop at 1 MiB of UTF-8 (``script_size``); a refused
+    write changes nothing.
+    """
+
+    __slots__ = ("_document", "_holder", "_triggers")
+
+    def __init__(
+        self,
+        document: Document,
+        holder: Callable[[], Dictionary],
+        triggers: frozenset[ScriptTrigger],
+    ) -> None:
+        """Wrap a field's or widget's dictionary; use ``Field.scripts`` or ``Widget.scripts``."""
+        self._document = document
+        self._holder = holder
+        self._triggers = triggers
+
+    def _items(self) -> dict[ScriptTrigger, str]:
+        return _scripts(self._holder(), self._triggers)
+
+    def _trigger(self, trigger: object) -> ScriptTrigger:
+        resolved = ScriptTrigger(trigger)
+        if resolved not in self._triggers:
+            owner = "field" if ScriptTrigger.FORMAT in self._triggers else "widget"
+            msg = f"{resolved.name} is not a trigger of this {owner}"
+            raise ValueError(msg)
+        return resolved
+
+    def __getitem__(self, trigger: ScriptTrigger) -> str:
+        """Return the script of ``trigger``; a trigger without one raises :class:`KeyError`."""
+        return self._items()[self._trigger(trigger)]
+
+    def __setitem__(self, trigger: ScriptTrigger, source: str) -> None:
+        """Set the JavaScript that ``trigger`` runs."""
+        resolved = self._trigger(trigger)
+        if not isinstance(source, str):
+            msg = f"a script is a str: {type(source).__name__}"
+            raise TypeError(msg)
+        if len(source) * 4 > _MAX_SCRIPT_SIZE and _script_size(source) > _MAX_SCRIPT_SIZE:
+            _refuse_script("a script's UTF-8 bytes")
+        self._write(resolved, source)
+
+    def __delitem__(self, trigger: ScriptTrigger) -> None:
+        """Remove the script of ``trigger``; a trigger without one raises :class:`KeyError`."""
+        resolved = self._trigger(trigger)
+        if resolved not in self._items():
+            raise KeyError(trigger)
+        self._write(resolved, None)
+
+    def _write(self, trigger: ScriptTrigger, source: str | None) -> None:
+        """Set or remove one script after admitting the mapping that it leaves."""
+        holder = self._holder()
+        items = _scripts(holder, self._triggers)
+        items.pop(trigger, None)
+        if source is not None and _script_size(source) + sum(map(_script_size, items.values())) > _MAX_SCRIPT_SIZE:
+            _refuse_script("scripts")
+        action = None if source is None else {"S": Name("JavaScript"), "JS": source}
+        with self._document.transaction():
+            if trigger is ScriptTrigger.ACTIVATE:
+                _assign(holder, "A", action)
+            else:
+                _assign(holder, "AA", _additional(holder, _TRIGGER_KEYS[trigger], action))
+            if trigger is ScriptTrigger.CALCULATE:
+                _calculate(self._document, holder, listed=source is not None)
+
+    def __iter__(self) -> Iterator[ScriptTrigger]:
+        """Iterate over the triggers that have a script."""
+        return iter(list(self._items()))
+
+    def __len__(self) -> int:
+        """Return the number of scripts."""
+        return len(self._items())
+
+    def __repr__(self) -> str:
+        """Return ``Scripts({...})``."""
+        return f"Scripts({self._items()!r})"
+
+
+def _assign(holder: Dictionary, key: str, value: object) -> None:
+    """Set ``key`` of ``holder``, or remove it for ``None``."""
+    if value is not None:
+        holder[key] = value
+    elif key in holder:
+        del holder[key]
+
+
+def _additional(holder: Dictionary, key: str, action: object) -> dict[str, object] | None:
+    """Return ``holder``'s ``/AA`` with ``key`` set to ``action``, as a direct dictionary, or ``None`` when empty."""
+    current = holder.get("AA")
+    entries = {name: current[name] for name in current if name != key} if isinstance(current, Dictionary) else {}
+    if action is not None:
+        entries[key] = action
+    return entries or None
+
+
+def _calculate(document: Document, field: Dictionary, *, listed: bool) -> None:
+    """List ``field`` once in the calculation order ``/CO``, keeping its position, or take it out."""
+    form = document.catalog.get("AcroForm")
+    if not isinstance(form, Dictionary):
+        msg = "AcroForm is not a dictionary"
+        raise PdfError(msg)
+    current = form.get("CO")
+    current = list(current) if isinstance(current, Array) else []
+    if len(current) > _MAX_CALCULATION_ORDER:
+        msg = "AcroForm calculation order exceeds the field-tree edge limit"
+        raise PdfError(msg)
+    order = []
+    found = False
+    for item in current:
+        if item == field:
+            if listed and not found:
+                order.append(item)
+            found = True
+        else:
+            order.append(item)
+    if listed and not found:
+        if len(order) >= _MAX_CALCULATION_ORDER:
+            msg = "AcroForm calculation order exceeds the field-tree edge limit"
+            raise PdfError(msg)
+        order.append(field)
+    _assign(form, "CO", order or None)
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,6 +549,16 @@ class Field:
             msg = f"a field value is a str or bool: {value!r}"
             raise TypeError(msg)
         _core.form_field_fill(self._core(), self._id, value)
+
+    @property
+    def scripts(self) -> Scripts:
+        """Return the field's JavaScript by trigger: keystroke, format, validate, and calculate.
+
+        Setting a calculate script lists the field in the form's calculation
+        order, ``/CO``.
+        """
+        self._read()
+        return Scripts(self._document, lambda: self.obj, _FIELD_TRIGGERS)
 
     def __eq__(self, other: object) -> bool:
         """Compare document and object."""
@@ -912,6 +1164,8 @@ for _public in (
     ListBox,
     PushButton,
     RadioButton,
+    ScriptTrigger,
+    Scripts,
     SignatureField,
     SignatureFlags,
     TextField,

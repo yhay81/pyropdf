@@ -34,6 +34,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
 | `annotation_input_size` | 1 MiB | The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together. |
 | `form_field_input_size` | 1 MiB | The value that setting `Field.value` writes is longer than 1 MiB in UTF-8. |
+| `script_size` | 1 MiB | A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written. |
 | `text_line_count` | 4,096 lines | The text that a form field's appearance draws lays out in more than 4,096 lines. |
 | `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges. |
 | `named_destination_text_size` | 16 MiB | The names of the document's named destinations are longer than 16 MiB together. |

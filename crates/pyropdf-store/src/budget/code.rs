@@ -94,6 +94,9 @@ pub enum LimitCode {
     /// The value that setting `Field.value` writes is longer than 1 MiB in
     /// UTF-8.
     FormFieldInputSize,
+    /// A form script, or the scripts of one field or widget together, are
+    /// longer than 1 MiB in UTF-8, read or written.
+    ScriptSize,
     /// The text that a form field's appearance draws lays out in more than
     /// 4,096 lines.
     TextLineCount,
@@ -134,7 +137,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -166,6 +169,7 @@ impl LimitCode {
         Self::PasswordInputSize,
         Self::AnnotationInputSize,
         Self::FormFieldInputSize,
+        Self::ScriptSize,
         Self::TextLineCount,
         Self::NamedDestinationCount,
         Self::NamedDestinationTextSize,
@@ -214,6 +218,7 @@ impl LimitCode {
             Self::PasswordInputSize => "password_input_size",
             Self::AnnotationInputSize => "annotation_input_size",
             Self::FormFieldInputSize => "form_field_input_size",
+            Self::ScriptSize => "script_size",
             Self::TextLineCount => "text_line_count",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationTextSize => "named_destination_text_size",
@@ -264,6 +269,7 @@ impl LimitCode {
             Self::PasswordInputSize => "the password is too long",
             Self::AnnotationInputSize => "the annotation text is too long",
             Self::FormFieldInputSize => "the form field value is too long",
+            Self::ScriptSize => "the form script is too long",
             Self::TextLineCount => "the text has too many lines",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
@@ -314,6 +320,7 @@ impl LimitCode {
             Self::PasswordInputSize => Some("bytes"),
             Self::AnnotationInputSize => Some("bytes"),
             Self::FormFieldInputSize => Some("bytes"),
+            Self::ScriptSize => Some("bytes"),
             Self::TextLineCount => Some("lines"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationTextSize => Some("bytes"),
@@ -364,6 +371,7 @@ impl LimitCode {
             Self::PasswordInputSize => Some(127),
             Self::AnnotationInputSize => Some(1_048_576),
             Self::FormFieldInputSize => Some(1_048_576),
+            Self::ScriptSize => Some(1_048_576),
             Self::TextLineCount => Some(4_096),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationTextSize => Some(16_777_216),

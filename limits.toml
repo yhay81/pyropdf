@@ -212,6 +212,12 @@ unit = "bytes"
 default = 1_048_576
 reached = "The value that setting `Field.value` writes is longer than 1 MiB in UTF-8."
 
+[codes.script_size]
+message = "the form script is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written."
+
 [codes.text_line_count]
 message = "the text has too many lines"
 unit = "lines"
