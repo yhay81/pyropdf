@@ -63,6 +63,15 @@ class Pixmap:
     def save(self, path: str | PathLike[str], /, *, format: str | None = None, quality: int = 95) -> None: ...  # noqa: A002
     def __buffer__(self, flags: int, /) -> memoryview: ...
 
+def insert_ocr_layer(
+    document: _Document,
+    number: int,
+    generation: int,
+    words: list[tuple[float, float, float, float, str]],
+    rotation: int,
+    /,
+) -> bool: ...
+
 class _OcrEngine:
     def __init__(
         self,

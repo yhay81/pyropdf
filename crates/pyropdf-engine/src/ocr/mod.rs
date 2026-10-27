@@ -6,6 +6,8 @@
 //! versioned `pylopdf-ocr-models` package and loads an [`Engine`] with
 //! explicit detector, recognizer, and dictionary paths.
 
+mod layer;
+
 use std::borrow::Cow;
 use std::fmt;
 use std::fs::File;
@@ -18,6 +20,8 @@ use pyropdf_store::budget::{Budget, LimitCode};
 use rten::{Model, RunOptions, ThreadPool};
 use rten_tensor::Layout as _;
 use rten_tensor::NdTensor;
+
+pub use self::layer::{Layer, LayerWord, MAX_LAYER_TEXT_BYTES, MAX_LAYER_WORDS, layer};
 
 const DETECTOR_THRESHOLD: f32 = 0.3;
 const DETECTOR_BOX_THRESHOLD: f32 = 0.5;

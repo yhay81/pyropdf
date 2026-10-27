@@ -553,7 +553,7 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
 
 /// Sets the data of `stream` to `data`, given decoded, compressed with
 /// `/FlateDecode` when `compress`, and drops its previous filters.
-fn set_data(stream: &mut Stream, data: &[u8], compress: bool) -> PyResult<()> {
+pub(crate) fn set_data(stream: &mut Stream, data: &[u8], compress: bool) -> PyResult<()> {
     let dict = stream.dict_mut();
     dict.remove("Filter");
     dict.remove("DecodeParms");

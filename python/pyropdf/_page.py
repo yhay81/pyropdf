@@ -12,7 +12,14 @@ from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
-from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord, _default_ocr_engine
+from pyropdf._ocr import (
+    OcrEngine,
+    OcrRotation,
+    OcrWord,
+    _bounded_utf8_size,
+    _default_ocr_engine,
+    _validate_ocr_rotation,
+)
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
 from pyropdf._tables import Table, build_tables
@@ -50,17 +57,50 @@ _MAX_SEARCH_INPUT_BYTES = 4096
 _FLOAT32_MAX = 3.4028234663852886e38
 
 
-def _clip_box(clip: object) -> tuple[float, float, float, float]:
+def _clip_box(clip: object, *, name: str = "clip") -> tuple[float, float, float, float]:
     """Return an ``(x0, y0, x1, y1)`` clip as floats, refusing one that holds no area."""
     try:
         x0, y0, x1, y1 = (float(value) for value in clip)  # ty: ignore[not-iterable]
     except (TypeError, ValueError) as error:
-        msg = f"clip must be 4 numbers (x0, y0, x1, y1): {clip!r}"
+        msg = f"{name} must be 4 numbers (x0, y0, x1, y1): {clip!r}"
         raise ValueError(msg) from error
     if not all(math.isfinite(v) and abs(v) <= _FLOAT32_MAX for v in (x0, y0, x1, y1)) or x0 >= x1 or y0 >= y1:
-        msg = f"clip must be a finite rect within PDF real-number range with x0 < x1 and y0 < y1: {clip!r}"
+        msg = f"{name} must be a finite rect within PDF real-number range with x0 < x1 and y0 < y1: {clip!r}"
         raise ValueError(msg)
     return x0, y0, x1, y1
+
+
+#: The most words with text, and UTF-8 bytes of their text, of one OCR layer.
+_MAX_OCR_LAYER_WORDS = 4096
+_MAX_OCR_LAYER_TEXT_BYTES = 1024 * 1024
+#: The defaults of the recognition options of :meth:`Page.apply_ocr`, which ``words`` excludes.
+_DEFAULT_OCR_RECOGNITION = (300, 1408, 192, 0.5)
+
+
+def _ocr_layer_words(words: Iterable[OcrWord]) -> list[OcrWord]:
+    """Return the words with text of an OCR layer, stopping at the first word over the limits."""
+    accepted: list[OcrWord] = []
+    text_bytes = 0
+    for word in words:
+        if not isinstance(word, OcrWord):
+            msg = f"words must be OcrWord records: {word!r}"
+            raise TypeError(msg)
+        _clip_box(word.bbox, name="word bbox")
+        if not isinstance(word.text, str):
+            msg = f"word text must be a string: {word.text!r}"
+            raise TypeError(msg)
+        if not word.text:
+            continue
+        if len(accepted) >= _MAX_OCR_LAYER_WORDS:
+            msg = f"words cannot contain more than {_MAX_OCR_LAYER_WORDS} entries with text"
+            raise ValueError(msg)
+        encoded_bytes = _bounded_utf8_size(word.text, _MAX_OCR_LAYER_TEXT_BYTES - text_bytes)
+        if encoded_bytes is None:
+            msg = f"word text cannot exceed {_MAX_OCR_LAYER_TEXT_BYTES} UTF-8 bytes per call"
+            raise ValueError(msg)
+        text_bytes += encoded_bytes
+        accepted.append(word)
+    return accepted
 
 
 class Page:
@@ -215,6 +255,90 @@ class Page:
             min_confidence=min_confidence,
             rotation=rotation,
             clip=None if clip is None else _clip_box(clip),
+        )
+
+    def apply_ocr(  # noqa: PLR0913 - OCR resource controls are keyword-only.
+        self,
+        *,
+        words: Iterable[OcrWord] | None = None,
+        engine: OcrEngine | None = None,
+        dpi: float = 300,
+        clip: Sequence[float] | None = None,
+        rotation: OcrRotation = 0,
+        skip_existing: bool = True,
+        tile_size: int = 1408,
+        overlap: int = 192,
+        min_confidence: float = 0.5,
+    ) -> list[OcrWord]:
+        """Add an invisible, searchable text layer and return the words it holds.
+
+        Without ``words``, the page is recognized as :meth:`ocr` recognizes it.
+        ``words`` takes the :class:`OcrWord` records that another engine, such
+        as Tesseract or a cloud service, recognized, with boxes in display
+        space; the recognition options do not apply to them. The text is not
+        drawn and appears only in extraction and search. An Identity-H
+        reference font with ToUnicode is used without embedding font data, so
+        any language, including CJK, adds almost no file size. One call takes
+        at most 4,096 words with text and 1 MiB of UTF-8 text, and adds the
+        layer in one transaction.
+
+        By default, a page with extractable text is skipped, which makes
+        repeated calls idempotent and avoids duplicate text layers; with
+        ``clip``, only text that meets the region counts. Use
+        ``skip_existing=False`` to add the layer anyway; existing text is kept.
+        ``rotation`` is the clockwise correction that reads sideways input and
+        orients the invisible baselines. An empty result changes nothing.
+        """
+        if not isinstance(skip_existing, bool):
+            msg = f"skip_existing must be a bool: {skip_existing!r}"
+            raise TypeError(msg)
+        resolved_rotation = _validate_ocr_rotation(rotation)
+        clip_rect = None if clip is None else _clip_box(clip)
+        if words is not None and (
+            engine is not None or (dpi, tile_size, overlap, min_confidence) != _DEFAULT_OCR_RECOGNITION
+        ):
+            msg = "engine, dpi, tile_size, overlap, and min_confidence apply to recognition, not to words"
+            raise TypeError(msg)
+        if skip_existing and self._has_text(clip_rect):
+            return []
+        if words is None:
+            words = self.ocr(
+                engine=engine,
+                dpi=dpi,
+                clip=clip_rect,
+                rotation=resolved_rotation,
+                tile_size=tile_size,
+                overlap=overlap,
+                min_confidence=min_confidence,
+            )
+        accepted = _ocr_layer_words(words)
+        if accepted:
+            payload = [(*word.bbox, word.text) for word in accepted]
+            try:
+                inserted = _core.insert_ocr_layer(
+                    self._document._core(),  # noqa: SLF001
+                    self._number,
+                    self._generation,
+                    payload,
+                    resolved_rotation,
+                )
+            except StaleObjectError as error:
+                raise self._stale() from error
+            if not inserted:
+                raise self._stale()
+        return accepted
+
+    def _has_text(self, clip: tuple[float, float, float, float] | None) -> bool:
+        """Return whether the page has extractable text, inside ``clip`` when given."""
+        if clip is None:
+            return bool(self.text().strip())
+        return any(
+            word.text.strip()
+            and word.bbox.x0 < clip[2]
+            and word.bbox.x1 > clip[0]
+            and word.bbox.y0 < clip[3]
+            and word.bbox.y1 > clip[1]
+            for word in self.words()
         )
 
     def svg(self, *, annotations: bool = True, max_size: int | None = _DEFAULT_MAX_SVG_SIZE) -> str:

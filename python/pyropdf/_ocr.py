@@ -1,7 +1,6 @@
 """The pure-Rust OCR engine and its input validation.
 
-Ported from pylopdf 036be111 ``src/pylopdf/_ocr.py``, without the
-validation of ``Page.apply_ocr`` (#146).
+Ported from pylopdf 036be111 ``src/pylopdf/_ocr.py``.
 """
 
 from __future__ import annotations
@@ -11,7 +10,7 @@ import math
 import os
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf._core import OcrError, Pixmap, _OcrEngine
 from pyropdf._geometry import Rect
@@ -20,8 +19,8 @@ from pyropdf._limits import _validate_optional_positive_int
 if TYPE_CHECKING:
     from pyropdf._page import Page
 
-OcrRotation = Literal[0, 90, 180, 270]
-"""A clockwise correction of sideways OCR input, in degrees."""
+OcrRotation: TypeAlias = Literal[0, 90, 180, 270]
+OcrRotation.__doc__ = """A clockwise correction of sideways OCR input, in degrees."""
 
 
 _DEFAULT_MAX_OCR_MODEL_SIZE = 64 * 1024 * 1024
@@ -36,13 +35,41 @@ _OCR_TILE_MULTIPLE = 32
 class OcrWord:
     """One recognized word: its text, its box, and the engine's confidence from 0 to 1.
 
-    :meth:`Page.ocr` gives boxes in the page's display space and
-    :meth:`OcrEngine.recognize` in the pixmap's pixels.
+    :meth:`Page.ocr` and :meth:`Page.apply_ocr` give boxes in the page's
+    display space and :meth:`OcrEngine.recognize` in the pixmap's pixels.
+    Words that another OCR engine recognized go to :meth:`Page.apply_ocr` as
+    ``OcrWord`` records in display space.
     """
 
     text: str
     bbox: Rect
     confidence: float
+
+
+_UTF8_TWO_BYTE_MIN = 0x80
+_UTF8_THREE_BYTE_MIN = 0x800
+_UTF8_FOUR_BYTE_MIN = 0x10000
+
+
+def _bounded_utf8_size(text: str, remaining: int) -> int | None:
+    """Return the UTF-8 size of ``text`` through ``remaining``, without encoding it; ``None`` past it."""
+    if text.isascii():
+        return len(text) if len(text) <= remaining else None
+    size = 0
+    for char in text:
+        codepoint = ord(char)
+        size += (
+            1
+            if codepoint < _UTF8_TWO_BYTE_MIN
+            else 2
+            if codepoint < _UTF8_THREE_BYTE_MIN
+            else 3
+            if codepoint < _UTF8_FOUR_BYTE_MIN
+            else 4
+        )
+        if size > remaining:
+            return None
+    return size
 
 
 def _validate_ocr_dpi(dpi: float) -> float:
