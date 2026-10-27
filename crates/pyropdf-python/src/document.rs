@@ -182,13 +182,14 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false))]
     fn save_path(
         &self,
         py: Python<'_>,
         path: PathBuf,
         incremental: bool,
         encryption: Option<&Bound<'_, PyAny>>,
+        prune: bool,
     ) -> PyResult<()> {
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
@@ -201,6 +202,7 @@ impl _Document {
                     &mut out,
                     incremental,
                     encryption.as_ref(),
+                    save::Options { prune },
                     &budget,
                 )?;
                 let file = out.into_inner().map_err(|e| e.into_error())?;
@@ -212,13 +214,14 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false))]
     fn to_bytes<'py>(
         &self,
         py: Python<'py>,
         incremental: bool,
         max_size: Option<u64>,
         encryption: Option<&Bound<'_, PyAny>>,
+        prune: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
@@ -229,6 +232,7 @@ impl _Document {
                 &mut out,
                 incremental,
                 encryption.as_ref(),
+                save::Options { prune },
                 &budget,
             )
             .map_err(|error| save_error(&error, "PDF bytes"))?;
@@ -335,14 +339,13 @@ fn write_version(
     out: &mut dyn Write,
     incremental: bool,
     encryption: Option<&Encryption>,
+    options: save::Options,
     budget: &Budget,
 ) -> save::Result<()> {
     if incremental {
         save::incremental(version, out, budget)?;
-    } else if let Some(encryption) = encryption {
-        save::full_encrypted(version, out, budget, encryption)?;
     } else {
-        save::full(version, out, budget)?;
+        save::full_with(version, out, budget, encryption, options)?;
     }
     Ok(())
 }
