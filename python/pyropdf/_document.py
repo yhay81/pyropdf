@@ -26,6 +26,8 @@ from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._page import _clip_box
 from pyropdf._pages import Pages, _resolve
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
+from pyropdf._profiles import pdfa_claim as _pdfa_claim
+from pyropdf._profiles import profiles as _profiles
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
 
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
+    from pyropdf._profiles import Profiles
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -144,6 +147,23 @@ class Document:
         """
         self._ensure_open()
         return _structural_check(self)
+
+    @property
+    def profiles(self) -> Profiles:
+        """Return the PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
+
+        The claims are what the document declares, not a validation. The
+        metadata read is capped at 16 MiB, beyond which :class:`LimitError`
+        is raised with code ``stream_data_size``.
+        """
+        self._ensure_open()
+        return _profiles(self)
+
+    @property
+    def pdfa_claim(self) -> tuple[int, str] | None:
+        """Return the PDF/A part and conformance level of the XMP metadata, such as ``(2, "B")``, or ``None``."""
+        self._ensure_open()
+        return _pdfa_claim(self)
 
     @property
     def history(self) -> History:
