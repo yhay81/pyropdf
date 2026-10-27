@@ -276,6 +276,15 @@ impl Version {
         &self.written
     }
 
+    /// Returns the first version of this version's document: its base,
+    /// before any transaction. [`Version::changes`] against it gives what
+    /// every transaction since opening wrote, at the cost of what they
+    /// wrote, not of the document.
+    #[must_use]
+    pub fn opened(&self) -> Self {
+        Self::first(Arc::clone(&self.origin))
+    }
+
     /// Returns the change set between this version and `other`, or `None`
     /// if they are versions of different documents.
     ///

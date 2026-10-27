@@ -121,6 +121,7 @@ def test_an_edited_page_renders_its_new_content() -> None:
     assert bytes(memoryview(blank)) == b"\xff" * (50 * 50 * 3)
 
 
+@pytest.mark.spec("page-boundaries", "interpret")
 def test_corpus_pages_render_with_their_display_size() -> None:
     for path in sorted(ASSETS.glob("*.pdf")):
         doc = pyropdf.open(path)
