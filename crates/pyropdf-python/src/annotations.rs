@@ -180,6 +180,17 @@ impl Annots {
         let Some(at) = index.index_of(Reference::new(number, generation)) else {
             return Ok(None);
         };
+        Self::at(&version, &index, at, budget).map(Some)
+    }
+
+    /// Reads the annotations of the page at `at` of `index`, a page index
+    /// of `version`.
+    pub(crate) fn at(
+        version: &Arc<Version>,
+        index: &Arc<PageIndex>,
+        at: usize,
+        budget: Budget,
+    ) -> PyResult<Self> {
         let page = &index.pages()[at];
         let crop = display_box(page);
         let rotation = rotation(page.rotate());
@@ -188,7 +199,7 @@ impl Annots {
             Some(Value::Reference(reference)) => Some(*reference),
             _ => None,
         };
-        let items = match resolve(&version, annots, &budget)? {
+        let items = match resolve(version, annots, &budget)? {
             Some(Value::Array(items)) => items,
             _ => Array::new(),
         };
@@ -197,16 +208,16 @@ impl Annots {
                 "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
             )));
         }
-        Ok(Some(Self {
-            version,
-            index,
+        Ok(Self {
+            version: Arc::clone(version),
+            index: Arc::clone(index),
             at,
             budget,
             crop,
             rotation,
             array,
             items,
-        }))
+        })
     }
 
     pub(crate) fn page(&self) -> &Page {

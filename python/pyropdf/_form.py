@@ -417,6 +417,16 @@ class Form(Mapping[str, Field]):
             raise KeyError(name)
         return Field(self._document, *found)
 
+    def __delitem__(self, name: str) -> None:
+        """Remove the field named ``name`` with its widgets, in one transaction; another name raises :class:`KeyError`.
+
+        The widgets leave every page that lists them, and the field leaves
+        the field tree and the calculation order with each named parent
+        that it leaves without kids.
+        """
+        field = self[name]
+        _core.form_field_remove(self._core(), field._id)  # noqa: SLF001
+
     def __iter__(self) -> Iterator[str]:
         """Iterate over the field names in sorted order."""
         return iter(self._names())

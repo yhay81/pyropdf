@@ -147,6 +147,21 @@ class Widgets(Sequence[Widget]):
         """Return one widget, or a list of them for a slice."""
         return self._handles()[index]
 
+    def __delitem__(self, index: int | slice) -> None:
+        """Remove widgets from the page and from the form, in one transaction.
+
+        A widget of a field leaves every page that lists it and the field's
+        ``/Kids``; the field leaves the form with its last widget, as
+        ``del doc.form[name]`` removes it. The widget objects stay in the
+        document.
+        """
+        selected = self._handles()[index]
+        widgets = selected if isinstance(selected, list) else [selected]
+        page = self._page
+        handles = [(widget._index, widget._id) for widget in widgets]  # noqa: SLF001
+        if not _core.widget_remove(page._document._core(), page._number, page._generation, handles):  # noqa: SLF001
+            raise page._stale()  # noqa: SLF001
+
     def add(self, specification: FieldSpecification) -> Widget:
         """Add the widget that ``specification`` describes, and return it.
 
