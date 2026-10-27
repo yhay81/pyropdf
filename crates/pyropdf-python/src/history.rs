@@ -1,14 +1,18 @@
 //! Transactions and history for `python/pyropdf/_history.py` (DESIGN.md
 //! sections 4.1 and 10, as #12 decided).
 //!
-//! An open Python transaction is one store transaction of the document: the
-//! edits of every thread write into it until the outermost transaction
-//! ends. A nested transaction takes a savepoint, so that its exception
-//! discards only its own writes. Reads see what the open transaction has
-//! written. An edit outside a transaction commits at once, as one step
-//! without a name.
+//! An open Python transaction is one store transaction of the document,
+//! which belongs to the thread that opened it until its outermost
+//! transaction ends. A nested transaction takes a savepoint, so that its
+//! exception discards only its own writes. That thread's reads see what the
+//! transaction has written; other threads read the current version, so
+//! they see its writes only once it commits them all (DESIGN.md section
+//! 4.6). Their edits, transactions, undo, and redo wait for the store's
+//! writer lock, which the transaction holds. An edit outside a transaction
+//! commits at once, as one step without a name.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::{self, ThreadId};
 
 use pyo3::prelude::*;
 use pyropdf_store::budget::Budget;
@@ -30,6 +34,8 @@ pub struct State {
 
 /// An open transaction, with the savepoints of its nested transactions.
 struct Open {
+    /// The thread that opened it, the only one that writes into it.
+    owner: ThreadId,
     transaction: Transaction,
     savepoints: Vec<Savepoint>,
     name: String,
@@ -48,6 +54,12 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// Returns the open transaction if this thread opened it.
+fn owned(open: &mut Option<Open>) -> Option<&mut Open> {
+    open.as_mut()
+        .filter(|open| open.owner == thread::current().id())
+}
+
 impl State {
     /// Forgets the open transaction and the step names.
     pub fn clear(&self) {
@@ -57,12 +69,12 @@ impl State {
 }
 
 impl _Document {
-    /// Returns the version that reads see: what the open transaction has
-    /// written, or the current version.
+    /// Returns the version that reads see: what this thread's open
+    /// transaction has written, or the current version.
     pub(crate) fn reading(&self) -> PyResult<Arc<Version>> {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
-        Ok(match open.as_mut() {
+        Ok(match owned(&mut open) {
             Some(open) => Arc::clone(
                 open.snapshot
                     .get_or_insert_with(|| open.transaction.snapshot()),
@@ -77,7 +89,7 @@ impl _Document {
     pub(crate) fn reading_parent(&self) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
-        let Some(open) = open.as_mut() else {
+        let Some(open) = owned(&mut open) else {
             return Ok((store.current(), None));
         };
         let view = Arc::clone(
@@ -93,13 +105,14 @@ impl _Document {
         Ok((view, unchanged.then_some(parent)))
     }
 
-    /// Returns whether a transaction is open.
+    /// Returns whether this thread has a transaction open.
     pub(crate) fn in_transaction(&self) -> bool {
-        lock(&self.history.open).is_some()
+        owned(&mut lock(&self.history.open)).is_some()
     }
 
-    /// Runs `write` in the open transaction, or in a transaction of its
-    /// own that commits as one step without a name.
+    /// Runs `write` in this thread's open transaction, or in a transaction
+    /// of its own that commits as one step without a name, once no other
+    /// transaction holds the writer lock.
     pub(crate) fn edit<T>(
         &self,
         py: Python<'_>,
@@ -109,7 +122,7 @@ impl _Document {
         let budget = self.budget();
         {
             let mut open = lock(&self.history.open);
-            if let Some(open) = open.as_mut() {
+            if let Some(open) = owned(&mut open) {
                 open.snapshot = None;
                 return write(&mut open.transaction, &budget);
             }
@@ -121,8 +134,9 @@ impl _Document {
     }
 
     /// Runs `write` in a transaction whose writes are then discarded: in a
-    /// savepoint of the open transaction, or in a transaction of its own
-    /// that is dropped. `write` returns what it read, such as a snapshot.
+    /// savepoint of this thread's open transaction, or in a transaction of
+    /// its own that is dropped. `write` returns what it read, such as a
+    /// snapshot.
     pub(crate) fn scratch<T>(
         &self,
         py: Python<'_>,
@@ -132,7 +146,7 @@ impl _Document {
         let budget = self.budget();
         {
             let mut open = lock(&self.history.open);
-            if let Some(open) = open.as_mut() {
+            if let Some(open) = owned(&mut open) {
                 let savepoint = open.transaction.savepoint();
                 let result = write(&mut open.transaction, &budget);
                 open.transaction.rollback(savepoint);
@@ -178,35 +192,39 @@ fn sync(steps: &mut Steps, store: &Document) {
     steps.position = undo;
 }
 
-/// Opens a transaction named `name`, or nests one in the open transaction.
+/// Opens a transaction named `name`, or nests one in this thread's open
+/// transaction. Another thread's transaction is waited for, with the GIL
+/// released, as the store's writer lock waits.
 #[pyfunction]
 pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> PyResult<()> {
     let store = document.document()?;
     let mut open = lock(&document.history.open);
-    match open.as_mut() {
-        Some(open) => open.savepoints.push(open.transaction.savepoint()),
-        None => {
-            drop(open);
-            let transaction = py.detach(|| store.begin());
-            *lock(&document.history.open) = Some(Open {
-                transaction,
-                savepoints: Vec::new(),
-                name,
-                snapshot: None,
-            });
-        }
+    if let Some(open) = owned(&mut open) {
+        open.savepoints.push(open.transaction.savepoint());
+        return Ok(());
     }
+    drop(open);
+    let transaction = py.detach(|| store.begin());
+    // Holding the writer lock, this thread is the only one with an open
+    // transaction: another thread's ended before its lock was released.
+    *lock(&document.history.open) = Some(Open {
+        owner: thread::current().id(),
+        transaction,
+        savepoints: Vec::new(),
+        name,
+        snapshot: None,
+    });
     Ok(())
 }
 
-/// Ends the innermost open transaction: with `commit`, its writes stay,
-/// and the outermost one commits them as one step; otherwise its writes
-/// are discarded.
+/// Ends the innermost transaction that this thread opened: with `commit`,
+/// its writes stay, and the outermost one commits them as one step;
+/// otherwise its writes are discarded.
 #[pyfunction]
 pub fn end_transaction(document: &_Document, commit: bool) -> PyResult<()> {
     let store = document.document()?;
     let mut guard = lock(&document.history.open);
-    let Some(open) = guard.as_mut() else {
+    let Some(open) = owned(&mut guard) else {
         return Err(PdfError::new_err("no transaction is open"));
     };
     if let Some(savepoint) = open.savepoints.pop() {
@@ -241,7 +259,7 @@ pub fn history_state(document: &_Document) -> PyResult<(Vec<String>, usize, Opti
 }
 
 fn outside_transaction(document: &_Document, what: &str) -> PyResult<()> {
-    if lock(&document.history.open).is_some() {
+    if document.in_transaction() {
         return Err(PdfError::new_err(format!(
             "cannot {what} inside a transaction"
         )));

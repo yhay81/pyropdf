@@ -21,6 +21,10 @@ class Transaction:
     propagates. A transaction opened inside another joins it: its edits
     commit with the outer one, and its exception discards only its own
     edits. Reads inside the block see its edits.
+
+    A transaction belongs to the thread that opened it. Other threads read
+    the version before it until it commits, and their edits, transactions,
+    undo, and redo wait until it ends.
     """
 
     __slots__ = ("_document", "_name")

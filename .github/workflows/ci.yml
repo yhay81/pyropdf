@@ -48,8 +48,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The floor of the abi3-py311 extension, and the newest CPython.
-        python: ["3.11", "3.15"]
+        # The floor of the abi3-py311 extension, the newest CPython, and its
+        # free-threaded build, for which PyO3 builds a version-specific
+        # extension (DESIGN.md section 4.6).
+        python: ["3.11", "3.15", "3.15t"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the toolchain of rust-toolchain.toml

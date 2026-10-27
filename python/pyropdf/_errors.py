@@ -18,6 +18,10 @@ if TYPE_CHECKING:
     from typing import Any
 
 
+class PyropdfWarning(UserWarning):
+    """A recoverable condition of reading a PDF, such as glyphs that text extraction left out."""
+
+
 class StalePageError(StaleObjectError):
     """Use of a :class:`Page` whose page object the page tree no longer lists.
 
@@ -59,6 +63,7 @@ for _public in (
     StaleObjectError,
     StalePageError,
     DocumentClosedError,
+    PyropdfWarning,
 ):
     _public.__module__ = "pyropdf"
 
@@ -69,6 +74,7 @@ __all__ = [
     "MalformedPdfError",
     "PasswordError",
     "PdfError",
+    "PyropdfWarning",
     "StaleObjectError",
     "StalePageError",
 ]

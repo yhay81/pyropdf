@@ -1,0 +1,13 @@
+Python 3.15.0 free-threaded, arm64, 12 CPUs
+pages rendered at 72 dpi; median of 5 runs
+
+| File | Pages | Threads | Seconds | Speed-up |
+| --- | ---: | ---: | ---: | ---: |
+| bill-hr815.pdf | 110 | 1 | 0.426 | 1.00x |
+| bill-hr815.pdf | 110 | 2 | 0.217 | 1.96x |
+| bill-hr815.pdf | 110 | 4 | 0.111 | 3.82x |
+| bill-hr815.pdf | 110 | 8 | 0.067 | 6.40x |
+| usrguide.pdf | 27 | 1 | 0.089 | 1.00x |
+| usrguide.pdf | 27 | 2 | 0.047 | 1.90x |
+| usrguide.pdf | 27 | 4 | 0.027 | 3.30x |
+| usrguide.pdf | 27 | 8 | 0.020 | 4.39x |

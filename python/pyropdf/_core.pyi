@@ -58,8 +58,8 @@ class Pixmap:
     def stride(self) -> int: ...
     @property
     def resolution(self) -> tuple[int, int]: ...
-    def to_bytes(self, format: str = "png", *, max_size: int | None = ...) -> bytes: ...  # noqa: A002
-    def save(self, path: str | PathLike[str], /, *, format: str | None = None) -> None: ...  # noqa: A002
+    def to_bytes(self, format: str = "png", *, quality: int = 95, max_size: int | None = ...) -> bytes: ...  # noqa: A002
+    def save(self, path: str | PathLike[str], /, *, format: str | None = None, quality: int = 95) -> None: ...  # noqa: A002
     def __buffer__(self, flags: int, /) -> memoryview: ...
 
 def render_page(
@@ -74,6 +74,23 @@ def render_page(
     annotations: bool,
     /,
 ) -> Pixmap: ...
+def render_page_svg(
+    document: _Document, number: int, generation: int, annotations: bool, max_size: int | None, /
+) -> str: ...
+def render_pages(
+    document: _Document,
+    pages: list[int] | None,
+    matrix: tuple[float, float, float, float],
+    alpha: bool,
+    gray: bool,
+    background: tuple[int, int, int, int],
+    annotations: bool,
+    format: str,  # noqa: A002
+    quality: int,
+    workers: int,
+    max_size: int | None,
+    /,
+) -> list[bytes]: ...
 def web_limits() -> dict[str, Any]: ...
 def probe(
     path: str | None,
@@ -120,8 +137,31 @@ def page_content(
     max_elements: int | None,
     /,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]: ...
+
+_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool]
+
+def page_text(
+    document: _Document,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[str, int]: ...
+def document_text(
+    document: _Document,
+    pages: list[int] | None,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[str, int]: ...
 def begin_transaction(document: _Document, name: str, /) -> None: ...
 def end_transaction(document: _Document, commit: bool, /) -> None: ...
+def changes(
+    document: _Document, incremental: bool, /
+) -> tuple[list[tuple[str, int, str, list[int]]], list[tuple[str, int, str, list[int]]]]: ...
 def history_state(document: _Document, /) -> tuple[list[str], int, int | None, int]: ...
 def history_undo(document: _Document, /) -> None: ...
 def history_redo(document: _Document, /) -> None: ...
