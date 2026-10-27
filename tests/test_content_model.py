@@ -93,6 +93,7 @@ def assert_color(paint: pyropdf.Paint | None, rgb: tuple[float, float, float], a
     assert paint.alpha == pytest.approx(alpha, abs=1 / 255)
 
 
+@pytest.mark.spec("paths", "interpret")
 def test_paths_carry_their_fill_stroke_and_line_style() -> None:
     page = page_with(
         "/GS1 gs 1 0 0 rg 0 0 1 RG 2 w 1 J 2 j [3 2] 1 d 10 10 40 20 re B\n0 1 0 rg 60 10 m 80 40 100 0 120 30 c f*",
@@ -139,6 +140,7 @@ def test_a_fill_and_a_stroke_in_other_contexts_stay_two_paths() -> None:
     assert stroke.context.marked_content == (MarkedContent(tag="Artifact", mcid=None),)
 
 
+@pytest.mark.spec("text-objects", "interpret")
 def test_text_runs_report_glyphs_with_outline_boxes() -> None:
     content = page_with("BT /F1 24 Tf 20 40 Td (H i) Tj ET").content()
     (run,) = content.text_runs
@@ -171,6 +173,7 @@ def test_text_runs_report_glyphs_with_outline_boxes() -> None:
     assert run.bbox == letter.bbox | dot.bbox
 
 
+@pytest.mark.spec("text-state", "interpret")
 def test_text_render_modes_follow_the_painting() -> None:
     content = page_with(
         "BT /F1 12 Tf 1 0 0 RG 0 0 1 rg 10 50 Td 2 Tr (A) Tj 1 Tr (B) Tj 3 Tr (C) Tj 7 Tr (D) Tj 0 Tr (E) Tj ET"
@@ -203,6 +206,7 @@ def test_a_stroke_of_other_glyphs_is_its_own_run() -> None:
     assert [run.render_mode for run in page.content().text_runs] == [TextRenderMode.FILL, TextRenderMode.STROKE]
 
 
+@pytest.mark.spec("blend-modes", "interpret")
 def test_items_carry_clips_blend_modes_and_marked_content() -> None:
     page = page_with(
         "q 10 10 80 80 re W n /GS1 gs /Span << /MCID 7 >> BDC 1 0 0 rg 20 20 30 30 re f EMC Q "
@@ -227,6 +231,7 @@ def test_items_carry_clips_blend_modes_and_marked_content() -> None:
     assert plain.context.clip_bbox is None
 
 
+@pytest.mark.spec("transparency-groups", "interpret")
 def test_transparency_groups_carry_opacity_and_soft_masks() -> None:
     group = "/Type /XObject /Subtype /Form /BBox [0 0 200 100] /Group << /S /Transparency >>"
     page = page_with(
@@ -255,6 +260,7 @@ def test_items_share_the_context_they_were_painted_in() -> None:
     assert third.context is not first.context
 
 
+@pytest.mark.spec("shading-patterns", "interpret")
 def test_shadings_and_tiling_patterns_are_paints() -> None:
     tiling = "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 12 /Resources << >>"
     page = page_with(
@@ -283,6 +289,7 @@ def test_shadings_and_tiling_patterns_are_paints() -> None:
     assert tiled.bbox == pytest.approx(Rect(120, 50, 160, 90))
 
 
+@pytest.mark.spec("images", "interpret")
 def test_images_report_their_object_mask_and_placement() -> None:
     image = "/Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8"
     page = page_with(
@@ -305,6 +312,7 @@ def test_images_report_their_object_mask_and_placement() -> None:
     assert image.context.groups[-1].opacity == 1
 
 
+@pytest.mark.spec("image-masks", "interpret")
 def test_stencil_masks_are_images_without_an_object() -> None:
     page = page_with("q 0 0 1 rg 20 0 0 20 10 10 cm BI /W 2 /H 2 /IM true /BPC 1 ID \x00\x00 EI Q")
     (image,) = page.content().images
@@ -314,6 +322,7 @@ def test_stencil_masks_are_images_without_an_object() -> None:
     assert image.bbox == pytest.approx(Rect(10, 70, 30, 90))
 
 
+@pytest.mark.spec("type3-fonts", "interpret")
 def test_type3_glyphs_take_their_boxes_from_the_procedure() -> None:
     page = pyropdf.open(REAL_WORLD / "pdfium-type3.pdf").pages[0]
     runs = page.content().text_runs

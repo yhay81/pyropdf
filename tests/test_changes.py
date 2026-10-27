@@ -77,6 +77,7 @@ def test_an_unedited_document_reports_nothing_for_an_incremental_save() -> None:
     assert not pyropdf.Document().changes(incremental=False)
 
 
+@pytest.mark.spec("digital-signatures", "interpret")
 def test_editing_an_object_inside_a_signed_range_reports_the_signature_field() -> None:
     doc = _signed()
     doc.objects[3]["Rotate"] = 90
@@ -120,6 +121,7 @@ def test_an_open_transaction_reports_what_it_wrote() -> None:
 @pytest.mark.parametrize(
     ("name", "field"), [("bill-hr815.pdf", "USGPOSignature"), ("f1040.pdf", "Perms/UR3")], ids=["docmdp", "ur3"]
 )
+@pytest.mark.spec("digital-signatures", "read")
 def test_corpus_signatures_are_reported(name: str, field: str) -> None:
     doc = pyropdf.open(ASSETS / name)
     assert not doc.changes(incremental=True)
@@ -139,6 +141,7 @@ def test_corpus_signatures_are_reported(name: str, field: str) -> None:
     ],
     ids=["alpha", "blend", "soft-mask"],
 )
+@pytest.mark.spec("pdfa", "interpret")
 def test_transparency_breaks_a_pdfa_1_claim(transparency: dict[str, object]) -> None:
     doc = _claiming('xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" pdfaid:part="1" pdfaid:conformance="B"')
     state = doc.objects.add(transparency)
@@ -163,6 +166,7 @@ def test_a_later_pdfa_part_allows_transparency() -> None:
     assert doc.changes(incremental=True).claims == ()
 
 
+@pytest.mark.spec("pdfua", "interpret")
 def test_an_untagged_annotation_breaks_a_pdfua_claim() -> None:
     doc = _claiming('pdfuaid:part="1"')
     note = doc.objects.add({"Type": Name("Annot"), "Subtype": Name("Text"), "Rect": [0, 0, 10, 10]})
