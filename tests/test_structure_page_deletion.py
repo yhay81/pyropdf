@@ -3,8 +3,9 @@
 pylopdf's tests/test_structure_page_deletion.py at ebb01d3c, ported.
 Intended differences from pylopdf:
 
-- Selecting a page twice needs page copies (yhay81/pyropdf#175), so the
-  repeated-selection case is not ported.
+- Selecting a page twice copies it as ``insert`` does, so the copy gets
+  structure elements and parent-tree keys of its own, which the repeated
+  selection case checks apart from the rest.
 - Saved objects are compared without the whitespace next to delimiters,
   which pyropdf's writer places where lopdf's left none.
 - pylopdf also refused a structure tree of more than 1,048,576 nodes or
@@ -171,6 +172,32 @@ def test_deleting_a_page_removes_its_structure_content(edit: str) -> None:
     reopened = pyropdf.open(saved)
     texts = [page.text() for page in reopened.pages]
     assert "Beta" not in "".join(texts)
+    assert "Gamma 0" in texts[-1]
+
+
+def test_selecting_a_page_twice_removes_the_dropped_content_and_copies_the_kept() -> None:
+    doc = pyropdf.open(_tagged_pdf())
+    doc.pages.select([0, 0, 2])
+    saved = doc.to_bytes()
+    objects = _objects(saved)
+
+    for number in (4, 7, 13, 15, 17, 21, 22, 23, 25, 26):
+        assert number not in objects, number
+    _assert_references_resolve(objects)
+    _assert_object(objects, 14, b"<</S/Sect/P 11 0 R/Pg 3 0 R/K[1]>>")
+    _assert_object(objects, 32, b"<</Limits[(pa)(span)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
+    kept = b"12 0 R 14 0 R 16 0 R 18 0 R 24 0 R 27 0 R"
+    assert _compact(objects[11]).startswith(_compact(b"<</S/Document/P 10 0 R/K[" + kept))
+    copy = doc.pages[1]
+    copied = [number for number in _references(_kids(objects[11])) if number not in _references(kept)]
+    assert copied
+    assert all(f"/Pg {copy.xref} 0 R".encode() in objects[number] for number in copied)
+    assert _compact(objects[30]).startswith(_compact(b"<</Nums[0[12 0 R 14 0 R 24 0 R] 2[18 0 R] 3 16 0 R 6 27 0 R"))
+
+    reopened = pyropdf.open(saved)
+    texts = [page.text() for page in reopened.pages]
+    assert "Beta" not in "".join(texts)
+    assert texts[0] == texts[1]
     assert "Gamma 0" in texts[-1]
 
 
