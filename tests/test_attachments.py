@@ -114,6 +114,18 @@ def test_deleting_the_last_attachment_removes_the_tree() -> None:
     assert [defect for defect in reopened.check().defects if "Names" in defect.path] == []
 
 
+@pytest.mark.parametrize("header", ["1.3", "1.4", "1.5", "1.6", "1.7"])
+@pytest.mark.parametrize("description", ["", "An attached file"])
+@pytest.mark.parametrize("incremental", [False, True])
+def test_attachment_description_requires_pdf_16(header: str, description: str, *, incremental: bool) -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]).replace(b"%PDF-1.7", f"%PDF-{header}".encode(), 1))
+    doc.attachments.add("a.txt", b"data", description=description)
+    reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
+    assert [defect for defect in reopened.check().defects if defect.kind == "version"] == []
+    assert reopened.attachments["a.txt"].description == (description or None)
+    assert reopened.catalog.get("Version") == ("1.6" if header < "1.6" else None)
+
+
 def test_attachment_add_bounds_input_atomically() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     payload = b"1234"
