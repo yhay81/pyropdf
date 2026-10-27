@@ -64,6 +64,17 @@ pub enum LimitCode {
     SearchInputSize,
     /// `Page.search` finds more matches than the call's `max_hits`.
     SearchHitCount,
+    /// Styled text or table extraction collects more than 4,096 vector rules,
+    /// including inferred table dividers.
+    TextRuleCount,
+    /// A candidate table needs more than 4,096 row-column slots.
+    TableCellCount,
+    /// Reconstructing merged cells in one table examines more than 65,536
+    /// candidate spans.
+    TableSpanCandidateCount,
+    /// Text table detection encounters a row with more than 32 separated
+    /// columns.
+    TableColumnCount,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -101,7 +112,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 32] = [
+    pub const ALL: [Self; 36] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -121,6 +132,10 @@ impl LimitCode {
         Self::TextSize,
         Self::SearchInputSize,
         Self::SearchHitCount,
+        Self::TextRuleCount,
+        Self::TableCellCount,
+        Self::TableSpanCandidateCount,
+        Self::TableColumnCount,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
@@ -159,6 +174,10 @@ impl LimitCode {
             Self::TextSize => "text_size",
             Self::SearchInputSize => "search_input_size",
             Self::SearchHitCount => "search_hit_count",
+            Self::TextRuleCount => "text_rule_count",
+            Self::TableCellCount => "table_cell_count",
+            Self::TableSpanCandidateCount => "table_span_candidate_count",
+            Self::TableColumnCount => "table_column_count",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
@@ -199,6 +218,10 @@ impl LimitCode {
             Self::TextSize => "the text is too large",
             Self::SearchInputSize => "the search text is too long",
             Self::SearchHitCount => "the search finds too many matches",
+            Self::TextRuleCount => "the page has too many vector rules to read",
+            Self::TableCellCount => "the candidate table has too many cells",
+            Self::TableSpanCandidateCount => "the table needs too many cell span candidates",
+            Self::TableColumnCount => "the text table has too many columns",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
@@ -239,6 +262,10 @@ impl LimitCode {
             Self::TextSize => Some("bytes"),
             Self::SearchInputSize => Some("bytes"),
             Self::SearchHitCount => Some("matches"),
+            Self::TextRuleCount => Some("rules"),
+            Self::TableCellCount => Some("cells"),
+            Self::TableSpanCandidateCount => Some("candidates"),
+            Self::TableColumnCount => Some("columns"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
@@ -279,6 +306,10 @@ impl LimitCode {
             Self::TextSize => Some(67_108_864),
             Self::SearchInputSize => Some(4_096),
             Self::SearchHitCount => Some(4_096),
+            Self::TextRuleCount => Some(4_096),
+            Self::TableCellCount => Some(4_096),
+            Self::TableSpanCandidateCount => Some(65_536),
+            Self::TableColumnCount => Some(32),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),
