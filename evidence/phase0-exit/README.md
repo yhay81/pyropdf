@@ -8,7 +8,7 @@ bbdd9c6. This record links the evidence; it does not repeat it.
 | Criterion | State | Evidence |
 | --- | --- | --- |
 | Without edits, saves reproduce every corpus document: incremental saves byte for byte, full saves in every value | Holds | [store-corpus](../store-corpus/README.md), [save](../save/README.md) |
-| An edit followed by a page read serializes and parses only the objects the edit wrote, apart from hayro's re-read of the cross-reference data and the page tree, and the benchmark publishes its cost at 110, 440, and 1,760 pages | Holds by design and measured in time; no count test | [edit-render](../edit-render/README.md) |
+| An edit followed by a page read serializes and parses only the objects the edit wrote, apart from hayro's re-read of the cross-reference data and the page tree, and the benchmark publishes its cost at 110, 440, and 1,760 pages | Holds; counted by `an_edit_then_a_page_read_parses_and_serializes_only_what_it_wrote` (#259) | [edit-render](../edit-render/README.md) |
 | A failed transaction leaves the current version unchanged without copying the document | Holds | [python-transaction](../python-transaction/README.md) |
 | The fuzz targets run in CI | Hold; the weekly run on `main` found a defect, [#88](https://github.com/yhay81/pyropdf/issues/88) | `.github/workflows/fuzz.yml` |
 | I2 is released, or releases withhold the untrusted-input claim | Open | [#15](https://github.com/yhay81/pyropdf/issues/15) |
@@ -46,8 +46,12 @@ that the criterion names and the page walk:
   so the walk reads values that are already parsed; it parses only the page
   node that the rotation wrote.
 
-No test counts the parses, so this half of the criterion rests on that
-design and on the timings, not on a count.
+`crates/pyropdf-engine/src/bridge/tests.rs`
+(`an_edit_then_a_page_read_parses_and_serializes_only_what_it_wrote`, #259)
+counts both halves on the 110-page corpus file. After a first page read,
+it rotates one page and reads again. A base wrapper records every object
+the store reads from the file: none. The bridge's update holds two
+objects: the written page and the cross-reference stream.
 
 ## The fuzz finding
 

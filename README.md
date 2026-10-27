@@ -10,3 +10,10 @@ foundation with one versioned object store that every engine reads.
 evidence from pylopdf behind it, and how pylopdf's users and code move over.
 [evidence/pylopdf-baseline](evidence/pylopdf-baseline) holds the scripts
 behind that evidence.
+
+## Safety claims
+
+No pyropdf release claims safety for untrusted input before hayro's bounded
+construction (I2, [#15](https://github.com/yhay81/pyropdf/issues/15)) is
+released. `DocumentLimits` bounds the work of an operation, but it is not
+that claim.
