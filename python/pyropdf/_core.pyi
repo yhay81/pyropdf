@@ -158,6 +158,7 @@ def document_text(
     max_size: int | None,
     /,
 ) -> tuple[str, int]: ...
+def page_result_counts(document: _Document, /) -> tuple[int, int]: ...
 def page_layout(
     document: _Document,
     number: int,

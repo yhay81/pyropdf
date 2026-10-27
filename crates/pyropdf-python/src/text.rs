@@ -5,11 +5,11 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyropdf_engine::extract::{self, BBox, BlockTuple, Error, TextOptions, Unmapped};
-use pyropdf_store::budget::LimitCode;
+use pyropdf_engine::extract::{self, BBox, BlockTuple, Error, TextOptions, TextPeak, Unmapped};
+use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::value::Reference;
 
-use crate::document::_Document;
+use crate::document::{_Document, PageKey, PageKind, PageResult};
 use crate::errors::{PdfError, StaleObjectError, limit_error};
 use crate::pixmap::bridge_error;
 
@@ -18,6 +18,50 @@ use crate::pixmap::bridge_error;
 /// dehyphenate, exact boxes, styles)`, with the unmapped codes 0 to skip, 1
 /// for U+FFFD, and 2 for the glyph ID.
 type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool);
+
+/// The text options as a memo key, with the clip's coordinates as bits.
+pub(crate) type TextKey = (Option<[u64; 4]>, bool, u8, bool, bool, bool, bool, bool);
+
+fn text_key(options: OptionsTuple) -> TextKey {
+    let (clip, keep_clipped, unmapped, ligatures, whitespace, dehyphenate, exact, styles) = options;
+    (
+        clip.map(box_bits),
+        keep_clipped,
+        unmapped,
+        ligatures,
+        whitespace,
+        dehyphenate,
+        exact,
+        styles,
+    )
+}
+
+/// Returns the bits of a box's coordinates, which a memo key compares.
+pub(crate) fn box_bits((x0, y0, x1, y1): BBox) -> [u64; 4] {
+    [x0.to_bits(), y0.to_bits(), x1.to_bits(), y1.to_bits()]
+}
+
+/// Whether a result whose reading held `peak` fits the rest of `budget`.
+fn text_fits(budget: &Budget, peak: TextPeak) -> bool {
+    budget
+        .remaining(LimitCode::TextGlyphCount)
+        .is_none_or(|remaining| peak.glyphs <= remaining)
+        && budget
+            .remaining(LimitCode::TextSize)
+            .is_none_or(|remaining| peak.size <= remaining)
+}
+
+/// Refuses a result of another kind than its key's, which the memo never
+/// holds.
+fn mismatch() -> PyErr {
+    PdfError::new_err("the memo holds another kind of result for this page")
+}
+
+fn stale(number: u32, generation: u16) -> PyErr {
+    StaleObjectError::new_err(format!(
+        "page object {number} {generation} is no longer a page of the document"
+    ))
+}
 
 fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
     let (
@@ -62,7 +106,8 @@ fn text_error(error: Error) -> PyErr {
 /// Returns the text of the page whose object is `number` and `generation`,
 /// and the number of glyphs without Unicode that it left out, with the GIL
 /// released. `max_glyphs` bounds the glyphs with `text_glyph_count` and
-/// `max_size` the UTF-8 with `text_size`; `None` lifts either.
+/// `max_size` the UTF-8 with `text_size`; `None` lifts either. The text is
+/// memoized with what interpreting the page may read.
 #[pyfunction]
 pub fn page_text(
     py: Python<'_>,
@@ -73,27 +118,48 @@ pub fn page_text(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(String, usize)> {
+    let key = text_key(options);
     let options = text_options(options)?;
     let (version, index, budget) = crate::pages::index(document)?;
     let budget = budget
         .with_limit(LimitCode::TextGlyphCount, max_glyphs)
         .with_limit(LimitCode::TextSize, max_size);
     py.detach(|| {
-        let at = index
-            .index_of(Reference::new(number, generation))
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!(
-                    "page object {number} {generation} is no longer a page of the document"
-                ))
-            })?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        let mut text = String::new();
-        let skipped =
-            extract::page_text(&bridged, at, &options, &budget, &mut text).map_err(text_error)?;
-        Ok((text, skipped))
+        let reference = Reference::new(number, generation);
+        let (at, page) = index
+            .index_of(reference)
+            .and_then(|at| Some((at, index.get(at)?)))
+            .ok_or_else(|| stale(number, generation))?;
+        let key = PageKey {
+            page: reference,
+            kind: PageKind::Text(key),
+        };
+        let result = document.page_result(
+            &key,
+            &version,
+            page,
+            &budget,
+            |result| matches!(result, &PageResult::Text { peak, .. } if text_fits(&budget, peak)),
+            || {
+                let bridged = document
+                    .bridge
+                    .get(&version, &index, &budget)
+                    .map_err(|e| bridge_error(&e))?;
+                let mut text = String::new();
+                let (skipped, peak) =
+                    extract::page_text(&bridged, at, &options, &budget, &mut text)
+                        .map_err(text_error)?;
+                Ok(PageResult::Text {
+                    text,
+                    skipped,
+                    peak,
+                })
+            },
+        )?;
+        match &*result {
+            PageResult::Text { text, skipped, .. } => Ok((text.clone(), *skipped)),
+            _ => Err(mismatch()),
+        }
     })
 }
 
@@ -126,7 +192,7 @@ pub fn document_text(
             .get(&version, &index, &budget)
             .map_err(|e| bridge_error(&e))?;
         for at in indexes {
-            let page = extract::page_text(&bridged, at, &options, &budget, &mut text)
+            let (page, _) = extract::page_text(&bridged, at, &options, &budget, &mut text)
                 .map_err(text_error)?;
             skipped = skipped.saturating_add(page);
         }
@@ -138,6 +204,7 @@ pub fn document_text(
 /// `generation`: `(width, height, blocks, skipped)`, each span with its
 /// characters when `chars` is set, with the GIL released. The budgets are
 /// those of [`page_text`], and `max_size` also bounds the layout's strings.
+/// The layout is memoized with what interpreting the page may read.
 #[pyfunction]
 #[expect(
     clippy::too_many_arguments,
@@ -153,25 +220,46 @@ pub fn page_layout(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(f64, f64, Vec<BlockTuple>, usize)> {
+    let key = text_key(options);
     let options = text_options(options)?;
     let (version, index, budget) = crate::pages::index(document)?;
     let budget = budget
         .with_limit(LimitCode::TextGlyphCount, max_glyphs)
         .with_limit(LimitCode::TextSize, max_size);
     py.detach(|| {
-        let at = index
-            .index_of(Reference::new(number, generation))
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!(
-                    "page object {number} {generation} is no longer a page of the document"
-                ))
-            })?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        let layout =
-            extract::page_layout(&bridged, at, &options, chars, &budget).map_err(text_error)?;
-        Ok((layout.width, layout.height, layout.blocks, layout.skipped))
+        let reference = Reference::new(number, generation);
+        let (at, page) = index
+            .index_of(reference)
+            .and_then(|at| Some((at, index.get(at)?)))
+            .ok_or_else(|| stale(number, generation))?;
+        let key = PageKey {
+            page: reference,
+            kind: PageKind::Layout(key, chars),
+        };
+        let result = document.page_result(
+            &key,
+            &version,
+            page,
+            &budget,
+            |result| matches!(result, PageResult::Layout(layout) if text_fits(&budget, layout.peak)),
+            || {
+                let bridged = document
+                    .bridge
+                    .get(&version, &index, &budget)
+                    .map_err(|e| bridge_error(&e))?;
+                extract::page_layout(&bridged, at, &options, chars, &budget)
+                    .map(PageResult::Layout)
+                    .map_err(text_error)
+            },
+        )?;
+        match &*result {
+            PageResult::Layout(layout) => Ok((
+                layout.width,
+                layout.height,
+                layout.blocks.clone(),
+                layout.skipped,
+            )),
+            _ => Err(mismatch()),
+        }
     })
 }

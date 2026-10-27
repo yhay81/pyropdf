@@ -14,14 +14,16 @@ use pyropdf_engine::extract::{self, BBox, ContentItem, Error, ItemKinds};
 use pyropdf_store::budget::LimitCode;
 use pyropdf_store::value::Reference;
 
-use crate::document::_Document;
+use crate::document::{_Document, PageKey, PageKind, PageResult};
 use crate::errors::{PdfError, StaleObjectError, limit_error};
 use crate::pixmap::bridge_error;
+use crate::text::box_bits;
 
 /// Returns the items of the selected kinds that the page whose object is
 /// `number` and `generation` paints, with the GIL released while hayro
 /// interprets it. `max_elements` bounds the glyphs, path and clip segments,
 /// dash lengths, and items with `content_element_count`; `None` lifts it.
+/// The content is memoized with what interpreting the page may read.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
 pub fn page_content(
@@ -42,25 +44,63 @@ pub fn page_content(
         paths,
         images,
     };
-    let content = py.detach(|| {
-        let at = index
-            .index_of(Reference::new(number, generation))
+    let result = py.detach(|| {
+        let reference = Reference::new(number, generation);
+        let (at, page) = index
+            .index_of(reference)
+            .and_then(|at| Some((at, index.get(at)?)))
             .ok_or_else(|| {
                 StaleObjectError::new_err(format!(
                     "page object {number} {generation} is no longer a page of the document"
                 ))
             })?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        extract::page_content(&bridged, at, kinds, annotations, clip, &budget).map_err(
-            |e| match e {
-                Error::Limit(refusal) => limit_error(&refusal),
-                Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
+        let key = PageKey {
+            page: reference,
+            kind: PageKind::Content {
+                kinds: [text_runs, paths, images],
+                annotations,
+                clip: clip.map(box_bits),
+            },
+        };
+        document.page_result(
+            &key,
+            &version,
+            page,
+            &budget,
+            |result| {
+                matches!(result, &PageResult::Content { elements, .. }
+                    if budget
+                        .remaining(LimitCode::ContentElementCount)
+                        .is_none_or(|remaining| elements <= remaining))
+            },
+            || {
+                let bridged = document
+                    .bridge
+                    .get(&version, &index, &budget)
+                    .map_err(|e| bridge_error(&e))?;
+                // The elements stay charged until the call ends.
+                let before = budget.used(LimitCode::ContentElementCount);
+                let content =
+                    extract::page_content(&bridged, at, kinds, annotations, clip, &budget)
+                        .map_err(|e| match e {
+                            Error::Limit(refusal) => limit_error(&refusal),
+                            Error::NoPage(_) | Error::Allocation(_) => {
+                                PdfError::new_err(e.to_string())
+                            }
+                        })?;
+                Ok(PageResult::Content {
+                    content,
+                    elements: budget.used(LimitCode::ContentElementCount) - before,
+                })
             },
         )
     })?;
+    let PageResult::Content { content, .. } = &*result else {
+        return Err(PdfError::new_err(
+            "the memo holds another kind of result for this page",
+        ));
+    };
+    let content = content.clone();
     let mut items = Vec::new();
     items
         .try_reserve_exact(content.items.len())

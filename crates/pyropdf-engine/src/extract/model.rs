@@ -130,7 +130,7 @@ const MASK_COLOR_KEY: u8 = 3;
 const MAX_CACHED_GLYPHS: usize = 65_536;
 
 /// One painted item, in the tuple form that crosses into Python.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ContentItem {
     Text(TextRunTuple),
     Path(PathTuple),
@@ -138,7 +138,7 @@ pub enum ContentItem {
 }
 
 /// A page's content: items and the fonts and contexts they index.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PageContent {
     pub items: Vec<ContentItem>,
     pub fonts: Vec<FontTuple>,

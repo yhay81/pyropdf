@@ -2,6 +2,7 @@
 //! complete checks, probing, and saving, with the GIL released while the
 //! store works.
 
+use std::cell::Cell;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -10,9 +11,10 @@ use std::time::Duration;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
+use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
 use pyropdf_store::memo::Memo;
-use pyropdf_store::pages::{PageIndex, PageTree};
+use pyropdf_store::pages::{Page, PageIndex, PageTree};
 use pyropdf_store::save::{self, FileBase};
 use pyropdf_store::security::Encryption;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
@@ -37,6 +39,12 @@ pub struct _Document {
     /// so that the snapshots of transactions never displace the index of
     /// committed versions.
     pub(crate) draft_pages: Memo<PageTree, PageIndex>,
+    /// The text, layouts, and content of pages, memoized with what
+    /// interpreting each page may read.
+    results: Memo<PageKey, PageResult>,
+    /// The results of what an open transaction has written, kept apart as
+    /// its page index is.
+    draft_results: Memo<PageKey, PageResult>,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
     /// The open transaction and the names of the history's steps.
@@ -50,6 +58,8 @@ impl _Document {
             limits,
             pages: Memo::new(1),
             draft_pages: Memo::new(1),
+            results: Memo::new(RESULT_CAPACITY),
+            draft_results: Memo::new(RESULT_CAPACITY),
             bridge: pyropdf_engine::bridge::Cache::new(),
             history: crate::history::State::default(),
         }
@@ -77,6 +87,8 @@ impl _Document {
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(document));
         self.pages.clear();
         self.draft_pages.clear();
+        self.results.clear();
+        self.draft_results.clear();
         self.history.clear();
     }
 
@@ -259,6 +271,8 @@ impl _Document {
             .take();
         self.pages.clear();
         self.draft_pages.clear();
+        self.results.clear();
+        self.draft_results.clear();
         self.history.clear();
     }
 }
@@ -565,5 +579,104 @@ fn pdf_doc_char(byte: u8) -> char {
         0x7F => char::REPLACEMENT_CHARACTER,
         0x80..=0xA0 => PDF_DOC_HIGH[usize::from(byte - 0x80)],
         _ => char::from(byte),
+    }
+}
+
+/// The page results that a document memoizes at most, each as large as the
+/// limits of the call that computed it allow.
+const RESULT_CAPACITY: usize = 8;
+
+/// What a memoized page result is: the page, and what is derived from it
+/// with every option that changes it.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PageKey {
+    pub(crate) page: Reference,
+    pub(crate) kind: PageKind,
+}
+
+/// What is derived from a page, with its options. A box compares by the
+/// bits of its coordinates.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) enum PageKind {
+    Text(crate::text::TextKey),
+    Layout(crate::text::TextKey, bool),
+    Content {
+        kinds: [bool; 3],
+        annotations: bool,
+        clip: Option<[u64; 4]>,
+    },
+}
+
+/// A page's derived result, with the most of the call's limits that
+/// computing it held.
+pub(crate) enum PageResult {
+    Text {
+        text: String,
+        skipped: usize,
+        peak: TextPeak,
+    },
+    Layout(PageLayout),
+    Content {
+        content: PageContent,
+        elements: u64,
+    },
+}
+
+/// Returns how many page results the document's memos reused and how many
+/// they computed, for tests.
+#[pyfunction]
+pub fn page_result_counts(document: &_Document) -> (u64, u64) {
+    let (results, drafts) = (document.results.stats(), document.draft_results.stats());
+    (
+        results.hits + drafts.hits,
+        results.computations + drafts.computations,
+    )
+}
+
+/// A failed computation of a page's result.
+struct Failed(PyErr);
+
+impl From<Error> for Failed {
+    fn from(error: Error) -> Self {
+        Self(store_error(&error))
+    }
+}
+
+impl _Document {
+    /// Returns the result `key` of `page` on `version`: one that the memo
+    /// holds while the changes since miss what interpreting the page may
+    /// read ([`read_page`]), or else what `compute` returns.
+    ///
+    /// A held result that `fits` refuses, because the call's limits are
+    /// smaller than those it was computed under, is computed again, so that
+    /// the call refuses as a fresh computation does. A result that this call
+    /// computed fits by construction, and its charges stay with the budget.
+    pub(crate) fn page_result(
+        &self,
+        key: &PageKey,
+        version: &Arc<Version>,
+        page: &Page,
+        budget: &Budget,
+        fits: impl Fn(&PageResult) -> bool,
+        compute: impl Fn() -> PyResult<PageResult>,
+    ) -> PyResult<Arc<PageResult>> {
+        let memo = if self.in_transaction() {
+            &self.draft_results
+        } else {
+            &self.results
+        };
+        let computed = Cell::new(false);
+        let result = memo
+            .get_or_compute(key, version, budget, |reads| {
+                computed.set(true);
+                read_page(reads, page)?;
+                compute().map_err(Failed)
+            })
+            .map_err(|Failed(error)| error)?;
+        if computed.get() || fits(&result) {
+            Ok(result)
+        } else {
+            compute().map(Arc::new)
+        }
     }
 }

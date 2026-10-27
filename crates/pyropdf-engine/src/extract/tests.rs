@@ -4,7 +4,15 @@
 use hayro::hayro_interpret::DrawMode;
 use hayro::hayro_interpret::font::Glyph;
 use hayro::kurbo::{Affine, BezPath, Rect};
+use std::sync::Arc;
+
 use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::index::Index;
+use pyropdf_store::memo::Reads;
+use pyropdf_store::pages::PageIndex;
+use pyropdf_store::save::FileBase;
+use pyropdf_store::value::Bytes;
+use pyropdf_store::version::Document;
 
 use super::*;
 
@@ -22,6 +30,11 @@ fn pdf_with(content: &str) -> Vec<u8> {
         ),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
     ];
+    pdf_of(&objects)
+}
+
+/// Returns a PDF of `objects`, numbered from 1, whose catalog is object 1.
+fn pdf_of(objects: &[String]) -> Vec<u8> {
     let mut out = b"%PDF-1.7\n".to_vec();
     let mut offsets = Vec::new();
     for (at, body) in objects.iter().enumerate() {
@@ -169,8 +182,10 @@ fn text_charges_its_glyphs_and_text_and_a_refusal_keeps_nothing() {
     let options = TextOptions::default();
     let budget = Budget::default();
     let mut out = String::from("before ");
-    let skipped = page_text(&bridged, 0, &options, &budget, &mut out).unwrap();
+    let (skipped, peak) = page_text(&bridged, 0, &options, &budget, &mut out).unwrap();
     assert_eq!((out.as_str(), skipped), ("before Hi there\n", 0));
+    // The most held at once is the eight glyphs, and the nine bytes of text.
+    assert_eq!(peak, TextPeak { glyphs: 8, size: 9 });
     // The page's glyphs are released with it, and its text stays charged.
     assert_eq!(budget.used(LimitCode::TextGlyphCount), 0);
     assert_eq!(budget.used(LimitCode::TextSize), 9);
@@ -211,4 +226,70 @@ fn text_of_a_missing_page_is_refused() {
         ),
         Err(Error::NoPage(1))
     );
+}
+
+#[test]
+fn a_page_reads_what_it_reaches_but_not_the_other_pages() {
+    let content = "BT /F1 12 Tf 10 50 Td (Hi) Tj ET";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R \
+         /OCProperties << /OCGs [9 0 R] /D << /OFF [] >> >> >>"
+            .to_owned(),
+        "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 200 100] \
+         /Resources 11 0 R >>"
+            .to_owned(),
+        "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Annots [5 0 R] >>".to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /P 3 0 R \
+         /A << /S /GoTo /D [6 0 R /Fit] >> /AP << /N 12 0 R >> >>"
+            .to_owned(),
+        "<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>".to_owned(),
+        "<< /Length 0 >>\nstream\n\nendstream".to_owned(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        "<< /Type /OCG /Name (Layer) >>".to_owned(),
+        "<< /Type /Outlines >>".to_owned(),
+        "<< /Font << /F1 8 0 R >> /XObject << /X 13 0 R >> >>".to_owned(),
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length 0 >>\nstream\n\nendstream"
+            .to_owned(),
+        // A form whose resources are those that name it.
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Resources 11 0 R /Length 0 >>\n\
+         stream\n\nendstream"
+            .to_owned(),
+        "(unrelated)".to_owned(),
+    ];
+    let budget = Budget::default();
+    let index = Index::open(Bytes::new(pdf_of(&objects)), &budget).unwrap();
+    let document = Document::new(Arc::new(FileBase::new(index, &budget).unwrap()), None);
+    let version = document.current();
+    let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+
+    let mut reads = Reads::new(&version, &budget);
+    read_page(&mut reads, pages.get(0).unwrap()).unwrap();
+    let read = reads.finish().unwrap();
+
+    // The link's target page is read but not entered, so its content (7)
+    // is not; neither are the outlines (10) nor the unrelated object (14).
+    assert!(read.trailer());
+    assert_eq!(read.objects(), [1, 2, 3, 4, 5, 6, 8, 9, 11, 12, 13]);
+}
+
+#[test]
+fn a_page_read_set_fits_a_small_budget_with_sparse_object_numbers() {
+    let budget = Budget::default();
+    let index = Index::open(Bytes::new(pdf_with("")), &budget).unwrap();
+    let document = Document::new(Arc::new(FileBase::new(index, &budget).unwrap()), None);
+    let mut transaction = document.begin();
+    transaction
+        .write(u32::MAX - 1, &pyropdf_store::value::Value::Null, &budget)
+        .unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+
+    let small = Budget::default().with_limit(LimitCode::MemorySize, Some(65_536));
+    let mut reads = Reads::new(&version, &small);
+    read_page(&mut reads, pages.get(0).unwrap()).unwrap();
+    assert_eq!(reads.finish().unwrap().objects(), [1, 2, 3, 4, 5]);
 }
