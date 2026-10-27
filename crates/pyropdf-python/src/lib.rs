@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 
 mod cancel;
+mod changes;
 mod content;
 mod document;
 mod errors;
@@ -15,6 +16,7 @@ mod pixmap;
 mod render;
 mod security;
 mod source;
+mod text;
 #[cfg(windows)]
 mod windows_permissions;
 
@@ -27,6 +29,8 @@ mod windows_permissions;
 mod _core {
     #[pymodule_export]
     use super::cancel::CancellationToken;
+    #[pymodule_export]
+    use super::changes::changes;
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
@@ -60,6 +64,8 @@ mod _core {
     use super::render::render_page_svg;
     #[pymodule_export]
     use super::security::{security_state, unlock};
+    #[pymodule_export]
+    use super::text::{document_text, page_text};
 
     #[cfg(windows)]
     #[pymodule_export]

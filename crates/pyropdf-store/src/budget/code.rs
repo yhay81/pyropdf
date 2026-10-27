@@ -51,6 +51,12 @@ pub enum LimitCode {
     /// `Page.content` reads more glyphs, path and clip segments, dash lengths,
     /// and items than the call's `max_elements`.
     ContentElementCount,
+    /// `Page.text` or `Document.text` collects more glyphs of one page than the
+    /// call's `max_glyphs`.
+    TextGlyphCount,
+    /// The UTF-8 of a page's glyphs, or of the text that `Page.text` or
+    /// `Document.text` returns, is larger than the call's `max_size`.
+    TextSize,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -104,6 +110,8 @@ impl LimitCode {
         Self::ContentStreamSize,
         Self::ContentInputSize,
         Self::ContentElementCount,
+        Self::TextGlyphCount,
+        Self::TextSize,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
@@ -138,6 +146,8 @@ impl LimitCode {
             Self::ContentStreamSize => "content_stream_size",
             Self::ContentInputSize => "content_input_size",
             Self::ContentElementCount => "content_element_count",
+            Self::TextGlyphCount => "text_glyph_count",
+            Self::TextSize => "text_size",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
@@ -174,6 +184,8 @@ impl LimitCode {
             Self::ContentStreamSize => "the page's content is too large",
             Self::ContentInputSize => "the content is too large to parse",
             Self::ContentElementCount => "the page paints too many items",
+            Self::TextGlyphCount => "the page holds too many glyphs to read as text",
+            Self::TextSize => "the text is too large",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
@@ -210,6 +222,8 @@ impl LimitCode {
             Self::ContentStreamSize => Some("bytes"),
             Self::ContentInputSize => Some("bytes"),
             Self::ContentElementCount => Some("elements"),
+            Self::TextGlyphCount => Some("glyphs"),
+            Self::TextSize => Some("bytes"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
@@ -246,6 +260,8 @@ impl LimitCode {
             Self::ContentStreamSize => Some(67_108_864),
             Self::ContentInputSize => Some(67_108_864),
             Self::ContentElementCount => Some(262_144),
+            Self::TextGlyphCount => Some(262_144),
+            Self::TextSize => Some(67_108_864),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),

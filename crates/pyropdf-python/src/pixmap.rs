@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jpeg_encoder::{ColorType, Encoder as JpegEncoder, PixelDensity, PixelDensityUnit};
-use pyo3::exceptions::{PyBufferError, PyIndexError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyBufferError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyInt};
@@ -587,24 +587,7 @@ pub fn render_pages(
 ) -> PyResult<Vec<Py<PyBytes>>> {
     let encoding = Encoding::parse(format, quality, alpha)?;
     let (version, index, budget) = crate::pages::index(document)?;
-    let count = index.len();
-    let indexes = match pages {
-        None => (0..count).collect(),
-        Some(pages) => pages
-            .into_iter()
-            .map(|at| {
-                let resolved = if at < 0 { at + count as i64 } else { at };
-                usize::try_from(resolved)
-                    .ok()
-                    .filter(|&resolved| resolved < count)
-                    .ok_or_else(|| {
-                        PyIndexError::new_err(format!(
-                            "page index {at} is out of range for {count} pages"
-                        ))
-                    })
-            })
-            .collect::<PyResult<Vec<usize>>>()?,
-    };
+    let indexes = crate::pages::entries(pages, index.len())?;
     let (red, green, blue, opacity) = background;
     let options = render::Options {
         matrix,
