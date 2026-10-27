@@ -1,6 +1,6 @@
 //! The appearance streams of form widgets: the value of a text or choice
-//! field in a Standard 14 font, over the widget's background and border
-//! (DESIGN.md section 10).
+//! field in a Standard 14 font, and the states of a check box or radio
+//! button, over the widget's background and border (DESIGN.md section 10).
 //!
 //! Setting a field's value marks its widgets' appearances stale, and
 //! [`AppearanceSettler`](crate::annotations::AppearanceSettler) draws each
@@ -8,8 +8,8 @@
 //! along the `/Parent` chain, where a null entry, or a reference to a null
 //! or missing object, inherits as an absent one does; the interactive
 //! form's `/DA` and `/Q` are the defaults. Ported from pylopdf's
-//! `rust/src/form.rs` and the text appearances of
-//! `rust/src/document/forms.rs` at ebb01d3c4c742046e8ce7fd72957cd15a2933321.
+//! `rust/src/form.rs` and the appearances of `rust/src/document/forms.rs`
+//! at ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
 mod text;
 
@@ -39,6 +39,12 @@ const MULTILINE: i64 = 1 << 12;
 const PASSWORD: i64 = 1 << 13;
 const FILE_SELECT: i64 = 1 << 20;
 const COMB: i64 = 1 << 24;
+/// The flags of a button field that make it a radio button or a
+/// pushbutton (ISO 32000-2 Table 226).
+const RADIO: i64 = 1 << 15;
+const PUSHBUTTON: i64 = 1 << 16;
+/// The appearance state of a button that is not selected.
+pub const OFF: &str = "Off";
 
 /// The field entries that a widget's appearance reads, in [`Entries`]
 /// order.
@@ -115,6 +121,10 @@ pub enum Drawing {
     Removed,
     /// The widget's new normal appearance.
     Drawn(WidgetAppearance),
+    /// The normal appearances that a check box or radio button widget
+    /// lacks, by state: `Off` and the state that its `/AS` names. A state
+    /// that holds content is kept.
+    States(Vec<(Name, WidgetAppearance)>),
 }
 
 /// A drawn normal appearance of a widget: its content in the form's space,
@@ -171,8 +181,9 @@ impl WidgetAppearance {
 
 /// Draws the appearance of widget `number`, `widget`, for the appearance
 /// settler: a widget of a text or choice field gets a new normal appearance,
-/// keeping its down and rollover ones, and a widget that cannot be drawn
-/// keeps what it has. Refuses only with what a read or the budget refuses.
+/// keeping its down and rollover ones, a check box or radio button gets the
+/// states that it lacks, and a widget that cannot be drawn keeps what it
+/// has. Refuses only with what a read or the budget refuses.
 pub fn settle(
     transaction: &mut Transaction,
     number: u32,
@@ -201,6 +212,20 @@ pub fn settle(
         Drawing::Drawn(drawn) => {
             let reference = drawn.write(transaction, budget)?;
             appearances.insert(Name::from("N"), Value::Reference(reference));
+        }
+        Drawing::States(states) => {
+            let mut normal = match appearances.get("N") {
+                Some(normal) => match &*reader.resolve(normal)? {
+                    Value::Dict(normal) => normal.clone(),
+                    _ => Dict::new(),
+                },
+                None => Dict::new(),
+            };
+            for (state, drawn) in states {
+                let reference = drawn.write(transaction, budget)?;
+                normal.insert(state, Value::Reference(reference));
+            }
+            appearances.insert(Name::from("N"), Value::Dict(normal));
         }
     }
     let mut widget = widget.clone();
@@ -232,18 +257,31 @@ pub fn has_state_stream(reader: &Reader<'_>, widget: &Dict) -> Result<bool> {
     let Some(Value::Name(state)) = widget.get("AS") else {
         return Ok(false);
     };
-    let appearances = reader.entry(widget, "AP")?;
-    let Some(Value::Dict(appearances)) = appearances.as_deref() else {
+    has_state(reader, widget, state.as_bytes())
+}
+
+/// Returns whether the normal appearance of `state` of a check box or radio
+/// button widget is a stream with content.
+pub fn has_state(reader: &Reader<'_>, widget: &Dict, state: &[u8]) -> Result<bool> {
+    let normal = normal_states(reader, widget)?;
+    let Some(Value::Dict(states)) = normal.as_deref() else {
         return Ok(false);
     };
-    let states = reader.entry(appearances, "N")?;
-    let Some(Value::Dict(states)) = states.as_deref() else {
-        return Ok(false);
-    };
-    match states.get(state.as_bytes()) {
+    match states.get(state) {
         Some(normal) => Ok(has_content(&*reader.resolve(normal)?)),
         None => Ok(false),
     }
+}
+
+/// Returns the normal appearance dictionary of a check box or radio button
+/// widget, whose keys are its states, or `None` when it has none.
+pub fn normal_states(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Arc<Value>>> {
+    let appearances = reader.entry(widget, "AP")?;
+    let Some(Value::Dict(appearances)) = appearances.as_deref() else {
+        return Ok(None);
+    };
+    let normal = reader.entry(appearances, "N")?;
+    Ok(normal.filter(|normal| matches!(**normal, Value::Dict(_))))
 }
 
 fn has_content(value: &Value) -> bool {
@@ -260,7 +298,8 @@ enum TextLayout {
 }
 
 /// Draws the normal appearance of `widget` from the value of its field, or
-/// returns `None` for a widget of a field that is no text or choice field.
+/// the states that a check box or radio button widget lacks; returns `None`
+/// for a widget of another field, or a button that lacks no state.
 ///
 /// Refuses a widget without a usable `/Rect`, a malformed comb field, a
 /// comb value with more graphemes than `/MaxLen`, and text that does not
@@ -268,12 +307,15 @@ enum TextLayout {
 pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>, WidgetError> {
     let entries = entries(reader, widget)?;
     let [field_type, flags, value, quadding, max_len] = &entries;
+    let flags = integer(flags.as_deref()).unwrap_or(0);
     let text_field = match field_type.as_deref() {
         Some(Value::Name(name)) if name.as_bytes() == b"Tx" => true,
         Some(Value::Name(name)) if name.as_bytes() == b"Ch" => false,
+        Some(Value::Name(name)) if name.as_bytes() == b"Btn" && flags & PUSHBUTTON == 0 => {
+            return button_states(reader, widget, flags & RADIO != 0);
+        }
         _ => return Ok(None),
     };
-    let flags = integer(flags.as_deref()).unwrap_or(0);
     let layout = if !text_field {
         TextLayout::SingleLine
     } else if flags & COMB != 0 {
@@ -356,6 +398,49 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
         matrix: style.matrix,
         font,
     })))
+}
+
+/// Draws the states that a check box or radio button widget lacks: `Off`,
+/// and the state that its `/AS` names, as a check mark or a dot.
+fn button_states(
+    reader: &Reader<'_>,
+    widget: &Dict,
+    radio: bool,
+) -> Result<Option<Drawing>, WidgetError> {
+    let style = WidgetStyle::read(reader, widget)?;
+    let current = match reader.entry(widget, "AS")?.as_deref() {
+        Some(Value::Name(state)) => state.clone(),
+        _ => Name::from(OFF),
+    };
+    let normal = normal_states(reader, widget)?;
+    let normal = match normal.as_deref() {
+        Some(Value::Dict(normal)) => Some(normal),
+        _ => None,
+    };
+    let mut states = Vec::new();
+    for state in [Name::from(OFF), current] {
+        if states.iter().any(|(drawn, _)| *drawn == state) {
+            continue;
+        }
+        if let Some(normal) = normal
+            && let Some(stream) = normal.get(state.as_bytes())
+            && has_content(&*reader.resolve(stream)?)
+        {
+            continue;
+        }
+        let on = state.as_bytes() != OFF.as_bytes();
+        let content = style.button(on, radio, reader.budget)?;
+        states.push((
+            state,
+            WidgetAppearance {
+                content,
+                size: (style.width, style.height),
+                matrix: style.matrix,
+                font: None,
+            },
+        ));
+    }
+    Ok((!states.is_empty()).then_some(Drawing::States(states)))
 }
 
 /// Reads the entries of [`KEYS`] for a widget's field: each from the
@@ -625,6 +710,58 @@ impl WidgetStyle {
         ]
     }
 
+    /// Draws a check box, with a check mark when `on`, or a radio button,
+    /// with a dot when `on`.
+    fn button(&self, on: bool, radio: bool, budget: &Budget) -> Result<Vec<u8>, LimitExceeded> {
+        let mut out = BudgetVec::new(budget);
+        if radio {
+            self.round_decoration(&mut out)?;
+        } else {
+            self.decoration(&mut out)?;
+        }
+        let (width, height) = (self.width, self.height);
+        if on && radio {
+            let mut ops = circle(width / 2.0, height / 2.0, width.min(height) * 0.22);
+            ops.push_str("0 g\nf\n");
+            out.try_extend_from_slice(ops.as_bytes())?;
+        } else if on {
+            let ops = format!(
+                "q\n0 G\n{} w\n{} {} m\n{} {} l\n{} {} l\nS\nQ\n",
+                fmt((width.min(height) * 0.10).max(1.0)),
+                fmt(width * 0.20),
+                fmt(height * 0.52),
+                fmt(width * 0.42),
+                fmt(height * 0.27),
+                fmt(width * 0.82),
+                fmt(height * 0.76),
+            );
+            out.try_extend_from_slice(ops.as_bytes())?;
+        }
+        Ok(out.into_vec())
+    }
+
+    /// Draws the background and the border of a radio button as circles.
+    fn round_decoration(&self, out: &mut BudgetVec<'_, u8>) -> Result<(), LimitExceeded> {
+        let radius = ((self.width.min(self.height) - self.border_width) / 2.0).max(0.0);
+        let (x, y) = (self.width / 2.0, self.height / 2.0);
+        let mut ops = String::from("q\n");
+        if let Some(color) = self.background {
+            ops.push_str(&color.operator(false));
+            ops.push_str(&circle(x, y, radius));
+            ops.push_str("f\n");
+        }
+        if self.border_width > 0.0
+            && let Some(color) = self.border
+        {
+            ops.push_str(&color.operator(true));
+            ops.push_str(&format!("{} w\n", fmt(self.border_width)));
+            ops.push_str(&circle(x, y, radius));
+            ops.push_str("S\n");
+        }
+        ops.push_str("Q\n");
+        out.try_extend_from_slice(ops.as_bytes())
+    }
+
     /// Draws the background and the rectangular border.
     fn decoration(&self, out: &mut BudgetVec<'_, u8>) -> Result<(), LimitExceeded> {
         let mut ops = String::from("q\n");
@@ -811,6 +948,54 @@ fn comb_ops(
 
 /// Formats a number for content with at most six decimals, as pylopdf's
 /// widget appearances do.
+/// Returns a closed path of four Bézier curves around a circle.
+fn circle(x: f64, y: f64, radius: f64) -> String {
+    const KAPPA: f64 = 0.552_284_749_830_793_6;
+    let control = radius * KAPPA;
+    let points = [
+        [
+            x + radius,
+            y + control,
+            x + control,
+            y + radius,
+            x,
+            y + radius,
+        ],
+        [
+            x - control,
+            y + radius,
+            x - radius,
+            y + control,
+            x - radius,
+            y,
+        ],
+        [
+            x - radius,
+            y - control,
+            x - control,
+            y - radius,
+            x,
+            y - radius,
+        ],
+        [
+            x + control,
+            y - radius,
+            x + radius,
+            y - control,
+            x + radius,
+            y,
+        ],
+    ];
+    let mut ops = format!("{} {} m\n", fmt(x + radius), fmt(y));
+    for curve in points {
+        let numbers: Vec<String> = curve.into_iter().map(fmt).collect();
+        ops.push_str(&numbers.join(" "));
+        ops.push_str(" c\n");
+    }
+    ops.push_str("h\n");
+    ops
+}
+
 fn fmt(value: f64) -> String {
     let value = if value.abs() < 1.0e-9 { 0.0 } else { value };
     let text = format!("{value:.6}");

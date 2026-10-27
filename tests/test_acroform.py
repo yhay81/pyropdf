@@ -3,13 +3,13 @@
 pylopdf's tests/test_acroform.py at ebb01d3c, the reading cases ported.
 Intended differences:
 
-- setting a check box or radio button raises ``NotImplementedError`` until
-  #203, so the button fill cases and the fill halves of mixed button cases
-  wait for it; where pylopdf filled a button to show which widgets belong
-  to it, these tests read ``Field.widgets`` instead. The cases of embedded
-  form fonts wait for #194: a value outside WinAnsiEncoding is left for the
-  viewer to draw. ``/NeedAppearances`` stays true while a button widget has
-  no appearance of its state.
+- the cases of embedded form fonts wait for #194: a value outside
+  WinAnsiEncoding is left for the viewer to draw. The kid and intermediate
+  cases also read ``Field.widgets`` before they fill.
+- rendering reads the store and hands no serialized snapshot to the
+  interpreter, so ``max_interpretation_size`` does not refuse rendering a
+  filled button; the two ``test_state_appearance_*`` cases become one that
+  renders under both limits.
 - pyropdf has no renumbering save and no field removal on page deletion,
   so a handle goes stale when its object leaves ``/Fields``, and undo
   restores it.
@@ -67,7 +67,7 @@ def _form_stream(content: str) -> str:
     )
 
 
-def _build_form_pdf(*, text_widget_extra: str = "") -> bytes:
+def _build_form_pdf(*, checkbox_on_content: str = "", text_widget_extra: str = "") -> bytes:
     """Build text, choice, checkbox, radio, and nested AcroForm fields."""
     return build_raw_pdf(
         {
@@ -85,7 +85,7 @@ def _build_form_pdf(*, text_widget_extra: str = "") -> bytes:
             # Checkbox with Yes and Off appearances.
             10: "<< /FT /Btn /T (agree) /V /Off /AS /Off /Type /Annot /Subtype /Widget"
             " /Rect [50 660 70 680] /P 4 0 R /F 4 /AP << /N << /Yes 11 0 R /Off 12 0 R >> >> >>",
-            11: _form_stream(""),
+            11: _form_stream(checkbox_on_content),
             12: _form_stream(""),
             # Nested person.first field inheriting FT from its parent.
             13: "<< /T (person) /FT /Tx /Kids [14 0 R] >>",
@@ -353,13 +353,57 @@ def test_malformed_comb_field_is_rejected_atomically(original: bytes, replacemen
     assert doc.to_bytes() == before
 
 
-def test_buttons_are_not_set_yet() -> None:
+def test_fill_checkbox_with_bool() -> None:
     doc = pyropdf.open(_build_form_pdf())
-    before = doc.to_bytes()
-    for name, value in (("agree", True), ("plan", "Pro")):
-        with pytest.raises(NotImplementedError):
-            doc.form[name].value = value
-    assert doc.to_bytes() == before
+    doc.form["agree"].value = True
+    on_pixels = bytes(doc.pages[0].pixmap(clip=(45, 107, 75, 137), alpha=True))
+    assert _values(doc)["agree"] == "Yes"  # The on state of /AP /N.
+    data = doc.to_bytes()
+    assert b"/NeedAppearances false" in data
+    reopened = pyropdf.open(data)
+    assert _values(reopened)["agree"] == "Yes"
+    assert _opaque_pixels(reopened, (45, 107, 75, 137)) > 0
+
+    doc.form["agree"].value = False
+    assert _values(doc)["agree"] == "Off"
+    assert bytes(doc.pages[0].pixmap(clip=(45, 107, 75, 137), alpha=True)) != on_pixels
+
+
+@pytest.mark.parametrize("max_interpretation_size", [1, 1024 * 1024])
+def test_state_appearance_renders_from_the_store(max_interpretation_size: int) -> None:
+    limits = pyropdf.DocumentLimits(max_interpretation_size=max_interpretation_size)
+    doc = pyropdf.open(_build_form_pdf(), limits=limits)
+    doc.form["agree"].value = True
+
+    assert _values(doc)["agree"] == "Yes"
+    assert _opaque_pixels(doc, (45, 107, 75, 137)) > 0
+
+
+def test_fill_radio_selects_only_matching_widget() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form["plan"].value = "Basic"
+    assert _values(doc)["plan"] == "Basic"
+    pro = _opaque_pixels(doc, (295, 107, 325, 137))
+    basic = _opaque_pixels(doc, (345, 107, 375, 137))
+    assert basic > pro > 0
+
+
+def test_nonempty_custom_button_appearance_is_preserved() -> None:
+    green_square = "0 1 0 rg 0 0 20 20 re f"
+    doc = pyropdf.open(_build_form_pdf(checkbox_on_content=green_square))
+    doc.form["agree"].value = True
+    pix = doc.pages[0].pixmap(clip=(50, 112, 70, 132), alpha=True)
+    center = (10 * pix.width + 10) * pix.channels
+    assert tuple(bytes(pix)[center : center + 3]) == (0, 255, 0)
+    assert green_square.encode() in doc.to_bytes()
+
+
+def test_filling_draws_the_button_states_that_other_fields_lack() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form["customer"].value = "changed"
+    assert b"/NeedAppearances false" in doc.to_bytes()
+    assert _opaque_pixels(doc, (45, 107, 75, 137)) > 0
+    assert _values(doc)["agree"] == "Off"
 
 
 def test_widget_rotation_background_and_alignment_render() -> None:
@@ -720,10 +764,45 @@ def test_form_field_tree_rejects_excessive_widgets() -> None:
         doc.form["button"]
 
 
-def test_form_button_states_do_not_bound_reading_the_value() -> None:
+def test_form_button_states_reject_excessive_entries_atomically() -> None:
     states = " ".join(f"/S{index} 7 0 R" for index in range(8193))
     doc = pyropdf.open(_build_button_state_pdf(states))
     assert form_entries(doc) == [{"name": "button", "type": "checkbox", "value": "Off"}]
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="8192-entry safety limit"):
+        doc.form["button"].value = True
+    with pytest.raises(pyropdf.PdfError, match="8192-entry safety limit"):
+        doc.form["button"].value = "S0"
+    assert doc.to_bytes() == before
+
+
+def test_form_button_states_reject_excessive_unique_names() -> None:
+    states = " ".join(f"/S{index} 7 0 R" for index in range(4097))
+    doc = pyropdf.open(_build_button_state_pdf(states))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="4096-name safety limit"):
+        doc.form["button"].value = True
+    assert doc.to_bytes() == before
+
+
+def test_form_button_states_reject_excessive_name_bytes() -> None:
+    states = " ".join(f"/S{index}{'x' * 1024} 7 0 R" for index in range(1024))
+    doc = pyropdf.open(_build_button_state_pdf(states))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match=r"button-state name.*1048576-byte safety limit"):
+        doc.form["button"].value = True
+    with pytest.raises(pyropdf.PdfError, match=r"button-state name.*1048576-byte safety limit"):
+        doc.form["button"].value = "S0"
+    assert doc.to_bytes() == before
+
+
+def test_form_button_state_update_refuses_over_limit_output_atomically() -> None:
+    states = " ".join(f"/S{index} 7 0 R" for index in range(8192))
+    doc = pyropdf.open(_build_button_state_pdf(states))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="update exceeds the 8192-entry safety limit"):
+        doc.form["button"].value = "S0"
+    assert doc.to_bytes() == before
 
 
 def test_form_button_supports_indirect_kids_array() -> None:
@@ -731,6 +810,8 @@ def test_form_button_supports_indirect_kids_array() -> None:
     assert form_entries(doc) == [{"name": "button", "type": "checkbox", "value": "Off"}]
     assert _widget_xrefs(doc.form["button"]) == [6]
     assert doc.form["button"].widgets[0].button_states == ("Off", "Yes")
+    doc.form["button"].value = True
+    assert form_entries(doc) == [{"name": "button", "type": "checkbox", "value": "Yes"}]
 
 
 def _build_widget_kids_pdf(field: str, kids: list[str], extra: dict[int, str] | None = None) -> bytes:
@@ -760,7 +841,16 @@ def _build_widget_kids_pdf(field: str, kids: list[str], extra: dict[int, str] | 
     return build_raw_pdf(objects)
 
 
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
 SOLID_BUTTON_STATES = {20: _form_stream("0 1 0 rg 0 0 20 20 re f"), 21: _form_stream("1 0 0 rg 0 0 20 20 re f")}
+
+
+def _kid_colors(doc: pyropdf.Document, count: int = 3) -> list[tuple[int, ...]]:
+    """Sample the RGB color at the center of each of the first `count` kid widgets."""
+    pix = doc.pages[0].pixmap(alpha=True)
+    centers = ((75 * pix.width + 50 + 100 * index) * pix.channels for index in range(count))
+    return [tuple(bytes(pix)[center : center + 3]) for center in centers]
 
 
 @null_equivalents
@@ -781,6 +871,12 @@ def test_null_named_kids_are_widgets_of_their_checkbox(value: str) -> None:
     for doc in _reloaded(pyropdf.open(pdf)):
         assert form_entries(doc) == [{"name": "agree", "type": "checkbox", "value": "Off"}]
         assert [widget.on_state for widget in doc.form["agree"].widgets] == ["Yes"] * 3
+        assert _kid_colors(doc) == [RED] * 3
+        for checked, state, color in ((True, "Yes", GREEN), (False, "Off", RED)):
+            doc.form["agree"].value = checked
+            for current in _reloaded(doc):
+                assert form_entries(current) == [{"name": "agree", "type": "checkbox", "value": state}]
+                assert _kid_colors(current) == [color] * 3
 
 
 @null_equivalents
@@ -791,6 +887,10 @@ def test_null_named_kids_are_buttons_of_their_radio_group(value: str) -> None:
     for doc in _reloaded(pyropdf.open(pdf)):
         assert form_entries(doc) == [{"name": "plan", "type": "radio", "value": "Off"}]
         assert [widget.on_state for widget in doc.form["plan"].widgets] == ["A", "B", "C"]
+        doc.form["plan"].value = "B"
+        for current in _reloaded(doc):
+            assert form_entries(current) == [{"name": "plan", "type": "radio", "value": "B"}]
+            assert _kid_colors(current) == [RED, GREEN, RED]
 
 
 @pytest.mark.parametrize(
@@ -966,6 +1066,13 @@ def test_nameless_intermediate_widgets_are_buttons_of_their_checkbox(nameless: s
     for doc in _reloaded(pyropdf.open(pdf)):
         assert form_entries(doc) == [{"name": "agree", "type": "checkbox", "value": "Off"}]
         assert [widget.on_state for widget in doc.form["agree"].widgets] == ["Yes"] * 3
+        assert _kid_colors(doc) == [RED] * 3
+        for checked, state, color in ((True, "Yes", GREEN), (False, "Off", RED)):
+            doc.form["agree"].value = checked
+            for current in _reloaded(doc):
+                assert form_entries(current) == [{"name": "agree", "type": "checkbox", "value": state}]
+                assert _kid_colors(current) == [color] * 3
+                assert b"/NeedAppearances false" in current.to_bytes()
 
 
 @nameless_kinds
@@ -978,6 +1085,11 @@ def test_nameless_intermediate_widgets_are_buttons_of_their_radio_group(nameless
     for doc in _reloaded(pyropdf.open(pdf)):
         assert form_entries(doc) == [{"name": "plan", "type": "radio", "value": "Off"}]
         assert [widget.on_state for widget in doc.form["plan"].widgets] == ["A", "B", "C"]
+        doc.form["plan"].value = "C"
+        for current in _reloaded(doc):
+            assert form_entries(current) == [{"name": "plan", "type": "radio", "value": "C"}]
+            assert _kid_colors(current) == [RED, RED, GREEN]
+            assert b"/NeedAppearances false" in current.to_bytes()
 
 
 @nameless_kinds

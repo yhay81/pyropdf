@@ -191,8 +191,13 @@ class Field:
         other text and choice fields that have none yet; the form's
         ``/NeedAppearances`` stays true while a widget is left without one.
         A value that WinAnsiEncoding cannot show leaves the widgets for the
-        viewer to draw. Setting a check box or radio button raises
-        :exc:`NotImplementedError` for now.
+        viewer to draw. Setting a check box or radio button to a state name
+        selects that state in each widget that has it, or else in the first
+        widget, and turns the others ``Off``; ``True`` names the first state
+        that is not ``Off``, or ``"Yes"``, and ``False`` names ``"Off"``. The
+        widgets get the ``Off`` and selected states that they lack, as a
+        check mark or a dot, and the button states that other fields lack
+        are drawn too.
         """
         return self._read()[3]
 
@@ -201,8 +206,6 @@ class Field:
         if not isinstance(value, (str, bool)):
             msg = f"a field value is a str or bool: {value!r}"
             raise TypeError(msg)
-        if isinstance(value, bool):
-            value = "Yes" if value else "Off"
         _core.form_field_fill(self._core(), self._id, value)
 
     def __eq__(self, other: object) -> bool:

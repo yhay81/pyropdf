@@ -89,7 +89,7 @@ fn a_text_widget_draws_its_border_and_clipped_text() {
 
 #[test]
 fn a_widget_of_another_field_is_not_drawn() {
-    let document = form("", "/FT /Btn /V /Yes", "/Rect [0 0 20 20]");
+    let document = form("", "/FT /Sig", "/Rect [0 0 20 20]");
     assert!(draw(&document).unwrap().is_none());
 }
 
@@ -206,4 +206,62 @@ fn settling_refuses_what_the_budget_refuses() {
     let error = settle(&mut transaction, 4, widget, &budget).unwrap_err();
     let refusal: &LimitExceeded = error.limit().unwrap();
     assert_eq!(refusal.code(), LimitCode::MemorySize);
+}
+
+fn states(document: &Document) -> Vec<(String, String)> {
+    match draw(document).unwrap() {
+        Some(Drawing::States(states)) => states
+            .into_iter()
+            .map(|(state, drawn)| {
+                (
+                    String::from_utf8_lossy(state.as_bytes()).into_owned(),
+                    String::from_utf8(drawn.content).unwrap(),
+                )
+            })
+            .collect(),
+        _ => panic!("the widget lacks states"),
+    }
+}
+
+#[test]
+fn a_check_box_lacks_its_off_and_selected_states() {
+    let document = form(
+        "",
+        "/FT /Btn /V /Yes",
+        "/Rect [0 0 20 20] /AS /Yes /AP << /N << /Yes 5 0 R >> >>",
+    );
+    // The selected state holds content and is kept.
+    let drawn = states(&document);
+    assert_eq!(drawn.len(), 1);
+    assert_eq!(drawn[0].0, "Off");
+    assert!(drawn[0].1.ends_with("re S\nQ\n"), "{}", drawn[0].1);
+
+    let document = form("", "/FT /Btn /V /Yes", "/Rect [0 0 20 20] /AS /Yes");
+    let drawn = states(&document);
+    assert_eq!(
+        drawn
+            .iter()
+            .map(|(state, _)| state.as_str())
+            .collect::<Vec<_>>(),
+        ["Off", "Yes"]
+    );
+    assert!(drawn[1].1.contains(" m\n") && drawn[1].1.ends_with("S\nQ\n"));
+}
+
+#[test]
+fn a_radio_button_is_round_and_a_pushbutton_is_not_drawn() {
+    let document = form("", "/FT /Btn /Ff 32768 /V /A", "/Rect [0 0 20 20] /AS /A");
+    let drawn = states(&document);
+    assert!(drawn[0].1.contains(" c\n"));
+    assert!(drawn[1].1.ends_with("0 g\nf\n"));
+
+    let document = form("", "/FT /Btn /Ff 65536", "/Rect [0 0 20 20]");
+    assert!(draw(&document).unwrap().is_none());
+
+    let document = form(
+        "",
+        "/FT /Btn /V /Off",
+        "/Rect [0 0 20 20] /AS /Off /AP << /N << /Off 5 0 R >> >>",
+    );
+    assert!(draw(&document).unwrap().is_none());
 }
