@@ -1,13 +1,15 @@
-"""Validate the PDF/A corpus, and every save of every edit of it, with veraPDF.
+"""Validate the PDF/A and PDF/UA corpora, and every save of every edit of them, with veraPDF.
 
-CI runs this with veraPDF's greenfield-apps jar, which it downloads pinned by
-its SHA-256:
+CI runs this with veraPDF's greenfield-apps and greenfield-apps-arlington
+jars, which it downloads pinned by their SHA-256:
 
-    uv run python tools/verapdf.py --jar greenfield-apps-1.28.1.jar
+    uv run python tools/verapdf.py --jar greenfield-apps-1.28.1.jar --arlington greenfield-apps-arlington-1.26.6.jar
 
-Each fixture of tests/assets/pdfa and tests/assets/pdfua is validated under its claimed flavour, as
-is each edit of the preservation harness's EDITS applied to it and saved in
-full and incrementally. A save that veraPDF rejects must be listed in
+Each fixture of tests/assets/pdfa and tests/assets/pdfua is validated under
+its claimed flavour, as is each edit of the preservation harness's EDITS
+applied to it and saved in full and incrementally. With ``--arlington``,
+each of those files is also checked against the Arlington PDF Model of the
+PDF version in its header. A file that veraPDF rejects must be listed in
 ``REJECTED`` with the issue that tracks it; the script exits with status 1
 on a rejection that is not listed, and on a listed one that passes.
 """
@@ -35,15 +37,14 @@ FIXTURES: dict[Path, str] = {
     for name, (_, _, flavour) in runpy.run_path(str(corpus / "generate.py"))["FLAVOURS"].items()
 }
 
-#: Saves that veraPDF rejects, by file name, with the issue that tracks each.
+#: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
 REJECTED: dict[str, str] = {}
 
 
-def saves(directory: Path) -> dict[str, list[Path]]:
-    """Write every fixture and every save of every edit of it into ``directory``, by flavour."""
-    out: dict[str, list[Path]] = {}
+def saves(directory: Path) -> dict[Path, str]:
+    """Write every save of every edit of every fixture into ``directory``; return all files with their flavour."""
+    out = dict(FIXTURES)
     for source, flavour in FIXTURES.items():
-        paths = [source]
         for edit, apply in sorted(EDITS.items()):
             for incremental in (False, True):
                 doc = pyropdf.open(source)
@@ -51,8 +52,20 @@ def saves(directory: Path) -> dict[str, list[Path]]:
                 mode = "incremental" if incremental else "full"
                 path = directory / f"{source.stem}-{edit}-{mode}.pdf"
                 path.write_bytes(doc.to_bytes(incremental=incremental))
-                paths.append(path)
-        out[flavour] = paths
+                out[path] = flavour
+    return out
+
+
+def arlington(path: Path) -> str:
+    """Return the Arlington flavour of the PDF version in the header of ``path``."""
+    return "arlington" + path.read_bytes()[5:8].decode("ascii")
+
+
+def by_flavour(files: dict[Path, str]) -> dict[str, list[Path]]:
+    """Group ``files`` by their flavour."""
+    out: dict[str, list[Path]] = {}
+    for path, flavour in files.items():
+        out.setdefault(flavour, []).append(path)
     return out
 
 
@@ -87,24 +100,34 @@ def details(jar: Path, flavour: str, path: Path) -> str:
     return result.stdout
 
 
+def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
+    """Validate ``files`` under their flavours; print each verdict and return the unexpected ones."""
+    failures = []
+    for flavour, paths in by_flavour(files).items():
+        verdicts = validate(jar, flavour, paths)
+        for path in paths:
+            accepted = verdicts[path.name]
+            key = f"{flavour} {path.name}"
+            note = f" ({REJECTED[key]})" if key in REJECTED else ""
+            sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
+            if accepted == (key in REJECTED):
+                failures.append((flavour, path))
+    for flavour, path in failures:
+        sys.stdout.write(f"\nunexpected verdict for {path.name} under {flavour}:\n{details(jar, flavour, path)}\n")
+    return failures
+
+
 def main() -> int:
     """Validate the corpus and its saves, and return the exit status."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--jar", type=Path, required=True, help="veraPDF's greenfield-apps jar")
-    jar = parser.parse_args().jar.resolve()
-    failures = []
+    parser.add_argument("--arlington", type=Path, help="veraPDF's greenfield-apps-arlington jar")
+    args = parser.parse_args()
     with tempfile.TemporaryDirectory() as directory:
-        for flavour, paths in saves(Path(directory)).items():
-            verdicts = validate(jar, flavour, paths)
-            for path in paths:
-                accepted = verdicts[path.name]
-                listed = path.name in REJECTED
-                note = f" ({REJECTED[path.name]})" if listed else ""
-                sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {flavour} {path.name}{note}\n")
-                if accepted == listed:
-                    failures.append((flavour, path))
-        for flavour, path in failures:
-            sys.stdout.write(f"\nunexpected verdict for {path.name} under {flavour}:\n{details(jar, flavour, path)}\n")
+        files = saves(Path(directory))
+        failures = run(args.jar.resolve(), files)
+        if args.arlington:
+            failures += run(args.arlington.resolve(), {path: arlington(path) for path in files})
     return 1 if failures else 0
 
 
