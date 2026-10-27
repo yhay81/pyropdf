@@ -638,3 +638,23 @@ fn unreferenced_frees_what_only_freed_objects_refer_to() {
     let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
     assert_eq!(&*freed, &[2, 3, 6]);
 }
+
+#[test]
+fn unreferenced_frees_a_candidate_with_what_refers_only_to_it() {
+    let objects = vec![
+        (1, dict(vec![("K", array(vec![reference(4)]))])),
+        // A removed element and its parent, which only the element names.
+        (2, dict(vec![("P", reference(1)), ("K", reference(3))])),
+        (3, dict(vec![("P", reference(2)), ("Pg", reference(6))])),
+        // A removed element that an element that stays still names.
+        (4, dict(vec![("K", reference(5))])),
+        (5, dict(vec![("P", reference(4))])),
+        (6, Value::Integer(0)),
+    ];
+    let trailer = [(Name::from("Root"), reference(1))].into_iter().collect();
+    let document = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let index = build(&document.current(), &budget).unwrap();
+    let freed = unreferenced(&index, &[], &[3, 5], &budget).unwrap();
+    assert_eq!(&*freed, &[2, 3, 6]);
+}

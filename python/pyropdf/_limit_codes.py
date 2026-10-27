@@ -42,6 +42,7 @@ LimitCode: TypeAlias = Literal[
     "annotation_input_size",
     "named_destination_count",
     "named_destination_text_size",
+    "structure_tree_count",
     "page_entry_count",
     "memory_size",
     "deadline",
@@ -122,6 +123,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "named_destination_text_size": (
             "The names of the document's named destinations are longer than 16 MiB together."
+        ),
+        "structure_tree_count": (
+            "A structural edit of pages walks a structure tree that nests elements deeper than 256 levels, or whose "
+            "parent tree or ID tree nests nodes deeper than 32 levels."
         ),
         "page_entry_count": (
             "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page "

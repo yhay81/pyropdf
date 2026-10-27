@@ -35,6 +35,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `annotation_input_size` | 1 MiB | The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together. |
 | `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges. |
 | `named_destination_text_size` | 16 MiB | The names of the document's named destinations are longer than 16 MiB together. |
+| `structure_tree_count` | 256 levels | A structural edit of pages walks a structure tree that nests elements deeper than 256 levels, or whose parent tree or ID tree nests nodes deeper than 32 levels. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |

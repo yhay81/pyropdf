@@ -19,16 +19,15 @@ use super::{Edits, References, Referrer, Role, Rule, Step, find};
 /// holds it: an indirect destination, then an indirect action.
 const MAX_INDIRECTION: usize = 2;
 
-/// Plans the rules for the navigation to `removed`, the pages that leave
-/// the version that `reads` reads, whose index is `index`. `retained`
-/// lists the pages that stay. Both are ascending.
+/// Plans the rules for the navigation to `removed`, the pages that leave;
+/// see [`super::remove_pages`].
 ///
 /// Links to a removed page leave the pages that stay, outline items to it
 /// keep no destination, named destinations and the open action to it go,
 /// and so does an annotation's `/P` to it. When nothing stays, the outline
 /// goes. Refuses, before planning anything, navigation that is a page, a
 /// page tree node, or the catalog.
-pub fn remove_pages(
+pub(super) fn plan(
     reads: &mut Reads<'_>,
     index: &References,
     removed: &[u32],
@@ -335,7 +334,7 @@ fn is_named(reads: &mut Reads<'_>, value: &Value, names: &[Box<[u8]>]) -> Result
 }
 
 /// Returns the catalog's object number, if the trailer refers to one.
-fn catalog(reads: &mut Reads<'_>) -> Result<Option<u32>> {
+pub(super) fn catalog(reads: &mut Reads<'_>) -> Result<Option<u32>> {
     Ok(match reads.trailer().get("Root") {
         Some(&Value::Reference(root)) => Some(root.number()),
         _ => None,
@@ -383,7 +382,10 @@ fn resolved(reads: &mut Reads<'_>, value: &Value) -> Result<Option<Value>> {
     }
 }
 
-fn readable(reads: &mut Reads<'_>, number: u32) -> Result<Option<crate::version::Object>> {
+pub(super) fn readable(
+    reads: &mut Reads<'_>,
+    number: u32,
+) -> Result<Option<crate::version::Object>> {
     match reads.get(number) {
         Ok(object) => Ok(object),
         Err(error) if error.limit().is_some() => Err(error),
@@ -391,7 +393,7 @@ fn readable(reads: &mut Reads<'_>, number: u32) -> Result<Option<crate::version:
     }
 }
 
-fn dict_of(object: &crate::version::Object) -> Option<&Dict> {
+pub(super) fn dict_of(object: &crate::version::Object) -> Option<&Dict> {
     match &**object.value() {
         Value::Dict(dict) => Some(dict),
         Value::Stream(stream) => Some(stream.dict()),
@@ -399,14 +401,14 @@ fn dict_of(object: &crate::version::Object) -> Option<&Dict> {
     }
 }
 
-fn type_of(dict: &Dict) -> Option<&[u8]> {
+pub(super) fn type_of(dict: &Dict) -> Option<&[u8]> {
     match dict.get("Type") {
         Some(Value::Name(name)) => Some(name.as_bytes()),
         _ => None,
     }
 }
 
-fn is_aliasing(dict: &Dict) -> bool {
+pub(super) fn is_aliasing(dict: &Dict) -> bool {
     matches!(type_of(dict), Some(b"Page" | b"Pages" | b"Catalog"))
 }
 
@@ -414,6 +416,6 @@ fn is_link(dict: &Dict) -> bool {
     matches!(dict.get("Subtype"), Some(Value::Name(kind)) if kind.as_bytes() == b"Link")
 }
 
-fn is_in(sorted: &[u32], number: u32) -> bool {
+pub(super) fn is_in(sorted: &[u32], number: u32) -> bool {
     sorted.binary_search(&number).is_ok()
 }

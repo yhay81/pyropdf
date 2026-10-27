@@ -88,7 +88,16 @@ impl<'b> Edits<'b> {
         }
     }
 
-    /// Returns the referrers that the edits remove, ascending.
+    /// Records that the edits remove `number`, which is freed once nothing
+    /// but other removed objects refers to it.
+    pub(super) fn orphan(&mut self, number: u32) -> Result<()> {
+        self.orphans.try_push(number)?;
+        Ok(())
+    }
+
+    /// Returns the objects that the edits remove, ascending: the referrers
+    /// of [`Rule::RemoveReferrer`] and the structure elements that removed
+    /// pages leave empty.
     pub fn orphans(&mut self) -> &[u32] {
         self.orphans.sort_unstable();
         &self.orphans
@@ -220,10 +229,12 @@ fn at_mut<'v>(value: &'v mut Value, path: &[Step]) -> Option<&'v mut Value> {
 }
 
 /// Returns the objects that a structural edit frees, ascending: `seeds`,
-/// which leave whatever refers to them, and every object of `candidates`
-/// or that a freed object refers to whose referrers are all freed. An
-/// object that the trailer refers to stays. `index` is the index of the
-/// version after the edit's other changes.
+/// which leave whatever refers to them; the objects of `candidates`, and
+/// the objects that refer to them, that nothing refers to but freed objects
+/// and other such objects, so that a cycle of a candidate and what refers
+/// to it goes; and every object that a freed object refers to whose
+/// referrers are all freed. An object that the trailer refers to stays.
+/// `index` is the index of the version after the edit's other changes.
 pub fn unreferenced<'b>(
     index: &References,
     seeds: &[u32],
@@ -240,7 +251,57 @@ pub fn unreferenced<'b>(
             pending.try_extend_from_slice(index.targets(seed))?;
         }
     }
-    pending.try_extend_from_slice(candidates)?;
+    // The objects that may go: each leaves once something outside the freed
+    // objects and those that may go refers to it, and those that it refers
+    // to are checked again.
+    let mut group: Table<Member> = Table::new();
+    let mut check = BudgetVec::new(budget);
+    for &candidate in candidates {
+        if freed.get(candidate).is_none() && group.get(candidate).is_none() {
+            group.insert(candidate, Member::Candidate, budget)?;
+            check.try_push(candidate)?;
+        }
+    }
+    while let Some(number) = check.pop() {
+        budget.poll()?;
+        let member = match group.get(number) {
+            Some(&Member::Stays) | None => continue,
+            Some(&member) => member,
+        };
+        let mut held = index.trailer().binary_search(&number).is_ok();
+        for &referrer in index.referrers(number) {
+            if freed.get(referrer).is_some() {
+                continue;
+            }
+            match group.get(referrer) {
+                Some(Member::Candidate | Member::Referrer) => {}
+                Some(Member::Stays) => held = true,
+                None if member == Member::Candidate => {
+                    group.insert(referrer, Member::Referrer, budget)?;
+                    check.try_push(referrer)?;
+                }
+                None => held = true,
+            }
+        }
+        if held {
+            group.insert(number, Member::Stays, budget)?;
+            for &target in index.targets(number) {
+                if matches!(
+                    group.get(target),
+                    Some(Member::Candidate | Member::Referrer)
+                ) {
+                    check.try_push(target)?;
+                }
+            }
+        }
+    }
+    for (number, member) in group.iter() {
+        if *member != Member::Stays {
+            freed.insert(number, (), budget)?;
+            out.try_push(number)?;
+            pending.try_extend_from_slice(index.targets(number))?;
+        }
+    }
     while let Some(number) = pending.pop() {
         budget.poll()?;
         if freed.get(number).is_some()
@@ -258,6 +319,17 @@ pub fn unreferenced<'b>(
     }
     out.sort_unstable();
     Ok(out)
+}
+
+/// What an object is to the objects that [`unreferenced`] may free.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Member {
+    /// A candidate that may go.
+    Candidate,
+    /// An object that refers to a candidate, and may go with it.
+    Referrer,
+    /// An object that something outside refers to, which stays.
+    Stays,
 }
 
 /// Returns the refusal of an edit that would treat a page, a page tree

@@ -98,6 +98,10 @@ pub enum LimitCode {
     /// The names of the document's named destinations are longer than 16 MiB
     /// together.
     NamedDestinationTextSize,
+    /// A structural edit of pages walks a structure tree that nests elements
+    /// deeper than 256 levels, or whose parent tree or ID tree nests nodes
+    /// deeper than 32 levels.
+    StructureTreeCount,
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
@@ -113,7 +117,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 37] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -146,6 +150,7 @@ impl LimitCode {
         Self::AnnotationInputSize,
         Self::NamedDestinationCount,
         Self::NamedDestinationTextSize,
+        Self::StructureTreeCount,
         Self::PageEntryCount,
         Self::MemorySize,
         Self::Deadline,
@@ -188,6 +193,7 @@ impl LimitCode {
             Self::AnnotationInputSize => "annotation_input_size",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationTextSize => "named_destination_text_size",
+            Self::StructureTreeCount => "structure_tree_count",
             Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
@@ -232,6 +238,7 @@ impl LimitCode {
             Self::AnnotationInputSize => "the annotation text is too long",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
+            Self::StructureTreeCount => "the structure tree is too deep",
             Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
@@ -276,6 +283,7 @@ impl LimitCode {
             Self::AnnotationInputSize => Some("bytes"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationTextSize => Some("bytes"),
+            Self::StructureTreeCount => Some("levels"),
             Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
@@ -320,6 +328,7 @@ impl LimitCode {
             Self::AnnotationInputSize => Some(1_048_576),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationTextSize => Some(16_777_216),
+            Self::StructureTreeCount => Some(256),
             Self::PageEntryCount => None,
             Self::MemorySize => None,
             Self::Deadline => None,
