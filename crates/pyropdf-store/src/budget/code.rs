@@ -96,7 +96,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 30] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
