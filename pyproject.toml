@@ -18,6 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Free Threading :: 3 - Stable",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -72,8 +73,9 @@ line-length = 120
 src = ["python"]
 # Markdown examples stay hand-aligned, as in DESIGN.md section 10.
 # evidence/pylopdf-baseline keeps pylopdf's measurement scripts as they ran for
-# DESIGN.md section 2.1.
-extend-exclude = ["*.md", "evidence/pylopdf-baseline"]
+# DESIGN.md section 2.1. tools/arlington/generate.py writes typed.pyi, and
+# tests/test_arlington_schema.py checks it.
+extend-exclude = ["*.md", "evidence/pylopdf-baseline", "python/pyropdf/typed.pyi"]
 
 [tool.ruff.lint]
 select = ["ALL"]

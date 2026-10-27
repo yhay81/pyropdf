@@ -379,3 +379,120 @@ def test_a_deleted_page_refuses_operations() -> None:
     del doc.pages[0]
     with pytest.raises(pyropdf.StalePageError):
         page.operations  # noqa: B018 - the property raises.
+
+
+@pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
+def test_writing_back_every_corpus_page_keeps_its_pixels(path: Path) -> None:
+    doc = pyropdf.open(path.read_bytes())
+    pages = range(min(len(doc.pages), 3))
+    before = [bytes(doc.pages[at].pixmap(dpi=36)) for at in pages]
+
+    for at in pages:
+        page = doc.pages[at]
+        operations = page.operations
+        page.operations = operations
+        assert page.operations == operations
+
+    reopened = pyropdf.open(doc.to_bytes())
+    assert [bytes(reopened.pages[at].pixmap(dpi=36)) for at in pages] == before
+
+
+def test_assigning_operations_edits_the_page() -> None:
+    doc = pyropdf.open(_page(b"BT /F1 12 Tf 20 250 Td (Keep) Tj 0 -20 Td (Drop) Tj ET", filtered=True))
+    page = doc.pages[0]
+    kept = [operation for operation in page.operations if operation.operands != (String(b"Drop"),)]
+
+    page.operations = kept
+
+    assert page.obj["Contents"].read() == b"BT /F1 12 Tf 20 250 Td (Keep) Tj 0 -20 Td ET"
+    assert page.obj["Contents"]["Filter"] == Name("FlateDecode")
+    assert list(pyropdf.open(doc.to_bytes()).pages[0].operations) == kept
+
+
+def test_new_operations_draw_on_the_page() -> None:
+    doc = pyropdf.open(_page(b""))
+    page = doc.pages[0]
+    blank = bytes(page.pixmap())
+
+    drawn = [
+        Operation("BT"),
+        Operation("Tf", (Name("F1"), 20)),
+        Operation("Td", (50, 150)),
+        Operation("Tj", (String(b"Drawn"),)),
+        Operation("ET"),
+    ]
+
+    page.operations = drawn
+
+    assert bytes(page.pixmap()) != blank
+    assert list(page.operations) == drawn
+
+
+def test_assigning_a_shared_content_stream_leaves_other_pages() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 300 300] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+                4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                5: "<< /Length 33 >>\nstream\nBT /F1 12 Tf 20 250 Td (Hi) Tj ET\nendstream",
+                6: "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+            }
+        )
+    )
+
+    doc.pages[0].operations = []
+
+    assert doc.pages[0].operations.to_bytes() == b""
+    assert doc.pages[1].operations.to_bytes() == b"BT /F1 12 Tf 20 250 Td (Hi) Tj ET"
+    assert doc.objects[5].read() == b"BT /F1 12 Tf 20 250 Td (Hi) Tj ET"
+
+
+def test_one_assignment_is_one_step_that_undo_reverts() -> None:
+    doc = pyropdf.open(_page(b"q Q"))
+    page = doc.pages[0]
+    objects = len(doc.objects)
+
+    page.operations = [Operation("q"), Operation("Q"), Operation("q"), Operation("Q")]
+
+    assert doc.history.steps == ("",)
+    assert len(page.operations) == 4
+    doc.history.undo()
+    assert page.operations.to_bytes() == b"q Q"
+    assert page.obj["Contents"] == doc.objects[5]
+    assert len(doc.objects) == objects
+    with doc.transaction("both"):
+        page.operations = []
+        page.rotation = 90
+    assert doc.history.steps == ("both",)
+
+
+def test_page_operations_refuse_wrong_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = pyropdf.open(_page(b"q Q"))
+    page = doc.pages[0]
+
+    with pytest.raises(TypeError, match="assign a sequence"):
+        page.operations = b"q Q"  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError, match="assign a sequence"):
+        page.operations = 3  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError, match="Operation or InlineImage"):
+        page.operations = [Operation("q"), "Q"]  # ty: ignore[invalid-assignment]
+    monkeypatch.setattr("pyropdf._page._DEFAULT_MAX_CONTENT_SIZE", 4)
+    with pytest.raises(pyropdf.LimitError, match="page content of 5 bytes exceeds the 4-byte limit") as error:
+        page.operations = [Operation("q"), Operation("Q"), Operation("n")]
+    assert error.value.code == "content_input_size"
+    assert page.operations.to_bytes() == b"q Q"
+    assert doc.history.steps == ()
+
+
+def test_a_deleted_page_refuses_assigned_operations() -> None:
+    doc = pyropdf.open(_page(b"q Q"))
+    doc.pages.new()
+    page = doc.pages[0]
+    del doc.pages[0]
+    objects = len(doc.objects)
+
+    with pytest.raises(pyropdf.StalePageError):
+        page.operations = []
+    assert len(doc.objects) == objects

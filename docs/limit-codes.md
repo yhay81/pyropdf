@@ -16,13 +16,20 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `interpretation_fuel` | No limit | Interpretation uses more fuel than the operation allows. |
 | `content_operation_count` | 1,048,576 operations | Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576. |
 | `content_stream_size` | 64 MiB | A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them. |
-| `content_input_size` | 64 MiB | The content that `Operations.parse` reads is larger than the call's `max_size`. |
+| `content_input_size` | 64 MiB | The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an assignment to `Page.operations` writes is larger than 64 MiB. |
 | `content_element_count` | 262,144 elements | `Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`. |
+| `text_glyph_count` | 262,144 glyphs | `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`. |
+| `text_size` | 64 MiB | The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |
 | `pixmap_output_size` | 64 MiB | Encoding a pixmap writes more bytes than the call's `max_size`. |
+| `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |
+| `render_output_size` | 512 MiB | The images that `doc.render` encodes write more bytes in all than the call's `max_size`. |
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
+| `embedded_file_size` | 64 MiB | An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`. |
+| `embedded_file_input_size` | 1 MiB | An attachment's name, file name, or description is longer in UTF-8 than 1 MiB. |
+| `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
 | `cancelled` | — | A cancellation token of the operation is cancelled. |

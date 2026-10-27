@@ -22,6 +22,8 @@ pyropdf-store.workspace = true
 # PNG output of Pixmap, the version that hayro already pulls in.
 flate2 = "1.1.10"
 png = "0.18.1"
+# JPEG output of Pixmap and doc.render, as pylopdf encodes it.
+jpeg-encoder = "0.7.0"
 # maturin sets PYO3_BUILD_EXTENSION_MODULE, which replaces PyO3's deprecated
 # extension-module feature.
 pyo3 = { version = "0.30.1", features = ["abi3-py311"] }

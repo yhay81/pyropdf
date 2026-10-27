@@ -3,25 +3,41 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
 from pyropdf._content import Content, _content_from_core
-from pyropdf._errors import StaleObjectError, StalePageError
+from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Rect
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
-from pyropdf._operations import Operations, _from_core
+from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._text import (
+    _DEFAULT_MAX_TEXT_GLYPHS,
+    _DEFAULT_MAX_TEXT_SIZE,
+    Layout,
+    Unmapped,
+    Word,
+    _warn_skipped,
+    build_layout,
+    build_words,
+    text_options,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from pyropdf._document import Document
+    from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
+    from pyropdf._text import _CoreBlock, _TextOptions
 
 #: Elements that one ``Page.content()`` reads by default (``content_element_count``).
 _DEFAULT_MAX_CONTENT_ELEMENTS = 262_144
+#: UTF-8 bytes of one ``Page.svg()`` by default (``svg_output_size``).
+_DEFAULT_MAX_SVG_SIZE = 64 * 1024 * 1024
 #: The largest magnitude of a PDF real that hayro reads as a 32-bit float.
 _FLOAT32_MAX = 3.4028234663852886e38
 
@@ -160,6 +176,30 @@ class Page:
         except StaleObjectError as error:
             raise self._stale() from error
 
+    def svg(self, *, annotations: bool = True, max_size: int | None = _DEFAULT_MAX_SVG_SIZE) -> str:
+        """Render the current version of the page to an SVG string at 72 dpi, with text drawn as paths.
+
+        ``annotations=False`` leaves out the appearances of annotations and
+        form widgets. ``max_size`` caps the UTF-8 output and defaults to
+        64 MiB, raising :class:`LimitError` with code ``svg_output_size``;
+        ``None`` opts out. hayro-svg builds its whole string before the limit
+        is checked, so the limit keeps an oversized result from becoming a
+        Python string rather than bounding the converter's memory. The GIL
+        is released while hayro-svg converts.
+        """
+        _validate_bool("annotations", annotations)
+        _validate_optional_positive_int("max_size", max_size)
+        try:
+            return _core.render_page_svg(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                annotations,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+
     def content(  # noqa: PLR0913 - the item kinds and the reading options are all keyword-only
         self,
         *,
@@ -221,6 +261,169 @@ class Page:
             raise self._stale() from error
         return _content_from_core(raw)
 
+    def text(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> str:
+        """Return the text of the current version of the page in reading order.
+
+        Reading order follows the geometry and script heuristics described in
+        the documentation rather than the document's semantic order. Spaces
+        between words are inferred from glyph positions, and lines end with a
+        newline. Annotation appearances count as page content.
+
+        ``clip`` keeps the glyphs whose box's center lies inside a
+        display-space rectangle, in the page's reading order, which gives the
+        text in a rectangle. Glyphs that the page boundary or the clip paths
+        hide entirely are left out unless ``clipped=True``; invisible text,
+        such as an OCR layer, is kept. ``ligatures=False`` expands the
+        ligature characters U+FB00 to U+FB06 to their letters;
+        ``whitespace=False`` makes every whitespace character a space;
+        ``dehyphenate=True`` removes a hyphen that ends a line between two
+        letters of a word that continues in lowercase on the next line of the
+        block, and joins the two lines; and ``unmapped`` decides what a glyph
+        without Unicode becomes (see :data:`Unmapped`).
+
+        ``max_glyphs`` bounds the glyphs collected, 262,144 by default, with
+        :class:`LimitError` code ``text_glyph_count``, and ``max_size`` the
+        UTF-8 of their text and of the returned text, 64 MiB by default, with
+        code ``text_size``; ``None`` lifts either. The GIL is released while
+        hayro interprets the page.
+        """
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+        )
+        try:
+            text, skipped = _core.page_text(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                options,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return text
+
+    def words(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        exact_bboxes: bool = False,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> list[Word]:
+        """Return the words of the current version of the page in reading order, as :class:`Word` records.
+
+        Boxes are in display space and span the glyphs' advances and the
+        font's ascender and descender, or their outlines with
+        ``exact_bboxes=True``. The other options are those of :meth:`text`; a
+        word that dehyphenation joins is one :class:`Word` on its first line
+        whose box spans both parts.
+        """
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+            exact_bboxes=exact_bboxes,
+        )
+        _, _, blocks = self._layout(options, chars=False, max_glyphs=max_glyphs, max_size=max_size)
+        return build_words(blocks)
+
+    def layout(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        chars: bool = False,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        exact_bboxes: bool = False,
+        styles: bool = False,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> Layout:
+        """Return the text of the current version of the page as blocks, lines, and spans, in reading order.
+
+        With ``chars=True``, every span also lists its characters as
+        :class:`Char` records: each glyph keeps its complete Unicode mapping,
+        ligatures included, and each space that pyropdf infers from a gap is a
+        char with ``is_synthetic`` set, so that a span's chars join to its
+        text. Boxes are in display space and span the glyphs' advances and the
+        font's ascender and descender, or their outlines with
+        ``exact_bboxes=True``. Dehyphenation removes the hyphen from the end
+        of the line and keeps both lines. ``styles=True`` also reads the
+        page's vector rules and sets :attr:`Span.is_underlined` and
+        :attr:`Span.is_struck` where a horizontal rule underlines or strikes
+        out horizontal text, as pymupdf's ``TEXT_COLLECT_STYLES`` does. The
+        other options are those of :meth:`text`, and ``max_size`` also bounds
+        the UTF-8 of the layout's strings.
+        """
+        if not isinstance(chars, bool):
+            msg = f"chars must be True or False: {chars!r}"
+            raise TypeError(msg)
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+            exact_bboxes=exact_bboxes,
+            styles=styles,
+        )
+        return build_layout(*self._layout(options, chars=chars, max_glyphs=max_glyphs, max_size=max_size))
+
+    def _layout(
+        self, options: _TextOptions, *, chars: bool, max_glyphs: int | None, max_size: int | None
+    ) -> tuple[float, float, list[_CoreBlock]]:
+        """Return the core's layout of the page and warn of the glyphs it skipped."""
+        try:
+            width, height, blocks, skipped = _core.page_layout(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                options,
+                chars,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return width, height, blocks
+
     @property
     def operations(self) -> Operations:
         """Return the page's content as :class:`Operations`, as hayro reads it.
@@ -230,6 +433,14 @@ class Page:
         and tokenized with hayro's parser, so the operations are the ones
         that rendering interprets. Each operation keeps its bytes, so
         ``page.operations.to_bytes()`` is that content.
+
+        Assigning a sequence of :class:`Operation` and :class:`InlineImage`
+        values writes them as one new Flate-compressed content stream that
+        replaces ``/Contents``, in one transaction, so a stream that other
+        pages share stays theirs. Operations that a read produced write
+        their bytes back, so ``page.operations = page.operations`` keeps
+        what renders. More than 64 MiB of written content raises
+        :class:`LimitError` code ``content_input_size``.
 
         Reading refuses more than 1,048,576 operations
         (``content_operation_count``) and more than 64 MiB of joined content
@@ -242,6 +453,25 @@ class Page:
         if raw is None:
             raise self._stale()
         return _from_core(raw)
+
+    @operations.setter
+    def operations(self, operations: Iterable[Operation | InlineImage]) -> None:
+        if not isinstance(operations, Operations):
+            if isinstance(operations, (str, bytes, bytearray, memoryview)) or not isinstance(operations, Iterable):
+                msg = f"assign a sequence of Operation and InlineImage values: {type(operations).__name__}"
+                raise TypeError(msg)
+            operations = Operations(operations)
+        data = operations.to_bytes()
+        if len(data) > _DEFAULT_MAX_CONTENT_SIZE:
+            code = "content_input_size"
+            msg = f"page content of {len(data)} bytes exceeds the {_DEFAULT_MAX_CONTENT_SIZE}-byte limit"
+            raise LimitError(code, msg)
+        document = self._document
+        with document.transaction():
+            # The page must still be a page when its content changes.
+            _ = self.index
+            number = document.objects.add_stream(data)
+            self.obj["Contents"] = document.objects[number]
 
     def _geometry(self) -> tuple[int, float, float]:
         """Return the rotation, width, and height, or raise for a deleted page."""
