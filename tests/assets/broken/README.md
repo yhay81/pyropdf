@@ -15,6 +15,8 @@ per kind of defect:
 | `count.pdf` | the page tree's `/Count` is 2 for one page | `PageTreeNode/Count` |
 | `parent.pdf` | the page's `/Parent` is the catalog | `PageTreeNode/Kids` |
 | `order.pdf` | a name tree's keys run `(b)`, `(a)` | `NameTree/Names` |
+| `struct-parent.pdf` | a structure element's `/P` is the catalog | `StructTreeRoot/K` |
+| `next-key.pdf` | `/ParentTreeNextKey` is 0 with key 0 in the parent tree | `StructTreeRoot/ParentTreeNextKey` |
 | `limits.pdf` | a number tree's `/Limits` miss its last key | `NumberTree/Limits` |
 
 `cycle.pdf` is a page tree whose root lists itself among its kids, which

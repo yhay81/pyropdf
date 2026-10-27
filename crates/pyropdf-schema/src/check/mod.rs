@@ -218,8 +218,8 @@ struct Walk<'g, G: Graph> {
     queue: Vec<(u32, Target)>,
     visited: HashSet<(u32, usize)>,
     targets: HashMap<u32, usize>,
-    /// The page tree nodes whose count and kids are checked, once each
-    /// although a node is checked as more than one type.
+    /// The page tree nodes and structure elements whose kids are checked,
+    /// once each although a node is checked as more than one type.
     counted: HashSet<u32>,
 }
 
@@ -340,6 +340,13 @@ impl<'g, G: Graph> Walk<'g, G> {
             && self.counted.insert(number)
         {
             self.pages(number, dict)?;
+        }
+        if matches!(described.name, "StructTreeRoot" | "StructElem")
+            && let Some(number) = object
+            && path.is_empty()
+            && self.counted.insert(number)
+        {
+            self.structure(number, dict, described.name)?;
         }
         for (name, value) in self.graph.entries(dict) {
             let Ok(name) = std::str::from_utf8(name) else {
@@ -850,6 +857,102 @@ impl<'g, G: Graph> Walk<'g, G> {
                 "PageTreeNode/Count",
                 "7.7.3.2",
                 format!("/Count is {count}, but the kids hold {sum} pages"),
+            );
+        }
+        Ok(())
+    }
+
+    /// Checks that each structure element kid of structure node `number`
+    /// names it as its `/P`, and that a root's `/ParentTreeNextKey` is
+    /// greater than every key of its parent tree.
+    fn structure(&mut self, number: u32, node: &G::Value, name: &str) -> Result<(), G::Error> {
+        if let Some(kids) = self.graph.get(node, b"K") {
+            let items = match self.graph.view(kids) {
+                View::Reference(kid) => vec![Item::Reference(0, kid)],
+                _ => self.items(kids, "K")?,
+            };
+            for item in items {
+                let Item::Reference(at, kid) = item else {
+                    continue;
+                };
+                let Some(value) = self.graph.resolve(kid)? else {
+                    continue;
+                };
+                let kind = self.graph.get(&value, b"Type").map(|t| self.graph.view(t));
+                let element = match kind {
+                    Some(View::Name(b"StructElem")) => true,
+                    None => self.graph.get(&value, b"S").is_some(),
+                    _ => false,
+                };
+                let parent = self.graph.get(&value, b"P").map(|p| self.graph.view(p));
+                if element && parent != Some(View::Reference(number)) {
+                    let found = match parent {
+                        Some(View::Reference(other)) => format!("{other} 0 R"),
+                        Some(other) => other.to_string(),
+                        None => "nothing".to_owned(),
+                    };
+                    self.invariant(
+                        Some(kid),
+                        "P",
+                        &format!("{name}/K"),
+                        "14.7.2",
+                        format!("kid {at} of structure node {number} names {found} as its /P"),
+                    );
+                }
+            }
+        }
+        if name != "StructTreeRoot" {
+            return Ok(());
+        }
+        let next = self
+            .graph
+            .get(node, b"ParentTreeNextKey")
+            .map(|n| self.graph.view(n));
+        let Some(View::Integer(next)) = next else {
+            return Ok(());
+        };
+        let Some(tree) = self.graph.get(node, b"ParentTree") else {
+            return Ok(());
+        };
+        let resolved;
+        let tree = match self.graph.view(tree) {
+            View::Reference(at) => match self.graph.resolve(at)? {
+                Some(value) => {
+                    resolved = value;
+                    &*resolved
+                }
+                None => return Ok(()),
+            },
+            _ => tree,
+        };
+        let greatest = if let Some(nums) = self.graph.get(tree, b"Nums") {
+            self.graph
+                .elements(nums)
+                .iter()
+                .step_by(2)
+                .filter_map(|key| match self.graph.view(key) {
+                    View::Integer(key) => Some(key),
+                    _ => None,
+                })
+                .max()
+        } else {
+            self.graph
+                .get(tree, b"Limits")
+                .and_then(|limits| self.graph.elements(limits).get(1))
+                .and_then(|high| match self.graph.view(high) {
+                    View::Integer(high) => Some(high),
+                    _ => None,
+                })
+        };
+        if let Some(greatest) = greatest
+            && greatest >= next
+        {
+            self.invariant(
+                Some(number),
+                "ParentTreeNextKey",
+                "StructTreeRoot/ParentTreeNextKey",
+                "14.7.5.4",
+                format!("/ParentTreeNextKey is {next}, but the parent tree holds key {greatest}"),
             );
         }
         Ok(())
