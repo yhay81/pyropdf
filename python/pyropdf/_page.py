@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
 from pyropdf._content import Content, _content_from_core
@@ -12,7 +12,7 @@ from pyropdf._geometry import Rect
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
 from pyropdf._operations import Operations, _from_core
-from pyropdf._pixmap import _render_matrix
+from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -110,27 +110,53 @@ class Page:
         _, width, height = self._geometry()
         return Rect(0.0, 0.0, width, height)
 
-    def pixmap(
+    def pixmap(  # noqa: PLR0913 - the rendering options are all keyword-only
         self,
         *,
         dpi: float | None = None,
         matrix: Sequence[float] | None = None,
+        clip: Sequence[float] | None = None,
         alpha: bool = False,
+        background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+        annotations: bool = True,
+        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
     ) -> Pixmap:
         """Render the current version of the page to a :class:`Pixmap`.
 
         ``dpi`` scales the page uniformly, 72 by default; ``matrix`` is a
         :class:`Matrix` or six entries, whose translation is dropped, since
         the raster covers the transformed page, or a linear map
-        ``(a, b, c, d)``. Without ``alpha`` the page lies on white. The GIL
-        is released while hayro renders.
+        ``(a, b, c, d)``. Without ``alpha`` the page lies on white.
+        ``background`` is an RGB or RGBA tuple with components from 0 to 255
+        painted beneath the page, which must be opaque without ``alpha``.
+        ``annotations=False`` leaves out the appearances of annotations and
+        form widgets. ``colorspace="gray"`` converts the rendered colors to
+        gray with ITU-R BT.601 luma weights.
+
+        ``clip`` is a display rectangle ``(x0, y0, x1, y1)``: its bounding
+        box under the matrix, rounded outward to whole pixels and
+        intersected with the page, is all that is rasterized. A clip that
+        leaves no pixel of the page raises :class:`PdfError`, and the size
+        limits of the whole page still apply. The GIL is released while
+        hayro renders.
         """
         linear = _render_matrix(matrix, dpi)
-        if not isinstance(alpha, bool):
-            msg = f"alpha must be a bool: {alpha!r}"
-            raise TypeError(msg)
+        rgba = _render_background(background, alpha=alpha)
+        _validate_bool("annotations", annotations)
+        gray = _render_gray(colorspace)
+        box = None if clip is None else _clip_box(clip)
         try:
-            return _core.render_page(self._document._core(), self._number, self._generation, linear, alpha)  # noqa: SLF001
+            return _core.render_page(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                linear,
+                alpha,
+                gray,
+                rgba,
+                box,
+                annotations,
+            )
         except StaleObjectError as error:
             raise self._stale() from error
 

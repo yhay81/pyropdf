@@ -52,7 +52,7 @@ from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, Str
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
-from pyropdf._pixmap import Pixmap
+from pyropdf._pixmap import Colorspace, Pixmap
 
 for _public in (
     Array,
@@ -86,6 +86,7 @@ __all__ = [
     "Clip",
     "ClosePath",
     "Color",
+    "Colorspace",
     "Content",
     "ContentItem",
     "CurveTo",

@@ -25,28 +25,30 @@ use crate::errors::{EncryptedDocumentError, LimitError, PdfError, StaleObjectErr
 /// Metres per inch, for PNG's pixels per metre.
 const METRES_PER_INCH: f64 = 0.0254;
 
-/// A rendered page: immutable pixels, row by row from the top, RGB or RGB
-/// and straight alpha, 8 bits per channel.
+/// A rendered page: immutable pixels, row by row from the top, RGB or gray,
+/// each with or without straight alpha, 8 bits per channel.
 #[pyclass(frozen, module = "pyropdf._core")]
 pub struct Pixmap {
     width: u32,
     height: u32,
     alpha: bool,
+    gray: bool,
     data: Arc<Vec<u8>>,
     resolution: (u32, u32),
 }
 
 impl Pixmap {
     fn channels(&self) -> u32 {
-        3 + u32::from(self.alpha)
+        u32::from(!self.gray) * 2 + 1 + u32::from(self.alpha)
     }
 
     fn png(&self, out: &mut dyn Write) -> Result<(), String> {
         let mut encoder = png::Encoder::new(out, self.width, self.height);
-        encoder.set_color(if self.alpha {
-            png::ColorType::Rgba
-        } else {
-            png::ColorType::Rgb
+        encoder.set_color(match (self.gray, self.alpha) {
+            (true, false) => png::ColorType::Grayscale,
+            (true, true) => png::ColorType::GrayscaleAlpha,
+            (false, false) => png::ColorType::Rgb,
+            (false, true) => png::ColorType::Rgba,
         });
         encoder.set_depth(png::BitDepth::Eight);
         encoder.set_compression(png::Compression::Fast);
@@ -103,7 +105,7 @@ impl Pixmap {
         self.height
     }
 
-    /// Bytes per pixel: 3 for RGB, 4 for RGB and alpha.
+    /// Bytes per pixel: 1 for gray, 3 for RGB, and one more with alpha.
     #[getter(channels)]
     fn get_channels(&self) -> u32 {
         self.channels()
@@ -113,6 +115,14 @@ impl Pixmap {
     #[getter]
     const fn alpha(&self) -> bool {
         self.alpha
+    }
+
+    /// The color space of the samples, a `pyropdf.Colorspace`.
+    #[getter]
+    fn colorspace<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        py.import("pyropdf._pixmap")?
+            .getattr("Colorspace")?
+            .getattr(if self.gray { "GRAY" } else { "RGB" })
     }
 
     /// Bytes per row: width × channels.
@@ -210,8 +220,12 @@ impl Pixmap {
     }
 
     fn __repr__(&self) -> String {
+        let colorspace = if self.gray { "gray" } else { "rgb" };
         let alpha = if self.alpha { " alpha" } else { "" };
-        format!("<Pixmap {}x{} rgb{alpha}>", self.width, self.height)
+        format!(
+            "<Pixmap {}x{} {colorspace}{alpha}>",
+            self.width, self.height
+        )
     }
 
     /// Exposes the pixels without a copy, read-only, shaped `(height,
@@ -379,8 +393,10 @@ fn temporary_sibling(target: &Path) -> io::Result<(PathBuf, File)> {
 }
 
 /// Renders the page whose object is `number` and `generation` through the
-/// linear `matrix`, with the GIL released.
+/// linear `matrix`, with the GIL released. The Python layer has checked the
+/// options and resolved `background` to straight RGBA.
 #[pyfunction]
+#[expect(clippy::too_many_arguments, reason = "the options of Page.pixmap")]
 pub fn render_page(
     py: Python<'_>,
     document: &_Document,
@@ -388,8 +404,21 @@ pub fn render_page(
     generation: u16,
     matrix: (f64, f64, f64, f64),
     alpha: bool,
+    gray: bool,
+    background: (u8, u8, u8, u8),
+    clip: Option<(f64, f64, f64, f64)>,
+    annotations: bool,
 ) -> PyResult<Pixmap> {
     let (version, index, budget) = crate::pages::index(document)?;
+    let (red, green, blue, opacity) = background;
+    let options = render::Options {
+        matrix,
+        alpha,
+        gray,
+        background: [red, green, blue, opacity],
+        clip,
+        annotations,
+    };
     let raster = py.detach(|| -> PyResult<Raster> {
         let at = index
             .index_of(Reference::new(number, generation))
@@ -402,15 +431,16 @@ pub fn render_page(
             .bridge
             .get(&version, &index, &budget)
             .map_err(|e| bridge_error(&e))?;
-        render::raster(&bridged, at, matrix, alpha).map_err(|e| match e {
+        render::raster(&bridged, at, &options).map_err(|e| match e {
             RasterError::Geometry(message) => PyValueError::new_err(message),
-            RasterError::NoPage(_) => PdfError::new_err(e.to_string()),
+            RasterError::NoPage(_) | RasterError::Clip(_) => PdfError::new_err(e.to_string()),
         })
     })?;
     Ok(Pixmap {
         width: u32::from(raster.width),
         height: u32::from(raster.height),
         alpha: raster.alpha,
+        gray: raster.gray,
         data: Arc::new(raster.data),
         resolution: raster.resolution,
     })
