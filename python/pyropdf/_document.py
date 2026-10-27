@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
+from pyropdf._changes import changes as _changes
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
     from types import TracebackType
     from typing import Self
+
+    from pyropdf._changes import ChangeReport
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -108,6 +111,17 @@ class Document:
         """Return a context manager that groups the edits of its block into one step named ``name``."""
         self._ensure_open()
         return Transaction(self, name)
+
+    def changes(self, *, incremental: bool) -> ChangeReport:
+        """Return what the edits since opening invalidate if the document is saved now.
+
+        The report lists the signatures of the opened file that the edits
+        change, or that a save that is not ``incremental`` rewrites, and the
+        PDF/A or PDF/UA claims of the metadata that the edits break. Its cost
+        follows the edits, not the document.
+        """
+        self._ensure_open()
+        return _changes(self, incremental=incremental)
 
     @property
     def history(self) -> History:
