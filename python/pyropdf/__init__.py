@@ -59,6 +59,7 @@ from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
 
 for _public in (
@@ -139,6 +140,7 @@ __all__ = [
     "Objects",
     "Operation",
     "Operations",
+    "OutputIntent",
     "Page",
     "Pages",
     "Paint",
@@ -149,6 +151,7 @@ __all__ = [
     "Pixmap",
     "Point",
     "Probe",
+    "Profiles",
     "PyropdfWarning",
     "Quad",
     "Real",
