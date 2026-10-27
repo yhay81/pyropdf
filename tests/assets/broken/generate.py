@@ -83,6 +83,26 @@ DEFECTS: dict[str, tuple[bytes, tuple[int | None, str, str, str]]] = {
         ),
         (1, "Names/Dests/Names/2", "NameTree/Names", "invariant"),
     ),
+    "struct-parent.pdf": (
+        page(
+            {
+                1: b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>",
+                5: b"<< /Type /StructTreeRoot /K 6 0 R >>",
+                6: b"<< /Type /StructElem /S /P /P 1 0 R >>",
+            }
+        ),
+        (6, "P", "StructTreeRoot/K", "invariant"),
+    ),
+    "next-key.pdf": (
+        page(
+            {
+                1: b"<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>",
+                5: b"<< /Type /StructTreeRoot /K 6 0 R /ParentTree << /Nums [0 6 0 R] >> /ParentTreeNextKey 0 >>",
+                6: b"<< /Type /StructElem /S /P /P 5 0 R >>",
+            }
+        ),
+        (5, "ParentTreeNextKey", "StructTreeRoot/ParentTreeNextKey", "invariant"),
+    ),
     "limits.pdf": (
         page(
             {

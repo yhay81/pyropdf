@@ -289,3 +289,51 @@ fn tree_keys_out_of_order_and_wrong_limits_are_found() {
         "{found:?}"
     );
 }
+
+fn tagged(element_parent: V, next: i64) -> Vec<V> {
+    let mut objects = valid();
+    objects[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        ("StructTreeRoot", V::Ref(4)),
+    ]);
+    objects.push(V::Dict(vec![
+        ("Type", V::Name("StructTreeRoot")),
+        ("K", V::Ref(5)),
+        (
+            "ParentTree",
+            V::Dict(vec![(
+                "Nums",
+                V::Array(vec![V::Int(0), V::Ref(5), V::Int(3), V::Ref(5)]),
+            )]),
+        ),
+        ("ParentTreeNextKey", V::Int(next)),
+    ]));
+    objects.push(V::Dict(vec![
+        ("Type", V::Name("StructElem")),
+        ("S", V::Name("P")),
+        ("P", element_parent),
+    ]));
+    objects
+}
+
+#[test]
+fn a_structure_element_whose_parent_is_another_node_is_found() {
+    assert_eq!(invariants(tagged(V::Ref(4), 4)), vec![]);
+    assert_eq!(
+        invariants(tagged(V::Ref(1), 4)),
+        vec![(Some(5), "P".into(), "StructTreeRoot/K".into())]
+    );
+}
+
+#[test]
+fn a_parent_tree_next_key_within_the_tree_is_found() {
+    assert_eq!(
+        invariants(tagged(V::Ref(4), 3)),
+        vec![(
+            Some(4),
+            "ParentTreeNextKey".into(),
+            "StructTreeRoot/ParentTreeNextKey".into()
+        )]
+    );
+}
