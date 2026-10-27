@@ -54,7 +54,7 @@ from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
-from pyropdf._text import Unmapped
+from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
 
 for _public in (
     Array,
@@ -84,7 +84,9 @@ __all__ = [
     "Access",
     "Array",
     "BlendMode",
+    "Block",
     "CancellationToken",
+    "Char",
     "Clip",
     "ClosePath",
     "Color",
@@ -107,7 +109,9 @@ __all__ = [
     "Image",
     "ImageMask",
     "InlineImage",
+    "Layout",
     "LimitError",
+    "Line",
     "LineCap",
     "LineJoin",
     "LineTo",
@@ -138,6 +142,7 @@ __all__ = [
     "ShadingType",
     "SoftMask",
     "SoftMaskType",
+    "Span",
     "StaleObjectError",
     "StalePageError",
     "Stream",
@@ -149,6 +154,7 @@ __all__ = [
     "Transaction",
     "TransparencyGroup",
     "Unmapped",
+    "Word",
     "__version__",
     "open",
     "probe",

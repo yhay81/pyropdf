@@ -51,11 +51,13 @@ pub enum LimitCode {
     /// `Page.content` reads more glyphs, path and clip segments, dash lengths,
     /// and items than the call's `max_elements`.
     ContentElementCount,
-    /// `Page.text` or `Document.text` collects more glyphs of one page than the
-    /// call's `max_glyphs`.
+    /// `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects
+    /// more glyphs of one page than the call's `max_glyphs`.
     TextGlyphCount,
-    /// The UTF-8 of a page's glyphs, or of the text that `Page.text` or
-    /// `Document.text` returns, is larger than the call's `max_size`.
+    /// The UTF-8 of a page's glyphs, of the text that `Page.text` or
+    /// `Document.text` returns, or of the strings of the records that
+    /// `Page.words` or `Page.layout` returns, is larger than the call's
+    /// `max_size`.
     TextSize,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
