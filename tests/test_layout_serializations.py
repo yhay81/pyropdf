@@ -3,11 +3,11 @@
 Ported from pylopdf 036be111 ``tests/test_layout_serializations.py`` and,
 from ``tests/test_layout.py``, ``test_dict_structure``,
 ``test_span_dictionaries_hold_pymupdf_color_alpha_and_char_flags``, and
-``test_dict_reports_transformed_baseline_direction``. Not ported:
-``test_spans_take_the_ascender_and_descender_of_an_opentype_program``,
-which embeds a font with ``page.draw``, and
+``test_dict_reports_transformed_baseline_direction``, and
 ``test_a_substitute_for_a_font_that_is_not_embedded_lends_no_metrics``,
-which needs OCR (#102); pyropdf writes neither yet.
+without the Japanese fallback font that pyropdf does not have. Not ported:
+``test_spans_take_the_ascender_and_descender_of_an_opentype_program``,
+which embeds a font with ``page.draw``, which pyropdf does not write yet.
 """
 
 from __future__ import annotations
@@ -137,6 +137,22 @@ def test_dict_reports_transformed_baseline_direction() -> None:
     assert abs(direction_y) == pytest.approx(1.0)
     assert line["wmode"] == 0
     assert line["spans"][0]["text"] == "Vertical"
+
+
+def test_a_substitute_for_a_font_that_is_not_embedded_lends_no_metrics() -> None:
+    """The OCR layer's font is not embedded, so its spans take the default metrics."""
+    source = pyropdf.Document()
+    source.pages.new((360, 200)).apply_ocr(
+        words=[pyropdf.OcrWord(text="Hello 1", bbox=pyropdf.Rect(20, 40, 200, 70), confidence=0.9)]
+    )
+    page = pyropdf.open(source.to_bytes()).pages[0]
+
+    (span,) = page.layout().blocks[0].lines[0].spans
+
+    assert span.font == "PyroOCR-Gothic"
+    assert (span.ascender, span.descender) == (0.8, -0.2)
+    # The search box is the box that the OCR word was placed in.
+    assert page.search("Hello 1") == [pytest.approx(pyropdf.Rect(20, 40, 200, 70), abs=0.01)]
 
 
 def test_html_places_one_paragraph_per_line_with_its_spans() -> None:
