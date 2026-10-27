@@ -13,6 +13,10 @@ publish.workspace = true
 pyropdf-store.workspace = true
 hayro = "0.8.0"
 hayro-svg = "0.8.0"
+# The font tables that hayro already reads, for the line metrics of text.
+skrifa = "0.46.2"
+# The bidirectional classes of the reading order of text.
+unicode-bidi = "0.3.18"
 
 [dev-dependencies]
 # Property tests of the bridge (DESIGN.md F9).

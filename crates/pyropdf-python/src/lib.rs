@@ -15,6 +15,7 @@ mod pixmap;
 mod render;
 mod security;
 mod source;
+mod text;
 #[cfg(windows)]
 mod windows_permissions;
 
@@ -60,6 +61,8 @@ mod _core {
     use super::render::render_page_svg;
     #[pymodule_export]
     use super::security::{security_state, unlock};
+    #[pymodule_export]
+    use super::text::{document_text, page_text};
 
     #[cfg(windows)]
     #[pymodule_export]
