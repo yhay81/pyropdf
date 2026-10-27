@@ -218,6 +218,24 @@ unit = "bytes"
 default = 16_777_216
 reached = "The names of the document's named destinations are longer than 16 MiB together."
 
+[codes.toc_entry_count]
+message = "the outline has too many items"
+unit = "entries"
+default = 65_536
+reached = "The outline holds more than 65,536 items or 131,072 links between them, a list of items holds more than 65,536 children, or `doc.outline` is set to more than 65,536 entries."
+
+[codes.toc_text_size]
+message = "the outline text is too long"
+unit = "bytes"
+default = 16_777_216
+reached = "The titles and target texts of the outline are longer than 16 MiB together, as the document encodes them or as they are returned."
+
+[codes.toc_input_size]
+message = "the outline input text is too long"
+unit = "bytes"
+default = 16_777_216
+reached = "The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB together in UTF-8 or as PDF text strings, or leave the outline's text above that."
+
 [codes.structure_tree_count]
 message = "the structure tree is too deep"
 unit = "levels"

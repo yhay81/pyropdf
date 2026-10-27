@@ -98,6 +98,17 @@ pub enum LimitCode {
     /// The names of the document's named destinations are longer than 16 MiB
     /// together.
     NamedDestinationTextSize,
+    /// The outline holds more than 65,536 items or 131,072 links between them,
+    /// a list of items holds more than 65,536 children, or `doc.outline` is set
+    /// to more than 65,536 entries.
+    TocEntryCount,
+    /// The titles and target texts of the outline are longer than 16 MiB
+    /// together, as the document encodes them or as they are returned.
+    TocTextSize,
+    /// The titles and target texts that setting `doc.outline` or editing an
+    /// item writes are longer than 16 MiB together in UTF-8 or as PDF text
+    /// strings, or leave the outline's text above that.
+    TocInputSize,
     /// A structural edit of pages walks a structure tree that nests elements
     /// deeper than 256 levels, or whose parent tree or ID tree nests nodes
     /// deeper than 32 levels.
@@ -117,7 +128,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 37] = [
+    pub const ALL: [Self; 40] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -150,6 +161,9 @@ impl LimitCode {
         Self::AnnotationInputSize,
         Self::NamedDestinationCount,
         Self::NamedDestinationTextSize,
+        Self::TocEntryCount,
+        Self::TocTextSize,
+        Self::TocInputSize,
         Self::StructureTreeCount,
         Self::PageEntryCount,
         Self::MemorySize,
@@ -193,6 +207,9 @@ impl LimitCode {
             Self::AnnotationInputSize => "annotation_input_size",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationTextSize => "named_destination_text_size",
+            Self::TocEntryCount => "toc_entry_count",
+            Self::TocTextSize => "toc_text_size",
+            Self::TocInputSize => "toc_input_size",
             Self::StructureTreeCount => "structure_tree_count",
             Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
@@ -238,6 +255,9 @@ impl LimitCode {
             Self::AnnotationInputSize => "the annotation text is too long",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
+            Self::TocEntryCount => "the outline has too many items",
+            Self::TocTextSize => "the outline text is too long",
+            Self::TocInputSize => "the outline input text is too long",
             Self::StructureTreeCount => "the structure tree is too deep",
             Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
@@ -283,6 +303,9 @@ impl LimitCode {
             Self::AnnotationInputSize => Some("bytes"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationTextSize => Some("bytes"),
+            Self::TocEntryCount => Some("entries"),
+            Self::TocTextSize => Some("bytes"),
+            Self::TocInputSize => Some("bytes"),
             Self::StructureTreeCount => Some("levels"),
             Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
@@ -328,6 +351,9 @@ impl LimitCode {
             Self::AnnotationInputSize => Some(1_048_576),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationTextSize => Some(16_777_216),
+            Self::TocEntryCount => Some(65_536),
+            Self::TocTextSize => Some(16_777_216),
+            Self::TocInputSize => Some(16_777_216),
             Self::StructureTreeCount => Some(256),
             Self::PageEntryCount => None,
             Self::MemorySize => None,

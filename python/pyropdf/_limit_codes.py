@@ -42,6 +42,9 @@ LimitCode: TypeAlias = Literal[
     "annotation_input_size",
     "named_destination_count",
     "named_destination_text_size",
+    "toc_entry_count",
+    "toc_text_size",
+    "toc_input_size",
     "structure_tree_count",
     "page_entry_count",
     "memory_size",
@@ -123,6 +126,18 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "named_destination_text_size": (
             "The names of the document's named destinations are longer than 16 MiB together."
+        ),
+        "toc_entry_count": (
+            "The outline holds more than 65,536 items or 131,072 links between them, a list of items holds more than "
+            "65,536 children, or `doc.outline` is set to more than 65,536 entries."
+        ),
+        "toc_text_size": (
+            "The titles and target texts of the outline are longer than 16 MiB together, as the document encodes them "
+            "or as they are returned."
+        ),
+        "toc_input_size": (
+            "The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB "
+            "together in UTF-8 or as PDF text strings, or leave the outline's text above that."
         ),
         "structure_tree_count": (
             "A structural edit of pages walks a structure tree that nests elements deeper than 256 levels, or whose "

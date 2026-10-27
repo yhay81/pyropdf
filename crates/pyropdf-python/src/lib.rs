@@ -12,6 +12,7 @@ mod history;
 mod items;
 mod objects;
 mod ocr;
+mod outline;
 mod pages;
 mod pixmap;
 mod render;
@@ -63,6 +64,11 @@ mod _core {
     };
     #[pymodule_export]
     use super::ocr::{_OcrEngine, insert_ocr_layer};
+    #[pymodule_export]
+    use super::outline::{
+        outline_children, outline_entries, outline_item, outline_set_open, outline_set_style,
+        outline_set_target, outline_set_title, outline_walk_counts, outline_write,
+    };
     #[pymodule_export]
     use super::pages::{
         new_page, page_count, page_geometry, page_index, page_object, page_objects,

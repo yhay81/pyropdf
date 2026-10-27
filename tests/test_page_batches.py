@@ -9,8 +9,7 @@ moving pages is covered here by the page label cases. Not ported:
 - importing pages with ``extend`` and its entry limit (yhay81/pyropdf#176);
 - the batches of pylopdf's internal core document, which pyropdf has no
   counterpart of: its Python API is the contract, and the entry limit cases
-  below bound the same batches;
-- the outline that a large table of contents writes (yhay81/pyropdf#183).
+  below bound the same batches.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 import pyropdf
-from pyropdf import Document
+from pyropdf import Destination, Document, OutlineEntry
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -108,6 +107,28 @@ def test_select_reorders_every_page(large_pdf: bytes) -> None:
     assert len(doc.pages) == LARGE_PAGE_COUNT
     assert doc.pages[0].text() == f"Page {LARGE_PAGE_COUNT - 1}\n"
     assert doc.pages[LARGE_PAGE_COUNT - 1].text() == "Page 0\n"
+
+
+def test_large_manual_toc_round_trips_through_page_edits(large_pdf: bytes) -> None:
+    doc = pyropdf.open(large_pdf)
+    outline: list[tuple[int, str, int]] = []
+    for index in range(LARGE_PAGE_COUNT):
+        outline.append((1, f"Chapter {index}", index))
+        outline.append((2, f"Section {index}.1", index))
+    doc.outline = [OutlineEntry(level, title, Destination(page)) for level, title, page in outline]
+
+    def tuples(document: Document) -> list[tuple[int, str, int | None]]:
+        return [(entry.level, entry.title, entry.page) for entry in document.outline.entries()]
+
+    assert len(outline) > 4_096
+    assert tuples(doc) == outline
+    assert tuples(pyropdf.open(doc.to_bytes())) == outline
+
+    half = LARGE_PAGE_COUNT // 2
+    del doc.pages[:half]
+    # Items that led to a deleted page stay without a destination.
+    retained = [(level, title, None if page < half else page - half) for level, title, page in outline]
+    assert tuples(doc) == retained
 
 
 def test_delete_pages_accepts_more_than_the_floor(large_pdf: bytes) -> None:

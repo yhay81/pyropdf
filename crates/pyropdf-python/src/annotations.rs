@@ -623,7 +623,7 @@ fn charge_decoded(
 
 /// Encodes a text string as `String.text` reads it: ASCII as is, anything
 /// else as UTF-16BE.
-fn encode_text(text: &str) -> Value {
+pub(crate) fn encode_text(text: &str) -> Value {
     let bytes = if text.is_ascii() {
         text.as_bytes().to_vec()
     } else {
