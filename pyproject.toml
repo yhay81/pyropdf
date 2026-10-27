@@ -50,6 +50,12 @@ dev = [
     # the version that CI runs.
     "ty>=0.0.91",
 ]
+# Independent readers that tools/oracles.py compares saves with, outside CI.
+# pymupdf 2 depends on onnxruntime, which has no wheel for every Python here.
+oracles = [
+    "pymupdf>=1.28,<2",
+    "pypdfium2>=5.14.0",
+]
 
 [tool.uv]
 # Cache keys that make uv rebuild the extension after its Rust sources,
@@ -105,3 +111,8 @@ ignore = [
 "tests/**" = ["INP001", "S101", "D103", "PLR2004"]
 # The tools are scripts, not a package.
 "tools/**" = ["INP001"]
+
+[[tool.ty.overrides]]
+# The readers of the oracles group, which CI does not install.
+include = ["tools/oracles.py"]
+rules = { unresolved-import = "ignore" }
