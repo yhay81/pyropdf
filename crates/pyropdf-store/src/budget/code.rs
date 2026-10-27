@@ -88,6 +88,12 @@ pub enum LimitCode {
     RenderOutputSize,
     /// A password is longer in UTF-8 than PDF 2.0 allows.
     PasswordInputSize,
+    /// An attachment that `Attachment.read`, `Attachment.write`, or
+    /// `Attachments.add` handles is larger than the call's `max_size`.
+    EmbeddedFileSize,
+    /// An attachment's name, file name, or description is longer in UTF-8 than
+    /// 1 MiB.
+    EmbeddedFileInputSize,
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
@@ -128,7 +134,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 42] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -158,6 +164,8 @@ impl LimitCode {
         Self::SvgOutputSize,
         Self::RenderOutputSize,
         Self::PasswordInputSize,
+        Self::EmbeddedFileSize,
+        Self::EmbeddedFileInputSize,
         Self::AnnotationInputSize,
         Self::NamedDestinationCount,
         Self::NamedDestinationTextSize,
@@ -204,6 +212,8 @@ impl LimitCode {
             Self::SvgOutputSize => "svg_output_size",
             Self::RenderOutputSize => "render_output_size",
             Self::PasswordInputSize => "password_input_size",
+            Self::EmbeddedFileSize => "embedded_file_size",
+            Self::EmbeddedFileInputSize => "embedded_file_input_size",
             Self::AnnotationInputSize => "annotation_input_size",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationTextSize => "named_destination_text_size",
@@ -252,6 +262,8 @@ impl LimitCode {
             Self::SvgOutputSize => "the SVG document is too large",
             Self::RenderOutputSize => "the rendered images are too large",
             Self::PasswordInputSize => "the password is too long",
+            Self::EmbeddedFileSize => "the attachment is too large",
+            Self::EmbeddedFileInputSize => "the attachment's text is too long",
             Self::AnnotationInputSize => "the annotation text is too long",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
@@ -300,6 +312,8 @@ impl LimitCode {
             Self::SvgOutputSize => Some("bytes"),
             Self::RenderOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
+            Self::EmbeddedFileSize => Some("bytes"),
+            Self::EmbeddedFileInputSize => Some("bytes"),
             Self::AnnotationInputSize => Some("bytes"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationTextSize => Some("bytes"),
@@ -348,6 +362,8 @@ impl LimitCode {
             Self::SvgOutputSize => Some(67_108_864),
             Self::RenderOutputSize => Some(536_870_912),
             Self::PasswordInputSize => Some(127),
+            Self::EmbeddedFileSize => Some(67_108_864),
+            Self::EmbeddedFileInputSize => Some(1_048_576),
             Self::AnnotationInputSize => Some(1_048_576),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationTextSize => Some(16_777_216),
