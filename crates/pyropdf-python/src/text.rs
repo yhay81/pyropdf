@@ -1,12 +1,14 @@
-//! `page.text`, `doc.text`, `page.words`, and `page.layout`: the text of
-//! pages in reading order, ported from pylopdf's `extract_text` and
-//! `extract_layout` in `rust/src/document/extraction.rs` at
-//! 036be111cafe77755db4bb2be17bc70a8f2f9d82.
+//! `page.text`, `doc.text`, `page.words`, `page.layout`, and `page.search`:
+//! the text of pages in reading order, ported from pylopdf's `extract_text`,
+//! `extract_layout`, and `search_page` in `rust/src/document/extraction.rs`
+//! at 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyropdf_engine::content::PageContent;
-use pyropdf_engine::extract::{self, BBox, BlockTuple, Error, TextOptions, TextPeak, Unmapped};
+use pyropdf_engine::extract::{
+    self, BBox, BlockTuple, Error, QuadTuple, SearchHits, TextOptions, TextPeak, Unmapped,
+};
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::Reference;
@@ -268,5 +270,59 @@ pub fn page_layout(
             )),
             _ => Err(mismatch()),
         }
+    })
+}
+
+/// The matches of a search: a box per match, or a quad per line of each.
+#[derive(IntoPyObject)]
+pub enum Hits {
+    Boxes(Vec<BBox>),
+    Quads(Vec<QuadTuple>),
+}
+
+/// Returns the case-insensitive matches of `needle` on the page whose object
+/// is `number` and `generation`, a box per match or with `quads` a quad per
+/// line of each match, and the glyphs without Unicode that it left out, with
+/// the GIL released. `max_hits` bounds the matches with `search_hit_count`,
+/// and the other budgets are those of [`page_text`].
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the page, the search, its options, and the three budgets of one call"
+)]
+pub fn page_search(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    needle: &str,
+    quads: bool,
+    options: OptionsTuple,
+    max_hits: Option<u64>,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<(Hits, usize)> {
+    let options = text_options(options)?;
+    let (version, index, budget) = crate::pages::index(document)?;
+    let budget = budget
+        .with_limit(LimitCode::SearchHitCount, max_hits)
+        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
+        .with_limit(LimitCode::TextSize, max_size);
+    py.detach(|| {
+        let reference = Reference::new(number, generation);
+        let at = index
+            .index_of(reference)
+            .ok_or_else(|| stale(number, generation))?;
+        let bridged = document
+            .bridge
+            .get(&version, &index, &budget)
+            .map_err(|e| bridge_error(&e))?;
+        let (hits, skipped) = extract::page_search(&bridged, at, &options, needle, quads, &budget)
+            .map_err(text_error)?;
+        let hits = match hits {
+            SearchHits::Boxes(boxes) => Hits::Boxes(boxes),
+            SearchHits::Quads(quads) => Hits::Quads(quads),
+        };
+        Ok((hits, skipped))
     })
 }

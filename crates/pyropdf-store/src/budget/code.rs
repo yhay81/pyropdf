@@ -59,6 +59,11 @@ pub enum LimitCode {
     /// `Page.words` or `Page.layout` returns, is larger than the call's
     /// `max_size`.
     TextSize,
+    /// The text that `Page.search` looks for is longer than 4,096 bytes in
+    /// UTF-8.
+    SearchInputSize,
+    /// `Page.search` finds more matches than the call's `max_hits`.
+    SearchHitCount,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -90,7 +95,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 30] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -108,6 +113,8 @@ impl LimitCode {
         Self::ContentElementCount,
         Self::TextGlyphCount,
         Self::TextSize,
+        Self::SearchInputSize,
+        Self::SearchHitCount,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
@@ -142,6 +149,8 @@ impl LimitCode {
             Self::ContentElementCount => "content_element_count",
             Self::TextGlyphCount => "text_glyph_count",
             Self::TextSize => "text_size",
+            Self::SearchInputSize => "search_input_size",
+            Self::SearchHitCount => "search_hit_count",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
@@ -178,6 +187,8 @@ impl LimitCode {
             Self::ContentElementCount => "the page paints too many items",
             Self::TextGlyphCount => "the page holds too many glyphs to read as text",
             Self::TextSize => "the text is too large",
+            Self::SearchInputSize => "the search text is too long",
+            Self::SearchHitCount => "the search finds too many matches",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
@@ -214,6 +225,8 @@ impl LimitCode {
             Self::ContentElementCount => Some("elements"),
             Self::TextGlyphCount => Some("glyphs"),
             Self::TextSize => Some("bytes"),
+            Self::SearchInputSize => Some("bytes"),
+            Self::SearchHitCount => Some("matches"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
@@ -250,6 +263,8 @@ impl LimitCode {
             Self::ContentElementCount => Some(262_144),
             Self::TextGlyphCount => Some(262_144),
             Self::TextSize => Some(67_108_864),
+            Self::SearchInputSize => Some(4_096),
+            Self::SearchHitCount => Some(4_096),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),

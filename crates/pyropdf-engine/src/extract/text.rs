@@ -10,6 +10,7 @@
 //! builds the words, spans, and blocks of the same lines.
 
 mod layout;
+mod search;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,6 +29,7 @@ pub use self::layout::{
     BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SpanStyleTuple, SpanTuple, WordTuple,
     page_layout,
 };
+pub use self::search::{SearchHits, page_search};
 use super::provenance::{RunCheck, Source, run_sources};
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;

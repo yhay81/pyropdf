@@ -347,7 +347,7 @@ fn is_horizontal(glyph: &GlyphRecord) -> bool {
 
 /// Glyph bounding box with vertical extents approximated from baseline and
 /// size.
-fn glyphs_bbox(glyphs: &[GlyphRecord]) -> BBox {
+pub(super) fn glyphs_bbox(glyphs: &[GlyphRecord]) -> BBox {
     let mut x0 = f64::INFINITY;
     let mut y0 = f64::INFINITY;
     let mut x1 = f64::NEG_INFINITY;
@@ -720,7 +720,7 @@ fn glyph_corners(glyph: &GlyphRecord) -> [(f64, f64); 4] {
 /// The quad of glyphs that share a baseline: the smallest rectangle along
 /// the first glyph's baseline direction that holds every glyph's box, so
 /// that the quad of rotated text follows the text.
-fn glyphs_quad(glyphs: &[GlyphRecord]) -> QuadTuple {
+pub(super) fn glyphs_quad(glyphs: &[GlyphRecord]) -> QuadTuple {
     let first = &glyphs[0];
     let (dx, dy) = if first.writing_mode == 1 {
         (1.0, 0.0)
