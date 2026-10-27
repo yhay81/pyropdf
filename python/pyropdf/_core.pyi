@@ -137,8 +137,31 @@ def page_content(
     max_elements: int | None,
     /,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]: ...
+
+_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool]
+
+def page_text(
+    document: _Document,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[str, int]: ...
+def document_text(
+    document: _Document,
+    pages: list[int] | None,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[str, int]: ...
 def begin_transaction(document: _Document, name: str, /) -> None: ...
 def end_transaction(document: _Document, commit: bool, /) -> None: ...
+def changes(
+    document: _Document, incremental: bool, /
+) -> tuple[list[tuple[str, int, str, list[int]]], list[tuple[str, int, str, list[int]]]]: ...
 def history_state(document: _Document, /) -> tuple[list[str], int, int | None, int]: ...
 def history_undo(document: _Document, /) -> None: ...
 def history_redo(document: _Document, /) -> None: ...

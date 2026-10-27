@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
 from pyropdf._attachments import Attachments
+from pyropdf._changes import changes as _changes
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -21,13 +22,17 @@ from pyropdf._errors import DocumentClosedError, LimitError, PdfError
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
+from pyropdf._page import _clip_box
 from pyropdf._pages import Pages, _resolve
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
+from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
     from types import TracebackType
     from typing import Self
+
+    from pyropdf._changes import ChangeReport
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -113,6 +118,17 @@ class Document:
         """Return a context manager that groups the edits of its block into one step named ``name``."""
         self._ensure_open()
         return Transaction(self, name)
+
+    def changes(self, *, incremental: bool) -> ChangeReport:
+        """Return what the edits since opening invalidate if the document is saved now.
+
+        The report lists the signatures of the opened file that the edits
+        change, or that a save that is not ``incremental`` rewrites, and the
+        PDF/A or PDF/UA claims of the metadata that the edits break. Its cost
+        follows the edits, not the document.
+        """
+        self._ensure_open()
+        return _changes(self, incremental=incremental)
 
     @property
     def history(self) -> History:
@@ -303,6 +319,46 @@ class Document:
         return _core.render_pages(
             doc, entries, linear, alpha, gray, rgba, annotations, format, quality, workers, max_size
         )
+
+    def text(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        pages: Iterable[int] | None = None,
+        *,
+        clip: Sequence[float] | None = None,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> str:
+        """Return the text of the given pages of the current version, joined in their order.
+
+        ``pages`` holds zero-based page indexes, negative ones counted from
+        the end and repeats allowed; ``None`` means every page. It may hold
+        up to the larger of the page count and 4,096 entries, past which
+        :class:`LimitError` code ``page_entry_count`` refuses it. The text
+        equals joining :meth:`Page.text` of each page with the same options,
+        read from one version even while other threads edit the document.
+        ``max_glyphs`` bounds each page and ``max_size`` the whole text. The
+        GIL is released while hayro interprets the pages.
+        """
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+        )
+        doc = self._core()
+        entries = None if pages is None else _page_entries(pages, _core.page_count(doc))
+        text, skipped = _core.document_text(doc, entries, options, max_glyphs, max_size)
+        _warn_skipped(skipped)
+        return text
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""

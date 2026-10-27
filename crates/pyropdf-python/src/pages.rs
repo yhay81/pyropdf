@@ -40,6 +40,29 @@ pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageInd
     Ok((version, index, budget))
 }
 
+/// Resolves the page entries of a batch, such as the `pages` of
+/// `doc.render`, to indexes: every page for `None`, negative entries counted
+/// from the end.
+pub(crate) fn entries(pages: Option<Vec<i64>>, count: usize) -> PyResult<Vec<usize>> {
+    let Some(pages) = pages else {
+        return Ok((0..count).collect());
+    };
+    pages
+        .into_iter()
+        .map(|at| {
+            let resolved = if at < 0 { at + count as i64 } else { at };
+            usize::try_from(resolved)
+                .ok()
+                .filter(|&resolved| resolved < count)
+                .ok_or_else(|| {
+                    PyIndexError::new_err(format!(
+                        "page index {at} is out of range for {count} pages"
+                    ))
+                })
+        })
+        .collect()
+}
+
 /// Returns the number of pages.
 #[pyfunction]
 pub fn page_count(document: &_Document) -> PyResult<usize> {

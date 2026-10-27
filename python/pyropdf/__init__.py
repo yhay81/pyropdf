@@ -1,6 +1,7 @@
 """Complete control of PDF as ISO 32000-2 defines it, implemented in Rust."""
 
 from pyropdf._attachments import Attachment, Attachments
+from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -43,6 +44,7 @@ from pyropdf._errors import (
     MalformedPdfError,
     PasswordError,
     PdfError,
+    PyropdfWarning,
     StaleObjectError,
     StalePageError,
 )
@@ -54,6 +56,7 @@ from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._text import Unmapped
 
 for _public in (
     Attachment,
@@ -69,6 +72,9 @@ for _public in (
     Probe,
     DocumentLimits,
     CancellationToken,
+    ChangeReport,
+    ClaimChange,
+    SignatureChange,
     History,
     InlineImage,
     Operation,
@@ -88,6 +94,8 @@ __all__ = [
     "Attachments",
     "BlendMode",
     "CancellationToken",
+    "ChangeReport",
+    "ClaimChange",
     "Clip",
     "ClosePath",
     "Color",
@@ -132,12 +140,14 @@ __all__ = [
     "Pixmap",
     "Point",
     "Probe",
+    "PyropdfWarning",
     "Quad",
     "Real",
     "Rect",
     "Segment",
     "ShadingPattern",
     "ShadingType",
+    "SignatureChange",
     "SoftMask",
     "SoftMaskType",
     "StaleObjectError",
@@ -150,6 +160,7 @@ __all__ = [
     "TilingPattern",
     "Transaction",
     "TransparencyGroup",
+    "Unmapped",
     "__version__",
     "open",
     "probe",

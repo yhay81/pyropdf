@@ -14,6 +14,7 @@ from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -248,6 +249,67 @@ class Page:
         except StaleObjectError as error:
             raise self._stale() from error
         return _content_from_core(raw)
+
+    def text(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> str:
+        """Return the text of the current version of the page in reading order.
+
+        Reading order follows the geometry and script heuristics described in
+        the documentation rather than the document's semantic order. Spaces
+        between words are inferred from glyph positions, and lines end with a
+        newline. Annotation appearances count as page content.
+
+        ``clip`` keeps the glyphs whose box's center lies inside a
+        display-space rectangle, in the page's reading order, which gives the
+        text in a rectangle. Glyphs that the page boundary or the clip paths
+        hide entirely are left out unless ``clipped=True``; invisible text,
+        such as an OCR layer, is kept. ``ligatures=False`` expands the
+        ligature characters U+FB00 to U+FB06 to their letters;
+        ``whitespace=False`` makes every whitespace character a space;
+        ``dehyphenate=True`` removes a hyphen that ends a line between two
+        letters of a word that continues in lowercase on the next line of the
+        block, and joins the two lines; and ``unmapped`` decides what a glyph
+        without Unicode becomes (see :data:`Unmapped`).
+
+        ``max_glyphs`` bounds the glyphs collected, 262,144 by default, with
+        :class:`LimitError` code ``text_glyph_count``, and ``max_size`` the
+        UTF-8 of their text and of the returned text, 64 MiB by default, with
+        code ``text_size``; ``None`` lifts either. The GIL is released while
+        hayro interprets the page.
+        """
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+        )
+        try:
+            text, skipped = _core.page_text(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                options,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return text
 
     @property
     def operations(self) -> Operations:
