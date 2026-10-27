@@ -33,13 +33,13 @@ def _validate_optional_positive_int(name: str, value: object) -> None:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DocumentLimits:
-    """Optional budgets for opening and reading untrusted PDFs.
+    """Optional budgets for opening and reading PDFs.
 
     ``None`` leaves a limit unset. Each limit refuses with :class:`LimitError`,
     whose ``code`` names it. Opening reads only the cross-reference data, so
     damage and most limits surface when a part is first read;
     ``check_at_open`` reads every object at open instead. :meth:`web` is a
-    conservative profile for user uploads in bounded workers.
+    conservative profile for servers that read documents in bounded workers.
     """
 
     #: The size of the input, in bytes (``file_size``).
@@ -88,7 +88,7 @@ class DocumentLimits:
 
     @classmethod
     def web(cls) -> DocumentLimits:
-        """Return pylopdf's profile for user uploads, which checks every object at open."""
+        """Return pylopdf's web profile, which checks every object at open."""
         return cls(**web_limits(), check_at_open=True)
 
 

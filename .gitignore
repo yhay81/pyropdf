@@ -6,3 +6,4 @@
 /python/pyropdf/*.so
 /target
 __pycache__
+node_modules
