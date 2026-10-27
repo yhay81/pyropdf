@@ -36,7 +36,7 @@ fuzz_target!(
         return;
     };
     if !pages.is_empty() {
-        let _ = render::raster(&bridged, 0, (0.1, 0.0, 0.0, 0.1), false);
+        let _ = render::raster(&bridged, 0, &render::Options::new((0.1, 0.0, 0.0, 0.1), false));
     }
     }
 );
