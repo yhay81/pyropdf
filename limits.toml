@@ -102,13 +102,25 @@ reached = "A page's content streams, decoded and joined, are larger than 64 MiB 
 message = "the content is too large to parse"
 unit = "bytes"
 default = 67_108_864
-reached = "The content that `Operations.parse` reads is larger than the call's `max_size`."
+reached = "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an assignment to `Page.operations` writes is larger than 64 MiB."
 
 [codes.content_element_count]
 message = "the page paints too many items"
 unit = "elements"
 default = 262_144
 reached = "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`."
+
+[codes.text_glyph_count]
+message = "the page holds too many glyphs to read as text"
+unit = "glyphs"
+default = 262_144
+reached = "`Page.text` or `Document.text` collects more glyphs of one page than the call's `max_glyphs`."
+
+[codes.text_size]
+message = "the text is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The UTF-8 of a page's glyphs, or of the text that `Page.text` or `Document.text` returns, is larger than the call's `max_size`."
 
 # The low-level object model.
 
@@ -138,6 +150,18 @@ unit = "bytes"
 default = 67_108_864
 reached = "Encoding a pixmap writes more bytes than the call's `max_size`."
 
+[codes.svg_output_size]
+message = "the SVG document is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "A page's SVG holds more UTF-8 bytes than the call's `max_size`."
+
+[codes.render_output_size]
+message = "the rendered images are too large"
+unit = "bytes"
+default = 536_870_912
+reached = "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."
+
 # Input to the API.
 
 [codes.password_input_size]
@@ -145,6 +169,11 @@ message = "the password is too long"
 unit = "bytes"
 default = 127
 reached = "A password is longer in UTF-8 than PDF 2.0 allows."
+
+[codes.page_entry_count]
+message = "the list of pages is too long"
+unit = "entries"
+reached = "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096."
 
 # The operation as a whole.
 

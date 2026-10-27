@@ -17,6 +17,7 @@ _POINTS_PER_INCH = 72.0
 _COLOR_MAX = 255
 #: A matrix's linear part, or its six entries with a translation.
 _MATRIX_LENGTHS = (4, 6)
+_MAX_QUALITY = 100
 
 
 class Colorspace(enum.StrEnum):
@@ -42,6 +43,22 @@ def _validate_bool(name: str, value: object) -> None:
     if not isinstance(value, bool):
         msg = f"{name} must be a bool: {value!r}"
         raise TypeError(msg)
+
+
+def _validate_encoding(format: str, quality: int, *, alpha: bool) -> None:  # noqa: A002 - the public name.
+    """Refuse an unknown format, a quality outside 1 through 100, and JPEG with alpha."""
+    if format not in ("png", "jpeg"):
+        msg = f"format must be 'png' or 'jpeg': {format!r}"
+        raise ValueError(msg)
+    if isinstance(quality, bool) or not isinstance(quality, int):
+        msg = f"quality must be an integer from 1 through 100: {quality!r}"
+        raise TypeError(msg)
+    if not 1 <= quality <= _MAX_QUALITY:
+        msg = f"quality must be an integer from 1 through 100: {quality!r}"
+        raise ValueError(msg)
+    if format == "jpeg" and alpha:
+        msg = "JPEG has no alpha channel; render without alpha or write PNG"
+        raise ValueError(msg)
 
 
 def _normalize_background(

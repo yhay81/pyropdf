@@ -2,6 +2,7 @@
 
 # The typed views of section 8, a module of their own: one class per object type.
 from pyropdf import typed
+from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -44,6 +45,7 @@ from pyropdf._errors import (
     MalformedPdfError,
     PasswordError,
     PdfError,
+    PyropdfWarning,
     StaleObjectError,
     StalePageError,
 )
@@ -55,6 +57,7 @@ from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._text import Unmapped
 
 for _public in (
     Array,
@@ -68,6 +71,9 @@ for _public in (
     Probe,
     DocumentLimits,
     CancellationToken,
+    ChangeReport,
+    ClaimChange,
+    SignatureChange,
     History,
     InlineImage,
     Operation,
@@ -85,6 +91,8 @@ __all__ = [
     "Array",
     "BlendMode",
     "CancellationToken",
+    "ChangeReport",
+    "ClaimChange",
     "Clip",
     "ClosePath",
     "Color",
@@ -129,12 +137,14 @@ __all__ = [
     "Pixmap",
     "Point",
     "Probe",
+    "PyropdfWarning",
     "Quad",
     "Real",
     "Rect",
     "Segment",
     "ShadingPattern",
     "ShadingType",
+    "SignatureChange",
     "SoftMask",
     "SoftMaskType",
     "StaleObjectError",
@@ -147,6 +157,7 @@ __all__ = [
     "TilingPattern",
     "Transaction",
     "TransparencyGroup",
+    "Unmapped",
     "__version__",
     "open",
     "probe",

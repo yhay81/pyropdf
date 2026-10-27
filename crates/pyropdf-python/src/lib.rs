@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 
 mod cancel;
+mod changes;
 mod content;
 mod document;
 mod errors;
@@ -12,17 +13,25 @@ mod items;
 mod objects;
 mod pages;
 mod pixmap;
+mod render;
 mod schema;
 mod security;
 mod source;
+mod text;
 #[cfg(windows)]
 mod windows_permissions;
 
 /// The extension module of pyropdf, which `python/pyropdf` imports.
-#[pymodule]
+///
+/// It runs without the GIL on free-threaded CPython: a document's state is
+/// behind its own locks, and reads work on immutable versions (DESIGN.md
+/// section 4.6; tests/test_threads.py).
+#[pymodule(gil_used = false)]
 mod _core {
     #[pymodule_export]
     use super::cancel::CancellationToken;
+    #[pymodule_export]
+    use super::changes::changes;
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
@@ -51,11 +60,15 @@ mod _core {
         set_page_rotation, set_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, render_page};
+    use super::pixmap::{Pixmap, render_page, render_pages};
+    #[pymodule_export]
+    use super::render::render_page_svg;
     #[pymodule_export]
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]
     use super::security::{security_state, unlock};
+    #[pymodule_export]
+    use super::text::{document_text, page_text};
 
     #[cfg(windows)]
     #[pymodule_export]

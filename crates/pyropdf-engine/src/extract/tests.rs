@@ -162,3 +162,53 @@ fn a_missing_page_is_refused() {
         Error::NoPage(1)
     );
 }
+
+#[test]
+fn text_charges_its_glyphs_and_text_and_a_refusal_keeps_nothing() {
+    let bridged = Bridged::of_bytes(pdf_with("BT /F1 12 Tf 10 50 Td (Hi there) Tj ET"));
+    let options = TextOptions::default();
+    let budget = Budget::default();
+    let mut out = String::from("before ");
+    let skipped = page_text(&bridged, 0, &options, &budget, &mut out).unwrap();
+    assert_eq!((out.as_str(), skipped), ("before Hi there\n", 0));
+    // The page's glyphs are released with it, and its text stays charged.
+    assert_eq!(budget.used(LimitCode::TextGlyphCount), 0);
+    assert_eq!(budget.used(LimitCode::TextSize), 9);
+
+    // Eight glyphs are collected, and their eight bytes become nine.
+    for (code, limit) in [(LimitCode::TextGlyphCount, 7), (LimitCode::TextSize, 8)] {
+        let budget = Budget::default().with_limit(code, Some(limit));
+        let mut out = String::from("before ");
+        let Err(Error::Limit(refusal)) = page_text(&bridged, 0, &options, &budget, &mut out) else {
+            panic!("{limit} should not hold the text");
+        };
+        assert_eq!(refusal.code(), code);
+        assert_eq!(out, "before ");
+        assert_eq!(budget.used(LimitCode::TextGlyphCount), 0);
+        assert_eq!(budget.used(LimitCode::TextSize), 0);
+    }
+    assert_eq!(
+        Budget::default().limit(LimitCode::TextGlyphCount),
+        Some(262_144)
+    );
+    assert_eq!(
+        Budget::default().limit(LimitCode::TextSize),
+        Some(64 * 1024 * 1024)
+    );
+}
+
+#[test]
+fn text_of_a_missing_page_is_refused() {
+    let bridged = Bridged::of_bytes(pdf_with(""));
+    let mut out = String::new();
+    assert_eq!(
+        page_text(
+            &bridged,
+            1,
+            &TextOptions::default(),
+            &Budget::default(),
+            &mut out
+        ),
+        Err(Error::NoPage(1))
+    );
+}
