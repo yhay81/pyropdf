@@ -128,8 +128,9 @@ def _check_inline(value: object) -> None:
 
 #: The version that a document without a header is held to, as pyropdf writes it.
 _DEFAULT_VERSION = (1, 7)
-#: The version that adds /Names/EmbeddedFiles, and the one that adds /UF.
+#: The versions that add /Names/EmbeddedFiles, /Desc, and /UF.
 _EMBEDDED_FILES_VERSION = (1, 4)
+_DESCRIPTION_VERSION = (1, 6)
 _UF_VERSION = (1, 7)
 
 
@@ -442,7 +443,8 @@ class Attachments(Mapping[str, Attachment]):
 
         The file name is written as ``/UF`` only from PDF 1.7, the later of
         the header and the catalog's ``/Version``; a document older than PDF
-        1.4, which has no embedded file tree, gets ``/Version /1.4``.
+        1.4, which has no embedded file tree, gets ``/Version /1.4``. A
+        description requires at least PDF 1.6.
         Deleting the last attachment removes the tree.
         """
         self._document._ensure_open()  # noqa: SLF001
@@ -471,8 +473,9 @@ class Attachments(Mapping[str, Attachment]):
         with self._document.transaction("attachment add"):
             dictionary = {"Type": Name("EmbeddedFile"), "Params": {"Size": len(payload)}}
             stream = objects[objects.add_stream(payload, dictionary)]
-            # /UF names the file only from PDF 1.7, and the tree needs 1.4.
-            unicode = _require(self._document, _EMBEDDED_FILES_VERSION) >= _UF_VERSION
+            # /Desc needs 1.6, /UF needs 1.7, and the tree needs 1.4.
+            minimum = _DESCRIPTION_VERSION if description is not None else _EMBEDDED_FILES_VERSION
+            unicode = _require(self._document, minimum) >= _UF_VERSION
             filespec: dict[str, object] = {"Type": Name("Filespec"), "F": filename}
             if unicode:
                 filespec["UF"] = filename
