@@ -32,7 +32,7 @@ use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
 use crate::pages::{display_box, editing_index, index, number, rect, resolve, rotation};
 
 /// The most entries of a page's `/Annots` that a read or an edit accepts.
-const MAX_PAGE_ANNOTATIONS: usize = 4_096;
+pub(crate) const MAX_PAGE_ANNOTATIONS: usize = 4_096;
 /// The most bytes of annotation text that one read encodes or returns, and
 /// that one edit writes.
 const MAX_ANNOTATION_TEXT_BYTES: usize = 1024 * 1024;

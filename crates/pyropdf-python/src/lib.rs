@@ -71,7 +71,7 @@ mod _core {
     };
     #[pymodule_export]
     use super::pages::{
-        new_page, page_count, page_geometry, page_index, page_object, page_objects,
+        import_pages, new_page, page_count, page_geometry, page_index, page_object, page_objects,
         set_page_rotation, set_pages,
     };
     #[pymodule_export]

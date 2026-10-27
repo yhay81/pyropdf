@@ -83,20 +83,29 @@ enum Fit {
     Other,
 }
 
-/// A destination array, reduced to what a target reports.
+/// The fits that a destination array names (ISO 32000-2 table 149).
+const FITS: [&str; 8] = [
+    "XYZ", "Fit", "FitB", "FitH", "FitBH", "FitV", "FitBV", "FitR",
+];
+
+/// A destination array, reduced to what a target reports and what
+/// [`Destination::array`] writes again.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Destination {
     page: DestinationPage,
     fit: Fit,
-    /// Array elements 2 to 4: the fit's coordinates and the zoom.
-    numbers: [Option<f64>; 3],
+    /// The fit's name, if it is one of [`FITS`].
+    name: Option<&'static str>,
+    /// Array elements 2 to 5: the fit's coordinates and the zoom.
+    numbers: [Option<f64>; 4],
 }
 
 impl Destination {
     pub(crate) const UNRESOLVED: Self = Self {
         page: DestinationPage::Missing,
         fit: Fit::Other,
-        numbers: [None; 3],
+        name: None,
+        numbers: [None; 4],
     };
 
     /// Reduces a destination array, or a dictionary whose `/D` is one,
@@ -117,16 +126,19 @@ impl Destination {
             Some(Value::Integer(index)) => DestinationPage::Index(*index),
             _ => DestinationPage::Missing,
         };
-        let fit = match resolve(array.get(1))? {
-            Some(Value::Name(name)) => match name.as_bytes() {
-                b"XYZ" => Fit::Xyz,
-                b"FitH" | b"FitBH" => Fit::Horizontal,
-                b"FitV" | b"FitBV" => Fit::Vertical,
-                _ => Fit::Other,
-            },
+        let name = match resolve(array.get(1))? {
+            Some(Value::Name(name)) => FITS
+                .into_iter()
+                .find(|fit| fit.as_bytes() == name.as_bytes()),
+            _ => None,
+        };
+        let fit = match name {
+            Some("XYZ") => Fit::Xyz,
+            Some("FitH" | "FitBH") => Fit::Horizontal,
+            Some("FitV" | "FitBV") => Fit::Vertical,
             _ => Fit::Other,
         };
-        let mut numbers = [None; 3];
+        let mut numbers = [None; 4];
         for (slot, at) in numbers.iter_mut().zip(2..) {
             *slot = match resolve(array.get(at))? {
                 Some(Value::Integer(value)) => Some(value as f64),
@@ -134,7 +146,38 @@ impl Destination {
                 _ => None,
             };
         }
-        Ok(Self { page, fit, numbers })
+        Ok(Self {
+            page,
+            fit,
+            name,
+            numbers,
+        })
+    }
+
+    /// Returns the page that the destination names in `index`.
+    pub(crate) fn page_in(&self, index: &PageIndex) -> Option<Reference> {
+        let at = match self.page {
+            DestinationPage::Reference(reference) => index.index_of(reference)?,
+            DestinationPage::Index(at) => usize::try_from(at).ok()?,
+            DestinationPage::Missing => return None,
+        };
+        index.get(at)?.object()
+    }
+
+    /// Returns the destination as an array that names `page`, with the
+    /// operands that its fit takes; an unknown fit becomes `/Fit`.
+    pub(crate) fn array(&self, page: Reference) -> Array {
+        let (name, operands) = match self.name {
+            Some(name @ ("XYZ" | "FitR")) => (name, if name == "XYZ" { 3 } else { 4 }),
+            Some(name @ ("FitH" | "FitBH" | "FitV" | "FitBV")) => (name, 1),
+            Some(name) => (name, 0),
+            None => ("Fit", 0),
+        };
+        let mut array = Array::from(vec![Value::Reference(page), Value::Name(Name::from(name))]);
+        for operand in &self.numbers[..operands] {
+            array.push(operand.map_or(Value::Null, number));
+        }
+        array
     }
 
     /// Returns the zero-based page, display point, and zoom that the
@@ -153,7 +196,7 @@ impl Destination {
         let page = &pages[at];
         let crop = display_box(page);
         let turn = rotation(page.rotate());
-        let [first, second, third] = self.numbers;
+        let [first, second, third, _] = self.numbers;
         let (point, zoom) = match self.fit {
             Fit::Xyz => (
                 (first.is_some() || second.is_some()).then(|| {

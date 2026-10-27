@@ -12,13 +12,18 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyropdf_engine::pages::copy::Copies;
-use pyropdf_store::budget::Budget;
+use pyropdf_engine::pages::import;
+use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::refs::{self, Edits};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
+use crate::annotations::MAX_PAGE_ANNOTATIONS;
+use crate::annotations::links::{
+    Destination, Lead, LeadReader, NamedDestinations, lead, named, read,
+};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, store_error};
 
@@ -245,6 +250,237 @@ pub fn set_pages(
         }
         result
     })
+}
+
+/// Inserts copies of the pages of `source` at `at`, with what they reach,
+/// in one transaction. Links between the imported pages keep leading to
+/// them; other links within `source` go.
+#[pyfunction]
+pub fn import_pages(
+    py: Python<'_>,
+    document: &_Document,
+    source: &_Document,
+    pages: Vec<(u32, u16)>,
+    at: usize,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let (target, index, budget) = index(document)?;
+    let (_, root_dict) = root(&target, &budget)?;
+    let (version, source_index, _) = self::index(source)?;
+    let pages = pages
+        .into_iter()
+        .map(|(number, generation)| Reference::new(number, generation))
+        .collect::<Vec<_>>();
+    let mut imported = Vec::with_capacity(pages.len());
+    for &page in &pages {
+        if source_index.index_of(page).is_none() {
+            return Err(not_a_page(page));
+        }
+        imported.push(page.number());
+    }
+    imported.sort_unstable();
+    if imported.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(PyValueError::new_err(
+            "a page of another document can be inserted once per call",
+        ));
+    }
+    let mut links = Links {
+        source,
+        index: &source_index,
+        imported: &imported,
+        reads: Reads::new(&version, &budget),
+        named: None,
+        overrides: BudgetVec::new(&budget),
+    };
+    let mut prepared = BudgetVec::new(&budget);
+    prepared
+        .try_reserve_exact(pages.len())
+        .map_err(|e| store(e.into()))?;
+    for &page in &pages {
+        let entry = source_index
+            .index_of(page)
+            .and_then(|at| source_index.get(at))
+            .ok_or_else(|| not_a_page(page))?;
+        let mut dict = entry.dict().clone();
+        for key in INHERITABLE {
+            match entry.inherited(key) {
+                Some(value) => {
+                    dict.insert(Name::from(key), value.clone());
+                }
+                None => {
+                    dict.remove(key);
+                }
+            }
+        }
+        // What the page would otherwise inherit from the receiving root.
+        for key in INHERITABLE {
+            if dict.get(key).is_some() || root_dict.get(key).is_none() {
+                continue;
+            }
+            let default = match key {
+                "CropBox" => dict.get("MediaBox").cloned().unwrap_or_else(a4),
+                "MediaBox" => a4(),
+                "Rotate" => Value::Integer(0),
+                _ => Value::Dict(Dict::new()),
+            };
+            dict.insert(Name::from(key), default);
+        }
+        match links.annots(&dict)? {
+            Some(annots) if annots.is_empty() => {
+                dict.remove("Annots");
+            }
+            Some(annots) => {
+                dict.insert(Name::from("Annots"), Value::Array(annots));
+            }
+            None => {}
+        }
+        prepared
+            .try_push((page, dict))
+            .map_err(|e| store(e.into()))?;
+    }
+    let mut overrides = links.overrides.into_vec();
+    // A link that two pages share is prepared once per page, alike.
+    overrides.sort_by_key(|(number, _)| *number);
+    overrides.dedup_by_key(|(number, _)| *number);
+    let mut order = current_order(&index)?;
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = (|| {
+            let (root, _) = root(transaction.version(), budget)?;
+            let added = import::import(transaction, &version, &prepared, &overrides, root, budget)
+                .map_err(store)?;
+            let at = at.min(order.len());
+            order.splice(at..at, added.iter().copied());
+            let view = transaction.snapshot();
+            rewrite_with(transaction, &view, &index, &order, &added, budget)
+        })();
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
+
+/// The media box that a page without one gets: A4, as the renderer draws it.
+fn a4() -> Value {
+    Value::Array(Array::from(vec![
+        Value::Integer(0),
+        Value::Integer(0),
+        Value::Integer(595),
+        Value::Integer(842),
+    ]))
+}
+
+/// Prepares the links of pages that an import brings from `source`.
+struct Links<'a, 'b> {
+    source: &'a _Document,
+    index: &'a PageIndex,
+    /// The numbers of the imported pages, sorted.
+    imported: &'a [u32],
+    reads: Reads<'b>,
+    named: Option<Arc<NamedDestinations>>,
+    /// The link objects that lead elsewhere once imported, or go.
+    overrides: BudgetVec<'b, (u32, Option<Value>)>,
+}
+
+impl Links<'_, '_> {
+    /// Returns the annotations of `page` without the links within `source`
+    /// that lead to a page left behind, and with explicit destinations for
+    /// the others; `None` when the page has no annotation array.
+    fn annots(&mut self, page: &Dict) -> PyResult<Option<Array>> {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let Some(Value::Array(items)) = self.resolved(page.get("Annots"))? else {
+            return Ok(None);
+        };
+        if items.len() > MAX_PAGE_ANNOTATIONS {
+            return Err(MalformedPdfError::new_err(format!(
+                "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
+            )));
+        }
+        let mut kept = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            let Some(Value::Dict(annotation)) = self.resolved(Some(item))? else {
+                kept.push(item.clone());
+                continue;
+            };
+            let link = matches!(
+                self.resolved(annotation.get("Subtype"))?,
+                Some(Value::Name(subtype)) if subtype.as_bytes() == b"Link"
+            );
+            if !link {
+                kept.push(item.clone());
+                continue;
+            }
+            let destination = match lead(self, &annotation)? {
+                Lead::Target(_) => {
+                    kept.push(item.clone());
+                    continue;
+                }
+                Lead::Destination(destination) => destination,
+                Lead::Name(name) => self.lookup(&name)?,
+            };
+            let prepared = destination
+                .page_in(self.index)
+                .filter(|page| self.imported.binary_search(&page.number()).is_ok())
+                .map(|page| self.retarget(&annotation, &destination, page))
+                .transpose()?;
+            match item {
+                Value::Reference(reference) => {
+                    if prepared.is_some() {
+                        kept.push(item.clone());
+                    }
+                    self.overrides
+                        .try_push((reference.number(), prepared.map(Value::Dict)))
+                        .map_err(|e| store(e.into()))?;
+                }
+                _ => kept.extend(prepared.map(Value::Dict)),
+            }
+        }
+        Ok(Some(Array::from(kept)))
+    }
+
+    /// Returns `link` leading to `destination` on `page` with an explicit
+    /// array, in its `/GoTo` action if it has one.
+    fn retarget(
+        &mut self,
+        link: &Dict,
+        destination: &Destination,
+        page: Reference,
+    ) -> PyResult<Dict> {
+        let array = Value::Array(destination.array(page));
+        let mut link = link.clone();
+        if let Some(Value::Dict(mut action)) = self.resolved(link.get("A"))? {
+            action.insert(Name::from("D"), array);
+            link.insert(Name::from("A"), Value::Dict(action));
+            link.remove("Dest");
+        } else {
+            link.insert(Name::from("Dest"), array);
+            link.remove("A");
+        }
+        Ok(link)
+    }
+
+    fn lookup(&mut self, name: &[u8]) -> PyResult<Destination> {
+        if self.named.is_none() {
+            self.named = Some(named(self.source)?);
+        }
+        Ok(self
+            .named
+            .as_ref()
+            .and_then(|named| named.get(name))
+            .unwrap_or(Destination::UNRESOLVED))
+    }
+}
+
+impl LeadReader for Links<'_, '_> {
+    fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>> {
+        read(&mut self.reads, value)
+    }
+
+    /// The import reads no text of a link.
+    fn text(&mut self, _: &[u8], _: &str, _: bool) -> PyResult<String> {
+        Ok(String::new())
+    }
 }
 
 fn not_a_page(page: Reference) -> PyErr {
