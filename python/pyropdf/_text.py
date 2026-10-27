@@ -5,7 +5,8 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from html import escape
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pyropdf._content import _RENDER_MODES, Color, TextRenderMode
 from pyropdf._errors import PyropdfWarning
@@ -230,12 +231,221 @@ class Layout:
     height: float
     blocks: tuple[Block, ...]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return the layout as dictionaries, lists, and tuples for JSON.
 
-# The span flags that pymupdf reports and that the core computes.
+        The shape is that of pymupdf's ``get_text("dict")``: blocks with
+        ``number``, ``type`` (0 for text), ``bbox``, and ``lines``; lines with
+        ``bbox``, ``wmode``, ``dir``, and ``spans``; and spans with ``bbox``,
+        ``origin``, ``size``, ``font``, ``flags``, ``char_flags``, ``color``,
+        ``alpha``, ``ascender``, ``descender``, and ``text``. When the layout
+        holds characters, each span has ``chars`` in place of ``text``, a list
+        of ``c``, ``bbox``, ``origin``, and ``synthetic``, as in pymupdf's
+        ``"rawdict"``. ``Char.stream`` and ``Char.operation`` stay on the
+        records, out of pymupdf's shape.
+        """
+        return {
+            "width": self.width,
+            "height": self.height,
+            "blocks": [
+                {
+                    "number": number,
+                    "type": 0,
+                    "bbox": tuple(block.bbox),
+                    "lines": [
+                        {
+                            "bbox": tuple(line.bbox),
+                            "wmode": int(line.is_vertical),
+                            "dir": tuple(line.direction),
+                            "spans": [_span_dict(span) for span in line.spans],
+                        }
+                        for line in block.lines
+                    ],
+                }
+                for number, block in enumerate(self.blocks)
+            ],
+        }
+
+    def to_html(self) -> str:
+        """Return the layout as a positioned HTML fragment, as pymupdf's ``"html"`` output.
+
+        The fragment is one ``<div>`` the size of the page, in points, with one
+        absolutely positioned ``<p>`` per line at the top-left corner of its
+        box, turned along its baseline, and one ``<span>`` per span in its
+        font family, size, weight, style, and color. Invisible text keeps its
+        place with ``opacity:0``.
+        """
+        parts = [f'<div style="position:relative;width:{_pt(self.width)};height:{_pt(self.height)}">']
+        parts.extend(_html_line(line) for block in self.blocks for line in block.lines)
+        parts.append("</div>\n")
+        return "\n".join(parts)
+
+    def to_xml(self) -> str:
+        """Return the layout as XML, as pymupdf's ``"xml"`` output.
+
+        A ``<page>`` holds ``<block>``, ``<line>``, and ``<font>`` elements
+        with their boxes, writing mode, baseline direction, and font, size,
+        and color. A layout with characters gives one ``<char>`` per
+        character with its box, origin, and text, and marks inferred spaces
+        with ``synthetic="1"``; a layout without characters gives each span's
+        text.
+        """
+        parts = [f'<page width="{_num(self.width)}" height="{_num(self.height)}">']
+        for block in self.blocks:
+            parts.append(f'<block bbox="{_nums(block.bbox)}">')
+            for line in block.lines:
+                parts.append(
+                    f'<line bbox="{_nums(line.bbox)}" wmode="{int(line.is_vertical)}" dir="{_nums(line.direction)}">'
+                )
+                parts.extend(_xml_span(span) for span in line.spans)
+                parts.append("</line>")
+            parts.append("</block>")
+        parts.append("</page>\n")
+        return "\n".join(parts)
+
+
+# The span flags that pymupdf reports; the core passes all but the
+# superscript as flags.
+_SUPERSCRIPT = 1
 _ITALIC = 2
 _SERIF = 4
 _MONOSPACED = 8
 _BOLD = 16
+# The char flags of pymupdf's span dictionaries.
+_STRIKEOUT = 1
+_UNDERLINE = 2
+_FILLED = 16
+_STROKED = 32
+_CLIPPED = 64
+_FILLED_MODES = frozenset({TextRenderMode.FILL, TextRenderMode.FILL_STROKE})
+_STROKED_MODES = frozenset({TextRenderMode.STROKE, TextRenderMode.FILL_STROKE})
+
+
+def _num(value: float) -> str:
+    """Return a coordinate with at most three decimals and no trailing zeros."""
+    text = f"{value:.3f}".rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+def _nums(values: Sequence[float]) -> str:
+    return " ".join(_num(value) for value in values)
+
+
+def _pt(value: float) -> str:
+    return f"{_num(value)}pt"
+
+
+def _srgb(component: float) -> int:
+    """Return a color component from 0 to 1 as a byte."""
+    return round(min(max(component, 0.0), 1.0) * 255)
+
+
+def _hex(color: Color | None) -> str:
+    """Return a color as ``#rrggbb``; text without a color paint is black."""
+    if color is None:
+        return "#000000"
+    return f"#{_srgb(color.red):02x}{_srgb(color.green):02x}{_srgb(color.blue):02x}"
+
+
+def _flags(span: Span) -> int:
+    """Return pymupdf's span flags of a span."""
+    return (
+        (_SUPERSCRIPT if span.is_superscript else 0)
+        | (_ITALIC if span.is_italic else 0)
+        | (_SERIF if span.is_serif else 0)
+        | (_MONOSPACED if span.is_monospaced else 0)
+        | (_BOLD if span.is_bold else 0)
+    )
+
+
+def _html_line(line: Line) -> str:
+    """Return one line of :meth:`Layout.to_html`."""
+    style = f"position:absolute;margin:0;white-space:pre;left:{_pt(line.bbox.x0)};top:{_pt(line.bbox.y0)}"
+    if line.is_vertical:
+        style += ";writing-mode:vertical-rl"
+    elif line.direction != (1, 0):
+        # Turn the line about the start of its quad, along its baseline.
+        ul = line.quad.ul
+        angle = math.degrees(math.atan2(line.direction.y, line.direction.x))
+        style = (
+            f"position:absolute;margin:0;white-space:pre;left:{_pt(ul.x)};top:{_pt(ul.y)};"
+            f"transform-origin:0 0;transform:rotate({_num(angle)}deg)"
+        )
+    spans = "".join(_html_span(span) for span in line.spans)
+    return f'<p style="{style}">{spans}</p>'
+
+
+def _html_span(span: Span) -> str:
+    """Return one span of :meth:`Layout.to_html`."""
+    family = "serif" if span.is_serif else "monospace" if span.is_monospaced else "sans-serif"
+    font = f"{escape(_css_string(span.font))},{family}" if span.font else family
+    style = f"font-family:{font};font-size:{_pt(span.size)};line-height:1;color:{_hex(span.color)}"
+    if span.is_bold:
+        style += ";font-weight:bold"
+    if span.is_italic:
+        style += ";font-style:italic"
+    if span.render_mode is TextRenderMode.INVISIBLE:
+        style += ";opacity:0"
+    elif span.color is not None and span.color.alpha < 1:
+        style += f";opacity:{_num(span.color.alpha)}"
+    return f'<span style="{style}">{escape(span.text, quote=False)}</span>'
+
+
+def _css_string(value: str) -> str:
+    """Quote a CSS string before the enclosing HTML attribute is escaped."""
+    quoted = "".join(f"\\{ord(char):x} " if char in '\\"' or char < " " or char == "\x7f" else char for char in value)
+    return f'"{quoted}"'
+
+
+_SYNTHETIC = ' synthetic="1"'
+
+
+def _xml_span(span: Span) -> str:
+    """Return one span of :meth:`Layout.to_xml` as a ``<font>`` element."""
+    head = (
+        f'<font name="{escape(span.font)}" size="{_num(span.size)}" flags="{_flags(span)}" '
+        f'color="{_hex(span.color)}" bbox="{_nums(span.bbox)}">'
+    )
+    if not span.chars:
+        return f"{head}{escape(span.text, quote=False)}</font>"
+    chars = "".join(
+        f'<char bbox="{_nums(char.bbox)}" x="{_num(char.origin.x)}" y="{_num(char.origin.y)}" '
+        f'c="{escape(char.text)}"{_SYNTHETIC if char.is_synthetic else ""}/>'
+        for char in span.chars
+    )
+    return f"{head}{chars}</font>"
+
+
+def _span_dict(span: Span) -> dict[str, Any]:
+    """Return one span of :meth:`Layout.to_dict`."""
+    char_flags = (
+        (_STRIKEOUT if span.is_struck else 0)
+        | (_UNDERLINE if span.is_underlined else 0)
+        | (_FILLED if span.render_mode in _FILLED_MODES else 0)
+        | (_STROKED if span.render_mode in _STROKED_MODES else 0)
+        | (_CLIPPED if span.is_clipped else 0)
+    )
+    color = span.color
+    result: dict[str, Any] = {
+        "bbox": tuple(span.bbox),
+        "origin": tuple(span.origin),
+        "size": span.size,
+        "font": span.font,
+        "flags": _flags(span),
+        "char_flags": char_flags,
+        "color": 0 if color is None else _srgb(color.red) << 16 | _srgb(color.green) << 8 | _srgb(color.blue),
+        "alpha": 255 if color is None else _srgb(color.alpha),
+        "ascender": span.ascender,
+        "descender": span.descender,
+    }
+    if not span.chars:
+        result["text"] = span.text
+    else:
+        result["chars"] = [
+            {"c": char.text, "bbox": tuple(char.bbox), "origin": tuple(char.origin), "synthetic": char.is_synthetic}
+            for char in span.chars
+        ]
+    return result
 
 
 def _rect(box: Sequence[float]) -> Rect:
