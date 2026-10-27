@@ -32,7 +32,7 @@
 //! the decoded bytes of cross-reference streams and object streams against
 //! the limits of decoded streams.
 
-mod lex;
+pub(crate) mod lex;
 mod objstm;
 mod read;
 mod scan;

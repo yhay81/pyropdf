@@ -19,6 +19,7 @@ use super::{
     length_value,
 };
 use crate::budget::{Budget, BudgetVec, LimitCode, StreamKind};
+use crate::index::lex::is_white;
 use crate::{Error, LimitExceeded, Result};
 
 /// How many values the conversion converts between two polls of the budget.
@@ -40,12 +41,35 @@ impl Value {
     /// nested deeper than it allows, or `memory_size` for what the value
     /// holds.
     pub fn parse(source: &Bytes, budget: &Budget) -> Result<Self> {
+        Self::parse_with_lengths(source, budget, &|_| Ok(None))
+    }
+
+    /// Parses the value that `source` begins with, as [`Value::parse`] does,
+    /// and reads the data of a stream whose `/Length` refers to an object as
+    /// hayro reads it through the file's cross-reference table.
+    ///
+    /// `fetch` returns the bytes that the value of the object that a
+    /// reference names begins with, as [`Base::object`] returns them. When
+    /// the length's object is an integer alone, and the data that it gives
+    /// ends at white space and `endstream`, the stream holds that data and
+    /// its dictionary keeps the reference. Otherwise the stream holds what
+    /// [`Value::parse`] reads: the data before `endstream`, without the
+    /// white space that ends it, as it does when `fetch` cannot read the
+    /// object. Refuses with the limits that `fetch` refuses with, and as
+    /// [`Value::parse`] does.
+    ///
+    /// [`Base::object`]: crate::version::Base::object
+    pub fn parse_with_lengths(
+        source: &Bytes,
+        budget: &Budget,
+        fetch: &dyn Fn(Reference) -> Result<Option<Bytes>>,
+    ) -> Result<Self> {
         #[cfg(test)]
         PARSES.with(|parses| parses.set(parses.get() + 1));
         guard(|| {
             let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice())
                 .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;
-            Converter::new(source, budget).convert(object)
+            Converter::new(source, budget, fetch).convert(object)
         })
     }
 
@@ -57,7 +81,9 @@ impl Value {
     /// an encrypted document but borrows its containers from the encrypted
     /// bytes, so the lexemes of such an object would be encrypted.
     pub fn from_object(object: &Object<'_>, source: &Bytes, budget: &Budget) -> Result<Self> {
-        guard(|| Converter::new(source, budget).convert(MaybeRef::NotRef(object.clone())))
+        guard(|| {
+            Converter::new(source, budget, &|_| Ok(None)).convert(MaybeRef::NotRef(object.clone()))
+        })
     }
 }
 
@@ -142,6 +168,8 @@ struct Converter<'s, 'b> {
     /// share.
     source: &'s Bytes,
     budget: &'b Budget,
+    /// Returns the bytes of the object that a stream's `/Length` refers to.
+    fetch: &'s dyn Fn(Reference) -> Result<Option<Bytes>>,
     /// How many values the conversion has converted, for polling the budget.
     steps: u32,
 }
@@ -175,10 +203,15 @@ enum Start<'a, 'b> {
 }
 
 impl<'s, 'b> Converter<'s, 'b> {
-    const fn new(source: &'s Bytes, budget: &'b Budget) -> Self {
+    const fn new(
+        source: &'s Bytes,
+        budget: &'b Budget,
+        fetch: &'s dyn Fn(Reference) -> Result<Option<Bytes>>,
+    ) -> Self {
         Self {
             source,
             budget,
+            fetch,
             steps: 0,
         }
     }
@@ -267,10 +300,23 @@ impl<'s, 'b> Converter<'s, 'b> {
                 stream: Some(stream),
                 ..
             } => {
+                // hayro reads the data that an indirect length gives, and
+                // the dictionary keeps the reference.
+                if let Some((_, Value::Reference(reference))) =
+                    entries.iter().find(|(key, _)| key.as_bytes() == LENGTH)
+                    && let Some(data) = self.indirect_data(&stream, *reference)?
+                {
+                    let dict = Dict {
+                        entries: entries.into_vec(),
+                        lexeme,
+                    };
+                    return Ok(Value::Stream(Box::new(Stream { dict, data })));
+                }
                 let data = self.stream_data(&stream)?;
                 // The data is what hayro-syntax found, which its length
                 // describes. A dictionary that says otherwise, or refers to
-                // its length, is changed and forgets its lexeme.
+                // a length that does not fit the data, is changed and
+                // forgets its lexeme.
                 let length = length_value(data.len());
                 match entries.iter_mut().find(|(key, _)| key.as_bytes() == LENGTH) {
                     Some((_, value)) if *value == length => {}
@@ -414,6 +460,49 @@ impl<'s, 'b> Converter<'s, 'b> {
         (lexeme.first() == Some(&b'[') && lexeme.last() == Some(&b']')).then_some(lexeme)
     }
 
+    /// Returns the data of `stream` that its length's object, which
+    /// `reference` names, gives, as hayro reads it: the bytes after the end
+    /// of line that follows `stream`, when white space and `endstream`
+    /// follow them in the source.
+    ///
+    /// Returns `None` when the object is unreadable or not an integer alone,
+    /// or the data that it gives does not fit, so that the stream falls back
+    /// to what hayro-syntax found. Refuses as the budget refuses reading the
+    /// object. The object is read alone, resolving no length of its own, so
+    /// a length that names its own stream reads no object again.
+    fn indirect_data(
+        &self,
+        stream: &syntax::Stream<'_>,
+        reference: Reference,
+    ) -> Result<Option<Bytes>> {
+        let bytes = match (self.fetch)(reference) {
+            Ok(bytes) => bytes,
+            // hayro reads an object that it cannot read as no length.
+            Err(error) if error.limit().is_none() => None,
+            Err(error) => return Err(error),
+        };
+        let Some(length) = bytes.as_deref().and_then(length_object) else {
+            return Ok(None);
+        };
+        let Some(start) = self.source.offset_of(&stream.raw_data()) else {
+            return Ok(None);
+        };
+        let Some(end) = start.checked_add(length) else {
+            return Ok(None);
+        };
+        let Some(after) = self.source.get(end..) else {
+            return Ok(None);
+        };
+        let keyword = after
+            .iter()
+            .position(|&byte| !is_white(byte))
+            .unwrap_or(after.len());
+        if !after[keyword..].starts_with(b"endstream") {
+            return Ok(None);
+        }
+        Ok(self.source.slice(start..end))
+    }
+
     /// Returns the encoded data of `stream`: a slice of the source when it is
     /// one, and a copy otherwise.
     fn stream_data(&self, stream: &syntax::Stream<'_>) -> Result<Bytes> {
@@ -518,6 +607,21 @@ fn copy(bytes: &[u8], budget: &Budget) -> Result<Box<[u8]>, LimitExceeded> {
     copy.try_reserve_exact(bytes.len())?;
     copy.try_extend_from_slice(bytes)?;
     Ok(copy.into_vec().into_boxed_slice())
+}
+
+/// Returns the length that `bytes`, the bytes that a stream's length object
+/// begins with, give: an integer from 0, which hayro-syntax reads alone.
+///
+/// A reference or any other value gives no length. hayro-syntax reads the
+/// bytes as one value, so it reads a stream there through no other object.
+fn length_object(bytes: &[u8]) -> Option<usize> {
+    let object = panic::catch_unwind(|| MaybeRef::<Object<'_>>::from_bytes(bytes)).ok()??;
+    match object {
+        MaybeRef::NotRef(Object::Number(number)) if is_integer(number) => {
+            usize::try_from(number.as_i64()).ok()
+        }
+        _ => None,
+    }
 }
 
 /// Returns the value of a reference that hayro-syntax read.
