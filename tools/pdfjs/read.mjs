@@ -6,7 +6,8 @@ import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 for (const path of process.argv.slice(2)) {
   const data = new Uint8Array(await readFile(path));
-  const document = await getDocument({ data, verbosity: 0, isEvalSupported: false }).promise;
+  const task = getDocument({ data, verbosity: 0, isEvalSupported: false });
+  const document = await task.promise;
   const pages = [];
   for (let number = 1; number <= document.numPages; number += 1) {
     const page = await document.getPage(number);
@@ -15,6 +16,6 @@ for (const path of process.argv.slice(2)) {
     const text = content.items.map((item) => item.str ?? "").join("");
     pages.push([width, height, text]);
   }
-  await document.destroy();
+  await task.destroy();
   process.stdout.write(`${JSON.stringify(pages)}\n`);
 }
