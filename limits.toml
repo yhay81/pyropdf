@@ -122,6 +122,18 @@ unit = "bytes"
 default = 67_108_864
 reached = "The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`."
 
+[codes.search_input_size]
+message = "the search text is too long"
+unit = "bytes"
+default = 4_096
+reached = "The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8."
+
+[codes.search_hit_count]
+message = "the search finds too many matches"
+unit = "matches"
+default = 4_096
+reached = "`Page.search` finds more matches than the call's `max_hits`."
+
 # The low-level object model.
 
 [codes.stream_data_size]

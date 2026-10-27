@@ -1,7 +1,6 @@
-"""Quads of extracted text, which follow rotated baselines.
+"""Quads of extracted text and of search results, which follow rotated baselines.
 
-Ported from pylopdf 036be111 ``tests/test_text_quads.py``; the search tests
-belong to #100.
+Ported from pylopdf 036be111 ``tests/test_text_quads.py``.
 """
 
 from __future__ import annotations
@@ -32,6 +31,24 @@ def _inside(point: pyropdf.Point, quad: pyropdf.Quad, tolerance: float = 1e-6) -
     return -tolerance <= u <= 1 + tolerance and -tolerance <= v <= 1 + tolerance
 
 
+@pytest.mark.parametrize("degrees", [30, 135])
+def test_search_quads_cover_rotated_text_tightly(degrees: int) -> None:
+    page = _rotated(degrees)
+
+    (quad,) = page.search("words", quads=True)
+    (rect,) = page.search("words")
+    word = page.words()[1]
+
+    assert quad.rect == pytest.approx(rect)
+    assert quad.rect == pytest.approx(word.bbox)
+    # The quad holds the glyphs' origins but much less area than the rectangle.
+    chars = page.layout(chars=True).blocks[0].lines[0].spans[0].chars[-5:]
+    assert [char.text for char in chars] == list("words")
+    assert all(_inside(char.origin, quad) for char in chars)
+    quad_area = math.dist(quad.ul, quad.ur) * math.dist(quad.ul, quad.ll)
+    assert quad_area < 0.75 * rect.width * rect.height
+
+
 @pytest.mark.parametrize("degrees", [0, 30, 90, 135, 180, 270])
 def test_quads_follow_the_baseline_of_rotated_text(degrees: int) -> None:
     page = _rotated(degrees)
@@ -57,3 +74,34 @@ def test_horizontal_quads_are_the_rectangles() -> None:
 
     assert line.quad.is_rectangular
     assert line.quad.rect == line.bbox
+
+
+def test_horizontal_search_quads_are_the_rectangles() -> None:
+    page = pyropdf.open(build_text_pdf("BT /F1 20 Tf 72 700 Td (one two one) Tj ET")).pages[0]
+
+    quads = page.search("one", quads=True)
+
+    assert [quad.rect for quad in quads] == page.search("one")
+    assert all(quad.is_rectangular for quad in quads)
+
+
+def test_a_dehyphenated_match_gives_one_quad_per_line() -> None:
+    page = pyropdf.open(build_text_pdf("BT /F1 12 Tf 14 TL 72 700 Td (exam-) Tj T* (ple) Tj ET")).pages[0]
+
+    quads = page.search("example", dehyphenate=True, quads=True)
+    (rect,) = page.search("example", dehyphenate=True)
+
+    assert len(quads) == 2
+    assert quads[0].rect | quads[1].rect == rect
+    assert quads[0].ul.y < quads[1].ul.y
+
+
+def test_search_quads_validate_and_bound_their_input() -> None:
+    page = pyropdf.open(build_text_pdf("BT /F1 20 Tf 72 700 Td (a a a) Tj ET")).pages[0]
+
+    with pytest.raises(TypeError, match="quads must be True or False"):
+        page.search("a", quads=1)  # ty: ignore[no-matching-overload]
+    with pytest.raises(pyropdf.LimitError) as error:
+        page.search("a", quads=True, max_hits=2)
+    assert error.value.code == "search_hit_count"
+    assert len(page.search("a", quads=True, max_hits=None)) == 3

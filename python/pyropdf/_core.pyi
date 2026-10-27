@@ -169,6 +169,18 @@ def page_layout(
     max_size: int | None,
     /,
 ) -> tuple[float, float, list[Any], int]: ...
+def page_search(
+    document: _Document,
+    number: int,
+    generation: int,
+    needle: str,
+    quads: bool,
+    options: _TextOptions,
+    max_hits: int | None,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[list[Any], int]: ...
 def begin_transaction(document: _Document, name: str, /) -> None: ...
 def end_transaction(document: _Document, commit: bool, /) -> None: ...
 def changes(

@@ -20,6 +20,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `content_element_count` | 262,144 elements | `Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`. |
 | `text_glyph_count` | 262,144 glyphs | `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`. |
 | `text_size` | 64 MiB | The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`. |
+| `search_input_size` | 4 KiB | The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8. |
+| `search_hit_count` | 4,096 matches | `Page.search` finds more matches than the call's `max_hits`. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |

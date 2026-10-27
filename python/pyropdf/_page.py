@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
-from pyropdf._geometry import Rect
+from pyropdf._geometry import Quad, Rect
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
@@ -20,6 +20,8 @@ from pyropdf._text import (
     Layout,
     Unmapped,
     Word,
+    _quad,
+    _rect,
     _warn_skipped,
     build_layout,
     build_words,
@@ -38,6 +40,10 @@ if TYPE_CHECKING:
 _DEFAULT_MAX_CONTENT_ELEMENTS = 262_144
 #: UTF-8 bytes of one ``Page.svg()`` by default (``svg_output_size``).
 _DEFAULT_MAX_SVG_SIZE = 64 * 1024 * 1024
+#: Matches that one ``Page.search()`` returns by default (``search_hit_count``).
+_DEFAULT_MAX_SEARCH_HITS = 4096
+#: UTF-8 bytes of the text that ``Page.search()`` looks for (``search_input_size``).
+_MAX_SEARCH_INPUT_BYTES = 4096
 #: The largest magnitude of a PDF real that hayro reads as a 32-bit float.
 _FLOAT32_MAX = 3.4028234663852886e38
 
@@ -426,6 +432,124 @@ class Page:
             raise self._stale() from error
         _warn_skipped(skipped)
         return width, height, blocks
+
+    @overload
+    def search(
+        self,
+        text: str,
+        *,
+        clip: Sequence[float] | None = ...,
+        quads: Literal[False] = ...,
+        max_hits: int | None = ...,
+        clipped: bool = ...,
+        ligatures: bool = ...,
+        whitespace: bool = ...,
+        dehyphenate: bool = ...,
+        unmapped: Unmapped = ...,
+        exact_bboxes: bool = ...,
+        max_glyphs: int | None = ...,
+        max_size: int | None = ...,
+    ) -> list[Rect]: ...
+
+    @overload
+    def search(
+        self,
+        text: str,
+        *,
+        clip: Sequence[float] | None = ...,
+        quads: Literal[True],
+        max_hits: int | None = ...,
+        clipped: bool = ...,
+        ligatures: bool = ...,
+        whitespace: bool = ...,
+        dehyphenate: bool = ...,
+        unmapped: Unmapped = ...,
+        exact_bboxes: bool = ...,
+        max_glyphs: int | None = ...,
+        max_size: int | None = ...,
+    ) -> list[Quad]: ...
+
+    def search(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        text: str,
+        *,
+        clip: Sequence[float] | None = None,
+        quads: bool = False,
+        max_hits: int | None = _DEFAULT_MAX_SEARCH_HITS,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        exact_bboxes: bool = False,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> list[Rect] | list[Quad]:
+        """Search the text of the current version of the page case-insensitively for ``text``.
+
+        Return one :class:`Rect` per match, or with ``quads=True`` one
+        :class:`Quad` per line of each match: a quad follows the baseline,
+        so that it covers rotated text tightly where a rectangle is
+        axis-aligned. Search reads the lines of :meth:`layout` and finds no
+        match across lines, except that ``dehyphenate=True`` joins a
+        hyphenated word's lines; a match across that join gives one
+        rectangle that spans both parts, or one quad per line. A space that
+        pyropdf infers from a gap matches a space of ``text``.
+
+        ``text`` is at most 4,096 bytes in UTF-8, or the call raises
+        :class:`LimitError` with code ``search_input_size``. More matches
+        than ``max_hits`` raise :class:`LimitError` with code
+        ``search_hit_count`` instead of returning some of them;
+        ``max_hits=None`` lifts the limit for trusted input. The other
+        options are those of :meth:`layout`.
+        """
+        if not isinstance(text, str):
+            msg = f"text must be a str: {text!r}"
+            raise TypeError(msg)
+        if not text:
+            msg = "text must be at least 1 character"
+            raise ValueError(msg)
+        # Each character takes 1 to 4 bytes. Reject a long string before
+        # encoding, so checking the byte limit also has bounded allocation.
+        if len(text) > _MAX_SEARCH_INPUT_BYTES or (
+            len(text) * 4 > _MAX_SEARCH_INPUT_BYTES and len(text.encode()) > _MAX_SEARCH_INPUT_BYTES
+        ):
+            code = "search_input_size"
+            msg = f"the search text exceeds the {_MAX_SEARCH_INPUT_BYTES}-byte UTF-8 limit"
+            raise LimitError(code, msg)
+        if not isinstance(quads, bool):
+            msg = f"quads must be True or False: {quads!r}"
+            raise TypeError(msg)
+        _validate_optional_positive_int("max_hits", max_hits)
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+            exact_bboxes=exact_bboxes,
+        )
+        try:
+            hits, skipped = _core.page_search(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                text,
+                quads,
+                options,
+                max_hits,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        if quads:
+            return [_quad(hit) for hit in hits]
+        return [_rect(hit) for hit in hits]
 
     @property
     def operations(self) -> Operations:
