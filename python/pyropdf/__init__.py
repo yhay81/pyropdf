@@ -16,6 +16,7 @@ from pyropdf._errors import (
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
+from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Pixmap
@@ -33,6 +34,9 @@ for _public in (
     DocumentLimits,
     CancellationToken,
     History,
+    InlineImage,
+    Operation,
+    Operations,
     Page,
     Pages,
     Transaction,
@@ -52,10 +56,13 @@ __all__ = [
     "EncryptedDocumentError",
     "Encryption",
     "History",
+    "InlineImage",
     "LimitError",
     "MalformedPdfError",
     "Name",
     "Objects",
+    "Operation",
+    "Operations",
     "Page",
     "Pages",
     "PasswordError",

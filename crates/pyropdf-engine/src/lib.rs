@@ -2,4 +2,5 @@
 //! budgets (DESIGN.md section 11).
 
 pub mod bridge;
+pub mod content;
 pub mod render;

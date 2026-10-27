@@ -32,10 +32,10 @@ GENERATED = (
 )
 COMMAND = "uv run python tools/generate_limits.py"
 
-# The codes of pylopdf at 884af0dbf21973cfd434a9eca4e769de62fcc25c that Phase 0
-# needs, which keep their names: opening and the structure of the document,
-# decoding streams, the data handed to the interpreter, the low-level object
-# model, saving, pixmaps, and passwords.
+# The codes of pylopdf at 884af0dbf21973cfd434a9eca4e769de62fcc25c that pyropdf
+# has, which keep their names: opening and the structure of the document,
+# decoding streams, the data handed to the interpreter, content operations,
+# the low-level object model, saving, pixmaps, and passwords.
 PYLOPDF_CODES = (
     "file_size",
     "page_count",
@@ -47,6 +47,9 @@ PYLOPDF_CODES = (
     "decompression_unverifiable",
     "stream_filter_count",
     "interpretation_size",
+    "content_operation_count",
+    "content_stream_size",
+    "content_input_size",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",

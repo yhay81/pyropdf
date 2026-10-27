@@ -14,6 +14,9 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `stream_filter_count` | 16 filters | A stream chains more filters than its limit. |
 | `interpretation_size` | No limit | The PDF data handed to the interpreter is larger than `DocumentLimits.max_interpretation_size`. |
 | `interpretation_fuel` | No limit | Interpretation uses more fuel than the operation allows. |
+| `content_operation_count` | 1,048,576 operations | Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576. |
+| `content_stream_size` | 64 MiB | A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them. |
+| `content_input_size` | 64 MiB | The content that `Operations.parse` reads is larger than the call's `max_size`. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |

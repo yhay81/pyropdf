@@ -21,6 +21,9 @@ LimitCode: TypeAlias = Literal[
     "stream_filter_count",
     "interpretation_size",
     "interpretation_fuel",
+    "content_operation_count",
+    "content_stream_size",
+    "content_input_size",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",
@@ -52,6 +55,14 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The PDF data handed to the interpreter is larger than `DocumentLimits.max_interpretation_size`."
         ),
         "interpretation_fuel": "Interpretation uses more fuel than the operation allows.",
+        "content_operation_count": (
+            "Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than "
+            "1,048,576."
+        ),
+        "content_stream_size": (
+            "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them."
+        ),
+        "content_input_size": "The content that `Operations.parse` reads is larger than the call's `max_size`.",
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",

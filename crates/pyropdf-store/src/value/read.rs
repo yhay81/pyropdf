@@ -50,18 +50,13 @@ impl Value {
     }
 
     /// Converts `object`, which hayro-syntax parsed, keeping lexemes where it
-    /// borrows from `source`.
+    /// borrows from `source`, as [`Value::parse`] converts what it parses.
     ///
-    /// Until the index (yhay81/pyropdf#24) reads objects, tests enumerate
-    /// them through hayro-syntax's `Pdf`, which decrypts strings but borrows
-    /// containers from the encrypted bytes: `object` must come from a
-    /// document without encryption.
-    #[cfg(test)]
-    pub(crate) fn from_object(
-        object: &Object<'_>,
-        source: &Bytes,
-        budget: &Budget,
-    ) -> Result<Self> {
+    /// The engine converts the operands of content streams so. `object` must
+    /// borrow from plain bytes: hayro-syntax's `Pdf` decrypts the strings of
+    /// an encrypted document but borrows its containers from the encrypted
+    /// bytes, so the lexemes of such an object would be encrypted.
+    pub fn from_object(object: &Object<'_>, source: &Bytes, budget: &Budget) -> Result<Self> {
         guard(|| Converter::new(source, budget).convert(MaybeRef::NotRef(object.clone())))
     }
 }
@@ -104,6 +99,12 @@ impl Stream {
     /// stream whole and without a bound (yhay81/pyropdf#48), so the budget
     /// counts the decoded bytes once they are decoded.
     pub fn decoded(&self, budget: &Budget) -> Result<Vec<u8>> {
+        self.decoded_as(StreamKind::Any, budget)
+    }
+
+    /// Returns the data decoded as [`Stream::decoded`] decodes it, charging
+    /// its decoded size as a stream of `kind`, whose limits also bound it.
+    pub fn decoded_as(&self, kind: StreamKind, budget: &Budget) -> Result<Vec<u8>> {
         if self.dict.get("Filter").is_none() {
             return copy(&self.data, budget).map(Vec::from).map_err(Into::into);
         }
@@ -119,7 +120,7 @@ impl Stream {
         .flatten()
         .ok_or_else(|| Error::malformed("the stream's filters cannot be decoded"))?;
         let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
-        budget.decode(StreamKind::Any).charge(size)?;
+        budget.decode(kind).charge(size)?;
         Ok(data)
     }
 }

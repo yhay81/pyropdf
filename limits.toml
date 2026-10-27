@@ -84,6 +84,26 @@ message = "interpretation needs too much work"
 unit = "units of fuel"
 reached = "Interpretation uses more fuel than the operation allows."
 
+# Content streams as operations.
+
+[codes.content_operation_count]
+message = "the content holds too many operations"
+unit = "operations"
+default = 1_048_576
+reached = "Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576."
+
+[codes.content_stream_size]
+message = "the page's content is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them."
+
+[codes.content_input_size]
+message = "the content is too large to parse"
+unit = "bytes"
+default = 67_108_864
+reached = "The content that `Operations.parse` reads is larger than the call's `max_size`."
+
 # The low-level object model.
 
 [codes.stream_data_size]

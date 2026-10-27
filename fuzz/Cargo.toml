@@ -47,6 +47,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "content"
+path = "fuzz_targets/content.rs"
+test = false
+doc = false
+bench = false
+
 # Debug assertions and overflow checks find more, as cargo-fuzz builds them.
 [profile.release]
 debug = 1

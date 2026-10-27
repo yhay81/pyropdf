@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from pyropdf import _core
 from pyropdf._errors import StaleObjectError, StalePageError
 from pyropdf._objects import Dictionary
+from pyropdf._operations import Operations, _from_core
 from pyropdf._pixmap import _render_matrix
 
 if TYPE_CHECKING:
@@ -110,6 +111,28 @@ class Page:
             return _core.render_page(self._document._core(), self._number, self._generation, linear, alpha)  # noqa: SLF001
         except StaleObjectError as error:
             raise self._stale() from error
+
+    @property
+    def operations(self) -> Operations:
+        """Return the page's content as :class:`Operations`, as hayro reads it.
+
+        The content streams of ``/Contents`` are decoded and joined as the
+        renderer joins them, each stream of an array followed by one space,
+        and tokenized with hayro's parser, so the operations are the ones
+        that rendering interprets. Each operation keeps its bytes, so
+        ``page.operations.to_bytes()`` is that content.
+
+        Reading refuses more than 1,048,576 operations
+        (``content_operation_count``) and more than 64 MiB of joined content
+        (``content_stream_size``), besides the decoding limits of
+        :class:`DocumentLimits`; use :meth:`Operations.parse` with
+        ``max_operations=None`` on ``page.obj["Contents"].read()`` for larger
+        trusted content. The GIL is released while the content is read.
+        """
+        raw = _core.page_operations(self._document._core(), self._number, self._generation)  # noqa: SLF001
+        if raw is None:
+            raise self._stale()
+        return _from_core(raw)
 
     def _geometry(self) -> tuple[int, float, float]:
         """Return the rotation, width, and height, or raise for a deleted page."""
