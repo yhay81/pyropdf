@@ -1,0 +1,9 @@
+{
+  "name": "pyropdf-pdfjs-oracle",
+  "private": true,
+  "description": "pdf.js as a development-only reader oracle for tools/oracles.py",
+  "type": "module",
+  "dependencies": {
+    "pdfjs-dist": "6.4.299"
+  }
+}

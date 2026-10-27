@@ -129,6 +129,7 @@ def test_annotations_false_leaves_annotation_appearances_out() -> None:
     assert _crop(with_annotations, 100, 50, 101, 51) == b"\xff\x00\x00"
 
 
+@pytest.mark.spec("appearance-streams", "interpret")
 def test_annotations_false_changes_a_corpus_page_with_annotations() -> None:
     # The second page of the 1040 form shows its widgets.
     page = pyropdf.open((REAL_WORLD / "f1040.pdf").read_bytes()).pages[1]
