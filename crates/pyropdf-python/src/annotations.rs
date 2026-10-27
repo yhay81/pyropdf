@@ -224,6 +224,14 @@ impl Annots {
         &self.index.pages()[self.at]
     }
 
+    /// Returns a reader of the version that the annotations were read in.
+    pub(crate) fn reader(&self) -> Reader<'_> {
+        Reader {
+            version: &self.version,
+            budget: &self.budget,
+        }
+    }
+
     /// Returns the object and dictionary of the entry `item`, or `None`
     /// for an entry that is not an annotation dictionary.
     pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
@@ -428,12 +436,12 @@ impl Annots {
     }
 
     /// Reads a `/C` or `/IC` array of up to four numbers, empty otherwise.
-    fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
+    pub(crate) fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
         Ok(self.numbers(dict.get(key), 4)?.unwrap_or_default())
     }
 
     /// Reads the border that `/BS`, else `/Border`, describes.
-    fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
+    pub(crate) fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
         if let Some(Value::Dict(style)) = self.resolved(dict.get("BS"))? {
             let width = self
                 .number(style.get("W"))?
@@ -492,15 +500,15 @@ impl Annots {
     /// `change` edit the annotation's dictionary and the page's
     /// `/Annots`, and writes both. `change` gets the annotation's
     /// reference and returns whether it changed `/Annots`. With `look`, the
-    /// edit marks the annotation's appearance stale. Returns the
-    /// annotation's object.
-    fn write(
+    /// edit marks the annotation's appearance stale. A refused edit
+    /// changes nothing. Returns the annotation's object.
+    pub(crate) fn write(
         &self,
         py: Python<'_>,
         document: &_Document,
         position: usize,
         look: bool,
-        mut dict: Dict,
+        dict: Dict,
         change: impl FnOnce(
             &mut Transaction,
             Reference,
@@ -509,41 +517,64 @@ impl Annots {
             &Budget,
         ) -> PyResult<bool>,
     ) -> PyResult<(u32, u16)> {
-        let mut items = self.items.clone();
         document.edit(py, |transaction, budget| {
-            let mut listed = false;
-            // A handle finds a direct dictionary by its position alone.
-            if matches!(self.items.get(position), Some(Value::Dict(_))) {
-                for item in items.iter_mut() {
-                    if let Value::Dict(entry) = item {
-                        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-                        transaction
-                            .write(reference.number(), &Value::Dict(entry.clone()), budget)
-                            .map_err(|e| store_error(&e))?;
-                        *item = Value::Reference(reference);
-                        listed = true;
-                    }
+            let savepoint = transaction.savepoint();
+            let result = self.write_in(transaction, (position, look), dict, change, budget);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    }
+
+    /// Implements [`Annots::write`] in its transaction.
+    fn write_in(
+        &self,
+        transaction: &mut Transaction,
+        (position, look): (usize, bool),
+        mut dict: Dict,
+        change: impl FnOnce(
+            &mut Transaction,
+            Reference,
+            &mut Dict,
+            &mut Array,
+            &Budget,
+        ) -> PyResult<bool>,
+        budget: &Budget,
+    ) -> PyResult<(u32, u16)> {
+        let mut items = self.items.clone();
+        let mut listed = false;
+        // A handle finds a direct dictionary by its position alone.
+        if matches!(self.items.get(position), Some(Value::Dict(_))) {
+            for item in items.iter_mut() {
+                if let Value::Dict(entry) = item {
+                    let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+                    transaction
+                        .write(reference.number(), &Value::Dict(entry.clone()), budget)
+                        .map_err(|e| store_error(&e))?;
+                    *item = Value::Reference(reference);
+                    listed = true;
                 }
             }
-            let Some(Value::Reference(reference)) = items.get(position).cloned() else {
-                return Err(PdfError::new_err(
-                    "the annotation changed while it was edited",
-                ));
-            };
-            listed |= change(transaction, reference, &mut dict, &mut items, budget)?;
+        }
+        let Some(Value::Reference(reference)) = items.get(position).cloned() else {
+            return Err(PdfError::new_err(
+                "the annotation changed while it was edited",
+            ));
+        };
+        listed |= change(transaction, reference, &mut dict, &mut items, budget)?;
+        transaction
+            .write(reference.number(), &Value::Dict(dict), budget)
+            .map_err(|e| store_error(&e))?;
+        if listed {
+            self.write_items(transaction, items, budget)?;
+        }
+        if look {
             transaction
-                .write(reference.number(), &Value::Dict(dict), budget)
+                .mark(Structure::Appearance, reference.number(), budget)
                 .map_err(|e| store_error(&e))?;
-            if listed {
-                self.write_items(transaction, items, budget)?;
-            }
-            if look {
-                transaction
-                    .mark(Structure::Appearance, reference.number(), budget)
-                    .map_err(|e| store_error(&e))?;
-            }
-            Ok((reference.number(), reference.generation()))
-        })
+        }
+        Ok((reference.number(), reference.generation()))
     }
 
     /// Writes the page's `/Annots` as `items`: into the array object that

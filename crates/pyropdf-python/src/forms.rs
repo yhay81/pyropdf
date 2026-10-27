@@ -16,7 +16,7 @@ use std::sync::Arc;
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::Reader;
 use pyropdf_engine::forms::{self as widgets, WidgetError};
-use pyropdf_engine::standard::is_winansi;
+use pyropdf_engine::standard::{DA_FONTS, DefaultAppearance, is_winansi};
 use pyropdf_store::budget::Budget;
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
@@ -24,7 +24,7 @@ use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use crate::annotations::{Annots, MAX_PAGE_ANNOTATIONS, Rect, border_style, rgb};
+use crate::annotations::{Annots, MAX_PAGE_ANNOTATIONS, Rect, border_style, encode_text, rgb};
 use crate::document::{_Document, Failed, text_string};
 use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
 use crate::pages::{editing_index, index};
@@ -2819,4 +2819,263 @@ fn detach(
         Some(parent) => edit_array(transaction, parent.number(), "Kids", budget, false, gone),
         None => edit_array(transaction, holder, "Fields", budget, false, gone),
     }
+}
+
+/// A widget's style: its `/MK` border color, background color, and
+/// caption; its border, from `/BS` else `/Border`; and the font resource,
+/// size, and RGB color of the `/DA` that it draws its text with, its own or
+/// inherited.
+type WidgetStyle = (
+    (Vec<f64>, Vec<f64>, Option<String>),
+    Option<(f64, String, Vec<f64>)>,
+    Option<(String, f64, (f64, f64, f64))>,
+);
+
+/// Reads the style of the widget that a handle names. Returns `None` for a
+/// page that is gone, and raises `StaleObjectError` for a widget that is.
+#[pyfunction]
+pub fn widget_style(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: Id,
+) -> PyResult<Option<WidgetStyle>> {
+    py.detach(|| {
+        let Some(annots) = Annots::read(document, number, generation)? else {
+            return Ok(None);
+        };
+        let (_, dict) = annots.find(index, id)?;
+        if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+            return Err(StaleObjectError::new_err(format!(
+                "annotation {} is no longer a widget",
+                id.0
+            )));
+        }
+        let mark = match annots.resolved(dict.get("MK"))? {
+            Some(Value::Dict(mark)) => mark,
+            _ => Dict::new(),
+        };
+        let caption = match annots.resolved(mark.get("CA"))? {
+            Some(Value::String(caption)) => {
+                let caption = widgets::text_string(caption.as_bytes());
+                if caption.len() > MAX_INPUT_BYTES {
+                    return Err(limit(format!(
+                        "a widget caption exceeds the {MAX_INPUT_BYTES}-byte safety limit"
+                    )));
+                }
+                Some(caption)
+            }
+            _ => None,
+        };
+        let colors = (
+            annots.color(&mark, "BC")?,
+            annots.color(&mark, "BG")?,
+            caption,
+        );
+        let appearance = widgets::text_appearance(&annots.reader(), &dict)
+            .map_err(|e| store_error(&e))?
+            .map(|da| (da.font, da.size, da.color));
+        Ok(Some((colors, annots.border(&dict)?, appearance)))
+    })
+}
+
+/// An edit of a widget's geometry and style, as the setters of `Widget`
+/// pass it; `clear` names the properties to remove. Colors are RGB from 0
+/// to 1, the border is `(width, style, dashes)`, and `font_name` is the
+/// PostScript name of a Standard 14 font.
+#[derive(FromPyObject)]
+#[pyo3(from_item_all)]
+pub struct WidgetEdit {
+    #[pyo3(default)]
+    rect: Option<Rect>,
+    #[pyo3(default)]
+    flags: Option<i64>,
+    #[pyo3(default)]
+    border: Option<(f64, String, Vec<f64>)>,
+    #[pyo3(default)]
+    border_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    background_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    caption: Option<String>,
+    #[pyo3(default)]
+    text_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    font_name: Option<String>,
+    #[pyo3(default)]
+    font_size: Option<f64>,
+    /// Always given, so that the edit is not all defaults.
+    clear: Vec<String>,
+}
+
+impl WidgetEdit {
+    /// Applies the edit to `dict`, a widget on a page of `annots`.
+    fn apply(&self, annots: &Annots, dict: &mut Dict) -> PyResult<()> {
+        if self
+            .caption
+            .as_ref()
+            .is_some_and(|caption| caption.len() > MAX_INPUT_BYTES)
+        {
+            return Err(LimitError::new_err((
+                "annotation_input_size",
+                format!("a widget caption exceeds the {MAX_INPUT_BYTES}-byte UTF-8 safety limit"),
+            )));
+        }
+        let mut mark = match annots.resolved(dict.get("MK"))? {
+            Some(Value::Dict(mark)) => mark,
+            _ => Dict::new(),
+        };
+        let marked = !mark.is_empty();
+        if let Some(caption) = &self.caption {
+            mark.insert(Name::from("CA"), encode_text(caption));
+        }
+        if let Some(color) = self.border_color {
+            mark.insert(Name::from("BC"), rgb(color, "border color")?);
+        }
+        if let Some(color) = self.background_color {
+            mark.insert(Name::from("BG"), rgb(color, "background color")?);
+        }
+        for property in &self.clear {
+            match property.as_str() {
+                "border_color" => drop(mark.remove("BC")),
+                "background_color" => drop(mark.remove("BG")),
+                "caption" => drop(mark.remove("CA")),
+                "border" => {
+                    dict.remove("BS");
+                    dict.remove("Border");
+                }
+                other => {
+                    return Err(PdfError::new_err(format!(
+                        "a widget property that cannot be removed: {other:?}"
+                    )));
+                }
+            }
+        }
+        if !mark.is_empty() {
+            dict.insert(Name::from("MK"), Value::Dict(mark));
+        } else if marked {
+            dict.remove("MK");
+        }
+        if let Some(border) = &self.border {
+            dict.remove("Border");
+            dict.insert(Name::from("BS"), border_style(border)?);
+        }
+        if let Some(flags) = self.flags {
+            if !(0..=1023).contains(&flags) {
+                return Err(PdfError::new_err("annotation flags are bits 1 to 10"));
+            }
+            dict.insert(Name::from("F"), Value::Integer(flags));
+        }
+        if let Some(area @ (x0, y0, x1, y1)) = self.rect {
+            if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) || x1 <= x0 || y1 <= y0 {
+                return Err(PdfError::new_err(
+                    "a widget rectangle is finite and not empty",
+                ));
+            }
+            dict.insert(Name::from("Rect"), annots.to_pdf(area));
+        }
+        if self.text_color.is_some() || self.font_name.is_some() || self.font_size.is_some() {
+            let current = widgets::text_appearance(&annots.reader(), dict)
+                .map_err(|e| store_error(&e))?
+                .unwrap_or_else(|| DefaultAppearance::parse(b""));
+            let color = self.text_color.unwrap_or(current.color);
+            rgb(color, "text color")?;
+            let resource = match &self.font_name {
+                Some(name) => DA_FONTS
+                    .iter()
+                    .find(|(_, font)| font == name)
+                    .map(|(resource, _)| (*resource).to_owned())
+                    .ok_or_else(|| {
+                        PdfError::new_err(format!("unknown Standard 14 font {name:?}"))
+                    })?,
+                None => current.font,
+            };
+            let size = self.font_size.unwrap_or(current.size);
+            if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
+                return Err(PdfError::new_err(
+                    "a widget font size is from 0, which fits the text, to 10000",
+                ));
+            }
+            let (red, green, blue) = color;
+            let da = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+            dict.insert(
+                Name::from("DA"),
+                Value::String(PdfString::literal(da.into_bytes())),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Edits the widget that a handle names and draws it again for its
+/// field's value: a text or choice value, every state of a check box or
+/// radio button, and a pushbutton's caption; a signature widget keeps an
+/// appearance that it has. Returns the widget's object, which a direct
+/// dictionary gains here, or `None` for a page that is gone.
+#[pyfunction]
+pub fn widget_edit(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: Id,
+    edit: WidgetEdit,
+) -> PyResult<Option<Id>> {
+    let Some(annots) = Annots::edit(document, number, generation)? else {
+        return Ok(None);
+    };
+    let (position, mut dict) = annots.find(index, id)?;
+    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+        return Err(StaleObjectError::new_err(format!(
+            "annotation {} is no longer a widget",
+            id.0
+        )));
+    }
+    edit.apply(&annots, &mut dict)?;
+    annots
+        .write(
+            py,
+            document,
+            position,
+            false,
+            dict,
+            |transaction, reference, dict, _, budget| {
+                restyle(transaction, reference.number(), dict, budget)?;
+                Ok(false)
+            },
+        )
+        .map(Some)
+}
+
+/// Writes widget `number`, `dict`, draws it again as [`widget_edit`] does,
+/// leaves `dict` as written, and sets `/NeedAppearances` while a widget of
+/// the form lacks an appearance.
+fn restyle(
+    transaction: &mut Transaction,
+    number: u32,
+    dict: &mut Dict,
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    transaction
+        .write(number, &Value::Dict(dict.clone()), budget)
+        .map_err(store)?;
+    let version = transaction.version();
+    let drawing = widgets::restyled(&Reader { version, budget }, dict).map_err(widget_error)?;
+    if let Some(drawing) = drawing {
+        widgets::write(transaction, number, dict, drawing, budget).map_err(store)?;
+        if let Some(drawn) = dict_at(transaction, number, budget)? {
+            *dict = drawn;
+        }
+    }
+    let version = transaction.snapshot();
+    let form = walk(&mut Reads::new(&version, budget))?;
+    if !form.fields.is_empty() {
+        let complete = complete(&version, &form, budget)?;
+        set_need_appearances(transaction, !complete, budget)?;
+    }
+    Ok(())
 }
