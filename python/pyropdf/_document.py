@@ -13,6 +13,9 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core, _markdown
+from pyropdf._attachments import Attachments
+from pyropdf._changes import changes as _changes
+from pyropdf._check import structural_check as _structural_check
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -26,12 +29,18 @@ from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box
 from pyropdf._pages import Pages, _page_entries
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
+from pyropdf._profiles import pdfa_claim as _pdfa_claim
+from pyropdf._profiles import profiles as _profiles
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
     from types import TracebackType
     from typing import Self
+
+    from pyropdf._changes import ChangeReport
+    from pyropdf._check import StructuralReport
+    from pyropdf._profiles import Profiles
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -82,6 +91,12 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def attachments(self) -> Attachments:
+        """Return the embedded files, a mapping of :class:`Attachment` handles by name."""
+        self._ensure_open()
+        return Attachments(self)
 
     @property
     def objects(self) -> Objects:
@@ -141,6 +156,50 @@ class Document:
         """Return a context manager that groups the edits of its block into one step named ``name``."""
         self._ensure_open()
         return Transaction(self, name)
+
+    def changes(self, *, incremental: bool) -> ChangeReport:
+        """Return what the edits since opening invalidate if the document is saved now.
+
+        The report lists the signatures of the opened file that the edits
+        change, or that a save that is not ``incremental`` rewrites, and the
+        PDF/A or PDF/UA claims of the metadata that the edits break. Its cost
+        follows the edits, not the document.
+        """
+        self._ensure_open()
+        return _changes(self, incremental=incremental)
+
+    def check(self) -> StructuralReport:
+        """Return how the document departs from the Arlington PDF Model.
+
+        The check walks the current version from the trailer through the
+        model's object types and reports each value of the wrong type,
+        missing required key, key or value newer than the file's version,
+        value direct where it must be indirect or the reverse, and value
+        outside the key's possible values. It also reports the ``invariant``
+        defects of page, name, number, and structure trees, references, and
+        appearance states, and the ``profile`` defects of a claimed PDF/A or
+        PDF/UA profile that need no rendering. Each defect names its object
+        and its clause. The walk runs under the document's limits.
+        """
+        self._ensure_open()
+        return _structural_check(self)
+
+    @property
+    def profiles(self) -> Profiles:
+        """Return the PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
+
+        The claims are what the document declares, not a validation. The
+        metadata read is capped at 16 MiB, beyond which :class:`LimitError`
+        is raised with code ``stream_data_size``.
+        """
+        self._ensure_open()
+        return _profiles(self)
+
+    @property
+    def pdfa_claim(self) -> tuple[int, str] | None:
+        """Return the PDF/A part and conformance level of the XMP metadata, such as ``(2, "B")``, or ``None``."""
+        self._ensure_open()
+        return _pdfa_claim(self)
 
     @property
     def history(self) -> History:
@@ -497,8 +556,7 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
 
     Opening reads the cross-reference data only; ``bytes`` are read in place,
     without a copy, and other buffers are copied. ``limits`` bounds the work,
-    and :meth:`DocumentLimits.web` also reads every object at open, for
-    untrusted uploads. Input that is not a readable PDF, including empty
+    and :meth:`DocumentLimits.web` also reads every object at open. Input that is not a readable PDF, including empty
     input, raises :class:`MalformedPdfError`, and a missing file raises
     :class:`FileNotFoundError`.
     """
