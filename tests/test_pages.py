@@ -64,6 +64,7 @@ def numbers(doc: Document) -> list[int | str]:
     return ["new" if page.rect[2] == 50 else int(page.rect[2]) - 100 for page in doc.pages]
 
 
+@pytest.mark.spec("page-tree", "read")
 def test_pages_is_a_sequence_of_page_handles() -> None:
     doc = doc_of(4)
     pages = doc.pages
@@ -140,6 +141,7 @@ def test_changing_the_pages_during_iteration_raises() -> None:
         (lambda pages: delitem(pages, slice(3, 1)), [0, 1, 2, 3, 4, 5]),
     ],
 )
+@pytest.mark.spec("page-tree", "edit")
 def test_del_takes_an_index_or_a_slice(edit: Callable[[pyropdf.Pages], None], remaining: list[int]) -> None:
     doc = doc_of()
     edit(doc.pages)
@@ -166,6 +168,7 @@ def test_del_refuses_bad_indexes_before_changing(index: object, error: type[Exce
     ("index", "expected"),
     [(None, [0, 1, 2, "new"]), (0, ["new", 0, 1, 2]), (-1, [0, 1, "new", 2]), (9, [0, 1, 2, "new"])],
 )
+@pytest.mark.spec("page-tree", "create")
 def test_new_inserts_a_blank_page_where_list_insert_would(index: int | None, expected: list[object]) -> None:
     doc = doc_of(3)
     page = doc.pages.new((50, 300), index=index)
@@ -175,6 +178,7 @@ def test_new_inserts_a_blank_page_where_list_insert_would(index: int | None, exp
     assert numbers(pyropdf.open(doc.to_bytes())) == expected
 
 
+@pytest.mark.spec("page-boundaries", "create")
 def test_new_defaults_to_a4_and_validates_the_size() -> None:
     doc = Document()
     assert doc.pages.new().rect == (0.0, 0.0, 595.0, 842.0)
@@ -209,6 +213,7 @@ def test_new_page_preserves_indirect_root_kids() -> None:
     assert len(pyropdf.open(doc.to_bytes()).pages) == 1
 
 
+@pytest.mark.spec("page-objects", "create")
 def test_new_page_uses_requested_geometry_under_cropped_rotated_parent() -> None:
     doc = pyropdf.open(
         build_raw_pdf(
@@ -229,6 +234,7 @@ def test_new_page_uses_requested_geometry_under_cropped_rotated_parent() -> None
 
 
 @pytest.mark.parametrize("operation", ["delete_pages", "move"])
+@pytest.mark.spec("page-objects", "edit")
 def test_page_edits_inherit_past_attributes_that_name_missing_objects(operation: str) -> None:
     attributes = " ".join(f"/{key} 99 0 R" for key in ("MediaBox", "CropBox", "Rotate", "Resources"))
     doc = pyropdf.open(
@@ -278,6 +284,7 @@ def test_a_page_whose_parent_is_a_cycle_is_repaired_by_an_edit() -> None:
     ("index", "to", "expected"),
     [(0, 2, [1, 2, 0, 3]), (3, 0, [3, 0, 1, 2]), (-1, 1, [0, 3, 1, 2]), (1, -1, [0, 2, 3, 1]), (2, 2, [0, 1, 2, 3])],
 )
+@pytest.mark.spec("page-tree", "edit")
 def test_move_puts_the_page_at_the_destination_index(index: int, to: int, expected: list[int]) -> None:
     doc = doc_of(4)
     page = doc.pages[index]
