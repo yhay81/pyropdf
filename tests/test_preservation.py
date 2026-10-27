@@ -114,6 +114,32 @@ def assign_operations(doc: pyropdf.Document) -> set[int]:
     return {number(page.obj)}
 
 
+def add_attachment(doc: pyropdf.Document) -> set[int]:
+    # Adding a name writes the catalog, for its /Version where the file is
+    # older than PDF 1.4, its name dictionary, and its EmbeddedFiles root.
+    touched = {number(doc.catalog)}
+    names = doc.catalog.get("Names")
+    if names is not None and names.xref is not None:
+        touched.add(names.xref)
+        files = names.get("EmbeddedFiles")
+        if files is not None and files.xref is not None:
+            touched.add(files.xref)
+    doc.attachments.add("pyropdf-preserved", b"data", filename="preserved.txt")
+    return touched
+
+
+def write_attachment(doc: pyropdf.Document) -> set[int]:
+    touched = add_attachment(doc)
+    doc.attachments["pyropdf-preserved"].write(b"other data")
+    return touched
+
+
+def delete_attachment(doc: pyropdf.Document) -> set[int]:
+    touched = add_attachment(doc)
+    del doc.attachments["pyropdf-preserved"]
+    return touched
+
+
 def delete_entry(doc: pyropdf.Document) -> set[int]:
     doc.catalog["Preserved"] = Name("Gone")
     del doc.catalog["Preserved"]
@@ -162,6 +188,9 @@ EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "rewrite_stream": rewrite_stream,
     "move_page": move_page,
     "assign_operations": assign_operations,
+    "add_attachment": add_attachment,
+    "write_attachment": write_attachment,
+    "delete_attachment": delete_attachment,
     "delete_entry": delete_entry,
     "array_insert_delete": array_insert_delete,
     "typed_set": typed_set,
