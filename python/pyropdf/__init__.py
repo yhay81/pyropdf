@@ -1,5 +1,7 @@
 """Complete control of PDF as ISO 32000-2 defines it, implemented in Rust."""
 
+# The typed views of section 8, a module of their own: one class per object type.
+from pyropdf import typed
 from pyropdf._attachments import Attachment, Attachments
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._content import (
@@ -170,4 +172,5 @@ __all__ = [
     "__version__",
     "open",
     "probe",
+    "typed",
 ]

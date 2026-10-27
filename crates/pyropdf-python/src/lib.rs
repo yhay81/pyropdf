@@ -14,6 +14,7 @@ mod objects;
 mod pages;
 mod pixmap;
 mod render;
+mod schema;
 mod security;
 mod source;
 mod text;
@@ -62,6 +63,8 @@ mod _core {
     use super::pixmap::{Pixmap, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
+    #[pymodule_export]
+    use super::schema::{schema_names, schema_object};
     #[pymodule_export]
     use super::security::{security_state, unlock};
     #[pymodule_export]

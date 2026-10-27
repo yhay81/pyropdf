@@ -1,9 +1,10 @@
 """pyropdf-schema's descriptors are generated from the pinned Arlington PDF Model.
 
 tools/arlington/generate.py reads the model's TSV files, vendored under
-tools/arlington/model, and writes crates/pyropdf-schema/src/generated.rs
-(DESIGN.md section 8). The Rust tests of the crate sample the descriptors;
-these tests check that the committed tables are the model's, whole.
+tools/arlington/model, and writes crates/pyropdf-schema/src/generated.rs and
+the stub of the typed views, python/pyropdf/typed.pyi (DESIGN.md section 8).
+The Rust tests of the crate sample the descriptors; these tests check that
+the committed tables are the model's, whole.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GENERATOR = ROOT / "tools/arlington/generate.py"
 MODEL = Path("tools/arlington/model")
 GENERATED = Path("crates/pyropdf-schema/src/generated.rs")
+STUB = Path("python/pyropdf/typed.pyi")
 COMMAND = "python3 tools/arlington/generate.py"
 
 OBJECT = re.compile(r'    Object \{ name: "([^"]+)", keys: &\[$')
@@ -32,10 +34,11 @@ def generate(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def copy_model(root: Path) -> Path:
-    """Copy the model and the generated file to another root, and return it."""
+    """Copy the model and the generated files to another root, and return it."""
     shutil.copytree(ROOT / MODEL, root / MODEL)
-    (root / GENERATED).parent.mkdir(parents=True)
-    shutil.copyfile(ROOT / GENERATED, root / GENERATED)
+    for path in (GENERATED, STUB):
+        (root / path).parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / path, root / path)
     return root
 
 
@@ -81,6 +84,16 @@ def test_the_check_fails_when_the_model_changes(tmp_path: Path) -> None:
     assert result.stderr == f"{GENERATED.as_posix()} is stale; run `{COMMAND}`\n"
     assert generate(root).returncode == 0
     assert "Table 28" in (root / GENERATED).read_text(encoding="utf-8")
+
+
+def test_the_check_fails_when_the_stub_is_stale(tmp_path: Path) -> None:
+    root = copy_model(tmp_path)
+    (root / STUB).unlink()
+
+    result = generate(root, "--check")
+
+    assert result.returncode == 1
+    assert result.stderr == f"{STUB.as_posix()} is stale; run `{COMMAND}`\n"
 
 
 def test_a_model_the_generator_does_not_understand_is_refused(tmp_path: Path) -> None:
