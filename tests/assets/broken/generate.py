@@ -103,6 +103,23 @@ DEFECTS: dict[str, tuple[bytes, tuple[int | None, str, str, str]]] = {
         ),
         (5, "ParentTreeNextKey", "StructTreeRoot/ParentTreeNextKey", "invariant"),
     ),
+    "size.pdf": (
+        page({1: b"<< /Type /Catalog /Pages 2 0 R /Outlines 5 0 R >>", 5: b"<< /Type /Outlines >>"}).replace(
+            b"/Size 6 /Root", b"/Size 5 /Root"
+        ),
+        (5, "", "FileTrailer/Size", "invariant"),
+    ),
+    "state.pdf": (
+        page(
+            {
+                3: PAGE.replace(b"/Contents", b"/Annots [5 0 R] /Contents"),
+                5: b"<< /Type /Annot /Subtype /Square /Rect [0 0 9 9] /AP << /N << /On 6 0 R >> >> >>",
+                6: b"<< /Type /XObject /Subtype /Form /BBox [0 0 9 9] /Resources << >> /Length 0 >>"
+                b"\nstream\n\nendstream",
+            }
+        ),
+        (5, "AS", "AnnotSquare/AS", "invariant"),
+    ),
     "limits.pdf": (
         page(
             {

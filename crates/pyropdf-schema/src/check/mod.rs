@@ -183,8 +183,28 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
     };
     let mut met = HashSet::new();
     walk.object(None, graph.trailer(), Target::Object(trailer))?;
+    let size = match graph
+        .get(graph.trailer(), b"Size")
+        .map(|size| graph.view(size))
+    {
+        // A `/Size` that is not positive is a value defect already.
+        Some(View::Integer(size)) if size > 0 => Some(size),
+        _ => None,
+    };
     while let Some((number, target)) = walk.queue.pop() {
         let first = met.insert(number);
+        if first
+            && let Some(size) = size
+            && i64::from(number) >= size
+        {
+            walk.invariant(
+                Some(number),
+                "",
+                "FileTrailer/Size",
+                "7.5.5",
+                format!("object {number} is referenced, but the trailer's /Size is {size}"),
+            );
+        }
         graph.visit(first)?;
         walk.report.objects += usize::from(first);
         if let Some(value) = graph.resolve(number)? {
@@ -340,6 +360,13 @@ impl<'g, G: Graph> Walk<'g, G> {
             && self.counted.insert(number)
         {
             self.pages(number, dict)?;
+        }
+        if described.name.starts_with("Annot")
+            && let Some(number) = object
+            && path.is_empty()
+            && self.counted.insert(number)
+        {
+            self.appearance_state(number, dict, described.name);
         }
         if matches!(described.name, "StructTreeRoot" | "StructElem")
             && let Some(number) = object
@@ -956,6 +983,27 @@ impl<'g, G: Graph> Walk<'g, G> {
             );
         }
         Ok(())
+    }
+
+    /// Checks that an annotation whose normal appearance is a dictionary of
+    /// states has an `/AS`. An `/AS` that names no normal state is allowed:
+    /// it draws nothing, as an unchecked box often does.
+    fn appearance_state(&mut self, number: u32, annotation: &G::Value, name: &str) {
+        let normal = self
+            .graph
+            .get(annotation, b"AP")
+            .and_then(|ap| self.graph.get(ap, b"N"));
+        if normal.is_some_and(|normal| self.graph.view(normal) == View::Dictionary)
+            && self.graph.get(annotation, b"AS").is_none()
+        {
+            self.invariant(
+                Some(number),
+                "AS",
+                &format!("{name}/AS"),
+                "12.5.5",
+                "the normal appearance has states, but the annotation has no /AS".to_owned(),
+            );
+        }
     }
 
     /// Checks that the keys of a name or number tree node ascend strictly
