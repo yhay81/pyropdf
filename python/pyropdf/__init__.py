@@ -60,6 +60,7 @@ from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
+from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
 
 for _public in (
@@ -170,6 +171,8 @@ __all__ = [
     "Stroke",
     "StructuralDefect",
     "StructuralReport",
+    "Table",
+    "TableDiagnostics",
     "TextRenderMode",
     "TextRun",
     "TilingPattern",

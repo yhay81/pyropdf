@@ -33,8 +33,8 @@ pub use model::{
 pub use reads::read_page;
 pub use text::{
     BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SearchHits, SpanStyleTuple, SpanTuple,
-    TextOptions, TextPeak, Unmapped, WordTuple, page_layout, page_search, page_selection,
-    page_text,
+    TableCell, TableDiagnosticsTuple, TableTuple, TextOptions, TextPeak, Unmapped, WordTuple,
+    page_layout, page_search, page_selection, page_tables, page_text,
 };
 
 /// Why reading a page's content stopped.

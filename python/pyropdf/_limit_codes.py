@@ -29,6 +29,10 @@ LimitCode: TypeAlias = Literal[
     "text_size",
     "search_input_size",
     "search_hit_count",
+    "text_rule_count",
+    "table_cell_count",
+    "table_span_candidate_count",
+    "table_column_count",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",
@@ -90,6 +94,14 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "search_input_size": "The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8.",
         "search_hit_count": "`Page.search` finds more matches than the call's `max_hits`.",
+        "text_rule_count": (
+            "Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers."
+        ),
+        "table_cell_count": "A candidate table needs more than 4,096 row-column slots.",
+        "table_span_candidate_count": (
+            "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
+        ),
+        "table_column_count": "Text table detection encounters a row with more than 32 separated columns.",
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",

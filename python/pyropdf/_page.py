@@ -14,6 +14,7 @@ from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._tables import Table, build_tables
 from pyropdf._text import (
     _DEFAULT_MAX_TEXT_GLYPHS,
     _DEFAULT_MAX_TEXT_SIZE,
@@ -606,6 +607,57 @@ class Page:
             raise self._stale() from error
         _warn_skipped(skipped)
         return text
+
+    def tables(
+        self,
+        *,
+        strategy: Literal["lines", "text"] = "lines",
+        clip: Sequence[float] | None = None,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> list[Table]:
+        """Find the tables of the current version of the page from vector rules or aligned text.
+
+        The ``"lines"`` strategy reads the page's stroked rules and thin
+        filled rectangles. It needs an outer grid of at least two rows and
+        two columns, and rebuilds rectangular merged cells. It splits a
+        coarse span of the grid when at least three evenly led text records
+        occupy the same cells across it.
+
+        The ``"text"`` strategy finds a borderless table only where at least
+        three consecutive rows have the same number of segments, aligned
+        column edges, compatible leading, and clear gaps between columns.
+        Aligned multicolumn prose can pass for a table, so use it where the
+        page is known to hold tabular data.
+
+        ``clip`` is a display-space rectangle: only the tables whose whole
+        box lies inside it are returned, and no part of a table is. Each
+        table carries :class:`TableDiagnostics`. The page's glyphs count
+        against ``max_glyphs`` and ``max_size`` as for :meth:`text`.
+        Exceeding 4,096 vector rules, 4,096 cells per candidate table,
+        65,536 merged-cell candidates per grid, or 32 text columns raises
+        :class:`LimitError`, with no partial table results.
+        """
+        if strategy not in {"lines", "text"}:
+            msg = f"strategy must be 'lines' or 'text': {strategy!r}"
+            raise ValueError(msg)
+        clip_box = None if clip is None else _clip_box(clip)
+        _validate_optional_positive_int("max_glyphs", max_glyphs)
+        _validate_optional_positive_int("max_size", max_size)
+        try:
+            raw, skipped = _core.page_tables(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                strategy == "text",
+                clip_box,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return build_tables(raw, strategy)
 
     @property
     def operations(self) -> Operations:

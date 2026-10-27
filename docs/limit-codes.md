@@ -22,6 +22,10 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `text_size` | 64 MiB | The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`. |
 | `search_input_size` | 4 KiB | The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8. |
 | `search_hit_count` | 4,096 matches | `Page.search` finds more matches than the call's `max_hits`. |
+| `text_rule_count` | 4,096 rules | Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers. |
+| `table_cell_count` | 4,096 cells | A candidate table needs more than 4,096 row-column slots. |
+| `table_span_candidate_count` | 65,536 candidates | Reconstructing merged cells in one table examines more than 65,536 candidate spans. |
+| `table_column_count` | 32 columns | Text table detection encounters a row with more than 32 separated columns. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |
