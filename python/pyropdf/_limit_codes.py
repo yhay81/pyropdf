@@ -29,6 +29,7 @@ LimitCode: TypeAlias = Literal[
     "object_value_depth",
     "pdf_output_size",
     "pixmap_output_size",
+    "svg_output_size",
     "password_input_size",
     "memory_size",
     "deadline",
@@ -72,6 +73,7 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
         "pixmap_output_size": "Encoding a pixmap writes more bytes than the call's `max_size`.",
+        "svg_output_size": "A page's SVG holds more UTF-8 bytes than the call's `max_size`.",
         "password_input_size": "A password is longer in UTF-8 than PDF 2.0 allows.",
         "memory_size": (
             "The collections of one operation would hold more memory than it allows, or the allocator refuses it."

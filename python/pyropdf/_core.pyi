@@ -74,6 +74,9 @@ def render_page(
     annotations: bool,
     /,
 ) -> Pixmap: ...
+def render_page_svg(
+    document: _Document, number: int, generation: int, annotations: bool, max_size: int | None, /
+) -> str: ...
 def web_limits() -> dict[str, Any]: ...
 def probe(
     path: str | None,

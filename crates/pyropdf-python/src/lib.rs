@@ -12,6 +12,7 @@ mod items;
 mod objects;
 mod pages;
 mod pixmap;
+mod render;
 mod security;
 mod source;
 #[cfg(windows)]
@@ -51,6 +52,8 @@ mod _core {
     };
     #[pymodule_export]
     use super::pixmap::{Pixmap, render_page};
+    #[pymodule_export]
+    use super::render::render_page_svg;
     #[pymodule_export]
     use super::security::{security_state, unlock};
 

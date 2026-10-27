@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 #: Elements that one ``Page.content()`` reads by default (``content_element_count``).
 _DEFAULT_MAX_CONTENT_ELEMENTS = 262_144
+#: UTF-8 bytes of one ``Page.svg()`` by default (``svg_output_size``).
+_DEFAULT_MAX_SVG_SIZE = 64 * 1024 * 1024
 #: The largest magnitude of a PDF real that hayro reads as a 32-bit float.
 _FLOAT32_MAX = 3.4028234663852886e38
 
@@ -156,6 +158,30 @@ class Page:
                 rgba,
                 box,
                 annotations,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+
+    def svg(self, *, annotations: bool = True, max_size: int | None = _DEFAULT_MAX_SVG_SIZE) -> str:
+        """Render the current version of the page to an SVG string at 72 dpi, with text drawn as paths.
+
+        ``annotations=False`` leaves out the appearances of annotations and
+        form widgets. ``max_size`` caps the UTF-8 output and defaults to
+        64 MiB, raising :class:`LimitError` with code ``svg_output_size``;
+        ``None`` opts out. hayro-svg builds its whole string before the limit
+        is checked, so the limit keeps an oversized result from becoming a
+        Python string rather than bounding the converter's memory. The GIL
+        is released while hayro-svg converts.
+        """
+        _validate_bool("annotations", annotations)
+        _validate_optional_positive_int("max_size", max_size)
+        try:
+            return _core.render_page_svg(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                annotations,
+                max_size,
             )
         except StaleObjectError as error:
             raise self._stale() from error

@@ -1,5 +1,5 @@
 //! Rasterizing a page through hayro, as much as `page.pixmap`
-//! (yhay81/pyropdf#35) needs.
+//! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
 use hayro::hayro_interpret::InterpreterSettings;
 use hayro::vello_cpu::color::AlphaColor;
@@ -12,8 +12,11 @@ use hayro::hayro_syntax::Pdf;
 
 use crate::bridge::{Bridged, Error, Result};
 
+mod svg;
 #[cfg(test)]
 mod tests;
+
+pub use svg::svg;
 
 /// A rendered page: its size in pixels and its pixels, row by row from the
 /// top, as premultiplied RGBA with 8 bits per channel.
