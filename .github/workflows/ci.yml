@@ -104,6 +104,15 @@ jobs:
           echo "$ARLINGTON_SHA256  target/verapdf/greenfield-apps-arlington.jar" | sha256sum --check --strict
           uv run --no-sync python tools/verapdf.py --jar target/verapdf/greenfield-apps.jar \
             --arlington target/verapdf/greenfield-apps-arlington.jar
+      - name: Read every save of the corpus with pdf.js
+        # pdf.js is a development-only reader oracle (tools/oracles.py); the
+        # runner's Node installs it from tools/pdfjs's lockfile without its
+        # install scripts or its optional canvas.
+        if: matrix.python == '3.11'
+        run: |
+          node --version
+          npm ci --ignore-scripts --omit=optional --no-audit --no-fund --prefix tools/pdfjs
+          uv run --no-sync python tools/oracles.py --readers pdfjs
 
   audit:
     name: Audit
