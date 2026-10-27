@@ -1,7 +1,8 @@
 //! Tests of the security handler: pylopdf's encrypted fixtures open with
 //! the right passwords and refuse wrong ones, saves decrypt, keep the
 //! encryption with the original encrypted bytes, or encrypt anew with
-//! AES-128 and AES-256, which qpdf reads when it is installed.
+//! AES-128 and AES-256, which qpdf reads when it is installed. A stream
+//! whose `/Length` refers to an object decrypts the data that hayro does.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -445,4 +446,85 @@ fn a_repaired_encrypted_file_locates_its_compressed_objects_with_the_password() 
             .collect::<Vec<_>>()
     };
     assert_eq!(entries(&unlocked), entries(&again));
+}
+
+/// A fixture whose content streams refer to their lengths: object 6 to
+/// object 7, which is uncompressed, and object 8 to object 9, which object
+/// stream 10 holds. The encrypted data of each ends in a line feed.
+const INDIRECT_LENGTH: &str = "user-rc4-128-indirect-length.pdf";
+
+#[test]
+fn a_stream_with_an_indirect_length_decrypts_the_data_that_hayro_decrypts() {
+    let bytes = fixture(INDIRECT_LENGTH);
+    let document = open(&bytes, Some("userpw")).unwrap();
+    let version = document.current();
+    let index = version.base().file().unwrap();
+    let pdf = hayro_syntax::Pdf::new_with_password(bytes, "userpw").unwrap();
+    let budget = Budget::default();
+    for number in [6, 8] {
+        // The search for `endstream` trims the line feed that ends the
+        // encrypted data, and the length keeps it.
+        let raw = index
+            .object(Reference::new(number, 0), &budget)
+            .unwrap()
+            .unwrap();
+        let fetch = |length| index.object(length, &budget);
+        let Value::Stream(encrypted) = Value::parse_with_lengths(&raw, &budget, &fetch).unwrap()
+        else {
+            panic!("object {number} is a stream");
+        };
+        assert_eq!(encrypted.data().last(), Some(&b'\n'), "object {number}");
+        let Value::Stream(searched) = Value::parse(&raw, &budget).unwrap() else {
+            panic!("object {number} is a stream");
+        };
+        assert!(
+            searched.data().len() < encrypted.data().len(),
+            "object {number}"
+        );
+
+        let object = version.get(number, &budget).unwrap().unwrap();
+        let Value::Stream(stream) = &**object.value() else {
+            panic!("object {number} is a stream");
+        };
+        let id = hayro_syntax::object::ObjectIdentifier::new(i32::try_from(number).unwrap(), 0);
+        let theirs = pdf
+            .xref()
+            .get::<hayro_syntax::object::Stream<'_>>(id)
+            .unwrap();
+        assert_eq!(
+            stream.data().as_slice(),
+            &*theirs.raw_data(),
+            "object {number}"
+        );
+        assert!(
+            String::from_utf8_lossy(stream.data()).contains("(Encrypted page "),
+            "object {number}"
+        );
+    }
+}
+
+#[test]
+fn a_budget_refusal_while_reading_an_indirect_length_refuses_the_read() {
+    let document = open(&fixture(INDIRECT_LENGTH), Some("userpw")).unwrap();
+    let base = document.current().base().clone();
+    // Object 8's length is in object stream 10, which decodes to more than
+    // this budget allows.
+    let budget = Budget::default().with_limit(LimitCode::DecompressedSize, Some(1));
+    let refused = base.object(Reference::new(8, 0), &budget).unwrap_err();
+    assert_eq!(
+        refused.limit().map(crate::LimitExceeded::code),
+        Some(LimitCode::DecompressedSize)
+    );
+    // Object 6's length is uncompressed, so the budget reads it.
+    assert!(
+        base.object(Reference::new(6, 0), &budget)
+            .unwrap()
+            .is_some()
+    );
+    // The refusal is not kept.
+    assert!(
+        base.object(Reference::new(8, 0), &Budget::default())
+            .unwrap()
+            .is_some()
+    );
 }
