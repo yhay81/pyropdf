@@ -146,3 +146,69 @@ def test_a_closed_document_refuses_the_check() -> None:
     doc.close()
     with pytest.raises(pyropdf.DocumentClosedError):
         doc.check()
+
+
+def claiming(claim: str, catalog: str = "") -> pyropdf.Document:
+    """Return a one-page document whose XMP metadata declares ``claim``, plus ``catalog`` entries."""
+    xmp = f"<rdf:Description {claim}/>".encode()
+    data = CORPUS["pdf"](
+        [
+            b"<< /Type /Catalog /Pages 2 0 R /Metadata 5 0 R " + catalog.encode() + b" >>",
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>",
+            b"<< /Type /StructTreeRoot >>",
+            b"<< /Type /Metadata /Subtype /XML /Length %d >>\nstream\n%s\nendstream" % (len(xmp), xmp),
+        ]
+    )
+    return pyropdf.open(data)
+
+
+def profile_defects(doc: pyropdf.Document) -> set[tuple[int | None, str, str]]:
+    return {(d.xref, d.path, d.clause) for d in doc.check().defects if d.kind == "profile"}
+
+
+PDFA = 'pdfaid:part="2" pdfaid:conformance="B"'
+INTENT = "/OutputIntents [<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB) >>]"
+PDFUA = 'pdfuaid:part="1"'
+UA_KEEPS = (
+    "/MarkInfo << /Marked true >> /StructTreeRoot 4 0 R /Lang (en) /ViewerPreferences << /DisplayDocTitle true >>"
+)
+
+
+def test_a_pdfa_claim_that_holds_has_no_profile_defect() -> None:
+    assert profile_defects(claiming(PDFA, INTENT)) == set()
+
+
+def test_a_pdfa_claim_without_an_output_intent_is_found() -> None:
+    assert profile_defects(claiming(PDFA)) == {(1, "OutputIntents", "PDF/A-2B/OutputIntents")}
+
+
+def test_a_pdfa_claim_with_javascript_is_found() -> None:
+    names = "/Names << /JavaScript << /Names [] >> >>"
+    assert profile_defects(claiming(PDFA, f"{INTENT} {names}")) == {
+        (1, "Names/JavaScript", "PDF/A-2B/Names"),
+    }
+    action = "/OpenAction << /S /JavaScript /JS (app.alert(1)) >>"
+    assert profile_defects(claiming(PDFA, f"{INTENT} {action}")) == {(1, "OpenAction", "PDF/A-2B/OpenAction")}
+
+
+def test_a_pdfa_claim_with_encryption_is_found() -> None:
+    data = claiming(PDFA, INTENT).to_bytes(encryption=pyropdf.Encryption(owner_password="owner"))  # noqa: S106 - test data
+    assert profile_defects(pyropdf.open(data)) == {(None, "Encrypt", "PDF/A-2B/Encrypt")}
+
+
+def test_a_pdfua_claim_that_holds_has_no_profile_defect() -> None:
+    assert profile_defects(claiming(PDFUA, UA_KEEPS)) == set()
+
+
+def test_a_pdfua_claim_breaking_each_rule_is_found() -> None:
+    assert profile_defects(claiming(PDFUA)) == {
+        (1, "MarkInfo/Marked", "PDF/UA-1/MarkInfo"),
+        (1, "StructTreeRoot", "PDF/UA-1/StructTreeRoot"),
+        (1, "Lang", "PDF/UA-1/Lang"),
+        (1, "ViewerPreferences/DisplayDocTitle", "PDF/UA-1/ViewerPreferences"),
+    }
+
+
+def test_no_claim_means_no_profile_defect() -> None:
+    assert profile_defects(claiming('dc:title="x"')) == set()
