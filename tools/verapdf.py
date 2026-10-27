@@ -38,7 +38,14 @@ FIXTURES: dict[Path, str] = {
 }
 
 #: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
-REJECTED: dict[str, str] = {}
+REJECTED: dict[str, str] = {
+    # PDF/A restricts embedded files, and attachment edits do not yet keep or
+    # report the claim.
+    f"{part} pdfa-{part}-{edit}_attachment-{mode}.pdf": "#301"
+    for part in ("1b", "2b", "2u", "3b", "4")
+    for edit in ("add", "write", "delete")
+    for mode in ("full", "incremental")
+}
 
 
 def saves(directory: Path) -> dict[Path, str]:
@@ -83,7 +90,8 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
     verdicts: dict[str, bool] = {}
     for line in result.stdout.splitlines():
         verdict, _, rest = line.partition(" ")
-        if verdict in {"PASS", "FAIL"}:
+        # The Arlington profiles report a deviation from the model as DEVIATION.
+        if verdict in {"PASS", "FAIL", "DEVIATION"}:
             verdicts[Path(rest.split(" ")[0]).name] = verdict == "PASS"
     missing = [path.name for path in paths if path.name not in verdicts]
     if missing:

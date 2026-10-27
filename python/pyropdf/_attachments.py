@@ -12,6 +12,7 @@ from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from pyropdf import _core
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode_text_string
@@ -123,6 +124,38 @@ def _check_inline(value: object) -> None:
             pending.extend(item.values())
         elif isinstance(item, Array) and not item.is_indirect:
             pending.extend(item)
+
+
+#: The version that a document without a header is held to, as pyropdf writes it.
+_DEFAULT_VERSION = (1, 7)
+#: The versions that add /Names/EmbeddedFiles, /Desc, and /UF.
+_EMBEDDED_FILES_VERSION = (1, 4)
+_DESCRIPTION_VERSION = (1, 6)
+_UF_VERSION = (1, 7)
+
+
+def _parse_version(text: str) -> tuple[int, int] | None:
+    major, _, minor = text.partition(".")
+    return (int(major), int(minor)) if major.isdigit() and minor.isdigit() else None
+
+
+def _version(document: Document) -> tuple[int, int]:
+    """Return the document's version: the later of its header and the catalog's ``/Version``."""
+    header = _core.header_version(document._core())  # noqa: SLF001
+    version = (_parse_version(header) if header is not None else None) or _DEFAULT_VERSION
+    declared = document.catalog.get("Version")
+    if isinstance(declared, Name):
+        version = max(version, _parse_version(str(declared)) or version)
+    return version
+
+
+def _require(document: Document, minimum: tuple[int, int]) -> tuple[int, int]:
+    """Raise the catalog's ``/Version`` to ``minimum`` when the document is older, and return its version."""
+    version = _version(document)
+    if version < minimum:
+        document.catalog["Version"] = Name(f"{minimum[0]}.{minimum[1]}")
+        return minimum
+    return version
 
 
 def _file(filespec: object) -> Stream | None:
@@ -305,7 +338,19 @@ def _writable(document: Document) -> list[_Entry]:
 
 
 def _rewrite(document: Document, entries: list[_Entry]) -> None:
-    """Write the name tree as one node whose ``/Names`` holds ``entries``, sorted by key."""
+    """Write the name tree as one node whose ``/Names`` holds ``entries``, sorted by key.
+
+    Without entries the tree is removed, and so is a name dictionary that it
+    leaves empty, since a name tree node has at least one entry.
+    """
+    if not entries:
+        catalog = document.catalog
+        names = catalog.get("Names")
+        if isinstance(names, Dictionary) and "EmbeddedFiles" in names:
+            del names["EmbeddedFiles"]
+            if not len(names):
+                del catalog["Names"]
+        return
     pairs: list[object] = []
     for entry in sorted(entries, key=lambda entry: entry.key):
         pairs += [String(entry.key), entry.filespec]
@@ -395,6 +440,12 @@ class Attachments(Mapping[str, Attachment]):
         unbounded input. The name, file name, and description together are
         bounded at 1 MiB in UTF-8 before the data is copied; refusals use
         ``embedded_file_input_size``.
+
+        The file name is written as ``/UF`` only from PDF 1.7, the later of
+        the header and the catalog's ``/Version``; a document older than PDF
+        1.4, which has no embedded file tree, gets ``/Version /1.4``. A
+        description requires at least PDF 1.6.
+        Deleting the last attachment removes the tree.
         """
         self._document._ensure_open()  # noqa: SLF001
         if not isinstance(name, str):
@@ -422,10 +473,15 @@ class Attachments(Mapping[str, Attachment]):
         with self._document.transaction("attachment add"):
             dictionary = {"Type": Name("EmbeddedFile"), "Params": {"Size": len(payload)}}
             stream = objects[objects.add_stream(payload, dictionary)]
-            filespec: dict[str, object] = {"Type": Name("Filespec"), "F": filename, "UF": filename}
+            # /Desc needs 1.6, /UF needs 1.7, and the tree needs 1.4.
+            minimum = _DESCRIPTION_VERSION if description is not None else _EMBEDDED_FILES_VERSION
+            unicode = _require(self._document, minimum) >= _UF_VERSION
+            filespec: dict[str, object] = {"Type": Name("Filespec"), "F": filename}
+            if unicode:
+                filespec["UF"] = filename
             if description is not None:
                 filespec["Desc"] = description
-            filespec["EF"] = {"F": stream, "UF": stream}
+            filespec["EF"] = {"F": stream, "UF": stream} if unicode else {"F": stream}
             added = objects[objects.add(filespec)]
             _rewrite(self._document, [*entries, _Entry(_encode_text_string(name), name, added)])
         return Attachment(self._document, name)

@@ -134,11 +134,29 @@ unit = "matches"
 default = 4_096
 reached = "`Page.search` finds more matches than the call's `max_hits`."
 
-[codes.markdown_output_size]
-message = "the Markdown is too large"
-unit = "bytes"
-default = 67_108_864
-reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
+[codes.text_rule_count]
+message = "the page has too many vector rules to read"
+unit = "rules"
+default = 4_096
+reached = "Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers."
+
+[codes.table_cell_count]
+message = "the candidate table has too many cells"
+unit = "cells"
+default = 4_096
+reached = "A candidate table needs more than 4,096 row-column slots."
+
+[codes.table_span_candidate_count]
+message = "the table needs too many cell span candidates"
+unit = "candidates"
+default = 65_536
+reached = "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
+
+[codes.table_column_count]
+message = "the text table has too many columns"
+unit = "columns"
+default = 32
+reached = "Text table detection encounters a row with more than 32 separated columns."
 
 # The low-level object model.
 
@@ -155,6 +173,12 @@ default = 32
 reached = "A value written to the document nests arrays and dictionaries deeper than its limit."
 
 # Output.
+
+[codes.markdown_output_size]
+message = "the Markdown is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
 
 [codes.pdf_output_size]
 message = "the PDF output is too large"
