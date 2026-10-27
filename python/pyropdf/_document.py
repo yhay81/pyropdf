@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
+from pyropdf._attachments import Attachments
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -78,6 +79,12 @@ class Document:
         """Return the pages, a sequence of :class:`Page` handles that edits keep valid."""
         self._ensure_open()
         return Pages(self)
+
+    @property
+    def attachments(self) -> Attachments:
+        """Return the embedded files, a mapping of :class:`Attachment` handles by name."""
+        self._ensure_open()
+        return Attachments(self)
 
     @property
     def objects(self) -> Objects:

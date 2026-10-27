@@ -1,5 +1,6 @@
 """Complete control of PDF as ISO 32000-2 defines it, implemented in Rust."""
 
+from pyropdf._attachments import Attachment, Attachments
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -55,6 +56,8 @@ from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 
 for _public in (
+    Attachment,
+    Attachments,
     Array,
     Dictionary,
     Name,
@@ -81,6 +84,8 @@ for _public in (
 __all__ = [
     "Access",
     "Array",
+    "Attachment",
+    "Attachments",
     "BlendMode",
     "CancellationToken",
     "Clip",

@@ -25,6 +25,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |
 | `render_output_size` | 512 MiB | The images that `doc.render` encodes write more bytes in all than the call's `max_size`. |
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
+| `embedded_file_size` | 64 MiB | An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`. |
+| `embedded_file_input_size` | 1 MiB | An attachment's name, file name, or description is longer in UTF-8 than 1 MiB. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
