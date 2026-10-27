@@ -138,7 +138,7 @@ def page_content(
     /,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]: ...
 
-_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool]
+_TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool]
 
 def page_text(
     document: _Document,
@@ -157,6 +157,16 @@ def document_text(
     max_size: int | None,
     /,
 ) -> tuple[str, int]: ...
+def page_layout(
+    document: _Document,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    chars: bool,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[float, float, list[Any], int]: ...
 def begin_transaction(document: _Document, name: str, /) -> None: ...
 def end_transaction(document: _Document, commit: bool, /) -> None: ...
 def changes(
