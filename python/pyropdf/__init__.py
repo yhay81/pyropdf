@@ -4,6 +4,7 @@
 from pyropdf import typed
 from pyropdf._attachments import Attachment, Attachments
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
+from pyropdf._check import StructuralDefect, StructuralReport
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -77,6 +78,8 @@ for _public in (
     ChangeReport,
     ClaimChange,
     SignatureChange,
+    StructuralDefect,
+    StructuralReport,
     History,
     InlineImage,
     Operation,
@@ -162,6 +165,8 @@ __all__ = [
     "Stream",
     "String",
     "Stroke",
+    "StructuralDefect",
+    "StructuralReport",
     "TextRenderMode",
     "TextRun",
     "TilingPattern",

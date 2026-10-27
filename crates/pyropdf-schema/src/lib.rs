@@ -9,6 +9,7 @@
 
 #![warn(clippy::allow_attributes_without_reason)]
 
+pub mod check;
 #[rustfmt::skip]
 mod generated;
 
@@ -37,6 +38,33 @@ pub enum Kind {
     StringText,
 }
 
+impl Kind {
+    /// The name of the kind in the model, such as `name-tree`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Array => "array",
+            Self::Bitmask => "bitmask",
+            Self::Boolean => "boolean",
+            Self::Date => "date",
+            Self::Dictionary => "dictionary",
+            Self::Integer => "integer",
+            Self::Matrix => "matrix",
+            Self::Name => "name",
+            Self::NameTree => "name-tree",
+            Self::Null => "null",
+            Self::Number => "number",
+            Self::NumberTree => "number-tree",
+            Self::Rectangle => "rectangle",
+            Self::Stream => "stream",
+            Self::String => "string",
+            Self::StringAscii => "string-ascii",
+            Self::StringByte => "string-byte",
+            Self::StringText => "string-text",
+        }
+    }
+}
+
 /// Whether a key is required, or must be an indirect reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Condition {
@@ -52,6 +80,12 @@ pub enum Condition {
 pub struct Version {
     pub major: u8,
     pub minor: u8,
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
 }
 
 /// The PDF version that introduced a key.

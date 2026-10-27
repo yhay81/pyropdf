@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal
 from pyropdf import _core
 from pyropdf._attachments import Attachments
 from pyropdf._changes import changes as _changes
+from pyropdf._check import structural_check as _structural_check
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
     from typing import Self
 
     from pyropdf._changes import ChangeReport
+    from pyropdf._check import StructuralReport
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -129,6 +131,19 @@ class Document:
         """
         self._ensure_open()
         return _changes(self, incremental=incremental)
+
+    def check(self) -> StructuralReport:
+        """Return how the document departs from the Arlington PDF Model.
+
+        The check walks the current version from the trailer through the
+        model's object types and reports each value of the wrong type,
+        missing required key, key or value newer than the file's version,
+        value direct where it must be indirect or the reverse, and value
+        outside the key's possible values. Each defect names its object and
+        its clause. The walk runs under the document's limits.
+        """
+        self._ensure_open()
+        return _structural_check(self)
 
     @property
     def history(self) -> History:

@@ -1,0 +1,209 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
+use super::{DefectKind, Graph, View, check};
+use crate::Version;
+
+/// A small document for the check's own tests.
+#[derive(Clone, Debug)]
+enum V {
+    Int(i64),
+    Name(&'static str),
+    Array(Vec<V>),
+    Dict(Vec<(&'static str, V)>),
+    Ref(u32),
+}
+
+struct Doc {
+    trailer: V,
+    objects: Vec<Rc<V>>,
+    visits: Cell<usize>,
+    limit: usize,
+}
+
+impl Graph for Doc {
+    type Value = V;
+    type Owned = Rc<V>;
+    type Error = ();
+
+    fn version(&self) -> Version {
+        Version { major: 1, minor: 7 }
+    }
+
+    fn trailer(&self) -> &V {
+        &self.trailer
+    }
+
+    fn resolve(&self, number: u32) -> Result<Option<Rc<V>>, ()> {
+        Ok(self.objects.get(number as usize).cloned())
+    }
+
+    fn view<'v>(&self, value: &'v V) -> View<'v> {
+        match value {
+            V::Int(value) => View::Integer(*value),
+            V::Name(name) => View::Name(name.as_bytes()),
+            V::Array(items) => View::Array(items.len()),
+            V::Dict(_) => View::Dictionary,
+            V::Ref(number) => View::Reference(*number),
+        }
+    }
+
+    fn get<'v>(&self, dict: &'v V, key: &[u8]) -> Option<&'v V> {
+        match dict {
+            V::Dict(entries) => entries
+                .iter()
+                .find(|(name, _)| name.as_bytes() == key)
+                .map(|(_, value)| value),
+            _ => None,
+        }
+    }
+
+    fn entries<'v>(&self, dict: &'v V) -> Vec<(&'v [u8], &'v V)> {
+        match dict {
+            V::Dict(entries) => entries
+                .iter()
+                .map(|(name, value)| (name.as_bytes(), value))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn elements<'v>(&self, array: &'v V) -> &'v [V] {
+        match array {
+            V::Array(items) => items,
+            _ => &[],
+        }
+    }
+
+    fn visit(&self, _first: bool) -> Result<(), ()> {
+        self.visits.set(self.visits.get() + 1);
+        if self.visits.get() > self.limit {
+            Err(())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn doc(objects: Vec<V>) -> Doc {
+    Doc {
+        trailer: V::Dict(vec![("Size", V::Int(9)), ("Root", V::Ref(1))]),
+        objects: objects.into_iter().map(Rc::new).collect(),
+        visits: Cell::new(0),
+        limit: usize::MAX,
+    }
+}
+
+fn valid() -> Vec<V> {
+    vec![
+        V::Int(0),
+        V::Dict(vec![("Type", V::Name("Catalog")), ("Pages", V::Ref(2))]),
+        V::Dict(vec![
+            ("Type", V::Name("Pages")),
+            ("Kids", V::Array(vec![V::Ref(3)])),
+            ("Count", V::Int(1)),
+        ]),
+        V::Dict(vec![
+            ("Type", V::Name("Page")),
+            ("Parent", V::Ref(2)),
+            (
+                "MediaBox",
+                V::Array(vec![V::Int(0), V::Int(0), V::Int(612), V::Int(792)]),
+            ),
+            ("Resources", V::Dict(vec![])),
+        ]),
+    ]
+}
+
+#[test]
+fn a_valid_document_passes() {
+    let report = check(&doc(valid())).unwrap();
+    assert_eq!(report.defects, vec![]);
+    assert_eq!(report.objects, 3);
+}
+
+#[test]
+fn a_missing_key_names_object_and_clause() {
+    let mut objects = valid();
+    objects[1] = V::Dict(vec![("Type", V::Name("Catalog"))]);
+    let report = check(&doc(objects)).unwrap();
+    let [defect] = report.defects.as_slice() else {
+        panic!("{:?}", report.defects)
+    };
+    assert_eq!(defect.kind, DefectKind::Required);
+    assert_eq!(defect.object, Some(1));
+    assert_eq!(defect.clause, "Catalog/Pages");
+    assert_eq!(defect.spec, "Table 29");
+}
+
+#[test]
+fn a_wrong_type_and_a_wrong_value_are_found() {
+    let mut objects = valid();
+    objects[2] = V::Dict(vec![
+        ("Type", V::Name("Pages")),
+        ("Kids", V::Array(vec![V::Ref(3)])),
+        ("Count", V::Name("one")),
+    ]);
+    objects[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        ("PageLayout", V::Name("Sideways")),
+    ]);
+    let report = check(&doc(objects)).unwrap();
+    let kinds: Vec<_> = report
+        .defects
+        .iter()
+        .map(|defect| (defect.kind, defect.clause.as_str()))
+        .collect();
+    assert!(
+        kinds.contains(&(DefectKind::Type, "PageTreeNodeRoot/Count")),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&(DefectKind::Value, "Catalog/PageLayout")),
+        "{kinds:?}"
+    );
+}
+
+#[test]
+fn a_direct_value_that_must_be_indirect_is_found() {
+    let mut objects = valid();
+    let pages = objects[2].clone();
+    objects[1] = V::Dict(vec![("Type", V::Name("Catalog")), ("Pages", pages)]);
+    let report = check(&doc(objects)).unwrap();
+    assert!(
+        report
+            .defects
+            .iter()
+            .any(|defect| defect.kind == DefectKind::Indirect && defect.clause == "Catalog/Pages")
+    );
+}
+
+#[test]
+fn a_cycle_is_visited_once_and_a_deep_chain_meets_the_budget() {
+    let mut objects = valid();
+    // The page tree's kid is the tree itself.
+    objects[2] = V::Dict(vec![
+        ("Type", V::Name("Pages")),
+        ("Kids", V::Array(vec![V::Ref(2)])),
+        ("Count", V::Int(1)),
+    ]);
+    let report = check(&doc(objects)).unwrap();
+    assert!(report.objects <= 3);
+
+    let mut chain = vec![
+        V::Int(0),
+        V::Dict(vec![("Type", V::Name("Catalog")), ("Pages", V::Ref(2))]),
+    ];
+    for number in 2..10_002 {
+        chain.push(V::Dict(vec![
+            ("Type", V::Name("Pages")),
+            ("Kids", V::Array(vec![V::Ref(number + 1)])),
+            ("Count", V::Int(1)),
+        ]));
+    }
+    let mut deep = doc(chain);
+    deep.limit = 100;
+    assert!(check(&deep).is_err());
+    assert_eq!(deep.visits.get(), 101);
+}
