@@ -26,6 +26,7 @@ use crate::annotations::links::{
 };
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, store_error};
+use crate::forms;
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
@@ -342,14 +343,26 @@ pub fn import_pages(
     // A link that two pages share is prepared once per page, alike.
     overrides.sort_by_key(|(number, _)| *number);
     overrides.dedup_by_key(|(number, _)| *number);
-    let pruned = pruned(
+    let (fields, calculation) =
+        refs::form_fields(&mut Reads::new(&version, &budget)).map_err(store)?;
+    let (pruned, kept) = pruned(
         source,
         &version,
         &source_index,
         &imported,
         &overrides,
+        !fields.is_empty(),
         &budget,
     )?;
+    // A complete import registers every top-level field, and a partial one
+    // those that keep a widget of its pages.
+    let fields = match kept {
+        Some(kept) => fields
+            .into_iter()
+            .filter(|field| kept.binary_search(&field.number()).is_ok())
+            .collect(),
+        None => fields,
+    };
     if !pruned.is_empty() {
         // The links' own overrides come first and win.
         overrides.extend(pruned);
@@ -361,12 +374,35 @@ pub fn import_pages(
         let savepoint = transaction.savepoint();
         let result = (|| {
             let (root, _) = root(transaction.version(), budget)?;
-            let added = import::import(transaction, &version, &prepared, &overrides, root, budget)
-                .map_err(store)?;
+            let along = import::Along {
+                objects: &fields,
+                found: &calculation,
+            };
+            let imported = import::import(
+                transaction,
+                &version,
+                &prepared,
+                &overrides,
+                along,
+                root,
+                budget,
+            )
+            .map_err(store)?;
+            let added = imported.pages;
             let at = at.min(order.len());
             order.splice(at..at, added.iter().copied());
             let view = transaction.snapshot();
-            rewrite_with(transaction, &view, &index, &order, &added, budget)
+            rewrite_with(transaction, &view, &index, &order, &added, budget)?;
+            let fields = imported
+                .objects
+                .iter()
+                .filter_map(|field| match field {
+                    &Value::Reference(field) => Some(field),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let calculation = imported.found.iter().flatten().copied().collect::<Vec<_>>();
+            forms::register_imported(transaction, &fields, &calculation, budget)
         })();
         if result.is_err() {
             transaction.rollback(savepoint);
@@ -375,18 +411,27 @@ pub fn import_pages(
     })
 }
 
+/// Source objects that an import replaces, sorted by number: `Some` with
+/// the value to copy instead, `None` with null.
+type Overrides = Vec<(u32, Option<Value>)>;
+
 /// Returns the overrides that leave the structure content of the source
-/// pages other than `imported` out of a tagged `source`, as deleting those
-/// pages would, with the links that `links` removes. Empty for an untagged
-/// source, or when every page comes along.
+/// pages other than `imported` out of a tagged `source`, and the widgets
+/// and fields of those pages out of a source with a form (`form`), as
+/// deleting those pages would, with the links that `links` removes. Empty
+/// when neither applies or when every page comes along.
+///
+/// With a form and pages left behind, also returns the top-level fields
+/// that keep a widget of the imported pages.
 fn pruned(
     source: &_Document,
     version: &Arc<Version>,
     index: &PageIndex,
     imported: &[u32],
     links: &[(u32, Option<Value>)],
+    form: bool,
     budget: &Budget,
-) -> PyResult<Vec<(u32, Option<Value>)>> {
+) -> PyResult<(Overrides, Option<Vec<u32>>)> {
     let store = |e: pyropdf_store::Error| store_error(&e);
     let catalog = resolve(version, version.trailer().get("Root"), budget)?;
     let tagged =
@@ -398,8 +443,8 @@ fn pruned(
         .map(|page| page.number())
         .filter(|number| imported.binary_search(number).is_err())
         .collect::<Vec<_>>();
-    if !tagged || removed.is_empty() {
-        return Ok(Vec::new());
+    if !(tagged || form) || removed.is_empty() {
+        return Ok((Vec::new(), None));
     }
     removed.sort_unstable();
     removed.dedup();
@@ -413,8 +458,18 @@ fn pruned(
                 .map_err(store)?;
         }
     }
-    refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
-        .map_err(store)?;
+    if tagged {
+        refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
+            .map_err(store)?;
+    }
+    let kept = if form {
+        let mut kept = refs::prune_forms(&mut reads, &references, &removed, imported, &mut edits)
+            .map_err(store)?;
+        kept.sort_unstable();
+        Some(kept)
+    } else {
+        None
+    };
     let mut out = edits
         .orphans()
         .iter()
@@ -423,7 +478,7 @@ fn pruned(
     for (number, value) in edits.values(version, budget).map_err(store)?.into_vec() {
         out.push((number, Some(value)));
     }
-    Ok(out)
+    Ok((out, kept))
 }
 
 /// The media box that a page without one gets: A4, as the renderer draws it.

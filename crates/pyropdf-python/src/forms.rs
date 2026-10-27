@@ -2416,6 +2416,202 @@ fn dict_at(transaction: &Transaction, number: u32, budget: &Budget) -> PyResult<
     })
 }
 
+/// Registers `fields`, the copies of the top-level fields that an import
+/// of pages brought, in the receiving form, and `order` in its calculation
+/// order, as pylopdf's `AcroFormImport` does. A form that is no dictionary
+/// gives way to a new one. An imported partial name that a receiving
+/// top-level field has takes the smallest `+N` suffix that no top-level
+/// field of either has, shared by the imported fields of that name.
+pub(crate) fn register_imported(
+    transaction: &mut Transaction,
+    fields: &[Reference],
+    order: &[Reference],
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let version = transaction.snapshot();
+    let mut reads = Reads::new(&version, budget);
+    let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
+        return Err(PdfError::new_err("the document has no catalog"));
+    };
+    let Some(Value::Dict(mut catalog)) = object(&mut reads, id(root))?.as_deref().cloned() else {
+        return Err(PdfError::new_err("the document has no catalog"));
+    };
+    let references = |items: &[Reference]| {
+        Array::from(
+            items
+                .iter()
+                .copied()
+                .map(Value::Reference)
+                .collect::<Vec<_>>(),
+        )
+    };
+    let form = match catalog.get("AcroForm") {
+        Some(Value::Reference(reference)) => match object(&mut reads, id(*reference))?.as_deref() {
+            Some(Value::Dict(form)) => Some((Some(reference.number()), form.clone())),
+            _ => None,
+        },
+        Some(Value::Dict(form)) => Some((None, form.clone())),
+        _ => None,
+    };
+    let Some((holder, form)) = form else {
+        let mut form = Dict::new();
+        form.insert(Name::from("Fields"), Value::Array(references(fields)));
+        if !order.is_empty() {
+            form.insert(Name::from("CO"), Value::Array(references(order)));
+        }
+        let reference = transaction.allocate().map_err(store)?;
+        transaction
+            .write(reference.number(), &Value::Dict(form), budget)
+            .map_err(store)?;
+        catalog.insert(Name::from("AcroForm"), Value::Reference(reference));
+        transaction
+            .write(root.number(), &Value::Dict(catalog), budget)
+            .map_err(store)?;
+        return Ok(());
+    };
+    rename_imported(transaction, &mut reads, &form, fields, budget)?;
+    let holder = match holder {
+        Some(holder) => holder,
+        None => {
+            let reference = transaction.allocate().map_err(store)?;
+            transaction
+                .write(reference.number(), &Value::Dict(form), budget)
+                .map_err(store)?;
+            catalog.insert(Name::from("AcroForm"), Value::Reference(reference));
+            transaction
+                .write(root.number(), &Value::Dict(catalog), budget)
+                .map_err(store)?;
+            reference.number()
+        }
+    };
+    edit_array(transaction, holder, "Fields", budget, true, |items| {
+        for &field in fields {
+            items.push(Value::Reference(field));
+        }
+    })?;
+    if !order.is_empty() {
+        edit_array(transaction, holder, "CO", budget, true, |items| {
+            for &field in order {
+                items.push(Value::Reference(field));
+            }
+        })?;
+    }
+    Ok(())
+}
+
+/// Gives each of the imported top-level `fields` whose partial name a
+/// top-level field of `form` has the smallest `+N` suffix that no
+/// top-level field of either has; see [`register_imported`].
+fn rename_imported(
+    transaction: &mut Transaction,
+    reads: &mut Reads<'_>,
+    form: &Dict,
+    fields: &[Reference],
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let mut receiving = HashSet::new();
+    let mut totals = (0, 0);
+    if let Some(Value::Array(items)) = read(reads, form.get("Fields"))? {
+        for item in items.iter() {
+            if let Some(name) = partial_name(reads, item, &mut totals)? {
+                receiving.insert(name);
+            }
+        }
+    }
+    let mut imported = Vec::new();
+    let mut totals = (0, 0);
+    for &field in fields {
+        if let Some(name) = partial_name(reads, &Value::Reference(field), &mut totals)? {
+            imported.push((field, name));
+        }
+    }
+    if !imported.iter().any(|(_, name)| receiving.contains(name)) {
+        return Ok(());
+    }
+    let mut reserved: HashSet<String> = receiving.clone();
+    reserved.extend(imported.iter().map(|(_, name)| name.clone()));
+    let mut renamed: HashMap<String, String> = HashMap::new();
+    for (field, name) in &imported {
+        if !receiving.contains(name) {
+            continue;
+        }
+        let new_name = match renamed.get(name) {
+            Some(new_name) => new_name.clone(),
+            None => {
+                let candidate = (1usize..)
+                    .map(|suffix| format!("{name}+{suffix}"))
+                    .find(|candidate| !reserved.contains(candidate))
+                    .unwrap_or_default();
+                reserved.insert(candidate.clone());
+                renamed.insert(name.clone(), candidate.clone());
+                candidate
+            }
+        };
+        let Some(mut dict) = dict_at(transaction, field.number(), budget)? else {
+            continue;
+        };
+        let partial = read(reads, dict.get("T"))?;
+        let suffix = &new_name[name.len()..];
+        dict.insert(
+            Name::from("T"),
+            renamed_partial(partial.as_ref(), &new_name, suffix),
+        );
+        transaction
+            .write(field.number(), &Value::Dict(dict), budget)
+            .map_err(store)?;
+    }
+    Ok(())
+}
+
+/// Returns the non-empty partial name `/T` of the field that `entry`
+/// names, charging it to `totals` under the field-name limit.
+fn partial_name(
+    reads: &mut Reads<'_>,
+    entry: &Value,
+    totals: &mut (usize, usize),
+) -> PyResult<Option<String>> {
+    let &Value::Reference(reference) = entry else {
+        return Ok(None);
+    };
+    let Some(field) = object(reads, id(reference))? else {
+        return Ok(None);
+    };
+    let Value::Dict(field) = &*field else {
+        return Ok(None);
+    };
+    let Some(partial) = field.get("T") else {
+        return Ok(None);
+    };
+    Ok(text(reads, partial, totals, MAX_NAME_BYTES, "field-name")?.filter(|name| !name.is_empty()))
+}
+
+/// Returns partial name `partial` with `suffix` appended in its own
+/// encoding, UTF-16BE or single bytes, or `renamed` as a new text string
+/// when `partial` is no string or odd UTF-16BE.
+fn renamed_partial(partial: Option<&Value>, renamed: &str, suffix: &str) -> Value {
+    let Some(Value::String(partial)) = partial else {
+        return encode_text(renamed);
+    };
+    let bytes = partial.as_bytes();
+    let utf16 = bytes.starts_with(&[0xfe, 0xff]);
+    if utf16 && bytes.len() % 2 != 0 {
+        return encode_text(renamed);
+    }
+    let mut encoded = bytes.to_vec();
+    for byte in suffix.bytes() {
+        if utf16 {
+            encoded.push(0);
+        }
+        encoded.push(byte);
+    }
+    Value::String(PdfString::new(encoded, partial.form()))
+}
+
 /// Edits the array that entry `key` of object `holder` holds: an array
 /// object that the entry names, or else the entry itself. An entry that is
 /// no array starts empty with `create`, and stays as it is without.

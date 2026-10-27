@@ -38,22 +38,28 @@ const MAX_WIDGETS: usize = 4_096;
 /// points at the retained page that lists it. Fields that never had a
 /// widget stay. Refuses, before planning anything, a field tree beyond the
 /// limits of the form's walk.
+///
+/// For a `copy` of the retained pages, a widget that no page lists stays
+/// only when its `/P` names a retained page. Returns the top-level fields
+/// that hold a widget that stays, in `/Fields` order: those that such a
+/// copy takes along.
 pub(super) fn plan(
     reads: &mut Reads<'_>,
     index: &References,
     removed: &[u32],
     retained: &[u32],
+    copy: bool,
     edits: &mut Edits<'_>,
-) -> Result<()> {
+) -> Result<Vec<u32>> {
     let Some(form) = form(reads)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let fields = form.array(reads, "Fields")?;
     let top_level = top_level(reads, fields.as_ref().map(|(_, items)| items))?;
     if top_level.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    let mut tree = Tree::new(reads, index, removed, retained);
+    let mut tree = Tree::new(reads, index, removed, retained, copy);
     tree.walk(reads, &top_level)?;
     let mut planned = Table::new();
     for at in 0..tree.walked.len() {
@@ -75,9 +81,17 @@ pub(super) fn plan(
         }
     }
     let mut kept_top_level = BudgetVec::new(budget);
+    let mut imported = BudgetVec::new(budget);
     for &reference in top_level.iter() {
         if tree.keeps(reads, &Value::Reference(reference))? {
             kept_top_level.try_push(reference.number())?;
+        }
+        if tree
+            .coverage
+            .get(reference.number())
+            .is_some_and(|coverage| coverage.kept)
+        {
+            imported.try_push(reference.number())?;
         }
     }
     let kept = tree.kept(reads, &kept_top_level)?;
@@ -97,7 +111,26 @@ pub(super) fn plan(
     for &number in kept.iter() {
         tree.point_widgets(reads, index, edits, number)?;
     }
-    Ok(())
+    Ok(imported.into_vec())
+}
+
+/// Returns the form's top-level fields, each once and in `/Fields` order,
+/// and the references of its calculation order, in order.
+pub(super) fn fields(reads: &mut Reads<'_>) -> Result<(Vec<Reference>, Vec<Reference>)> {
+    let Some(form) = form(reads)? else {
+        return Ok((Vec::new(), Vec::new()));
+    };
+    let fields = form.array(reads, "Fields")?;
+    let top_level = top_level(reads, fields.as_ref().map(|(_, items)| items))?;
+    let mut order = BudgetVec::new(reads.budget());
+    if let Some((_, items)) = form.array(reads, "CO")? {
+        for entry in items.iter() {
+            if let &Value::Reference(reference) = entry {
+                order.try_push(reference)?;
+            }
+        }
+    }
+    Ok((top_level.into_vec(), order.into_vec()))
 }
 
 /// The interactive form dictionary, and where it lies.
@@ -385,6 +418,9 @@ struct Tree<'a, 'b> {
     index: &'a References,
     removed: &'a [u32],
     retained: &'a [u32],
+    /// Whether the retained pages are copied, so that a widget that no
+    /// page lists stays only when its `/P` names one of them.
+    copy: bool,
     coverage: Table<Coverage>,
     /// The walked fields, in the order that the walk leaves them.
     walked: BudgetVec<'b, u32>,
@@ -397,11 +433,13 @@ impl<'a, 'b> Tree<'a, 'b> {
         index: &'a References,
         removed: &'a [u32],
         retained: &'a [u32],
+        copy: bool,
     ) -> Self {
         Self {
             index,
             removed,
             retained,
+            copy,
             coverage: Table::new(),
             walked: BudgetVec::new(reads.budget()),
             placements: Table::new(),
@@ -707,9 +745,11 @@ impl<'a, 'b> Tree<'a, 'b> {
         }
         let kept = page.is_some()
             || (!listed
-                && !node(reads, number)?.is_some_and(|dict| {
-                    matches!(dict.get("P"), Some(Value::Reference(to)) if is_in(self.removed, to.number()))
-                }));
+                && match node(reads, number)?.as_ref().and_then(|dict| dict.get("P")) {
+                    Some(Value::Reference(to)) if self.copy => is_in(self.retained, to.number()),
+                    Some(Value::Reference(to)) => !is_in(self.removed, to.number()),
+                    _ => !self.copy,
+                });
         let placement = Placement { page, kept };
         self.placements.insert(number, placement, reads.budget())?;
         Ok(placement)

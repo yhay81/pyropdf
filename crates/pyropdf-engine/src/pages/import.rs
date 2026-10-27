@@ -27,9 +27,30 @@ const MAX_DEPTH: usize = 1024;
 /// keys of pages and annotations.
 const STRUCTURE_KEYS: [&str; 2] = ["StructParent", "StructParents"];
 
+/// What an import copies besides its pages.
+#[derive(Clone, Copy, Default)]
+pub struct Along<'a> {
+    /// The source objects to copy, such as the top-level fields that join
+    /// the receiving form.
+    pub objects: &'a [Reference],
+    /// The source objects whose copies the caller wants when the import
+    /// copies them anyway, such as the fields of a calculation order.
+    pub found: &'a [Reference],
+}
+
+/// What an import copied.
+pub struct Imported {
+    /// The new pages, in order.
+    pub pages: Vec<Reference>,
+    /// The copy of each of [`Along::objects`], or null.
+    pub objects: Vec<Value>,
+    /// The copy of each of [`Along::found`], if the import copied it.
+    pub found: Vec<Option<Reference>>,
+}
+
 /// Imports `pages`, each a source page with the dictionary that the
 /// receiving document should hold for it, from `source` under the page-tree
-/// node `root`, and returns the new pages in order.
+/// node `root`, with the objects that `along` names.
 ///
 /// `overrides`, sorted by number, replaces source objects, such as links
 /// that now lead elsewhere: `Some` with the value to copy instead, `None`
@@ -42,9 +63,10 @@ pub fn import(
     source: &Version,
     pages: &[(Reference, Dict)],
     overrides: &[(u32, Option<Value>)],
+    along: Along<'_>,
     root: Reference,
     budget: &Budget,
-) -> Result<Vec<Reference>> {
+) -> Result<Imported> {
     let mut walk = Walk {
         source,
         overrides,
@@ -70,6 +92,11 @@ pub fn import(
     if let Some(graft) = &mut graft {
         graft.copy(transaction, &mut walk)?;
     }
+    let mut objects = BudgetVec::new(budget);
+    objects.try_reserve_exact(along.objects.len())?;
+    for &object in along.objects {
+        objects.try_push(walk.reference(transaction, object)?)?;
+    }
     while let Some((number, new)) = walk.pending.pop() {
         let value = match walk.object(number)? {
             Some(Value::Stream(mut stream)) => {
@@ -86,7 +113,16 @@ pub fn import(
     if let Some(graft) = graft {
         graft.finish(transaction, budget)?;
     }
-    Ok(added.into_vec())
+    let mut found = BudgetVec::new(budget);
+    found.try_reserve_exact(along.found.len())?;
+    for object in along.found {
+        found.try_push(walk.numbers.get(&object.number()).copied())?;
+    }
+    Ok(Imported {
+        pages: added.into_vec(),
+        objects: objects.into_vec(),
+        found: found.into_vec(),
+    })
 }
 
 /// A hash map charged to the budget as it grows.

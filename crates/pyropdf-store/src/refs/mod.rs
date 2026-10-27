@@ -70,8 +70,31 @@ pub fn remove_pages(
         edits,
         structure::Reach::Affected,
     )?;
-    forms::plan(reads, index, removed, retained, edits)?;
+    forms::plan(reads, index, removed, retained, false, edits)?;
     Ok(())
+}
+
+/// Plans in `edits` only the form rules of [`remove_pages`] for `removed`,
+/// for a copy of the `retained` pages that takes their fields along: the
+/// widgets of removed pages and the fields that keep no widget leave the
+/// field tree, and so does a widget that no page lists unless its `/P`
+/// names a retained page. Returns the top-level fields that hold a widget
+/// that stays, in `/Fields` order.
+pub fn prune_forms(
+    reads: &mut Reads<'_>,
+    index: &References,
+    removed: &[u32],
+    retained: &[u32],
+    edits: &mut Edits<'_>,
+) -> Result<Vec<u32>> {
+    forms::plan(reads, index, removed, retained, true, edits)
+}
+
+/// Returns the top-level fields of the document's form, each once and in
+/// `/Fields` order, without the entries that are no field, and the
+/// references of its calculation order `/CO`.
+pub fn form_fields(reads: &mut Reads<'_>) -> Result<(Vec<Reference>, Vec<Reference>)> {
+    forms::fields(reads)
 }
 
 /// Plans in `edits` only the structure rules of [`remove_pages`] for
