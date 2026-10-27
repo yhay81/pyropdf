@@ -13,6 +13,7 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
+from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
@@ -56,9 +57,11 @@ __all__ = [
     "EncryptedDocumentError",
     "Encryption",
     "History",
+    "IRect",
     "InlineImage",
     "LimitError",
     "MalformedPdfError",
+    "Matrix",
     "Name",
     "Objects",
     "Operation",
@@ -69,8 +72,11 @@ __all__ = [
     "PdfError",
     "Permissions",
     "Pixmap",
+    "Point",
     "Probe",
+    "Quad",
     "Real",
+    "Rect",
     "StaleObjectError",
     "StalePageError",
     "Stream",
