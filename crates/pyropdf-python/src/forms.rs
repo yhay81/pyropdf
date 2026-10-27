@@ -1,7 +1,8 @@
 //! The interactive form (ISO 32000-2 section 12.7): the terminal fields
 //! that `doc.form` maps by name, the widgets of pages and of fields, the
-//! values that setting a field writes, and the repair of radio buttons
-//! written as fields of their own (DESIGN.md section 10).
+//! values and properties that editing a field writes, the fields and
+//! widgets that `page.widgets.add` creates, and the repair of radio
+//! buttons written as fields of their own (DESIGN.md section 10).
 //!
 //! The walk of the field tree is memoized with the objects that it read
 //! (section 5), so reading every field of a form costs one walk of each
@@ -23,7 +24,7 @@ use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use crate::annotations::{Annots, Rect};
+use crate::annotations::{Annots, MAX_PAGE_ANNOTATIONS, Rect, border_style, rgb};
 use crate::document::{_Document, Failed, text_string};
 use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
 use crate::pages::index;
@@ -1928,4 +1929,613 @@ pub fn form_walk_counts(document: &_Document) -> (u64, u64) {
         form.hits + drafts.hits,
         form.computations + drafts.computations,
     )
+}
+
+/// A field to create with its first widget, or a widget to add to the
+/// field of that name and kind, as `page.widgets.add` passes a field
+/// specification. Colours are RGB from 0 to 1, the border is its width,
+/// `/S` style, and dash lengths, and `align` is a `/Q` code.
+#[derive(FromPyObject)]
+#[pyo3(from_item_all)]
+pub struct FieldSpec {
+    /// `text`, `checkbox`, `radio`, `combobox`, `listbox`, `pushbutton`, or
+    /// `signature`.
+    kind: String,
+    name: String,
+    rect: Rect,
+    #[pyo3(default)]
+    value: Option<String>,
+    #[pyo3(default)]
+    default_value: Option<String>,
+    #[pyo3(default)]
+    flags: i64,
+    #[pyo3(default)]
+    label: Option<String>,
+    #[pyo3(default)]
+    max_length: Option<i64>,
+    #[pyo3(default)]
+    choices: Option<Vec<(String, String)>>,
+    #[pyo3(default)]
+    on_state: Option<String>,
+    #[pyo3(default)]
+    caption: Option<String>,
+    #[pyo3(default)]
+    border: Option<(f64, String, Vec<f64>)>,
+    #[pyo3(default)]
+    border_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    background_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    text_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    font_size: Option<f64>,
+    #[pyo3(default)]
+    align: Option<u8>,
+}
+
+/// The `/Ff` bit of a radio group that keeps one button on.
+const NO_TOGGLE_TO_OFF: i64 = 1 << 14;
+
+/// The field entries that a field merged with its widget gives to the new
+/// parent that it gets with a second widget.
+const FIELD_KEYS: [&str; 11] = [
+    "FT", "T", "TU", "TM", "Ff", "V", "DV", "Opt", "MaxLen", "TI", "I",
+];
+
+/// The `/AA` triggers of a field, which go to that parent; the others
+/// belong to the widget.
+const FIELD_TRIGGERS: [&str; 4] = ["K", "F", "V", "C"];
+
+/// Returns the `/FT` and the `/Ff` bits of a field of `kind`.
+fn field_type(kind: &str) -> PyResult<(&'static str, i64)> {
+    Ok(match kind {
+        "text" => ("Tx", 0),
+        "checkbox" => ("Btn", 0),
+        // Radio groups keep one button on, as Acrobat creates them.
+        "radio" => ("Btn", RADIO | NO_TOGGLE_TO_OFF),
+        "pushbutton" => ("Btn", 1 << 16),
+        "combobox" => ("Ch", 1 << 17),
+        "listbox" => ("Ch", 0),
+        "signature" => ("Sig", 0),
+        other => return Err(PdfError::new_err(format!("unknown field kind {other:?}"))),
+    })
+}
+
+impl FieldSpec {
+    /// Returns the on state of a check box or radio button.
+    fn on_state(&self) -> &str {
+        self.on_state.as_deref().unwrap_or("Yes")
+    }
+
+    /// Checks the specification and returns the widget dictionary and the
+    /// field dictionary that it makes, before either joins the document.
+    fn dictionaries(&self, annots: &Annots) -> PyResult<(Dict, Dict)> {
+        let (field_type, kind_flags) = field_type(&self.kind)?;
+        let texts: usize = [
+            Some(&self.name),
+            self.value.as_ref(),
+            self.default_value.as_ref(),
+            self.label.as_ref(),
+            self.on_state.as_ref(),
+            self.caption.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(String::len)
+        .chain(
+            self.choices
+                .iter()
+                .flatten()
+                .map(|(value, label)| value.len() + label.len()),
+        )
+        .sum();
+        if texts > MAX_INPUT_BYTES {
+            return Err(LimitError::new_err((
+                "form_field_input_size",
+                format!("field texts exceed the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
+            )));
+        }
+        if self.name.is_empty() {
+            return Err(PdfError::new_err("a field has a name"));
+        }
+        if !(0..=i64::from(u32::MAX)).contains(&self.flags)
+            || self.flags & (KIND_FLAGS | NO_TOGGLE_TO_OFF) != 0
+        {
+            return Err(PdfError::new_err(
+                "field flags are a 32-bit value without the bits that the kind sets",
+            ));
+        }
+        let (x0, y0, x1, y1) = self.rect;
+        if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) || x1 <= x0 || y1 <= y0 {
+            return Err(PdfError::new_err(
+                "a widget rectangle is finite and not empty",
+            ));
+        }
+        let buttons = matches!(self.kind.as_str(), "checkbox" | "radio");
+        if buttons && matches!(self.on_state(), "" | widgets::OFF) {
+            return Err(PdfError::new_err(
+                "a button's on state is a name other than Off",
+            ));
+        }
+        let mut widget: Dict = [
+            ("Type", Value::Name(Name::from("Annot"))),
+            ("Subtype", Value::Name(Name::from("Widget"))),
+            ("Rect", annots.to_pdf(self.rect)),
+            ("F", Value::Integer(4)),
+        ]
+        .into_iter()
+        .map(|(key, value)| (Name::from(key), value))
+        .collect();
+        if let Some(page) = annots.page().object() {
+            widget.insert(Name::from("P"), Value::Reference(page));
+        }
+        let mut mark = Dict::new();
+        if let Some(color) = self.border_color {
+            mark.insert(Name::from("BC"), rgb(color, "border colour")?);
+        }
+        if let Some(color) = self.background_color {
+            mark.insert(Name::from("BG"), rgb(color, "background colour")?);
+        }
+        if let Some(caption) = &self.caption {
+            mark.insert(Name::from("CA"), encode_value(caption));
+        }
+        // A widget on a turned page shows upright.
+        if annots.rotation != 0 {
+            mark.insert(Name::from("R"), Value::Integer(annots.rotation));
+        }
+        widget.insert(Name::from("MK"), Value::Dict(mark));
+        let border = self
+            .border
+            .clone()
+            .unwrap_or_else(|| (1.0, "S".to_owned(), Vec::new()));
+        widget.insert(Name::from("BS"), border_style(&border)?);
+        if shows_text(&self.kind) || self.kind == "pushbutton" {
+            let color = self.text_color.unwrap_or((0.0, 0.0, 0.0));
+            rgb(color, "text colour")?;
+            let size = self.font_size.unwrap_or(0.0);
+            if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
+                return Err(PdfError::new_err(
+                    "a widget font size is from 0, which fits the text, to 10000",
+                ));
+            }
+            let (red, green, blue) = color;
+            let appearance = format!("/Helv {size} Tf {red} {green} {blue} rg");
+            widget.insert(
+                Name::from("DA"),
+                Value::String(PdfString::literal(appearance.into_bytes())),
+            );
+            if let Some(align) = self.align {
+                if align > 2 {
+                    return Err(PdfError::new_err(
+                        "a field aligns left (0), centre (1), or right (2)",
+                    ));
+                }
+                widget.insert(Name::from("Q"), Value::Integer(i64::from(align)));
+            }
+        }
+        let mut field: Dict = [
+            ("FT", Value::Name(Name::from(field_type))),
+            ("T", encode_value(&self.name)),
+        ]
+        .into_iter()
+        .map(|(key, value)| (Name::from(key), value))
+        .collect();
+        if kind_flags | self.flags != 0 {
+            field.insert(Name::from("Ff"), Value::Integer(kind_flags | self.flags));
+        }
+        if let Some(label) = &self.label {
+            field.insert(Name::from("TU"), encode_value(label));
+        }
+        if let Some(length) = self.max_length {
+            if self.kind != "text" || !(0..=1_000_000).contains(&length) {
+                return Err(PdfError::new_err(
+                    "only a text field has a maximum length, from 0 to 1000000",
+                ));
+            }
+            field.insert(Name::from("MaxLen"), Value::Integer(length));
+        }
+        if let Some(choices) = &self.choices {
+            if !matches!(self.kind.as_str(), "combobox" | "listbox") {
+                return Err(PdfError::new_err("only a choice field has choices"));
+            }
+            if choices.len() > MAX_VALUE_ITEMS {
+                return Err(PdfError::new_err(format!(
+                    "a choice field has at most {MAX_VALUE_ITEMS} choices"
+                )));
+            }
+            field.insert(Name::from("Opt"), options(choices));
+        }
+        if let Some(default) = &self.default_value {
+            let default = if field_type == "Btn" {
+                Value::Name(Name::from(default.as_str()))
+            } else {
+                encode_value(default)
+            };
+            field.insert(Name::from("DV"), default);
+        }
+        if shows_text(&self.kind)
+            && let Some(value) = &self.value
+        {
+            field.insert(Name::from("V"), encode_value(value));
+        }
+        Ok((widget, field))
+    }
+}
+
+/// Returns the `/Opt` array of `choices`: a text string for an option whose
+/// label is its export value, else an array of the two.
+fn options(choices: &[(String, String)]) -> Value {
+    let options = choices.iter().map(|(value, label)| {
+        if value == label {
+            encode_value(value)
+        } else {
+            Value::Array(Array::from(vec![encode_value(value), encode_value(label)]))
+        }
+    });
+    Value::Array(options.collect())
+}
+
+/// Adds a widget that `spec` describes to page object `(number,
+/// generation)`: the first widget of a new field, or another widget of the
+/// field of that name and kind. Draws the widget through the appearance
+/// settler, as setting the field's value does, and returns the widget's
+/// object and position in the page's `/Annots`; or `None` for a page that
+/// is gone. Refuses a name with dots or one of a field that has fields
+/// below it, a kind other than the existing field's, and what pylopdf
+/// refuses in a specification, leaving the document as it was.
+#[pyfunction]
+pub fn widget_add(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    spec: FieldSpec,
+) -> PyResult<Option<(Id, u32)>> {
+    let Some(annots) = Annots::edit(document, number, generation)? else {
+        return Ok(None);
+    };
+    if annots.items.len() >= MAX_PAGE_ANNOTATIONS {
+        return Err(PdfError::new_err(format!(
+            "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
+        )));
+    }
+    if !matches!(
+        annots.resolved(annots.page().dict().get("Annots"))?,
+        None | Some(Value::Array(_))
+    ) {
+        return Err(PdfError::new_err("the page's /Annots is not an array"));
+    }
+    let (widget, field) = spec.dictionaries(&annots)?;
+    let index = u32::try_from(annots.items.len()).unwrap_or(u32::MAX);
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = add_widget(transaction, &annots, &spec, widget, field, budget);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result.map(|id| Some((id, index)))
+    })
+}
+
+fn add_widget(
+    transaction: &mut Transaction,
+    annots: &Annots,
+    spec: &FieldSpec,
+    mut widget: Dict,
+    mut field: Dict,
+    budget: &Budget,
+) -> PyResult<Id> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let before = transaction.snapshot();
+    let form = walk(&mut Reads::new(&before, budget))?;
+    let existing = form.fields.iter().find(|field| field.name == spec.name);
+    match existing {
+        Some(existing) if existing.kind != spec.kind => {
+            return Err(PdfError::new_err(format!(
+                "the form already has a {} field named {:?}",
+                existing.kind, spec.name
+            )));
+        }
+        None if spec.name.contains('.') => {
+            return Err(PdfError::new_err(
+                "a new field's name has no dots; dots join the names of a field's parents",
+            ));
+        }
+        None if form.fields.iter().any(|field| {
+            field
+                .name
+                .strip_prefix(&spec.name)
+                .is_some_and(|suffix| suffix.starts_with('.'))
+        }) =>
+        {
+            return Err(PdfError::new_err(
+                "the form already has a non-terminal field of that name",
+            ));
+        }
+        _ => {}
+    }
+    let holder = form_object(transaction, budget)?;
+    let reference = transaction.allocate().map_err(store)?;
+    let buttons = matches!(spec.kind.as_str(), "checkbox" | "radio");
+    let field_id = match existing {
+        Some(existing) => {
+            let parent = join(transaction, holder, existing.id, budget)?;
+            widget.insert(Name::from("Parent"), Value::Reference(parent));
+            edit_array(transaction, parent.number(), "Kids", budget, |kids| {
+                kids.push(Value::Reference(reference));
+            })?;
+            id(parent)
+        }
+        None if spec.kind == "radio" => {
+            let parent = transaction.allocate().map_err(store)?;
+            let kids = Array::from(vec![Value::Reference(reference)]);
+            field.insert(Name::from("Kids"), Value::Array(kids));
+            transaction
+                .write(parent.number(), &Value::Dict(field), budget)
+                .map_err(store)?;
+            widget.insert(Name::from("Parent"), Value::Reference(parent));
+            edit_array(transaction, holder, "Fields", budget, |fields| {
+                fields.push(Value::Reference(parent));
+            })?;
+            id(parent)
+        }
+        None => {
+            for (key, value) in field.iter() {
+                widget.insert(key.clone(), value.clone());
+            }
+            edit_array(transaction, holder, "Fields", budget, |fields| {
+                fields.push(Value::Reference(reference));
+            })?;
+            id(reference)
+        }
+    };
+    if buttons {
+        // Settling draws the `Off` state and the state that `/AS` names.
+        let state = Value::Name(Name::from(spec.on_state()));
+        widget.insert(Name::from("AS"), state);
+    }
+    transaction
+        .write(reference.number(), &Value::Dict(widget), budget)
+        .map_err(store)?;
+    let mut items = annots.items.clone();
+    items.push(Value::Reference(reference));
+    annots.write_items(transaction, items, budget)?;
+    if buttons {
+        transaction
+            .mark(Structure::Appearance, reference.number(), budget)
+            .map_err(store)?;
+        transaction
+            .settle(Scope::One(Structure::Appearance), budget)
+            .map_err(store)?;
+        let selected = spec.value.as_deref() == Some(spec.on_state());
+        let value = match existing.and_then(|existing| existing.value.as_deref()) {
+            _ if selected => spec.on_state(),
+            Some(value) => value,
+            None => widgets::OFF,
+        };
+        fill(
+            transaction,
+            field_id,
+            &FillValue::Text(value.to_owned()),
+            budget,
+        )?;
+    } else if shows_text(&spec.kind)
+        && let Some(value) = &spec.value
+    {
+        fill(
+            transaction,
+            field_id,
+            &FillValue::Text(value.clone()),
+            budget,
+        )?;
+    } else {
+        let version = transaction.snapshot();
+        let form = walk(&mut Reads::new(&version, budget))?;
+        let field = form.field(field_id).ok_or_else(|| stale(field_id))?;
+        redraw(transaction, &form, field, budget)?;
+    }
+    Ok(id(reference))
+}
+
+/// Returns the object of the form dictionary, after moving one that the
+/// catalog holds into an object of its own, or creating an empty one that
+/// names Helvetica as `/Helv`.
+fn form_object(transaction: &mut Transaction, budget: &Budget) -> PyResult<u32> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let version = transaction.snapshot();
+    let mut reads = Reads::new(&version, budget);
+    let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
+        return Err(PdfError::new_err("the document has no catalog"));
+    };
+    let Some(Value::Dict(mut catalog)) = object(&mut reads, id(root))?.as_deref().cloned() else {
+        return Err(PdfError::new_err("the document has no catalog"));
+    };
+    let form = match catalog.get("AcroForm") {
+        Some(Value::Reference(reference)) => {
+            if let Some(Value::Dict(_)) = object(&mut reads, id(*reference))?.as_deref() {
+                return Ok(reference.number());
+            }
+            None
+        }
+        Some(Value::Dict(form)) => Some(form.clone()),
+        _ => None,
+    };
+    let form = match form {
+        Some(form) => form,
+        None => {
+            let font = transaction.allocate().map_err(store)?;
+            let helvetica: Dict = [
+                ("Type", "Font"),
+                ("Subtype", "Type1"),
+                ("BaseFont", "Helvetica"),
+                ("Encoding", "WinAnsiEncoding"),
+            ]
+            .into_iter()
+            .map(|(key, value)| (Name::from(key), Value::Name(Name::from(value))))
+            .collect();
+            transaction
+                .write(font.number(), &Value::Dict(helvetica), budget)
+                .map_err(store)?;
+            let fonts: Dict = [(Name::from("Helv"), Value::Reference(font))]
+                .into_iter()
+                .collect();
+            let resources: Dict = [(Name::from("Font"), Value::Dict(fonts))]
+                .into_iter()
+                .collect();
+            let appearance = PdfString::literal(b"/Helv 0 Tf 0 g".to_vec());
+            [
+                (Name::from("Fields"), Value::Array(Array::new())),
+                (Name::from("DA"), Value::String(appearance)),
+                (Name::from("DR"), Value::Dict(resources)),
+            ]
+            .into_iter()
+            .collect()
+        }
+    };
+    let reference = transaction.allocate().map_err(store)?;
+    transaction
+        .write(reference.number(), &Value::Dict(form), budget)
+        .map_err(store)?;
+    catalog.insert(Name::from("AcroForm"), Value::Reference(reference));
+    transaction
+        .write(root.number(), &Value::Dict(catalog), budget)
+        .map_err(store)?;
+    Ok(reference.number())
+}
+
+/// Returns the dictionary of object `number` in the transaction's version.
+fn dict_at(transaction: &Transaction, number: u32, budget: &Budget) -> PyResult<Option<Dict>> {
+    let object = transaction
+        .version()
+        .get(number, budget)
+        .map_err(|e| store_error(&e))?;
+    Ok(match object.as_ref().map(|object| &**object.value()) {
+        Some(Value::Dict(dict)) => Some(dict.clone()),
+        _ => None,
+    })
+}
+
+/// Edits the array that entry `key` of object `holder` holds: an array
+/// object that the entry names, or else the entry itself, which an entry
+/// that is no array starts empty.
+fn edit_array(
+    transaction: &mut Transaction,
+    holder: u32,
+    key: &str,
+    budget: &Budget,
+    edit: impl FnOnce(&mut Array),
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let Some(mut dict) = dict_at(transaction, holder, budget)? else {
+        return Err(PdfError::new_err("a form node is no dictionary"));
+    };
+    if let Some(Value::Reference(array)) = dict.get(key) {
+        let array = *array;
+        let object = transaction
+            .version()
+            .get(array.number(), budget)
+            .map_err(store)?;
+        if let Some(Value::Array(items)) = object.as_ref().map(|object| &**object.value()) {
+            let mut items = items.clone();
+            edit(&mut items);
+            transaction
+                .write(array.number(), &Value::Array(items), budget)
+                .map_err(store)?;
+            return Ok(());
+        }
+    }
+    let mut items = match dict.get(key) {
+        Some(Value::Array(items)) => items.clone(),
+        _ => Array::new(),
+    };
+    edit(&mut items);
+    dict.insert(Name::from(key), Value::Array(items));
+    transaction
+        .write(holder, &Value::Dict(dict), budget)
+        .map_err(store)?;
+    Ok(())
+}
+
+/// Returns the field that takes another widget of field `field`: the field
+/// itself, or, for a field merged with its widget, a new parent that takes
+/// its field entries and field triggers and its place in the field tree
+/// and the calculation order of form `holder`.
+fn join(
+    transaction: &mut Transaction,
+    holder: u32,
+    field: Id,
+    budget: &Budget,
+) -> PyResult<Reference> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let reference = Reference::new(field.0, field.1);
+    let Some(mut kid) = dict_at(transaction, field.0, budget)? else {
+        return Err(stale(field));
+    };
+    if !matches!(kid.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"Widget") {
+        return Ok(reference);
+    }
+    let parent = transaction.allocate().map_err(store)?;
+    let mut dict: Dict = [(
+        Name::from("Kids"),
+        Value::Array(Array::from(vec![Value::Reference(reference)])),
+    )]
+    .into_iter()
+    .collect();
+    for key in FIELD_KEYS {
+        if let Some(value) = kid.remove(key) {
+            dict.insert(Name::from(key), value);
+        }
+    }
+    // A merged dictionary holds the actions of both; only the field's
+    // triggers move to the parent.
+    let actions = match kid.get("AA") {
+        Some(Value::Reference(actions)) => dict_at(transaction, actions.number(), budget)?,
+        Some(Value::Dict(actions)) => Some(actions.clone()),
+        _ => None,
+    };
+    if let Some(mut actions) = actions {
+        let triggers: Dict = FIELD_TRIGGERS
+            .iter()
+            .filter_map(|trigger| Some((Name::from(*trigger), actions.remove(trigger)?)))
+            .collect();
+        if !triggers.is_empty() {
+            dict.insert(Name::from("AA"), Value::Dict(triggers));
+        }
+        if actions.is_empty() {
+            kid.remove("AA");
+        } else {
+            kid.insert(Name::from("AA"), Value::Dict(actions));
+        }
+    }
+    let grand = match kid.get("Parent") {
+        Some(Value::Reference(grand)) => Some(*grand),
+        _ => None,
+    };
+    if let Some(grand) = grand {
+        dict.insert(Name::from("Parent"), Value::Reference(grand));
+    }
+    kid.insert(Name::from("Parent"), Value::Reference(parent));
+    transaction
+        .write(parent.number(), &Value::Dict(dict), budget)
+        .map_err(store)?;
+    transaction
+        .write(field.0, &Value::Dict(kid), budget)
+        .map_err(store)?;
+    let swap = |items: &mut Array| {
+        for item in items.iter_mut() {
+            if *item == Value::Reference(reference) {
+                *item = Value::Reference(parent);
+            }
+        }
+    };
+    let (holder_of, key) = match grand {
+        Some(grand) => (grand.number(), "Kids"),
+        None => (holder, "Fields"),
+    };
+    edit_array(transaction, holder_of, key, budget, swap)?;
+    let form = dict_at(transaction, holder, budget)?;
+    if form.is_some_and(|form| form.get("CO").is_some()) {
+        edit_array(transaction, holder, "CO", budget, swap)?;
+    }
+    Ok(parent)
 }

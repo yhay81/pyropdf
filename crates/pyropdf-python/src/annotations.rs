@@ -144,7 +144,7 @@ pub(crate) struct Annots {
     at: usize,
     budget: Budget,
     crop: [f64; 4],
-    rotation: i64,
+    pub(crate) rotation: i64,
     /// The array object that the page's `/Annots` names, if it names one.
     array: Option<Reference>,
     pub(crate) items: Array,
@@ -164,7 +164,11 @@ impl Annots {
     /// Reads the annotations of a page for an edit, in the version that
     /// [`editing_index`] reads, so that the appearances that earlier edits
     /// of the open transaction left stale stay stale.
-    fn edit(document: &_Document, number: u32, generation: u16) -> PyResult<Option<Self>> {
+    pub(crate) fn edit(
+        document: &_Document,
+        number: u32,
+        generation: u16,
+    ) -> PyResult<Option<Self>> {
         Self::of(editing_index(document)?, number, generation)
     }
 
@@ -205,7 +209,7 @@ impl Annots {
         }))
     }
 
-    fn page(&self) -> &Page {
+    pub(crate) fn page(&self) -> &Page {
         &self.index.pages()[self.at]
     }
 
@@ -267,7 +271,7 @@ impl Annots {
     }
 
     /// Converts a display rectangle to a PDF `/Rect` array.
-    fn to_pdf(&self, (x0, y0, x1, y1): Rect) -> Value {
+    pub(crate) fn to_pdf(&self, (x0, y0, x1, y1): Rect) -> Value {
         let (a, b) = to_pdf(self.crop, self.rotation, x0, y0);
         let (c, d) = to_pdf(self.crop, self.rotation, x1, y1);
         Value::Array(Array::from(vec![
@@ -534,7 +538,7 @@ impl Annots {
     /// Writes the page's `/Annots` as `items`: into the array object that
     /// it names, unless another page shares that array, else into the page
     /// dictionary.
-    fn write_items(
+    pub(crate) fn write_items(
         &self,
         transaction: &mut Transaction,
         items: Array,
@@ -638,7 +642,7 @@ pub(crate) fn encode_text(text: &str) -> Value {
     Value::String(PdfString::literal(bytes))
 }
 
-fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
+pub(crate) fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
     let (red, green, blue) = components;
     if ![red, green, blue]
         .iter()
@@ -911,7 +915,7 @@ impl Edit {
 
 /// Returns the `/BS` dictionary of a border: its width, `/S` style, and
 /// dash lengths, which a dashed border needs and no other takes.
-fn border_style((width, style, dashes): &(f64, String, Vec<f64>)) -> PyResult<Value> {
+pub(crate) fn border_style((width, style, dashes): &(f64, String, Vec<f64>)) -> PyResult<Value> {
     if !(width.is_finite() && *width >= 0.0) {
         return Err(PdfError::new_err(
             "an annotation border width is finite and not negative",
