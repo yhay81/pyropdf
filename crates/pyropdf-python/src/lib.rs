@@ -55,7 +55,7 @@ mod _core {
         set_page_rotation, set_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, render_page};
+    use super::pixmap::{Pixmap, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
     #[pymodule_export]
