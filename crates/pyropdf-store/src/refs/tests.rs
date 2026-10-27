@@ -490,3 +490,151 @@ fn the_cache_keeps_no_version_alive() {
     let index = cache.get(&other.current(), &budget).unwrap();
     assert_eq!(index.referrers(3), &[2, 4, 5, 7, 9, 12, 13]);
 }
+
+/// Applies `rule` to every reference to object `number` in `document` that
+/// `only` holds, or that any object holds, and returns the index of the
+/// version that the edits make, with the objects that they free freed.
+fn apply_everywhere(
+    document: &Document,
+    number: u32,
+    only: Option<u32>,
+    rule: Rule,
+) -> Result<References> {
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget)?;
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    for &referrer in index.referrers(number) {
+        if only.is_some_and(|only| only != referrer) {
+            continue;
+        }
+        for found in find(&mut reads, Referrer::Object(referrer), number)?.iter() {
+            edits.apply(&mut reads, &index, referrer, &found.path, rule)?;
+        }
+    }
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget)?;
+    let after = transaction.snapshot();
+    let changes = version.changes(&after, &budget)?.unwrap();
+    let updated = index.update(&mut Reads::new(&after, &budget), &changes)?;
+    for &freed in unreferenced(&updated, &[], edits.orphans(), &budget)?.iter() {
+        transaction.free(freed, &budget)?;
+    }
+    let committed = transaction.commit(&budget)?;
+    build(&committed, &budget)
+}
+
+#[test]
+fn each_rule_leaves_no_reference_to_the_object_that_leaves() {
+    // The rules for references to the page, object 3, of the tagged document.
+    for rule in [
+        Rule::RemoveEntry,
+        Rule::Unresolve,
+        Rule::Retarget(Reference::new(1, 0)),
+    ] {
+        let index = apply_everywhere(&tagged(), 3, None, rule).unwrap();
+        assert_eq!(index.referrers(3), &[] as &[u32], "{rule:?}");
+    }
+    // Removing the link, object 4, that leads to the page drops it from the
+    // page's annotations, and frees it once the structure element no longer
+    // refers to it.
+    let document = tagged();
+    let index = apply_everywhere(&document, 3, Some(4), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(4), &[9]);
+    assert_eq!(index.targets(3), &[2, 5, 13]);
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(9, &Value::Null, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    let index = apply_everywhere(&document, 3, Some(4), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(4), &[] as &[u32]);
+    assert!(!index.referrers(3).contains(&4));
+    assert!(document.current().get(4, &budget).unwrap().is_none());
+}
+
+#[test]
+fn removing_entries_keeps_the_positions_of_the_others() {
+    let objects = vec![
+        (
+            1,
+            array(vec![
+                reference(3),
+                Value::Integer(0),
+                reference(3),
+                reference(2),
+                reference(3),
+            ]),
+        ),
+        (2, Value::Integer(0)),
+        (3, Value::Integer(0)),
+    ];
+    let document = document_of(&objects, Dict::new());
+    apply_everywhere(&document, 3, None, Rule::RemoveEntry).unwrap();
+    let budget = Budget::default();
+    let value = document.current().get(1, &budget).unwrap().unwrap();
+    assert_eq!(
+        **value.value(),
+        array(vec![Value::Integer(0), reference(2)])
+    );
+}
+
+#[test]
+fn removing_pages_refuses_navigation_that_aliases_a_page_before_any_edit() {
+    let document = tagged();
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    let mut catalog = match &**document.current().get(1, &budget).unwrap().unwrap().value() {
+        Value::Dict(dict) => dict.clone(),
+        _ => unreachable!(),
+    };
+    catalog.insert(Name::from("Outlines"), reference(3));
+    transaction
+        .write(1, &Value::Dict(catalog), &budget)
+        .unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let index = build(&version, &budget).unwrap();
+    let mut edits = Edits::new(&budget);
+    let error = remove_pages(
+        &mut Reads::new(&version, &budget),
+        &index,
+        &[3],
+        &[],
+        &mut edits,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("cannot alias a page"));
+    assert!(edits.is_empty());
+}
+
+#[test]
+fn unreferenced_frees_what_only_freed_objects_refer_to() {
+    let objects = vec![
+        (1, dict(vec![("Kids", array(vec![reference(2)]))])),
+        // A page, its content, and a font that another page shares.
+        (
+            2,
+            dict(vec![
+                ("Contents", reference(3)),
+                ("Font", reference(4)),
+                ("Annots", array(vec![reference(6)])),
+            ]),
+        ),
+        (3, Value::Integer(0)),
+        (4, Value::Integer(0)),
+        (5, dict(vec![("Font", reference(4))])),
+        // An annotation that refers back to the page.
+        (6, dict(vec![("P", reference(2))])),
+    ];
+    let trailer = [
+        (Name::from("Root"), reference(1)),
+        (Name::from("Other"), reference(5)),
+    ]
+    .into_iter()
+    .collect();
+    let document = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let index = build(&document.current(), &budget).unwrap();
+    let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
+    assert_eq!(&*freed, &[2, 3, 6]);
+}

@@ -12,7 +12,9 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyropdf_store::budget::Budget;
+use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
+use pyropdf_store::refs::{self, Edits};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -166,7 +168,10 @@ pub fn set_page_rotation(
 }
 
 /// Lists `pages`, objects of current pages, as the document's pages in
-/// order, in one transaction.
+/// order, in one transaction. The pages that leave run the rules of the
+/// references to them (DESIGN.md section 8): the navigation that leads to
+/// them goes, and they and the objects that only they referred to are
+/// freed. A refusal leaves the document as it was.
 #[pyfunction]
 pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -> PyResult<()> {
     let (_, index, _) = index(document)?;
@@ -174,10 +179,85 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
         .into_iter()
         .map(|(number, generation)| Reference::new(number, generation))
         .collect::<Vec<_>>();
+    let mut retained: Vec<u32> = order.iter().map(|page| page.number()).collect();
+    retained.sort_unstable();
+    retained.dedup();
+    let mut removed = current_order(&index)?
+        .iter()
+        .map(|page| page.number())
+        .filter(|number| retained.binary_search(number).is_err())
+        .collect::<Vec<_>>();
+    removed.sort_unstable();
+    removed.dedup();
     document.edit(py, |transaction, budget| {
-        let view = transaction.snapshot();
-        rewrite_with(transaction, &view, &index, &order, None, budget)
+        let savepoint = transaction.savepoint();
+        let result = remove_pages(
+            document,
+            transaction,
+            &index,
+            &order,
+            &removed,
+            &retained,
+            budget,
+        );
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
     })
+}
+
+/// Runs the rules for `removed`, writes the page tree with `order` as its
+/// pages, and frees what the removed pages leave unreferenced.
+fn remove_pages(
+    document: &_Document,
+    transaction: &mut Transaction,
+    index: &PageIndex,
+    order: &[Reference],
+    removed: &[u32],
+    retained: &[u32],
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    if removed.is_empty() {
+        let view = transaction.snapshot();
+        return rewrite_with(transaction, &view, index, order, None, budget);
+    }
+    let parent = Arc::clone(transaction.parent());
+    let before = transaction.snapshot();
+    let references = document.references.get(&parent, budget).map_err(store)?;
+    let references = match parent.changes(&before, budget).map_err(store)? {
+        Some(changes) if !changes.is_empty() => Arc::new(
+            references
+                .update(&mut Reads::new(&before, budget), &changes)
+                .map_err(store)?,
+        ),
+        _ => references,
+    };
+    let mut edits = Edits::new(budget);
+    refs::remove_pages(
+        &mut Reads::new(&before, budget),
+        &references,
+        removed,
+        retained,
+        &mut edits,
+    )
+    .map_err(store)?;
+    edits.write(transaction, budget).map_err(store)?;
+    let view = transaction.snapshot();
+    rewrite_with(transaction, &view, index, order, None, budget)?;
+    let after = transaction.snapshot();
+    let references = match before.changes(&after, budget).map_err(store)? {
+        Some(changes) => references
+            .update(&mut Reads::new(&after, budget), &changes)
+            .map_err(store)?,
+        None => return Ok(()),
+    };
+    let freed = refs::unreferenced(&references, removed, edits.orphans(), budget).map_err(store)?;
+    for &number in freed.iter() {
+        transaction.free(number, budget).map_err(store)?;
+    }
+    Ok(())
 }
 
 /// Adds a blank page of `width` by `height` points at `at`, counted from
@@ -274,7 +354,11 @@ fn rewrite_with(
         if !changes {
             continue;
         }
-        let mut dict = page.dict().clone();
+        // The rules may have edited the page in this transaction.
+        let mut dict = match resolve(version, Some(&Value::Reference(reference)), budget)? {
+            Some(Value::Dict(dict)) => dict,
+            _ => page.dict().clone(),
+        };
         dict.insert(Name::from("Parent"), Value::Reference(root));
         for key in INHERITABLE {
             match page.inherited(key) {
