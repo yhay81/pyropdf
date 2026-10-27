@@ -14,11 +14,13 @@ mod layout;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use hayro::hayro_interpret::DrawMode;
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
+use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings};
+use hayro::hayro_syntax::Pdf;
+use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::{Affine, BezPath, Point, Rect};
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use unicode_bidi::{BidiClass, bidi_class};
 
 use self::layout::RuleSegment;
@@ -26,8 +28,10 @@ pub use self::layout::{
     BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SpanStyleTuple, SpanTuple, WordTuple,
     page_layout,
 };
+use super::provenance::{RunCheck, Source, run_sources};
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;
+use crate::content::PageContent;
 
 /// The name, style flags, and line metrics of a font.
 #[derive(Clone)]
@@ -353,6 +357,11 @@ struct GlyphRecord {
     joins_previous: bool,
     /// Glyph callback order before geometric clustering.
     source_order: usize,
+    /// The place of the glyph run that showed the glyph among the page's runs.
+    run: u32,
+    /// The operation of the page's own content that showed the glyph, for
+    /// a layout with chars.
+    source: Option<Source>,
 }
 
 fn try_push_text<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
@@ -410,6 +419,9 @@ struct TextCollector<'b> {
     style: RunStyle,
     /// The index of the first glyph that the latest run recorded.
     run_start: usize,
+    /// The glyph count and first transform of each run, which the sources
+    /// of a layout with chars are checked against.
+    checks: Option<BudgetVec<'b, RunCheck>>,
     options: TextOptions,
     /// The visible page in display space, outside which glyphs are hidden.
     page_box: Rect,
@@ -420,6 +432,7 @@ struct RunStyle {
     color: Option<[f32; 4]>,
     render_mode: u8,
     clip: Option<Rect>,
+    run: u32,
 }
 
 impl ContentSink for TextCollector<'_> {
@@ -428,11 +441,28 @@ impl ContentSink for TextCollector<'_> {
             color: style.color,
             render_mode: style.render_mode,
             clip: style.clip,
+            run: style.run,
         };
         self.run_start = self.glyphs.len();
+        if let Some(checks) = &mut self.checks
+            && self.error.is_none()
+            && let Err(refusal) = checks.try_push(RunCheck {
+                run: style.run,
+                glyphs: 0,
+                first: [0; 6],
+            })
+        {
+            self.error = Some(refusal.into());
+        }
     }
 
     fn glyph(&mut self, glyph: &Glyph<'_>, transform: Affine, ink: Option<Rect>) {
+        if let Some(check) = self.checks.as_mut().and_then(|checks| checks.last_mut()) {
+            if check.glyphs == 0 {
+                check.first = transform.as_coeffs().map(f64::to_bits);
+            }
+            check.glyphs = check.glyphs.saturating_add(1);
+        }
         if self.error.is_none()
             && let Err(error) = self.collect_glyph(glyph, transform, ink)
         {
@@ -583,6 +613,8 @@ impl TextCollector<'_> {
             is_struck: false,
             joins_previous: false,
             source_order,
+            run: self.style.run,
+            source: None,
         };
         // A glyph is clipped away when the page or the clip paths leave no
         // part of its box visible.
@@ -2262,7 +2294,7 @@ pub fn page_text(
     budget: &Budget,
     out: &mut String,
 ) -> Result<(usize, TextPeak), Error> {
-    let viewed = viewed_page_lines(bridged, index, options, budget)?;
+    let viewed = viewed_page_lines(bridged, index, options, None, budget)?;
     // The glyphs and their text give way to the text assembled from them.
     viewed.charge.release(budget);
     let lines = viewed.lines;
@@ -2319,11 +2351,13 @@ fn viewed_page_lines(
     bridged: &Bridged,
     index: usize,
     options: &TextOptions,
+    content: Option<&PageContent>,
     budget: &Budget,
 ) -> Result<ViewedLines, Error> {
+    let pdf = bridged.pdf();
+    let pages = pdf.pages();
+    let page = pages.get(index).ok_or(Error::NoPage(index))?;
     let page_box = {
-        let pages = bridged.pdf().pages();
-        let page = pages.get(index).ok_or(Error::NoPage(index))?;
         let (width, height) = page.render_dimensions();
         Rect::new(0.0, 0.0, f64::from(width), f64::from(height))
     };
@@ -2340,17 +2374,27 @@ fn viewed_page_lines(
             color: None,
             render_mode: RENDER_FILL,
             clip: None,
+            run: 0,
         },
         run_start: 0,
+        checks: content.map(|_| BudgetVec::new(budget)),
         options: *options,
         page_box,
     };
-    let (_, mut collector) = super::page_content_into(
-        bridged,
-        index,
+    // Text includes the annotations' appearances. The sources of a layout
+    // with chars interpret the page again with the fonts of the first time.
+    let settings = InterpreterSettings {
+        render_annotations: true,
+        ..InterpreterSettings::default()
+    };
+    let cache = InterpreterCache::new();
+    let (_, mut collector) = super::model::collect_page_content(
+        pdf,
+        page,
+        settings.clone(),
+        &cache,
         collector,
         ItemKinds::NONE,
-        true,
         None,
         budget,
     )?;
@@ -2363,6 +2407,21 @@ fn viewed_page_lines(
         return Err(error);
     }
     let mut glyphs = collector.glyphs;
+    if let (Some(content), Some(checks)) = (content, &collector.checks)
+        && let Err(error) = add_sources(
+            pdf,
+            page,
+            settings,
+            &cache,
+            content,
+            checks,
+            &mut glyphs,
+            budget,
+        )
+    {
+        charge.release(budget);
+        return Err(error);
+    }
     if options.styles {
         layout::mark_styles(&mut glyphs, collector.rules);
     }
@@ -2378,6 +2437,29 @@ fn viewed_page_lines(
             Err(error)
         }
     }
+}
+
+/// Names the operation of the page's own content that showed each glyph,
+/// as a second interpretation of the content finds it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the interpretation and what it checks"
+)]
+fn add_sources<'a>(
+    pdf: &'a Pdf,
+    page: &Page<'a>,
+    settings: InterpreterSettings,
+    cache: &InterpreterCache<'a>,
+    content: &PageContent,
+    checks: &[RunCheck],
+    glyphs: &mut [GlyphRecord],
+    budget: &Budget,
+) -> Result<(), Error> {
+    let sources = run_sources(pdf, page, settings, cache, content, checks, budget)?;
+    for glyph in glyphs {
+        glyph.source = sources.get(glyph.run as usize).copied().flatten();
+    }
+    Ok(())
 }
 
 /// Clusters glyphs into lines and orders them for reading, each line in
@@ -2471,6 +2553,8 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
         is_struck: glyph.is_struck,
         joins_previous: glyph.joins_previous,
         source_order: glyph.source_order,
+        run: glyph.run,
+        source: glyph.source,
     })
 }
 

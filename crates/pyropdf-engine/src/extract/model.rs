@@ -560,6 +560,9 @@ pub struct GlyphStyle {
     /// The intersection of the boxes of the clip paths in force, in display
     /// space, or `None` when no clip path is.
     pub clip: Option<Rect>,
+    /// The run's place among the glyph runs that hayro showed on the page,
+    /// counting from 0, a stroke that completes a fill included.
+    pub run: u32,
 }
 
 /// What a reader built on the content model receives besides the items.
@@ -712,6 +715,8 @@ pub(crate) struct ContentCollector<'b, S> {
     pending: Option<Pending>,
     /// The glyph matrices of the fill run that a stroke may complete.
     pending_matrices: Vec<f64>,
+    /// The glyph runs that hayro has shown.
+    runs: u32,
     outlines: HashMap<u128, Option<GlyphInk>>,
     type3_boxes: HashMap<u128, Option<Rect>>,
     budget: &'b Budget,
@@ -740,6 +745,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             state: None,
             pending: None,
             pending_matrices: Vec::new(),
+            runs: 0,
             outlines: HashMap::new(),
             type3_boxes: HashMap::new(),
             budget,
@@ -949,6 +955,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         props: &DrawProps<'a>,
         mode: &DrawMode,
         pending: Option<Pending>,
+        ordinal: u32,
     ) -> Result<(), Error> {
         let glyphs = run.glyphs();
         if glyphs.is_empty() {
@@ -992,6 +999,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                         DrawMode::Invisible => RENDER_INVISIBLE,
                     },
                     clip: self.clip_boxes.last().copied(),
+                    run: ordinal,
                 });
             }
             for glyph in glyphs {
@@ -1367,7 +1375,9 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
 
     fn draw_glyph_run(&mut self, run: &GlyphRun<'_, 'a>, props: DrawProps<'a>, mode: &DrawMode) {
         let pending = self.pending.take();
-        self.run(|this| this.record_text(run, &props, mode, pending));
+        let ordinal = self.runs;
+        self.runs = self.runs.saturating_add(1);
+        self.run(|this| this.record_text(run, &props, mode, pending, ordinal));
     }
 
     fn draw_image(&mut self, image: Image<'a, '_>, props: ImageDrawProps<'a>) {
@@ -1405,18 +1415,24 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
     }
 }
 
-/// Interprets one page, feeding `sink`, and collects its content.
-pub(crate) fn collect_page_content<S: ContentSink>(
-    pdf: &Pdf,
-    page: &Page<'_>,
+/// Interprets one page, feeding `sink`, and collects its content. `cache`
+/// keeps the fonts and objects that hayro reads for another interpretation
+/// of the page.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one interpretation and what it collects"
+)]
+pub(crate) fn collect_page_content<'a, S: ContentSink>(
+    pdf: &'a Pdf,
+    page: &Page<'a>,
     settings: InterpreterSettings,
+    cache: &InterpreterCache<'a>,
     sink: S,
     kinds: ItemKinds,
     clip: Option<BBox>,
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
-    let cache = InterpreterCache::new();
-    let mut context = extraction_context(pdf, page, &cache, settings);
+    let mut context = extraction_context(pdf, page, cache, settings);
     let mut collector = ContentCollector::new(sink, kinds, budget);
     interpret_page(page, &mut context, &mut collector);
     collector.finish(clip)

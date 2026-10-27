@@ -20,13 +20,13 @@ if TYPE_CHECKING:
     #: ``(bbox, (text, chars), size, origin, font, flags, style, quad)``, whose
     #: style is ``(color, render mode, clipped, ascender, descender,
     #: (underlined, struck out, superscript))``; a char is ``(text, bbox,
-    #: origin, synthetic)``; a word is ``(bbox, text)``; and a quad is four
-    #: points.
+    #: origin, synthetic, (stream, operation) or None)``; a word is ``(bbox,
+    #: text)``; and a quad is four points.
     _Box = tuple[float, float, float, float]
     _Pt = tuple[float, float]
     _CoreQuad = tuple[_Pt, _Pt, _Pt, _Pt]
     _CoreStyle = tuple[tuple[float, float, float, float] | None, int, bool, float, float, tuple[bool, bool, bool]]
-    _CoreChar = tuple[str, _Box, _Pt, bool]
+    _CoreChar = tuple[str, _Box, _Pt, bool, tuple[int, int] | None]
     _CoreSpan = tuple[_Box, tuple[str, list[_CoreChar]], float, _Pt, str, int, _CoreStyle, _CoreQuad]
     _CoreLine = tuple[_Box, list[_CoreSpan], list[tuple[_Box, str]], _Pt, int, _CoreQuad]
     _CoreBlock = tuple[_Box, list[_CoreLine]]
@@ -126,6 +126,15 @@ class Char:
     """Whether the char is a space that pyropdf inferred from the gap between
     two glyphs, as ``Span.text`` holds it, rather than a glyph; its box spans
     the gap."""
+    stream: int | None = None
+    """The object number of the content stream that holds the operator that
+    showed the glyph, or ``None``, as for ``operation``."""
+    operation: int | None = None
+    """The index in :attr:`Page.operations` of the operation that showed the
+    glyph, or ``None`` for a synthetic char and for a glyph that a Form
+    XObject or an annotation's appearance shows. It is also ``None`` for
+    every char of a page whose content :attr:`Page.operations` cannot read,
+    or that pyropdf cannot match to hayro's interpretation."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -244,7 +253,7 @@ def _point(point: Sequence[float]) -> Point:
     return _new_tuple(Point, point) if _isfinite(point[0] + point[1]) else Point(*point)
 
 
-def _char(text: str, bbox: Rect, origin: Point, is_synthetic: bool) -> Char:  # noqa: FBT001 - one core tuple.
+def _char(text: str, bbox: Rect, origin: Point, is_synthetic: bool, source: tuple[int, int] | None) -> Char:  # noqa: FBT001 - one core tuple.
     """Return a :class:`Char` for every glyph of a layout with characters.
 
     The ``__init__`` of a frozen dataclass sets each field through
@@ -256,6 +265,12 @@ def _char(text: str, bbox: Rect, origin: Point, is_synthetic: bool) -> Char:  # 
     _set_char_bbox(char, bbox)
     _set_char_origin(char, origin)
     _set_char_synthetic(char, is_synthetic)
+    if source is None:
+        _set_char_stream(char, None)
+        _set_char_operation(char, None)
+    else:
+        _set_char_stream(char, source[0])
+        _set_char_operation(char, source[1])
     return char
 
 
@@ -266,6 +281,8 @@ _set_char_text = Char.text.__set__
 _set_char_bbox = Char.bbox.__set__
 _set_char_origin = Char.origin.__set__
 _set_char_synthetic = Char.is_synthetic.__set__
+_set_char_stream = Char.stream.__set__
+_set_char_operation = Char.operation.__set__
 
 
 def _quad(quad: Sequence[Sequence[float]]) -> Quad:
@@ -333,8 +350,8 @@ def _build_span(  # noqa: PLR0913, PLR0917 - unpacks one core span tuple.
     """Build one :class:`Span` from its text and, when asked for, its glyphs."""
     text, glyphs = content
     chars = tuple(
-        _char(char, _rect(char_bbox), _point(char_origin), synthetic)
-        for char, char_bbox, char_origin, synthetic in glyphs
+        _char(char, _rect(char_bbox), _point(char_origin), synthetic, source)
+        for char, char_bbox, char_origin, synthetic, source in glyphs
     )
     components, render_mode, is_clipped, ascender, descender, (is_underlined, is_struck, is_superscript) = style
     if components is None:

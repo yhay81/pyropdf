@@ -18,6 +18,7 @@ use pyropdf_store::budget::Budget;
 use crate::bridge::Bridged;
 
 mod model;
+mod provenance;
 mod reads;
 #[cfg(test)]
 mod tests;
@@ -106,7 +107,8 @@ pub fn page_content_into<S: ContentSink>(
         render_annotations: annotations,
         ..InterpreterSettings::default()
     };
-    model::collect_page_content(pdf, page, settings, sink, kinds, clip, budget)
+    let cache = InterpreterCache::new();
+    model::collect_page_content(pdf, page, settings, &cache, sink, kinds, clip, budget)
 }
 
 /// The resolution of an image without a JFIF header, as pymupdf reports it.

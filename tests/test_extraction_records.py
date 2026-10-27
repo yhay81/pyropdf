@@ -119,9 +119,17 @@ def test_text_records_hold_checked_geometry_and_compare_as_constructed(usrguide:
     assert boxes == [pyropdf.Rect(*box) for box in boxes]
     assert points == [pyropdf.Point(*point) for point in points]
     rebuilt = [
-        pyropdf.Char(text=char.text, bbox=char.bbox, origin=char.origin, is_synthetic=char.is_synthetic)
+        pyropdf.Char(
+            text=char.text,
+            bbox=char.bbox,
+            origin=char.origin,
+            is_synthetic=char.is_synthetic,
+            stream=char.stream,
+            operation=char.operation,
+        )
         for char in chars
     ]
+    assert any(char.operation is not None for char in chars)
     assert rebuilt == chars
     assert {hash(char) for char in rebuilt} == {hash(char) for char in chars}
     assert repr(rebuilt[0]) == repr(chars[0])
