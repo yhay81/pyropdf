@@ -66,6 +66,32 @@ DEFECTS: dict[str, tuple[bytes, tuple[int | None, str, str, str]]] = {
         pdf([CATALOG, PAGES, PAGE, CONTENT]).replace(b"/Size 5 /Root", b"/Size 0 /Root"),
         (None, "Size", "FileTrailer/Size", "value"),
     ),
+    "count.pdf": (
+        page({2: b"<< /Type /Pages /Kids [3 0 R] /Count 2 >>"}),
+        (2, "Count", "PageTreeNode/Count", "invariant"),
+    ),
+    "parent.pdf": (
+        page({3: PAGE.replace(b"/Parent 2 0 R", b"/Parent 1 0 R")}),
+        (3, "Parent", "PageTreeNode/Kids", "invariant"),
+    ),
+    "order.pdf": (
+        page(
+            {
+                1: b"<< /Type /Catalog /Pages 2 0 R"
+                b" /Names << /Dests << /Names [(b) [3 0 R /Fit] (a) [3 0 R /Fit]] >> >> >>"
+            }
+        ),
+        (1, "Names/Dests/Names/2", "NameTree/Names", "invariant"),
+    ),
+    "limits.pdf": (
+        page(
+            {
+                1: b"<< /Type /Catalog /Pages 2 0 R"
+                b" /PageLabels << /Nums [0 << /S /D >> 2 << /S /r >>] /Limits [0 3] >> >>"
+            }
+        ),
+        (1, "PageLabels/Limits", "NumberTree/Limits", "invariant"),
+    ),
 }
 
 #: A page tree whose root lists itself among its kids, which the walk must

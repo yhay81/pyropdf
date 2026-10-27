@@ -175,7 +175,9 @@ def changes(
 def structural_check(
     document: _Document, /
 ) -> tuple[
-    list[tuple[int | None, str, str, str, Literal["type", "required", "version", "indirect", "value"], str]],
+    list[
+        tuple[int | None, str, str, str, Literal["type", "required", "version", "indirect", "value", "invariant"], str]
+    ],
     bool,
     int,
     int,

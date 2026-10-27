@@ -10,7 +10,7 @@ from pyropdf import _core
 if TYPE_CHECKING:
     from pyropdf._document import Document
 
-DefectKind = Literal["type", "required", "version", "indirect", "value"]
+DefectKind = Literal["type", "required", "version", "indirect", "value", "invariant"]
 
 
 @dataclass(frozen=True, slots=True)

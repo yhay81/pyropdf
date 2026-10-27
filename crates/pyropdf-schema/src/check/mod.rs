@@ -113,6 +113,9 @@ pub enum DefectKind {
     Indirect,
     /// A value is none of the key's possible values.
     Value,
+    /// A page, name, or number tree breaks an invariant that the model
+    /// cannot state, such as a page count or the order of keys.
+    Invariant,
 }
 
 impl DefectKind {
@@ -124,6 +127,7 @@ impl DefectKind {
             Self::Version => "version",
             Self::Indirect => "indirect",
             Self::Value => "value",
+            Self::Invariant => "invariant",
         }
     }
 }
@@ -175,6 +179,7 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         queue: Vec::new(),
         visited: HashSet::new(),
         targets: HashMap::new(),
+        counted: HashSet::new(),
     };
     let mut met = HashSet::new();
     walk.object(None, graph.trailer(), Target::Object(trailer))?;
@@ -213,6 +218,9 @@ struct Walk<'g, G: Graph> {
     queue: Vec<(u32, Target)>,
     visited: HashSet<(u32, usize)>,
     targets: HashMap<u32, usize>,
+    /// The page tree nodes whose count and kids are checked, once each
+    /// although a node is checked as more than one type.
+    counted: HashSet<u32>,
 }
 
 /// A direct value waiting to be checked as `Target`, at `String`.
@@ -298,7 +306,7 @@ impl<'g, G: Graph> Walk<'g, G> {
                     self.array(object, value, &OBJECTS[usize::from(at)], &path, &mut stack)?;
                 }
                 (Target::Tree(typed), View::Dictionary) => {
-                    self.tree(value, typed, &path, &mut stack)?;
+                    self.tree(object, value, typed, &path, &mut stack)?;
                 }
                 _ => {}
             }
@@ -325,6 +333,13 @@ impl<'g, G: Graph> Walk<'g, G> {
             if !present {
                 self.required(object, dict, described, key, path)?;
             }
+        }
+        if described.name.starts_with("PageTreeNode")
+            && let Some(number) = object
+            && path.is_empty()
+            && self.counted.insert(number)
+        {
+            self.pages(number, dict)?;
         }
         for (name, value) in self.graph.entries(dict) {
             let Ok(name) = std::str::from_utf8(name) else {
@@ -707,11 +722,13 @@ impl<'g, G: Graph> Walk<'g, G> {
     /// leaves.
     fn tree<'v>(
         &mut self,
+        object: Option<u32>,
         node: &'v G::Value,
         typed: &'static Typed,
         path: &str,
         stack: &mut Vec<Frame<'v, G::Value>>,
     ) -> Result<(), G::Error> {
+        self.order(object, node, typed.kind, path)?;
         if let Some(kids) = self.graph.get(node, b"Kids") {
             for item in self.items(kids, &join(path, "Kids"))? {
                 match item {
@@ -749,6 +766,156 @@ impl<'g, G: Graph> Walk<'g, G> {
                     }
                 }
                 _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn invariant(
+        &mut self,
+        object: Option<u32>,
+        path: &str,
+        clause: &str,
+        spec: &'static str,
+        message: String,
+    ) {
+        if self.report.defects.len() >= MAX_DEFECTS {
+            self.report.truncated = true;
+            return;
+        }
+        self.report.defects.push(Defect {
+            object,
+            path: path.to_owned(),
+            clause: clause.to_owned(),
+            spec,
+            kind: DefectKind::Invariant,
+            message,
+        });
+    }
+
+    /// Checks that page tree node `number` counts its kids' pages and that
+    /// each kid names it as its `/Parent`. A kid without a `/Type` that
+    /// tells is left to the model check.
+    fn pages(&mut self, number: u32, node: &G::Value) -> Result<(), G::Error> {
+        let Some(kids) = self.graph.get(node, b"Kids") else {
+            return Ok(());
+        };
+        let mut sum = Some(0_i64);
+        for item in self.items(kids, "Kids")? {
+            let Item::Reference(at, kid) = item else {
+                sum = None;
+                continue;
+            };
+            let Some(value) = self.graph.resolve(kid)? else {
+                sum = None;
+                continue;
+            };
+            let count = match self.graph.get(&value, b"Type").map(|t| self.graph.view(t)) {
+                Some(View::Name(b"Page")) => Some(1),
+                Some(View::Name(b"Pages")) => {
+                    match self.graph.get(&value, b"Count").map(|c| self.graph.view(c)) {
+                        Some(View::Integer(count)) => Some(count),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            sum = sum.zip(count).map(|(sum, count)| sum.saturating_add(count));
+            let parent = self
+                .graph
+                .get(&value, b"Parent")
+                .map(|p| self.graph.view(p));
+            if count.is_some() && parent != Some(View::Reference(number)) {
+                let found = match parent {
+                    Some(View::Reference(other)) => format!("{other} 0 R"),
+                    Some(other) => other.to_string(),
+                    None => "nothing".to_owned(),
+                };
+                self.invariant(
+                    Some(kid),
+                    "Parent",
+                    "PageTreeNode/Kids",
+                    "7.7.3.2",
+                    format!("kid {at} of page tree node {number} names {found} as its /Parent"),
+                );
+            }
+        }
+        let count = self.graph.get(node, b"Count").map(|c| self.graph.view(c));
+        if let (Some(sum), Some(View::Integer(count))) = (sum, count)
+            && sum != count
+        {
+            self.invariant(
+                Some(number),
+                "Count",
+                "PageTreeNode/Count",
+                "7.7.3.2",
+                format!("/Count is {count}, but the kids hold {sum} pages"),
+            );
+        }
+        Ok(())
+    }
+
+    /// Checks that the keys of a name or number tree node ascend strictly
+    /// and that a leaf's `/Limits` are its first and last keys.
+    fn order(
+        &mut self,
+        object: Option<u32>,
+        node: &G::Value,
+        kind: Kind,
+        path: &str,
+    ) -> Result<(), G::Error> {
+        let (leaves, tree, spec) = if kind == Kind::NameTree {
+            ("Names", "NameTree", "7.9.6")
+        } else {
+            ("Nums", "NumberTree", "7.9.7")
+        };
+        let Some(array) = self.graph.get(node, leaves.as_bytes()) else {
+            return Ok(());
+        };
+        let resolved;
+        let array = match self.graph.view(array) {
+            View::Reference(number) => match self.graph.resolve(number)? {
+                Some(value) => {
+                    resolved = value;
+                    &*resolved
+                }
+                None => return Ok(()),
+            },
+            _ => array,
+        };
+        if !matches!(self.graph.view(array), View::Array(_)) {
+            return Ok(());
+        }
+        let keys: Vec<View<'_>> = self
+            .graph
+            .elements(array)
+            .iter()
+            .step_by(2)
+            .map(|key| self.graph.view(key))
+            .collect();
+        if let Some(at) = keys.windows(2).position(|pair| !ascends(pair[0], pair[1])) {
+            self.invariant(
+                object,
+                &join(path, &format!("{leaves}/{}", 2 * (at + 1))),
+                &format!("{tree}/{leaves}"),
+                spec,
+                format!("key {} does not follow key {}", keys[at + 1], keys[at]),
+            );
+        }
+        let limits = self.graph.get(node, b"Limits");
+        if let (Some(limits), Some(first), Some(last)) = (limits, keys.first(), keys.last())
+            && matches!(self.graph.view(limits), View::Array(2))
+        {
+            let bounds = self.graph.elements(limits);
+            let (low, high) = (self.graph.view(&bounds[0]), self.graph.view(&bounds[1]));
+            if !same(low, *first) || !same(high, *last) {
+                self.invariant(
+                    object,
+                    &join(path, "Limits"),
+                    &format!("{tree}/Limits"),
+                    spec,
+                    format!("/Limits are [{low} {high}], but the keys run from {first} to {last}"),
+                );
             }
         }
         Ok(())
@@ -793,6 +960,25 @@ impl<'g, G: Graph> Walk<'g, G> {
 enum Item<'v, V> {
     Direct(usize, &'v V, String),
     Reference(usize, u32),
+}
+
+/// Whether tree key `next` may follow `key`: strictly greater, as bytes for
+/// names and as integers for numbers. Keys of another type are left to the
+/// model check.
+fn ascends(key: View<'_>, next: View<'_>) -> bool {
+    match (key, next) {
+        (View::String(key), View::String(next)) => key < next,
+        (View::Integer(key), View::Integer(next)) => key < next,
+        _ => true,
+    }
+}
+
+/// Whether a `/Limits` bound names `key`, where both are of a key's type.
+fn same(bound: View<'_>, key: View<'_>) -> bool {
+    match (bound, key) {
+        (View::String(_) | View::Integer(_), View::String(_) | View::Integer(_)) => bound == key,
+        _ => true,
+    }
 }
 
 fn join(path: &str, key: &str) -> String {
