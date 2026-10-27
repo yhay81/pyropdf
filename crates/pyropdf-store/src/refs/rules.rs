@@ -13,7 +13,7 @@ use crate::version::Transaction;
 use crate::version::table::Table;
 use crate::{Error, Result};
 
-use super::{Found, References, Referrer, Role, Step, find};
+use super::{Found, References, Referrer, Role, Step, find_where};
 
 /// What a rule does with a reference to an object that leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,6 +47,11 @@ pub struct Edits<'b> {
     edits: BudgetVec<'b, Edit>,
     /// The referrers that [`Rule::RemoveReferrer`] removed.
     orphans: BudgetVec<'b, u32>,
+    /// The references of each object that the rules searched, by the
+    /// number that they name, so that each is read once: the position in
+    /// `found` of each object's.
+    held: Table<usize>,
+    found: BudgetVec<'b, BudgetVec<'b, Found>>,
 }
 
 impl<'b> Edits<'b> {
@@ -57,7 +62,45 @@ impl<'b> Edits<'b> {
             budget,
             edits: BudgetVec::new(budget),
             orphans: BudgetVec::new(budget),
+            held: Table::new(),
+            found: BudgetVec::new(budget),
         }
+    }
+
+    /// Returns every reference to object `number` that object `holder`
+    /// holds in the version that `reads` reads, as [`super::find`] does,
+    /// reading `holder` once however many of its references the rules ask
+    /// for.
+    pub(super) fn find(
+        &mut self,
+        reads: &mut Reads<'_>,
+        holder: u32,
+        number: u32,
+    ) -> Result<BudgetVec<'b, Found>> {
+        let at = if let Some(&at) = self.held.get(holder) {
+            at
+        } else {
+            let mut found = BudgetVec::new(self.budget);
+            for each in find_where(reads, Referrer::Object(holder), |_| true)?.into_vec() {
+                found.try_push(each)?;
+            }
+            found.sort_by_key(|found| found.reference.number());
+            self.found.try_push(found)?;
+            self.held
+                .insert(holder, self.found.len() - 1, self.budget)?;
+            self.found.len() - 1
+        };
+        let mut out = BudgetVec::new(self.budget);
+        if let Some(found) = self.found.get(at) {
+            let start = found.partition_point(|found| found.reference.number() < number);
+            for found in found[start..]
+                .iter()
+                .take_while(|found| found.reference.number() == number)
+            {
+                out.try_push(found.clone())?;
+            }
+        }
+        Ok(out)
     }
 
     /// Plans `rule` for the reference at `path` in object `referrer` of the
@@ -76,7 +119,7 @@ impl<'b> Edits<'b> {
             Rule::Retarget(to) => self.push(referrer, path, Some(to)),
             Rule::RemoveReferrer => {
                 for &holder in index.referrers(referrer) {
-                    for found in find(reads, Referrer::Object(holder), referrer)?.iter() {
+                    for found in self.find(reads, holder, referrer)?.iter() {
                         if is_annotation_entry(reads, holder, found)? {
                             self.push(holder, &found.path, None)?;
                         }
@@ -143,6 +186,13 @@ impl<'b> Edits<'b> {
             let mut last: Option<&[Step]> = None;
             while at < self.edits.len() && self.edits[at].number == number {
                 let edit = &self.edits[at];
+                let removals = removals(&self.edits[at..]);
+                if removals > 1 {
+                    remove_items(&mut value, &self.edits[at..at + removals]);
+                    last = Some(&self.edits[at + removals - 1].path);
+                    at += removals;
+                    continue;
+                }
                 if last != Some(&*edit.path) {
                     change(&mut value, &edit.path, edit.to);
                 }
@@ -172,6 +222,55 @@ fn is_annotation_entry(reads: &mut Reads<'_>, holder: u32, found: &Found) -> Res
         Err(error) if error.limit().is_some() => return Err(error),
         Err(_) => false,
     })
+}
+
+/// Returns how many of the first `edits`, sorted as [`Edits::write`] sorts
+/// them, remove items of one array of one object: none when the first edit
+/// does not remove an item.
+fn removals(edits: &[Edit]) -> usize {
+    fn removes(edit: &Edit) -> Option<(u32, &[Step])> {
+        match edit.path.split_last() {
+            Some((Step::Index(_), parent)) if edit.to.is_none() => Some((edit.number, parent)),
+            _ => None,
+        }
+    }
+    let Some(first) = edits.first().and_then(removes) else {
+        return 0;
+    };
+    edits
+        .iter()
+        .take_while(|edit| removes(edit) == Some(first))
+        .count()
+}
+
+/// Removes, in one pass over their array, the items that `edits` remove:
+/// items of one array, in descending order of position, as [`removals`]
+/// counts them.
+fn remove_items(value: &mut Value, edits: &[Edit]) {
+    let Some((_, parent)) = edits.first().and_then(|edit| edit.path.split_last()) else {
+        return;
+    };
+    let Some(Value::Array(items)) = at_mut(value, parent) else {
+        return;
+    };
+    let mut gone = edits
+        .iter()
+        .rev()
+        .filter_map(|edit| match edit.path.last() {
+            Some(Step::Index(index)) => Some(*index),
+            _ => None,
+        })
+        .peekable();
+    let mut position = 0;
+    items.retain(|_| {
+        let here = position;
+        position += 1;
+        let mut keep = true;
+        while let Some(index) = gone.next_if(|&index| index <= here) {
+            keep &= index != here;
+        }
+        keep
+    });
 }
 
 /// Removes the entry at `path` in `value`, or points the reference there

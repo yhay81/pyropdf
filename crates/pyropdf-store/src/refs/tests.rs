@@ -577,6 +577,29 @@ fn removing_entries_keeps_the_positions_of_the_others() {
         **value.value(),
         array(vec![Value::Integer(0), reference(2)])
     );
+
+    // Removals from one array around an edit inside one of its items.
+    let objects = vec![
+        (
+            1,
+            array(vec![
+                reference(3),
+                reference(3),
+                dict(vec![("A", reference(3)), ("B", reference(2))]),
+                reference(3),
+                reference(3),
+            ]),
+        ),
+        (2, Value::Integer(0)),
+        (3, Value::Integer(0)),
+    ];
+    let document = document_of(&objects, Dict::new());
+    apply_everywhere(&document, 3, None, Rule::RemoveEntry).unwrap();
+    let value = document.current().get(1, &budget).unwrap().unwrap();
+    assert_eq!(
+        **value.value(),
+        array(vec![dict(vec![("B", reference(2))])])
+    );
 }
 
 #[test]

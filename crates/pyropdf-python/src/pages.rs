@@ -182,24 +182,26 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
     let mut retained: Vec<u32> = order.iter().map(|page| page.number()).collect();
     retained.sort_unstable();
     retained.dedup();
-    let mut removed = current_order(&index)?
+    let before = current_order(&index)?
         .iter()
         .map(|page| page.number())
+        .collect::<Vec<_>>();
+    let mut removed = before
+        .iter()
+        .copied()
         .filter(|number| retained.binary_search(number).is_err())
         .collect::<Vec<_>>();
     removed.sort_unstable();
     removed.dedup();
+    let pages = Pages {
+        before: &before,
+        order: &order,
+        removed: &removed,
+        retained: &retained,
+    };
     document.edit(py, |transaction, budget| {
         let savepoint = transaction.savepoint();
-        let result = remove_pages(
-            document,
-            transaction,
-            &index,
-            &order,
-            &removed,
-            &retained,
-            budget,
-        );
+        let result = remove_pages(document, transaction, &index, &pages, budget);
         if result.is_err() {
             transaction.rollback(savepoint);
         }
@@ -207,24 +209,47 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
     })
 }
 
-/// Runs the rules for `removed`, writes the page tree with `order` as its
-/// pages, and frees what the removed pages leave unreferenced.
+/// The pages of [`set_pages`]: in their order before, in the new order,
+/// and the numbers of those that leave and of those that stay, ascending.
+struct Pages<'p> {
+    before: &'p [u32],
+    order: &'p [Reference],
+    removed: &'p [u32],
+    retained: &'p [u32],
+}
+
+/// Runs the rules for the removed pages, writes the page tree with the new
+/// order and the page labels that follow the pages, and frees what the
+/// removed pages and the labels before leave unreferenced.
 fn remove_pages(
     document: &_Document,
     transaction: &mut Transaction,
     index: &PageIndex,
-    order: &[Reference],
-    removed: &[u32],
-    retained: &[u32],
+    pages: &Pages<'_>,
     budget: &Budget,
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
-    if removed.is_empty() {
+    let Pages {
+        before: old,
+        order,
+        removed,
+        retained,
+    } = *pages;
+    let before = transaction.snapshot();
+    let numbers: Vec<u32> = order.iter().map(|page| page.number()).collect();
+    let labels = refs::relabel(&mut Reads::new(&before, budget), old, &numbers).map_err(store)?;
+    if removed.is_empty()
+        && labels
+            .as_ref()
+            .is_none_or(|labels| labels.nodes().is_empty())
+    {
+        if let Some(labels) = &labels {
+            labels.write(transaction, budget).map_err(store)?;
+        }
         let view = transaction.snapshot();
         return rewrite_with(transaction, &view, index, order, None, budget);
     }
     let parent = Arc::clone(transaction.parent());
-    let before = transaction.snapshot();
     let references = document.references.get(&parent, budget).map_err(store)?;
     let references = match parent.changes(&before, budget).map_err(store)? {
         Some(changes) if !changes.is_empty() => Arc::new(
@@ -235,15 +260,20 @@ fn remove_pages(
         _ => references,
     };
     let mut edits = Edits::new(budget);
-    refs::remove_pages(
-        &mut Reads::new(&before, budget),
-        &references,
-        removed,
-        retained,
-        &mut edits,
-    )
-    .map_err(store)?;
+    if !removed.is_empty() {
+        refs::remove_pages(
+            &mut Reads::new(&before, budget),
+            &references,
+            removed,
+            retained,
+            &mut edits,
+        )
+        .map_err(store)?;
+    }
     edits.write(transaction, budget).map_err(store)?;
+    if let Some(labels) = &labels {
+        labels.write(transaction, budget).map_err(store)?;
+    }
     let view = transaction.snapshot();
     rewrite_with(transaction, &view, index, order, None, budget)?;
     let after = transaction.snapshot();
@@ -253,7 +283,11 @@ fn remove_pages(
             .map_err(store)?,
         None => return Ok(()),
     };
-    let freed = refs::unreferenced(&references, removed, edits.orphans(), budget).map_err(store)?;
+    let mut candidates = edits.orphans().to_vec();
+    if let Some(labels) = &labels {
+        candidates.extend_from_slice(labels.nodes());
+    }
+    let freed = refs::unreferenced(&references, removed, &candidates, budget).map_err(store)?;
     for &number in freed.iter() {
         transaction.free(number, budget).map_err(store)?;
     }

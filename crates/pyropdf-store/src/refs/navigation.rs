@@ -13,7 +13,7 @@ use crate::value::{Dict, Value};
 use crate::version::table::Table;
 
 use super::rules::aliasing;
-use super::{Edits, References, Referrer, Role, Rule, Step, find};
+use super::{Edits, References, Role, Rule, Step};
 
 /// The most steps from a reference to a page up to the navigation that
 /// holds it: an indirect destination, then an indirect action.
@@ -50,7 +50,7 @@ pub(super) fn plan(
             if is_in(removed, referrer) {
                 continue;
             }
-            for found in find(reads, Referrer::Object(referrer), page)?.iter() {
+            for found in edits.find(reads, referrer, page)?.iter() {
                 match found.role {
                     Some(Role::Destination) => {
                         let holder = &found.path[..found.path.len() - 1];
@@ -116,7 +116,7 @@ impl Planner<'_, '_> {
                 if is_in(self.removed, holder) {
                     continue;
                 }
-                for found in find(reads, Referrer::Object(holder), referrer)?.iter() {
+                for found in edits.find(reads, holder, referrer)?.iter() {
                     self.navigation(reads, edits, holder, &found.path, depth + 1)?;
                 }
             }
