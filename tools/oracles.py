@@ -4,8 +4,8 @@ pypdfium2, pymupdf, and pdf.js read each document of the real-world corpus
 and of the generated PDF/A and PDF/UA corpora, and each save of each edit of
 the preservation harness's EDITS applied to it, in full and incrementally.
 Each reader's reading of a save must match its reading of the original: the
-same page count, plus one after ``new_page``, and on every page that the
-edit did not touch, the same size and extracted text. The readers are
+edited document's page count, and on every page that the edit did not touch,
+found again by its object number, the same size and extracted text. The readers are
 development-only oracles, outside the package's dependencies:
 
     uv run --group oracles python tools/oracles.py --readers pypdfium2 pymupdf
@@ -104,15 +104,19 @@ def pdfjs(files: list[bytes]) -> list[Reading]:
 READERS: dict[str, Callable[[list[bytes]], list[Reading]]] = {"pypdfium2": pdfium, "pymupdf": mupdf, "pdfjs": pdfjs}
 
 
-def differences(original: Reading, saved: Reading, untouched: list[int], *, added: int) -> list[str]:
-    """Return how ``saved`` differs from ``original`` on the pages that the edit did not touch."""
-    if len(saved) != len(original) + added:
-        return [f"page count {len(saved)}, expected {len(original) + added}"]
+def differences(original: Reading, saved: Reading, untouched: list[tuple[int, int]], *, count: int) -> list[str]:
+    """Return how ``saved`` differs from ``original`` on the pages that the edit did not touch.
+
+    ``untouched`` pairs each such page's index in the original with its index
+    in the save, since edits add and move pages.
+    """
+    if len(saved) != count:
+        return [f"page count {len(saved)}, expected {count}"]
     out = []
-    for index in untouched:
-        if saved[index][0] != original[index][0]:
-            out.append(f"page {index} size {saved[index][0]}, was {original[index][0]}")
-        if saved[index][1] != original[index][1]:
+    for index, at in untouched:
+        if saved[at][0] != original[index][0]:
+            out.append(f"page {index} size {saved[at][0]}, was {original[index][0]}")
+        if saved[at][1] != original[index][1]:
             out.append(f"page {index} text changed")
     return out
 
@@ -127,15 +131,20 @@ def check(source: Path, readers: list[str]) -> list[str]:
             doc = pyropdf.open(data)
             pages = [page.obj.xref for page in doc.pages]
             touched = apply(doc)
+            after = [page.obj.xref for page in doc.pages]
             files.append(doc.to_bytes(incremental=incremental))
-            untouched = [index for index, number in enumerate(pages) if number not in touched]
-            cases.append((edit, "incremental" if incremental else "full", untouched))
+            untouched = [
+                (index, after.index(number))
+                for index, number in enumerate(pages)
+                if number not in touched and number in after
+            ]
+            cases.append((edit, "incremental" if incremental else "full", untouched, len(after)))
     unexplained = []
     for reader in readers:
         original, *saved = READERS[reader](files)
         sys.stdout.write(f"{source.relative_to(ASSETS)} {reader}: {len(original)} pages\n")
-        for (edit, mode, untouched), reading in zip(cases, saved, strict=True):
-            for difference in differences(original, reading, untouched, added=edit == "new_page"):
+        for (edit, mode, untouched, count), reading in zip(cases, saved, strict=True):
+            for difference in differences(original, reading, untouched, count=count):
                 key = f"{reader} {source.name} {edit} {mode} {difference.split(' size')[0].split(' text')[0]}"
                 note = EXPLAINED.get(key)
                 sys.stdout.write(f"  {reader} {edit} {mode}: {difference}{f' ({note})' if note else ''}\n")
