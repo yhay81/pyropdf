@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 GENERATOR = ROOT / "tools/spec_map/generate.py"
 MAP = Path("docs/spec-map.json")
+COVERAGE = Path("docs/spec-coverage.md")
 FEATURES = Path("tools/spec_map/features.toml")
 COMMAND = "python3 tools/spec_map/generate.py"
 DIMENSIONS = ("read", "interpret", "create", "edit", "preserve")
@@ -32,7 +33,7 @@ def copy_root(root: Path) -> Path:
     """Copy what the generator reads and the map to another root, and return it."""
     shutil.copytree(ROOT / "tools/arlington/model", root / "tools/arlington/model")
     shutil.copytree(ROOT / "tests", root / "tests", ignore=shutil.ignore_patterns("assets", "__pycache__"))
-    for path in (FEATURES, MAP):
+    for path in (FEATURES, MAP, COVERAGE):
         (root / path).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / path, root / path)
     return root
@@ -163,3 +164,28 @@ def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> No
     by_name = features()
     assert by_name["flate-filter"]["read"]["status"] == "done"
     assert by_name["lzw-filter"]["read"] == {"status": "planned", "milestone": "Phase 4: Specification"}
+
+
+def test_the_coverage_page_lists_every_clause_and_exclusion() -> None:
+    spec_map = json.loads((ROOT / MAP).read_text(encoding="utf-8"))
+    page = (ROOT / COVERAGE).read_text(encoding="utf-8")
+    for clause, title in spec_map["clauses"].items():
+        assert f"| {clause} | {title} |" in page
+    excluded = [
+        (feature["feature"], dimension)
+        for feature in spec_map["features"]
+        for dimension in DIMENSIONS
+        if feature[dimension]["status"] in {"n/a", "non-goal"}
+    ]
+    assert excluded
+    for name, dimension in excluded:
+        assert f"- `{name}` {dimension}: " in page
+
+
+def test_a_stale_coverage_page_fails_the_check(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    page = root / COVERAGE
+    page.write_text(page.read_text(encoding="utf-8").replace("| 7.2 |", "| 7.2.0 |"), encoding="utf-8")
+    result = generate(root, "--check")
+    assert result.returncode == 1
+    assert f"{COVERAGE.as_posix()} is stale" in result.stderr
