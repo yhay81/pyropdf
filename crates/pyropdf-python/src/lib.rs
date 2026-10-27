@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 
 mod cancel;
 mod changes;
+mod check;
 mod content;
 mod document;
 mod errors;
@@ -32,6 +33,8 @@ mod _core {
     use super::cancel::CancellationToken;
     #[pymodule_export]
     use super::changes::changes;
+    #[pymodule_export]
+    use super::check::structural_check;
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]

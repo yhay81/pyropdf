@@ -1,7 +1,7 @@
 # Type stubs for the extension module that crates/pyropdf-python builds.
 
 from os import PathLike
-from typing import Any, TypeAlias, final
+from typing import Any, Literal, TypeAlias, final
 
 from pyropdf._pixmap import Colorspace
 
@@ -172,6 +172,15 @@ def end_transaction(document: _Document, commit: bool, /) -> None: ...
 def changes(
     document: _Document, incremental: bool, /
 ) -> tuple[list[tuple[str, int, str, list[int]]], list[tuple[str, int, str, list[int]]]]: ...
+def structural_check(
+    document: _Document, /
+) -> tuple[
+    list[tuple[int | None, str, str, str, Literal["type", "required", "version", "indirect", "value"], str]],
+    bool,
+    int,
+    int,
+    str,
+]: ...
 def history_state(document: _Document, /) -> tuple[list[str], int, int | None, int]: ...
 def history_undo(document: _Document, /) -> None: ...
 def history_redo(document: _Document, /) -> None: ...
