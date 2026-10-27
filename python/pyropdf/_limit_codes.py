@@ -39,6 +39,8 @@ LimitCode: TypeAlias = Literal[
     "svg_output_size",
     "render_output_size",
     "password_input_size",
+    "embedded_file_size",
+    "embedded_file_input_size",
     "annotation_input_size",
     "named_destination_count",
     "named_destination_text_size",
@@ -112,6 +114,11 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."
         ),
         "password_input_size": "A password is longer in UTF-8 than PDF 2.0 allows.",
+        "embedded_file_size": (
+            "An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the "
+            "call's `max_size`."
+        ),
+        "embedded_file_input_size": "An attachment's name, file name, or description is longer in UTF-8 than 1 MiB.",
         "annotation_input_size": (
             "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are "
             "longer than 1 MiB in UTF-8 together."

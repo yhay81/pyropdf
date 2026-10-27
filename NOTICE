@@ -1,0 +1,21 @@
+pyropdf
+Copyright (c) 2026 Yusuke Hayashi. Licensed under the MIT License; see LICENSE.
+
+This product includes the Arlington PDF Model of the PDF Association,
+https://github.com/pdf-association/arlington-pdf-model, at commit
+d148fee5a0cb6dcacadf58c09ed842e32847024d.
+Its TSV files are vendored under tools/arlington/model/tsv, and
+crates/pyropdf-schema/src/generated.rs is generated from them.
+
+  Copyright 2020 PDF Association, Inc. https://www.pdfa.org
+
+  This material is based upon work supported by the Defense Advanced
+  Research Projects Agency (DARPA) under Contract No. HR001119C0079.
+  Any opinions, findings and conclusions or recommendations expressed
+  in this material are those of the author(s) and do not necessarily
+  reflect the views of the Defense Advanced Research Projects Agency
+  (DARPA). Approved for public release.
+
+  Licensed under the Apache License, Version 2.0; a copy is at
+  tools/arlington/model/LICENSE and https://www.apache.org/licenses/LICENSE-2.0.
+  The model's own notice is tools/arlington/model/NOTICE.txt.
