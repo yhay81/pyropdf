@@ -40,6 +40,8 @@ use std::sync::{Arc, OnceLock};
 use base::{Origin, VALUE_BYTES};
 use table::Table;
 
+use crate::settle::{Mark, Stale, Structure};
+
 pub use base::{Base, MemoryBase};
 pub use document::{Document, HistoryStatus};
 pub use transaction::{Savepoint, Transaction};
@@ -68,6 +70,8 @@ pub struct Version {
     next: u64,
     /// What the transaction that made the version wrote.
     written: ChangeSet,
+    /// The structures that the version leaves stale (DESIGN.md section 7).
+    pub(crate) stale: Stale,
 }
 
 /// A written trailer, retained as bytes and a parsed dictionary.
@@ -131,7 +135,9 @@ impl Version {
 
     /// The version record and its change set, excluding shared objects.
     fn record_size(&self) -> u64 {
-        Self::OVERHEAD + self.written.objects.len() as u64 * size_of::<u32>() as u64
+        Self::OVERHEAD
+            + self.written.objects.len() as u64 * size_of::<u32>() as u64
+            + self.stale.marks().len() as u64 * Stale::MARK_SIZE
     }
 
     /// Returns the first version of a document from `origin`: its base,
@@ -144,6 +150,7 @@ impl Version {
             trailer: None,
             next,
             written: ChangeSet::default(),
+            stale: Stale::default(),
         }
     }
 
@@ -156,6 +163,7 @@ impl Version {
             trailer: self.trailer.clone(),
             next: self.next,
             written: ChangeSet::default(),
+            stale: self.stale.clone(),
         }
     }
 
@@ -221,6 +229,20 @@ impl Version {
     #[must_use]
     pub fn has_changes(&self) -> bool {
         self.trailer.is_some() || self.slots().next().is_some()
+    }
+
+    /// Returns whether the version leaves `structure` of object `number`
+    /// stale: a font subset that only a save settles, or a structure that no
+    /// settler is registered for.
+    #[must_use]
+    pub fn is_stale(&self, structure: Structure, number: u32) -> bool {
+        self.stale.contains(Mark { structure, number })
+    }
+
+    /// Returns the structures that the version leaves stale, sorted.
+    #[must_use]
+    pub fn stale(&self) -> &[Mark] {
+        self.stale.marks()
     }
 
     /// Returns the trailer: the one that a transaction wrote last, or the

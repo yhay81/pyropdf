@@ -16,6 +16,7 @@ use std::thread::{self, ThreadId};
 
 use pyo3::prelude::*;
 use pyropdf_store::budget::Budget;
+use pyropdf_store::settle::Scope;
 use pyropdf_store::version::{Document, Savepoint, Transaction, Version};
 
 use crate::document::_Document;
@@ -41,6 +42,23 @@ struct Open {
     name: String,
     /// What the transaction wrote, as reads see it, until the next write.
     snapshot: Option<Arc<Version>>,
+}
+
+impl Open {
+    /// Returns what the transaction wrote, as reads see it. A read may
+    /// depend on any structure that a write left stale, so the transaction
+    /// first settles every structure that a commit settles.
+    fn view(&mut self, budget: &Budget) -> PyResult<Arc<Version>> {
+        if let Some(snapshot) = &self.snapshot {
+            return Ok(Arc::clone(snapshot));
+        }
+        self.transaction
+            .settle(Scope::Commit, budget)
+            .map_err(|e| store_error(&e))?;
+        Ok(Arc::clone(
+            self.snapshot.insert(self.transaction.snapshot()),
+        ))
+    }
 }
 
 /// The names of the history's steps, and how many of them undo can take.
@@ -75,10 +93,7 @@ impl _Document {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
         Ok(match owned(&mut open) {
-            Some(open) => Arc::clone(
-                open.snapshot
-                    .get_or_insert_with(|| open.transaction.snapshot()),
-            ),
+            Some(open) => open.view(&self.budget())?,
             None => store.current(),
         })
     }
@@ -92,12 +107,9 @@ impl _Document {
         let Some(open) = owned(&mut open) else {
             return Ok((store.current(), None));
         };
-        let view = Arc::clone(
-            open.snapshot
-                .get_or_insert_with(|| open.transaction.snapshot()),
-        );
-        let parent = Arc::clone(open.transaction.parent());
         let budget = self.budget();
+        let view = open.view(&budget)?;
+        let parent = Arc::clone(open.transaction.parent());
         let unchanged = parent
             .changes(&view, &budget)
             .map_err(|e| store_error(&e))?

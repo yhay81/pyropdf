@@ -10,6 +10,7 @@ use pyo3::types::{PyString, PyTuple};
 use pyropdf_store::budget::Budget;
 use pyropdf_store::save::FileBase;
 use pyropdf_store::security::{Access, Encryption, Handler};
+use pyropdf_store::settle::Scope;
 use pyropdf_store::version::{Document, Version};
 
 use crate::document::_Document;
@@ -119,24 +120,35 @@ pub(crate) fn prepare(
                 aes256,
                 random,
             };
-            return Ok((document.reading()?, Some(encryption)));
+            return Ok((saved(py, document, false)?, Some(encryption)));
         }
         Some(_) => return Err(PyTypeError::new_err("encryption must be 'keep' or a tuple")),
     };
+    Ok((saved(py, document, !keep)?, None))
+}
+
+/// Returns the version that a save writes: the version that reads see, with
+/// every stale structure settled, font subsets included, and with no
+/// /Encrypt in its trailer when `decrypt` asks for it. A transaction that is
+/// then discarded makes those writes, so the current version keeps its
+/// provisional fonts and the history gains no step.
+fn saved(py: Python<'_>, document: &_Document, decrypt: bool) -> PyResult<Arc<Version>> {
     let version = document.reading()?;
-    if keep || version.trailer().get("Encrypt").is_none() {
-        return Ok((version, None));
+    let decrypt = decrypt && version.trailer().get("Encrypt").is_some();
+    if !decrypt && version.stale().is_empty() {
+        return Ok(version);
     }
-    // A full save without encryption writes the version decrypted: the
-    // same version with no /Encrypt in its trailer, which a transaction
-    // writes and then discards.
-    let mut trailer = version.trailer().clone();
-    trailer.remove("Encrypt");
-    let plain = document.scratch(py, |transaction, budget: &Budget| {
+    document.scratch(py, |transaction, budget: &Budget| {
         transaction
-            .set_trailer(trailer, budget)
+            .settle(Scope::Save, budget)
             .map_err(|e| store_error(&e))?;
+        if decrypt {
+            let mut trailer = transaction.version().trailer().clone();
+            trailer.remove("Encrypt");
+            transaction
+                .set_trailer(trailer, budget)
+                .map_err(|e| store_error(&e))?;
+        }
         Ok(transaction.snapshot())
-    })?;
-    Ok((plain, None))
+    })
 }
