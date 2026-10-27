@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 GENERATOR = ROOT / "tools/spec_map/generate.py"
+CLAIM = ROOT / "tools/spec_map/claim.py"
 MAP = Path("docs/spec-map.json")
 COVERAGE = Path("docs/spec-coverage.md")
 FEATURES = Path("tools/spec_map/features.toml")
@@ -140,6 +141,15 @@ def test_markers_and_statuses_the_generator_does_not_understand_are_refused(tmp_
             "but tests prove it",
         ),
         (features_path, features_text.replace('clause = "7.4.6"', 'clause = "7.4.66"'), "does not list: 7.4.66"),
+        (features_path, features_text.replace('reason = "7.4: a filter', 'reason = "A filter'), "cites no clause"),
+        (
+            features_path,
+            features_text.replace(
+                "[features.lzw-filter]\n",
+                '[features.lzw-filter]\ndeprecated = true\ncreate = { status = "n/a", reason = "7.4.4: old." }\n',
+            ),
+            "creating a deprecated feature is a non-goal",
+        ),
         (features_path, features_text.replace('"7.2" = ', '"7.2.1" = "Unused"\n"7.2" = '), "without a feature: 7.2.1"),
     ]
     for path, broken, message in cases:
@@ -189,3 +199,51 @@ def test_a_stale_coverage_page_fails_the_check(tmp_path: Path) -> None:
     result = generate(root, "--check")
     assert result.returncode == 1
     assert f"{COVERAGE.as_posix()} is stale" in result.stderr
+
+
+SCOPE = """name = "Test claim"
+pdf-versions = ["2.0"]
+errata = "2024-12-01"
+extensions = []
+profiles = []
+tools = ["qpdf"]
+"""
+
+
+def claim(root: Path, scope: str) -> subprocess.CompletedProcess[str]:
+    """Run the claim check of ``scope`` on a repository root."""
+    path = root / "scope.toml"
+    path.write_text(SCOPE + scope, encoding="utf-8")
+    command = [sys.executable, str(CLAIM), str(path), "--root", str(root)]
+    return subprocess.run(command, capture_output=True, check=False, text=True)  # noqa: S603 - fixed arguments
+
+
+def test_a_claim_holds_only_when_every_applicable_dimension_in_scope_is_done(tmp_path: Path) -> None:
+    held = claim(copy_root(tmp_path / "a"), 'clauses = ["7.6.4"]\n')
+    assert held.returncode == 0, held.stdout + held.stderr
+    assert "The claim holds." in held.stdout
+    assert "Full inventory: " in held.stdout
+    assert "5 of 5 applicable dimensions of 1 features done (100.0%)" in held.stdout
+    blocked = claim(copy_root(tmp_path / "b"), 'clauses = ["7.6.4", "7.4.4"]\n')
+    assert blocked.returncode == 1
+    assert "- flate-filter edit is planned" in blocked.stdout
+    assert "- lzw-filter read is planned" in blocked.stdout
+
+
+def test_a_non_goal_blocks_a_claim_unless_the_scope_excludes_it(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    features_path = root / FEATURES
+    goal = '{ status = "non-goal", decision = "#1", reason = "Test." }'
+    entry = "".join(f"{dimension} = {goal}\n" for dimension in DIMENSIONS)
+    features_path.write_text(
+        features_path.read_text(encoding="utf-8").replace("[features.lzw-filter]\n", f"[features.lzw-filter]\n{entry}"),
+        encoding="utf-8",
+    )
+    assert generate(root).returncode == 0
+    blocked = claim(root, 'clauses = []\nfeatures = ["lzw-filter"]\n')
+    assert blocked.returncode == 1
+    assert "- lzw-filter create is non-goal that the scope does not declare as an exclusion" in blocked.stdout
+    excluded = "".join(f'{dimension} = "Out of this claim."\n' for dimension in DIMENSIONS)
+    held = claim(root, f'clauses = []\nfeatures = ["lzw-filter"]\n\n[exclusions.lzw-filter]\n{excluded}')
+    assert held.returncode == 0, held.stdout
+    assert "- lzw-filter create (non-goal): Out of this claim." in held.stdout
