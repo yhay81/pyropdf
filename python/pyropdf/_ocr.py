@@ -211,6 +211,12 @@ class OcrEngine:
         gigabyte-scale detector tensor. ``rotation`` turns the raster
         clockwise for recognition, then maps boxes back. To recognize a page
         in page coordinates, use :meth:`Page.ocr`.
+
+        Recognition refuses rasters larger than 512 MiB in RGBA, more than
+        4,096 detected regions before overlap merging, or more than 32 MiB
+        of recognized UTF-8 text, with :class:`LimitError`. Page recognition
+        also observes its document's cancellation token and recognition
+        deadline between model calls; an individual model call runs to completion.
         """
         if not isinstance(pixmap, Pixmap):
             msg = f"pixmap must be a pyropdf.Pixmap: {pixmap!r}"
@@ -258,6 +264,7 @@ class OcrEngine:
             pixmap = page.pixmap(dpi=resolved_dpi, clip=clip_rect, alpha=True, background=(255, 255, 255))
             raster_results = self._engine.recognize_pixmap(
                 pixmap,
+                document=page.document._core(),  # noqa: SLF001 - share document operation limits.
                 tile_size=tile_size,
                 overlap=overlap,
                 min_confidence=resolved_confidence,

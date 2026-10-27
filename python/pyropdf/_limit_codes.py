@@ -29,11 +29,18 @@ LimitCode: TypeAlias = Literal[
     "text_size",
     "search_input_size",
     "search_hit_count",
-    "markdown_output_size",
+    "text_rule_count",
+    "table_cell_count",
+    "table_span_candidate_count",
+    "table_column_count",
+    "ocr_raster_size",
+    "ocr_detection_count",
+    "ocr_text_size",
     "ocr_model_size",
     "ocr_dictionary_entries",
     "stream_data_size",
     "object_value_depth",
+    "markdown_output_size",
     "pdf_output_size",
     "pixmap_output_size",
     "svg_output_size",
@@ -93,10 +100,19 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "search_input_size": "The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8.",
         "search_hit_count": "`Page.search` finds more matches than the call's `max_hits`.",
-        "markdown_output_size": (
-            "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is "
-            "larger than the call's `max_size`."
+        "text_rule_count": (
+            "Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers."
         ),
+        "table_cell_count": "A candidate table needs more than 4,096 row-column slots.",
+        "table_span_candidate_count": (
+            "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
+        ),
+        "table_column_count": "Text table detection encounters a row with more than 32 separated columns.",
+        "ocr_raster_size": "The raster expanded to RGBA for OCR exceeds 512 MiB.",
+        "ocr_detection_count": (
+            "OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps."
+        ),
+        "ocr_text_size": "OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering.",
         "ocr_model_size": (
             "The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its "
             "`max_model_size`."
@@ -104,6 +120,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "ocr_dictionary_entries": "The dictionary that `OcrEngine` loads has more lines than the limit.",
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
+        "markdown_output_size": (
+            "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is "
+            "larger than the call's `max_size`."
+        ),
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
         "pixmap_output_size": "Encoding a pixmap writes more bytes than the call's `max_size`.",
         "svg_output_size": "A page's SVG holds more UTF-8 bytes than the call's `max_size`.",

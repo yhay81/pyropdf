@@ -544,8 +544,11 @@ class Page:
         if not text:
             msg = "text must be at least 1 character"
             raise ValueError(msg)
-        # A character takes at most 4 bytes: short text needs no encoding to check.
-        if len(text) * 4 > _MAX_SEARCH_INPUT_BYTES and len(text.encode()) > _MAX_SEARCH_INPUT_BYTES:
+        # Each character takes 1 to 4 bytes. Reject a long string before
+        # encoding, so checking the byte limit also has bounded allocation.
+        if len(text) > _MAX_SEARCH_INPUT_BYTES or (
+            len(text) * 4 > _MAX_SEARCH_INPUT_BYTES and len(text.encode()) > _MAX_SEARCH_INPUT_BYTES
+        ):
             code = "search_input_size"
             msg = f"the search text exceeds the {_MAX_SEARCH_INPUT_BYTES}-byte UTF-8 limit"
             raise LimitError(code, msg)
@@ -679,6 +682,9 @@ class Page:
         box lies inside it are returned, and no part of a table is. Each
         table carries :class:`TableDiagnostics`. The page's glyphs count
         against ``max_glyphs`` and ``max_size`` as for :meth:`text`.
+        Exceeding 4,096 vector rules, 4,096 cells per candidate table,
+        65,536 merged-cell candidates per grid, or 32 text columns raises
+        :class:`LimitError`, with no partial table results.
         """
         if strategy not in {"lines", "text"}:
             msg = f"strategy must be 'lines' or 'text': {strategy!r}"

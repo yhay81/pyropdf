@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use pyropdf_engine::ocr::{Engine, Error, OcrTuple, Options};
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
 
+use crate::document::_Document;
 use crate::errors::{OcrError, limit_error};
 use crate::pixmap::Pixmap;
 
@@ -66,7 +67,8 @@ impl _OcrEngine {
 
     /// Recognizes the words of `pixmap` with the GIL released, as boxes in
     /// its pixel coordinates with their text and confidence.
-    #[pyo3(signature = (pixmap, *, tile_size=1408, overlap=192, min_confidence=0.5, rotation=0))]
+    #[pyo3(signature = (pixmap, *, tile_size=1408, overlap=192, min_confidence=0.5, rotation=0, document=None))]
+    #[allow(clippy::too_many_arguments)]
     fn recognize_pixmap(
         &self,
         py: Python<'_>,
@@ -75,7 +77,12 @@ impl _OcrEngine {
         overlap: usize,
         min_confidence: f32,
         rotation: usize,
+        document: Option<PyRef<'_, _Document>>,
     ) -> PyResult<Vec<OcrTuple>> {
+        let budget = document
+            .as_ref()
+            .map_or_else(Budget::default, |document| document.budget());
+        drop(document);
         let (pixels, layout) = pixmap.ocr_raster();
         drop(pixmap);
         let options = Options {
@@ -84,7 +91,7 @@ impl _OcrEngine {
             min_confidence,
             rotation,
         };
-        py.detach(|| self.engine.recognize(&pixels, layout, &options))
+        py.detach(|| self.engine.recognize(&pixels, layout, &options, &budget))
             .map_err(ocr_error)
     }
 

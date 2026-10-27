@@ -3,11 +3,9 @@
 Ported from pylopdf 036be111 ``tests/test_layout_serializations.py`` and,
 from ``tests/test_layout.py``, ``test_dict_structure``,
 ``test_span_dictionaries_hold_pymupdf_color_alpha_and_char_flags``, and
-``test_dict_reports_transformed_baseline_direction``. Not ported:
-``test_spans_take_the_ascender_and_descender_of_an_opentype_program``,
-which embeds a font with ``page.draw``, and
-``test_a_substitute_for_a_font_that_is_not_embedded_lends_no_metrics``,
-which needs OCR (#102); pyropdf writes neither yet.
+``test_dict_reports_transformed_baseline_direction``. The font-metric cases
+use an existing embedded TrueType program and a non-embedded CJK fixture
+instead of drawing text or configuring OCR fallback fonts.
 """
 
 from __future__ import annotations
@@ -15,11 +13,13 @@ from __future__ import annotations
 import html.parser
 import json
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 
 import pytest
 from corpus import ASSETS
 from test_content import build_raw_pdf
 from test_extraction_records import build_painted_text_pdf
+from test_search import build_cjk_pdf
 from test_text import build_text_pdf
 
 import pyropdf
@@ -116,6 +116,35 @@ def test_span_flags_mark_a_superscript_and_char_flags_its_decorations() -> None:
     assert spans[0]["char_flags"] & 3 == 3
 
 
+def test_spans_take_the_ascender_and_descender_of_an_opentype_program() -> None:
+    page = pyropdf.open(ASSETS / "nics-background-checks-2015-11.pdf").pages[0]
+    layout = page.layout(chars=True)
+    span = next(s for b in layout.blocks for line in b.lines for s in line.spans if s.font == "ArialMT")
+    # The embedded ArialMT's head has 2048 units per em, and its hhea
+    # ascender and descender are 1854 and -434, independently read from it.
+    ascender, descender = 1854 / 2048, -434 / 2048
+    assert (span.ascender, span.descender) == (ascender, descender)
+    assert ascender - descender > 1
+    char = span.chars[0]
+    assert char.bbox.y0 == pytest.approx(char.origin.y - span.size * ascender)
+    assert char.bbox.y1 == pytest.approx(char.origin.y - span.size * descender)
+    serialized = next(
+        s for b in layout.to_dict()["blocks"] for line in b["lines"] for s in line["spans"] if s["font"] == "ArialMT"
+    )
+    assert (serialized["ascender"], serialized["descender"]) == (ascender, descender)
+
+
+def test_a_substitute_for_a_font_that_is_not_embedded_lends_no_metrics() -> None:
+    # This CID font has no FontFile. Hayro supplies a substitute for its
+    # glyphs, while the extraction metrics retain the documented defaults.
+    page = pyropdf.open(build_cjk_pdf()).pages[0]
+    (span,) = page.layout().blocks[0].lines[0].spans
+    assert span.font == "MS-Mincho"
+    assert (span.ascender, span.descender) == (0.8, -0.2)
+    serialized = page.layout().to_dict()["blocks"][0]["lines"][0]["spans"][0]
+    assert (serialized["ascender"], serialized["descender"]) == (0.8, -0.2)
+
+
 def test_dict_reports_transformed_baseline_direction() -> None:
     """Assemble a rotated baseline without mistaking it for vertical WMode."""
     stream = "BT /F1 24 Tf 0 1 -1 0 100 100 Tm (Vertical) Tj ET"
@@ -171,6 +200,28 @@ def test_html_and_xml_escape_text() -> None:
     assert "&lt;a&gt; &amp; " in fragment
     assert "".join(_parse(fragment).text).strip() == '<a> & "b"'
     assert "".join(char.get("c", "") for char in root.iter("char")) == '<a> & "b"'
+
+
+@pytest.mark.parametrize(
+    ("font", "quoted"),
+    [
+        ('A";position:fixed;/*', '"A\\22 ;position:fixed;/*"'),
+        ("A\\B\nC\rD\fE", '"A\\5c B\\a C\\d D\\c E"'),
+    ],
+)
+def test_html_quotes_font_names_inside_css_strings(font: str, quoted: str) -> None:
+    layout = pyropdf.open(build_text_pdf("BT /F1 20 Tf 72 700 Td (Text) Tj ET")).pages[0].layout()
+    (block,) = layout.blocks
+    (line,) = block.lines
+    (span,) = line.spans
+    changed = replace(layout, blocks=(replace(block, lines=(replace(line, spans=(replace(span, font=font),)),)),))
+
+    styles = [style for tag, style in _parse(changed.to_html()).tags if tag == "span"]
+
+    # HTML entities have already been decoded. Quotes, backslashes, and
+    # line breaks must still be escaped for the CSS parser at this point.
+    assert len(styles) == 1
+    assert styles[0].startswith(f"font-family:{quoted},sans-serif;font-size:20pt;")
 
 
 def test_html_turns_rotated_lines_along_their_baseline() -> None:
