@@ -91,6 +91,7 @@ def test_an_undone_state_saves_and_reopens() -> None:
         assert reopened.pages[0].rotation == 90
 
 
+@pytest.mark.spec("incremental-update", "create", "preserve")
 def test_undoing_to_the_original_saves_incrementally_as_read() -> None:
     original = numbered(1)
     doc = pyropdf.open(original)

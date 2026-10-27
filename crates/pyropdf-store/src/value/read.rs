@@ -121,7 +121,8 @@ impl Stream {
     ///
     /// Refuses with a malformed input error a stream whose filters
     /// hayro-syntax does not decode, such as an image filter, and with a
-    /// limit what the budget does not allow. hayro-syntax 0.8 decodes a
+    /// limit what the budget does not allow, such as a chain of more
+    /// filters than its `stream_filter_count`. hayro-syntax 0.8 decodes a
     /// stream whole and without a bound (yhay81/pyropdf#48), so the budget
     /// counts the decoded bytes once they are decoded.
     pub fn decoded(&self, budget: &Budget) -> Result<Vec<u8>> {
@@ -131,8 +132,15 @@ impl Stream {
     /// Returns the data decoded as [`Stream::decoded`] decodes it, charging
     /// its decoded size as a stream of `kind`, whose limits also bound it.
     pub fn decoded_as(&self, kind: StreamKind, budget: &Budget) -> Result<Vec<u8>> {
-        if self.dict.get("Filter").is_none() {
-            return copy(&self.data, budget).map(Vec::from).map_err(Into::into);
+        match self.dict.get("Filter") {
+            None => return copy(&self.data, budget).map(Vec::from).map_err(Into::into),
+            Some(Value::Array(filters)) => {
+                budget.check(
+                    LimitCode::StreamFilterCount,
+                    u64::try_from(filters.len()).unwrap_or(u64::MAX),
+                )?;
+            }
+            Some(_) => {}
         }
         let mut source = BudgetVec::new(budget);
         crate::write::value(&mut source, &Value::Stream(Box::new(self.clone())))?;
