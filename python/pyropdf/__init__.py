@@ -43,6 +43,7 @@ from pyropdf._errors import (
     MalformedPdfError,
     PasswordError,
     PdfError,
+    PyropdfWarning,
     StaleObjectError,
     StalePageError,
 )
@@ -54,6 +55,7 @@ from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._text import Unmapped
 
 for _public in (
     Array,
@@ -133,6 +135,7 @@ __all__ = [
     "Pixmap",
     "Point",
     "Probe",
+    "PyropdfWarning",
     "Quad",
     "Real",
     "Rect",
@@ -152,6 +155,7 @@ __all__ = [
     "TilingPattern",
     "Transaction",
     "TransparencyGroup",
+    "Unmapped",
     "__version__",
     "open",
     "probe",

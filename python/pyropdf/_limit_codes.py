@@ -25,6 +25,8 @@ LimitCode: TypeAlias = Literal[
     "content_stream_size",
     "content_input_size",
     "content_element_count",
+    "text_glyph_count",
+    "text_size",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",
@@ -73,6 +75,13 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "content_element_count": (
             "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's "
             "`max_elements`."
+        ),
+        "text_glyph_count": (
+            "`Page.text` or `Document.text` collects more glyphs of one page than the call's `max_glyphs`."
+        ),
+        "text_size": (
+            "The UTF-8 of a page's glyphs, or of the text that `Page.text` or `Document.text` returns, is larger than "
+            "the call's `max_size`."
         ),
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
