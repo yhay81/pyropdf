@@ -225,10 +225,27 @@ def _from_core(raw: tuple[list[Any], bytes]) -> Operations:
         if entry[0] == "i":
             item: Operation | InlineImage = InlineImage(_entries(entry[1]), entry[2])
         else:
-            item = Operation(_name_text(entry[1]), tuple(_value(value) for value in entry[2]))
+            item = _read_operation(_name_text(entry[1]), tuple(_value(value) for value in entry[2]))
         object.__setattr__(item, "_source", entry[3])
         items.append(item)
     return Operations(items, tail=tail)
+
+
+def _read_operation(operator: str, operands: tuple[Any, ...]) -> Operation:
+    """Return an operation as the core read it.
+
+    A ``BI`` whose image the content does not finish, without ``ID`` or
+    ``EI``, reaches here as an operation. A program must write an inline
+    image as :class:`InlineImage`, but reading keeps this one, whose source
+    bytes write the content back as it was.
+    """
+    if operator != "BI":
+        return Operation(operator, operands)
+    item = object.__new__(Operation)
+    object.__setattr__(item, "operator", operator)
+    object.__setattr__(item, "operands", operands)
+    object.__setattr__(item, "_source", None)
+    return item
 
 
 def _value(value: Any) -> Any:  # noqa: ANN401 - operands are any object-model value.
