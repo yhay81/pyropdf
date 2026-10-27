@@ -57,6 +57,7 @@ def build_text_pdf(*streams: str, to_unicode: dict[int, str] | None = None) -> b
     return build_raw_pdf(objects)
 
 
+@pytest.mark.spec("text-extraction", "interpret")
 def test_text_follows_reading_order_with_spaces_and_line_ends() -> None:
     page = pyropdf.open(
         build_text_pdf("BT /F1 20 Tf 72 600 Td (Second) Tj ET BT /F1 20 Tf 72 700 Td (First) Tj 60 0 Td (gap) Tj ET")
@@ -136,6 +137,7 @@ def _unmapped_document() -> pyropdf.Document:
     return document
 
 
+@pytest.mark.spec("text-extraction", "read")
 def test_unmapped_glyphs_are_skipped_or_stand_for_a_placeholder() -> None:
     page = _unmapped_document().pages[0]
 
