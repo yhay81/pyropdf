@@ -104,6 +104,16 @@ def test_attachment_add_writes_only_what_the_documents_version_allows(
     assert reopened.attachments["a.txt"].read() == b"data"
 
 
+def test_deleting_the_last_attachment_removes_the_tree() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a.txt", b"data")
+    del doc.attachments["a.txt"]
+    reopened = pyropdf.open(doc.to_bytes())
+    assert "Names" not in reopened.catalog
+    assert list(reopened.attachments) == []
+    assert [defect for defect in reopened.check().defects if "Names" in defect.path] == []
+
+
 def test_attachment_add_bounds_input_atomically() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     payload = b"1234"

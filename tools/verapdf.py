@@ -45,10 +45,6 @@ REJECTED: dict[str, str] = {
     for part in ("1b", "2b", "2u", "3b", "4")
     for edit in ("add", "write", "delete")
     for mode in ("full", "incremental")
-} | {
-    # Deleting the last attachment leaves an empty EmbeddedFiles tree.
-    f"arlington1.4 pdfa-1b-delete_attachment-{mode}.pdf": "#301"
-    for mode in ("full", "incremental")
 }
 
 

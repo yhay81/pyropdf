@@ -337,7 +337,19 @@ def _writable(document: Document) -> list[_Entry]:
 
 
 def _rewrite(document: Document, entries: list[_Entry]) -> None:
-    """Write the name tree as one node whose ``/Names`` holds ``entries``, sorted by key."""
+    """Write the name tree as one node whose ``/Names`` holds ``entries``, sorted by key.
+
+    Without entries the tree is removed, and so is a name dictionary that it
+    leaves empty, since a name tree node has at least one entry.
+    """
+    if not entries:
+        catalog = document.catalog
+        names = catalog.get("Names")
+        if isinstance(names, Dictionary) and "EmbeddedFiles" in names:
+            del names["EmbeddedFiles"]
+            if not len(names):
+                del catalog["Names"]
+        return
     pairs: list[object] = []
     for entry in sorted(entries, key=lambda entry: entry.key):
         pairs += [String(entry.key), entry.filespec]
@@ -431,6 +443,7 @@ class Attachments(Mapping[str, Attachment]):
         The file name is written as ``/UF`` only from PDF 1.7, the later of
         the header and the catalog's ``/Version``; a document older than PDF
         1.4, which has no embedded file tree, gets ``/Version /1.4``.
+        Deleting the last attachment removes the tree.
         """
         self._document._ensure_open()  # noqa: SLF001
         if not isinstance(name, str):
