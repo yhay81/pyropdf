@@ -1,2 +1,0 @@
-Key	Type	SinceVersion	DeprecatedIn	Required	IndirectReference	Inheritable	DefaultValue	PossibleValues	SpecialCase	Link	Note
-*	dictionary	1.3		FALSE	TRUE	FALSE				[PageObject]	Table 388, O cell

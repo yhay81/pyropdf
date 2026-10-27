@@ -79,11 +79,12 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "`max_elements`."
         ),
         "text_glyph_count": (
-            "`Page.text` or `Document.text` collects more glyphs of one page than the call's `max_glyphs`."
+            "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the "
+            "call's `max_glyphs`."
         ),
         "text_size": (
-            "The UTF-8 of a page's glyphs, or of the text that `Page.text` or `Document.text` returns, is larger than "
-            "the call's `max_size`."
+            "The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings "
+            "of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`."
         ),
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",

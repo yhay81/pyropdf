@@ -6,9 +6,13 @@
 //! direction in display space. The records are clustered into lines, the
 //! lines ordered for reading, and the text assembled with inferred spaces
 //! and line breaks. The operation's budget counts the glyphs with
-//! `text_glyph_count` and their UTF-8 with `text_size` (F6).
+//! `text_glyph_count` and their UTF-8 with `text_size` (F6). [`layout`]
+//! builds the words, spans, and blocks of the same lines.
+
+mod layout;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use hayro::hayro_interpret::DrawMode;
 use hayro::hayro_interpret::font::Glyph;
@@ -17,12 +21,21 @@ use hayro::kurbo::{Affine, BezPath, Point, Rect};
 use pyropdf_store::budget::{Budget, LimitCode};
 use unicode_bidi::{BidiClass, bidi_class};
 
+use self::layout::RuleSegment;
+pub use self::layout::{
+    BlockTuple, CharTuple, LineTuple, PageLayout, QuadTuple, SpanStyleTuple, SpanTuple, WordTuple,
+    page_layout,
+};
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;
 
-/// The line metrics of a font, which box its glyphs.
-#[derive(Clone, Copy)]
+/// The name, style flags, and line metrics of a font.
+#[derive(Clone)]
 struct FontInfo {
+    /// PostScript name, or empty when unavailable.
+    name: Arc<str>,
+    /// pymupdf-compatible flags: italic=2, serif=4, monospace=8, bold=16.
+    flags: i64,
     /// The ascender and descender in em, as MuPDF reads them from the font
     /// program, or 0.8 and -0.2 without one.
     ascender: f64,
@@ -32,6 +45,8 @@ struct FontInfo {
 impl Default for FontInfo {
     fn default() -> Self {
         Self {
+            name: Arc::from(""),
+            flags: 0,
             ascender: DEFAULT_ASCENDER,
             descender: DEFAULT_DESCENDER,
         }
@@ -42,16 +57,38 @@ impl Default for FontInfo {
 const DEFAULT_ASCENDER: f64 = 0.8;
 const DEFAULT_DESCENDER: f64 = -0.2;
 
-/// Reads the line metrics of a glyph's font, once per font.
+/// Reads the name, flags, and line metrics of a glyph's font, once per font.
 ///
 /// A standard font that is not embedded, for which hayro gives no font
-/// data, and a bare CFF program, which OpenType tables do not describe,
-/// keep the defaults.
+/// data, keeps the defaults, and a bare CFF program, which OpenType tables
+/// do not describe, keeps the default metrics.
 fn font_info_of(glyph: &hayro::hayro_interpret::font::OutlineGlyph) -> FontInfo {
-    glyph
-        .font_data()
-        .and_then(|data| line_metrics((*data.data).as_ref()))
-        .unwrap_or_default()
+    let Some(data) = glyph.font_data() else {
+        return FontInfo::default();
+    };
+    let name: Arc<str> = Arc::from(data.postscript_name.unwrap_or_default());
+    let lower = name.to_ascii_lowercase();
+    let mut flags = 0i64;
+    if data.is_italic || lower.contains("italic") || lower.contains("oblique") {
+        flags |= 2;
+    }
+    if data.is_serif {
+        flags |= 4;
+    }
+    if data.is_monospace {
+        flags |= 8;
+    }
+    if data.weight.is_some_and(|weight| weight >= 600) || lower.contains("bold") {
+        flags |= 16;
+    }
+    let (ascender, descender) =
+        line_metrics((*data.data).as_ref()).unwrap_or((DEFAULT_ASCENDER, DEFAULT_DESCENDER));
+    FontInfo {
+        name,
+        flags,
+        ascender,
+        descender,
+    }
 }
 
 /// Returns the ascender and descender of a font program, as pymupdf's
@@ -63,7 +100,7 @@ fn font_info_of(glyph: &hayro::hayro_interpret::font::OutlineGlyph) -> FontInfo 
 /// `hhea` values are zero. MuPDF then replaces an ascender that is not
 /// positive or exceeds 8 em with 0.8, a descender beyond 3 em either way with
 /// -0.2, and a positive descender with its negation.
-fn line_metrics(program: &[u8]) -> Option<FontInfo> {
+fn line_metrics(program: &[u8]) -> Option<(f64, f64)> {
     use skrifa::raw::TableProvider;
     use skrifa::raw::tables::os2::SelectionFlags;
 
@@ -109,10 +146,7 @@ fn line_metrics(program: &[u8]) -> Option<FontInfo> {
         // A zero descender stays 0.0, as in MuPDF, rather than becoming -0.0.
         f64::from(-descender.abs()) / f64::from(units_per_em)
     };
-    Some(FontInfo {
-        ascender,
-        descender,
-    })
+    Some((ascender, descender))
 }
 
 /// Unicode text of one glyph, mirroring hayro's `BfString` shape.
@@ -254,6 +288,12 @@ pub struct TextOptions {
     pub normalize_whitespace: bool,
     /// Join a word that a hyphen splits at the end of a line.
     pub dehyphenate: bool,
+    /// Box each glyph with its exact ink box instead of its advance and font
+    /// metrics.
+    pub exact_bboxes: bool,
+    /// Collect the page's vector rules and mark the glyphs that one
+    /// underlines or strikes out.
+    pub styles: bool,
 }
 
 impl TextOptions {
@@ -290,12 +330,24 @@ struct GlyphRecord {
     writing_mode: u8,
     /// Font identity key for span splitting; Type 3 uses 0.
     font_key: u128,
-    /// The line metrics of the glyph's font.
+    /// The name, flags, and line metrics of the glyph's font.
     font: FontInfo,
+    /// The sRGB approximation and alpha of the glyph's paint; `None` for a
+    /// pattern or invisible text.
+    color: Option<[f32; 4]>,
     /// The `RENDER_*` mode of the run that painted the glyph.
     render_mode: u8,
     /// Whether the clip paths leave no part of the glyph's box visible.
     is_clipped: bool,
+    /// The exact ink box, collected with [`TextOptions::exact_bboxes`];
+    /// `None` without it and for a glyph without ink.
+    ink: Option<BBox>,
+    /// Whether a horizontal rule underlines the glyph, with
+    /// [`TextOptions::styles`].
+    is_underlined: bool,
+    /// Whether a horizontal rule strikes the glyph out, with
+    /// [`TextOptions::styles`].
+    is_struck: bool,
     /// Whether the glyph continues the word of the line before, which
     /// dehyphenation removed the hyphen of.
     joins_previous: bool,
@@ -337,6 +389,9 @@ fn try_push_glyph_text(value: &mut String, text: &GlyphText, label: &str) -> Res
 /// The content model's sink that collects the glyphs of a page.
 struct TextCollector<'b> {
     glyphs: Vec<GlyphRecord>,
+    /// The rules that underline or strike out glyphs, with
+    /// [`TextOptions::styles`].
+    rules: Vec<RuleSegment>,
     /// font_key → FontInfo cache, resolving font_data only once per font.
     font_infos: HashMap<u128, FontInfo>,
     /// Most recent font lookup; consecutive glyphs usually share one font, so
@@ -362,6 +417,7 @@ struct TextCollector<'b> {
 
 /// The parts of a [`GlyphStyle`] that the collector keeps.
 struct RunStyle {
+    color: Option<[f32; 4]>,
     render_mode: u8,
     clip: Option<Rect>,
 }
@@ -369,18 +425,23 @@ struct RunStyle {
 impl ContentSink for TextCollector<'_> {
     fn glyph_run(&mut self, style: &GlyphStyle) {
         self.style = RunStyle {
+            color: style.color,
             render_mode: style.render_mode,
             clip: style.clip,
         };
         self.run_start = self.glyphs.len();
     }
 
-    fn glyph(&mut self, glyph: &Glyph<'_>, transform: Affine, _: Option<Rect>) {
+    fn glyph(&mut self, glyph: &Glyph<'_>, transform: Affine, ink: Option<Rect>) {
         if self.error.is_none()
-            && let Err(error) = self.collect_glyph(glyph, transform)
+            && let Err(error) = self.collect_glyph(glyph, transform, ink)
         {
             self.error = Some(error);
         }
+    }
+
+    fn wants_ink(&self) -> bool {
+        self.options.exact_bboxes
     }
 
     fn stroke_completes_fill(&mut self) {
@@ -391,7 +452,14 @@ impl ContentSink for TextCollector<'_> {
         }
     }
 
-    fn path(&mut self, _: &BezPath, _: Affine, _: &DrawMode) {}
+    fn path(&mut self, path: &BezPath, transform: Affine, mode: &DrawMode) {
+        if self.options.styles
+            && self.error.is_none()
+            && let Err(error) = layout::collect_rules(path, transform, mode, &mut self.rules)
+        {
+            self.error = Some(error);
+        }
+    }
 
     fn stopped(&self) -> bool {
         self.error.is_some()
@@ -400,7 +468,12 @@ impl ContentSink for TextCollector<'_> {
 
 impl TextCollector<'_> {
     /// Record one glyph whose combined transform maps glyph space to display space.
-    fn collect_glyph(&mut self, glyph: &Glyph<'_>, combined: Affine) -> Result<(), Error> {
+    fn collect_glyph(
+        &mut self,
+        glyph: &Glyph<'_>,
+        combined: Affine,
+        ink: Option<Rect>,
+    ) -> Result<(), Error> {
         let unicode = match (glyph.as_unicode(), self.options.unmapped) {
             (Some(unicode), _) => unicode,
             (None, Unmapped::Skip) => {
@@ -456,10 +529,10 @@ impl TextCollector<'_> {
         let (advance_width, font_key, font) = match glyph {
             Glyph::Outline(g) => {
                 let key = g.font_cache_key();
-                let info = if let Some((last_key, last_info)) = self.last_font
-                    && last_key == key
+                let info = if let Some((last_key, last_info)) = &self.last_font
+                    && *last_key == key
                 {
-                    last_info
+                    last_info.clone()
                 } else {
                     if !self.font_infos.contains_key(&key) {
                         self.font_infos.try_reserve(1).map_err(|error| {
@@ -468,11 +541,12 @@ impl TextCollector<'_> {
                             ))
                         })?;
                     }
-                    let info = *self
+                    let info = self
                         .font_infos
                         .entry(key)
-                        .or_insert_with(|| font_info_of(g));
-                    self.last_font = Some((key, info));
+                        .or_insert_with(|| font_info_of(g))
+                        .clone();
+                    self.last_font = Some((key, info.clone()));
                     info
                 };
                 (g.advance_width().map(f64::from), key, info)
@@ -501,8 +575,12 @@ impl TextCollector<'_> {
             writing_mode: 0,
             font_key,
             font,
+            color: self.style.color,
             render_mode: self.style.render_mode,
             is_clipped: false,
+            ink: None,
+            is_underlined: false,
+            is_struck: false,
             joins_previous: false,
             source_order,
         };
@@ -518,6 +596,13 @@ impl TextCollector<'_> {
         if record.is_clipped && !self.options.keep_clipped {
             return Ok(());
         }
+        record.ink = ink
+            .filter(|ink| {
+                [ink.x0, ink.y0, ink.x1, ink.y1]
+                    .iter()
+                    .all(|value| value.is_finite())
+            })
+            .map(|ink| (ink.x0, ink.y0, ink.x1, ink.y1));
         let bytes = record.text.len();
         self.budget.charge(LimitCode::TextGlyphCount, 1)?;
         if let Err(refusal) = self.budget.charge(LimitCode::TextSize, as_u64(bytes)) {
@@ -2166,6 +2251,61 @@ pub fn page_text(
     budget: &Budget,
     out: &mut String,
 ) -> Result<usize, Error> {
+    let viewed = viewed_page_lines(bridged, index, options, budget)?;
+    // The glyphs and their text give way to the text assembled from them.
+    viewed.charge.release(budget);
+    let lines = viewed.lines;
+    let size = assembled_text_size(&lines).ok_or_else(|| {
+        Error::Allocation("the assembled text exceeds the address space".to_owned())
+    })?;
+    budget.charge(LimitCode::TextSize, as_u64(size))?;
+    let appended = assemble_text(&lines, Some(size)).and_then(|text| {
+        out.try_reserve(text.len())
+            .map_err(|error| Error::Allocation(format!("failed to grow the text: {error}")))?;
+        out.push_str(&text);
+        Ok(())
+    });
+    if let Err(error) = appended {
+        budget.release(LimitCode::TextSize, as_u64(size));
+        return Err(error);
+    }
+    Ok(viewed.skipped)
+}
+
+/// What a page's glyphs hold of the budget: their count against
+/// `text_glyph_count` and their UTF-8 against `text_size`.
+struct GlyphCharge {
+    glyphs: usize,
+    text_size: usize,
+}
+
+impl GlyphCharge {
+    fn release(&self, budget: &Budget) {
+        budget.release(LimitCode::TextGlyphCount, as_u64(self.glyphs));
+        budget.release(LimitCode::TextSize, as_u64(self.text_size));
+    }
+}
+
+/// A page's lines in reading order as the text options view them.
+struct ViewedLines {
+    lines: Vec<Vec<GlyphRecord>>,
+    /// The glyphs without Unicode that [`Unmapped::Skip`] left out.
+    skipped: usize,
+    /// The visible page in display space.
+    page_box: Rect,
+    /// What the glyphs hold of the budget, which the caller releases.
+    charge: GlyphCharge,
+}
+
+/// Collects the glyphs of a page, and its rules with
+/// [`TextOptions::styles`], and returns its lines in reading order as the
+/// text options view them. A refusal releases every charge.
+fn viewed_page_lines(
+    bridged: &Bridged,
+    index: usize,
+    options: &TextOptions,
+    budget: &Budget,
+) -> Result<ViewedLines, Error> {
     let page_box = {
         let pages = bridged.pdf().pages();
         let page = pages.get(index).ok_or(Error::NoPage(index))?;
@@ -2174,6 +2314,7 @@ pub fn page_text(
     };
     let collector = TextCollector {
         glyphs: Vec::new(),
+        rules: Vec::new(),
         font_infos: HashMap::new(),
         last_font: None,
         text_size: 0,
@@ -2181,6 +2322,7 @@ pub fn page_text(
         error: None,
         skipped_no_unicode: 0,
         style: RunStyle {
+            color: None,
             render_mode: RENDER_FILL,
             clip: None,
         },
@@ -2197,36 +2339,30 @@ pub fn page_text(
         None,
         budget,
     )?;
-    let glyph_count = collector.glyphs.len();
-    let text_size = collector.text_size;
-    let release = || {
-        budget.release(LimitCode::TextGlyphCount, as_u64(glyph_count));
-        budget.release(LimitCode::TextSize, as_u64(text_size));
+    let charge = GlyphCharge {
+        glyphs: collector.glyphs.len(),
+        text_size: collector.text_size,
     };
     if let Some(error) = collector.error.take() {
-        release();
+        charge.release(budget);
         return Err(error);
     }
-    let skipped = collector.skipped_no_unicode;
-    let lines = page_lines(collector.glyphs).and_then(|lines| view_lines(lines, options));
-    // The glyphs and their text give way to the text assembled from them.
-    release();
-    let lines = lines?;
-    let size = assembled_text_size(&lines).ok_or_else(|| {
-        Error::Allocation("the assembled text exceeds the address space".to_owned())
-    })?;
-    budget.charge(LimitCode::TextSize, as_u64(size))?;
-    let appended = assemble_text(&lines, Some(size)).and_then(|text| {
-        out.try_reserve(text.len())
-            .map_err(|error| Error::Allocation(format!("failed to grow the text: {error}")))?;
-        out.push_str(&text);
-        Ok(())
-    });
-    if let Err(error) = appended {
-        budget.release(LimitCode::TextSize, as_u64(size));
-        return Err(error);
+    let mut glyphs = collector.glyphs;
+    if options.styles {
+        layout::mark_styles(&mut glyphs, collector.rules);
     }
-    Ok(skipped)
+    match page_lines(glyphs).and_then(|lines| view_lines(lines, options)) {
+        Ok(lines) => Ok(ViewedLines {
+            lines,
+            skipped: collector.skipped_no_unicode,
+            page_box,
+            charge,
+        }),
+        Err(error) => {
+            charge.release(budget);
+            Err(error)
+        }
+    }
 }
 
 /// Clusters glyphs into lines and orders them for reading, each line in
@@ -2254,7 +2390,7 @@ fn view_lines(
         let mut kept = Vec::new();
         for glyph in line {
             if let Some((x0, y0, x1, y1)) = view.clip {
-                let (gx0, gy0, gx1, gy1) = font_bbox(glyph);
+                let (gx0, gy0, gx1, gy1) = glyph_bbox(glyph);
                 let (cx, cy) = ((gx0 + gx1) * 0.5, (gy0 + gy1) * 0.5);
                 if !(cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) {
                     continue;
@@ -2311,9 +2447,13 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
         direction: glyph.direction,
         writing_mode: glyph.writing_mode,
         font_key: glyph.font_key,
-        font: glyph.font,
+        font: glyph.font.clone(),
+        color: glyph.color,
         render_mode: glyph.render_mode,
         is_clipped: glyph.is_clipped,
+        ink: glyph.ink,
+        is_underlined: glyph.is_underlined,
+        is_struck: glyph.is_struck,
         joins_previous: glyph.joins_previous,
         source_order: glyph.source_order,
     })
@@ -2694,6 +2834,11 @@ fn assemble_text<L: AsRef<[GlyphRecord]>>(
         debug_assert_eq!(out.len(), size);
     }
     Ok(out)
+}
+
+/// One glyph's box: its exact ink box when collected, else [`font_bbox`].
+fn glyph_bbox(glyph: &GlyphRecord) -> BBox {
+    glyph.ink.unwrap_or_else(|| font_bbox(glyph))
 }
 
 /// One glyph bbox from its advance and the font's ascender and descender,
