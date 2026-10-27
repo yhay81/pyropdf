@@ -5,7 +5,8 @@
 //! [`AppearanceSettler`] then draws it once per transaction and writes the
 //! drawing as a new form XObject that `/AP /N` names, so that a stream that
 //! other annotations share is never overwritten. It draws the kinds that
-//! [`draws`] accepts and leaves the others as they are. The `/Rect` of text
+//! [`draws`] accepts, and the widgets of form fields with
+//! [`forms::settle`], and leaves the others as they are. The `/Rect` of text
 //! markup, lines, polygons, and ink follows their geometry, so settling
 //! fits it again too.
 //!
@@ -32,6 +33,8 @@ use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
+
+use crate::forms;
 
 /// The most points that one annotation's geometry holds, a squiggly line's
 /// zigzag included.
@@ -132,6 +135,10 @@ impl Settler for AppearanceSettler {
             let Value::Dict(dict) = &**object.value() else {
                 continue;
             };
+            if forms::is_widget(dict) {
+                forms::settle(transaction, number, dict, budget)?;
+                continue;
+            }
             let reader = Reader {
                 version: transaction.version(),
                 budget,
@@ -174,7 +181,7 @@ pub struct Reader<'a> {
 impl Reader<'_> {
     /// Follows `value` through at most [`MAX_CHAIN`] references; a missing
     /// object, or a longer chain, reads as null.
-    fn resolve(&self, value: &Value) -> Result<Arc<Value>> {
+    pub(crate) fn resolve(&self, value: &Value) -> Result<Arc<Value>> {
         let &Value::Reference(mut reference) = value else {
             return Ok(Arc::new(value.clone()));
         };
@@ -194,14 +201,14 @@ impl Reader<'_> {
         Ok(Arc::new(Value::Null))
     }
 
-    fn entry(&self, dict: &Dict, key: &str) -> Result<Option<Arc<Value>>> {
+    pub(crate) fn entry(&self, dict: &Dict, key: &str) -> Result<Option<Arc<Value>>> {
         dict.get(key)
             .map(|value| self.resolve(value))
             .transpose()
             .map(|value| value.filter(|value| !matches!(**value, Value::Null)))
     }
 
-    fn number(&self, value: &Value) -> Result<Option<f64>> {
+    pub(crate) fn number(&self, value: &Value) -> Result<Option<f64>> {
         Ok(match &*self.resolve(value)? {
             #[expect(
                 clippy::cast_precision_loss,
@@ -223,7 +230,7 @@ impl Reader<'_> {
 
     /// Reads up to `max` numbers of the array `value`, or `None` for
     /// anything else.
-    fn numbers_of(&self, value: &Value, max: usize) -> Result<Option<Vec<f64>>> {
+    pub(crate) fn numbers_of(&self, value: &Value, max: usize) -> Result<Option<Vec<f64>>> {
         let resolved = self.resolve(value)?;
         let Value::Array(items) = &*resolved else {
             return Ok(None);
@@ -1059,7 +1066,7 @@ fn fmt(v: f64) -> String {
 }
 
 /// Returns a number as an integer when it is one, else a real.
-fn real(value: f64) -> Value {
+pub(crate) fn real(value: f64) -> Value {
     #[expect(
         clippy::cast_possible_truncation,
         reason = "the value is integral and within the range of an i64"
@@ -1071,7 +1078,7 @@ fn real(value: f64) -> Value {
     }
 }
 
-fn numbers_array(values: &[f64]) -> Value {
+pub(crate) fn numbers_array(values: &[f64]) -> Value {
     Value::Array(values.iter().map(|value| real(*value)).collect::<Array>())
 }
 

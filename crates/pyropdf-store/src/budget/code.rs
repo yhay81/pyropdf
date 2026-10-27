@@ -91,6 +91,12 @@ pub enum LimitCode {
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
+    /// The value that setting `Field.value` writes is longer than 1 MiB in
+    /// UTF-8.
+    FormFieldInputSize,
+    /// The text that a form field's appearance draws lays out in more than
+    /// 4,096 lines.
+    TextLineCount,
     /// The document's named destinations, its `/Names /Dests` tree and its
     /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes,
     /// or more than 131,072 tree edges.
@@ -128,7 +134,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 42] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -159,6 +165,8 @@ impl LimitCode {
         Self::RenderOutputSize,
         Self::PasswordInputSize,
         Self::AnnotationInputSize,
+        Self::FormFieldInputSize,
+        Self::TextLineCount,
         Self::NamedDestinationCount,
         Self::NamedDestinationTextSize,
         Self::TocEntryCount,
@@ -205,6 +213,8 @@ impl LimitCode {
             Self::RenderOutputSize => "render_output_size",
             Self::PasswordInputSize => "password_input_size",
             Self::AnnotationInputSize => "annotation_input_size",
+            Self::FormFieldInputSize => "form_field_input_size",
+            Self::TextLineCount => "text_line_count",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationTextSize => "named_destination_text_size",
             Self::TocEntryCount => "toc_entry_count",
@@ -253,6 +263,8 @@ impl LimitCode {
             Self::RenderOutputSize => "the rendered images are too large",
             Self::PasswordInputSize => "the password is too long",
             Self::AnnotationInputSize => "the annotation text is too long",
+            Self::FormFieldInputSize => "the form field value is too long",
+            Self::TextLineCount => "the text has too many lines",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
             Self::TocEntryCount => "the outline has too many items",
@@ -301,6 +313,8 @@ impl LimitCode {
             Self::RenderOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
             Self::AnnotationInputSize => Some("bytes"),
+            Self::FormFieldInputSize => Some("bytes"),
+            Self::TextLineCount => Some("lines"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationTextSize => Some("bytes"),
             Self::TocEntryCount => Some("entries"),
@@ -349,6 +363,8 @@ impl LimitCode {
             Self::RenderOutputSize => Some(536_870_912),
             Self::PasswordInputSize => Some(127),
             Self::AnnotationInputSize => Some(1_048_576),
+            Self::FormFieldInputSize => Some(1_048_576),
+            Self::TextLineCount => Some(4_096),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationTextSize => Some(16_777_216),
             Self::TocEntryCount => Some(65_536),

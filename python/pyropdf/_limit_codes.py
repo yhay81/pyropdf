@@ -40,6 +40,8 @@ LimitCode: TypeAlias = Literal[
     "render_output_size",
     "password_input_size",
     "annotation_input_size",
+    "form_field_input_size",
+    "text_line_count",
     "named_destination_count",
     "named_destination_text_size",
     "toc_entry_count",
@@ -120,6 +122,8 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are "
             "longer than 1 MiB in UTF-8 together."
         ),
+        "form_field_input_size": "The value that setting `Field.value` writes is longer than 1 MiB in UTF-8.",
+        "text_line_count": "The text that a form field's appearance draws lays out in more than 4,096 lines.",
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
             "than 65,536 entries or tree nodes, or more than 131,072 tree edges."

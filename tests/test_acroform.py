@@ -3,9 +3,13 @@
 pylopdf's tests/test_acroform.py at ebb01d3c, the reading cases ported.
 Intended differences:
 
-- the fill cases, and the fill halves of mixed cases, wait for #193; the
-  font cases wait for it too. Where pylopdf filled a field to show which
-  widgets belong to it, these tests read ``Field.widgets`` instead.
+- setting a check box or radio button raises ``NotImplementedError`` until
+  #203, so the button fill cases and the fill halves of mixed button cases
+  wait for it; where pylopdf filled a button to show which widgets belong
+  to it, these tests read ``Field.widgets`` instead. The cases of embedded
+  form fonts wait for #194: a value outside WinAnsiEncoding is left for the
+  viewer to draw. ``/NeedAppearances`` stays true while a button widget has
+  no appearance of its state.
 - pyropdf has no renumbering save and no field removal on page deletion,
   so a handle goes stale when its object leaves ``/Fields``, and undo
   restores it.
@@ -16,6 +20,7 @@ Intended differences:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from typing import TYPE_CHECKING, TypeAlias
@@ -62,7 +67,7 @@ def _form_stream(content: str) -> str:
     )
 
 
-def _build_form_pdf() -> bytes:
+def _build_form_pdf(*, text_widget_extra: str = "") -> bytes:
     """Build text, choice, checkbox, radio, and nested AcroForm fields."""
     return build_raw_pdf(
         {
@@ -76,7 +81,7 @@ def _build_form_pdf() -> bytes:
             ),
             # Text field with an initial value.
             9: "<< /FT /Tx /T (customer) /V (initial) /Type /Annot /Subtype /Widget"
-            " /Rect [50 700 250 720] /P 4 0 R /F 4 >>",
+            f" /Rect [50 700 250 720] /P 4 0 R /F 4 {text_widget_extra} >>",
             # Checkbox with Yes and Off appearances.
             10: "<< /FT /Btn /T (agree) /V /Off /AS /Off /Type /Annot /Subtype /Widget"
             " /Rect [50 660 70 680] /P 4 0 R /F 4 /AP << /N << /Yes 11 0 R /Off 12 0 R >> >> >>",
@@ -257,6 +262,333 @@ def test_form_errors() -> None:
         doc.form["nosuch"]
     with pytest.raises(KeyError):
         doc.form[""]
+    with pytest.raises(TypeError, match="str or bool"):
+        doc.form["customer"].value = 1  # ty: ignore[invalid-assignment]
+
+
+def _opaque_pixels(doc: pyropdf.Document, clip: tuple[float, float, float, float]) -> int:
+    pix = doc.pages[0].pixmap(clip=clip, alpha=True)
+    return sum(alpha != 0 for alpha in bytes(pix)[3::4])
+
+
+def _values(doc: pyropdf.Document) -> dict[str, str | None]:
+    return {name: field.value for name, field in doc.form.items()}
+
+
+def test_fill_text_field_roundtrip_without_unicode_font() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    assert _opaque_pixels(doc, (45, 67, 255, 97)) == 0
+    doc.form["customer"].value = "山田 太郎"
+    doc.form["person.first"].value = "Taro"
+    data = doc.to_bytes()
+    assert b"/NeedAppearances true" in data
+    reopened = pyropdf.open(data)
+    fields = _values(reopened)
+    assert fields["customer"] == "山田 太郎"
+    assert fields["person.first"] == "Taro"
+    # Without an embedded font the CJK value is left for the viewer, but
+    # WinAnsi text has an appearance that survives a save and reopen.
+    assert _opaque_pixels(reopened, (45, 67, 255, 97)) == 0
+    assert _opaque_pixels(reopened, (45, 147, 255, 177)) > 0
+
+
+def test_fill_choice_field_generates_appearance() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form["level"].value = "pro"
+    assert _values(doc)["level"] == "pro"
+    assert _opaque_pixels(doc, (295, 67, 505, 97)) > 0
+
+
+def test_fill_multiline_text_field_wraps_and_renders() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    value = "A deliberately long first line that wraps inside the field.\nA second line."
+    doc.form["notes"].value = value
+    assert _values(doc)["notes"] == value
+    assert _opaque_pixels(doc, (45, 187, 255, 257)) > 0
+
+
+def test_fill_multiline_text_field_bounds_layout_lines_atomically() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    before = doc.to_bytes()
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        doc.form["notes"].value = "\n" * 4096
+
+    assert caught.value.code == "text_line_count"
+    assert doc.to_bytes() == before
+
+
+def test_fill_comb_field_centers_characters_and_enforces_maxlen() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form["code"].value = "A12"
+    assert _values(doc)["code"] == "A12"
+
+    # Center alignment places three characters in slots 2 to 4 of six cells.
+    cell_width = 200 / 6
+    counts = [
+        _opaque_pixels(doc, (300 + index * cell_width, 227, 300 + (index + 1) * cell_width, 252)) for index in range(6)
+    ]
+    assert counts[0] == 0
+    assert all(count > 0 for count in counts[1:4])
+    assert counts[4:] == [0, 0]
+
+    with pytest.raises(pyropdf.PdfError, match="exceeding MaxLen 6"):
+        doc.form["code"].value = "1234567"
+    assert _values(doc)["code"] == "A12"
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "message"),
+    [
+        (b"/MaxLen 6", b"/MaxLen 0", "positive MaxLen"),
+        (b"/Ff 16777216", b"/Ff 16781312", "cannot also be multiline"),
+    ],
+)
+def test_malformed_comb_field_is_rejected_atomically(original: bytes, replacement: bytes, message: str) -> None:
+    doc = pyropdf.open(_build_form_pdf().replace(original, replacement))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match=message):
+        doc.form["code"].value = "12"
+    assert _values(doc)["code"] is None
+    assert doc.to_bytes() == before
+
+
+def test_buttons_are_not_set_yet() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    before = doc.to_bytes()
+    for name, value in (("agree", True), ("plan", "Pro")):
+        with pytest.raises(NotImplementedError):
+            doc.form[name].value = value
+    assert doc.to_bytes() == before
+
+
+def test_widget_rotation_background_and_alignment_render() -> None:
+    extra = "/Q 2 /MK << /R 90 /BG [1 1 0] /BC [1 0 0] >> /BS << /W 2 >>"
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra=extra))
+    doc.form["customer"].value = "right"
+    assert re.search(rb"/Matrix\s*\[0 1 -1 0 200 0\]", doc.to_bytes())
+    assert _opaque_pixels(doc, (45, 67, 255, 97)) > 0
+
+
+def test_field_value_rejects_excessive_text_atomically() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    field = doc.form["customer"]
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        field.value = "x" * (1024 * 1024 + 1)
+    assert caught.value.code == "form_field_input_size"
+    assert doc.to_bytes() == before
+
+
+def test_filling_is_undone_as_one_edit() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    before = doc.to_bytes()
+    doc.form["customer"].value = "changed"
+    doc.history.undo()
+    assert doc.to_bytes() == before
+
+
+INHERITABLE_FIELD_KEYS = ("FT", "Ff", "MaxLen", "Q", "V")
+
+
+def _build_inherited_comb_pdf(child: str, extra: dict[int, str] | None = None) -> bytes:
+    """Build a comb field whose child field `code.inner` adds `child` entries.
+
+    The child inherits the text type, comb flag, MaxLen 6, right alignment,
+    and value of its parent `code`. Filling the sibling `other` completes the
+    child's missing appearance from the value that it inherits.
+    """
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 250 100] /Annots [8 0 R 9 0 R] >>",
+            4: "<< /Fields [5 0 R 9 0 R] >>",
+            5: "<< /FT /Tx /Ff 16777216 /MaxLen 6 /Q 2 /T (code) /V (P42) /Kids [8 0 R] >>",
+            6: "null",
+            8: (
+                f"<< /T (inner) /Parent 5 0 R {child} /Type /Annot /Subtype /Widget"
+                " /Rect [3 30 247 60] /P 3 0 R /F 4 /BS << /W 0 >> >>"
+            ),
+            9: "<< /FT /Tx /T (other) /Type /Annot /Subtype /Widget /Rect [3 70 247 95] /P 3 0 R /F 4 >>",
+            **(extra or {}),
+        }
+    )
+
+
+def _inner_comb_cells(doc: pyropdf.Document, count: int = 6) -> list[bool]:
+    """Report which comb cells of `code.inner`, inside its 240-point content box, hold ink."""
+    width = 240 / count
+    return [_opaque_pixels(doc, (5 + index * width, 40, 5 + (index + 1) * width, 70)) > 0 for index in range(count)]
+
+
+@null_equivalents
+@pytest.mark.parametrize("target", ["code.inner", "other"])
+def test_comb_appearance_inherits_past_null_child_entries(value: str, target: str) -> None:
+    """Comb layout and alignment use the parent's `/MaxLen` and `/Q` past null child entries."""
+    entries = " ".join(f"/{key} {value}" for key in INHERITABLE_FIELD_KEYS)
+    source = pyropdf.open(_build_inherited_comb_pdf(entries))
+
+    for doc in _reloaded(source):
+        doc.form[target].value = "A12"
+        with pytest.raises(pyropdf.PdfError, match="exceeding MaxLen 6"):
+            doc.form["code.inner"].value = "1234567"
+        for current in _reloaded(doc):
+            # Right alignment places three characters in the last three of six cells.
+            assert _inner_comb_cells(current) == [False, False, False, True, True, True]
+
+
+@null_equivalents
+@pytest.mark.parametrize("target", ["code.inner", "other"])
+def test_text_appearance_inherits_past_null_child_entries(value: str, target: str) -> None:
+    """A single-line child draws right-aligned text past null-equivalent `/Q` and `/V`."""
+    source = pyropdf.open(_build_inherited_comb_pdf(f"/Ff 0 /Q {value} /V {value}"))
+
+    for doc in _reloaded(source):
+        doc.form[target].value = "A12"
+        for current in _reloaded(doc):
+            assert _opaque_pixels(current, (5, 40, 125, 70)) == 0
+            assert _opaque_pixels(current, (125, 40, 245, 70)) > 0
+
+
+@pytest.mark.parametrize(
+    ("entries", "extra"),
+    [
+        ("/MaxLen 4 /Q 0 /V (own)", {}),
+        ("/MaxLen 10 0 R /Q 11 0 R /V 12 0 R", {10: "4", 11: "0", 12: "(own)"}),
+    ],
+    ids=["direct", "indirect"],
+)
+def test_present_child_field_entries_override_parent_values(entries: str, extra: dict[int, str]) -> None:
+    """Only null-equivalent entries inherit; a present child value still wins."""
+    doc = pyropdf.open(_build_inherited_comb_pdf(entries, extra))
+    assert form_entries(doc)[0] == {"name": "code.inner", "type": "text", "value": "own"}
+
+    doc.form["other"].value = "x"
+
+    for current in _reloaded(doc):
+        # Left alignment places three characters in the first three of four cells.
+        assert _inner_comb_cells(current, 4) == [True, True, True, False]
+
+
+def _build_default_quadding_pdf(
+    acroform: str,
+    *,
+    parent: str = "",
+    child: str = "",
+    extra: dict[int, str] | None = None,
+    direct: bool = False,
+) -> bytes:
+    """Build comb, text, and choice fields without `/Q` beyond the given entries.
+
+    The interactive form dictionary adds `acroform` entries and is a direct
+    catalog value when `direct` is true. The comb field `code` adds `parent`
+    entries, and its child `code.inner` adds `child` entries and inherits the
+    comb flag, MaxLen 6, and value P42. The text field `other` and the combo
+    box `level` hold xyz. No widget has an appearance or a border, so filling
+    one field draws it and completes the appearances of the other two.
+    """
+    form = f"<< /Fields [5 0 R 9 0 R 10 0 R] {acroform} >>"
+    objects = {
+        1: f"<< /Type /Catalog /Pages 2 0 R /AcroForm {form if direct else '4 0 R'} >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 250 100] /Annots [8 0 R 9 0 R 10 0 R] >>",
+        5: f"<< /FT /Tx /Ff 16777216 /MaxLen 6 /T (code) /V (P42) {parent} /Kids [8 0 R] >>",
+        6: "null",
+        8: (
+            f"<< /T (inner) /Parent 5 0 R {child} /Type /Annot /Subtype /Widget"
+            " /Rect [3 30 247 60] /P 3 0 R /F 4 /BS << /W 0 >> >>"
+        ),
+        9: (
+            "<< /FT /Tx /T (other) /V (xyz) /Type /Annot /Subtype /Widget"
+            " /Rect [3 70 247 95] /P 3 0 R /F 4 /BS << /W 0 >> >>"
+        ),
+        10: (
+            "<< /FT /Ch /Ff 131072 /T (level) /V (xyz) /Opt [(xyz) (A12)] /Type /Annot /Subtype /Widget"
+            " /Rect [3 3 247 27] /P 3 0 R /F 4 /BS << /W 0 >> >>"
+        ),
+        **(extra or {}),
+    }
+    if not direct:
+        objects[4] = form
+    return build_raw_pdf(objects)
+
+
+def _quadding_ink(doc: pyropdf.Document) -> dict[str, tuple[bool, ...]]:
+    """Report the inked comb cells of `code.inner` and the inked halves of `other` and `level`."""
+    return {
+        "code.inner": tuple(_inner_comb_cells(doc)),
+        "other": tuple(_opaque_pixels(doc, (left, 5, left + 120, 30)) > 0 for left in (5, 125)),
+        "level": tuple(_opaque_pixels(doc, (left, 73, left + 120, 97)) > 0 for left in (5, 125)),
+    }
+
+
+LEFT_ALIGNED = {"code.inner": (True, True, True, False, False, False), "other": (True, False), "level": (True, False)}
+RIGHT_ALIGNED = {"code.inner": (False, False, False, True, True, True), "other": (False, True), "level": (False, True)}
+
+
+@pytest.mark.parametrize("direct", [False, True], ids=["indirect", "direct"])
+@pytest.mark.parametrize("target", ["code.inner", "other", "level"])
+def test_appearances_default_to_acroform_quadding(target: str, *, direct: bool) -> None:
+    """Fields without `/Q` on their `/Parent` chain use the AcroForm's `/Q` (ISO 32000-2 Table 225)."""
+    source = pyropdf.open(_build_default_quadding_pdf("/Q 2", direct=direct))
+
+    for doc in _reloaded(source):
+        doc.form[target].value = "A12"
+        for current in _reloaded(doc):
+            assert _quadding_ink(current) == RIGHT_ALIGNED
+
+
+@null_equivalents
+@pytest.mark.parametrize("target", ["code.inner", "other"])
+def test_null_field_quadding_reaches_acroform_default(value: str, target: str) -> None:
+    """Null-equivalent `/Q` entries on the `/Parent` chain fall through to the AcroForm's `/Q`."""
+    source = pyropdf.open(_build_default_quadding_pdf("/Q 2", parent=f"/Q {value}", child=f"/Q {value}"))
+
+    for doc in _reloaded(source):
+        doc.form[target].value = "A12"
+        for current in _reloaded(doc):
+            assert _quadding_ink(current) == RIGHT_ALIGNED
+
+
+@pytest.mark.parametrize(
+    "value",
+    [*NULL_EQUIVALENTS.values(), "3", "/Right"],
+    ids=[*NULL_EQUIVALENTS, "out-of-range", "non-integer"],
+)
+@pytest.mark.parametrize("target", ["code.inner", "other"])
+def test_null_or_unusable_acroform_quadding_aligns_left(value: str, target: str) -> None:
+    """A null-equivalent AcroForm `/Q` reads as absent, and an unusable one aligns left."""
+    source = pyropdf.open(_build_default_quadding_pdf(f"/Q {value}"))
+
+    for doc in _reloaded(source):
+        doc.form[target].value = "A12"
+        for current in _reloaded(doc):
+            assert _quadding_ink(current) == LEFT_ALIGNED
+
+
+@pytest.mark.parametrize(
+    ("parent", "child", "extra"),
+    [
+        ("", "/Q 0", {}),
+        ("", "/Q 11 0 R", {11: "0"}),
+        ("/Q 0", "", {}),
+        ("", "/Q 3", {}),
+    ],
+    ids=["field", "indirect", "parent", "out-of-range"],
+)
+@pytest.mark.parametrize("target", ["code.inner", "other"])
+def test_field_quadding_overrides_acroform_default(parent: str, child: str, extra: dict[int, str], target: str) -> None:
+    """A `/Q` on the `/Parent` chain, including `/Q 0`, wins over the AcroForm's `/Q`.
+
+    An out-of-range field value still stops inheritance and aligns left.
+    """
+    source = pyropdf.open(_build_default_quadding_pdf("/Q 2", parent=parent, child=child, extra=extra))
+
+    for doc in _reloaded(source):
+        doc.form[target].value = "A12"
+        for current in _reloaded(doc):
+            assert _quadding_ink(current) == {**RIGHT_ALIGNED, "code.inner": LEFT_ALIGNED["code.inner"]}
 
 
 def test_no_form_returns_empty() -> None:
@@ -740,6 +1072,34 @@ def test_nameless_widget_with_kids_is_a_widget_and_an_intermediate() -> None:
 
     for doc in _reloaded(pyropdf.open(pdf)):
         assert _widget_xrefs(doc.form["name"]) == [5, 6, 7]
+        doc.form["name"].value = "new"
+        for current in _reloaded(doc):
+            ink = _kid_ink(current)
+            assert ink[0] > 0
+            assert ink == [ink[0]] * 3
+            assert b"/NeedAppearances false" in current.to_bytes()
+
+
+def _kid_ink(doc: pyropdf.Document, count: int = 3) -> list[int]:
+    """Count the opaque pixels inside each of the first `count` kid widgets."""
+    return [_opaque_pixels(doc, (10 + 100 * index, 60, 90 + 100 * index, 90)) for index in range(count)]
+
+
+@nameless_kinds
+def test_need_appearances_waits_for_the_widgets_below_intermediates(nameless: str) -> None:
+    """NeedAppearances stays true while a widget below an intermediate lacks an appearance."""
+    source = pyropdf.open(_build_folded_pdf("/FT /Tx /T (name)", [["", ""]], nameless))
+
+    for doc in _reloaded(source):
+        doc.form["name"].value = "山田"
+        for current in _reloaded(doc):
+            assert form_entries(current) == [{"name": "name", "type": "text", "value": "山田"}]
+            assert _kid_ink(current, 2) == [0, 0]
+            assert b"/NeedAppearances true" in current.to_bytes()
+        doc.form["name"].value = "new"
+        for current in _reloaded(doc):
+            assert min(_kid_ink(current, 2)) > 0
+            assert b"/NeedAppearances false" in current.to_bytes()
 
 
 def _assert_checkbox_limit(at_limit: bytes, over_limit: bytes, message: str) -> None:

@@ -185,8 +185,25 @@ class Field:
         by commas; a check box or radio button holds the appearance state of
         the selected widget, such as ``"Yes"``, or ``"Off"``. ``None`` means
         the field has no ``/V``.
+
+        Setting a text or choice field writes its value and draws the
+        appearances of its widgets in a Standard 14 font, with those of the
+        other text and choice fields that have none yet; the form's
+        ``/NeedAppearances`` stays true while a widget is left without one.
+        A value that WinAnsiEncoding cannot show leaves the widgets for the
+        viewer to draw. Setting a check box or radio button raises
+        :exc:`NotImplementedError` for now.
         """
         return self._read()[3]
+
+    @value.setter
+    def value(self, value: str | bool) -> None:
+        if not isinstance(value, (str, bool)):
+            msg = f"a field value is a str or bool: {value!r}"
+            raise TypeError(msg)
+        if isinstance(value, bool):
+            value = "Yes" if value else "Off"
+        _core.form_field_fill(self._core(), self._id, value)
 
     def __eq__(self, other: object) -> bool:
         """Compare document and object."""

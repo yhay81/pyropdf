@@ -1,7 +1,7 @@
 //! The interactive form (ISO 32000-2 section 12.7): the terminal fields
-//! that `doc.form` maps by name, the widgets of pages and of fields, and
-//! the repair of radio buttons written as fields of their own (DESIGN.md
-//! section 10).
+//! that `doc.form` maps by name, the widgets of pages and of fields, the
+//! values that setting a field writes, and the repair of radio buttons
+//! written as fields of their own (DESIGN.md section 10).
 //!
 //! The walk of the field tree is memoized with the objects that it read
 //! (section 5), so reading every field of a form costs one walk of each
@@ -12,16 +12,21 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
+use pyropdf_engine::annotations::Reader;
+use pyropdf_engine::forms::{self as widgets, WidgetError};
+use pyropdf_engine::standard::is_winansi;
 use pyropdf_store::budget::Budget;
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
-use pyropdf_store::version::Version;
+use pyropdf_store::version::{Transaction, Version};
 
 use crate::annotations::{Annots, Rect};
 use crate::document::{_Document, Failed, text_string};
-use crate::errors::{PdfError, StaleObjectError, store_error};
+use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
 use crate::pages::index;
 
 /// The most terminal fields that a walk returns.
@@ -48,6 +53,9 @@ const MAX_PARENTS: usize = 64;
 /// The bytes of the appearance states that one read of a page's widgets
 /// returns.
 const MAX_STATE_BYTES: usize = 1024 * 1024;
+/// The UTF-8 bytes of the value that setting a field writes
+/// (`form_field_input_size`).
+const MAX_INPUT_BYTES: usize = 1024 * 1024;
 /// The `/Ff` bit of radio buttons.
 const RADIO: i64 = 1 << 15;
 /// The keys of a radio button that a repaired group gives to its new
@@ -1222,6 +1230,215 @@ pub fn form_repair_radio_groups(py: Python<'_>, document: &_Document) -> PyResul
         transaction.write(number, &value, budget).map_err(store)?;
         Ok(u32::try_from(groups.len()).unwrap_or(u32::MAX))
     })
+}
+
+/// Returns `text` as a text string: ASCII without control characters as it
+/// is, and else UTF-16BE, in which the line breaks and other controls that
+/// PDFDocEncoding leaves unmapped read back.
+fn encode_value(text: &str) -> Value {
+    let bytes = if text.is_ascii() && !text.chars().any(char::is_control) {
+        text.as_bytes().to_vec()
+    } else {
+        let mut bytes = vec![0xFE, 0xFF];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+        bytes
+    };
+    Value::String(PdfString::literal(bytes))
+}
+
+fn widget_error(error: WidgetError) -> PyErr {
+    match error {
+        WidgetError::Malformed(message) => PdfError::new_err(message.into_owned()),
+        WidgetError::Lines => LimitError::new_err(("text_line_count", error.to_string())),
+        WidgetError::Store(error) => store_error(&error),
+    }
+}
+
+/// Returns widget `id` of `version` when it looks like a widget.
+fn widget_of(
+    version: &Version,
+    (number, generation): Id,
+    budget: &Budget,
+) -> PyResult<Option<Arc<Value>>> {
+    let object = version
+        .get(number, budget)
+        .map_err(|e| store_error(&e))?
+        .filter(|object| object.generation() == generation);
+    Ok(object
+        .map(|object| Arc::clone(object.value()))
+        .filter(|value| matches!(&**value, Value::Dict(dict) if looks_like_widget(dict))))
+}
+
+/// Returns whether a field of `kind` shows its value in text.
+fn shows_text(kind: &str) -> bool {
+    matches!(kind, "text" | "combobox" | "listbox")
+}
+
+/// Sets the value of field `id`, a text or choice field, to `value`, and
+/// draws its widgets through the appearance settler, with those of the
+/// other text and choice fields that have no appearance yet; then sets the
+/// form's `/NeedAppearances` when a widget is left without one. Refuses
+/// what pylopdf refuses, leaving the document as it was.
+#[pyfunction]
+pub fn form_field_fill(py: Python<'_>, document: &_Document, id: Id, value: &str) -> PyResult<()> {
+    if value.len() > MAX_INPUT_BYTES {
+        return Err(LimitError::new_err((
+            "form_field_input_size",
+            format!("form field value exceeds the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
+        )));
+    }
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = fill(transaction, id, value, budget);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
+
+fn fill(transaction: &mut Transaction, id: Id, value: &str, budget: &Budget) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let before = transaction.snapshot();
+    let mut reads = Reads::new(&before, budget);
+    let form = walk(&mut reads)?;
+    let field = form.field(id).ok_or_else(|| stale(id))?;
+    match field.kind {
+        kind if shows_text(kind) => {}
+        "pushbutton" => {
+            return Err(PdfError::new_err(
+                "pushbutton fields do not have fillable values",
+            ));
+        }
+        "checkbox" | "radio" => {
+            return Err(PyNotImplementedError::new_err(
+                "setting the value of a check box or radio button is not supported yet",
+            ));
+        }
+        "signature" => {
+            return Err(PdfError::new_err(
+                "filling signature fields is not supported (see the pyHanko integration for digital signatures)",
+            ));
+        }
+        _ => return Err(PdfError::new_err("unsupported field type")),
+    }
+    let Some(Value::Dict(mut dict)) = object(&mut reads, id)?.as_deref().cloned() else {
+        return Err(stale(id));
+    };
+    dict.insert(Name::from("V"), encode_value(value));
+    transaction
+        .write(id.0, &Value::Dict(dict), budget)
+        .map_err(store)?;
+    // The widgets of the field are drawn or refused with the reason; those
+    // of other fields that have no appearance are drawn where they can be.
+    let mut marks = Vec::new();
+    {
+        let version = transaction.version();
+        let reader = Reader { version, budget };
+        for &widget in &field.widgets {
+            if let Some(dict) = widget_of(version, widget, budget)?
+                && let Value::Dict(dict) = &*dict
+            {
+                widgets::appearance(&reader, dict).map_err(widget_error)?;
+                marks.push(widget.0);
+            }
+        }
+        for other in &form.fields {
+            if other.name == field.name
+                || !shows_text(other.kind)
+                || !other.value.as_deref().is_none_or(is_winansi)
+            {
+                continue;
+            }
+            for &widget in &other.widgets {
+                if let Some(dict) = widget_of(version, widget, budget)?
+                    && let Value::Dict(dict) = &*dict
+                    && !widgets::has_normal_stream(&reader, dict).map_err(store)?
+                {
+                    marks.push(widget.0);
+                }
+            }
+        }
+    }
+    for number in marks {
+        transaction
+            .mark(Structure::Appearance, number, budget)
+            .map_err(store)?;
+    }
+    transaction
+        .settle(Scope::One(Structure::Appearance), budget)
+        .map_err(store)?;
+    let complete = complete(transaction.version(), &form, budget)?;
+    set_need_appearances(transaction, !complete, budget)
+}
+
+/// Returns whether every widget of a text, choice, check box, or radio
+/// field of `form` has an appearance to show.
+fn complete(version: &Version, form: &Form, budget: &Budget) -> PyResult<bool> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let reader = Reader { version, budget };
+    for field in &form.fields {
+        let buttons = matches!(field.kind, "checkbox" | "radio");
+        if !buttons && !shows_text(field.kind) {
+            continue;
+        }
+        for &widget in &field.widgets {
+            let Some(dict) = widget_of(version, widget, budget)? else {
+                continue;
+            };
+            let Value::Dict(dict) = &*dict else {
+                continue;
+            };
+            let shown = if buttons {
+                widgets::has_state_stream(&reader, dict)
+            } else {
+                widgets::has_normal_stream(&reader, dict)
+            };
+            if !shown.map_err(store)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Sets the form's `/NeedAppearances` to `value` where the form dictionary
+/// is written: as an object of its own, or in the catalog's.
+fn set_need_appearances(
+    transaction: &mut Transaction,
+    value: bool,
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let version = transaction.snapshot();
+    let mut reads = Reads::new(&version, budget);
+    let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
+        return Ok(());
+    };
+    let Some(Value::Dict(mut catalog)) = object(&mut reads, id(root))?.as_deref().cloned() else {
+        return Ok(());
+    };
+    let (number, mut form) = match catalog.get("AcroForm") {
+        Some(Value::Reference(reference)) => match object(&mut reads, id(*reference))?.as_deref() {
+            Some(Value::Dict(form)) => (Some(reference.number()), form.clone()),
+            _ => return Ok(()),
+        },
+        Some(Value::Dict(form)) => (None, form.clone()),
+        _ => return Ok(()),
+    };
+    if form.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+        return Ok(());
+    }
+    form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+    let (number, value) = match number {
+        Some(number) => (number, Value::Dict(form)),
+        None => {
+            catalog.insert(Name::from("AcroForm"), Value::Dict(form));
+            (root.number(), Value::Dict(catalog))
+        }
+    };
+    transaction.write(number, &value, budget).map_err(store)?;
+    Ok(())
 }
 
 /// Returns how many form walks the document's memos reused and how many
