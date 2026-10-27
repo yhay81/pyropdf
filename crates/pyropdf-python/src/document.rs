@@ -538,7 +538,7 @@ fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResul
 }
 
 /// Returns the version of a `%PDF-x.y` header, such as `"1.7"`.
-fn header_version(bytes: &[u8]) -> Option<String> {
+pub(crate) fn header_version(bytes: &[u8]) -> Option<String> {
     let rest = bytes.strip_prefix(b"%PDF-")?;
     let end = rest
         .iter()

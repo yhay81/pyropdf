@@ -500,3 +500,98 @@ fn an_encrypted_version_without_a_file_is_refused() {
         Error::EncryptionChanged
     );
 }
+
+/// A file base that records every object the store reads from it.
+#[derive(Debug)]
+struct Counting {
+    file: FileBase,
+    reads: Mutex<Vec<u32>>,
+}
+
+impl pyropdf_store::version::Base for Counting {
+    fn generation(&self, number: u32) -> Option<u16> {
+        self.file.generation(number)
+    }
+
+    fn free_generation(&self, number: u32) -> Option<u16> {
+        self.file.free_generation(number)
+    }
+
+    fn object(
+        &self,
+        reference: Reference,
+        budget: &Budget,
+    ) -> pyropdf_store::Result<Option<Bytes>> {
+        self.reads.lock().unwrap().push(reference.number());
+        self.file.object(reference, budget)
+    }
+
+    fn trailer(&self) -> &Dict {
+        self.file.trailer()
+    }
+
+    fn next_number(&self) -> u64 {
+        self.file.next_number()
+    }
+
+    fn numbers(&self, out: &mut BudgetVec<'_, u32>) -> pyropdf_store::Result<()> {
+        self.file.numbers(out)
+    }
+
+    fn file(&self) -> Option<&Index> {
+        self.file.file()
+    }
+}
+
+#[test]
+fn an_edit_then_a_page_read_parses_and_serializes_only_what_it_wrote() {
+    let budget = Budget::default();
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/real_world/bill-hr815.pdf");
+    let index = Index::open(Bytes::new(fs::read(path).unwrap()), &budget).unwrap();
+    let base = Arc::new(Counting {
+        file: FileBase::new(index, &budget).unwrap(),
+        reads: Mutex::new(Vec::new()),
+    });
+    let document = Document::new(
+        Arc::clone(&base) as Arc<dyn pyropdf_store::version::Base>,
+        None,
+    );
+    // A first page read: the page index walk and the bridge.
+    let version = document.current();
+    let pages = page_index(&version);
+    assert_eq!(pages.len(), 110);
+    bridge(&version);
+    let first: Vec<u32> = base.reads.lock().unwrap().drain(..).collect();
+    assert!(!first.is_empty());
+
+    let page = pages.get(pages.len() / 2).unwrap();
+    let number = page.object().unwrap().number();
+    let mut dict = page.dict().clone();
+    dict.insert(Name::from("Rotate"), 90.into());
+    let mut transaction = document.begin();
+    transaction
+        .write(number, &Value::Dict(dict), &budget)
+        .unwrap();
+    let edited = transaction.commit(&budget).unwrap();
+
+    let edited_pages = page_index(&edited);
+    let (bytes, update) = update(&edited, &[], None, &budget).unwrap();
+    let bridged = Bridged::new(&edited, &edited_pages, &budget).unwrap();
+    let reads = base.reads.lock().unwrap().clone();
+    // The store reads no object of the file again, the page tree's nodes
+    // included: the first walk parsed them, and every version shares them.
+    assert_eq!(reads, Vec::<u32>::new());
+    // The update holds the written page and the cross-reference stream.
+    let appended = &bytes[bytes.len() - update..];
+    let objects = appended.windows(7).filter(|w| *w == b"\nendobj").count();
+    assert_eq!(objects, 2);
+    assert!(appended.starts_with(format!("\n{number} 0 obj").as_bytes()));
+    assert_eq!(bridged.stats().update, update);
+    let rotated = render::page(&bridged, pages.len() / 2, SCALE).unwrap();
+    let original = render::page(&bridge(&version), pages.len() / 2, SCALE).unwrap();
+    assert_eq!(
+        (rotated.width, rotated.height),
+        (original.height, original.width)
+    );
+}
