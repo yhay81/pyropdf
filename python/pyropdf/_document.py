@@ -142,8 +142,11 @@ class Document:
         model's object types and reports each value of the wrong type,
         missing required key, key or value newer than the file's version,
         value direct where it must be indirect or the reverse, and value
-        outside the key's possible values. Each defect names its object and
-        its clause. The walk runs under the document's limits.
+        outside the key's possible values. It also reports the ``invariant``
+        defects of page, name, number, and structure trees, references, and
+        appearance states, and the ``profile`` defects of a claimed PDF/A or
+        PDF/UA profile that need no rendering. Each defect names its object
+        and its clause. The walk runs under the document's limits.
         """
         self._ensure_open()
         return _structural_check(self)
