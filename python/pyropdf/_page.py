@@ -378,7 +378,10 @@ class Page:
         :class:`Char` records: each glyph keeps its complete Unicode mapping,
         ligatures included, and each space that pyropdf infers from a gap is a
         char with ``is_synthetic`` set, so that a span's chars join to its
-        text. Boxes are in display space and span the glyphs' advances and the
+        text. A glyph of the page's own content streams names the stream and
+        the index in :attr:`operations` of the operation that showed it, in
+        ``Char.stream`` and ``Char.operation``, which a second interpretation
+        of the content finds. Boxes are in display space and span the glyphs' advances and the
         font's ascender and descender, or their outlines with
         ``exact_bboxes=True``. Dehyphenation removes the hyphen from the end
         of the line and keeps both lines. ``styles=True`` also reads the

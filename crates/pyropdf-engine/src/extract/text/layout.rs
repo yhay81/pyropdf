@@ -20,12 +20,17 @@ use super::{
     viewed_page_lines,
 };
 use crate::bridge::Bridged;
+use crate::content::PageContent;
 
 /// Four corners: upper left, upper right, lower left, and lower right.
 pub type QuadTuple = ((f64, f64), (f64, f64), (f64, f64), (f64, f64));
 /// One glyph of a span: `(whole Unicode mapping, bbox, baseline origin,
-/// synthetic)`; a synthetic char is a space inferred from a gap.
-pub type CharTuple = (String, BBox, (f64, f64), bool);
+/// synthetic, (stream, operation))`; a synthetic char is a space inferred
+/// from a gap. The last names the object number of the content stream and
+/// the index in the page's joined content of the operation that showed the
+/// glyph, when the glyph comes from the page's own content and the layout
+/// was given it.
+pub type CharTuple = (String, BBox, (f64, f64), bool, Option<(u32, u32)>);
 /// A span's paint, metrics, and decorations: `(sRGB color and alpha, render
 /// mode, clipped, ascender, descender, (underlined, struck out,
 /// superscript))`.
@@ -78,7 +83,8 @@ pub struct PageLayout {
 }
 
 /// Returns the layout of the page at `index`, each span with its characters
-/// when `chars` is set.
+/// when `chars` is set. With `content`, the page's content as the store
+/// reads it, each character names the operation that showed it.
 ///
 /// The page's glyphs count against `text_glyph_count` and their text against
 /// `text_size` while the layout is built, and the layout's strings against
@@ -88,9 +94,11 @@ pub fn page_layout(
     index: usize,
     options: &TextOptions,
     chars: bool,
+    content: Option<&PageContent>,
     budget: &Budget,
 ) -> Result<PageLayout, Error> {
-    let viewed = viewed_page_lines(bridged, index, options, budget)?;
+    let content = content.filter(|_| chars);
+    let viewed = viewed_page_lines(bridged, index, options, content, budget)?;
     let mut meter = Meter { budget, charged: 0 };
     let blocks = assemble_layout(&viewed.lines, chars, &mut meter).and_then(|mut blocks| {
         merge_joined_words(&viewed.lines, &mut blocks)?;
@@ -443,7 +451,7 @@ fn span_chars(glyphs: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<CharT
             meter.charge(" ")?;
             try_push_text(
                 &mut chars,
-                (" ".to_owned(), bbox, origin, true),
+                (" ".to_owned(), bbox, origin, true, None),
                 "layout chars",
             )?;
         }
@@ -453,7 +461,13 @@ fn span_chars(glyphs: &[GlyphRecord], meter: &mut Meter<'_>) -> Result<Vec<CharT
         ends_with_space = text.ends_with(' ');
         try_push_text(
             &mut chars,
-            (text, glyph_bbox(glyph), (glyph.x, glyph.y), false),
+            (
+                text,
+                glyph_bbox(glyph),
+                (glyph.x, glyph.y),
+                false,
+                glyph.source.map(|source| (source.stream, source.operation)),
+            ),
             "layout chars",
         )?;
         if !glyph_is_nonspacing_mark(glyph) {

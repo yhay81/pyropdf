@@ -5,8 +5,10 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{self, BBox, BlockTuple, Error, TextOptions, TextPeak, Unmapped};
 use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::memo::Reads;
 use pyropdf_store::value::Reference;
 
 use crate::document::{_Document, PageKey, PageKind, PageResult};
@@ -247,7 +249,12 @@ pub fn page_layout(
                     .bridge
                     .get(&version, &index, &budget)
                     .map_err(|e| bridge_error(&e))?;
-                extract::page_layout(&bridged, at, &options, chars, &budget)
+                // A content that the store cannot read as operations leaves
+                // the chars without sources.
+                let content = chars
+                    .then(|| PageContent::read(&mut Reads::new(&version, &budget), page).ok())
+                    .flatten();
+                extract::page_layout(&bridged, at, &options, chars, content.as_ref(), &budget)
                     .map(PageResult::Layout)
                     .map_err(text_error)
             },
