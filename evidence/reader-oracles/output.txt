@@ -39,4 +39,4 @@ real_world/usrguide.pdf pymupdf: 27 pages
 real_world/wdl6812-manuscript.pdf pypdfium2: 2 pages
 real_world/wdl6812-manuscript.pdf pymupdf: 2 pages
 
-20 documents, 280 saves, 2 readers: 0 unexplained differences
+20 documents, 280 saves, readers pypdfium2, pymupdf: 0 unexplained differences

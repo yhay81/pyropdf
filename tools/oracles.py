@@ -1,28 +1,32 @@
 """Read every save of every edit of the corpus with independent readers.
 
-pypdfium2 and pymupdf read each document of the real-world corpus and of the
-generated PDF/A and PDF/UA corpora, and each save of each edit of the
-preservation harness's EDITS applied to it, in full and incrementally. Each
-reader's reading of a save must match its reading of the original: the same
-page count, plus one after ``new_page``, and on every page that the edit did
-not touch, the same size and extracted text. The readers are development-only
-oracles, outside CI and the package's dependencies:
+pypdfium2, pymupdf, and pdf.js read each document of the real-world corpus
+and of the generated PDF/A and PDF/UA corpora, and each save of each edit of
+the preservation harness's EDITS applied to it, in full and incrementally.
+Each reader's reading of a save must match its reading of the original: the
+same page count, plus one after ``new_page``, and on every page that the
+edit did not touch, the same size and extracted text. The readers are
+development-only oracles, outside the package's dependencies:
 
-    uv run --group oracles python tools/oracles.py
+    uv run --group oracles python tools/oracles.py --readers pypdfium2 pymupdf
+    npm ci --ignore-scripts --prefix tools/pdfjs
+    uv run python tools/oracles.py --readers pdfjs
 
-The script prints one line per document and reader and every difference, and
-exits with status 1 on a difference that ``EXPLAINED`` does not list.
+CI runs the pdf.js reader from tools/pdfjs's lockfile. The script prints one
+line per document and reader and every difference, and exits with status 1
+on a difference that ``EXPLAINED`` does not list.
 """
 
 from __future__ import annotations
 
+import argparse
+import json
 import runpy
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
-
-import pymupdf
-import pypdfium2
 
 import pyropdf
 
@@ -45,26 +49,59 @@ Reading = list[tuple[tuple[float, float], str]]
 EXPLAINED: dict[str, str] = {}
 
 
-def pdfium(data: bytes) -> Reading:
-    """Return pypdfium2's reading of ``data``."""
-    document = pypdfium2.PdfDocument(data)
-    try:
-        out = []
-        for page in document:
-            width, height = page.get_size()
-            out.append(((round(width, 2), round(height, 2)), page.get_textpage().get_text_range()))
-        return out
-    finally:
-        document.close()
+def pdfium(files: list[bytes]) -> list[Reading]:
+    """Return pypdfium2's reading of each of ``files``."""
+    import pypdfium2  # noqa: PLC0415 - the oracles group, which CI does not install.
+
+    out = []
+    for data in files:
+        document = pypdfium2.PdfDocument(data)
+        try:
+            pages = []
+            for page in document:
+                width, height = page.get_size()
+                pages.append(((round(width, 2), round(height, 2)), page.get_textpage().get_text_range()))
+            out.append(pages)
+        finally:
+            document.close()
+    return out
 
 
-def mupdf(data: bytes) -> Reading:
-    """Return pymupdf's reading of ``data``."""
-    with pymupdf.open(stream=data, filetype="pdf") as document:
-        return [((round(page.rect.width, 2), round(page.rect.height, 2)), page.get_text()) for page in document]
+def mupdf(files: list[bytes]) -> list[Reading]:
+    """Return pymupdf's reading of each of ``files``."""
+    import pymupdf  # noqa: PLC0415 - the oracles group, which CI does not install.
+
+    pymupdf.TOOLS.mupdf_display_errors(False)  # noqa: FBT003 - pymupdf's own API.
+    out = []
+    for data in files:
+        with pymupdf.open(stream=data, filetype="pdf") as document:
+            out.append(
+                [((round(page.rect.width, 2), round(page.rect.height, 2)), page.get_text()) for page in document]
+            )
+    return out
 
 
-READERS: dict[str, Callable[[bytes], Reading]] = {"pypdfium2": pdfium, "pymupdf": mupdf}
+def pdfjs(files: list[bytes]) -> list[Reading]:
+    """Return pdf.js's reading of each of ``files``, through tools/pdfjs/read.mjs."""
+    with tempfile.TemporaryDirectory() as directory:
+        paths = []
+        for index, data in enumerate(files):
+            path = Path(directory) / f"{index}.pdf"
+            path.write_bytes(data)
+            paths.append(str(path))
+        script = str(ROOT / "tools" / "pdfjs" / "read.mjs")
+        result = subprocess.run(["node", script, *paths], capture_output=True, text=True, check=False)  # noqa: S603, S607 - a fixed script on generated files.
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        msg = f"pdf.js exited with status {result.returncode}"
+        raise SystemExit(msg)
+    return [
+        [((round(width, 2), round(height, 2)), text) for width, height, text in json.loads(line)]
+        for line in result.stdout.splitlines()
+    ]
+
+
+READERS: dict[str, Callable[[list[bytes]], list[Reading]]] = {"pypdfium2": pdfium, "pymupdf": mupdf, "pdfjs": pdfjs}
 
 
 def differences(original: Reading, saved: Reading, untouched: list[int], *, added: int) -> list[str]:
@@ -80,38 +117,41 @@ def differences(original: Reading, saved: Reading, untouched: list[int], *, adde
     return out
 
 
-def check(source: Path) -> list[str]:
+def check(source: Path, readers: list[str]) -> list[str]:
     """Return the unexplained differences of every save of every edit of ``source``."""
     data = source.read_bytes()
-    originals = {reader: read(data) for reader, read in READERS.items()}
-    unexplained = []
+    files = [data]
+    cases = []
     for edit, apply in sorted(EDITS.items()):
         for incremental in (False, True):
             doc = pyropdf.open(data)
             pages = [page.obj.xref for page in doc.pages]
             touched = apply(doc)
-            saved = doc.to_bytes(incremental=incremental)
+            files.append(doc.to_bytes(incremental=incremental))
             untouched = [index for index, number in enumerate(pages) if number not in touched]
-            mode = "incremental" if incremental else "full"
-            for reader, read in READERS.items():
-                found = differences(originals[reader], read(saved), untouched, added=edit == "new_page")
-                for difference in found:
-                    key = f"{reader} {source.name} {edit} {mode} {difference.split(' size')[0].split(' text')[0]}"
-                    note = EXPLAINED.get(key)
-                    sys.stdout.write(f"  {reader} {edit} {mode}: {difference}{f' ({note})' if note else ''}\n")
-                    if note is None:
-                        unexplained.append(key)
-    for reader, reading in originals.items():
-        sys.stdout.write(f"{source.relative_to(ASSETS)} {reader}: {len(reading)} pages\n")
+            cases.append((edit, "incremental" if incremental else "full", untouched))
+    unexplained = []
+    for reader in readers:
+        original, *saved = READERS[reader](files)
+        sys.stdout.write(f"{source.relative_to(ASSETS)} {reader}: {len(original)} pages\n")
+        for (edit, mode, untouched), reading in zip(cases, saved, strict=True):
+            for difference in differences(original, reading, untouched, added=edit == "new_page"):
+                key = f"{reader} {source.name} {edit} {mode} {difference.split(' size')[0].split(' text')[0]}"
+                note = EXPLAINED.get(key)
+                sys.stdout.write(f"  {reader} {edit} {mode}: {difference}{f' ({note})' if note else ''}\n")
+                if note is None:
+                    unexplained.append(key)
     return unexplained
 
 
 def main() -> int:
     """Check every source, and return the exit status."""
-    pymupdf.TOOLS.mupdf_display_errors(False)  # noqa: FBT003 - pymupdf's own API.
-    unexplained = [key for source in SOURCES for key in check(source)]
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--readers", nargs="+", choices=sorted(READERS), default=sorted(READERS))
+    readers = parser.parse_args().readers
+    unexplained = [key for source in SOURCES for key in check(source, readers)]
     saves = len(SOURCES) * len(EDITS) * 2
-    sys.stdout.write(f"\n{len(SOURCES)} documents, {saves} saves, {len(READERS)} readers: ")
+    sys.stdout.write(f"\n{len(SOURCES)} documents, {saves} saves, readers {', '.join(readers)}: ")
     sys.stdout.write(f"{len(unexplained)} unexplained differences\n")
     return 1 if unexplained else 0
 
