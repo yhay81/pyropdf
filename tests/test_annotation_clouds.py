@@ -2,8 +2,7 @@
 
 pylopdf's tests/test_annotation_clouds.py at ebb01d3c. Intended
 differences: the core's checks are called as ``_core.annotation_add`` with
-the page's object, and the render-time clouds of squares that a file stores
-without an appearance are #169's: this file reads their intensities only.
+the page's object.
 """
 
 from __future__ import annotations
@@ -129,7 +128,7 @@ def test_clouds_are_validated() -> None:
     assert Square((0, 0, 1, 1), clouds=1, border=Border(2)).clouds == 1.0
 
 
-def test_other_producers_clouds_are_read() -> None:
+def test_other_producers_clouds_are_read_and_drawn() -> None:
     doc = pyropdf.open(
         build_raw_pdf(
             {
@@ -144,3 +143,7 @@ def test_other_producers_clouds_are_read() -> None:
     )
 
     assert [annotation.clouds for annotation in doc.pages[0].annotations] == [2.0, 0.0, 0.0]
+    pixmap = doc.pages[0].pixmap(dpi=72)
+    # The clamped cloud leaves gaps in its top row; the solid border does not.
+    assert len([x for x in _ink_columns(pixmap, 11) if x < 100]) < 70
+    assert [x for x in _ink_columns(pixmap, 10) if x > 100] == list(range(110, 190))

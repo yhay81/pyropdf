@@ -81,6 +81,32 @@ fn corpus_pages_render_as_hayro_renders_the_original() {
     });
 }
 
+#[test]
+fn a_highlight_stored_without_an_appearance_is_drawn_inside_its_rectangle() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let bytes = fs::read(path).unwrap();
+    let document = open(bytes.clone());
+    let version = document.current();
+    let budget = Budget::default();
+    let bridged = Bridged::with_appearances(&version, &page_index(&version), &budget).unwrap();
+    assert!(!version.has_changes());
+    let ours = render::page(&bridged, 0, 1.0).unwrap();
+    let theirs = render::page(&Bridged::of_bytes(bytes), 0, 1.0).unwrap();
+    assert_eq!((ours.width, ours.height), (theirs.width, theirs.height));
+    // The highlight covers x 293 to 349 and y 250 to 262 from the top.
+    let mut changed = 0;
+    for (at, (a, b)) in ours.data.chunks(4).zip(theirs.data.chunks(4)).enumerate() {
+        if a != b {
+            let (x, y) = (at % usize::from(ours.width), at / usize::from(ours.width));
+            assert!((292..=350).contains(&x), "pixel {x} {y}");
+            assert!((249..=263).contains(&y), "pixel {x} {y}");
+            changed += 1;
+        }
+    }
+    assert!(changed > 0);
+}
+
 /// A content stream that fills a rectangle whose position and grey level
 /// `seed` picks.
 fn content(seed: u8) -> Value {

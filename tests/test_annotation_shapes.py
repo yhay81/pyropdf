@@ -4,9 +4,7 @@ pylopdf's tests/test_annotation_shapes.py at ebb01d3c. Intended
 differences: the core's checks are called as ``_core.annotation_add`` with
 the page's object, and refuse a subtype as one that pyropdf "does not add";
 a rectangle of three numbers, or of an infinite one, raises pyropdf's
-geometry ``PdfError``;
-the render-time appearances of shapes that a file stores without one are
-#169's.
+geometry ``PdfError``.
 """
 
 from __future__ import annotations
@@ -227,6 +225,38 @@ def _without_appearance(entries: str) -> pyropdf.Document:
             }
         )
     )
+
+
+def test_rendering_draws_a_missing_shape_appearance_without_changing_the_document() -> None:
+    doc = _without_appearance("/Subtype /Square /Rect [10 10 110 60] /C [0 0 1] /IC [1 1 0] /Border [0 0 4]")
+    before = doc.to_bytes()
+
+    pixmap = doc.pages[0].pixmap(dpi=72)
+
+    assert _pixel(pixmap, 11, 89) == (0, 0, 255)
+    assert _pixel(pixmap, 60, 65) == (255, 255, 0)
+    assert "AP" not in doc.pages[0].annotations[0].obj
+    assert doc.to_bytes() == before
+    assert not doc.history.can_undo
+    assert doc.pages[0].annotations[0].border == Border(4)
+
+
+@pytest.mark.parametrize(
+    ("entries", "inside"),
+    [
+        # /RD insets the shape; a CMYK colour converts to RGB.
+        ("/Subtype /Circle /Rect [10 10 110 90] /IC [0 0 1 0] /RD [10 10 10 10]", (255, 255, 0)),
+        # A gray colour, and /BS overrides /Border.
+        ("/Subtype /Square /Rect [10 10 110 90] /IC [0.5] /BS << /W 0 >> /Border [0 0 9]", (128, 128, 128)),
+    ],
+)
+def test_the_engine_reads_the_dictionary(entries: str, inside: tuple[int, int, int]) -> None:
+    doc = _without_appearance(entries)
+
+    pixmap = doc.pages[0].pixmap(dpi=72)
+
+    assert _pixel(pixmap, 60, 50) == inside
+    assert _pixel(pixmap, 12, 88) == (WHITE if "RD" in entries else inside)
 
 
 @pytest.mark.parametrize(

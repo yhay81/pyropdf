@@ -9,6 +9,10 @@
 //! markup, lines, polygons, and ink follows their geometry, so settling
 //! fits it again too.
 //!
+//! A render draws an annotation that a file stores without an appearance
+//! as if the settler had drawn it: [`synthesized`] lists the objects that
+//! the bridge hands hayro for them, and the version never holds them.
+//!
 //! A drawing is made on a canvas over the annotation's `/Rect` whose `y`
 //! axis points down, as pylopdf's appearance engine draws it, and the
 //! content flips it into the form's space. Ported from pylopdf's
@@ -16,6 +20,7 @@
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321, without its canvas.
 
 mod icons;
+mod missing;
 mod shapes;
 
 use std::fmt::Write as _;
@@ -61,6 +66,7 @@ const BLEND_MODES: [&str; 16] = [
 /// The most dash lengths that a border pattern holds.
 pub const MAX_BORDER_DASHES: usize = 32;
 
+pub use missing::{MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized};
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
 
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`
@@ -603,6 +609,8 @@ pub struct Appearance {
     fitted: bool,
     alpha: f64,
     blend: Option<&'static str>,
+    /// The path points that the content draws.
+    points: usize,
 }
 
 impl Appearance {
@@ -837,6 +845,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         fitted: fitted.is_some(),
         alpha,
         blend,
+        points: canvas.points,
     }))
 }
 
@@ -899,6 +908,8 @@ fn markup_line(subtype: &[u8], quad: Quad) -> Option<Vec<(f64, f64)>> {
 struct Canvas {
     out: String,
     height: f64,
+    /// The path points drawn so far.
+    points: usize,
 }
 
 impl Canvas {
@@ -906,11 +917,13 @@ impl Canvas {
         Self {
             out: String::new(),
             height,
+            points: 0,
         }
     }
 
     /// Appends a path: `m` and `l` take one point, `c` three, `h` none.
     fn path(&mut self, operators: &str, coordinates: &[f64]) {
+        self.points = self.points.saturating_add(coordinates.len() / 2);
         let mut points = coordinates.as_chunks::<2>().0.iter();
         for operator in operators.chars() {
             let count = match operator {
