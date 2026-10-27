@@ -15,7 +15,7 @@ import pytest
 from corpus import ASSETS
 
 import pyropdf
-from pyropdf import Matrix, Name, typed
+from pyropdf import Array, Dictionary, Matrix, Name, Stream, typed
 
 STUB = Path(typed.__file__).with_suffix(".pyi")
 
@@ -91,6 +91,7 @@ def test_a_page_its_font_and_its_annotations_read_as_declared() -> None:
     assert isinstance(type3.FontMatrix, Matrix)
 
 
+@pytest.mark.spec("page-tree", "interpret")
 def test_an_inheritable_key_reads_through_the_page_tree() -> None:
     doc = pyropdf.Document()
     doc.pages.new((200, 300))
@@ -214,3 +215,87 @@ def test_views_take_handles_only() -> None:
     assert typed.Catalog(doc.catalog) == typed.Catalog(doc.catalog)
     assert typed.Catalog(doc.catalog) != typed.PageObject(doc.catalog)
     assert len({typed.Catalog(doc.catalog), typed.Catalog(doc.catalog)}) == 1
+
+
+_SAMPLES: dict[str, object] = {
+    "boolean": True,
+    "integer": 1,
+    "bitmask": 1,
+    "number": 2.5,
+    "string-text": "text",
+    "string-ascii": "ascii",
+    "date": "D:20261028000000Z",
+    "string": b"bytes",
+    "string-byte": b"bytes",
+    "null": None,
+    "rectangle": (0, 0, 10, 20),
+    "matrix": (1, 0, 0, 1, 5, 6),
+}
+
+
+def _container(doc: pyropdf.Document, handle: type) -> Any:  # noqa: ANN401 - a handle of the given type.
+    """Return a new indirect object that ``handle`` addresses."""
+    if handle is Stream:
+        return doc.objects[doc.objects.add_stream(b"data")]
+    return doc.objects[doc.objects.add([] if handle is Array else {})]
+
+
+def _sample(doc: pyropdf.Document, kind: str, links: tuple[str, ...], names: frozenset[str] | None) -> object:
+    """Return a value that a key writes as ``kind``."""
+    if kind in _SAMPLES:
+        return _SAMPLES[kind]
+    if kind == "name":
+        return min(names) if names else "Example"
+    # A tree links to the types of its values, not to its own.
+    if links and kind not in {"name-tree", "number-tree"}:
+        handles = {"array": Array, "stream": Stream}
+        views = [getattr(typed, _class_name(link)) for link in links]
+        view = next((view for view in views if view._handle is handles.get(kind, Dictionary)), views[0])  # noqa: SLF001
+        return view(_container(doc, view._handle))  # noqa: SLF001
+    return _container(doc, {"array": Array, "stream": Stream}.get(kind, Dictionary))
+
+
+def _plain(value: object) -> object:
+    """Return ``value`` with its direct arrays as lists, which compare by content."""
+    if isinstance(value, Array) and not value.is_indirect:
+        return [_plain(item) for item in value]
+    return value
+
+
+@pytest.mark.spec("arlington", "read", "create", "edit")
+@pytest.mark.parametrize("name", typed.TYPES)
+def test_every_key_of_every_object_type_round_trips(name: str) -> None:
+    doc = pyropdf.Document()
+    view_type = getattr(typed, _class_name(name))
+    obj = _container(doc, view_type._handle)  # noqa: SLF001
+    view = view_type(obj)
+    if isinstance(obj, Stream):
+        assert obj.read() == b"data"
+        assert obj.read(decode=False) != b"data"
+    keys = cast("Any", typed)._keys(name)  # noqa: SLF001
+    # A wildcard key stands for the keys and positions that no other key names.
+    steps: dict[str, str | int]
+    if isinstance(obj, Array):
+        positions = {key: int(key.rstrip("*")) for key in keys if key != "*"}
+        if "*" in keys:
+            positions["*"] = max(positions.values(), default=-1) + 1
+        obj.extend([None] * (max(positions.values(), default=-1) + 1))
+        steps = dict(positions)
+    else:
+        steps = {key: "Undeclared" if key == "*" else key for key in keys}
+
+    for key, described in keys.items():
+        # hayro-syntax refuses a stream that names an external file (#224).
+        if isinstance(obj, Stream) and key == "F":
+            continue
+        step = steps[key]
+        for declared in described.types:
+            view[step] = _sample(doc, declared.kind, declared.links, declared.names)
+            stored = _plain(obj[step])
+            value = view[step]
+            view[step] = value
+            assert _plain(obj[step]) == stored, (key, declared.kind)
+        # The store writes a stream's /Length from its data.
+        if isinstance(obj, Dictionary) and not (isinstance(obj, Stream) and key == "Length"):
+            del view[step]
+            assert step not in obj

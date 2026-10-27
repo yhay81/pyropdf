@@ -175,6 +175,7 @@ def test_every_write_is_one_step_and_a_transaction_groups_them() -> None:
     assert doc.catalog["A"] == 1
 
 
+@pytest.mark.spec("flate-filter", "read", "create")
 def test_stream_write_compresses_and_reads_back() -> None:
     doc = _two_pages()
     contents = doc.pages[0].obj["Contents"]

@@ -62,6 +62,9 @@ cache-keys = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "spec(feature, *dimensions): the test proves the feature in those dimensions of the specification map (tools/spec_map)",
+]
 
 [tool.ty.src]
 # Check the package, its tests, and the repository's tools. ty reads the

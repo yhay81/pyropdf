@@ -1,0 +1,37 @@
+# The statuses of the specification map that no test proves (DESIGN.md
+# section 8). tools/spec_map/generate.py reads this file with the markers of
+# the tests; a done status comes only from a test marked pytest.mark.spec,
+# so this file cannot declare one.
+
+# Every object of the Arlington PDF Model is a feature of the map.
+[arlington]
+interpret = { status = "planned", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Typed views write every key as declared, but nothing yet adds the references and settles the structures that a new object needs.", issue = 219, milestone = "Phase 3: Typed objects" }
+edit = { status = "partial", missing = "Typed views change and remove every key as declared, but no reference rule yet keeps the structures that depend on an object consistent.", issue = 219, milestone = "Phase 3: Typed objects" }
+preserve = { status = "planned", milestone = "Phase 4: Specification" }
+
+# hayro-syntax refuses a stream whose dictionary names an external file.
+[[arlington.rule]]
+keys = ["Length", "Filter", "DecodeParms", "F"]
+read = { status = "engine", upstream = 224 }
+create = { status = "engine", upstream = 224 }
+edit = { status = "engine", upstream = 224 }
+
+[features.flate-filter]
+clause = "7.4.4"
+description = "The FlateDecode filter: zlib-compressed stream data."
+objects = []
+interpret = { status = "n/a", reason = "7.4: a filter only encodes the data of a stream, whose decoded data Read covers." }
+edit = { status = "planned", milestone = "Phase 4: Specification" }
+preserve = { status = "planned", milestone = "Phase 4: Specification" }
+
+[features.page-tree]
+clause = "7.7.3"
+description = "The page tree: the pages in order, their inherited attributes, and inserting, moving, and deleting pages."
+objects = ["PageObject", "PageTreeNode", "PageTreeNodeRoot"]
+preserve = { status = "planned", milestone = "Phase 4: Specification" }
+
+[features.standard-security-handler]
+clause = "7.6.4"
+description = "The standard security handler: user and owner passwords, permissions, and RC4 and AES encryption."
+objects = ["EncryptionStandard"]
