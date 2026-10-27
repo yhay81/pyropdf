@@ -10,24 +10,29 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _core
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
-from pyropdf._errors import DocumentClosedError, PdfError
+from pyropdf._errors import DocumentClosedError, LimitError, PdfError
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
-from pyropdf._pages import Pages
+from pyropdf._pages import Pages, _resolve
+from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from types import TracebackType
     from typing import Self
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
+_DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
+_DEFAULT_RENDER_WORKERS = 4
+_MAX_RENDER_WORKERS = 64
+_MIN_PAGE_ENTRY_LIMIT = 4096
 _TEMPORARY_FILE_ATTEMPTS = 100
 
 #: The Info dictionary keys that :class:`Probe` reports, by their names in pyropdf.
@@ -236,6 +241,62 @@ class Document:
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption))
 
+    def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
+        self,
+        pages: Iterable[int] | None = None,
+        *,
+        dpi: float | None = None,
+        matrix: Sequence[float] | None = None,
+        alpha: bool = False,
+        background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+        annotations: bool = True,
+        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        format: Literal["png", "jpeg"] = "png",  # noqa: A002 - the public name.
+        quality: int = 95,
+        workers: int | None = None,
+        max_size: int | None = _DEFAULT_MAX_RENDER_BATCH_SIZE,
+    ) -> list[bytes]:
+        """Render pages of the current version to encoded images, in the order of ``pages``.
+
+        ``dpi``, ``matrix``, ``alpha``, ``background``, ``annotations``, and
+        ``colorspace`` mean what they mean to :meth:`Page.pixmap`, so the
+        default is opaque RGB at 72 dpi, and each image is what
+        ``page.pixmap(...).to_bytes(format, quality=quality)`` returns.
+        ``format`` is ``"png"`` or ``"jpeg"`` at ``quality``, 1 through 100;
+        JPEG has no alpha. ``pages`` holds page indexes, negative ones from
+        the end, and may repeat them; it defaults to every page, and may
+        hold up to the larger of the page count and 4,096 entries, past
+        which :class:`LimitError` code ``page_entry_count`` refuses it.
+
+        Every page renders from the one version that is current when the
+        call starts, so commits from other threads leave the batch as it
+        was. The pages render on up to ``workers`` threads, 1 through 64,
+        and up to four CPUs by default, with the GIL released; the threads
+        are fewer when their largest rasters would hold more than about
+        512 MB at once. ``max_size`` bounds the encoded bytes of all the
+        images together, 512 MiB by default, with :class:`LimitError` code
+        ``render_output_size``; ``None`` leaves it unbounded.
+        """
+        linear = _render_matrix(matrix, dpi)
+        rgba = _render_background(background, alpha=alpha)
+        _validate_bool("annotations", annotations)
+        gray = _render_gray(colorspace)
+        _validate_encoding(format, quality, alpha=alpha)
+        if workers is None:
+            workers = min(_DEFAULT_RENDER_WORKERS, os.cpu_count() or 1)
+        elif isinstance(workers, bool) or not isinstance(workers, int):
+            msg = f"workers must be an integer from 1 through {_MAX_RENDER_WORKERS}: {workers!r}"
+            raise TypeError(msg)
+        if not 1 <= workers <= _MAX_RENDER_WORKERS:
+            msg = f"workers must be an integer from 1 through {_MAX_RENDER_WORKERS}: {workers!r}"
+            raise ValueError(msg)
+        _validate_optional_positive_int("max_size", max_size)
+        doc = self._core()
+        entries = None if pages is None else _page_entries(pages, _core.page_count(doc))
+        return _core.render_pages(
+            doc, entries, linear, alpha, gray, rgba, annotations, format, quality, workers, max_size
+        )
+
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""
         self._closed = True
@@ -264,6 +325,27 @@ class Document:
         """Return a representation containing the open or closed state."""
         state = "closed " if self._closed else ""
         return f"<{state}pyropdf.Document>"
+
+
+def _page_entries(pages: Iterable[int], count: int) -> list[int]:
+    """Check page entries against ``count`` pages, reading at most one entry past their limit.
+
+    The limit is the larger of ``count`` and 4,096, so that repeating pages
+    never costs more than one pass over a large document.
+    """
+    limit = max(count, _MIN_PAGE_ENTRY_LIMIT)
+    entries: list[int] = []
+    for index in pages:
+        if len(entries) >= limit:
+            code = "page_entry_count"
+            msg = (
+                f"pages cannot hold more than {limit} entries "
+                f"(the larger of the page count and {_MIN_PAGE_ENTRY_LIMIT})"
+            )
+            raise LimitError(code, msg)
+        _resolve(index, count)
+        entries.append(index)
+    return entries
 
 
 def _validate_bool(name: str, value: object) -> None:

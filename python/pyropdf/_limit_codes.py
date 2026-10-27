@@ -30,7 +30,9 @@ LimitCode: TypeAlias = Literal[
     "pdf_output_size",
     "pixmap_output_size",
     "svg_output_size",
+    "render_output_size",
     "password_input_size",
+    "page_entry_count",
     "memory_size",
     "deadline",
     "cancelled",
@@ -74,7 +76,14 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
         "pixmap_output_size": "Encoding a pixmap writes more bytes than the call's `max_size`.",
         "svg_output_size": "A page's SVG holds more UTF-8 bytes than the call's `max_size`.",
+        "render_output_size": (
+            "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."
+        ),
         "password_input_size": "A password is longer in UTF-8 than PDF 2.0 allows.",
+        "page_entry_count": (
+            "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page "
+            "count and 4,096."
+        ),
         "memory_size": (
             "The collections of one operation would hold more memory than it allows, or the allocator refuses it."
         ),

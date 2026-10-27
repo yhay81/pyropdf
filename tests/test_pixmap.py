@@ -156,7 +156,7 @@ def test_to_bytes_writes_png_within_its_bound() -> None:
     assert caught.value.code == "pixmap_output_size"
     assert pixmap.to_bytes(max_size=None) == data
     with pytest.raises(ValueError, match="format"):
-        pixmap.to_bytes("jpeg")
+        pixmap.to_bytes("webp")
     with pytest.raises(ValueError, match="max_size"):
         pixmap.to_bytes(max_size=0)
 

@@ -144,6 +144,12 @@ unit = "bytes"
 default = 67_108_864
 reached = "A page's SVG holds more UTF-8 bytes than the call's `max_size`."
 
+[codes.render_output_size]
+message = "the rendered images are too large"
+unit = "bytes"
+default = 536_870_912
+reached = "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."
+
 # Input to the API.
 
 [codes.password_input_size]
@@ -151,6 +157,11 @@ message = "the password is too long"
 unit = "bytes"
 default = 127
 reached = "A password is longer in UTF-8 than PDF 2.0 allows."
+
+[codes.page_entry_count]
+message = "the list of pages is too long"
+unit = "entries"
+reached = "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096."
 
 # The operation as a whole.
 

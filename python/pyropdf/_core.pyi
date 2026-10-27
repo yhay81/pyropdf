@@ -58,8 +58,8 @@ class Pixmap:
     def stride(self) -> int: ...
     @property
     def resolution(self) -> tuple[int, int]: ...
-    def to_bytes(self, format: str = "png", *, max_size: int | None = ...) -> bytes: ...  # noqa: A002
-    def save(self, path: str | PathLike[str], /, *, format: str | None = None) -> None: ...  # noqa: A002
+    def to_bytes(self, format: str = "png", *, quality: int = 95, max_size: int | None = ...) -> bytes: ...  # noqa: A002
+    def save(self, path: str | PathLike[str], /, *, format: str | None = None, quality: int = 95) -> None: ...  # noqa: A002
     def __buffer__(self, flags: int, /) -> memoryview: ...
 
 def render_page(
@@ -77,6 +77,20 @@ def render_page(
 def render_page_svg(
     document: _Document, number: int, generation: int, annotations: bool, max_size: int | None, /
 ) -> str: ...
+def render_pages(
+    document: _Document,
+    pages: list[int] | None,
+    matrix: tuple[float, float, float, float],
+    alpha: bool,
+    gray: bool,
+    background: tuple[int, int, int, int],
+    annotations: bool,
+    format: str,  # noqa: A002
+    quality: int,
+    workers: int,
+    max_size: int | None,
+    /,
+) -> list[bytes]: ...
 def web_limits() -> dict[str, Any]: ...
 def probe(
     path: str | None,
