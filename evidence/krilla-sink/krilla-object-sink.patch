@@ -1,0 +1,405 @@
+From 3626e89c417607bb81ed46794a9eb038eaaf40f3 Mon Sep 17 00:00:00 2001
+From: Yusuke Hayashi <yusuke8h@gmail.com>
+Date: Wed, 28 Oct 2026 02:17:56 +0900
+Subject: [PATCH] Write the objects of a document into a caller-supplied sink
+
+Document::finish_into hands the indirect objects that Document::finish
+writes to an ObjectSink, numbered with numbers the sink allocates, and
+returns the objects that a catalog would reference. The numbering pass
+is shared with the PDF writer, which allocates sequentially.
+---
+ crates/krilla/src/chunk_container.rs |  90 ++++++++++++++++++---
+ crates/krilla/src/document.rs        |  19 +++++
+ crates/krilla/src/lib.rs             |   1 +
+ crates/krilla/src/serialize.rs       |  54 +++++++++----
+ crates/krilla/src/sink.rs            | 117 +++++++++++++++++++++++++++
+ 5 files changed, 255 insertions(+), 26 deletions(-)
+ create mode 100644 crates/krilla/src/sink.rs
+
+diff --git a/crates/krilla/src/chunk_container.rs b/crates/krilla/src/chunk_container.rs
+index 4d242ba..7410327 100644
+--- a/crates/krilla/src/chunk_container.rs
++++ b/crates/krilla/src/chunk_container.rs
+@@ -1,4 +1,4 @@
+-use pdf_writer::{Chunk, Finish, Name, Pdf, Ref, Str, TextStr};
++use pdf_writer::{Chunk, Finish, Limits, Name, Pdf, Ref, Str, TextStr};
+ use std::collections::HashMap;
+ use std::sync::OnceLock;
+ use xmp_writer::{RenditionClass, XmpWriter};
+@@ -8,6 +8,7 @@ use crate::error::KrillaResult;
+ use crate::interchange::metadata::Metadata;
+ use crate::metadata::PageLayout;
+ use crate::serialize::SerializeContext;
++use crate::sink::{ObjectSink, SinkOutput};
+ use crate::util::{stable_hash_base64, Deferred};
+ 
+ type DChunk = Deferred<Chunk>;
+@@ -101,12 +102,83 @@ impl ChunkContainer {
+         }
+     }
+ 
++    /// Assigns each object of every chunk its final reference, from
++    /// `allocate`, and returns the mapping with the total length of the
++    /// chunks.
++    fn remap(
++        &self,
++        sc: &mut SerializeContext,
++        allocate: &mut dyn FnMut() -> Ref,
++    ) -> KrillaResult<(HashMap<Ref, Ref>, usize)> {
++        let mut remapper = HashMap::new();
++        let mut chunks_byte_len = 0;
++
++        self.visit(sc, &mut |chunk| {
++            for object_ref in chunk.refs() {
++                let existing = remapper.insert(object_ref, allocate());
++                debug_assert!(existing.is_none());
++            }
++            chunks_byte_len += chunk.len();
++        })?;
++
++        Ok((remapper, chunks_byte_len))
++    }
++
++    /// Writes every chunk into `sink` instead of a PDF file, numbered with
++    /// references that the sink allocates, and returns the references that
++    /// a document catalog would hold.
++    pub(crate) fn finish_into(
++        self,
++        sc: &mut SerializeContext,
++        sink: &mut dyn ObjectSink,
++    ) -> KrillaResult<SinkOutput> {
++        let (remapper, _) = self.remap(sc, &mut || Ref::new(sink.allocate()))?;
++
++        let mut limits = Limits::new();
++        self.visit(sc, &mut |chunk| {
++            let renumbered = chunk.renumber(|old| remapper[&old]);
++            limits.merge(renumbered.limits());
++            sink.write(renumbered.as_bytes());
++        })?;
++        sc.register_limits(&limits);
++
++        let mut named_destinations = sc
++            .global_objects
++            .named_destinations
++            .take()
++            .into_iter()
++            .map(|(name, (dest_ref, _))| (name.as_bytes().to_vec(), remapper[&dest_ref].get()))
++            .collect::<Vec<_>>();
++        named_destinations.sort();
++        let embedded_files = sc
++            .global_objects
++            .embedded_files
++            .take()
++            .into_iter()
++            .map(|(name, file_ref)| (name.into_bytes(), remapper[&file_ref].get()))
++            .collect();
++
++        let get = |entry: &Option<(Ref, Chunk)>| entry.as_ref().map(|e| remapper[&e.0].get());
++        let page_tree = self
++            .non_stream
++            .page_tree
++            .as_ref()
++            .expect("page tree should exist");
++
++        Ok(SinkOutput {
++            pages: remapper[&page_tree.0].get(),
++            acro_form: get(&self.non_stream.forms),
++            page_labels: get(&self.non_stream.page_label_tree),
++            output_intents: get(&self.non_stream.destination_profiles),
++            struct_tree_root: get(&self.non_stream.struct_tree_root),
++            outlines: get(&self.non_stream.outline),
++            named_destinations,
++            embedded_files,
++        })
++    }
++
+     pub(crate) fn finish(self, sc: &mut SerializeContext) -> KrillaResult<Pdf> {
+         let mut remapped_ref = Ref::new(1);
+-        let mut remapper = HashMap::new();
+-
+-        // Allows us to estimate the capacity we will need for the new PDF.
+-        let mut chunks_byte_len = 0;
+ 
+         // This traverses the chunks in the order that we will write them to the PDF and assigns new
+         // references as we go. This gives us the advantage that the PDF will be numbered with
+@@ -115,13 +187,7 @@ impl ChunkContainer {
+         // easier down the road.
+         //
+         // It also allows us to estimate the capacity we will need for the new PDF.
+-        self.visit(sc, &mut |chunk| {
+-            for object_ref in chunk.refs() {
+-                let existing = remapper.insert(object_ref, remapped_ref.bump());
+-                debug_assert!(existing.is_none());
+-            }
+-            chunks_byte_len += chunk.len();
+-        })?;
++        let (remapper, chunks_byte_len) = self.remap(sc, &mut || remapped_ref.bump())?;
+ 
+         // Chunk length is not an exact number because the length might change as we renumber,
+         // so we add a bit of a padding by multiplying with 1.1. The 200 is additional padding
+diff --git a/crates/krilla/src/document.rs b/crates/krilla/src/document.rs
+index 6966d65..7acfc42 100644
+--- a/crates/krilla/src/document.rs
++++ b/crates/krilla/src/document.rs
+@@ -26,6 +26,7 @@ use crate::page::{Page, PageSettings};
+ #[cfg(feature = "pdf")]
+ use crate::pdf::PdfDocument;
+ use crate::serialize::{SerializeContext, SerializeSettings};
++use crate::sink::{ObjectSink, SinkOutput};
+ use crate::surface::Location;
+ 
+ /// A PDF document.
+@@ -159,4 +160,22 @@ impl Document {
+ 
+         Ok(serializer_context.finish(chunk_container)?.finish())
+     }
++
++    /// Write the objects of the document into `sink` instead of a PDF file.
++    ///
++    /// The objects are numbered with numbers that the sink allocates, and the
++    /// result names the objects that a document catalog would reference.
++    pub fn finish_into(mut self, sink: &mut dyn ObjectSink) -> KrillaResult<SinkOutput> {
++        // Write empty page if none has been created yet.
++        if self.serializer_context.page_infos().is_empty() {
++            self.start_page();
++        }
++
++        let Self {
++            serializer_context,
++            chunk_container,
++        } = self;
++
++        serializer_context.finish_into(chunk_container, sink)
++    }
+ }
+diff --git a/crates/krilla/src/lib.rs b/crates/krilla/src/lib.rs
+index 49818ff..78916bb 100644
+--- a/crates/krilla/src/lib.rs
++++ b/crates/krilla/src/lib.rs
+@@ -167,6 +167,7 @@ pub mod num;
+ pub mod page;
+ #[cfg(feature = "pdf")]
+ pub mod pdf;
++pub mod sink;
+ pub mod stream;
+ pub mod surface;
+ pub mod text;
+diff --git a/crates/krilla/src/serialize.rs b/crates/krilla/src/serialize.rs
+index a235bd2..0bb66c4 100644
+--- a/crates/krilla/src/serialize.rs
++++ b/crates/krilla/src/serialize.rs
+@@ -34,6 +34,7 @@ use crate::page::{InternalPage, PageLabel, PageLabelContainer};
+ use crate::pdf::{PdfDocument, PdfSerializerContext};
+ use crate::resource;
+ use crate::resource::{Resource, Resourceable};
++use crate::sink::{ObjectSink, SinkOutput};
+ use crate::surface::{Location, Surface};
+ use crate::text::{Font, FontContainer, FontIdentifier, GlyphId, StandardFont};
+ use crate::util::{NameExt, SipHashable};
+@@ -469,33 +470,58 @@ impl SerializeContext {
+         &mut self.validation_store
+     }
+ 
++    /// Writes the objects of `chunk_container` into `sink` instead of a PDF
++    /// file.
++    pub(crate) fn finish_into(
++        mut self,
++        mut chunk_container: ChunkContainer,
++        sink: &mut dyn ObjectSink,
++    ) -> KrillaResult<SinkOutput> {
++        self.serialize_deferred(&mut chunk_container)?;
++        let output = chunk_container.finish_into(&mut self, sink)?;
++        self.check()?;
++
++        Ok(output)
++    }
++
+     pub(crate) fn finish(mut self, mut chunk_container: ChunkContainer) -> KrillaResult<Pdf> {
++        self.serialize_deferred(&mut chunk_container)?;
++
++        // Create the final PDF.
++        let pdf = chunk_container.finish(&mut self)?;
++        self.register_limits(pdf.limits());
++        self.check()?;
++
++        Ok(pdf)
++    }
++
++    fn serialize_deferred(&mut self, chunk_container: &mut ChunkContainer) -> KrillaResult<()> {
+         // We need to be careful here that we serialize the objects in the right order,
+         // as in some cases we use MaybeTake::take to remove an object, which means that
+         // no object that is serialized afterwards must depend on it.
+ 
+         // Serialize all objects that can only be written in the end.
+-        self.serialize_destination_profiles(&mut chunk_container);
+-        self.serialize_page_label_tree(&mut chunk_container);
+-        self.serialize_outline(&mut chunk_container);
+-        self.serialize_pages(&mut chunk_container)?;
+-        self.serialize_page_tree(&mut chunk_container);
+-        self.serialize_forms(&mut chunk_container);
++        self.serialize_destination_profiles(chunk_container);
++        self.serialize_page_label_tree(chunk_container);
++        self.serialize_outline(chunk_container);
++        self.serialize_pages(chunk_container)?;
++        self.serialize_page_tree(chunk_container);
++        self.serialize_forms(chunk_container);
+         // Forms register fonts for variable text /DA strings,
+         // so it's important we serialize fonts afterwards!
+-        self.serialize_fonts(&mut chunk_container)?;
++        self.serialize_fonts(chunk_container)?;
+         #[cfg(feature = "pdf")]
+-        self.serialize_embedded_pdfs(&mut chunk_container)?;
+-        self.serialize_xyz_destinations(&mut chunk_container)?;
++        self.serialize_embedded_pdfs(chunk_container)?;
++        self.serialize_xyz_destinations(chunk_container)?;
+         // It is important that we serialize the tags AFTER we have serialized the pages,
+         // because page serialization will update the annotation refs of the page infos,
+         // and when serializing the parent tree map we need to know the refs of the annotations
+-        self.serialize_tag_tree(&mut chunk_container)?;
++        self.serialize_tag_tree(chunk_container)?;
+ 
+-        // Create the final PDF.
+-        let pdf = chunk_container.finish(&mut self)?;
+-        self.register_limits(pdf.limits());
++        Ok(())
++    }
+ 
++    fn check(mut self) -> KrillaResult<()> {
+         self.check_validator_limits();
+ 
+         if !self.validation_errors.is_empty() {
+@@ -524,7 +550,7 @@ impl SerializeContext {
+         // Just a sanity check that we've actually processed all items.
+         self.global_objects.assert_all_taken();
+ 
+-        Ok(pdf)
++        Ok(())
+     }
+ }
+ 
+diff --git a/crates/krilla/src/sink.rs b/crates/krilla/src/sink.rs
+new file mode 100644
+index 0000000..a3f34b6
+--- /dev/null
++++ b/crates/krilla/src/sink.rs
+@@ -0,0 +1,117 @@
++//! Writing the objects of a document into a sink that the caller supplies.
++//!
++//! [`Document::finish`](crate::Document::finish) writes a complete PDF file.
++//! [`Document::finish_into`](crate::Document::finish_into) instead hands the
++//! same indirect objects to an [`ObjectSink`], numbered with object numbers
++//! that the sink allocates, so that an application can add them to a
++//! document it already holds.
++
++/// Receives the indirect objects of a document.
++pub trait ObjectSink {
++    /// Allocates the number of a new indirect object in the receiving
++    /// document. Numbers must be positive and unique.
++    fn allocate(&mut self) -> i32;
++
++    /// Receives a sequence of complete indirect objects (`N 0 obj ...
++    /// endobj`), each numbered with a number from [`ObjectSink::allocate`].
++    fn write(&mut self, objects: &[u8]);
++}
++
++/// The objects that a document catalog would reference, as numbers the sink
++/// allocated. The sink owns the catalog, the document information, and the
++/// XMP metadata, which krilla does not write into it.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct SinkOutput {
++    /// The root of the page tree.
++    pub pages: i32,
++    /// The interactive form dictionary.
++    pub acro_form: Option<i32>,
++    /// The page label number tree.
++    pub page_labels: Option<i32>,
++    /// The output intents array.
++    pub output_intents: Option<i32>,
++    /// The structure tree root.
++    pub struct_tree_root: Option<i32>,
++    /// The outline dictionary.
++    pub outlines: Option<i32>,
++    /// The named destinations, sorted by name, for the `Dests` name tree.
++    pub named_destinations: Vec<(Vec<u8>, i32)>,
++    /// The embedded files, sorted by name, for the `EmbeddedFiles` name tree
++    /// and the catalog's associated files.
++    pub embedded_files: Vec<(Vec<u8>, i32)>,
++}
++
++#[cfg(test)]
++mod tests {
++    use super::ObjectSink;
++    use crate::geom::{PathBuilder, Rect};
++    use crate::page::PageSettings;
++    use crate::Document;
++
++    struct Collector {
++        next: i32,
++        allocated: Vec<i32>,
++        bytes: Vec<u8>,
++    }
++
++    impl ObjectSink for Collector {
++        fn allocate(&mut self) -> i32 {
++            let number = self.next;
++            self.next += 1;
++            self.allocated.push(number);
++            number
++        }
++
++        fn write(&mut self, objects: &[u8]) {
++            self.bytes.extend_from_slice(objects);
++        }
++    }
++
++    fn document() -> Document {
++        let mut document = Document::new();
++        let mut page = document.start_page_with(PageSettings::from_wh(200.0, 200.0).unwrap());
++        let mut surface = page.surface();
++        let mut builder = PathBuilder::new();
++        builder.push_rect(Rect::from_xywh(20.0, 20.0, 50.0, 50.0).unwrap());
++        surface.draw_path(&builder.finish().unwrap());
++        surface.finish();
++        page.finish();
++        document
++    }
++
++    fn count(bytes: &[u8], needle: &[u8]) -> usize {
++        bytes.windows(needle.len()).filter(|w| *w == needle).count()
++    }
++
++    #[test]
++    fn sink_receives_every_object_with_its_own_numbers() {
++        let mut sink = Collector {
++            next: 100,
++            allocated: vec![],
++            bytes: vec![],
++        };
++        let output = document().finish_into(&mut sink).unwrap();
++
++        assert!(sink.allocated.contains(&output.pages));
++        assert_eq!(count(&sink.bytes, b" 0 obj"), sink.allocated.len());
++        for number in &sink.allocated {
++            let header = format!("{number} 0 obj");
++            assert_eq!(count(&sink.bytes, header.as_bytes()), 1, "{header}");
++        }
++        assert!(!sink.bytes.windows(4).any(|w| w == b"/Cat"));
++    }
++
++    #[test]
++    fn the_file_holds_the_sink_objects_and_a_catalog() {
++        let mut sink = Collector {
++            next: 1,
++            allocated: vec![],
++            bytes: vec![],
++        };
++        document().finish_into(&mut sink).unwrap();
++        let pdf = document().finish().unwrap();
++
++        // The file adds the catalog and the document information.
++        assert_eq!(count(&pdf, b" 0 obj"), sink.allocated.len() + 2);
++    }
++}
+-- 
+2.56.0
+
