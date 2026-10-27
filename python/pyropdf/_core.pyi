@@ -180,6 +180,17 @@ def page_search(
     max_size: int | None,
     /,
 ) -> tuple[list[Any], int]: ...
+def page_selection(
+    document: _Document,
+    number: int,
+    generation: int,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[str, int]: ...
 def begin_transaction(document: _Document, name: str, /) -> None: ...
 def end_transaction(document: _Document, commit: bool, /) -> None: ...
 def history_state(document: _Document, /) -> tuple[list[str], int, int | None, int]: ...

@@ -1,7 +1,8 @@
-//! `page.text`, `doc.text`, `page.words`, `page.layout`, and `page.search`:
-//! the text of pages in reading order, ported from pylopdf's `extract_text`,
-//! `extract_layout`, and `search_page` in `rust/src/document/extraction.rs`
-//! at 036be111cafe77755db4bb2be17bc70a8f2f9d82.
+//! `page.text`, `doc.text`, `page.words`, `page.layout`, `page.search`, and
+//! `page.selection`: the text of pages in reading order, ported from
+//! pylopdf's `extract_text`, `extract_layout`, `search_page`, and
+//! `select_text` in `rust/src/document/extraction.rs` at
+//! 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -324,5 +325,48 @@ pub fn page_search(
             SearchHits::Quads(quads) => Hits::Quads(quads),
         };
         Ok((hits, skipped))
+    })
+}
+
+/// Returns the text that a viewer selects by dragging from `start` to `end`
+/// on the page whose object is `number` and `generation`, and the glyphs
+/// without Unicode that it left out, with the GIL released. The points are
+/// finite and in display space, and the budgets are those of [`page_text`].
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the page, the two points, the options, and the two budgets of one call"
+)]
+pub fn page_selection(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    start: (f64, f64),
+    end: (f64, f64),
+    options: OptionsTuple,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<(String, usize)> {
+    if ![start.0, start.1, end.0, end.1]
+        .iter()
+        .all(|value| value.is_finite())
+    {
+        return Err(PyValueError::new_err("selection points must be finite"));
+    }
+    let options = text_options(options)?;
+    let (version, index, budget) = crate::pages::index(document)?;
+    let budget = budget
+        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
+        .with_limit(LimitCode::TextSize, max_size);
+    py.detach(|| {
+        let at = index
+            .index_of(Reference::new(number, generation))
+            .ok_or_else(|| stale(number, generation))?;
+        let bridged = document
+            .bridge
+            .get(&version, &index, &budget)
+            .map_err(|e| bridge_error(&e))?;
+        extract::page_selection(&bridged, at, &options, start, end, &budget).map_err(text_error)
     })
 }

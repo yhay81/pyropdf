@@ -11,6 +11,7 @@
 
 mod layout;
 mod search;
+mod selection;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub use self::layout::{
     page_layout,
 };
 pub use self::search::{SearchHits, page_search};
+pub use self::selection::page_selection;
 use super::provenance::{RunCheck, Source, run_sources};
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;
@@ -2857,7 +2859,7 @@ fn logicalize_rtl_line(line: &mut [GlyphRecord]) {
 }
 
 /// Calculate the exact plain-text size before allocating the returned string.
-fn assembled_text_size(lines: &[Vec<GlyphRecord>]) -> Option<usize> {
+fn assembled_text_size<L: AsRef<[GlyphRecord]>>(lines: &[L]) -> Option<usize> {
     let mut total = 0usize;
     for (line_index, line) in lines.iter().enumerate() {
         let mut line_size = 0usize;
@@ -2865,7 +2867,7 @@ fn assembled_text_size(lines: &[Vec<GlyphRecord>]) -> Option<usize> {
         let mut ends_with_space = false;
         let mut ends_with_newline = line_index > 0;
         let mut previous: Option<&GlyphRecord> = None;
-        for glyph in line {
+        for glyph in line.as_ref() {
             if needs_gap(previous, glyph) && !ends_with_space && !ends_with_newline {
                 line_size = line_size.checked_add(1)?;
                 trailing_spaces = trailing_spaces.checked_add(1)?;

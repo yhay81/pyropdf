@@ -548,6 +548,62 @@ class Page:
             return [_quad(hit) for hit in hits]
         return [_rect(hit) for hit in hits]
 
+    def selection(
+        self,
+        start: Sequence[float],
+        end: Sequence[float],
+        *,
+        clip: Sequence[float] | None = None,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> str:
+        """Return the text that a viewer selects by dragging from ``start`` to ``end``.
+
+        The selection runs in reading order from the character nearest
+        ``start`` to the one nearest ``end``, whichever comes first, with the
+        first and last lines in part and the lines between them whole, as
+        :meth:`text` assembles them, and without a final line break. Both
+        points are in display space; ``clip`` limits the characters as
+        :meth:`text` does, and so do the budgets. A page without text
+        selects ``""``.
+        """
+        points = []
+        for name, point in (("start", start), ("end", end)):
+            try:
+                x, y = (float(value) for value in point)
+            except (TypeError, ValueError) as error:
+                msg = f"{name} must be a point (x, y): {point!r}"
+                raise ValueError(msg) from error
+            if not (math.isfinite(x) and math.isfinite(y)):
+                msg = f"{name} must be a finite point: {point!r}"
+                raise ValueError(msg)
+            points.append((x, y))
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=False,
+            ligatures=True,
+            whitespace=True,
+            dehyphenate=False,
+            unmapped="skip",
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+        )
+        try:
+            text, skipped = _core.page_selection(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                points[0],
+                points[1],
+                options,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return text
+
     @property
     def operations(self) -> Operations:
         """Return the page's content as :class:`Operations`, as hayro reads it.
