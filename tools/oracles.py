@@ -90,7 +90,11 @@ def pdfjs(files: list[bytes]) -> list[Reading]:
             path.write_bytes(data)
             paths.append(str(path))
         script = str(ROOT / "tools" / "pdfjs" / "read.mjs")
-        result = subprocess.run(["node", script, *paths], capture_output=True, text=True, check=True)  # noqa: S603, S607 - a fixed script on generated files.
+        result = subprocess.run(["node", script, *paths], capture_output=True, text=True, check=False)  # noqa: S603, S607 - a fixed script on generated files.
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        msg = f"pdf.js exited with status {result.returncode}"
+        raise SystemExit(msg)
     return [
         [((round(width, 2), round(height, 2)), text) for width, height, text in json.loads(line)]
         for line in result.stdout.splitlines()
