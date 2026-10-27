@@ -5,6 +5,7 @@ use pyo3::prelude::*;
 
 mod cancel;
 mod changes;
+mod check;
 mod content;
 mod document;
 mod errors;
@@ -14,6 +15,7 @@ mod objects;
 mod pages;
 mod pixmap;
 mod render;
+mod schema;
 mod security;
 mod source;
 mod text;
@@ -32,9 +34,13 @@ mod _core {
     #[pymodule_export]
     use super::changes::changes;
     #[pymodule_export]
+    use super::check::structural_check;
+    #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
-    use super::document::{_Document, page_result_counts, probe, web_limits};
+    use super::document::{
+        _Document, document_header_version, page_result_counts, probe, web_limits,
+    };
     #[pymodule_export]
     use super::errors::{
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, PasswordError,
@@ -62,6 +68,8 @@ mod _core {
     use super::pixmap::{Pixmap, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
+    #[pymodule_export]
+    use super::schema::{schema_names, schema_object};
     #[pymodule_export]
     use super::security::{security_state, unlock};
     #[pymodule_export]

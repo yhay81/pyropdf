@@ -514,8 +514,21 @@ fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResul
     Ok((count, header, encrypted, repaired, metadata))
 }
 
+/// Returns the version of the document's `%PDF-x.y` header, such as
+/// `"1.4"`, or `None` for a document that was not read from a file or whose
+/// header names no version.
+#[pyfunction]
+#[pyo3(name = "header_version")]
+pub fn document_header_version(document: &_Document) -> PyResult<Option<String>> {
+    let version = document.reading()?;
+    Ok(version
+        .base()
+        .file()
+        .and_then(|index| header_version(&index.bytes()[index.origin()..])))
+}
+
 /// Returns the version of a `%PDF-x.y` header, such as `"1.7"`.
-fn header_version(bytes: &[u8]) -> Option<String> {
+pub(crate) fn header_version(bytes: &[u8]) -> Option<String> {
     let rest = bytes.strip_prefix(b"%PDF-")?;
     let end = rest
         .iter()
