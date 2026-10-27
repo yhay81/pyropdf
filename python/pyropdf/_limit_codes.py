@@ -39,6 +39,7 @@ LimitCode: TypeAlias = Literal[
     "svg_output_size",
     "render_output_size",
     "password_input_size",
+    "annotation_input_size",
     "page_entry_count",
     "memory_size",
     "deadline",
@@ -109,6 +110,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."
         ),
         "password_input_size": "A password is longer in UTF-8 than PDF 2.0 allows.",
+        "annotation_input_size": (
+            "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are "
+            "longer than 1 MiB in UTF-8 together."
+        ),
         "page_entry_count": (
             "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page "
             "count and 4,096."

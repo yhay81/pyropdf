@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
+from pyropdf._annotations import Annotations
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
@@ -135,6 +136,11 @@ class Page:
     def obj(self) -> Dictionary:
         """Return the page dictionary as a handle of the low-level object model."""
         return Dictionary(self._document, (self._number, self._generation))
+
+    @property
+    def annotations(self) -> Annotations:
+        """Return the page's annotations other than links and form widgets, in ``/Annots`` order."""
+        return Annotations(self)
 
     @property
     def index(self) -> int:

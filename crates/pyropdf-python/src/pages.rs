@@ -377,7 +377,7 @@ pub(crate) fn rotation(value: Option<&Value>) -> i64 {
 }
 
 /// Reads a rectangle of four numbers, normalized.
-fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
+pub(crate) fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
     let Value::Array(array) = value else {
         return None;
     };
@@ -397,7 +397,7 @@ fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
 }
 
 /// Returns `value` as an integer when it is one, else as a real.
-fn number(value: f64) -> Value {
+pub(crate) fn number(value: f64) -> Value {
     if value.fract() == 0.0 && value.abs() < 1e15 {
         Value::Integer(value as i64)
     } else {

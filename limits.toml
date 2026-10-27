@@ -200,6 +200,12 @@ unit = "bytes"
 default = 127
 reached = "A password is longer in UTF-8 than PDF 2.0 allows."
 
+[codes.annotation_input_size]
+message = "the annotation text is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together."
+
 [codes.page_entry_count]
 message = "the list of pages is too long"
 unit = "entries"

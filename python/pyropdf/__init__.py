@@ -1,5 +1,17 @@
 """Complete control of PDF as ISO 32000-2 defines it, implemented in Rust."""
 
+from pyropdf._annotations import (
+    Annotation,
+    AnnotationFlags,
+    Annotations,
+    AnnotationType,
+    AttachmentIcon,
+    Border,
+    BorderStyle,
+    LineEnding,
+    NoteIcon,
+    StampIcon,
+)
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -85,9 +97,16 @@ for _public in (
 
 __all__ = [
     "Access",
+    "Annotation",
+    "AnnotationFlags",
+    "AnnotationType",
+    "Annotations",
     "Array",
+    "AttachmentIcon",
     "BlendMode",
     "Block",
+    "Border",
+    "BorderStyle",
     "CancellationToken",
     "Char",
     "Clip",
@@ -116,6 +135,7 @@ __all__ = [
     "LimitError",
     "Line",
     "LineCap",
+    "LineEnding",
     "LineJoin",
     "LineTo",
     "MalformedPdfError",
@@ -123,6 +143,7 @@ __all__ = [
     "Matrix",
     "MoveTo",
     "Name",
+    "NoteIcon",
     "Objects",
     "OcrEngine",
     "OcrError",
@@ -152,6 +173,7 @@ __all__ = [
     "Span",
     "StaleObjectError",
     "StalePageError",
+    "StampIcon",
     "Stream",
     "String",
     "Stroke",
