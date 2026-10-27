@@ -134,6 +134,12 @@ unit = "matches"
 default = 4_096
 reached = "`Page.search` finds more matches than the call's `max_hits`."
 
+[codes.markdown_output_size]
+message = "the Markdown is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
+
 # The low-level object model.
 
 [codes.stream_data_size]

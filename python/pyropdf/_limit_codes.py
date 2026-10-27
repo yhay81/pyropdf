@@ -29,6 +29,7 @@ LimitCode: TypeAlias = Literal[
     "text_size",
     "search_input_size",
     "search_hit_count",
+    "markdown_output_size",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",
@@ -88,6 +89,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "search_input_size": "The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8.",
         "search_hit_count": "`Page.search` finds more matches than the call's `max_hits`.",
+        "markdown_output_size": (
+            "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is "
+            "larger than the call's `max_size`."
+        ),
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",

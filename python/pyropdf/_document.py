@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
-from pyropdf import _core
+from pyropdf import _core, _markdown
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -338,6 +338,38 @@ class Document:
         text, skipped = _core.document_text(doc, entries, options, max_glyphs, max_size)
         _warn_skipped(skipped)
         return text
+
+    def markdown(
+        self,
+        pages: Iterable[int] | None = None,
+        *,
+        table_strategy: Literal["lines", "text"] | None = "lines",
+        max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
+    ) -> str:
+        """Return the given pages of the current version as Markdown, joined in their order.
+
+        Headings come from font sizes: the size that holds the most text is
+        the body's, and larger sizes map in descending order to ``#``
+        through ``####``. Wrapped CJK lines join without spaces, leading
+        bullets and ``1.`` or ``1)`` become Markdown lists, and the bold and
+        italic of embedded fonts become emphasis. Multicolumn text follows
+        its gutters, and vertical CJK columns read top to bottom and right to
+        left; ruby and mixed orientations are not interpreted.
+
+        Complete bordered tables of :meth:`Page.tables` become Markdown
+        tables in reading order; ``table_strategy="text"`` adds the
+        borderless tables that overlap none of them, and ``None`` converts no
+        table. ``pages`` is as for :meth:`text`. More than ``max_size`` bytes
+        of UTF-8 in all raise :class:`LimitError` with code
+        ``markdown_output_size`` without a partial result;
+        ``max_size=None`` lifts the limit.
+        """
+        _markdown.validate_options(table_strategy, max_size)
+        count = _core.page_count(self._core())
+        indexes = range(count) if pages is None else _page_entries(pages, count)
+        return _markdown.pages_markdown(
+            [self.pages[index] for index in indexes], table_strategy=table_strategy, max_size=max_size
+        )
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""

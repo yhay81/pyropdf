@@ -1,0 +1,797 @@
+"""Build Markdown from the dictionary of a page's layout.
+
+Ported from pylopdf 036be111 ``src/pylopdf/_markdown.py``.
+
+Initial rules:
+
+- Body size is the font size containing the most characters, rounded to 0.1 pt.
+  Sufficiently larger sizes map in descending order to heading levels 1–4.
+- Wrapped lines join without a space between characters in scripts that do not
+  normally delimit words with spaces.
+- Adjacent spans of one line are separated by a space when the gap between
+  them exceeds the extractor's word gap, as in ``Page.text()``.
+- Leading bullets such as ・, •, and ● plus ``1.``/``1)`` normalize to lists.
+- Span flags derived from embedded-font weight and italic metadata become
+  emphasis markers in body text. Heading text remains plain to avoid combining
+  heading markers with emphasis. Standard 14 Type 1 fonts are excluded because
+  hayro does not expose their metadata.
+- Multicolumn text follows deterministic whitespace gutters.
+- Conservative vertical CJK columns follow extracted top-to-bottom,
+  right-to-left order. Ruby and mixed-orientation typography are not interpreted.
+- Complete bordered tables become Markdown tables in page reading order.
+  Conservative borderless detection remains opt-in.
+"""
+
+from __future__ import annotations
+
+import re
+import unicodedata
+from collections import Counter
+from typing import TYPE_CHECKING, Any, Literal
+
+from pyropdf._errors import LimitError
+from pyropdf._limits import _validate_optional_positive_int
+from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, build_layout, build_words, text_options
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from pyropdf._geometry import Rect
+    from pyropdf._page import Page
+    from pyropdf._tables import Table
+    from pyropdf._text import Word
+
+    #: :meth:`Layout.to_dict` and its lines and spans.
+    TextPageDict = dict[str, Any]
+    TextLine = dict[str, Any]
+    TextSpan = dict[str, Any]
+
+_BBox = tuple[float, float, float, float]
+_MarkdownTable = tuple[_BBox, str]
+_AxisOrientation = Literal["right", "down", "left", "up"]
+
+#: Minimum size ratio relative to body text for a heading.
+_HEADING_RATIO = 1.15
+#: Maximum number of heading levels.
+_MAX_HEADING_LEVELS = 4
+#: Leading bullets recognized when followed by whitespace, including ASCII dashes.
+_SPACED_BULLETS = "・•●○◦▪‣–—-*"
+#: Leading bullets recognized without whitespace, common in CJK documents.
+_TIGHT_BULLETS = "・•●○◦▪‣"
+#: Numbered lists in ``1.`` or ``23)`` form.
+_NUMBERED = re.compile(r"^(\d{1,3})[.)][ 　]+")
+#: Inline gap, relative to font size, above which adjacent spans are separate
+#: words. Matches ``WORD_GAP`` in ``crates/pyropdf-engine/src/extract/text.rs``.
+_WORD_GAP = 0.15
+_UTF8_ONE_BYTE_MAX = 0x7F
+_UTF8_TWO_BYTE_MAX = 0x7FF
+_UTF8_SURROGATE_MIN = 0xD800
+_UTF8_SURROGATE_MAX = 0xDFFF
+_UTF8_THREE_BYTE_MAX = 0xFFFF
+
+
+class MarkdownOutputLimitError(Exception):
+    """Internal signal that escaped Markdown would exceed its output budget."""
+
+
+def _round_size(size: float) -> float:
+    return round(size, 1)
+
+
+def _line_inside_bbox(line: TextLine, bbox: _BBox) -> bool:
+    """Return whether a line center lies inside a display-coordinate bbox."""
+    x0, y0, x1, y1 = line["bbox"]
+    center_x = (x0 + x1) * 0.5
+    center_y = (y0 + y1) * 0.5
+    return bbox[0] <= center_x <= bbox[2] and bbox[1] <= center_y <= bbox[3]
+
+
+def _word_inside_bbox(word: Word, bbox: _BBox) -> bool:
+    """Return whether a word center lies inside a display-coordinate bbox."""
+    center_x = (word.bbox.x0 + word.bbox.x1) * 0.5
+    center_y = (word.bbox.y0 + word.bbox.y1) * 0.5
+    return bbox[0] <= center_x <= bbox[2] and bbox[1] <= center_y <= bbox[3]
+
+
+def _line_orientation(line: TextLine) -> _AxisOrientation:
+    """Return the nearest right-angle direction of one baseline."""
+    x, y = line["dir"]
+    if abs(x) >= abs(y):
+        return "right" if x >= 0 else "left"
+    return "down" if y >= 0 else "up"
+
+
+def _dominant_orientation(lines: list[TextLine]) -> _AxisOrientation:
+    """Return the character-weighted baseline direction of a line collection."""
+    directions: Counter[_AxisOrientation] = Counter()
+    for line in lines:
+        directions[_line_orientation(line)] += max(1, len(_line_text(line)))
+    return directions.most_common(1)[0][0] if directions else "right"
+
+
+def table_orientation(layout: TextPageDict, bbox: _BBox) -> _AxisOrientation:
+    """Return table text direction, falling back to the surrounding page."""
+    lines = [line for block in layout["blocks"] for line in block["lines"]]
+    inside = [line for line in lines if _line_inside_bbox(line, bbox)]
+    return _dominant_orientation(inside or lines)
+
+
+def table_to_markdown(
+    source_rows: list[list[str | None]],
+    *,
+    fill_empty: bool = True,
+    orientation: _AxisOrientation = "right",
+    cell_anchors: Sequence[int] | None = None,
+    max_size: int | None = None,
+) -> str:
+    """Render table rows after bounded normalization of their text direction."""
+    rows = [row.copy() for row in source_rows]
+    if not rows:
+        return ""
+
+    if fill_empty:
+        _fill_merged_cells(rows, cell_anchors)
+    rows = _orient_rows(rows, orientation)
+    _preflight_table_markdown(rows, max_size)
+
+    rendered = ["| " + " | ".join(_escape_table_cell(value) for value in rows[0]) + " |"]
+    rendered.append("| " + " | ".join("---" for _ in rows[0]) + " |")
+    rendered.extend("| " + " | ".join(_escape_table_cell(value) for value in row) + " |" for row in rows[1:])
+    return "\n".join(rendered)
+
+
+def _preflight_table_markdown(rows: list[list[str | None]], max_size: int | None) -> None:
+    """Reject an oversized table before allocating escaped cell strings."""
+    if max_size is None:
+        return
+
+    header_columns = len(rows[0])
+    output_size = len(rows)
+    output_size += 4 + max(0, header_columns - 1) * 3 + header_columns * 3
+    output_size += sum(4 + max(0, len(row) - 1) * 3 for row in rows)
+    if output_size > max_size:
+        raise MarkdownOutputLimitError
+
+    for row in rows:
+        for value in row:
+            if value is None:
+                continue
+            for character in value:
+                if character in {"\\", "|"}:
+                    output_size += 2
+                elif character == "\n":
+                    output_size += 4
+                else:
+                    output_size += _utf8_character_size(character)
+                if output_size > max_size:
+                    raise MarkdownOutputLimitError
+
+
+def _utf8_character_size(character: str) -> int:
+    """Return one Unicode scalar's UTF-8 size without allocating encoded bytes."""
+    code_point = ord(character)
+    if code_point <= _UTF8_ONE_BYTE_MAX:
+        return 1
+    if code_point <= _UTF8_TWO_BYTE_MAX:
+        return 2
+    if _UTF8_SURROGATE_MIN <= code_point <= _UTF8_SURROGATE_MAX:
+        return len(character.encode())
+    if code_point <= _UTF8_THREE_BYTE_MAX:
+        return 3
+    return 4
+
+
+def utf8_size(value: str) -> int:
+    """Return a string's strict UTF-8 size without materializing encoded bytes."""
+    return sum(_utf8_character_size(character) for character in value)
+
+
+def _fill_merged_cells(
+    rows: list[list[str | None]],
+    cell_anchors: Sequence[int] | None,
+) -> None:
+    """Copy merged-cell anchors into covered slots in place."""
+    column_count = len(rows[0])
+    if cell_anchors is not None and len(cell_anchors) == len(rows) * column_count:
+        for index, anchor in enumerate(cell_anchors):
+            if not 0 <= anchor < len(cell_anchors):
+                continue
+            row_index, column_index = divmod(index, column_count)
+            anchor_row, anchor_column = divmod(anchor, column_count)
+            if rows[row_index][column_index] is None:
+                rows[row_index][column_index] = rows[anchor_row][anchor_column]
+        return
+
+    # Compatibility fallback for callers that only have extracted values.
+    for row_index, row in enumerate(rows):
+        for column_index, value in enumerate(row):
+            if value is not None:
+                continue
+            above = rows[row_index - 1][column_index] if row_index else None
+            left = row[column_index - 1] if column_index else None
+            row[column_index] = above if above is not None else left
+
+
+def _orient_rows(
+    rows: list[list[str | None]],
+    orientation: _AxisOrientation,
+) -> list[list[str | None]]:
+    """Rotate display-coordinate rows into logical text reading order."""
+    if orientation == "down":
+        return [list(row) for row in zip(*rows, strict=True)][::-1]
+    if orientation == "left":
+        return [row[::-1] for row in rows[::-1]]
+    if orientation == "up":
+        return [list(row) for row in zip(*rows[::-1], strict=True)]
+    return rows
+
+
+def _escape_table_cell(value: str | None) -> str:
+    """Escape one Markdown table cell."""
+    if value is None:
+        return ""
+    return value.replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+
+
+def collect_sizes(
+    layouts: list[TextPageDict],
+    excluded_bboxes: list[list[_BBox]] | None = None,
+) -> Counter[float]:
+    """Count non-table characters by rounded font size across page dicts."""
+    counter: Counter[float] = Counter()
+    for page_index, layout in enumerate(layouts):
+        bboxes = [] if excluded_bboxes is None else excluded_bboxes[page_index]
+        for block in layout["blocks"]:
+            for line in block["lines"]:
+                if any(_line_inside_bbox(line, bbox) for bbox in bboxes):
+                    continue
+                for span in line["spans"]:
+                    counter[_round_size(span["size"])] += len(span["text"])
+    return counter
+
+
+def heading_levels(counter: Counter[float]) -> dict[float, int]:
+    """Map heading sizes to levels 1–4, excluding body size and below."""
+    if not counter:
+        return {}
+    body = counter.most_common(1)[0][0]
+    bigger = sorted((size for size in counter if size > body * _HEADING_RATIO), reverse=True)
+    return {size: min(rank + 1, _MAX_HEADING_LEVELS) for rank, size in enumerate(bigger)}
+
+
+#: Scripts whose adjacent glyphs do not infer inter-word spaces in the extractor.
+_NO_SPACE_WORD_SCRIPT_RANGES = (
+    (0x0E00, 0x0E7F),
+    (0x0E80, 0x0EFF),
+    (0x1000, 0x109F),
+    (0x1780, 0x17FF),
+    (0x19E0, 0x19FF),
+    (0xA9E0, 0xA9FF),
+    (0xAA60, 0xAA7F),
+)
+
+#: Wrapped lines also join CJK punctuation, kana, Han, and width forms directly.
+#: This is paragraph joining, not dictionary-based word segmentation.
+_NO_SPACE_SCRIPT_RANGES = (
+    *_NO_SPACE_WORD_SCRIPT_RANGES,
+    (0x3000, 0x30FF),
+    (0x3400, 0x9FFF),
+    (0xF900, 0xFAFF),
+    (0xFF00, 0xFFEF),
+)
+
+
+def _joins_without_space(ch: str) -> bool:
+    """Return whether a character joins a wrapped line without ASCII space."""
+    code = ord(ch)
+    return any(low <= code <= high for low, high in _NO_SPACE_SCRIPT_RANGES)
+
+
+def _join_lines(lines: list[str]) -> str:
+    """Join paragraph lines according to the boundary characters' scripts."""
+    parts = [lines[0]]
+    previous = lines[0]
+    for line in lines[1:]:
+        if not (previous and line and _joins_without_space(previous[-1]) and _joins_without_space(line[0])):
+            parts.append(" ")
+        parts.append(line)
+        previous = line
+    return "".join(parts)
+
+
+#: pymupdf-compatible span flag bits: italic=2, serif=4, mono=8, bold=16.
+_ITALIC = 2
+_BOLD = 16
+
+
+def _span_interval(span: TextSpan, direction: tuple[float, float]) -> tuple[float, float]:
+    """Return a span's extent along its line's baseline direction."""
+    x0, y0, x1, y1 = span["bbox"]
+    projections = [x * direction[0] + y * direction[1] for x in (x0, x1) for y in (y0, y1)]
+    # glyph_bbox uses ASCENT + DESCENT == 1; projecting its axis-aligned
+    # bounds adds this cross-axis padding at each end of a rotated baseline.
+    padding = abs(direction[0] * direction[1]) * span["size"]
+    return min(projections) + padding, max(projections) - padding
+
+
+def _needs_span_gap(previous: TextSpan, span: TextSpan, line: TextLine) -> bool:
+    """Return whether a word gap separates two adjacent spans of one line.
+
+    Spans contain the inferred spaces between their own glyphs only, so this
+    repeats the extractor's symmetric glyph-gap rule at span boundaries.
+    """
+    before = previous["text"]
+    after = span["text"]
+    if line["wmode"] == 1 or not before or not after or before[-1].isspace() or after[0].isspace():
+        return False
+    if all(any(low <= ord(ch) <= high for low, high in _NO_SPACE_WORD_SCRIPT_RANGES) for ch in (before[-1], after[0])):
+        return False
+    if unicodedata.bidirectional(after[0]) == "NSM":
+        return False
+    previous_start, previous_end = _span_interval(previous, line["dir"])
+    start, end = _span_interval(span, line["dir"])
+    gap = start - previous_end if start >= previous_start else previous_start - end
+    return gap > max(previous["size"], span["size"], 1.0) * _WORD_GAP
+
+
+def _join_spans(line: TextLine, render: Callable[[TextSpan], str]) -> str:
+    """Join rendered spans, restoring word gaps that fall between two spans."""
+    parts: list[str] = []
+    previous: TextSpan | None = None
+    for span in line["spans"]:
+        if previous is not None and _needs_span_gap(previous, span, line):
+            parts.append(" ")
+        parts.append(render(span))
+        if not all(unicodedata.bidirectional(ch) == "NSM" for ch in span["text"]):
+            previous = span
+    return "".join(parts).strip()
+
+
+def _line_text(line: TextLine) -> str:
+    return _join_spans(line, lambda span: span["text"])
+
+
+def _span_markdown(span: TextSpan) -> str:
+    """Convert a span to emphasized Markdown, keeping outer whitespace outside."""
+    text: str = span["text"]
+    flags = span["flags"]
+    bold = bool(flags & _BOLD)
+    italic = bool(flags & _ITALIC)
+    core = text.strip()
+    if not core or not (bold or italic):
+        return text
+    marker = "***" if bold and italic else ("**" if bold else "*")
+    lead = text[: len(text) - len(text.lstrip())]
+    trail = text[len(text.rstrip()) :]
+    return f"{lead}{marker}{core}{marker}{trail}"
+
+
+def _line_markdown(line: TextLine) -> str:
+    """Build a body line with bold and italic markers."""
+    return _join_spans(line, _span_markdown)
+
+
+def _line_size(line: TextLine) -> float:
+    """Return the line's representative size by character count."""
+    sizes: Counter[float] = Counter()
+    for span in line["spans"]:
+        sizes[_round_size(span["size"])] += len(span["text"])
+    return sizes.most_common(1)[0][0] if sizes else 0.0
+
+
+def _normalize_list_item(text: str) -> str | None:
+    """Normalize a bullet or numbered line, returning ``None`` otherwise."""
+    if text[:1] and text[0] in _SPACED_BULLETS and text[1:2] in (" ", "　"):
+        return "- " + text[2:].lstrip(" 　")
+    if text[:1] and text[0] in _TIGHT_BULLETS:
+        return "- " + text[1:].lstrip(" 　")
+    matched = _NUMBERED.match(text)
+    if matched:
+        return f"{matched.group(1)}. " + text[matched.end() :]
+    return None
+
+
+def _table_events(
+    layout: TextPageDict,
+    tables: list[_MarkdownTable],
+    words: list[Word] | None,
+) -> tuple[dict[int, list[int]], list[set[int]], dict[int, tuple[str, str]]]:
+    """Place tables at their first contained line or nearest geometric slot."""
+    indexed_lines = [
+        ((block_index, line_index), line)
+        for block_index, block in enumerate(layout["blocks"])
+        for line_index, line in enumerate(block["lines"])
+    ]
+    lines = [line for _, line in indexed_lines]
+    line_positions = {key: index for index, (key, _) in enumerate(indexed_lines)}
+    line_words: dict[tuple[int, int], list[Word]] = {}
+    for word in [] if words is None else words:
+        line_words.setdefault((word.block, word.line), []).append(word)
+    memberships: list[set[int]] = [set() for _ in lines]
+    events: dict[int, list[int]] = {}
+    page_orientation = _dominant_orientation(lines)
+    for table_index, (bbox, _) in enumerate(tables):
+        contained = _contained_line_positions(
+            bbox,
+            lines,
+            line_positions,
+            line_words,
+            use_words=words is not None,
+        )
+        for index in contained:
+            memberships[index].add(table_index)
+        position = contained[0] if contained else _geometric_event_position(lines, bbox, page_orientation)
+        events.setdefault(position, []).append(table_index)
+    for table_indices in events.values():
+        table_indices.sort(key=lambda index: (tables[index][0][1], tables[index][0][0]))
+    residuals = _residual_line_texts(indexed_lines, line_words, memberships, tables)
+    return events, memberships, residuals
+
+
+def _contained_line_positions(
+    bbox: _BBox,
+    lines: list[TextLine],
+    line_positions: dict[tuple[int, int], int],
+    line_words: dict[tuple[int, int], list[Word]],
+    *,
+    use_words: bool,
+) -> list[int]:
+    """Return layout positions containing text owned by one table."""
+    if use_words:
+        return sorted(
+            {
+                line_positions[key]
+                for key, words in line_words.items()
+                if key in line_positions and any(_word_inside_bbox(word, bbox) for word in words)
+            }
+        )
+    return [index for index, line in enumerate(lines) if _line_inside_bbox(line, bbox)]
+
+
+def _geometric_event_position(
+    lines: list[TextLine],
+    bbox: _BBox,
+    orientation: _AxisOrientation,
+) -> int:
+    """Return the nearest reading-order insertion slot for a textless table."""
+    inline = {
+        "right": (1.0, 0.0),
+        "down": (0.0, 1.0),
+        "left": (-1.0, 0.0),
+        "up": (0.0, -1.0),
+    }[orientation]
+    block = (-inline[1], inline[0])
+    table_center = ((bbox[0] + bbox[2]) * 0.5, (bbox[1] + bbox[3]) * 0.5)
+    table_projection = table_center[0] * block[0] + table_center[1] * block[1]
+    return next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if (
+                (line["bbox"][0] + line["bbox"][2]) * 0.5 * block[0]
+                + (line["bbox"][1] + line["bbox"][3]) * 0.5 * block[1]
+            )
+            >= table_projection
+        ),
+        len(lines),
+    )
+
+
+def _join_words(words: list[str]) -> str:
+    """Join positioned words using the same script-aware paragraph rule."""
+    if not words:
+        return ""
+    return _join_lines(words)
+
+
+def _residual_line_texts(
+    indexed_lines: list[tuple[tuple[int, int], TextLine]],
+    line_words: dict[tuple[int, int], list[Word]],
+    memberships: list[set[int]],
+    tables: list[_MarkdownTable],
+) -> dict[int, tuple[str, str]]:
+    """Keep words before and after tables when a line crosses a table edge."""
+    residuals: dict[int, tuple[str, str]] = {}
+    for position, (key, line) in enumerate(indexed_lines):
+        if not memberships[position]:
+            continue
+        bboxes = [tables[index][0] for index in memberships[position]]
+        direction = line["dir"]
+        projections = [
+            corner_x * direction[0] + corner_y * direction[1]
+            for bbox in bboxes
+            for corner_x in (bbox[0], bbox[2])
+            for corner_y in (bbox[1], bbox[3])
+        ]
+        table_start = min(projections)
+        before: list[str] = []
+        after: list[str] = []
+        for word in line_words.get(key, []):
+            if any(_word_inside_bbox(word, bbox) for bbox in bboxes):
+                continue
+            center_x = (word.bbox.x0 + word.bbox.x1) * 0.5
+            center_y = (word.bbox.y0 + word.bbox.y1) * 0.5
+            target = before if center_x * direction[0] + center_y * direction[1] < table_start else after
+            target.append(word.text)
+        residuals[position] = (_join_words(before), _join_words(after))
+    return residuals
+
+
+def _classify_line(
+    line: TextLine,
+    levels: dict[float, int],
+    text_override: str | None = None,
+) -> tuple[str, str]:
+    """Classify a non-table line as heading, list item, paragraph, or empty."""
+    text = _line_text(line) if text_override is None else text_override.strip()
+    if not text:
+        return "", ""
+    level = levels.get(_line_size(line))
+    if level is not None:
+        # Keep headings plain to avoid stacking # with emphasis markers.
+        return "h", "#" * level + " " + text
+    item = _normalize_list_item(text)
+    if item is not None:
+        return "li", item
+    return "p", _line_markdown(line) if text_override is None else text
+
+
+def _join_entries(entries: list[tuple[str, str]]) -> str:
+    """Join entries while keeping consecutive list items together."""
+    parts: list[str] = []
+    previous = ""
+    for kind, text in entries:
+        if parts:
+            parts.append("\n" if kind == "li" and previous == "li" else "\n\n")
+        parts.append(text)
+        previous = kind
+    return "".join(parts)
+
+
+class _MarkdownBuilder:
+    """Accumulate one page without retaining entries beyond its output budget."""
+
+    def __init__(self, max_size: int | None) -> None:
+        self.entries: list[tuple[str, str]] = []
+        self.paragraph: list[str] = []
+        self.max_size = max_size
+        self.output_size = 0
+        self.paragraph_size = 0
+
+    def _check_size(self, size: int) -> None:
+        if self.max_size is not None and size > self.max_size:
+            raise MarkdownOutputLimitError
+
+    def _entry_separator_size(self, kind: str) -> int:
+        if not self.entries:
+            return 0
+        return 1 if kind == "li" and self.entries[-1][0] == "li" else 2
+
+    def _append_entry(self, kind: str, text: str, *, text_size: int | None = None) -> None:
+        if text_size is None:
+            text_size = 0 if self.max_size is None else utf8_size(text)
+        next_size = self.output_size + self._entry_separator_size(kind) + text_size
+        self._check_size(next_size)
+        self.entries.append((kind, text))
+        self.output_size = next_size
+
+    def _append_paragraph_line(self, text: str) -> None:
+        text_size = 0 if self.max_size is None else utf8_size(text)
+        if self.paragraph:
+            previous = self.paragraph[-1]
+            if not (previous and text and _joins_without_space(previous[-1]) and _joins_without_space(text[0])):
+                text_size += 1
+        pending_separator = 2 if self.entries else 0
+        self._check_size(self.output_size + pending_separator + self.paragraph_size + text_size)
+        self.paragraph.append(text)
+        self.paragraph_size += text_size
+
+    def flush_paragraph(self) -> None:
+        """Append and clear a pending paragraph."""
+        if not self.paragraph:
+            return
+        text = _join_lines(self.paragraph)
+        self._append_entry("p", text, text_size=self.paragraph_size)
+        self.paragraph.clear()
+        self.paragraph_size = 0
+
+    def append_classified(self, kind: str, text: str) -> None:
+        """Append one classified line, retaining paragraph joining rules."""
+        if kind == "p":
+            self._append_paragraph_line(text)
+        elif kind:
+            self.flush_paragraph()
+            self._append_entry(kind, text)
+
+    def append_tables(
+        self,
+        table_data: list[_MarkdownTable],
+        table_indices: list[int],
+    ) -> None:
+        """Append non-empty table renderings for one reading-order event."""
+        self.flush_paragraph()
+        for table_index in table_indices:
+            markdown = table_data[table_index][1]
+            if markdown:
+                self._append_entry("table", markdown)
+
+    def render(self) -> str:
+        """Return the completed page after charging all pending text."""
+        self.flush_paragraph()
+        return _join_entries(self.entries)
+
+
+def page_to_markdown(
+    layout: TextPageDict,
+    levels: dict[float, int],
+    tables: list[_MarkdownTable] | None = None,
+    words: list[Word] | None = None,
+    max_size: int | None = None,
+) -> str:
+    """Convert one page while bounding retained Markdown entries and output."""
+    table_data = [] if tables is None else tables
+    table_events, table_memberships, residual_texts = _table_events(layout, table_data, words)
+    builder = _MarkdownBuilder(max_size)
+    line_position = 0
+    for block in layout["blocks"]:
+        for line in block["lines"]:
+            pending_tables = table_events.get(line_position, [])
+            if table_memberships[line_position]:
+                before, after = residual_texts.get(line_position, ("", ""))
+                kind, text = _classify_line(line, levels, before)
+                builder.append_classified(kind, text)
+                if pending_tables:
+                    builder.append_tables(table_data, pending_tables)
+                kind, text = _classify_line(line, levels, after)
+                builder.append_classified(kind, text)
+                line_position += 1
+                continue
+            if pending_tables:
+                builder.append_tables(table_data, pending_tables)
+            kind, text = _classify_line(line, levels)
+            if not kind:
+                line_position += 1
+                continue
+            builder.append_classified(kind, text)
+            line_position += 1
+        builder.flush_paragraph()
+    builder.append_tables(table_data, table_events.get(line_position, []))
+    return builder.render()
+
+
+#: The default bound on the UTF-8 of the Markdown that one call returns.
+_DEFAULT_MAX_MARKDOWN_SIZE = 64 * 1024 * 1024
+#: A text table that covers more than this share of a bordered table's area
+#: gives way to it.
+_MARKDOWN_TABLE_OVERLAP_LIMIT = 0.5
+
+
+def markdown_output_limit_error(max_size: int) -> LimitError:
+    """Build the error of every Markdown conversion that exceeds ``max_size``."""
+    return LimitError(
+        "markdown_output_size",
+        f"Markdown output exceeds the {max_size}-byte UTF-8 limit",
+    )
+
+
+def _table_overlap_ratio(left: Rect, right: Rect) -> float:
+    """Return the intersection area divided by the smaller table area."""
+    width = max(0.0, min(left.x1, right.x1) - max(left.x0, right.x0))
+    height = max(0.0, min(left.y1, right.y1) - max(left.y0, right.y0))
+    smaller_area = min(left.width * left.height, right.width * right.height)
+    return 0.0 if smaller_area <= 0.0 else width * height / smaller_area
+
+
+def _page_tables(page: Page, strategy: Literal["lines", "text"] | None) -> list[Table]:
+    """Return the bordered tables, with ``"text"`` extended by the text tables that overlap none."""
+    if strategy is None:
+        return []
+    tables = page.tables(strategy="lines")
+    if strategy == "text":
+        for candidate in page.tables(strategy="text"):
+            if all(
+                _table_overlap_ratio(candidate.bbox, table.bbox) < _MARKDOWN_TABLE_OVERLAP_LIMIT for table in tables
+            ):
+                tables.append(candidate)
+    tables.sort(key=lambda table: (table.bbox.y0, table.bbox.x0))
+    return tables
+
+
+def _table_output(
+    layout: TextPageDict,
+    tables: list[Table],
+    *,
+    max_size: int | None,
+    remaining_size: int | None,
+) -> list[_MarkdownTable]:
+    """Render the tables of a page without keeping more than the remaining budget."""
+    rendered: list[_MarkdownTable] = []
+    rendered_bytes = 0
+    for table in tables:
+        bbox = (table.bbox.x0, table.bbox.y0, table.bbox.x1, table.bbox.y1)
+        table_budget = None if remaining_size is None else max(0, remaining_size - rendered_bytes)
+        try:
+            table_markdown = table_to_markdown(
+                [list(row) for row in table.rows],
+                orientation=table_orientation(layout, bbox),
+                cell_anchors=table._anchors,  # noqa: SLF001
+                max_size=table_budget,
+            )
+        except MarkdownOutputLimitError:
+            raise markdown_output_limit_error(max_size or 0) from None
+        rendered_bytes += utf8_size(table_markdown)
+        rendered.append((bbox, table_markdown))
+    return rendered
+
+
+def _page_layout(page: Page) -> tuple[TextPageDict, list[Word]]:
+    """Return the layout dictionary and the words of a page with the default text options."""
+    options = text_options(
+        clip=None,
+        clipped=False,
+        ligatures=True,
+        whitespace=True,
+        dehyphenate=False,
+        unmapped="skip",
+        max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS,
+        max_size=_DEFAULT_MAX_TEXT_SIZE,
+    )
+    width, height, blocks = page._layout(  # noqa: SLF001
+        options, chars=False, max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS, max_size=_DEFAULT_MAX_TEXT_SIZE
+    )
+    return build_layout(width, height, blocks).to_dict(), build_words(blocks)
+
+
+def validate_options(table_strategy: object, max_size: object) -> None:
+    """Refuse a table strategy or an output bound that a Markdown conversion does not take."""
+    if table_strategy not in {"lines", "text", None}:
+        msg = f"table_strategy must be 'lines', 'text', or None: {table_strategy!r}"
+        raise ValueError(msg)
+    _validate_optional_positive_int("max_size", max_size)
+
+
+def pages_markdown(
+    pages: Sequence[Page],
+    *,
+    table_strategy: Literal["lines", "text"] | None,
+    max_size: int | None,
+) -> str:
+    """Convert ``pages`` to Markdown, inferring heading sizes from all of them.
+
+    A page with no Markdown adds nothing; the others join with a blank line.
+    """
+    size_counts: Counter[float] = Counter()
+    for page in pages:
+        layout, _ = _page_layout(page)
+        tables = _page_tables(page, table_strategy)
+        bboxes = [(table.bbox.x0, table.bbox.y0, table.bbox.x1, table.bbox.y1) for table in tables]
+        size_counts.update(collect_sizes([layout], [bboxes]))
+    levels = heading_levels(size_counts)
+
+    rendered: list[str] = []
+    output_bytes = 0
+    for page in pages:
+        layout, words = _page_layout(page)
+        tables = _page_tables(page, table_strategy)
+        separator_bytes = 2 if rendered else 0
+        page_budget = None if max_size is None else max_size - output_bytes - separator_bytes
+        markdown_tables = _table_output(layout, tables, max_size=max_size, remaining_size=page_budget)
+        try:
+            page_markdown = page_to_markdown(
+                layout,
+                levels,
+                markdown_tables,
+                words if tables else None,
+                max_size=None if page_budget is None else max(0, page_budget),
+            )
+        except MarkdownOutputLimitError:
+            raise markdown_output_limit_error(max_size or 0) from None
+        if not page_markdown:
+            continue
+        if page_budget is not None:
+            page_bytes = utf8_size(page_markdown)
+            if page_bytes > page_budget:
+                raise markdown_output_limit_error(max_size or 0)
+            output_bytes += separator_bytes + page_bytes
+        rendered.append(page_markdown)
+    return "\n\n".join(rendered)
