@@ -8,6 +8,7 @@
 mod base;
 mod prune;
 mod raw;
+mod recode;
 
 #[cfg(test)]
 mod tests;
@@ -18,11 +19,12 @@ use std::io::{self, Write};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::index::{Index, Location};
 use crate::security::{self, Encryption, Handler};
-use crate::value::{Dict, PdfString, Reference, Value};
+use crate::value::{Bytes, Dict, PdfString, Reference, Value};
 use crate::version::{Slot, Version};
-use crate::{Error as StoreError, LimitExceeded, write};
+use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
 
 pub use base::FileBase;
+pub use recode::Streams;
 
 /// A save either reports a typed store error, preserves the sink's I/O
 /// error, or refuses a mode unsupported by this base.
@@ -137,6 +139,8 @@ pub struct Options {
     /// Writes only the objects that the trailer reaches, and the numbers of
     /// the others as free entries.
     pub prune: bool,
+    /// How the save writes the data of streams.
+    pub streams: Streams,
 }
 
 /// Writes the objects of `version` to `target` as [`full`] does, encrypted
@@ -195,11 +199,11 @@ pub fn full_with(
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
-        write_object(version, &mut rows[at], &mut out, &mode)?;
+        write_object(version, &mut rows[at], &mut out, &mode, options.streams)?;
     }
     for row in &mut rows {
         if Some(row.number) != root {
-            write_object(version, row, &mut out, &mode)?;
+            write_object(version, row, &mut out, &mode, options.streams)?;
         }
     }
     if let Mode::New { dict, number, .. } = &mode {
@@ -231,6 +235,19 @@ pub fn full_with(
 /// Refuses repaired and non-file bases and encryption before writing.
 /// Returns bytes written; partial output after an error must be discarded.
 pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
+    incremental_with(version, target, budget, None)
+}
+
+/// Writes the update as [`incremental`] does, compressing the streams that
+/// it writes as [`Streams::Compress`] at `compress` when that is given.
+/// The objects of the original file stay as they are.
+pub fn incremental_with(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    compress: Option<u8>,
+) -> Result<u64> {
+    let streams = compress.map_or(Streams::Keep, Streams::Compress);
     let file = version
         .base()
         .file()
@@ -259,7 +276,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
         budget.poll()?;
         if number != 0 {
             let mut row = row(version, number);
-            write_object(version, &mut row, &mut out, &mode)?;
+            write_object(version, &mut row, &mut out, &mode, streams)?;
             rows.try_push(row)?;
         }
     }
@@ -371,6 +388,7 @@ fn write_object(
     row: &mut Row,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
+    streams: Streams,
 ) -> Result<()> {
     out.budget.poll()?;
     if row.offset.is_none() {
@@ -402,10 +420,52 @@ fn write_object(
             security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
         }
     };
+    let bytes =
+        match recode(version, reference, streams, mode, budget).map_err(|error| match error {
+            Error::Store(error) => Error::Store(context(error)),
+            error => error,
+        })? {
+            // A compressed stream replaces the data only where it is shorter.
+            Some(recoded) if streams == Streams::Decompress || recoded.len() < bytes.len() => {
+                recoded
+            }
+            _ => bytes,
+        };
     row.offset = Some(out.offset()?);
     out.display(format_args!("{} {} obj\n", row.number, row.generation))?;
     out.bytes(&bytes)?;
     out.bytes(b"\nendobj\n")
+}
+
+/// Returns the bytes of the object `reference` with its stream recoded as
+/// `streams` asks, encrypted as `mode` encrypts, or `None` when it stays as
+/// it is. An object that does not parse stays as it is.
+fn recode(
+    version: &Version,
+    reference: Reference,
+    streams: Streams,
+    mode: &Mode<'_>,
+    budget: &Budget,
+) -> Result<Option<Bytes>> {
+    if streams == Streams::Keep {
+        return Ok(None);
+    }
+    let object = match version.get(reference.number(), budget) {
+        Ok(Some(object)) => object,
+        Ok(None) => return Ok(None),
+        Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(value) = recode::recoded(object.value(), streams, budget)? else {
+        return Ok(None);
+    };
+    let mut plain = BudgetVec::new(budget);
+    write::value(&mut plain, &value)?;
+    let plain = Bytes::new(plain.into_vec());
+    Ok(Some(match mode.handler() {
+        Some(handler) => security::encrypt_bytes(handler, reference, &plain, budget)?,
+        None => plain,
+    }))
 }
 
 fn finish(
