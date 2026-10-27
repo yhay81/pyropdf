@@ -44,6 +44,9 @@ fn a_canvas_flips_its_y_axis_into_the_form() {
 fn every_note_icon_balances_its_paths() {
     let paint = Paint {
         stroke: Some((1.0, 1.0, 0.0)),
+        interior: None,
+        width: 1.0,
+        dashes: Vec::new(),
     };
     for icon in [
         &b"Comment"[..],
@@ -70,4 +73,81 @@ fn every_note_icon_balances_its_paths() {
         assert_eq!(painted.max(1), painted, "{icon:?}");
         assert!(started >= painted, "{icon:?}");
     }
+}
+
+#[test]
+fn cloud_bumps_stay_inside_the_box_of_a_cloudy_square() {
+    let paint = Paint {
+        stroke: Some((1.0, 0.0, 0.0)),
+        interior: Some((1.0, 1.0, 0.0)),
+        width: 1.0,
+        dashes: Vec::new(),
+    };
+    let mut canvas = Canvas::new(60.0);
+    shapes::boxed(&mut canvas, &paint, false, (100.0, 60.0), [0.0; 4], 2.0);
+    let numbers: Vec<f64> = canvas
+        .out
+        .lines()
+        .filter(|line| line.ends_with(" c") || line.ends_with(" m"))
+        .flat_map(|line| line.split(' ').filter_map(|word| word.parse::<f64>().ok()))
+        .collect();
+    assert!(numbers.len() > 40);
+    let (xs, ys): (Vec<f64>, Vec<f64>) = numbers
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[x, y]| (x, y))
+        .unzip();
+    // The stroke's half width lies between the bumps and the box.
+    assert!(xs.iter().all(|x| (0.5..=99.5).contains(x)));
+    assert!(ys.iter().all(|y| (0.5..=59.5).contains(y)));
+    assert!(canvas.out.ends_with("B\n"));
+}
+
+#[test]
+fn line_endings_fill_only_closed_shapes() {
+    let paint = Paint {
+        stroke: Some((0.0, 0.0, 1.0)),
+        interior: Some((1.0, 1.0, 0.0)),
+        width: 2.0,
+        dashes: vec![4.0, 2.0],
+    };
+    for (ending, closed) in [(1, true), (4, false), (5, true), (6, false), (9, false)] {
+        let mut canvas = Canvas::new(100.0);
+        assert!(shapes::lines(
+            &mut canvas,
+            &paint,
+            b"Line",
+            &[vec![(10.0, 50.0), (90.0, 50.0)]],
+            0.0,
+            [0, ending],
+            |point| point,
+        ));
+        let painted: Vec<&str> = canvas
+            .out
+            .lines()
+            .filter(|line| matches!(*line, "S" | "B" | "f"))
+            .collect();
+        // The dashed line, then its ending, which never dashes.
+        assert_eq!(painted, ["S", if closed { "B" } else { "S" }], "{ending}");
+        assert!(canvas.out.ends_with("[] 0 d\nB\n") || canvas.out.ends_with("[] 0 d\nS\n"));
+    }
+    let mut canvas = Canvas::new(100.0);
+    assert!(!shapes::lines(
+        &mut canvas,
+        &paint,
+        b"PolyLine",
+        &[vec![(10.0, 50.0)]],
+        0.0,
+        [0, 0],
+        |point| point,
+    ));
+}
+
+#[test]
+fn ending_sizes_and_cloud_radii_follow_the_width() {
+    assert!((ending_size(0.5) - 3.0).abs() < f64::EPSILON);
+    assert!((ending_size(2.0) - 6.0).abs() < f64::EPSILON);
+    assert!((cloud_radius(0.1, 0.0) - 2.0).abs() < f64::EPSILON);
+    assert!((cloud_radius(2.0, 1.0) - 9.0).abs() < f64::EPSILON);
 }

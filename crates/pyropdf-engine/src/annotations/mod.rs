@@ -5,7 +5,9 @@
 //! [`AppearanceSettler`] then draws it once per transaction and writes the
 //! drawing as a new form XObject that `/AP /N` names, so that a stream that
 //! other annotations share is never overwritten. It draws the kinds that
-//! [`draws`] accepts and leaves the others as they are.
+//! [`draws`] accepts and leaves the others as they are. The `/Rect` of text
+//! markup, lines, polygons, and ink follows their geometry, so settling
+//! fits it again too.
 //!
 //! A drawing is made on a canvas over the annotation's `/Rect` whose `y`
 //! axis points down, as pylopdf's appearance engine draws it, and the
@@ -14,6 +16,7 @@
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321, without its canvas.
 
 mod icons;
+mod shapes;
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -55,14 +58,32 @@ const BLEND_MODES: [&str; 16] = [
     "Luminosity",
 ];
 
+/// The most dash lengths that a border pattern holds.
+pub const MAX_BORDER_DASHES: usize = 32;
+
+pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
+
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`
 /// lists its corners.
 pub type Quad = [(f64, f64); 4];
 
+/// The point lists of a line, polygon, polyline, or ink annotation: one
+/// list, or one per ink stroke.
+pub type PointLists = Vec<Vec<(f64, f64)>>;
+
 /// Returns whether the settler draws annotations of `subtype`.
 #[must_use]
 pub fn draws(subtype: &[u8]) -> bool {
-    is_text_markup(subtype) || subtype == b"Text"
+    is_text_markup(subtype)
+        || has_points(subtype)
+        || matches!(subtype, b"Text" | b"Square" | b"Circle")
+}
+
+/// Returns whether `subtype` is a line, polygon, polyline, or ink
+/// annotation, which `/L`, `/Vertices`, or `/InkList` place.
+#[must_use]
+pub fn has_points(subtype: &[u8]) -> bool {
+    matches!(subtype, b"Line" | b"Polygon" | b"PolyLine" | b"Ink")
 }
 
 /// Returns whether `subtype` is text markup, which `/QuadPoints` place.
@@ -109,20 +130,27 @@ impl Settler for AppearanceSettler {
                 version: transaction.version(),
                 budget,
             };
-            let Some(drawn) = appearance(&reader, dict)? else {
-                continue;
+            // An annotation that cannot be drawn still has its rectangle
+            // fitted to its geometry.
+            let (form, rect) = match appearance(&reader, dict)? {
+                Some(drawn) => (Some(drawn.form()), drawn.fitted.then_some(drawn.rect)),
+                None => (None, fitted_rect(&reader, dict)?),
             };
-            let mut dict = dict.clone();
-            let form = drawn.form();
-            budget.charge(LimitCode::MemorySize, form.data().len() as u64)?;
-            let reference = transaction.allocate()?;
-            transaction.write(reference.number(), &Value::from(form), budget)?;
-            if drawn.markup {
-                dict.insert(Name::from("Rect"), numbers_array(&drawn.rect));
+            if form.is_none() && rect.is_none() {
+                continue;
             }
-            let mut appearances = Dict::new();
-            appearances.insert(Name::from("N"), Value::Reference(reference));
-            dict.insert(Name::from("AP"), Value::Dict(appearances));
+            let mut dict = dict.clone();
+            if let Some(form) = form {
+                budget.charge(LimitCode::MemorySize, form.data().len() as u64)?;
+                let reference = transaction.allocate()?;
+                transaction.write(reference.number(), &Value::from(form), budget)?;
+                let mut appearances = Dict::new();
+                appearances.insert(Name::from("N"), Value::Reference(reference));
+                dict.insert(Name::from("AP"), Value::Dict(appearances));
+            }
+            if let Some(rect) = rect {
+                dict.insert(Name::from("Rect"), numbers_array(&rect));
+            }
             transaction.write(number, &Value::Dict(dict), budget)?;
         }
         Ok(())
@@ -289,6 +317,199 @@ impl Reader<'_> {
         }
         Ok(Some(quads))
     }
+
+    /// Reads the border that `/BS`, else `/Border`, describes, or `None`
+    /// without either or with an unusable `/Border`.
+    pub fn border(&self, dict: &Dict) -> Result<Option<Border>> {
+        if let Some(style) = self.entry(dict, "BS")? {
+            let Value::Dict(style) = &*style else {
+                return self.legacy_border(dict);
+            };
+            let width = match style.get("W") {
+                Some(value) => self.number(value)?.filter(|width| *width >= 0.0),
+                None => None,
+            }
+            .unwrap_or(1.0);
+            let dashed = self.name(style, "S")?.as_deref() == Some(b"D".as_slice());
+            let dashes = if dashed {
+                self.numbers(style, "D", MAX_BORDER_DASHES)?
+                    .filter(|dashes| valid_dashes(dashes))
+                    .unwrap_or_else(|| vec![3.0])
+            } else {
+                Vec::new()
+            };
+            return Ok(Some(Border { width, dashes }));
+        }
+        self.legacy_border(dict)
+    }
+
+    /// Reads the `[h v width dashes]` array of `/Border`.
+    fn legacy_border(&self, dict: &Dict) -> Result<Option<Border>> {
+        let Some(items) = self.entry(dict, "Border")? else {
+            return Ok(None);
+        };
+        let Value::Array(items) = &*items else {
+            return Ok(None);
+        };
+        if !(3..=4).contains(&items.len()) {
+            return Ok(None);
+        }
+        let items = items.as_slice();
+        let Some(width) = self.number(&items[2])?.filter(|width| *width >= 0.0) else {
+            return Ok(None);
+        };
+        let dashes = match items.get(3) {
+            Some(pattern) => match self.numbers_of(pattern, MAX_BORDER_DASHES)? {
+                Some(dashes) if valid_dashes(&dashes) => dashes,
+                _ => return Ok(None),
+            },
+            None => Vec::new(),
+        };
+        Ok(Some(Border { width, dashes }))
+    }
+
+    /// Reads the intensity of a cloudy border, `/BE` with `/S /C`, clamped
+    /// from 0 to 2, or 0 without one (ISO 32000-2 Table 167).
+    fn cloud_intensity(&self, dict: &Dict) -> Result<f64> {
+        let Some(effect) = self.entry(dict, "BE")? else {
+            return Ok(0.0);
+        };
+        let Value::Dict(effect) = &*effect else {
+            return Ok(0.0);
+        };
+        if self.name(effect, "S")?.as_deref() != Some(b"C".as_slice()) {
+            return Ok(0.0);
+        }
+        Ok(match effect.get("I") {
+            Some(value) => self.number(value)?.unwrap_or(0.0),
+            None => 0.0,
+        }
+        .clamp(0.0, 2.0))
+    }
+
+    /// Reads the start and end styles of `/LE`, by index into
+    /// [`LINE_ENDINGS`]; an absent or unknown style is `None`, index 0.
+    pub fn line_endings(&self, dict: &Dict) -> Result<[usize; 2]> {
+        let Some(items) = self.entry(dict, "LE")? else {
+            return Ok([0, 0]);
+        };
+        let Value::Array(items) = &*items else {
+            return Ok([0, 0]);
+        };
+        let mut endings = [0; 2];
+        for (ending, item) in endings.iter_mut().zip(items.iter()) {
+            if let Value::Name(name) = &*self.resolve(item)? {
+                *ending = LINE_ENDINGS
+                    .iter()
+                    .position(|known| known.as_bytes() == name.as_bytes())
+                    .unwrap_or(0);
+            }
+        }
+        Ok(endings)
+    }
+
+    /// Reads the `/RD` insets of a square or circle: left, top, right, and
+    /// bottom, or zeros for unusable ones.
+    fn rect_differences(&self, dict: &Dict, size: (f64, f64)) -> Result<[f64; 4]> {
+        let Some(values) = self.numbers(dict, "RD", 4)? else {
+            return Ok([0.0; 4]);
+        };
+        let [left, top, right, bottom] = values[..] else {
+            return Ok([0.0; 4]);
+        };
+        if [left, top, right, bottom].iter().any(|value| *value < 0.0)
+            || left + right >= size.0
+            || top + bottom >= size.1
+        {
+            return Ok([0.0; 4]);
+        }
+        Ok([left, top, right, bottom])
+    }
+
+    /// Returns the array of numbers that holds the points of a line
+    /// (`/L`), polygon or polyline (`/Vertices`), or ink annotation
+    /// (`/InkList`), resolved, or `None` for another subtype or a missing
+    /// array.
+    fn point_array(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<Arc<Value>>> {
+        let key = match subtype {
+            b"Line" => "L",
+            b"Polygon" | b"PolyLine" => "Vertices",
+            b"Ink" => "InkList",
+            _ => return Ok(None),
+        };
+        Ok(self
+            .entry(dict, key)?
+            .filter(|value| matches!(**value, Value::Array(_))))
+    }
+
+    /// Counts the points of a line, polygon, polyline, or ink annotation
+    /// from the lengths of its arrays alone, as a read checks them against
+    /// [`MAX_ANNOTATION_POINTS`] before reading them.
+    pub fn point_count(&self, dict: &Dict, subtype: &[u8]) -> Result<usize> {
+        let Some(array) = self.point_array(dict, subtype)? else {
+            return Ok(0);
+        };
+        let Value::Array(items) = &*array else {
+            return Ok(0);
+        };
+        if subtype != b"Ink" {
+            return Ok(items.len() / 2);
+        }
+        let mut numbers = items.len();
+        for stroke in items.iter() {
+            if let Value::Array(stroke) = &*self.resolve(stroke)? {
+                numbers = numbers.saturating_add(stroke.len());
+            }
+        }
+        Ok(numbers / 2)
+    }
+
+    /// Reads the point lists of a line, polygon, polyline, or ink
+    /// annotation in user space, or `None` when the geometry is missing,
+    /// malformed, or holds more than [`MAX_ANNOTATION_POINTS`] points.
+    pub fn point_lists(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<PointLists>> {
+        let Some(array) = self.point_array(dict, subtype)? else {
+            return Ok(None);
+        };
+        let Value::Array(items) = &*array else {
+            return Ok(None);
+        };
+        let mut left = MAX_ANNOTATION_POINTS;
+        let mut pairs = |value: &Value| -> Result<Option<Vec<(f64, f64)>>> {
+            let Some(numbers) = self.numbers_of(value, 2 * left)? else {
+                return Ok(None);
+            };
+            if !numbers.len().is_multiple_of(2) {
+                return Ok(None);
+            }
+            left -= numbers.len() / 2;
+            Ok(Some(
+                numbers
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|&[x, y]| (x, y))
+                    .collect(),
+            ))
+        };
+        if subtype != b"Ink" {
+            if subtype == b"Line" && items.len() != 4 {
+                return Ok(None);
+            }
+            return Ok(pairs(&array)?.map(|points| vec![points]));
+        }
+        if items.len() > MAX_ANNOTATION_POINTS {
+            return Ok(None);
+        }
+        let mut strokes = Vec::with_capacity(items.len());
+        for stroke in items.iter() {
+            match pairs(stroke)? {
+                Some(points) => strokes.push(points),
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(strokes))
+    }
 }
 
 /// Returns the points that the zigzags of a squiggly line over `quads`
@@ -308,10 +529,66 @@ pub fn zigzag_points(quads: &[Quad]) -> usize {
         .fold(0, usize::saturating_add)
 }
 
+/// The border of an annotation: its width and, for a dashed one, its dash
+/// pattern.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Border {
+    /// The line width.
+    pub width: f64,
+    /// The dash and gap lengths, empty for a solid line.
+    pub dashes: Vec<f64>,
+}
+
+/// Returns whether a dash array is one that a stroke can draw: finite,
+/// non-negative lengths that do not sum to zero.
+#[must_use]
+pub fn valid_dashes(dashes: &[f64]) -> bool {
+    !dashes.is_empty()
+        && dashes.iter().all(|dash| dash.is_finite() && *dash >= 0.0)
+        && dashes.iter().sum::<f64>() > 0.0
+}
+
 /// The paints of an appearance: the `/C` color, which strokes lines and
-/// fills highlights and icons.
+/// borders and fills highlights and icons; the `/IC` color, which fills
+/// shapes and closed line endings; and the border's width and dashes.
 struct Paint {
     stroke: Option<(f64, f64, f64)>,
+    interior: Option<(f64, f64, f64)>,
+    width: f64,
+    dashes: Vec<f64>,
+}
+
+/// A stroke: its color, width, line cap and join, and dash pattern.
+struct Stroke<'a> {
+    color: (f64, f64, f64),
+    width: f64,
+    cap: u8,
+    join: u8,
+    dashes: &'a [f64],
+}
+
+impl Paint {
+    /// Returns the border's stroke with `cap` and `join`, or `None` without
+    /// a color or width.
+    fn stroke(&self, cap: u8, join: u8) -> Option<Stroke<'_>> {
+        self.stroke
+            .filter(|_| self.width > 0.0)
+            .map(|color| Stroke {
+                color,
+                width: self.width,
+                cap,
+                join,
+                dashes: &self.dashes,
+            })
+    }
+
+    /// Returns a solid stroke for line endings, which never dash.
+    fn solid_stroke(&self) -> Option<Stroke<'_>> {
+        self.stroke(0, 0).map(|stroke| Stroke {
+            dashes: &[],
+            ..stroke
+        })
+    }
 }
 
 /// A drawn appearance: its content in the form's space, the form's size,
@@ -321,8 +598,9 @@ pub struct Appearance {
     content: Vec<u8>,
     size: (f64, f64),
     rect: [f64; 4],
-    /// Whether the rectangle follows the quadrilaterals of text markup.
-    markup: bool,
+    /// Whether the rectangle follows the geometry, as that of text markup,
+    /// lines, polygons, and ink does.
+    fitted: bool,
     alpha: f64,
     blend: Option<&'static str>,
 }
@@ -362,6 +640,85 @@ impl Appearance {
     }
 }
 
+/// The geometry of an annotation: the quadrilaterals of text markup, the
+/// point lists of a line, polygon, polyline, or ink, or none for a kind
+/// that `/Rect` alone places.
+enum Geometry {
+    Quads(Vec<Quad>),
+    Points(PointLists),
+    Rect,
+}
+
+/// Reads the geometry of an annotation of `subtype`, or `None` when it is
+/// missing or malformed.
+fn geometry(reader: &Reader<'_>, dict: &Dict, subtype: &[u8]) -> Result<Option<Geometry>> {
+    Ok(if is_text_markup(subtype) {
+        reader.quads(dict, subtype)?.map(Geometry::Quads)
+    } else if has_points(subtype) {
+        reader.point_lists(dict, subtype)?.map(Geometry::Points)
+    } else {
+        Some(Geometry::Rect)
+    })
+}
+
+/// Returns the bounds of `points`, which are infinite for none.
+fn bounds<'a>(points: impl Iterator<Item = &'a (f64, f64)>) -> [f64; 4] {
+    points.fold(
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ],
+        |[x0, y0, x1, y1], &(x, y)| [x0.min(x), y0.min(y), x1.max(x), y1.max(y)],
+    )
+}
+
+/// Returns the rectangle that `geometry` gives an annotation: the bounds of
+/// the quadrilaterals of text markup, or the bounds of the points of a
+/// line, polygon, polyline, or ink widened for the stroke, a polygon's
+/// cloudy border, and the line endings; or `None` for another kind or
+/// points without finite bounds.
+fn fit(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    subtype: &[u8],
+    geometry: &Geometry,
+) -> Result<Option<[f64; 4]>> {
+    let lists = match geometry {
+        Geometry::Quads(quads) => return Ok(Some(bounds(quads.iter().flatten()))),
+        Geometry::Points(lists) => lists,
+        Geometry::Rect => return Ok(None),
+    };
+    let [x0, y0, x1, y1] = bounds(lists.iter().flatten());
+    if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
+        return Ok(None);
+    }
+    let width = reader.border(dict)?.map_or(1.0, |border| border.width);
+    let mut pad = width / 2.0 + 1.0;
+    let intensity = reader.cloud_intensity(dict)?;
+    if intensity > 0.0 && subtype == b"Polygon" {
+        pad += cloud_radius(intensity, width);
+    }
+    if reader.line_endings(dict)? != [0, 0] {
+        pad += 2.0 * ending_size(width);
+    }
+    Ok(Some([x0 - pad, y0 - pad, x1 + pad, y1 + pad]))
+}
+
+/// Returns the rectangle that the geometry of the annotation `dict` gives
+/// it, for text markup, lines, polygons, polylines, and ink, or `None` for
+/// another kind or an unusable geometry.
+pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>> {
+    let Some(subtype) = reader.name(dict, "Subtype")? else {
+        return Ok(None);
+    };
+    match geometry(reader, dict, &subtype)? {
+        Some(geometry) => fit(reader, dict, &subtype, &geometry),
+        None => Ok(None),
+    }
+}
+
 /// Draws the normal appearance of the annotation `dict`, or returns `None`
 /// for a kind that [`draws`] refuses, or for a dictionary without a usable
 /// rectangle, geometry, or opacity.
@@ -372,31 +729,17 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
     if !draws(&subtype) {
         return Ok(None);
     }
-    let markup = is_text_markup(&subtype);
-    let quads = if markup {
-        match reader.quads(dict, &subtype)? {
-            Some(quads) => quads,
-            None => return Ok(None),
-        }
-    } else {
-        Vec::new()
+    let Some(geometry) = geometry(reader, dict, &subtype)? else {
+        return Ok(None);
     };
-    // Text markup covers its quadrilaterals, whatever /Rect says.
-    let rect = if markup {
-        quads.iter().flatten().fold(
-            [
-                f64::INFINITY,
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                f64::NEG_INFINITY,
-            ],
-            |[x0, y0, x1, y1], &(x, y)| [x0.min(x), y0.min(y), x1.max(x), y1.max(y)],
-        )
-    } else {
-        match reader.rect(dict)? {
+    let fitted = fit(reader, dict, &subtype, &geometry)?;
+    let rect = match (&geometry, fitted) {
+        (_, Some(rect)) => rect,
+        (Geometry::Rect, None) => match reader.rect(dict)? {
             Some(rect) => rect,
             None => return Ok(None),
-        }
+        },
+        _ => return Ok(None),
     };
     let [x0, y0, x1, y1] = rect;
     if !(x1 >= x0 && y1 >= y0) {
@@ -406,8 +749,12 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
     let Some(alpha) = reader.opacity(dict)? else {
         return Ok(None);
     };
+    let border = reader.border(dict)?;
     let paint = Paint {
         stroke: reader.color(dict, "C")?,
+        interior: reader.color(dict, "IC")?,
+        width: border.as_ref().map_or(1.0, |border| border.width),
+        dashes: border.map(|border| border.dashes).unwrap_or_default(),
     };
     // A highlight multiplies unless /BM says otherwise.
     let blend = match reader.blend_mode(dict)? {
@@ -420,8 +767,8 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         canvas.out.push_str("/G0 gs\n");
     }
     let to_canvas = |(x, y): (f64, f64)| (x - x0, y1 - y);
-    match &*subtype {
-        b"Text" => {
+    match (&*subtype, &geometry) {
+        (b"Text", _) => {
             let icon = reader.name(dict, "Name")?;
             icons::draw(
                 &mut canvas,
@@ -430,9 +777,21 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
                 size,
             );
         }
-        b"Highlight" => {
+        (b"Square" | b"Circle", _) => {
+            let insets = reader.rect_differences(dict, size)?;
+            let intensity = reader.cloud_intensity(dict)?;
+            shapes::boxed(
+                &mut canvas,
+                &paint,
+                &*subtype == b"Circle",
+                size,
+                insets,
+                intensity,
+            );
+        }
+        (b"Highlight", Geometry::Quads(quads)) => {
             if let Some(color) = paint.stroke {
-                for quad in &quads {
+                for quad in quads {
                     // QuadPoints list the corners TL, TR, BL, BR.
                     let corners = [quad[0], quad[1], quad[3], quad[2]].map(to_canvas);
                     let coordinates: Vec<f64> = corners.iter().flat_map(|&(x, y)| [x, y]).collect();
@@ -441,31 +800,41 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
                 }
             }
         }
-        _ => {
+        (_, Geometry::Quads(quads)) => {
             // Text-markup lines are one point wide, whatever the border.
             if let Some(color) = paint.stroke {
-                for quad in &quads {
+                for quad in quads {
                     let Some(line) = markup_line(&subtype, *quad) else {
                         continue;
                     };
-                    let mut operators = String::with_capacity(line.len());
-                    let mut coordinates = Vec::with_capacity(line.len() * 2);
-                    for (index, &point) in line.iter().enumerate() {
-                        operators.push(if index == 0 { 'm' } else { 'l' });
-                        let (x, y) = to_canvas(point);
-                        coordinates.extend([x, y]);
-                    }
+                    let (operators, coordinates) = shapes::polyline(&line, to_canvas);
                     canvas.path(&operators, &coordinates);
                     canvas.stroke(color, 1.0, 0, 0, &[]);
                 }
             }
         }
+        (_, Geometry::Points(lists)) => {
+            let intensity = reader.cloud_intensity(dict)?;
+            let endings = reader.line_endings(dict)?;
+            if !shapes::lines(
+                &mut canvas,
+                &paint,
+                &subtype,
+                lists,
+                intensity,
+                endings,
+                to_canvas,
+            ) {
+                return Ok(None);
+            }
+        }
+        (_, Geometry::Rect) => return Ok(None),
     }
     Ok(Some(Appearance {
         content: canvas.out.into_bytes(),
         size,
         rect,
-        markup,
+        fitted: fitted.is_some(),
         alpha,
         blend,
     }))
@@ -579,6 +948,29 @@ impl Canvas {
         self.out.push_str("S\n");
     }
 
+    /// Fills the path with `fill`, strokes it with `stroke`, or both; with
+    /// neither it ends the path unpainted.
+    fn draw(&mut self, fill: Option<(f64, f64, f64)>, stroke: Option<&Stroke<'_>>) {
+        if let Some(fill) = fill {
+            self.color(fill, "rg");
+        }
+        if let Some(stroke) = stroke {
+            self.stroke_state(
+                stroke.color,
+                stroke.width,
+                stroke.cap,
+                stroke.join,
+                stroke.dashes,
+            );
+        }
+        self.out.push_str(match (fill, stroke) {
+            (Some(_), Some(_)) => "B\n",
+            (Some(_), None) => "f\n",
+            (None, Some(_)) => "S\n",
+            (None, None) => "n\n",
+        });
+    }
+
     /// Fills the path with `fill`, then strokes it with round caps and
     /// joins.
     fn fill_stroke(&mut self, fill: (f64, f64, f64), stroke: (f64, f64, f64), width: f64) {
@@ -604,6 +996,42 @@ impl Canvas {
             dashes.join(" ")
         );
     }
+}
+
+/// Returns the coordinates of the ellipse inscribed in a rectangle, as a
+/// move and four Béziers.
+fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 26] {
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
+    let (kx, ky) = (rx * KAPPA, ry * KAPPA);
+    [
+        x1,
+        cy,
+        x1,
+        cy + ky,
+        cx + kx,
+        y1,
+        cx,
+        y1,
+        cx - kx,
+        y1,
+        x0,
+        cy + ky,
+        x0,
+        cy,
+        x0,
+        cy - ky,
+        cx - kx,
+        y0,
+        cx,
+        y0,
+        cx + kx,
+        y0,
+        x1,
+        cy - ky,
+        x1,
+        cy,
+    ]
 }
 
 /// Formats a number for content with at most four decimals.

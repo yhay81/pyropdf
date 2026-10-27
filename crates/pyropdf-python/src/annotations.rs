@@ -18,7 +18,8 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::{
-    MAX_ANNOTATION_POINTS, MAX_QUADS, is_text_markup, zigzag_points,
+    LINE_ENDINGS, MAX_ANNOTATION_POINTS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points,
+    is_text_markup, valid_dashes, zigzag_points,
 };
 use pyropdf_store::budget::Budget;
 use pyropdf_store::pages::{Page, PageIndex};
@@ -35,8 +36,6 @@ const MAX_PAGE_ANNOTATIONS: usize = 4_096;
 /// The most bytes of annotation text that one read encodes or returns, and
 /// that one edit writes.
 const MAX_ANNOTATION_TEXT_BYTES: usize = 1024 * 1024;
-/// The most dash lengths of a border.
-const MAX_BORDER_DASHES: usize = 32;
 
 /// The text entries of a [`Record`], in its order.
 const TEXT_KEYS: [&str; 8] = [
@@ -582,12 +581,6 @@ fn to_pdf(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
     }
 }
 
-/// Returns whether dash lengths are a pattern that draws: finite, not
-/// negative, and not all zero.
-fn valid_dashes(dashes: &[f64]) -> bool {
-    dashes.iter().all(|dash| dash.is_finite() && *dash >= 0.0) && dashes.iter().sum::<f64>() > 0.0
-}
-
 /// Adds `amount` to one total of a read's text budget.
 fn charge(total: &mut usize, amount: usize, label: &str) -> PyResult<()> {
     *total = total.saturating_add(amount);
@@ -749,6 +742,10 @@ pub struct Edit {
     rotate: Option<i64>,
     #[pyo3(default)]
     modified: Option<String>,
+    #[pyo3(default)]
+    points: Option<Vec<Vec<(f64, f64)>>>,
+    #[pyo3(default)]
+    line_endings: Option<(String, String)>,
     clear: Vec<String>,
 }
 
@@ -843,42 +840,24 @@ impl Edit {
             }
             dict.insert(Name::from("F"), Value::Integer(flags));
         }
-        if let Some((width, style, dashes)) = &self.border {
-            if !(width.is_finite() && *width >= 0.0)
-                || !matches!(style.as_str(), "S" | "D" | "B" | "I" | "U")
-                || dashes.len() > MAX_BORDER_DASHES
-                || (!dashes.is_empty() && !valid_dashes(dashes))
-                || (style == "D") == dashes.is_empty()
-            {
-                return Err(PdfError::new_err(
-                    "the border is not one that pyropdf writes",
-                ));
-            }
-            let mut border = Dict::new();
-            border.insert(Name::from("W"), number(*width));
-            border.insert(Name::from("S"), Value::Name(Name::from(style.as_str())));
-            if !dashes.is_empty() {
-                let dashes = dashes.iter().map(|dash| number(*dash)).collect::<Vec<_>>();
-                border.insert(Name::from("D"), Value::Array(Array::from(dashes)));
-            }
+        if let Some(border) = &self.border {
             dict.remove("Border");
-            dict.insert(Name::from("BS"), Value::Dict(border));
+            dict.insert(Name::from("BS"), border_style(border)?);
         }
         if let Some(intensity) = self.clouds {
-            if !matches!(subtype, "Square" | "Circle" | "Polygon") {
+            dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
+        }
+        if let Some(lists) = &self.points {
+            let (key, value) = point_entry(annots, subtype, lists)?;
+            dict.insert(Name::from(key), value);
+        }
+        if let Some(endings) = &self.line_endings {
+            if !matches!(subtype, "Line" | "PolyLine") {
                 return Err(PdfError::new_err(
-                    "only a square, a circle, or a polygon has a cloudy border",
+                    "only lines and polylines have line endings",
                 ));
             }
-            if !(intensity.is_finite() && intensity > 0.0 && intensity <= 2.0) {
-                return Err(PdfError::new_err(
-                    "a cloudy border's intensity is greater than 0 and at most 2",
-                ));
-            }
-            let mut effect = Dict::new();
-            effect.insert(Name::from("S"), Value::Name(Name::from("C")));
-            effect.insert(Name::from("I"), number(intensity));
-            dict.insert(Name::from("BE"), Value::Dict(effect));
+            dict.insert(Name::from("LE"), line_endings(endings)?);
         }
         if let Some(mode) = &self.blend_mode {
             if !BLEND_MODES.contains(&mode.as_str()) {
@@ -924,6 +903,186 @@ impl Edit {
         }
         Ok(())
     }
+}
+
+/// Returns the `/BS` dictionary of a border: its width, `/S` style, and
+/// dash lengths, which a dashed border needs and no other takes.
+fn border_style((width, style, dashes): &(f64, String, Vec<f64>)) -> PyResult<Value> {
+    if !(width.is_finite() && *width >= 0.0) {
+        return Err(PdfError::new_err(
+            "an annotation border width is finite and not negative",
+        ));
+    }
+    if !matches!(style.as_str(), "S" | "D" | "B" | "I" | "U") {
+        return Err(PdfError::new_err(format!(
+            "unknown annotation border style {style:?}"
+        )));
+    }
+    if dashes.len() > MAX_BORDER_DASHES
+        || (!dashes.is_empty() && !valid_dashes(dashes))
+        || (style == "D") == dashes.is_empty()
+    {
+        return Err(PdfError::new_err(format!(
+            "a dashed border has 1 to {MAX_BORDER_DASHES} non-negative dash lengths, and only a dashed one"
+        )));
+    }
+    let mut border = Dict::new();
+    border.insert(Name::from("W"), number(*width));
+    border.insert(Name::from("S"), Value::Name(Name::from(style.as_str())));
+    if !dashes.is_empty() {
+        let dashes = dashes.iter().map(|dash| number(*dash)).collect::<Vec<_>>();
+        border.insert(Name::from("D"), Value::Array(Array::from(dashes)));
+    }
+    Ok(Value::Dict(border))
+}
+
+/// Returns the `/BE` dictionary of a cloudy border of `intensity` on an
+/// annotation of `subtype`.
+fn cloud_effect(subtype: &str, intensity: f64) -> PyResult<Value> {
+    if !matches!(subtype, "Square" | "Circle" | "Polygon") {
+        return Err(PdfError::new_err(
+            "only a square, a circle, or a polygon has a cloudy border",
+        ));
+    }
+    if !(intensity.is_finite() && intensity > 0.0 && intensity <= 2.0) {
+        return Err(PdfError::new_err(
+            "a cloudy border's intensity is greater than 0 and at most 2",
+        ));
+    }
+    let mut effect = Dict::new();
+    effect.insert(Name::from("S"), Value::Name(Name::from("C")));
+    effect.insert(Name::from("I"), number(intensity));
+    Ok(Value::Dict(effect))
+}
+
+/// Returns the `/LE` array of a line's start and end styles.
+fn line_endings((start, end): &(String, String)) -> PyResult<Value> {
+    for style in [start, end] {
+        if !LINE_ENDINGS.contains(&style.as_str()) {
+            return Err(PdfError::new_err(format!("unknown line ending {style:?}")));
+        }
+    }
+    Ok(Value::Array(Array::from(vec![
+        Value::Name(Name::from(start.as_str())),
+        Value::Name(Name::from(end.as_str())),
+    ])))
+}
+
+/// Returns the key and the user-space array of the display points of a
+/// line (`/L`), polygon or polyline (`/Vertices`), or ink annotation
+/// (`/InkList`) on a page of `annots`. Settling fits the rectangle to them.
+fn point_entry(
+    annots: &Annots,
+    subtype: &str,
+    lists: &[Vec<(f64, f64)>],
+) -> PyResult<(&'static str, Value)> {
+    let fits = match subtype {
+        "Line" => lists.len() == 1 && lists[0].len() == 2,
+        "Polygon" | "PolyLine" => lists.len() == 1 && lists[0].len() >= 2,
+        "Ink" => !lists.is_empty() && lists.iter().all(|points| !points.is_empty()),
+        _ => {
+            return Err(PdfError::new_err(
+                "only lines, polygons, polylines, and ink have points",
+            ));
+        }
+    };
+    if !fits {
+        return Err(PdfError::new_err(format!(
+            "a {subtype} annotation has {}",
+            match subtype {
+                "Line" => "two points",
+                "Ink" => "one or more strokes of one or more points",
+                _ => "two or more vertices",
+            }
+        )));
+    }
+    if lists.iter().map(Vec::len).fold(0, usize::saturating_add) > MAX_ANNOTATION_POINTS {
+        return Err(LimitError::new_err((
+            "annotation_point_count",
+            format!("an annotation holds at most {MAX_ANNOTATION_POINTS} points"),
+        )));
+    }
+    let mut arrays = Vec::with_capacity(lists.len());
+    for points in lists {
+        let mut array = Vec::with_capacity(points.len() * 2);
+        for &(x, y) in points {
+            if !(x.is_finite() && y.is_finite()) {
+                return Err(PdfError::new_err("annotation points are finite"));
+            }
+            let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
+            array.extend([number(x), number(y)]);
+        }
+        arrays.push(Value::Array(Array::from(array)));
+    }
+    Ok(match subtype {
+        "Line" => ("L", arrays.swap_remove(0)),
+        "Ink" => ("InkList", Value::Array(Array::from(arrays))),
+        _ => ("Vertices", arrays.swap_remove(0)),
+    })
+}
+
+/// The display points of a line, polygon, polyline, or ink annotation,
+/// `None` for another kind or a missing or malformed geometry, and the
+/// `/LE` styles of a line or polyline.
+type Geometry = (
+    Option<Vec<Vec<(f64, f64)>>>,
+    Option<(&'static str, &'static str)>,
+);
+
+/// Reads the points and line endings of the annotation that a handle
+/// names, or returns `None` for a page that is gone. More than
+/// `MAX_ANNOTATION_POINTS` points raise rather than read in part.
+#[pyfunction]
+pub fn annotation_geometry(
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<Geometry>> {
+    let Some(annots) = Annots::read(document, number, generation)? else {
+        return Ok(None);
+    };
+    let (_, dict) = annots.find(index, id)?;
+    let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
+    if !has_points(&subtype) {
+        return Ok(Some((None, None)));
+    }
+    let reader = Reader {
+        version: &annots.version,
+        budget: &annots.budget,
+    };
+    if reader
+        .point_count(&dict, &subtype)
+        .map_err(|e| store_error(&e))?
+        > MAX_ANNOTATION_POINTS
+    {
+        return Err(LimitError::new_err((
+            "annotation_point_count",
+            format!("an annotation's geometry holds more than {MAX_ANNOTATION_POINTS} points"),
+        )));
+    }
+    let points = reader
+        .point_lists(&dict, &subtype)
+        .map_err(|e| store_error(&e))?
+        .map(|lists| {
+            lists
+                .into_iter()
+                .map(|points| {
+                    points
+                        .into_iter()
+                        .map(|(x, y)| to_display(annots.crop, annots.rotation, x, y))
+                        .collect()
+                })
+                .collect()
+        });
+    let endings = if matches!(&*subtype, b"Line" | b"PolyLine") {
+        let [start, end] = reader.line_endings(&dict).map_err(|e| store_error(&e))?;
+        Some((LINE_ENDINGS[start], LINE_ENDINGS[end]))
+    } else {
+        None
+    };
+    Ok(Some((points, endings)))
 }
 
 /// Reads the annotation that a handle names for an edit, or returns `None`
@@ -1231,8 +1390,10 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
 
 /// The annotation that `page.annotations.add` adds, as a specification's
 /// `_payload` gives it: its subtype; the display rectangles of text markup,
-/// or else its display rectangle; its color as RGB from 0 to 1, opacity,
-/// contents, and creation date; and a note's icon and open state.
+/// the display point lists of a line, polygon, polyline, or ink, or else
+/// its display rectangle; its colors as RGB from 0 to 1, border, cloudy
+/// border, opacity, blend mode, contents, and creation date; a line's
+/// endings; and a note's icon and open state.
 #[derive(FromPyObject)]
 #[pyo3(from_item_all)]
 pub struct Spec {
@@ -1253,10 +1414,34 @@ pub struct Spec {
     icon: Option<String>,
     #[pyo3(default)]
     open: Option<bool>,
+    #[pyo3(default)]
+    points: Option<Vec<Vec<(f64, f64)>>>,
+    #[pyo3(default)]
+    line_endings: Option<(String, String)>,
+    #[pyo3(default)]
+    interior_color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    border: Option<(f64, String, Vec<f64>)>,
+    #[pyo3(default)]
+    clouds: Option<f64>,
+    #[pyo3(default)]
+    blend_mode: Option<String>,
 }
 
 /// The subtypes that `page.annotations.add` adds.
-const ADDED_SUBTYPES: [&str; 5] = ["Highlight", "Underline", "StrikeOut", "Squiggly", "Text"];
+const ADDED_SUBTYPES: [&str; 11] = [
+    "Highlight",
+    "Underline",
+    "StrikeOut",
+    "Squiggly",
+    "Text",
+    "Square",
+    "Circle",
+    "Line",
+    "Polygon",
+    "PolyLine",
+    "Ink",
+];
 
 impl Spec {
     /// Returns the dictionary of the annotation, without its page.
@@ -1341,8 +1526,50 @@ impl Spec {
                     number(y1),
                 ])),
             );
+        } else if has_points(subtype.as_bytes()) {
+            let Some(lists) = self.points.as_ref().filter(|_| self.rect.is_none()) else {
+                return Err(PdfError::new_err(format!(
+                    "a {subtype} annotation takes points"
+                )));
+            };
+            let (key, value) = point_entry(annots, subtype, lists)?;
+            // The bounds of the points; settling widens them for the
+            // stroke, the cloudy border, and the line endings.
+            let mut bounds = (
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            );
+            for &(x, y) in lists.iter().flatten() {
+                let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
+                bounds = (
+                    bounds.0.min(x),
+                    bounds.1.min(y),
+                    bounds.2.max(x),
+                    bounds.3.max(y),
+                );
+            }
+            dict.insert(Name::from(key), value);
+            dict.insert(
+                Name::from("Rect"),
+                Value::Array(Array::from(vec![
+                    number(bounds.0),
+                    number(bounds.1),
+                    number(bounds.2),
+                    number(bounds.3),
+                ])),
+            );
+            if let Some(endings) = &self.line_endings {
+                if !matches!(subtype, "Line" | "PolyLine") {
+                    return Err(PdfError::new_err(format!(
+                        "a {subtype} annotation has no line endings"
+                    )));
+                }
+                dict.insert(Name::from("LE"), line_endings(endings)?);
+            }
         } else {
-            let Some(area) = self.rect else {
+            let Some(area) = self.rect.filter(|_| self.points.is_none()) else {
                 return Err(PdfError::new_err(format!(
                     "a {subtype} annotation takes a rectangle"
                 )));
@@ -1358,6 +1585,15 @@ impl Spec {
         if let Some(color) = self.color {
             dict.insert(Name::from("C"), rgb(color, "color")?);
         }
+        if let Some(color) = self.interior_color {
+            dict.insert(Name::from("IC"), rgb(color, "interior color")?);
+        }
+        if let Some(border) = &self.border {
+            dict.insert(Name::from("BS"), border_style(border)?);
+        }
+        if let Some(intensity) = self.clouds {
+            dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
+        }
         if let Some(opacity) = self.opacity {
             if !(opacity.is_finite() && opacity > 0.0 && opacity <= 1.0) {
                 return Err(PdfError::new_err(
@@ -1367,6 +1603,12 @@ impl Spec {
             if opacity < 1.0 {
                 dict.insert(Name::from("CA"), Value::from(opacity));
             }
+        }
+        if let Some(mode) = &self.blend_mode {
+            if !BLEND_MODES.contains(&mode.as_str()) {
+                return Err(PdfError::new_err(format!("unknown blend mode {mode:?}")));
+            }
+            dict.insert(Name::from("BM"), Value::Name(Name::from(mode.as_str())));
         }
         if let Some(contents) = &self.contents {
             dict.insert(Name::from("Contents"), encode_text(contents));
