@@ -35,3 +35,1126 @@ preserve = { status = "planned", milestone = "Phase 4: Specification" }
 clause = "7.6.4"
 description = "The standard security handler: user and owner passwords, permissions, and RC4 and AES encryption."
 objects = ["EncryptionStandard"]
+
+# The statuses of the dimensions that a feature below does not declare.
+[feature-defaults]
+read = { status = "planned", milestone = "Phase 4: Specification" }
+interpret = { status = "planned", milestone = "Phase 4: Specification" }
+create = { status = "planned", milestone = "Phase 4: Specification" }
+edit = { status = "planned", milestone = "Phase 4: Specification" }
+preserve = { status = "planned", milestone = "Phase 4: Specification" }
+
+# The feature-defining clauses of ISO 32000-2:2020 and the extensions and
+# profiles it names, with pyropdf's own titles. Every feature names one.
+[clauses]
+"7.2" = "Lexical conventions"
+"7.3" = "Objects"
+"7.4.2" = "ASCIIHexDecode filter"
+"7.4.3" = "ASCII85Decode filter"
+"7.4.4" = "LZWDecode and FlateDecode filters"
+"7.4.5" = "RunLengthDecode filter"
+"7.4.6" = "CCITTFaxDecode filter"
+"7.4.7" = "JBIG2Decode filter"
+"7.4.8" = "DCTDecode filter"
+"7.4.9" = "JPXDecode filter"
+"7.4.10" = "Crypt filter"
+"7.5.2" = "File header"
+"7.5.4" = "Cross-reference table"
+"7.5.6" = "Incremental updates"
+"7.5.7" = "Object streams"
+"7.5.8" = "Cross-reference streams"
+"7.6.3" = "General encryption algorithm"
+"7.6.4" = "Standard security handler"
+"7.6.5" = "Public-key security handlers"
+"7.6.6" = "Crypt filters"
+"7.7.2" = "Document catalog"
+"7.7.3" = "Page tree"
+"7.7.4" = "Name dictionary"
+"7.8" = "Content streams and resources"
+"7.9.2" = "String object types"
+"7.9.4" = "Dates"
+"7.9.6" = "Name trees"
+"7.9.7" = "Number trees"
+"7.10.2" = "Type 0 sampled functions"
+"7.10.3" = "Type 2 exponential interpolation functions"
+"7.10.4" = "Type 3 stitching functions"
+"7.10.5" = "Type 4 PostScript calculator functions"
+"7.11" = "File specifications"
+"7.11.4" = "Embedded file streams"
+"7.11.4.2" = "Related files arrays"
+"7.11.6" = "Collection items"
+"7.12" = "Extensions dictionary"
+"8.4" = "Graphics state"
+"8.5" = "Path construction and painting"
+"8.6.4" = "Device colour spaces"
+"8.6.5.2" = "CalGray colour spaces"
+"8.6.5.3" = "CalRGB colour spaces"
+"8.6.5.4" = "Lab colour spaces"
+"8.6.5.5" = "ICCBased colour spaces"
+"8.6.6.2" = "Pattern colour spaces"
+"8.6.6.3" = "Indexed colour spaces"
+"8.6.6.4" = "Separation colour spaces"
+"8.6.6.5" = "DeviceN colour spaces"
+"8.6.7" = "Overprint control"
+"8.7.3" = "Tiling patterns"
+"8.7.4" = "Shading patterns"
+"8.7.4.5.2" = "Type 1 function-based shadings"
+"8.7.4.5.3" = "Type 2 axial shadings"
+"8.7.4.5.4" = "Type 3 radial shadings"
+"8.7.4.5.5" = "Type 4 free-form Gouraud-shaded triangle meshes"
+"8.7.4.5.6" = "Type 5 lattice-form Gouraud-shaded triangle meshes"
+"8.7.4.5.7" = "Type 6 Coons patch meshes"
+"8.7.4.5.8" = "Type 7 tensor-product patch meshes"
+"8.8" = "External objects"
+"8.9.5" = "Image dictionaries"
+"8.9.6" = "Masked images"
+"8.9.7" = "Inline images"
+"8.10" = "Form XObjects"
+"8.10.4" = "Reference XObjects"
+"8.11" = "Optional content"
+"9.3" = "Text state parameters and operators"
+"9.4" = "Text objects"
+"9.6.2" = "Type 1 fonts"
+"9.6.3" = "TrueType fonts"
+"9.6.4" = "Type 3 fonts"
+"9.6.5" = "Character encoding"
+"9.7.4" = "CIDFonts"
+"9.7.5" = "CMaps"
+"9.7.6" = "Type 0 fonts"
+"9.8" = "Font descriptors"
+"9.9" = "Embedded font programs"
+"9.10" = "Extraction of text content"
+"10.3" = "CIE-based colour to device colour"
+"10.4" = "Conversions among device colour spaces"
+"10.5" = "Transfer functions"
+"10.6" = "Halftones"
+"10.7" = "Scan conversion details"
+"11.3.5" = "Blend mode"
+"11.5" = "Soft masks"
+"11.6.6" = "Transparency group XObjects"
+"11.7" = "Colour and transparency"
+"12.2" = "Viewer preferences"
+"12.3.2" = "Destinations"
+"12.3.3" = "Document outline"
+"12.3.5" = "Collections"
+"12.3.6" = "Navigators"
+"12.4.2" = "Page labels"
+"12.4.3" = "Articles"
+"12.4.4" = "Presentations"
+"12.5.2" = "Annotation dictionaries"
+"12.5.5" = "Appearance streams"
+"12.5.6.4" = "Text annotations"
+"12.5.6.5" = "Link annotations"
+"12.5.6.6" = "Free text annotations"
+"12.5.6.7" = "Line annotations"
+"12.5.6.8" = "Square and circle annotations"
+"12.5.6.9" = "Polygon and polyline annotations"
+"12.5.6.10" = "Text markup annotations"
+"12.5.6.11" = "Caret annotations"
+"12.5.6.12" = "Rubber stamp annotations"
+"12.5.6.13" = "Ink annotations"
+"12.5.6.14" = "Popup annotations"
+"12.5.6.15" = "File attachment annotations"
+"12.5.6.16" = "Sound annotations"
+"12.5.6.17" = "Movie annotations"
+"12.5.6.18" = "Screen annotations"
+"12.5.6.19" = "Widget annotations"
+"12.5.6.20" = "Printer's mark annotations"
+"12.5.6.21" = "Trap network annotations"
+"12.5.6.22" = "Watermark annotations"
+"12.5.6.23" = "Redaction annotations"
+"12.5.6.24" = "Projection annotations"
+"12.5.6.25" = "3D and RichMedia annotations"
+"12.6.3" = "Trigger events"
+"12.6.4.2" = "Go-To actions"
+"12.6.4.3" = "Remote Go-To actions"
+"12.6.4.4" = "Embedded Go-To actions"
+"12.6.4.5" = "Go-To-DPart actions"
+"12.6.4.6" = "Launch actions"
+"12.6.4.7" = "Thread actions"
+"12.6.4.8" = "URI actions"
+"12.6.4.9" = "Sound actions"
+"12.6.4.10" = "Movie actions"
+"12.6.4.11" = "Hide actions"
+"12.6.4.12" = "Named actions"
+"12.6.4.13" = "Set-OCG-state actions"
+"12.6.4.14" = "Rendition actions"
+"12.6.4.15" = "Transition actions"
+"12.6.4.16" = "Go-To-3D-view actions"
+"12.6.4.17" = "ECMAScript actions"
+"12.6.4.18" = "Rich media execute actions"
+"12.7.2" = "Interactive form dictionary"
+"12.7.4.3" = "Variable text"
+"12.7.5.2" = "Button fields"
+"12.7.5.3" = "Text fields"
+"12.7.5.4" = "Choice fields"
+"12.7.5.5" = "Signature fields"
+"12.7.6" = "Form actions"
+"12.7.8" = "Forms data format"
+"12.7.9" = "Non-interactive forms"
+"12.8" = "Digital signatures"
+"12.8.2" = "Transform methods"
+"12.8.4.3" = "Document security store"
+"12.8.5" = "Document timestamp dictionary"
+"12.8.6" = "Permissions"
+"12.8.7" = "Legal content attestations"
+"12.9" = "Measurement properties"
+"12.10" = "Document requirements"
+"13.2" = "Multimedia"
+"13.3" = "Sounds"
+"13.4" = "Movies"
+"13.5" = "Alternate presentations"
+"13.6" = "3D artwork"
+"13.7" = "Rich media"
+"14.3.2" = "Metadata streams"
+"14.3.3" = "Document information dictionary"
+"14.4" = "File identifiers"
+"14.5" = "Page-piece dictionaries"
+"14.6" = "Marked content"
+"14.7" = "Logical structure"
+"14.7.4" = "Structure namespaces"
+"14.8" = "Tagged PDF"
+"14.9" = "Accessibility support"
+"14.10" = "Web capture"
+"14.11.2" = "Page boundaries"
+"14.11.4" = "Separation dictionaries"
+"14.11.5" = "Output intents"
+"14.11.6" = "Trapping support"
+"14.11.7" = "Open prepress interface"
+"14.12" = "Document parts"
+"14.13" = "Associated files"
+"Annex F" = "Linearized PDF"
+"ISO 14289" = "PDF/UA"
+"ISO 15930" = "PDF/X"
+"ISO 16612" = "PDF/VT"
+"ISO 19005" = "PDF/A"
+"ISO/TS 32001" = "Hash algorithms"
+"ISO/TS 32002" = "Digital signature algorithms"
+"ISO/TS 32003" = "AES-GCM encryption"
+"ISO/TS 32004" = "Integrity protection"
+"ISO/TS 32005" = "Structure namespace inclusion"
+
+[features.lexical-conventions]
+clause = "7.2"
+description = "Characters, white space, delimiters, and comments of the file syntax."
+objects = []
+
+[features.basic-objects]
+clause = "7.3"
+description = "Booleans, numbers, strings, names, arrays, dictionaries, streams, null, and indirect objects and references."
+objects = ["Stream", "_UniversalArray", "_UniversalDictionary"]
+
+[features.asciihex-filter]
+clause = "7.4.2"
+description = "The ASCIIHexDecode filter: stream data as hexadecimal digits."
+objects = []
+
+[features.ascii85-filter]
+clause = "7.4.3"
+description = "The ASCII85Decode filter: stream data in base-85 text."
+objects = []
+
+[features.lzw-filter]
+clause = "7.4.4"
+description = "The LZWDecode filter: LZW-compressed stream data, with its predictors."
+objects = ["FilterLZWDecode"]
+
+[features.run-length-filter]
+clause = "7.4.5"
+description = "The RunLengthDecode filter: byte-oriented run-length encoding."
+objects = []
+
+[features.ccitt-fax-filter]
+clause = "7.4.6"
+description = "The CCITTFaxDecode filter: Group 3 and Group 4 fax encoding of monochrome images."
+objects = ["FilterCCITTFaxDecode"]
+
+[features.jbig2-filter]
+clause = "7.4.7"
+description = "The JBIG2Decode filter: JBIG2 monochrome images with their global segments."
+objects = ["FilterJBIG2Decode"]
+
+[features.dct-filter]
+clause = "7.4.8"
+description = "The DCTDecode filter: JPEG baseline and progressive images."
+objects = ["FilterDCTDecode"]
+
+[features.jpx-filter]
+clause = "7.4.9"
+description = "The JPXDecode filter: JPEG 2000 images, with their own color and transparency."
+objects = []
+
+[features.crypt-filter]
+clause = "7.4.10"
+description = "The Crypt filter: decrypting one stream with a named crypt filter."
+objects = ["FilterCrypt"]
+
+[features.file-header]
+clause = "7.5.2"
+description = "The header line that gives the file's PDF version."
+objects = []
+
+[features.xref-table]
+clause = "7.5.4"
+description = "The classic cross-reference table and the trailer that follows it."
+objects = ["FileTrailer", "TrailerIDArray"]
+
+[features.incremental-update]
+clause = "7.5.6"
+description = "Appending changes after the original bytes, with a new cross-reference section."
+objects = []
+
+[features.object-streams]
+clause = "7.5.7"
+description = "Compressed objects stored inside object streams."
+objects = ["ObjectStream"]
+
+[features.xref-streams]
+clause = "7.5.8"
+description = "Cross-reference data as a stream, and hybrid-reference files."
+objects = ["XRefStream"]
+
+[features.encryption-dictionary]
+clause = "7.6.3"
+description = "The encryption dictionary and the per-object keys of strings and streams."
+objects = []
+
+[features.public-key-security-handler]
+clause = "7.6.5"
+description = "Public-key security: recipients, their certificates, and their permissions."
+objects = ["EncryptionPublicKey"]
+
+[features.crypt-filters]
+clause = "7.6.6"
+description = "Named crypt filters and their methods: RC4, AES-128, and AES-256."
+objects = ["CryptFilter", "CryptFilterMap", "CryptFilterPublicKey", "CryptFilterPublicKeyMap"]
+
+[features.document-catalog]
+clause = "7.7.2"
+description = "The catalog: the root of the document's objects and its document-level settings."
+objects = ["Catalog"]
+
+[features.page-objects]
+clause = "7.7.3"
+description = "Page objects: boxes, resources, contents, rotation, and user units."
+objects = []
+
+[features.name-dictionary]
+clause = "7.7.4"
+description = "The name dictionary: the name trees of destinations, attachments, scripts, and other named objects."
+objects = ["Name"]
+
+[features.content-streams]
+clause = "7.8"
+description = "Content streams, their operators, and resource dictionaries."
+objects = ["Resource"]
+
+[features.text-strings]
+clause = "7.9.2"
+description = "Text strings in PDFDocEncoding, UTF-16BE, and UTF-8, and byte and ASCII strings."
+objects = []
+
+[features.dates]
+clause = "7.9.4"
+description = "Date strings with their time zone."
+objects = []
+
+[features.name-trees]
+clause = "7.9.6"
+description = "Name trees: sorted string keys spread over leaf and intermediate nodes."
+objects = []
+
+[features.number-trees]
+clause = "7.9.7"
+description = "Number trees: sorted integer keys spread over leaf and intermediate nodes."
+objects = []
+
+[features.sampled-functions]
+clause = "7.10.2"
+description = "Type 0 functions: sampled values with interpolation."
+objects = ["FunctionType0"]
+
+[features.exponential-functions]
+clause = "7.10.3"
+description = "Type 2 functions: exponential interpolation between two values."
+objects = ["FunctionType2"]
+
+[features.stitching-functions]
+clause = "7.10.4"
+description = "Type 3 functions: subfunctions joined over subdomains."
+objects = ["FunctionType3"]
+
+[features.calculator-functions]
+clause = "7.10.5"
+description = "Type 4 functions: a PostScript calculator program."
+objects = ["FunctionType4"]
+
+[features.file-specifications]
+clause = "7.11"
+description = "File specifications: file names, URLs, and their platform forms."
+objects = ["FileSpecification"]
+
+[features.embedded-files]
+clause = "7.11.4"
+description = "Files embedded in the document, with their parameters and checksums."
+objects = ["EmbeddedFileStream", "EmbeddedFileParameter", "FileSpecEF", "Mac"]
+
+[features.related-files]
+clause = "7.11.4.2"
+description = "Related files arrays: files that belong together with an embedded file."
+objects = ["FileSpecRF", "RelatedFilesArray"]
+
+[features.collection-items]
+clause = "7.11.6"
+description = "Collection items: the field values of a file in a portable collection."
+objects = ["CollectionItem", "CollectionSubitem"]
+
+[features.developer-extensions]
+clause = "7.12"
+description = "The extensions dictionary: developer and ISO extensions that a document uses."
+objects = ["Extensions", "DevExtensions", "ISO_DevExtensions"]
+
+[features.graphics-state]
+clause = "8.4"
+description = "The graphics state and its parameter dictionaries."
+objects = ["GraphicsStateParameter", "GraphicsStateParameterMap"]
+
+[features.paths]
+clause = "8.5"
+description = "Path construction, painting, and clipping."
+objects = []
+
+[features.device-color-spaces]
+clause = "8.6.4"
+description = "DeviceGray, DeviceRGB, and DeviceCMYK."
+objects = ["DeviceGrayColorSpace", "DeviceRGBColorSpace", "DeviceCMYKColorSpace"]
+
+[features.calgray-color-space]
+clause = "8.6.5.2"
+description = "CalGray: calibrated gray."
+objects = ["CalGrayColorSpace", "CalGrayDict"]
+
+[features.calrgb-color-space]
+clause = "8.6.5.3"
+description = "CalRGB: calibrated RGB."
+objects = ["CalRGBColorSpace", "CalRGBDict"]
+
+[features.lab-color-space]
+clause = "8.6.5.4"
+description = "Lab: CIE L*a*b*."
+objects = ["LabColorSpace", "LabDict"]
+
+[features.icc-based-color-space]
+clause = "8.6.5.5"
+description = "ICCBased: color described by an embedded ICC profile."
+objects = ["ICCBasedColorSpace", "ICCProfileStream"]
+
+[features.indexed-color-space]
+clause = "8.6.6.3"
+description = "Indexed: a color table over a base color space."
+objects = ["IndexedColorSpace"]
+
+[features.pattern-color-space]
+clause = "8.6.6.2"
+description = "Pattern: painting with a tiling or shading pattern."
+objects = ["PatternColorSpace"]
+
+[features.separation-color-space]
+clause = "8.6.6.4"
+description = "Separation: one colorant with its alternate space and tint transform."
+objects = ["SeparationColorSpace", "Separation"]
+
+[features.devicen-color-space]
+clause = "8.6.6.5"
+description = "DeviceN: several colorants, with their attributes and mixing hints."
+objects = ["DeviceNColorSpace", "DeviceNDict", "DeviceNProcess", "DeviceNMixingHints", "ColorantsDict"]
+
+[features.overprint]
+clause = "8.6.7"
+description = "Overprint and its mode."
+objects = []
+
+[features.tiling-patterns]
+clause = "8.7.3"
+description = "Tiling patterns: a cell of content repeated over an area."
+objects = ["PatternType1"]
+
+[features.function-shading]
+clause = "8.7.4.5.2"
+description = "Type 1 shadings: color as a function of position."
+objects = ["ShadingType1"]
+
+[features.axial-shading]
+clause = "8.7.4.5.3"
+description = "Type 2 shadings: color varying along an axis."
+objects = ["ShadingType2"]
+
+[features.radial-shading]
+clause = "8.7.4.5.4"
+description = "Type 3 shadings: color varying between two circles."
+objects = ["ShadingType3"]
+
+[features.free-form-triangle-shading]
+clause = "8.7.4.5.5"
+description = "Type 4 shadings: free-form Gouraud-shaded triangle meshes."
+objects = ["ShadingType4"]
+
+[features.lattice-triangle-shading]
+clause = "8.7.4.5.6"
+description = "Type 5 shadings: lattice-form Gouraud-shaded triangle meshes."
+objects = ["ShadingType5"]
+
+[features.coons-patch-shading]
+clause = "8.7.4.5.7"
+description = "Type 6 shadings: Coons patch meshes."
+objects = ["ShadingType6"]
+
+[features.tensor-patch-shading]
+clause = "8.7.4.5.8"
+description = "Type 7 shadings: tensor-product patch meshes."
+objects = ["ShadingType7"]
+
+[features.shading-patterns]
+clause = "8.7.4"
+description = "Shading patterns and the sh operator."
+objects = ["PatternType2", "ShadingMap", "PatternMap"]
+
+[features.xobjects]
+clause = "8.8"
+description = "External objects and the Do operator."
+objects = ["XObjectMap"]
+
+[features.images]
+clause = "8.9.5"
+description = "Image XObjects: samples, decoding, interpolation, and alternates."
+objects = ["XObjectImage", "AlternateImage"]
+
+[features.image-masks]
+clause = "8.9.6"
+description = "Stencil masks, explicit masks, and color-key masking."
+objects = ["XObjectImageMask"]
+
+[features.inline-images]
+clause = "8.9.7"
+description = "Images written inline in a content stream."
+objects = []
+
+[features.form-xobjects]
+clause = "8.10"
+description = "Form XObjects: reusable content with its own resources and matrix."
+objects = ["XObjectFormType1"]
+
+[features.reference-xobjects]
+clause = "8.10.4"
+description = "Reference XObjects: content imported from a page of another document."
+objects = ["Reference"]
+
+[features.optional-content]
+clause = "8.11"
+description = "Optional content groups, memberships, configurations, and their usage."
+objects = ["OptContentGroup", "OptContentMembership", "OptContentConfig", "OptContentProperties", "OptContentUsage", "OptContentUsageApplication"]
+
+[features.text-state]
+clause = "9.3"
+description = "Character and word spacing, scaling, leading, rise, and rendering modes."
+objects = []
+
+[features.text-objects]
+clause = "9.4"
+description = "Text objects, positioning, and showing text."
+objects = []
+
+[features.type1-fonts]
+clause = "9.6.2"
+description = "Type 1 fonts, the standard 14 fonts, and multiple master fonts."
+objects = ["FontType1", "FontMultipleMaster", "FontDescriptorType1"]
+
+[features.truetype-fonts]
+clause = "9.6.3"
+description = "TrueType fonts as simple fonts."
+objects = ["FontTrueType", "FontDescriptorTrueType"]
+
+[features.type3-fonts]
+clause = "9.6.4"
+description = "Type 3 fonts: glyphs drawn by content streams."
+objects = ["FontType3", "FontDescriptorType3", "CharProcMap"]
+
+[features.simple-font-encodings]
+clause = "9.6.5"
+description = "Encodings of simple fonts: base encodings and differences."
+objects = ["Encoding"]
+
+[features.cid-fonts]
+clause = "9.7.4"
+description = "CIDFonts: CIDFontType0 and CIDFontType2, with their widths and CID-to-GID maps."
+objects = ["FontCIDType0", "FontCIDType2", "CIDSystemInfo", "FontDescriptorCIDType0", "FontDescriptorCIDType2", "CIDFontDescriptorMetrics"]
+
+[features.cmaps]
+clause = "9.7.5"
+description = "CMaps: predefined and embedded maps from codes to CIDs."
+objects = ["CMapStream"]
+
+[features.type0-fonts]
+clause = "9.7.6"
+description = "Type 0 composite fonts."
+objects = ["FontType0"]
+
+[features.font-descriptors]
+clause = "9.8"
+description = "Font descriptors: metrics, flags, and style."
+objects = []
+
+[features.embedded-fonts]
+clause = "9.9"
+description = "Embedded font programs: Type 1, TrueType, CFF, and OpenType."
+objects = ["FontFile", "FontFile2", "FontFile3Type1", "FontFile3CIDType0", "FontFile3OpenType", "FontFileType1"]
+
+[features.text-extraction]
+clause = "9.10"
+description = "Mapping glyphs to Unicode, with ToUnicode CMaps."
+objects = ["ToUnicodeCMapStream"]
+
+[features.color-conversion]
+clause = "10.3"
+description = "Converting colors to device colors, with rendering intents."
+objects = []
+
+[features.device-color-conversion]
+clause = "10.4"
+description = "Conversions among device color spaces, black generation, and undercolor removal."
+objects = []
+
+[features.transfer-functions]
+clause = "10.5"
+description = "Transfer functions."
+objects = []
+
+[features.halftones]
+clause = "10.6"
+description = "Halftone screens and spot functions."
+objects = ["HalftoneType1", "HalftoneType5", "HalftoneType6", "HalftoneType10", "HalftoneType16"]
+
+[features.scan-conversion]
+clause = "10.7"
+description = "Flatness, smoothness, and stroke adjustment."
+objects = []
+
+[features.blend-modes]
+clause = "11.3.5"
+description = "Separable and non-separable blend modes."
+objects = ["ArrayOfBlendModes"]
+
+[features.soft-masks]
+clause = "11.5"
+description = "Soft masks from luminosity, alpha, and images."
+objects = ["SoftMaskAlpha", "SoftMaskLuminosity", "XObjectImageSoftMask"]
+
+[features.transparency-groups]
+clause = "11.6.6"
+description = "Transparency groups: isolated and knockout groups."
+objects = ["GroupAttributes"]
+
+[features.transparency-color]
+clause = "11.7"
+description = "Color spaces of groups and overprint with transparency."
+objects = []
+
+[features.viewer-preferences]
+clause = "12.2"
+description = "Viewer preferences: how a viewer opens and shows the document."
+objects = ["ViewerPreferences"]
+
+[features.destinations]
+clause = "12.3.2"
+description = "Explicit and named destinations."
+objects = ["DestDict", "DestsMap", "Dest0Array", "Dest1Array", "Dest4Array", "DestXYZArray", "Dest0StructArray", "Dest1StructArray", "Dest4StructArray", "DestXYZStructArray"]
+
+[features.outline]
+clause = "12.3.3"
+description = "The document outline: bookmarks with their titles, actions, and styles."
+objects = ["Outline", "OutlineItem"]
+
+[features.collections]
+clause = "12.3.5"
+description = "Portable collections: their schema, folders, sort, and navigator."
+objects = ["Collection", "CollectionSchema", "CollectionField", "CollectionFolder", "CollectionSort", "CollectionColors", "CollectionSplit", "Navigator"]
+
+[features.navigators]
+clause = "12.3.6"
+description = "Navigators that present a portable collection."
+objects = []
+
+[features.page-labels]
+clause = "12.4.2"
+description = "Page labels: numbering styles, prefixes, and starts."
+objects = ["PageLabel"]
+
+[features.articles]
+clause = "12.4.3"
+description = "Article threads and their beads."
+objects = ["Thread", "Bead", "BeadFirst"]
+
+[features.presentations]
+clause = "12.4.4"
+description = "Page transitions and display durations."
+objects = ["Transition", "NavNode"]
+
+[features.annotations]
+clause = "12.5.2"
+description = "Annotation dictionaries: rectangle, flags, border, color, and appearance state."
+objects = ["BorderStyle", "BorderEffect"]
+
+[features.appearance-streams]
+clause = "12.5.5"
+description = "Appearance streams of annotations: normal, rollover, and down."
+objects = ["Appearance", "AppearanceSubDict"]
+
+[features.text-annotations]
+clause = "12.5.6.4"
+description = "Text annotations: notes shown as icons."
+objects = ["AnnotText"]
+
+[features.link-annotations]
+clause = "12.5.6.5"
+description = "Link annotations: areas that go to a destination or perform an action."
+objects = ["AnnotLink"]
+
+[features.free-text-annotations]
+clause = "12.5.6.6"
+description = "Free text annotations: text shown directly on the page."
+objects = ["AnnotFreeText"]
+
+[features.line-annotations]
+clause = "12.5.6.7"
+description = "Line annotations, with their endings, leaders, and captions."
+objects = ["AnnotLine"]
+
+[features.square-circle-annotations]
+clause = "12.5.6.8"
+description = "Square and circle annotations."
+objects = ["AnnotSquare", "AnnotCircle"]
+
+[features.polygon-annotations]
+clause = "12.5.6.9"
+description = "Polygon and polyline annotations."
+objects = ["AnnotPolygon", "AnnotPolyLine"]
+
+[features.text-markup-annotations]
+clause = "12.5.6.10"
+description = "Highlight, underline, squiggly, and strikeout annotations."
+objects = ["AnnotHighlight", "AnnotUnderline", "AnnotSquiggly", "AnnotStrikeOut"]
+
+[features.caret-annotations]
+clause = "12.5.6.11"
+description = "Caret annotations: where text is to be inserted."
+objects = ["AnnotCaret"]
+
+[features.stamp-annotations]
+clause = "12.5.6.12"
+description = "Rubber stamp annotations."
+objects = ["AnnotStamp"]
+
+[features.ink-annotations]
+clause = "12.5.6.13"
+description = "Ink annotations: freehand paths."
+objects = ["AnnotInk"]
+
+[features.popup-annotations]
+clause = "12.5.6.14"
+description = "Popup annotations that show the text of another annotation."
+objects = ["AnnotPopup"]
+
+[features.file-attachment-annotations]
+clause = "12.5.6.15"
+description = "File attachment annotations: files attached at a point of a page."
+objects = ["AnnotFileAttachment"]
+
+[features.sound-annotations]
+clause = "12.5.6.16"
+description = "Sound annotations."
+objects = ["AnnotSound"]
+
+[features.movie-annotations]
+clause = "12.5.6.17"
+description = "Movie annotations."
+objects = ["AnnotMovie", "Movie", "MovieActivation"]
+
+[features.screen-annotations]
+clause = "12.5.6.18"
+description = "Screen annotations: regions where media plays."
+objects = ["AnnotScreen"]
+
+[features.widget-annotations]
+clause = "12.5.6.19"
+description = "Widget annotations: the appearance and characteristics of form fields."
+objects = ["AnnotWidget", "AppearanceCharacteristics", "IconFit"]
+
+[features.printer-mark-annotations]
+clause = "12.5.6.20"
+description = "Printer's mark annotations."
+objects = ["AnnotPrinterMark", "AppearancePrinterMark", "AppearancePrinterMarkSubDict", "XObjectFormPrinterMark"]
+
+[features.trap-network-annotations]
+clause = "12.5.6.21"
+description = "Trap network annotations."
+objects = ["AnnotTrapNetwork", "AppearanceTrapNet", "AppearanceTrapNetSubDict", "XObjectFormTrapNet"]
+
+[features.watermark-annotations]
+clause = "12.5.6.22"
+description = "Watermark annotations, with their fixed print placement."
+objects = ["AnnotWatermark", "FixedPrint"]
+
+[features.redaction-annotations]
+clause = "12.5.6.23"
+description = "Redaction annotations: content marked for removal."
+objects = ["AnnotRedact"]
+
+[features.projection-annotations]
+clause = "12.5.6.24"
+description = "Projection annotations."
+objects = ["AnnotProjection", "ExDataProjection"]
+
+[features.rich-annotations]
+clause = "12.5.6.25"
+description = "3D and RichMedia annotations."
+objects = ["Annot3D", "AnnotRichMedia"]
+
+[features.trigger-events]
+clause = "12.6.3"
+description = "Additional actions triggered by document, page, field, and annotation events."
+objects = ["AddActionCatalog", "AddActionPageObject", "AddActionFormField", "AddActionScreenAnnotation", "AddActionWidgetAnnotation"]
+
+[features.goto-actions]
+clause = "12.6.4.2"
+description = "Go-To actions within the document."
+objects = ["ActionGoTo"]
+
+[features.remote-goto-actions]
+clause = "12.6.4.3"
+description = "Go-To actions into another file."
+objects = ["ActionGoToR"]
+
+[features.embedded-goto-actions]
+clause = "12.6.4.4"
+description = "Go-To actions into an embedded file."
+objects = ["ActionGoToE", "Target", "TargetEmbedded"]
+
+[features.goto-dpart-actions]
+clause = "12.6.4.5"
+description = "Go-To actions into a document part."
+objects = ["ActionGoToDp"]
+
+[features.launch-actions]
+clause = "12.6.4.6"
+description = "Launch actions: opening a file or application."
+objects = ["ActionLaunch", "MicrosoftWindowsLaunchParam"]
+
+[features.thread-actions]
+clause = "12.6.4.7"
+description = "Thread actions: going to an article bead."
+objects = ["ActionThread"]
+
+[features.uri-actions]
+clause = "12.6.4.8"
+description = "URI actions and the document's base URI."
+objects = ["ActionURI", "URI"]
+
+[features.sound-actions]
+clause = "12.6.4.9"
+description = "Sound actions."
+objects = ["ActionSound"]
+
+[features.movie-actions]
+clause = "12.6.4.10"
+description = "Movie actions."
+objects = ["ActionMovie"]
+
+[features.hide-actions]
+clause = "12.6.4.11"
+description = "Hide actions: showing and hiding annotations."
+objects = ["ActionHide"]
+
+[features.named-actions]
+clause = "12.6.4.12"
+description = "Named actions such as next and previous page."
+objects = ["ActionNamed"]
+
+[features.set-ocg-state-actions]
+clause = "12.6.4.13"
+description = "Actions that change the state of optional content groups."
+objects = ["ActionSetOCGState"]
+
+[features.rendition-actions]
+clause = "12.6.4.14"
+description = "Rendition actions: controlling media playback."
+objects = ["ActionRendition"]
+
+[features.transition-actions]
+clause = "12.6.4.15"
+description = "Transition actions."
+objects = ["ActionTransition"]
+
+[features.goto-3d-view-actions]
+clause = "12.6.4.16"
+description = "Go-To-3D-view actions."
+objects = ["ActionGoTo3DView"]
+
+[features.ecmascript-actions]
+clause = "12.6.4.17"
+description = "ECMAScript actions and document-level scripts."
+objects = ["ActionECMAScript"]
+
+[features.rich-media-execute-actions]
+clause = "12.6.4.18"
+description = "Rich media execute actions."
+objects = ["ActionRichMediaExecute"]
+
+[features.variable-text]
+clause = "12.7.4.3"
+description = "Variable text: default appearance, quadding, and rich text of fields."
+objects = []
+
+[features.interactive-form]
+clause = "12.7.2"
+description = "The interactive form dictionary and the field tree."
+objects = ["InteractiveForm", "Field", "ArrayOfFields"]
+
+[features.button-fields]
+clause = "12.7.5.2"
+description = "Push buttons, check boxes, and radio buttons."
+objects = ["FieldBtnPush", "FieldBtnCheckbox", "FieldBtnRadio"]
+
+[features.text-fields]
+clause = "12.7.5.3"
+description = "Text fields: single line, multiline, password, file select, and comb."
+objects = ["FieldTx"]
+
+[features.choice-fields]
+clause = "12.7.5.4"
+description = "Choice fields: list boxes and combo boxes."
+objects = ["FieldChoice"]
+
+[features.signature-fields]
+clause = "12.7.5.5"
+description = "Signature fields, their locks, and seed values."
+objects = ["FieldSig", "SigFieldLock", "SigFieldSeedValue", "CertSeedValue"]
+
+[features.form-actions]
+clause = "12.7.6"
+description = "Submit-form, reset-form, and import-data actions."
+objects = ["ActionSubmitForm", "ActionResetForm", "ActionImportData"]
+
+[features.fdf]
+clause = "12.7.8"
+description = "Forms Data Format files."
+objects = []
+
+[features.non-interactive-forms]
+clause = "12.7.9"
+description = "Forms flattened into page content."
+objects = []
+
+[features.digital-signatures]
+clause = "12.8"
+description = "Signature dictionaries, byte ranges, and their PKCS#7 and CAdES encodings."
+objects = ["Signature", "SignatureBuildPropDict", "SignatureBuildDataDict", "SignatureBuildDataAppDict", "SignatureBuildDataSigQDict"]
+
+[features.signature-transforms]
+clause = "12.8.2"
+description = "Certification and field locking: DocMDP, FieldMDP, and UR transforms."
+objects = ["SignatureReferenceDocMDP", "SignatureReferenceFieldMDP", "SignatureReferenceUR", "SignatureReferenceIdentity", "DocMDPTransformParameters", "FieldMDPTransformParameters", "URTransformParameters", "MDPDict"]
+
+[features.document-security-store]
+clause = "12.8.4.3"
+description = "The document security store and validation-related information."
+objects = ["DSS", "VRI", "VRIMap"]
+
+[features.document-timestamps]
+clause = "12.8.5"
+description = "Document timestamp signatures."
+objects = ["DocTimeStamp", "TimeStampDict"]
+
+[features.permissions]
+clause = "12.8.6"
+description = "The permissions dictionary of usage rights and certification."
+objects = ["Permissions"]
+
+[features.legal-attestations]
+clause = "12.8.7"
+description = "Legal content attestations."
+objects = ["LegalAttestation"]
+
+[features.measurement]
+clause = "12.9"
+description = "Viewports and measure dictionaries: rectilinear and geospatial."
+objects = ["Viewport", "MeasureRL", "MeasureGEO", "NumberFormat", "GeographicCoordinateSystem", "ProjectedCoordinateSystem", "PointData"]
+
+[features.document-requirements]
+clause = "12.10"
+description = "Requirements that a viewer must meet to process the document."
+objects = ["RequirementsHandler"]
+
+[features.renditions]
+clause = "13.2"
+description = "Renditions, media clips, play and screen parameters, and media players."
+objects = ["RenditionMedia", "RenditionSelector", "MediaClipData", "MediaClipSection", "MediaPlayParameters", "MediaScreenParameters", "MediaPlayers", "MediaPlayerInfo", "MediaCriteria"]
+
+[features.sounds]
+clause = "13.3"
+description = "Sound objects."
+objects = ["SoundObject"]
+
+[features.movies]
+clause = "13.4"
+description = "Movie dictionaries."
+objects = []
+
+[features.alternate-presentations]
+clause = "13.5"
+description = "Alternate presentations: slide shows."
+objects = ["SlideShow"]
+
+[features.3d-artwork]
+clause = "13.6"
+description = "3D streams, views, nodes, lighting, and render modes."
+objects = ["3DStream", "3DView", "3DNode", "3DActivation", "3DLightingScheme", "3DRenderMode", "3DBackground", "3DCrossSection", "3DReference"]
+
+[features.rich-media]
+clause = "13.7"
+description = "Rich media content, configurations, instances, and settings."
+objects = ["RichMediaSettings", "RichMediaInstance", "RichMediaPresentation", "RichMediaParams"]
+
+[features.document-info]
+clause = "14.3.3"
+description = "The document information dictionary."
+objects = ["DocInfo"]
+
+[features.xmp-metadata]
+clause = "14.3.2"
+description = "XMP metadata streams of the document and its components."
+objects = ["Metadata"]
+
+[features.file-identifiers]
+clause = "14.4"
+description = "The trailer's file identifier pair."
+objects = []
+
+[features.page-piece]
+clause = "14.5"
+description = "Page-piece dictionaries: private data of applications."
+objects = ["PagePiece", "Data"]
+
+[features.marked-content]
+clause = "14.6"
+description = "Marked-content sequences and their property lists."
+objects = []
+
+[features.logical-structure]
+clause = "14.7"
+description = "The structure tree, its elements, parent tree, attributes, and class map."
+objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
+
+[features.structure-namespaces]
+clause = "14.7.4"
+description = "Structure namespaces and their role maps."
+objects = ["Namespace", "RoleMapNS"]
+
+[features.tagged-pdf]
+clause = "14.8"
+description = "Tagged PDF: the mark information and the standard structure types and attributes."
+objects = ["MarkInfo"]
+
+[features.accessibility]
+clause = "14.9"
+description = "Natural language, alternate descriptions, replacement text, and abbreviations."
+objects = []
+
+[features.web-capture]
+clause = "14.10"
+description = "Web capture: content sets, source information, and commands."
+objects = ["WebCaptureInfo", "WebCapturePageSet", "WebCaptureImageSet", "SourceInformation", "WebCaptureCommand", "WebCaptureCommandSettings"]
+
+[features.page-boundaries]
+clause = "14.11.2"
+description = "Media, crop, bleed, trim, and art boxes, and box color information."
+objects = ["BoxColorInfo", "BoxStyle"]
+
+[features.separation-dictionaries]
+clause = "14.11.4"
+description = "Separation dictionaries of pre-separated pages."
+objects = []
+
+[features.output-intents]
+clause = "14.11.5"
+description = "Output intents and their destination profiles."
+objects = ["OutputIntents", "DestOutputProfileRef"]
+
+[features.trapping]
+clause = "14.11.6"
+description = "Trap networks and their regions."
+objects = ["TrapRegion"]
+
+[features.opi]
+clause = "14.11.7"
+description = "Open prepress interface dictionaries."
+objects = ["OPIVersion13", "OPIVersion13Dict", "OPIVersion20", "OPIVersion20Dict"]
+
+[features.document-parts]
+clause = "14.12"
+description = "Document parts: page ranges with their metadata."
+objects = ["DPart", "DPartRoot", "DPM"]
+
+[features.associated-files]
+clause = "14.13"
+description = "Associated files of the document, its pages, and its objects."
+objects = ["AFFileSpecification", "AFEmbeddedFileStream", "AFEmbeddedFileParameter", "AFFileSpecEF"]
+
+[features.linearization]
+clause = "Annex F"
+description = "Linearized files for incremental display over a network."
+objects = ["LinearizationParameterDict"]
+
+[features.sha3-hashes]
+clause = "ISO/TS 32001"
+description = "SHA-3 and SHA-512 hash algorithms in PDF."
+objects = []
+
+[features.ecc-signatures]
+clause = "ISO/TS 32002"
+description = "ECDSA and EdDSA signature algorithms in PDF."
+objects = []
+
+[features.aes-gcm]
+clause = "ISO/TS 32003"
+description = "AES-GCM encryption in PDF."
+objects = []
+
+[features.integrity-protection]
+clause = "ISO/TS 32004"
+description = "Integrity protection of encrypted documents with a message authentication code."
+objects = []
+
+[features.namespace-inclusion]
+clause = "ISO/TS 32005"
+description = "PDF 1.7 and 2.0 structure namespaces in one document."
+objects = []
+
+[features.pdfa]
+clause = "ISO 19005"
+description = "PDF/A-1 to PDF/A-4: archival documents, read, written, and kept."
+objects = []
+
+[features.pdfua]
+clause = "ISO 14289"
+description = "PDF/UA-1 and PDF/UA-2: accessible documents, read, written, and kept."
+objects = []
+
+[features.pdfx]
+clause = "ISO 15930"
+description = "PDF/X: graphic exchange documents, read and kept."
+objects = []
+
+[features.pdfvt]
+clause = "ISO 16612"
+description = "PDF/VT: variable and transactional printing documents, read and kept."
+objects = []

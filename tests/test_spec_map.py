@@ -138,6 +138,8 @@ def test_markers_and_statuses_the_generator_does_not_understand_are_refused(tmp_
             ),
             "but tests prove it",
         ),
+        (features_path, features_text.replace('clause = "7.4.6"', 'clause = "7.4.66"'), "does not list: 7.4.66"),
+        (features_path, features_text.replace('"7.2" = ', '"7.2.1" = "Unused"\n"7.2" = '), "without a feature: 7.2.1"),
     ]
     for path, broken, message in cases:
         original = path.read_text(encoding="utf-8")
@@ -147,3 +149,17 @@ def test_markers_and_statuses_the_generator_does_not_understand_are_refused(tmp_
         path.write_text(original, encoding="utf-8")
         assert result.returncode == 1, message
         assert message in result.stderr, result.stderr
+
+
+def test_every_listed_clause_has_a_feature_and_every_feature_a_listed_clause() -> None:
+    spec_map = json.loads((ROOT / MAP).read_text(encoding="utf-8"))
+    named = {feature["clause"] for feature in spec_map["features"] if "clause" in feature}
+    assert named == set(spec_map["clauses"])
+    for standard in ("ISO/TS 32001", "ISO/TS 32005", "ISO 19005", "ISO 14289", "ISO 15930", "ISO 16612"):
+        assert standard in spec_map["clauses"]
+
+
+def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> None:
+    by_name = features()
+    assert by_name["flate-filter"]["read"]["status"] == "done"
+    assert by_name["lzw-filter"]["read"] == {"status": "planned", "milestone": "Phase 4: Specification"}

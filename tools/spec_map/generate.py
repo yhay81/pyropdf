@@ -9,7 +9,12 @@ proved by the case of a test parametrized by object name. features.toml gives
 every other status with what that status needs: ``planned`` its milestone,
 ``partial`` what is missing with its issue and milestone, ``engine`` the
 upstream issue, ``n/a`` its reason, and ``non-goal`` its decision and reason.
-``partial`` and ``engine`` keep the tests of what is done.
+``partial`` and ``engine`` keep the tests of what is done. features.toml's
+``[clauses]`` lists the feature-defining clauses of ISO 32000-2, its
+extensions, and the profiles it names, each with pyropdf's own title; every
+feature names one of them, and each of them has a feature.
+``[feature-defaults]`` gives the statuses of the dimensions that a feature
+does not declare.
 
 Run from the repository root: ``python3 tools/spec_map/generate.py`` writes
 the map and prints its coverage; ``--check`` writes nothing and fails when
@@ -151,6 +156,35 @@ def declared(root: Path, config: dict[str, Any], names: list[str]) -> dict[str, 
     return features
 
 
+def feature_defaults(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the statuses of the dimensions that a feature neither declares nor proves."""
+    defaults = {
+        dimension: status(value, f"feature-defaults.{dimension}")
+        for dimension, value in config.get("feature-defaults", {}).items()
+    }
+    if set(defaults) - set(DIMENSIONS):
+        msg = f"feature-defaults has statuses only for {', '.join(DIMENSIONS)}"
+        raise MapError(msg)
+    return defaults
+
+
+def clauses(config: dict[str, Any], features: dict[str, dict[str, Any]]) -> None:
+    """Refuse a feature whose clause is not listed, and a listed clause without a feature."""
+    listed = config.get("clauses")
+    if not isinstance(listed, dict) or not all(isinstance(title, str) for title in listed.values()):
+        msg = "clauses lists each feature-defining clause with its title"
+        raise MapError(msg)
+    named = {feature["clause"] for feature in features.values() if "clause" in feature}
+    unlisted = sorted(named - set(listed))
+    if unlisted:
+        msg = f"features name clauses that clauses does not list: {', '.join(unlisted)}"
+        raise MapError(msg)
+    uncovered = [clause for clause in listed if clause not in named]
+    if uncovered:
+        msg = f"clauses without a feature: {', '.join(uncovered)}"
+        raise MapError(msg)
+
+
 def object_keys(root: Path, name: str) -> set[str]:
     """Return the keys of the object type ``name``."""
     with (root / MODEL / "tsv" / f"{name}.tsv").open(encoding="utf-8", newline="") as file:
@@ -162,6 +196,8 @@ def build(root: Path) -> dict[str, Any]:
     names = objects(root)
     config = tomllib.loads((root / FEATURES).read_text(encoding="utf-8"))
     features = declared(root, config, names)
+    clauses(config, features)
+    defaults = feature_defaults(config)
     proved = marked(root, names)
     unknown = sorted({feature for feature, _ in proved} - set(features))
     if unknown:
@@ -171,6 +207,8 @@ def build(root: Path) -> dict[str, Any]:
         for dimension in DIMENSIONS:
             tests = proved.get((name, dimension), [])
             given = feature.get(dimension)
+            if given is None and not tests and name in config.get("features", {}):
+                given = defaults.get(dimension)
             if given is None and not tests:
                 msg = f"{name} has no {dimension} status: mark a test that proves it, or declare one in {FEATURES}"
                 raise MapError(msg)
@@ -184,7 +222,12 @@ def build(root: Path) -> dict[str, Any]:
         for dimension in DIMENSIONS:
             feature[dimension] = feature.pop(dimension)
     commit = (root / MODEL / "COMMIT").read_text(encoding="utf-8").strip()
-    return {"arlington": commit, "dimensions": list(DIMENSIONS), "features": list(features.values())}
+    return {
+        "arlington": commit,
+        "dimensions": list(DIMENSIONS),
+        "clauses": config["clauses"],
+        "features": list(features.values()),
+    }
 
 
 def coverage(spec_map: dict[str, Any]) -> dict[str, dict[str, int]]:
