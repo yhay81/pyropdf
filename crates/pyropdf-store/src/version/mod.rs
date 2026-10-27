@@ -28,7 +28,7 @@
 
 mod base;
 mod document;
-mod table;
+pub(crate) mod table;
 mod transaction;
 
 #[cfg(test)]

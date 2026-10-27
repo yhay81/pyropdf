@@ -71,7 +71,7 @@ fn empty<T, const N: usize>() -> [Option<T>; N] {
 
 /// A map from object numbers to values of type `V`, whose clones share
 /// structure.
-pub(super) struct Table<V> {
+pub(crate) struct Table<V> {
     root: Option<Arc<Branch<V>>>,
     /// The levels of branches, the root's included, or 0 for an empty table.
     height: u32,
@@ -110,7 +110,7 @@ impl<V> Table<V> {
     pub(super) const CHUNK_BYTES: u64 = (2 * size_of::<usize>() + size_of::<Chunk<V>>()) as u64;
 
     /// Returns an empty table.
-    pub(super) const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             root: None,
             height: 0,
@@ -125,7 +125,7 @@ impl<V> Table<V> {
     }
 
     /// Returns the value of `number`, if the table has one.
-    pub(super) fn get(&self, number: u32) -> Option<&V> {
+    pub(crate) fn get(&self, number: u32) -> Option<&V> {
         if u64::from(number) >= capacity(self.height) {
             return None;
         }
@@ -152,7 +152,7 @@ impl<V> Table<V> {
     /// capacity adds above the root, the chunk and the branches on the path
     /// to the slot that another table also holds, which it copies, and those
     /// that the path lacks. A refused write changes nothing.
-    pub(super) fn insert(
+    pub(crate) fn insert(
         &mut self,
         number: u32,
         value: V,
@@ -250,7 +250,7 @@ impl<V> Table<V> {
     }
 
     /// Returns the numbers that have values, ascending, with their values.
-    pub(super) fn iter(&self) -> Iter<'_, V> {
+    pub(crate) fn iter(&self) -> Iter<'_, V> {
         let mut branches = [None; MAX_HEIGHT as usize];
         let mut depth = 0;
         if let Some(root) = &self.root {
@@ -309,7 +309,7 @@ impl<V> Default for Table<V> {
 }
 
 /// The numbers of a table that have values, ascending, with their values.
-pub(super) struct Iter<'t, V> {
+pub(crate) struct Iter<'t, V> {
     height: u32,
     /// The branches on the path to the current chunk, the root first, each
     /// with the index of the child to visit next and the first number that
