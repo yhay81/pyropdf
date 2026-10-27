@@ -404,6 +404,21 @@ class Document:
             [self.pages[index] for index in indexes], table_strategy=table_strategy, max_size=max_size
         )
 
+    def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
+        """Draw annotation and widget appearances into page content and take them off their pages.
+
+        ``annotations`` covers every annotation but links, which stay, and
+        takes popups off with them; ``widgets`` covers form widgets and
+        removes the interactive form. Each one is drawn as rendering shows
+        it: its normal appearance mapped onto its rectangle, or the
+        appearance that rendering draws for one stored without, and hidden
+        ones leave undrawn. A widget without an appearance draws nothing;
+        fill fields first, which draws them. The edit is one step.
+        """
+        _validate_bool("annotations", annotations)
+        _validate_bool("widgets", widgets)
+        _core.flatten(self._core(), None, annotations, widgets)
+
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""
         self._closed = True

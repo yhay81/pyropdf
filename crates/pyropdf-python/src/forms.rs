@@ -14,7 +14,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyropdf_engine::annotations::Reader;
+use pyropdf_engine::annotations::{Reader, synthesized};
+use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::forms::{self as widgets, WidgetError};
 use pyropdf_engine::standard::{DA_FONTS, DefaultAppearance, is_winansi};
 use pyropdf_store::budget::Budget;
@@ -2620,8 +2621,24 @@ fn remove_widgets(
 ) -> PyResult<()> {
     let version = transaction.snapshot();
     let form = walk(&mut Reads::new(&version, budget))?;
-    // The fields that leave with their last widget, and the widgets that
-    // only leave their field.
+    let (fields, detached, unlisted) = leaving(&form, widgets)?;
+    unlist(
+        transaction,
+        document,
+        pages,
+        &unlisted,
+        (page, positions),
+        budget,
+    )?;
+    unfield(transaction, &fields, &detached, budget)
+}
+
+/// The fields that leave the form with their last widget, the widgets that
+/// only leave their field, and every widget that leaves its pages, sorted.
+type Leaving = (Vec<Id>, Vec<Id>, Vec<Id>);
+
+/// Returns what leaves form `form` when the sorted `widgets` leave it.
+fn leaving(form: &Form, widgets: &[Id]) -> PyResult<Leaving> {
     let mut fields = Vec::new();
     let mut seen = HashSet::new();
     let mut detached = Vec::new();
@@ -2645,26 +2662,133 @@ fn remove_widgets(
     }
     unlisted.sort_unstable();
     unlisted.dedup();
-    unlist(
-        transaction,
-        document,
-        pages,
-        &unlisted,
-        (page, positions),
-        budget,
-    )?;
+    Ok((fields, detached, unlisted))
+}
+
+/// Takes `fields` out of the form, with each named parent that one leaves
+/// without kids, and the widgets `detached` out of their fields.
+fn unfield(
+    transaction: &mut Transaction,
+    fields: &[Id],
+    detached: &[Id],
+    budget: &Budget,
+) -> PyResult<()> {
     if fields.is_empty() && detached.is_empty() {
         return Ok(());
     }
     let holder = form_object(transaction, budget)?;
-    for field in fields {
+    for &field in fields {
         remove_field(transaction, holder, field, budget)?;
     }
-    for widget in detached {
+    for &widget in detached {
         let parent = parent(transaction, widget.0, budget)?;
         let widget = Reference::new(widget.0, widget.1);
         detach(transaction, holder, parent, widget, budget)?;
     }
+    Ok(())
+}
+
+/// Draws the appearances of the annotations and widgets that `annotations`
+/// and `widgets` select into page content and takes them off, in one edit,
+/// on page object `page`, or on every page for `None`; returns `false` when
+/// `page` is no longer a page. Taking the widgets off every page removes the
+/// interactive form; taking them off one page takes them out of their
+/// fields, with each field that loses its last widget.
+#[pyfunction]
+#[pyo3(signature = (document, page, annotations, widgets, /))]
+pub fn flatten(
+    py: Python<'_>,
+    document: &_Document,
+    page: Option<Id>,
+    annotations: bool,
+    widgets: bool,
+) -> PyResult<bool> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let (version, index, budget) = editing_index(document)?;
+    let targets = match page {
+        Some((number, generation)) => match index.index_of(Reference::new(number, generation)) {
+            Some(at) => at..at + 1,
+            None => return Ok(false),
+        },
+        None => 0..index.pages().len(),
+    };
+    if !annotations && !widgets {
+        return Ok(true);
+    }
+    let selection = Selection {
+        annotations,
+        widgets,
+    };
+    // Annotations without an appearance are drawn as a render draws them.
+    let mut missing = if annotations {
+        Missing::new(synthesized(&version, &index, &budget).map_err(store)?)
+    } else {
+        Missing::default()
+    };
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = (|| {
+            let mut flattened = Vec::new();
+            for at in targets {
+                let annots = Annots::at(&version, &index, at, document.budget())?;
+                let Some(plan) =
+                    flattening::plan(&annots.reader(), &annots.items, selection).map_err(store)?
+                else {
+                    continue;
+                };
+                let Some(object) = annots.page().object() else {
+                    return Err(PdfError::new_err("the page is not an indirect object"));
+                };
+                if page.is_some() {
+                    flattened.extend(plan.widgets.iter().map(|widget| id(*widget)));
+                }
+                flattening::draw(
+                    transaction,
+                    object.number(),
+                    annots.page(),
+                    plan,
+                    &mut missing,
+                    budget,
+                )
+                .map_err(store)?;
+            }
+            if !widgets {
+                Ok(())
+            } else if page.is_none() {
+                remove_form(transaction, budget)
+            } else {
+                flattened.sort_unstable();
+                flattened.dedup();
+                let version = transaction.snapshot();
+                let form = walk(&mut Reads::new(&version, budget))?;
+                let (fields, detached, _) = leaving(&form, &flattened)?;
+                unfield(transaction, &fields, &detached, budget)
+            }
+        })();
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })?;
+    Ok(true)
+}
+
+/// Takes the interactive form out of the catalog.
+fn remove_form(transaction: &mut Transaction, budget: &Budget) -> PyResult<()> {
+    let version = transaction.snapshot();
+    let mut reads = Reads::new(&version, budget);
+    let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
+        return Ok(());
+    };
+    let Some(Value::Dict(mut catalog)) = object(&mut reads, id(root))?.as_deref().cloned() else {
+        return Ok(());
+    };
+    if catalog.remove("AcroForm").is_none() {
+        return Ok(());
+    }
+    transaction
+        .write(root.number(), &Value::Dict(catalog), budget)
+        .map_err(|e| store_error(&e))?;
     Ok(())
 }
 

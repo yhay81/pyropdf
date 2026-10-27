@@ -1055,7 +1055,7 @@ fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 26] {
 }
 
 /// Formats a number for content with at most four decimals.
-fn fmt(v: f64) -> String {
+pub(crate) fn fmt(v: f64) -> String {
     let s = format!("{v:.4}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
     if s.is_empty() || s == "-" || s == "-0" {

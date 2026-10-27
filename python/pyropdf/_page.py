@@ -242,6 +242,18 @@ class Page:
         except StaleObjectError as error:
             raise self._stale() from error
 
+    def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
+        """Draw this page's annotation and widget appearances into its content and take them off.
+
+        As :meth:`Document.flatten` does for one page, except that the
+        widgets leave their fields, and a field leaves the form with its
+        last widget, rather than the form leaving the document.
+        """
+        _validate_bool("annotations", annotations)
+        _validate_bool("widgets", widgets)
+        if not _core.flatten(self._document._core(), (self._number, self._generation), annotations, widgets):  # noqa: SLF001
+            raise self._stale()
+
     def ocr(  # noqa: PLR0913 - OCR resource controls are keyword-only.
         self,
         *,
