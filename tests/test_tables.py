@@ -2,10 +2,7 @@
 
 Ported from pylopdf 036be111 ``tests/test_tables.py``. The differences:
 
-- Markdown belongs to #142: ``test_table_markdown_preflights_escaped_utf8_output``,
-  ``test_table_markdown_validates_output_limit``, and
-  ``test_document_preflights_table_before_page_markdown`` are not ported,
-  and the other tests leave out their ``markdown`` assertions.
+- The Markdown tests and assertions are in ``tests/test_markdown.py``.
 - pylopdf inserts a page from another document; these tests add a blank
   page with ``pages.new``.
 - ``Page.tables`` also takes the ``max_glyphs`` and ``max_size`` budgets of

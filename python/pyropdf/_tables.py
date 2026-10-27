@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
+from pyropdf import _markdown
 from pyropdf._geometry import Rect
+from pyropdf._limits import _validate_optional_positive_int
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -56,6 +58,31 @@ class Table:
     #: The row-major index of the top-left slot of the cell that covers each
     #: slot, from the detector; Markdown fills a covered slot from it.
     _anchors: tuple[int, ...] | None = field(default=None, repr=False, compare=False)
+
+    def markdown(
+        self,
+        *,
+        fill_empty: bool = True,
+        max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
+    ) -> str:
+        """Return the table as Markdown, with the first row as its header.
+
+        With ``fill_empty``, the slots that a merged cell covers repeat its
+        text, since Markdown has no row or column spans. More than
+        ``max_size`` bytes of UTF-8 raise :class:`LimitError` with code
+        ``markdown_output_size`` before the escaped cells are built;
+        ``max_size=None`` lifts the limit.
+        """
+        _validate_optional_positive_int("max_size", max_size)
+        try:
+            return _markdown.table_to_markdown(
+                [list(row) for row in self.rows],
+                fill_empty=fill_empty,
+                cell_anchors=self._anchors,
+                max_size=max_size,
+            )
+        except _markdown.MarkdownOutputLimitError:
+            raise _markdown.markdown_output_limit_error(cast("int", max_size)) from None
 
 
 def build_tables(raw: Sequence[_CoreTable], strategy: Literal["lines", "text"]) -> list[Table]:

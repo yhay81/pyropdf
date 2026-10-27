@@ -80,6 +80,9 @@ pub enum LimitCode {
     /// A value written to the document nests arrays and dictionaries deeper
     /// than its limit.
     ObjectValueDepth,
+    /// The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or
+    /// `Table.markdown` returns is larger than the call's `max_size`.
+    MarkdownOutputSize,
     /// Saving writes more bytes than the call's `max_size`.
     PdfOutputSize,
     /// Encoding a pixmap writes more bytes than the call's `max_size`.
@@ -112,7 +115,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 37] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -138,6 +141,7 @@ impl LimitCode {
         Self::TableColumnCount,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
+        Self::MarkdownOutputSize,
         Self::PdfOutputSize,
         Self::PixmapOutputSize,
         Self::SvgOutputSize,
@@ -180,6 +184,7 @@ impl LimitCode {
             Self::TableColumnCount => "table_column_count",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
+            Self::MarkdownOutputSize => "markdown_output_size",
             Self::PdfOutputSize => "pdf_output_size",
             Self::PixmapOutputSize => "pixmap_output_size",
             Self::SvgOutputSize => "svg_output_size",
@@ -224,6 +229,7 @@ impl LimitCode {
             Self::TableColumnCount => "the text table has too many columns",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
+            Self::MarkdownOutputSize => "the Markdown is too large",
             Self::PdfOutputSize => "the PDF output is too large",
             Self::PixmapOutputSize => "the encoded image is too large",
             Self::SvgOutputSize => "the SVG document is too large",
@@ -268,6 +274,7 @@ impl LimitCode {
             Self::TableColumnCount => Some("columns"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
+            Self::MarkdownOutputSize => Some("bytes"),
             Self::PdfOutputSize => Some("bytes"),
             Self::PixmapOutputSize => Some("bytes"),
             Self::SvgOutputSize => Some("bytes"),
@@ -312,6 +319,7 @@ impl LimitCode {
             Self::TableColumnCount => Some(32),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
+            Self::MarkdownOutputSize => Some(67_108_864),
             Self::PdfOutputSize => Some(536_870_912),
             Self::PixmapOutputSize => Some(67_108_864),
             Self::SvgOutputSize => Some(67_108_864),

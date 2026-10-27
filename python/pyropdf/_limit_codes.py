@@ -35,6 +35,7 @@ LimitCode: TypeAlias = Literal[
     "table_column_count",
     "stream_data_size",
     "object_value_depth",
+    "markdown_output_size",
     "pdf_output_size",
     "pixmap_output_size",
     "svg_output_size",
@@ -104,6 +105,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "table_column_count": "Text table detection encounters a row with more than 32 separated columns.",
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
+        "markdown_output_size": (
+            "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is "
+            "larger than the call's `max_size`."
+        ),
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
         "pixmap_output_size": "Encoding a pixmap writes more bytes than the call's `max_size`.",
         "svg_output_size": "A page's SVG holds more UTF-8 bytes than the call's `max_size`.",

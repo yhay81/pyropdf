@@ -6,7 +6,7 @@ import math
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal, overload
 
-from pyropdf import _core
+from pyropdf import _core, _markdown
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
@@ -607,6 +607,20 @@ class Page:
             raise self._stale() from error
         _warn_skipped(skipped)
         return text
+
+    def markdown(
+        self,
+        *,
+        table_strategy: Literal["lines", "text"] | None = "lines",
+        max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
+    ) -> str:
+        """Return the current version of the page as Markdown.
+
+        This is :meth:`Document.markdown` of this page alone, which infers
+        heading sizes from this page.
+        """
+        _markdown.validate_options(table_strategy, max_size)
+        return _markdown.pages_markdown([self], table_strategy=table_strategy, max_size=max_size)
 
     def tables(
         self,
