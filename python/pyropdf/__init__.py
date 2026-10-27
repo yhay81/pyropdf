@@ -40,6 +40,7 @@ from pyropdf._errors import (
     EncryptedDocumentError,
     LimitError,
     MalformedPdfError,
+    OcrError,
     PasswordError,
     PdfError,
     PyropdfWarning,
@@ -50,6 +51,7 @@ from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
+from pyropdf._ocr import OcrEngine, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
@@ -122,6 +124,9 @@ __all__ = [
     "MoveTo",
     "Name",
     "Objects",
+    "OcrEngine",
+    "OcrError",
+    "OcrWord",
     "Operation",
     "Operations",
     "Page",

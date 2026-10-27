@@ -67,6 +67,11 @@ pub enum LimitCode {
     /// The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or
     /// `Table.markdown` returns is larger than the call's `max_size`.
     MarkdownOutputSize,
+    /// The detector, recognizer, and dictionary that `OcrEngine` loads hold
+    /// more bytes together than its `max_model_size`.
+    OcrModelSize,
+    /// The dictionary that `OcrEngine` loads has more lines than the limit.
+    OcrDictionaryEntries,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -98,7 +103,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 33] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -119,6 +124,8 @@ impl LimitCode {
         Self::SearchInputSize,
         Self::SearchHitCount,
         Self::MarkdownOutputSize,
+        Self::OcrModelSize,
+        Self::OcrDictionaryEntries,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
@@ -156,6 +163,8 @@ impl LimitCode {
             Self::SearchInputSize => "search_input_size",
             Self::SearchHitCount => "search_hit_count",
             Self::MarkdownOutputSize => "markdown_output_size",
+            Self::OcrModelSize => "ocr_model_size",
+            Self::OcrDictionaryEntries => "ocr_dictionary_entries",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
@@ -195,6 +204,8 @@ impl LimitCode {
             Self::SearchInputSize => "the search text is too long",
             Self::SearchHitCount => "the search finds too many matches",
             Self::MarkdownOutputSize => "the Markdown is too large",
+            Self::OcrModelSize => "the OCR model set is too large",
+            Self::OcrDictionaryEntries => "the OCR dictionary has too many entries",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
@@ -234,6 +245,8 @@ impl LimitCode {
             Self::SearchInputSize => Some("bytes"),
             Self::SearchHitCount => Some("matches"),
             Self::MarkdownOutputSize => Some("bytes"),
+            Self::OcrModelSize => Some("bytes"),
+            Self::OcrDictionaryEntries => Some("entries"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
@@ -273,6 +286,8 @@ impl LimitCode {
             Self::SearchInputSize => Some(4_096),
             Self::SearchHitCount => Some(4_096),
             Self::MarkdownOutputSize => Some(67_108_864),
+            Self::OcrModelSize => Some(67_108_864),
+            Self::OcrDictionaryEntries => Some(65_536),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),

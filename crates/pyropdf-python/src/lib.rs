@@ -10,6 +10,7 @@ mod errors;
 mod history;
 mod items;
 mod objects;
+mod ocr;
 mod pages;
 mod pixmap;
 mod render;
@@ -34,8 +35,8 @@ mod _core {
     use super::document::{_Document, page_result_counts, probe, web_limits};
     #[pymodule_export]
     use super::errors::{
-        DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, PasswordError,
-        PdfError, StaleObjectError,
+        DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,
+        PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
     use super::history::{
@@ -50,6 +51,8 @@ mod _core {
         object_insert, object_keys, object_len, object_lookup, object_numbers, object_replace,
         object_set, stream_read, stream_write,
     };
+    #[pymodule_export]
+    use super::ocr::_OcrEngine;
     #[pymodule_export]
     use super::pages::{
         new_page, page_count, page_geometry, page_index, page_object, page_objects,

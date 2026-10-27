@@ -48,20 +48,38 @@ wheels = [
 ]
 
 [[package]]
+name = "pylopdf-ocr-models"
+version = "0.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/64/6b44b5a824aefce2a1a7ec6cdbae372516b9789b3c06989a815d1e34fb0f/pylopdf_ocr_models-0.1.0.tar.gz", hash = "sha256:b41c50199465fb53dc41ae72ae33fd96197de764b15ecd3b46b56092b95440df", size = 26578842, upload-time = "2026-07-26T08:10:39.692Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/2f/600942fa646d4005cf7d3fc5ace072ba852f04f14bf5d4b63dc98743c94c/pylopdf_ocr_models-0.1.0-py3-none-any.whl", hash = "sha256:067acc9a39ca0dc7dd2b059c2180f9afa44c101a63d56c944b0b9c340d0c906d", size = 26627946, upload-time = "2026-07-26T08:10:36.393Z" },
+]
+
+[[package]]
 name = "pyropdf"
 source = { editable = "." }
 
+[package.optional-dependencies]
+ocr = [
+    { name = "pylopdf-ocr-models" },
+]
+
 [package.dev-dependencies]
 dev = [
+    { name = "pylopdf-ocr-models" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "ty" },
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pylopdf-ocr-models", marker = "extra == 'ocr'", specifier = ">=0.1.0,<0.2" }]
+provides-extras = ["ocr"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "pylopdf-ocr-models", specifier = ">=0.1.0,<0.2" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.17.2" },
     { name = "ty", specifier = ">=0.0.91" },

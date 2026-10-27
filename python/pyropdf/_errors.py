@@ -9,6 +9,7 @@ from pyropdf._core import (
     EncryptedDocumentError,
     LimitError,
     MalformedPdfError,
+    OcrError,
     PasswordError,
     PdfError,
     StaleObjectError,
@@ -63,6 +64,7 @@ for _public in (
     StaleObjectError,
     StalePageError,
     DocumentClosedError,
+    OcrError,
     PyropdfWarning,
 ):
     _public.__module__ = "pyropdf"
@@ -72,6 +74,7 @@ __all__ = [
     "EncryptedDocumentError",
     "LimitError",
     "MalformedPdfError",
+    "OcrError",
     "PasswordError",
     "PdfError",
     "PyropdfWarning",

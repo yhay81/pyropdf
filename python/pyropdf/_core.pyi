@@ -18,6 +18,7 @@ class LimitError(PdfError):
 
 class StaleObjectError(PdfError): ...
 class DocumentClosedError(PdfError): ...
+class OcrError(PdfError): ...
 
 @final
 class CancellationToken:
@@ -61,6 +62,26 @@ class Pixmap:
     def to_bytes(self, format: str = "png", *, quality: int = 95, max_size: int | None = ...) -> bytes: ...  # noqa: A002
     def save(self, path: str | PathLike[str], /, *, format: str | None = None, quality: int = 95) -> None: ...  # noqa: A002
     def __buffer__(self, flags: int, /) -> memoryview: ...
+
+class _OcrEngine:
+    def __init__(
+        self,
+        detector_path: str,
+        recognizer_path: str,
+        dictionary_path: str,
+        threads: int,
+        max_model_size: int | None,
+        /,
+    ) -> None: ...
+    def recognize_pixmap(
+        self,
+        pixmap: Pixmap,
+        *,
+        tile_size: int = 1408,
+        overlap: int = 192,
+        min_confidence: float = 0.5,
+        rotation: int = 0,
+    ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
     document: _Document,

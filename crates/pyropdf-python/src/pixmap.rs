@@ -18,6 +18,7 @@ use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyInt};
 use pyropdf_engine::bridge::Error as BridgeError;
+use pyropdf_engine::ocr;
 use pyropdf_engine::render::{self, Raster, RasterError};
 use pyropdf_store::value::Reference;
 
@@ -42,6 +43,17 @@ pub struct Pixmap {
 impl Pixmap {
     fn channels(&self) -> u32 {
         u32::from(!self.gray) * 2 + 1 + u32::from(self.alpha)
+    }
+
+    /// Returns the samples and their layout, which OCR reads.
+    pub fn ocr_raster(&self) -> (Arc<Vec<u8>>, ocr::Layout) {
+        let layout = ocr::Layout {
+            width: self.width as usize,
+            height: self.height as usize,
+            gray: self.gray,
+            alpha: self.alpha,
+        };
+        (Arc::clone(&self.data), layout)
     }
 
     fn encode(&self, out: &mut dyn Write, encoding: Encoding) -> Result<(), String> {

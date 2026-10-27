@@ -23,6 +23,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `search_input_size` | 4 KiB | The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8. |
 | `search_hit_count` | 4,096 matches | `Page.search` finds more matches than the call's `max_hits`. |
 | `markdown_output_size` | 64 MiB | The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`. |
+| `ocr_model_size` | 64 MiB | The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its `max_model_size`. |
+| `ocr_dictionary_entries` | 65,536 entries | The dictionary that `OcrEngine` loads has more lines than the limit. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |

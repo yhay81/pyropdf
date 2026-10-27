@@ -50,6 +50,12 @@ pyo3::create_exception!(
     PdfError,
     "An operation on a closed document."
 );
+pyo3::create_exception!(
+    _core,
+    OcrError,
+    PdfError,
+    "OCR model loading or inference failed."
+);
 
 /// Returns the `LimitError` of a refusal, whose arguments are its stable code
 /// and its message, as in pylopdf.

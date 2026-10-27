@@ -30,6 +30,8 @@ LimitCode: TypeAlias = Literal[
     "search_input_size",
     "search_hit_count",
     "markdown_output_size",
+    "ocr_model_size",
+    "ocr_dictionary_entries",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",
@@ -93,6 +95,11 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is "
             "larger than the call's `max_size`."
         ),
+        "ocr_model_size": (
+            "The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its "
+            "`max_model_size`."
+        ),
+        "ocr_dictionary_entries": "The dictionary that `OcrEngine` loads has more lines than the limit.",
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
