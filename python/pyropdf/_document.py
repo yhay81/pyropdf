@@ -474,8 +474,7 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
 
     Opening reads the cross-reference data only; ``bytes`` are read in place,
     without a copy, and other buffers are copied. ``limits`` bounds the work,
-    and :meth:`DocumentLimits.web` also reads every object at open, for
-    untrusted uploads. Input that is not a readable PDF, including empty
+    and :meth:`DocumentLimits.web` also reads every object at open. Input that is not a readable PDF, including empty
     input, raises :class:`MalformedPdfError`, and a missing file raises
     :class:`FileNotFoundError`.
     """
