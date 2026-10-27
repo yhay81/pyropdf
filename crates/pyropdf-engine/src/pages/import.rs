@@ -36,6 +36,11 @@ pub struct Along<'a> {
     /// The source objects whose copies the caller wants when the import
     /// copies them anyway, such as the fields of a calculation order.
     pub found: &'a [Reference],
+    /// Source values to copy, such as the default resources of the source
+    /// form.
+    pub values: &'a [Value],
+    /// Whether to return every object that the import copies.
+    pub copies: bool,
 }
 
 /// What an import copied.
@@ -46,6 +51,11 @@ pub struct Imported {
     pub objects: Vec<Value>,
     /// The copy of each of [`Along::found`], if the import copied it.
     pub found: Vec<Option<Reference>>,
+    /// The copy of each of [`Along::values`].
+    pub values: Vec<Value>,
+    /// With [`Along::copies`], every object that the import wrote, the
+    /// pages among them, by number ascending; empty without.
+    pub copies: Vec<Reference>,
 }
 
 /// Imports `pages`, each a source page with the dictionary that the
@@ -97,6 +107,11 @@ pub fn import(
     for &object in along.objects {
         objects.try_push(walk.reference(transaction, object)?)?;
     }
+    let mut values = BudgetVec::new(budget);
+    values.try_reserve_exact(along.values.len())?;
+    for value in along.values {
+        values.try_push(walk.value(transaction, value, 0)?)?;
+    }
     while let Some((number, new)) = walk.pending.pop() {
         let value = match walk.object(number)? {
             Some(Value::Stream(mut stream)) => {
@@ -118,10 +133,21 @@ pub fn import(
     for object in along.found {
         found.try_push(walk.numbers.get(&object.number()).copied())?;
     }
+    let mut copies = BudgetVec::new(budget);
+    if along.copies {
+        copies.try_reserve_exact(walk.numbers.len())?;
+        for &copy in walk.numbers.map.values() {
+            copies.try_push(copy)?;
+        }
+    }
+    let mut copies = copies.into_vec();
+    copies.sort_unstable();
     Ok(Imported {
         pages: added.into_vec(),
         objects: objects.into_vec(),
         found: found.into_vec(),
+        values: values.into_vec(),
+        copies,
     })
 }
 

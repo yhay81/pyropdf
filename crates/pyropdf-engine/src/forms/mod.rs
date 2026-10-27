@@ -11,6 +11,7 @@
 //! `rust/src/form.rs` and the appearances of `rust/src/document/forms.rs`
 //! at ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
+pub mod defaults;
 pub mod flatten;
 mod text;
 

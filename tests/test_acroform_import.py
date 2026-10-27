@@ -5,11 +5,8 @@ differences:
 
 - The checks read the saved document through the object model instead of
   matching lopdf's serialization with regular expressions.
-- The tests of the form defaults (``/DR``, ``/DA``, ``/Q``, and
-  ``/NeedAppearances``) come with #235, and so do the default-resource
-  checks of ``test_inserting_f1040_twice_renames_the_second_form``.
-  ``test_complete_import_registers_every_field`` is the field half of
-  ``test_complete_import_keeps_every_field_and_form_default``.
+- The store bounds the source ``/DR`` as it reads it, so the import does
+  not check its shape again as pylopdf's lopdf guard did.
 - A refused import raises :class:`pyropdf.MalformedPdfError` for a field
   tree past its limits, a :class:`pyropdf.PdfError`.
 """
@@ -35,7 +32,7 @@ from test_acroform_page_deletion import (
 from test_annotation_appearances import build_pdf
 
 import pyropdf
-from pyropdf import Dictionary
+from pyropdf import Dictionary, String
 
 F1040_TEXT = "topmostSubform[0].Page1[0].Address_ReadOrder[0].f1_20[0]"
 F1040_CHECKBOX = "topmostSubform[0].Page1[0].Checkbox_ReadOrder[0].c1_8[0]"
@@ -50,6 +47,17 @@ def _acroform(doc: pyropdf.Document) -> Dictionary:
     form = doc.catalog["AcroForm"]
     assert isinstance(form, Dictionary)
     return form
+
+
+def _appearances(doc: pyropdf.Document) -> list[bytes]:
+    """Return the default appearance string of every dictionary that has one."""
+    return [bytes(found) for value in _dictionaries(doc) if isinstance(found := value.get("DA"), String)]
+
+
+def _fonts(doc: pyropdf.Document) -> dict[str, Dictionary]:
+    """Return the fonts of the form's default resources by name."""
+    fonts = _acroform(doc)["DR"]["Font"]
+    return {name: fonts[name] for name in sorted(fonts)}
 
 
 def _pages(doc: pyropdf.Document) -> list[Dictionary]:
@@ -119,6 +127,12 @@ def test_inserting_f1040_twice_renames_the_second_form() -> None:
     # The partial names are UTF-16BE, and the suffix keeps that encoding.
     (renamed,) = _named(reopened, "T", "topmostSubform[0]+1")
     assert bytes(renamed["T"]) == b"\xfe\xff" + "topmostSubform[0]+1".encode("utf-16-be")
+    # The copies' default resources equal the receiving ones, so they are
+    # shared and every default appearance string stays as it was.
+    assert sorted(_acroform(reopened)["DR"]["Font"]) == ["Helv", "HelveticaLTStd-Bold", "ZaDb"]
+    appearances = _appearances(reopened)
+    assert sum(b"/HelveticaLTStd-Bold 8.00 Tf" in appearance for appearance in appearances) == 3 * 126
+    assert appearances.count(b"/Helv 0 Tf 0 g ") == 1
 
 
 @pytest.mark.parametrize(
@@ -138,7 +152,7 @@ def test_insert_pdf_range_registers_only_imported_page_fields(page: int, prefix:
     reopened.form[expected[0]["name"]].value = "x" if expected[0]["type"] == "text" else "Off"
 
 
-def test_complete_import_registers_every_field() -> None:
+def test_complete_import_keeps_every_field_and_form_default() -> None:
     src = pyropdf.open(_two_page_form())
     dst = pyropdf.Document()
     dst.pages.extend(src.pages[0:2][::-1])
@@ -146,9 +160,14 @@ def test_complete_import_registers_every_field() -> None:
     assert _fields(dst) == TWO_PAGE_FIELDS
     saved = pyropdf.open(dst.to_bytes())
     assert _holds_marker(saved)
+    acroform = _acroform(saved)
+    assert acroform["NeedAppearances"] is True
+    assert bytes(acroform["DA"]) == b"/Helv 0 Tf 0 g"
+    assert sorted(acroform["DR"]) == ["Font"]
+    assert sorted(acroform["DR"]["Font"]) == ["Helv"]
     assert b"/XFA" not in dst.to_bytes()
     assert b"/SigFlags" not in dst.to_bytes()
-    assert len(_acroform(saved)["CO"]) == 2
+    assert len(acroform["CO"]) == 2
 
 
 def test_partial_import_drops_widgets_and_fields_of_other_pages() -> None:
@@ -274,6 +293,168 @@ def test_colliding_top_level_names_take_the_smallest_unused_suffix() -> None:
         "b+1",
     ]
     assert len(form_entries(pyropdf.open(dst.to_bytes()))) == 8
+
+
+def _default_appearance_form(fonts: tuple[str, str], field: str, extra: dict[int, str] | None = None) -> bytes:
+    """Build one text field whose `/DR` fonts `/Helv` and `/F#20a` use `fonts`."""
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            3: "<< /Type /Page /Parent 2 0 R /Annots [7 0 R] >>",
+            4: f"<< /Type /Font /Subtype /Type1 /BaseFont /{fonts[0]} >>",
+            5: f"<< /Type /Font /Subtype /Type1 /BaseFont /{fonts[1]} >>",
+            6: "<< /Fields [7 0 R] /DR << /Font << /Helv 4 0 R /F#20a 5 0 R >> >> >>",
+            7: f"<< /FT /Tx {field} /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /P 3 0 R >>",
+            **(extra or {}),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("appearance", "expected"),
+    [
+        ("(/Helv 9 Tf 0 g)", b"/Helv_1 9 Tf 0 g"),
+        ("(0 g /Helv 9 Tf)", b"0 g /Helv_1 9 Tf"),
+        ("(/He#6Cv 9 Tf)", b"/Helv_1 9 Tf"),
+        ("(/F#20a 9 Tf)", b"/F#20a_1 9 Tf"),
+        ("(/Helv 9 Tf /Helv gs 1 0 0 rg)", b"/Helv_1 9 Tf /Helv gs 1 0 0 rg"),
+        ("<FEFF002F00480065006C0076002000390020005400660020003000200067>", b"/Helv_1 9 Tf 0 g"),
+        ("8 0 R", b"/Helv_1 9 Tf 0 g"),
+    ],
+    ids=["leading", "trailing", "escaped", "escaped-rename", "graphics-state", "utf-16", "indirect"],
+)
+def test_imported_default_appearances_follow_renamed_fonts(appearance: str, expected: bytes) -> None:
+    dst = pyropdf.open(_default_appearance_form(("Helvetica", "Courier"), "/T (own) /DA (/Helv 9 Tf 0 g)"))
+    src = _default_appearance_form(
+        ("Times-Roman", "Symbol"), f"/T (imported) /DA {appearance}", {8: "(/Helv 9 Tf 0 g)"}
+    )
+    dst.pages.extend(pyropdf.open(src).pages)
+
+    saved = pyropdf.open(dst.to_bytes())
+    assert list(_fonts(saved)) == ["F a", "F a_1", "Helv", "Helv_1"]
+    assert bytes(_field(saved, "own")["DA"]) == b"/Helv 9 Tf 0 g"
+    assert bytes(_field(saved, "imported")["DA"]) == expected
+
+
+def test_imported_fields_follow_renamed_default_resources_and_form_defaults() -> None:
+    dst = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 250 100] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Annots [6 0 R] >>",
+                4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                5: "<< /Fields [6 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> /Q 2 >>",
+                6: (
+                    "<< /FT /Tx /T (name) /Type /Annot /Subtype /Widget /Rect [5 60 245 90] /P 3 0 R /BS << /W 0 >> >>"
+                ),
+            }
+        )
+    )
+    src = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 250 100] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Annots [6 0 R 7 0 R] >>",
+                4: "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>",
+                5: "<< /Fields [6 0 R 7 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R /ZaDb 8 0 R >> >> >>",
+                6: (
+                    "<< /FT /Tx /T (name) /V (imported) /Type /Annot /Subtype /Widget /Rect [5 60 245 90]"
+                    " /P 3 0 R /BS << /W 0 >> >>"
+                ),
+                7: (
+                    "<< /FT /Tx /T (email) /DA (/Helv 9 Tf 0 g) /Type /Annot /Subtype /Widget"
+                    " /Rect [5 10 245 40] /P 3 0 R /BS << /W 0 >> >>"
+                ),
+                8: "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>",
+            }
+        )
+    )
+    dst.pages.extend(src.pages)
+
+    assert _fields(dst) == {"name": ("text", None), "name+1": ("text", "imported"), "email": ("text", None)}
+    saved = pyropdf.open(dst.to_bytes())
+    fonts = _fonts(saved)
+    assert list(fonts) == ["Helv", "Helv_1", "ZaDb"]
+    assert [font["BaseFont"] for font in fonts.values()] == ["Helvetica", "Times-Roman", "ZapfDingbats"]
+    assert bytes(_acroform(saved)["DA"]) == b"/Helv 0 Tf 0 g"
+    assert "DA" not in _field(saved, "name")
+    assert bytes(_field(saved, "name+1")["DA"]) == b"/Helv_1 0 Tf 0 g"
+    assert _field(saved, "name+1")["Q"] == 0
+    assert bytes(_field(saved, "email")["DA"]) == b"/Helv_1 9 Tf 0 g"
+    assert _field(saved, "email")["Q"] == 0
+
+    # The receiving field keeps the receiving document's right alignment,
+    # and the imported field keeps the source's default left alignment.
+    for name in ("name", "email"):
+        dst.form[name].value = "xyz"
+
+    def ink(page: int, clip: tuple[float, float, float, float]) -> bool:
+        return any(bytes(dst.pages[page].pixmap(clip=clip, alpha=True))[3::4])
+
+    # In display coordinates the receiving `name` on the first page spans
+    # y 10..40, and the imported `email` on the second page spans y 60..90.
+    assert ink(0, (125, 10, 245, 40))
+    assert not ink(0, (5, 10, 125, 40))
+    assert ink(1, (5, 60, 125, 90))
+    assert not ink(1, (125, 60, 245, 90))
+
+
+def _font_file_form(size: int, name: str) -> bytes:
+    """Build one field whose `/DR` font `/F1` embeds `size` bytes of font data."""
+    data = "0" * size
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            3: "<< /Type /Page /Parent 2 0 R /Annots [5 0 R] >>",
+            4: "<< /Fields [5 0 R] /DA (/F1 0 Tf 0 g) /DR << /Font << /F1 6 0 R >> >> >>",
+            5: f"<< /FT /Tx /T ({name}) /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /P 3 0 R >>",
+            6: "<< /Type /Font /Subtype /TrueType /BaseFont /Embedded /FontDescriptor 7 0 R >>",
+            7: "<< /Type /FontDescriptor /FontName /Embedded /FontFile2 8 0 R >>",
+            8: f"<< /Length {size} >>\nstream\n{data}\nendstream",
+        }
+    )
+
+
+@pytest.mark.parametrize(("size", "fonts"), [(1024, ["F1"]), (1024 * 1024 + 1, ["F1", "F1_1"])])
+def test_identical_default_resources_are_shared_within_the_comparison_budget(size: int, fonts: list[str]) -> None:
+    dst = pyropdf.open(_font_file_form(size, "own"))
+    dst.pages.extend(pyropdf.open(_font_file_form(size, "imported")).pages)
+    saved = pyropdf.open(dst.to_bytes())
+    assert list(_fonts(saved)) == fonts
+    # A renamed font moves the source's default appearance onto the field.
+    imported = _field(saved, "imported")
+    if len(fonts) == 2:
+        assert bytes(imported["DA"]) == b"/F1_1 0 Tf 0 g"
+    else:
+        assert "DA" not in imported
+
+
+def test_import_adds_missing_receiving_defaults_and_need_appearances() -> None:
+    src = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            3: "<< /Type /Page /Parent 2 0 R /Annots [5 0 R] >>",
+            4: "<< /Fields [5 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 6 0 R >> >> /NeedAppearances true >>",
+            5: "<< /FT /Tx /T (a) /Type /Annot /Subtype /Widget /Rect [0 0 10 10] /P 3 0 R >>",
+            6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        }
+    )
+    dst = pyropdf.open(_receiving_form("[]", "/NeedAppearances false"))
+    dst.pages.extend(pyropdf.open(src).pages)
+    saved = pyropdf.open(dst.to_bytes())
+    acroform = _acroform(saved)
+    assert acroform["NeedAppearances"] is True
+    assert list(_fonts(saved)) == ["Helv"]
+    assert "DA" not in acroform
+    # The receiving form names no default appearance, so the imported field
+    # carries the source's.
+    assert bytes(_field(saved, "a")["DA"]) == b"/Helv 0 Tf 0 g"
+    assert [field["name"] for field in form_entries(dst)] == ["a"]
 
 
 @pytest.mark.parametrize("value", ["7", "null", "8 0 R"])
