@@ -10,6 +10,8 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
   incremental saves, which reopen and read the written values back.
 - `bridge`: the page index, the hayro bridge, and a small render of the
   first page.
+- `content`: content streams split into contiguous operations whose bytes
+  and tail are the input.
 
 The store turns a panic of hayro-syntax into an error, so the targets keep
 Rust's default panic hook instead of libFuzzer's, which aborts on any panic:
@@ -26,8 +28,9 @@ cargo +nightly fuzz run index corpus/index -- -max_total_time=60
 ```
 
 `seeds.py` writes the corpus, its damaged inputs, and the encrypted
-fixtures as seeds of `index`, `save`, and `bridge`, and their uncompressed
-objects as seeds of `value`, to `fuzz/corpus/`, which git ignores.
+fixtures as seeds of `index`, `save`, and `bridge`, their uncompressed
+objects as seeds of `value`, and their content streams, inflated where they
+are Flate data, as seeds of `content`, to `fuzz/corpus/`, which git ignores.
 
 ## CI and Actions minutes
 
@@ -36,10 +39,10 @@ that change the store, the engine, or the targets, and for fifteen minutes on
 Mondays. Each job also installs cargo-fuzz and builds the target, about four
 minutes with a warm cache. Linux minutes count once:
 
-- weekly: 4 jobs × (15 + 4) minutes = about 76 minutes, or about 330 a month;
-- pull requests: 4 × (1 + 4) = about 20 minutes each, which Rust changes pay.
+- weekly: 5 jobs × (15 + 4) minutes = about 95 minutes, or about 410 a month;
+- pull requests: 5 × (1 + 4) = about 25 minutes each, which Rust changes pay.
 
 Against the 2,000 minutes a month of a private repository on GitHub Free
-(3,000 on Pro), the weekly run takes about a sixth (or a ninth). Lower
+(3,000 on Pro), the weekly run takes about a fifth (or a seventh). Lower
 `SECONDS_TO_RUN` or the `paths` of the pull-request trigger if the minutes
 run short.

@@ -8,9 +8,11 @@ one definition.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import re
 import sys
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,10 @@ TARGETS = ("index", "save", "bridge")
 #: The values of uncompressed objects, as the ``value`` target reads them.
 OBJECT = re.compile(rb"\d+\s+\d+\s+obj\b(.*?)\bendobj", re.DOTALL)
 MAX_VALUE_SEED = 4096
+#: The data of streams, and an operator that marks one as content, for ``content``.
+STREAM = re.compile(rb"stream\r?\n(.*?)endstream", re.DOTALL)
+CONTENT_OPERATOR = re.compile(rb"(?<![^\s\]\)>])(?:BT|cm|re|Do)\s")
+MAX_CONTENT_SEED = 65536
 
 
 def write(target: str, data: bytes) -> None:
@@ -44,6 +50,12 @@ def main() -> None:
             value = match.group(1).strip()
             if value and len(value) <= MAX_VALUE_SEED and b"stream" not in value:
                 write("value", value)
+        for match in STREAM.finditer(data):
+            content = match.group(1)
+            with contextlib.suppress(zlib.error):
+                content = zlib.decompress(content)
+            if len(content) <= MAX_CONTENT_SEED and CONTENT_OPERATOR.search(content):
+                write("content", content)
 
 
 if __name__ == "__main__":

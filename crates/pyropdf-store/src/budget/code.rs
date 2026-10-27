@@ -38,6 +38,15 @@ pub enum LimitCode {
     InterpretationSize,
     /// Interpretation uses more fuel than the operation allows.
     InterpretationFuel,
+    /// Content holds more operations than the call's `max_operations`, or
+    /// `Page.operations` reads more than 1,048,576.
+    ContentOperationCount,
+    /// A page's content streams, decoded and joined, are larger than 64 MiB
+    /// when `Page.operations` reads them.
+    ContentStreamSize,
+    /// The content that `Operations.parse` reads is larger than the call's
+    /// `max_size`.
+    ContentInputSize,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -61,7 +70,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -73,6 +82,9 @@ impl LimitCode {
         Self::StreamFilterCount,
         Self::InterpretationSize,
         Self::InterpretationFuel,
+        Self::ContentOperationCount,
+        Self::ContentStreamSize,
+        Self::ContentInputSize,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
@@ -98,6 +110,9 @@ impl LimitCode {
             Self::StreamFilterCount => "stream_filter_count",
             Self::InterpretationSize => "interpretation_size",
             Self::InterpretationFuel => "interpretation_fuel",
+            Self::ContentOperationCount => "content_operation_count",
+            Self::ContentStreamSize => "content_stream_size",
+            Self::ContentInputSize => "content_input_size",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
@@ -125,6 +140,9 @@ impl LimitCode {
             Self::StreamFilterCount => "a stream chains too many filters",
             Self::InterpretationSize => "the data handed to the interpreter is too large",
             Self::InterpretationFuel => "interpretation needs too much work",
+            Self::ContentOperationCount => "the content holds too many operations",
+            Self::ContentStreamSize => "the page's content is too large",
+            Self::ContentInputSize => "the content is too large to parse",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
@@ -152,6 +170,9 @@ impl LimitCode {
             Self::StreamFilterCount => Some("filters"),
             Self::InterpretationSize => Some("bytes"),
             Self::InterpretationFuel => Some("units of fuel"),
+            Self::ContentOperationCount => Some("operations"),
+            Self::ContentStreamSize => Some("bytes"),
+            Self::ContentInputSize => Some("bytes"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
@@ -179,6 +200,9 @@ impl LimitCode {
             Self::StreamFilterCount => Some(16),
             Self::InterpretationSize => None,
             Self::InterpretationFuel => None,
+            Self::ContentOperationCount => Some(1_048_576),
+            Self::ContentStreamSize => Some(67_108_864),
+            Self::ContentInputSize => Some(67_108_864),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),
