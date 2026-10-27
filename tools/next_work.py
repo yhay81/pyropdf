@@ -22,7 +22,7 @@ from urllib.parse import quote
 ROOT = Path(__file__).resolve().parent.parent
 REPO = "yhay81/pyropdf"
 PHASE = re.compile(r"Phase (\d+):")
-GROUPS = ("pull_requests", "with_pr", "claimed", "ready", "decisions", "upstream", "blocked", "later", "triage")
+GROUPS = ("pull_requests", "with_pr", "claimed", "ready", "decisions", "upstream", "blocked", "triage")
 
 
 @dataclass(frozen=True)
@@ -118,8 +118,12 @@ def current_ci(branch: str, commit: str, runs: list[dict[str, Any]]) -> CI:
     return CI(branch, commit, state, run["url"])
 
 
-def classify(item: Item, active_phase: int | None) -> str | None:  # noqa: PLR0911 - ordered work states
-    """Separate implementation from claims, blockers, decisions, and upstream."""
+def classify(item: Item, earliest_phase: int | None) -> str | None:  # noqa: PLR0911 - ordered work states
+    """Separate implementation from claims, blockers, decisions, and upstream.
+
+    Phases order work but do not gate it: an issue in a later phase is ready
+    as soon as its blocked-by links are closed.
+    """
     if item.pull_request:
         return "pull_requests"
     if "tracker" in item.labels:
@@ -128,12 +132,10 @@ def classify(item: Item, active_phase: int | None) -> str | None:  # noqa: PLR09
         return "with_pr"
     if "in-progress" in item.labels:
         return "claimed"
-    if item.blockers is None or item.phase is None or active_phase is None:
+    if item.blockers is None or item.phase is None or earliest_phase is None or item.phase < earliest_phase:
         return "triage"
     if item.blockers:
         return "blocked"
-    if item.phase != active_phase:
-        return "later" if item.phase > active_phase else "triage"
     if "decision" in item.labels:
         return "decisions"
     if "upstream" in item.labels or "scope-question" in item.labels:
@@ -179,19 +181,20 @@ def report(items: list[Item], ci: CI, branch: str) -> dict[str, Any]:
         and (match := PHASE.match(item.title))
         and int(match[1]) == item.phase
     ]
-    active_phase = min(phases) if phases else None
+    earliest_phase = min(phases) if phases else None
     groups: dict[str, list[Item]] = {group: [] for group in GROUPS}
     for item in items:
-        group = classify(item, active_phase)
+        group = classify(item, earliest_phase)
         if group is not None:
             groups[group].append(item)
-    for group, entries in groups.items():
-        entries.sort(key=lambda item: (-item.dependents if group == "ready" else 0, item.number))
+    for entries in groups.values():
+        entries.sort(key=lambda item: item.number)
+    groups["ready"].sort(key=lambda item: (item.phase or 0, -item.dependents, item.number))
     return {
         "repository": REPO,
         "observed_at": datetime.now(UTC).isoformat(),
         "local_branch": branch,
-        "active_phase": active_phase,
+        "earliest_phase": earliest_phase,
         "ci": asdict(ci),
         "next": next_action(groups, ci, branch),
         "groups": {group: [asdict(item) for item in entries] for group, entries in groups.items()},
@@ -247,7 +250,7 @@ def render(data: dict[str, Any]) -> str:
     ci = data["ci"]
     lines = [
         f"{REPO} | {data['observed_at']}",
-        f"Active phase: {data['active_phase']} | Local branch: {data['local_branch'] or '(detached)'}",
+        f"Earliest open phase: {data['earliest_phase']} | Local branch: {data['local_branch'] or '(detached)'}",
         f"{ci['branch']} CI: {ci['state']} at {ci['commit'][:12]} | {ci['url']}",
         f"Next: {data['next']}",
         "Explicit user assignments take precedence. This read-only report grants no approval.",
@@ -262,7 +265,8 @@ def render(data: dict[str, Any]) -> str:
                 counts += ", PRs=" + ",".join(f"#{number}" for number in item["linked_prs"])
             lines.append(f"  #{item['number']} {item['title']} ({counts}) | {item['url']}")
     lines += [
-        "\nReady order: active phase, most direct open dependents, then lowest issue number.",
+        "\nReady order: earliest phase, most direct open dependents, then lowest issue number.",
+        "Phases order work but do not gate it; only blocked-by links do.",
         f"Read issue scope: gh issue view N --repo {REPO}",
         f"Read discussion: gh issue view N --repo {REPO} --comments",
         f"Read blockers: gh api --paginate repos/{REPO}/issues/N/dependencies/blocked_by",

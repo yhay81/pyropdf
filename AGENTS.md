@@ -22,9 +22,10 @@ status text in a design document is not a work queue.
    and its PR's diff, checks, and review threads. Continue its unfinished
    acceptance criteria before selecting another issue. A matching branch
    is a clue to inspect, not permission to take over another agent's claim.
-4. For new work, use the earliest open phase tracker. The report suggests
-   ordinary ready tasks by most direct open dependents, then issue number;
-   this is a tie-breaker, not product priority. Read the selected issue's
+4. For new work, take a ready task from any open phase; a later phase does
+   not wait for an earlier one to exit. The report suggests ready tasks by
+   earliest phase, most direct open dependents, then issue number; this is
+   a tie-breaker, not product priority. Read the selected issue's
    Context, Scope, Paths, Acceptance, and Notes, then DESIGN.md sections 3
    and 4 and the sections it names. Recheck dependencies and claims before
    claiming: the report is a snapshot, not a reservation.
@@ -50,11 +51,16 @@ All work comes from issues. The pinned issue #1 is the root of the tree:
 phase trackers and engine trackers are its sub-issues, and tasks are
 sub-issues of a tracker. The milestone of an issue is its phase.
 
-An ordinary implementation issue is ready when it is open, belongs to the
-active phase, is neither `tracker` nor `in-progress`, has no open blocker
+An ordinary implementation issue is ready when it is open, belongs to an
+open phase, is neither `tracker` nor `in-progress`, has no open blocker
 or linked open PR, and is neither `decision` nor `upstream`/`scope-question`. The report keeps
 those other kinds separate because their next action differs. Missing phase
 or dependency metadata needs triage, not an assumption of readiness.
+
+Phases order work but do not gate it: only blocked-by links do. An issue
+therefore names every issue it waits on, in any phase, as a blocker. When
+a task turns out to need unfinished work that its links omit, add the
+link and choose another task.
 
 Read the issue with `gh issue view <number>`, then its discussion with
 `gh issue view <number> --comments`.

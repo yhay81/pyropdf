@@ -55,7 +55,7 @@ def ci(state: str = "success") -> Any:  # noqa: ANN401 - module loaded from a sc
         (issue(6, labels=("scope-question",)), "upstream"),
         (issue(7, blockers=None), "triage"),
         (issue(8, phase=None), "triage"),
-        (issue(9, phase=1), "later"),
+        (issue(9, phase=1), "ready"),
         (issue(10), "ready"),
         (issue(11, pull=True, labels=("in-progress",)), "pull_requests"),
     ],
@@ -64,21 +64,26 @@ def test_work_kinds_have_distinct_next_steps(item: Any, group: str | None) -> No
     assert work.classify(item, 0) == group
 
 
-def test_ready_order_stays_in_the_active_phase() -> None:
+def test_a_later_phase_is_ready_without_waiting_for_an_earlier_one() -> None:
     items = [
         issue(2, labels=("tracker",)),
         issue(26, dependents=2),
         issue(27, dependents=5),
         issue(19, phase=1, dependents=99),
         issue(28, dependents=5),
+        issue(30, phase=1, blockers=1),
     ]
     data = work.report(items, ci(), "main")
-    assert [item["number"] for item in data["groups"]["ready"]] == [27, 28, 26]
+    assert [item["number"] for item in data["groups"]["ready"]] == [27, 28, 26, 19]
     assert "Read #27" in data["next"]
-    assert data["groups"]["later"][0]["number"] == 19
+    assert [item["number"] for item in data["groups"]["blocked"]] == [30]
 
 
-def test_missing_active_phase_never_opens_a_later_phase() -> None:
+def test_an_issue_before_the_earliest_open_phase_needs_triage() -> None:
+    assert work.classify(issue(31, phase=0), 1) == "triage"
+
+
+def test_missing_phase_tracker_never_opens_work() -> None:
     data = work.report([issue(27)], ci(), "main")
     assert not data["groups"]["ready"]
     assert "missing" in data["next"]
@@ -171,9 +176,9 @@ def test_unknown_ci_status_is_not_pending_or_success() -> None:
     assert work.current_ci("main", "new", runs).state == "unknown"
 
 
-def test_an_engine_tracker_does_not_define_the_active_phase() -> None:
+def test_an_engine_tracker_does_not_define_the_earliest_phase() -> None:
     tracker = work.replace(issue(2, labels=("tracker",)), title="Engine work")
-    assert work.report([tracker, issue(27)], ci(), "main")["active_phase"] is None
+    assert work.report([tracker, issue(27)], ci(), "main")["earliest_phase"] is None
 
 
 def test_a_linked_pr_prevents_duplicate_work_without_a_claim(monkeypatch: pytest.MonkeyPatch) -> None:
