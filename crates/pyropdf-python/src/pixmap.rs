@@ -416,7 +416,7 @@ pub fn render_page(
     })
 }
 
-fn bridge_error(error: &BridgeError) -> PyErr {
+pub fn bridge_error(error: &BridgeError) -> PyErr {
     match error {
         BridgeError::Store(error) => store_error(error),
         BridgeError::EncryptionChanged | BridgeError::PasswordNotUtf8 => {

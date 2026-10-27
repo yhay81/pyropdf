@@ -24,6 +24,7 @@ LimitCode: TypeAlias = Literal[
     "content_operation_count",
     "content_stream_size",
     "content_input_size",
+    "content_element_count",
     "stream_data_size",
     "object_value_depth",
     "pdf_output_size",
@@ -63,6 +64,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them."
         ),
         "content_input_size": "The content that `Operations.parse` reads is larger than the call's `max_size`.",
+        "content_element_count": (
+            "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's "
+            "`max_elements`."
+        ),
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
