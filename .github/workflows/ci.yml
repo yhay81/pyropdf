@@ -66,6 +66,9 @@ jobs:
         with:
           version: "0.13.5"
           cache-suffix: python-${{ matrix.python }}
+      - name: Install qpdf
+        # The consistency harness checks saved documents with qpdf.
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qpdf
       - name: Build and install
         # Install the wheel rather than an editable build, so that the tests
         # import what a release would ship.
@@ -80,6 +83,8 @@ jobs:
       - name: Test
         # The tests include the check that the crates' dependencies follow
         # DESIGN.md section 11, which runs cargo metadata.
+        env:
+          PYROPDF_REQUIRE_QPDF: "1"
         run: uv run --no-sync pytest
 
   audit:
