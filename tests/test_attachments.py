@@ -85,6 +85,35 @@ def test_attachment_add_get_roundtrip() -> None:
     assert reopened.attachments["invoice.xml"].read() == payload
 
 
+@pytest.mark.parametrize(
+    ("header", "catalog", "unicode", "version"),
+    [("1.3", None, False, "1.4"), ("1.6", None, False, None), ("1.7", None, True, None), ("1.3", "1.7", True, "1.7")],
+)
+def test_attachment_add_writes_only_what_the_documents_version_allows(
+    header: str, catalog: str | None, *, unicode: bool, version: str | None
+) -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]).replace(b"%PDF-1.7", f"%PDF-{header}".encode(), 1))
+    if catalog is not None:
+        doc.catalog["Version"] = pyropdf.Name(catalog)
+    doc.attachments.add("a.txt", b"data")
+    reopened = pyropdf.open(doc.to_bytes())
+    assert [defect for defect in reopened.check().defects if defect.kind == "version"] == []
+    filespec = reopened.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+    assert ("UF" in filespec, "UF" in filespec["EF"]) == (unicode, unicode)
+    assert reopened.catalog.get("Version") == version
+    assert reopened.attachments["a.txt"].read() == b"data"
+
+
+def test_deleting_the_last_attachment_removes_the_tree() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a.txt", b"data")
+    del doc.attachments["a.txt"]
+    reopened = pyropdf.open(doc.to_bytes())
+    assert "Names" not in reopened.catalog
+    assert list(reopened.attachments) == []
+    assert [defect for defect in reopened.check().defects if "Names" in defect.path] == []
+
+
 def test_attachment_add_bounds_input_atomically() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     payload = b"1234"
