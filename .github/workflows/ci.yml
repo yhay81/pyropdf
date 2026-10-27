@@ -86,18 +86,24 @@ jobs:
         env:
           PYROPDF_REQUIRE_QPDF: "1"
         run: uv run --no-sync pytest
-      - name: Validate the PDF/A corpus and its saves with veraPDF
+      - name: Validate the PDF/A and PDF/UA corpora and their saves with veraPDF
         # One Python suffices: the saved bytes do not depend on it. The
-        # runner's Java runs the jar, pinned by its SHA-256.
+        # runner's Java runs the jars, pinned by their SHA-256; the Arlington
+        # build checks each file against the Arlington PDF Model.
         if: matrix.python == '3.11'
         env:
           VERAPDF_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps/1.28.1/greenfield-apps-1.28.1.jar
           VERAPDF_SHA256: 916049db6c6335a4a4c624e098499cff152ef523f65693a0d835aec635b6dcbc
+          ARLINGTON_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps-arlington/1.26.6/greenfield-apps-arlington-1.26.6.jar
+          ARLINGTON_SHA256: 0ccb01d10c9ca7df4326ed312ed5f725c88123f9a206d57486b27dd85fcdabd7
         run: |
           mkdir -p target/verapdf
           curl --fail --silent --show-error --location --output target/verapdf/greenfield-apps.jar "$VERAPDF_URL"
+          curl --fail --silent --show-error --location --output target/verapdf/greenfield-apps-arlington.jar "$ARLINGTON_URL"
           echo "$VERAPDF_SHA256  target/verapdf/greenfield-apps.jar" | sha256sum --check --strict
-          uv run --no-sync python tools/verapdf.py --jar target/verapdf/greenfield-apps.jar
+          echo "$ARLINGTON_SHA256  target/verapdf/greenfield-apps-arlington.jar" | sha256sum --check --strict
+          uv run --no-sync python tools/verapdf.py --jar target/verapdf/greenfield-apps.jar \
+            --arlington target/verapdf/greenfield-apps-arlington.jar
 
   audit:
     name: Audit
