@@ -509,8 +509,11 @@ class Page:
         if not text:
             msg = "text must be at least 1 character"
             raise ValueError(msg)
-        # A character takes at most 4 bytes: short text needs no encoding to check.
-        if len(text) * 4 > _MAX_SEARCH_INPUT_BYTES and len(text.encode()) > _MAX_SEARCH_INPUT_BYTES:
+        # Each character takes 1 to 4 bytes. Reject a long string before
+        # encoding, so checking the byte limit also has bounded allocation.
+        if len(text) > _MAX_SEARCH_INPUT_BYTES or (
+            len(text) * 4 > _MAX_SEARCH_INPUT_BYTES and len(text.encode()) > _MAX_SEARCH_INPUT_BYTES
+        ):
             code = "search_input_size"
             msg = f"the search text exceeds the {_MAX_SEARCH_INPUT_BYTES}-byte UTF-8 limit"
             raise LimitError(code, msg)

@@ -378,7 +378,7 @@ def _html_line(line: Line) -> str:
 def _html_span(span: Span) -> str:
     """Return one span of :meth:`Layout.to_html`."""
     family = "serif" if span.is_serif else "monospace" if span.is_monospaced else "sans-serif"
-    font = f"&quot;{escape(span.font)}&quot;,{family}" if span.font else family
+    font = f"{escape(_css_string(span.font))},{family}" if span.font else family
     style = f"font-family:{font};font-size:{_pt(span.size)};line-height:1;color:{_hex(span.color)}"
     if span.is_bold:
         style += ";font-weight:bold"
@@ -389,6 +389,14 @@ def _html_span(span: Span) -> str:
     elif span.color is not None and span.color.alpha < 1:
         style += f";opacity:{_num(span.color.alpha)}"
     return f'<span style="{style}">{escape(span.text, quote=False)}</span>'
+
+
+def _css_string(value: str) -> str:
+    """Quote a CSS string before the enclosing HTML attribute is escaped."""
+    quoted = "".join(
+        f"\\{ord(char):x} " if char in '\\"' or char < " " or char == "\x7f" else char for char in value
+    )
+    return f'"{quoted}"'
 
 
 _SYNTHETIC = ' synthetic="1"'
