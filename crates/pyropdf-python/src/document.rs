@@ -11,12 +11,14 @@ use std::time::Duration;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
+use pyropdf_engine::annotations::AppearanceSettler;
 use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
 use pyropdf_store::memo::Memo;
 use pyropdf_store::pages::{Page, PageIndex, PageTree};
 use pyropdf_store::save::{self, FileBase};
 use pyropdf_store::security::Encryption;
+use pyropdf_store::settle::{Settlers, Structure};
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Document, MemoryBase, Version};
 use pyropdf_store::{Error, write};
@@ -56,8 +58,17 @@ pub struct _Document {
     pub(crate) history: crate::history::State,
 }
 
+/// Registers the settlers that pyropdf's engines provide (DESIGN.md
+/// section 7).
+fn with_settlers(document: Document) -> Document {
+    document
+        .set_settlers(Settlers::default().with(Structure::Appearance, Arc::new(AppearanceSettler)));
+    document
+}
+
 impl _Document {
     fn new(document: Document, limits: DocumentLimits) -> Self {
+        let document = with_settlers(document);
         Self {
             document: RwLock::new(Some(Arc::new(document))),
             limits,
@@ -88,6 +99,7 @@ impl _Document {
     /// Replaces the store's document, as unlocking does, and forgets what
     /// was derived from the old one.
     pub(crate) fn replace(&self, document: Document) {
+        let document = with_settlers(document);
         *self
             .document
             .write()

@@ -34,8 +34,8 @@ mod _core {
     };
     #[pymodule_export]
     use super::annotations::{
-        _stale_appearances, annotation_edit, annotation_list, annotation_open, annotation_popup,
-        annotation_read, annotation_remove, annotation_reply,
+        _stale_appearances, annotation_add, annotation_edit, annotation_list, annotation_open,
+        annotation_popup, annotation_read, annotation_remove, annotation_reply,
     };
     #[pymodule_export]
     use super::cancel::CancellationToken;

@@ -16,7 +16,7 @@ use std::thread::{self, ThreadId};
 
 use pyo3::prelude::*;
 use pyropdf_store::budget::Budget;
-use pyropdf_store::settle::Scope;
+use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::version::{Document, Savepoint, Transaction, Version};
 
 use crate::document::_Document;
@@ -58,6 +58,32 @@ impl Open {
         Ok(Arc::clone(
             self.snapshot.insert(self.transaction.snapshot()),
         ))
+    }
+
+    /// Returns what the transaction wrote, as an edit of annotations reads
+    /// it: settled but for appearances, which no such edit reads, so that
+    /// several edits of one annotation draw its appearance once, when the
+    /// transaction commits or a read settles it.
+    fn draft(&mut self, budget: &Budget) -> PyResult<Arc<Version>> {
+        if let Some(snapshot) = &self.snapshot {
+            return Ok(Arc::clone(snapshot));
+        }
+        for structure in Structure::ALL {
+            if structure != Structure::Appearance {
+                self.transaction
+                    .settle(Scope::One(structure), budget)
+                    .map_err(|e| store_error(&e))?;
+            }
+        }
+        let snapshot = self.transaction.snapshot();
+        if !snapshot
+            .stale()
+            .iter()
+            .any(|mark| Scope::Commit.covers(mark.structure))
+        {
+            self.snapshot = Some(Arc::clone(&snapshot));
+        }
+        Ok(snapshot)
     }
 }
 
@@ -102,13 +128,28 @@ impl _Document {
     /// and the open transaction's parent when the transaction has written
     /// nothing yet, so that a reader may use what it memoized for the parent.
     pub(crate) fn reading_parent(&self) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
+        self.parent_of(false)
+    }
+
+    /// Returns the version that an edit of annotations reads, as
+    /// [`_Document::reading_parent`] does but with the appearances that the
+    /// open transaction left stale still stale.
+    pub(crate) fn editing_parent(&self) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
+        self.parent_of(true)
+    }
+
+    fn parent_of(&self, editing: bool) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
         let Some(open) = owned(&mut open) else {
             return Ok((store.current(), None));
         };
         let budget = self.budget();
-        let view = open.view(&budget)?;
+        let view = if editing {
+            open.draft(&budget)?
+        } else {
+            open.view(&budget)?
+        };
         let parent = Arc::clone(open.transaction.parent());
         let unchanged = parent
             .changes(&view, &budget)

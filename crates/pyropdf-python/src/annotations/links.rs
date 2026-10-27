@@ -598,7 +598,7 @@ pub fn link_add(
     area: Rect,
     target: Target,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some(annots) = Annots::read(document, number, generation)? else {
+    let Some(annots) = Annots::edit(document, number, generation)? else {
         return Ok(None);
     };
     if annots.items.len() >= MAX_PAGE_ANNOTATIONS {

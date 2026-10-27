@@ -11,14 +11,14 @@ from __future__ import annotations
 import enum
 import math
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Any, TypeAlias, cast, overload
 
 from pyropdf import _core
 from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
-from pyropdf._geometry import Rect, _rect_components
+from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._objects import Dictionary, String
 
 if TYPE_CHECKING:
@@ -744,6 +744,266 @@ class Annotation:
         return f"Annotation(type=AnnotationType.{kind.name}, rect={Rect(*entry[3])!r})"
 
 
+#: The most rectangles of one text-markup annotation.
+_MAX_MARKUP_RECTS = 4096
+#: The side of a note's icon, in points.
+_NOTE_SIZE = 20
+#: A PDF date as created annotations write it twice, for /CreationDate and
+#: /M, which the input budget charges so that the annotation reads back
+#: under the same budget.
+_DATE_PLACEHOLDER = "D:00000000000000Z"
+
+
+def _contents(value: object) -> str | None:
+    if value is not None and not isinstance(value, str):
+        msg = f"contents must be a str or None: {type(value).__name__}"
+        raise TypeError(msg)
+    return value
+
+
+def _bound_input(subtype: str, contents: str | None) -> None:
+    """Bound the subtype, contents, and dates that an added annotation writes to 1 MiB of UTF-8."""
+    texts = (subtype, contents or "", _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
+    if sum(len(text) for text in texts) * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE and (
+        sum(len(text.encode()) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+    ):
+        code = "annotation_input_size"
+        msg = f"annotation subtype and contents input exceeds the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte UTF-8 limit"
+        raise LimitError(code, msg)
+
+
+def _markup_rects(rects: object) -> tuple[Rect, ...]:
+    """Validate 1 to 4,096 rectangles or quads, stopping an iterator at the first one too many."""
+    if isinstance(rects, (str, bytes)) or not isinstance(rects, Iterable):
+        msg = f"rects must be a rectangle, a quad, or a sequence of them: {rects!r}"
+        raise TypeError(msg)
+    if isinstance(rects, Quad):
+        return (Rect(*_rect(rects.rect)),)
+    if isinstance(rects, (list, tuple)) and rects and isinstance(rects[0], (int, float)):
+        return (Rect(*_rect(rects)),)
+    validated: list[Rect] = []
+    for rect in rects:
+        if len(validated) >= _MAX_MARKUP_RECTS:
+            msg = f"rects cannot contain more than {_MAX_MARKUP_RECTS} rectangles"
+            raise ValueError(msg)
+        validated.append(Rect(*_rect(rect.rect if isinstance(rect, Quad) else rect)))
+    if not validated:
+        msg = "rects must contain at least one rectangle or quad"
+        raise ValueError(msg)
+    return tuple(validated)
+
+
+#: Rectangles or quads that text markup covers: one, or a sequence of them.
+MarkupRects: TypeAlias = Sequence[float] | Quad | Iterable[Sequence[float] | Quad]
+
+
+class _TextMarkup:
+    """The fields and validation that the text-markup specifications share."""
+
+    __slots__ = ()
+
+    rects: tuple[Rect, ...]
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def _init(self, rects: object, color: object, opacity: object, contents: object) -> None:
+        """Validate the specification; the contents are bounded before the rectangles are read."""
+        contents = _contents(contents)
+        _bound_input(type(self).__name__, contents)
+        validated = _markup_rects(rects)
+        if isinstance(opacity, bool) or not isinstance(opacity, (int, float)):
+            msg = f"opacity must be a number: {opacity!r}"
+            raise TypeError(msg)
+        object.__setattr__(self, "rects", validated)
+        object.__setattr__(self, "color", _opaque_color(color))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "contents", contents)
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "subtype": type(self).__name__,
+            "rects": [(rect.x0, rect.y0, rect.x1, rect.y1) for rect in self.rects],
+            "color": (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "contents": self.contents,
+            "created": _now(),
+        }
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class Highlight(_TextMarkup):
+    """A highlight over text, as ``page.annotations.add`` takes it.
+
+    ``rects`` is one rectangle or quad, or a sequence of them, in display
+    coordinates, such as the result of ``page.search``; a :class:`Quad`
+    contributes its bounding rectangle, and one annotation holds at most
+    4,096. ``color`` fills them in multiply blending at ``opacity``, and
+    ``contents`` is the text of its note. The annotation is written with its
+    appearance, so every viewer draws it alike.
+    """
+
+    rects: tuple[Rect, ...]
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(
+        self,
+        rects: MarkupRects,
+        *,
+        color: Color = Color(1.0, 1.0, 0.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 0.4,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification; the contents are bounded before the rectangles are read."""
+        self._init(rects, color, opacity, contents)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class Underline(_TextMarkup):
+    """A line under text, as ``page.annotations.add`` takes it.
+
+    The fields are those of :class:`Highlight`; ``color`` draws a one-point
+    line just above the bottom edge of each rectangle.
+    """
+
+    rects: tuple[Rect, ...]
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(
+        self,
+        rects: MarkupRects,
+        *,
+        color: Color = Color(0.0, 0.0, 1.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification; the contents are bounded before the rectangles are read."""
+        self._init(rects, color, opacity, contents)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class StrikeOut(_TextMarkup):
+    """A line through text, as ``page.annotations.add`` takes it.
+
+    The fields are those of :class:`Highlight`; ``color`` draws a one-point
+    line through the middle of each rectangle.
+    """
+
+    rects: tuple[Rect, ...]
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(
+        self,
+        rects: MarkupRects,
+        *,
+        color: Color = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification; the contents are bounded before the rectangles are read."""
+        self._init(rects, color, opacity, contents)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class Squiggly(_TextMarkup):
+    """A wavy line under text, as ``page.annotations.add`` takes it.
+
+    The fields are those of :class:`Highlight`; ``color`` draws a zigzag
+    two points wide along the bottom of each rectangle, at most 65,536 points
+    in all (``annotation_point_count``).
+    """
+
+    rects: tuple[Rect, ...]
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(
+        self,
+        rects: MarkupRects,
+        *,
+        color: Color = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification; the contents are bounded before the rectangles are read."""
+        self._init(rects, color, opacity, contents)
+
+
+def _point(value: object) -> Point:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence) or len(value) != 2:  # noqa: PLR2004
+        msg = f"a point is a Point or a pair of numbers: {value!r}"
+        raise TypeError(msg)
+    return Point(_number(value[0], "a point coordinate"), _number(value[1], "a point coordinate"))
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class Note:
+    """A note shown as an icon, as ``page.annotations.add`` takes it.
+
+    ``at`` is the display point of the icon's top-left corner; the icon is
+    20 points square, and its flags ask viewers to keep it upright on a
+    turned page. ``contents`` is the note's text, ``icon`` its picture,
+    ``color`` the icon's fill, and ``is_open`` whether a viewer opens the
+    note when it shows the page. Add a popup by assigning
+    :attr:`Annotation.popup_rect`.
+    """
+
+    at: Point
+    contents: str | None
+    icon: NoteIcon
+    color: Color
+    opacity: float
+    is_open: bool
+
+    def __init__(  # noqa: PLR0913 - the note's options.
+        self,
+        at: Point | Sequence[float],
+        *,
+        contents: str | None = None,
+        icon: NoteIcon = NoteIcon.NOTE,
+        color: Color = Color(1.0, 1.0, 0.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        is_open: bool = False,
+    ) -> None:
+        """Validate the specification."""
+        contents = _contents(contents)
+        _bound_input("Text", contents)
+        if not isinstance(is_open, bool):
+            msg = f"is_open is a bool: {is_open!r}"
+            raise TypeError(msg)
+        object.__setattr__(self, "at", _point(at))
+        object.__setattr__(self, "contents", contents)
+        object.__setattr__(self, "icon", NoteIcon(icon))
+        object.__setattr__(self, "color", _opaque_color(color))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "is_open", is_open)
+
+    def _payload(self) -> dict[str, Any]:
+        x, y = self.at
+        return {
+            "subtype": "Text",
+            "rect": (x, y, x + _NOTE_SIZE, y + _NOTE_SIZE),
+            "color": (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "contents": self.contents,
+            "created": _now(),
+            "icon": _ICON_NAMES[self.icon],
+            "open": self.is_open,
+        }
+
+
+#: The specifications that ``page.annotations.add`` takes.
+AnnotationSpecification: TypeAlias = Highlight | Underline | StrikeOut | Squiggly | Note
+_SPECIFICATIONS = (Highlight, Underline, StrikeOut, Squiggly, Note)
+
+
 def _entries(page: Page) -> list[_Annotation]:
     """Return the records of the annotations that ``page.annotations`` lists."""
     entries = _core.annotation_list(page._document._core(), page._number, page._generation)  # noqa: SLF001
@@ -797,6 +1057,23 @@ class Annotations(Sequence[Annotation]):
         if not _core.annotation_remove(page._document._core(), page._number, page._generation, handles):  # noqa: SLF001
             raise page._stale()  # noqa: SLF001
 
+    def add(self, specification: AnnotationSpecification) -> Annotation:
+        """Add the annotation that ``specification`` describes, and return it.
+
+        The annotation is drawn when its transaction commits, or before a
+        read in the transaction, so that every viewer draws it alike.
+        """
+        if not isinstance(specification, _SPECIFICATIONS):
+            msg = f"page.annotations.add takes an annotation specification: {type(specification).__name__}"
+            raise TypeError(msg)
+        page = self._page
+        payload = cast("dict[str, object]", specification._payload())  # noqa: SLF001
+        result = _core.annotation_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
+        if result is None:
+            raise page._stale()  # noqa: SLF001
+        # The handle finds the new annotation by its object.
+        return Annotation(page, result, 0)
+
     def __repr__(self) -> str:
         """Return ``Annotations([...])`` with the page's annotations."""
         return f"Annotations({list(self)!r})"
@@ -811,8 +1088,13 @@ for _public in (
     AttachmentIcon,
     Border,
     BorderStyle,
+    Highlight,
     LineEnding,
+    Note,
     NoteIcon,
+    Squiggly,
     StampIcon,
+    StrikeOut,
+    Underline,
 ):
     _public.__module__ = "pyropdf"
