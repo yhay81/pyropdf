@@ -232,6 +232,7 @@ def test_an_empty_document_saves_in_full_only() -> None:
         doc.to_bytes(incremental=True)
 
 
+@pytest.mark.spec("file-header", "read")
 def test_probe_reads_the_page_count_version_and_metadata() -> None:
     title = b"(Caf\xe9 \x93\x94 \x80)"
     author = b"<FEFF65E5672C>"
@@ -348,6 +349,7 @@ def test_a_save_into_a_read_only_directory_fails(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("name", NAMES)
+@pytest.mark.spec("xref-table", "read", "preserve")
 def test_corpus_files_round_trip_without_edits(name: str) -> None:
     data = (ASSETS / name).read_bytes()
     with pyropdf.open(data) as doc:
