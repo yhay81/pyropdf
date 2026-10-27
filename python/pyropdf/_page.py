@@ -12,6 +12,7 @@ from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
 from pyropdf._limits import _validate_optional_positive_int
+from pyropdf._links import Links
 from pyropdf._objects import Dictionary
 from pyropdf._ocr import (
     OcrEngine,
@@ -141,6 +142,11 @@ class Page:
     def annotations(self) -> Annotations:
         """Return the page's annotations other than links and form widgets, in ``/Annots`` order."""
         return Annotations(self)
+
+    @property
+    def links(self) -> Links:
+        """Return the page's link annotations, in ``/Annots`` order."""
+        return Links(self)
 
     @property
     def index(self) -> int:

@@ -21,6 +21,7 @@ use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Document, MemoryBase, Version};
 use pyropdf_store::{Error, write};
 
+use crate::annotations::links::NamedDestinations;
 use crate::errors::{DocumentClosedError, MalformedPdfError, save_error, store_error};
 use crate::history::DEFAULT_HISTORY_LIMIT;
 use crate::source;
@@ -45,6 +46,10 @@ pub struct _Document {
     /// The results of what an open transaction has written, kept apart as
     /// its page index is.
     draft_results: Memo<PageKey, PageResult>,
+    /// The named destinations, memoized by what indexing them read.
+    pub(crate) destinations: Memo<(), NamedDestinations>,
+    /// The named destinations of what an open transaction has written.
+    pub(crate) draft_destinations: Memo<(), NamedDestinations>,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
     /// The open transaction and the names of the history's steps.
@@ -60,6 +65,8 @@ impl _Document {
             draft_pages: Memo::new(1),
             results: Memo::new(RESULT_CAPACITY),
             draft_results: Memo::new(RESULT_CAPACITY),
+            destinations: Memo::new(1),
+            draft_destinations: Memo::new(1),
             bridge: pyropdf_engine::bridge::Cache::new(),
             history: crate::history::State::default(),
         }
@@ -89,6 +96,8 @@ impl _Document {
         self.draft_pages.clear();
         self.results.clear();
         self.draft_results.clear();
+        self.destinations.clear();
+        self.draft_destinations.clear();
         self.history.clear();
     }
 
@@ -273,6 +282,8 @@ impl _Document {
         self.draft_pages.clear();
         self.results.clear();
         self.draft_results.clear();
+        self.destinations.clear();
+        self.draft_destinations.clear();
         self.history.clear();
     }
 }
@@ -621,7 +632,7 @@ pub fn page_result_counts(document: &_Document) -> (u64, u64) {
 }
 
 /// A failed computation of a page's result.
-struct Failed(PyErr);
+pub(crate) struct Failed(pub(crate) PyErr);
 
 impl From<Error> for Failed {
     fn from(error: Error) -> Self {

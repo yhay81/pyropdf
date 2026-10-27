@@ -62,6 +62,7 @@ from pyropdf._errors import (
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
+from pyropdf._links import Destinations, Link, Links
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -69,6 +70,7 @@ from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._tables import Table, TableDiagnostics
+from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
 
 for _public in (
@@ -116,6 +118,8 @@ __all__ = [
     "Content",
     "ContentItem",
     "CurveTo",
+    "Destination",
+    "Destinations",
     "Dictionary",
     "Document",
     "DocumentClosedError",
@@ -131,6 +135,7 @@ __all__ = [
     "Image",
     "ImageMask",
     "InlineImage",
+    "Launch",
     "Layout",
     "LimitError",
     "Line",
@@ -138,11 +143,14 @@ __all__ = [
     "LineEnding",
     "LineJoin",
     "LineTo",
+    "Link",
+    "Links",
     "MalformedPdfError",
     "MarkedContent",
     "Matrix",
     "MoveTo",
     "Name",
+    "NamedAction",
     "NoteIcon",
     "Objects",
     "OcrEngine",
@@ -165,6 +173,7 @@ __all__ = [
     "Quad",
     "Real",
     "Rect",
+    "RemoteDestination",
     "Segment",
     "ShadingPattern",
     "ShadingType",
@@ -179,6 +188,7 @@ __all__ = [
     "Stroke",
     "Table",
     "TableDiagnostics",
+    "Target",
     "TextRenderMode",
     "TextRun",
     "TilingPattern",

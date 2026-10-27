@@ -29,6 +29,10 @@ mod windows_permissions;
 #[pymodule(gil_used = false)]
 mod _core {
     #[pymodule_export]
+    use super::annotations::links::{
+        link_add, link_edit, link_list, link_read, named_destinations,
+    };
+    #[pymodule_export]
     use super::annotations::{
         _stale_appearances, annotation_edit, annotation_list, annotation_open, annotation_popup,
         annotation_read, annotation_remove, annotation_reply,

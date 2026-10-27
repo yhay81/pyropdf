@@ -33,6 +33,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `render_output_size` | 512 MiB | The images that `doc.render` encodes write more bytes in all than the call's `max_size`. |
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
 | `annotation_input_size` | 1 MiB | The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together. |
+| `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges. |
+| `named_destination_text_size` | 16 MiB | The names of the document's named destinations are longer than 16 MiB together. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |

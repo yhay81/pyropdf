@@ -91,6 +91,13 @@ pub enum LimitCode {
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
+    /// The document's named destinations, its `/Names /Dests` tree and its
+    /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes,
+    /// or more than 131,072 tree edges.
+    NamedDestinationCount,
+    /// The names of the document's named destinations are longer than 16 MiB
+    /// together.
+    NamedDestinationTextSize,
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
@@ -106,7 +113,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 36] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -137,6 +144,8 @@ impl LimitCode {
         Self::RenderOutputSize,
         Self::PasswordInputSize,
         Self::AnnotationInputSize,
+        Self::NamedDestinationCount,
+        Self::NamedDestinationTextSize,
         Self::PageEntryCount,
         Self::MemorySize,
         Self::Deadline,
@@ -177,6 +186,8 @@ impl LimitCode {
             Self::RenderOutputSize => "render_output_size",
             Self::PasswordInputSize => "password_input_size",
             Self::AnnotationInputSize => "annotation_input_size",
+            Self::NamedDestinationCount => "named_destination_count",
+            Self::NamedDestinationTextSize => "named_destination_text_size",
             Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
@@ -219,6 +230,8 @@ impl LimitCode {
             Self::RenderOutputSize => "the rendered images are too large",
             Self::PasswordInputSize => "the password is too long",
             Self::AnnotationInputSize => "the annotation text is too long",
+            Self::NamedDestinationCount => "the named destinations are too many",
+            Self::NamedDestinationTextSize => "the names of the named destinations are too long",
             Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
@@ -261,6 +274,8 @@ impl LimitCode {
             Self::RenderOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
             Self::AnnotationInputSize => Some("bytes"),
+            Self::NamedDestinationCount => Some("entries"),
+            Self::NamedDestinationTextSize => Some("bytes"),
             Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
@@ -303,6 +318,8 @@ impl LimitCode {
             Self::RenderOutputSize => Some(536_870_912),
             Self::PasswordInputSize => Some(127),
             Self::AnnotationInputSize => Some(1_048_576),
+            Self::NamedDestinationCount => Some(65_536),
+            Self::NamedDestinationTextSize => Some(16_777_216),
             Self::PageEntryCount => None,
             Self::MemorySize => None,
             Self::Deadline => None,

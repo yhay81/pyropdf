@@ -206,6 +206,18 @@ unit = "bytes"
 default = 1_048_576
 reached = "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together."
 
+[codes.named_destination_count]
+message = "the named destinations are too many"
+unit = "entries"
+default = 65_536
+reached = "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges."
+
+[codes.named_destination_text_size]
+message = "the names of the named destinations are too long"
+unit = "bytes"
+default = 16_777_216
+reached = "The names of the document's named destinations are longer than 16 MiB together."
+
 [codes.page_entry_count]
 message = "the list of pages is too long"
 unit = "entries"

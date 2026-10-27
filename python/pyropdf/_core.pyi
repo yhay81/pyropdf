@@ -176,6 +176,27 @@ def annotation_reply(
     document: _Document, number: int, generation: int, index: int, annotation: _Id, target: _Id | None, /
 ) -> _Id | None: ...
 def annotation_remove(document: _Document, number: int, generation: int, handles: list[tuple[int, _Id]], /) -> bool: ...
+
+_Target: TypeAlias = tuple[str, int | None, tuple[float, float] | None, float | None, str | None, str | None]
+_Link: TypeAlias = tuple[int, _Id, tuple[float, float, float, float], _Target]
+_Place: TypeAlias = tuple[int, tuple[float, float] | None, float | None]
+
+def link_list(document: _Document, number: int, generation: int, /) -> list[_Link] | None: ...
+def link_read(document: _Document, number: int, generation: int, index: int, annotation: _Id, /) -> _Link | None: ...
+def link_add(
+    document: _Document, number: int, generation: int, area: tuple[float, float, float, float], target: _Target, /
+) -> _Id | None: ...
+def link_edit(
+    document: _Document,
+    number: int,
+    generation: int,
+    index: int,
+    annotation: _Id,
+    area: tuple[float, float, float, float] | None,
+    target: _Target | None,
+    /,
+) -> _Id | None: ...
+def named_destinations(document: _Document, /) -> list[tuple[str, _Place | None]]: ...
 def new_page(document: _Document, at: int, width: float, height: float, /) -> tuple[int, int]: ...
 
 _Root: TypeAlias = tuple[int, int] | None
