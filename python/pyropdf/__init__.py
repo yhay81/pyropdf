@@ -1,5 +1,7 @@
 """Complete control of PDF as ISO 32000-2 defines it, implemented in Rust."""
 
+# The typed views of section 8, a module of their own: one class per object type.
+from pyropdf import typed
 from pyropdf._annotations import (
     Annotation,
     AnnotationFlags,
@@ -12,6 +14,9 @@ from pyropdf._annotations import (
     NoteIcon,
     StampIcon,
 )
+from pyropdf._attachments import Attachment, Attachments
+from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
+from pyropdf._check import StructuralDefect, StructuralReport
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -68,10 +73,13 @@ from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
 
 for _public in (
+    Attachment,
+    Attachments,
     Array,
     Dictionary,
     Name,
@@ -83,6 +91,11 @@ for _public in (
     Probe,
     DocumentLimits,
     CancellationToken,
+    ChangeReport,
+    ClaimChange,
+    SignatureChange,
+    StructuralDefect,
+    StructuralReport,
     History,
     InlineImage,
     Operation,
@@ -102,13 +115,17 @@ __all__ = [
     "AnnotationType",
     "Annotations",
     "Array",
+    "Attachment",
     "AttachmentIcon",
+    "Attachments",
     "BlendMode",
     "Block",
     "Border",
     "BorderStyle",
     "CancellationToken",
+    "ChangeReport",
     "Char",
+    "ClaimChange",
     "Clip",
     "ClosePath",
     "Color",
@@ -151,6 +168,7 @@ __all__ = [
     "OcrWord",
     "Operation",
     "Operations",
+    "OutputIntent",
     "Page",
     "Pages",
     "Paint",
@@ -161,6 +179,7 @@ __all__ = [
     "Pixmap",
     "Point",
     "Probe",
+    "Profiles",
     "PyropdfWarning",
     "Quad",
     "Real",
@@ -168,6 +187,7 @@ __all__ = [
     "Segment",
     "ShadingPattern",
     "ShadingType",
+    "SignatureChange",
     "SoftMask",
     "SoftMaskType",
     "Span",
@@ -177,6 +197,8 @@ __all__ = [
     "Stream",
     "String",
     "Stroke",
+    "StructuralDefect",
+    "StructuralReport",
     "Table",
     "TableDiagnostics",
     "TextRenderMode",
@@ -189,4 +211,5 @@ __all__ = [
     "__version__",
     "open",
     "probe",
+    "typed",
 ]

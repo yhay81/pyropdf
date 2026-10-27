@@ -110,6 +110,7 @@ def test_values_map_to_python_types() -> None:
     assert len(values) == 11
 
 
+@pytest.mark.spec("document-catalog", "read")
 def test_trailer_catalog_and_page_objects() -> None:
     doc = _two_pages()
 
@@ -175,6 +176,7 @@ def test_every_write_is_one_step_and_a_transaction_groups_them() -> None:
     assert doc.catalog["A"] == 1
 
 
+@pytest.mark.spec("flate-filter", "read", "create")
 def test_stream_write_compresses_and_reads_back() -> None:
     doc = _two_pages()
     contents = doc.pages[0].obj["Contents"]
@@ -217,6 +219,22 @@ def test_stream_read_is_bounded() -> None:
     assert len(stream.read(max_size=None)) == 10_000
     with pytest.raises(ValueError, match="max_size"):
         stream.read(max_size=0)
+
+
+def test_stream_read_refuses_a_chain_of_more_filters_than_the_limit() -> None:
+    doc = pyropdf.Document()
+    data = b"x"
+    for _ in range(16):
+        data = zlib.compress(data)
+    stream = doc.objects[doc.objects.add_stream(data, filter=None)]
+    assert isinstance(stream, Stream)
+
+    stream["Filter"] = [Name("FlateDecode")] * 16
+    assert stream.read() == b"x"
+    stream["Filter"] = [Name("FlateDecode")] * 17
+    with pytest.raises(pyropdf.LimitError) as error:
+        stream.read()
+    assert error.value.code == "stream_filter_count"
 
 
 def test_unsupported_filters_raise_instead_of_returning_encoded_bytes() -> None:
@@ -273,6 +291,7 @@ def test_direct_handles_are_copied() -> None:
     assert list(doc.pages[0].obj["MediaBox"]) == [0, 0, 300, 792]
 
 
+@pytest.mark.spec("basic-objects", "read", "edit")
 def test_scalar_objects_read_as_values_and_can_be_replaced() -> None:
     doc = pyropdf.Document()
     xref = doc.objects.add(42)
@@ -284,6 +303,7 @@ def test_scalar_objects_read_as_values_and_can_be_replaced() -> None:
         doc.objects[10_000] = 1
 
 
+@pytest.mark.spec("text-strings", "read", "create")
 def test_text_strings() -> None:
     doc = pyropdf.Document()
     doc.trailer["Info"] = {"Title": "日本語のタイトル", "Author": "ASCII", "Raw": b"\x00\xff"}
@@ -299,6 +319,7 @@ def test_text_strings() -> None:
     assert String(b"caf\xe9").text == "café"
 
 
+@pytest.mark.spec("basic-objects", "create")
 def test_names_round_trip_and_reject_a_leading_slash() -> None:
     doc = pyropdf.Document()
     xref = doc.objects.add([Name("A#B"), Name("日本"), Name("a\udcff")])
@@ -460,6 +481,7 @@ def test_objects_are_readable_after_unlocking() -> None:
     assert encrypted.catalog["Pages"]["Count"] == 2
 
 
+@pytest.mark.spec("lexical-conventions", "read")
 def test_real_world_object_graph_reads() -> None:
     doc = pyropdf.open(REAL_WORLD / "f1040.pdf")
     fonts = 0
