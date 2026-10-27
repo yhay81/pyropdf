@@ -5,6 +5,8 @@ use pyo3::prelude::*;
 
 mod annotations;
 mod cancel;
+mod changes;
+mod check;
 mod content;
 mod document;
 mod errors;
@@ -17,6 +19,7 @@ mod outline;
 mod pages;
 mod pixmap;
 mod render;
+mod schema;
 mod security;
 mod source;
 mod text;
@@ -41,6 +44,10 @@ mod _core {
     };
     #[pymodule_export]
     use super::cancel::CancellationToken;
+    #[pymodule_export]
+    use super::changes::changes;
+    #[pymodule_export]
+    use super::check::structural_check;
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
@@ -84,6 +91,8 @@ mod _core {
     use super::pixmap::{Pixmap, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
+    #[pymodule_export]
+    use super::schema::{schema_names, schema_object};
     #[pymodule_export]
     use super::security::{security_state, unlock};
     #[pymodule_export]
