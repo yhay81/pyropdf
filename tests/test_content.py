@@ -17,6 +17,7 @@ Intended differences from pylopdf:
 
 from __future__ import annotations
 
+import random
 import zlib
 from decimal import Decimal
 from pathlib import Path
@@ -258,6 +259,56 @@ def test_content_after_what_hayro_reads_stays_in_the_tail() -> None:
     assert [operation.operator for operation in operations] == ["q"]
     assert operations.tail == b" 1 2 3 4 5 6 7 8 9 10 11 sc Q"
     assert operations.to_bytes() == content
+
+
+#: Malformed inline images, which pylopdf's fuzz run found raising ``ValueError``:
+#: ``BI`` without ``ID``, ``ID`` without ``EI``, and data cut short.
+MALFORMED_INLINE_IMAGES = [
+    b"BI /W 1 /H 1 ID \x00 Q",
+    b"q BI /W 1 /H 1 Q",
+    b"q BI /W 1 /H 1",
+    b"BI /W 1 /H 1 ID \x00\x01",
+    b"q BI /W 2 /H 2 /BPC 8 /CS /G ID \x00",
+    b"BI /W 4 /H 4 /BPC 8 /CS /G ID \x00 EI Q",
+    b"BI BI ID x EI EI",
+    b"BI\nQ BI /W 1 ID",
+]
+
+
+@pytest.mark.parametrize("content", MALFORMED_INLINE_IMAGES)
+def test_malformed_inline_images_read_and_write_back(content: bytes) -> None:
+    operations = Operations.parse(content)
+
+    assert operations.to_bytes() == content
+    assert Operations.parse(operations.to_bytes()) == operations
+    page = pyropdf.open(_page(content)).pages[0]
+    assert page.operations == operations
+
+
+def test_a_bi_that_names_no_image_is_read_as_an_operation() -> None:
+    operations = Operations.parse(b"BI /W 1 /H 1 ID \x00 Q")
+
+    assert [operation.operator for operation in operations] == ["BI", "Q"]
+    assert operations[0] == Operations.parse(b"BI /W 1 /H 1 ID \x00 Q")[0]
+    assert not isinstance(operations[0], InlineImage)
+    # A program still writes an inline image as InlineImage.
+    with pytest.raises(ValueError, match="write an inline image as InlineImage"):
+        Operation("BI", ())
+    # The operation read keeps its bytes among new operations.
+    edited = Operations([Operation("q"), *operations, Operation("Q")])
+    assert edited.to_bytes() == b"q\nBI /W 1 /H 1 ID \x00 Q\nQ"
+
+
+def test_content_around_inline_images_reads_without_raising() -> None:
+    # A seeded sweep over the tokens around inline images: whatever hayro
+    # reads writes back as the same bytes and reads as the same operations.
+    tokens = [b"BI", b"ID", b"EI", b"/W", b"1", b"\x00", b"q", b"Q", b"\n", b" ", b"(", b")", b"<<", b">>", b"%"]
+    draw = random.Random(113)  # noqa: S311 - a reproducible sweep, not a secret
+    for _ in range(2000):
+        content = b" ".join(draw.choice(tokens) for _ in range(draw.randrange(1, 12)))
+        operations = Operations.parse(content)
+        assert operations.to_bytes() == content, content
+        assert Operations.parse(operations.to_bytes()) == operations, content
 
 
 def test_an_escaped_operator_is_refused() -> None:
