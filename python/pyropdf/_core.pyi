@@ -37,9 +37,25 @@ class _Document:
         data: bytes | bytearray | memoryview, limits: object, password: bytes | None = None, /
     ) -> _Document: ...
     def is_repaired(self) -> bool: ...
-    def save_path(self, path: str, incremental: bool, encryption: object = None, prune: bool = False, /) -> None: ...
+    def save_path(
+        self,
+        path: str,
+        incremental: bool,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        /,
+    ) -> None: ...
     def to_bytes(
-        self, incremental: bool, max_size: int | None, encryption: object = None, prune: bool = False, /
+        self,
+        incremental: bool,
+        max_size: int | None,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...
     def close(self) -> None: ...

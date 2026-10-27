@@ -772,6 +772,7 @@ name = "pyropdf-store"
 version = "0.0.0"
 dependencies = [
  "aes",
+ "flate2",
  "hayro-syntax",
  "md-5",
  "proptest",

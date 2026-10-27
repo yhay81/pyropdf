@@ -182,7 +182,8 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None, prune=false))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
         py: Python<'_>,
@@ -190,6 +191,8 @@ impl _Document {
         incremental: bool,
         encryption: Option<&Bound<'_, PyAny>>,
         prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
     ) -> PyResult<()> {
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
@@ -202,7 +205,7 @@ impl _Document {
                     &mut out,
                     incremental,
                     encryption.as_ref(),
-                    save::Options { prune },
+                    save_options(prune, compress, decompress),
                     &budget,
                 )?;
                 let file = out.into_inner().map_err(|e| e.into_error())?;
@@ -214,7 +217,8 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
         py: Python<'py>,
@@ -222,6 +226,8 @@ impl _Document {
         max_size: Option<u64>,
         encryption: Option<&Bound<'_, PyAny>>,
         prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
@@ -232,7 +238,7 @@ impl _Document {
                 &mut out,
                 incremental,
                 encryption.as_ref(),
-                save::Options { prune },
+                save_options(prune, compress, decompress),
                 &budget,
             )
             .map_err(|error| save_error(&error, "PDF bytes"))?;
@@ -343,11 +349,26 @@ fn write_version(
     budget: &Budget,
 ) -> save::Result<()> {
     if incremental {
-        save::incremental(version, out, budget)?;
+        let compress = match options.streams {
+            save::Streams::Compress(level) => Some(level),
+            _ => None,
+        };
+        save::incremental_with(version, out, budget, compress)?;
     } else {
         save::full_with(version, out, budget, encryption, options)?;
     }
     Ok(())
+}
+
+/// Returns the options of a save that prunes when `prune`, compresses at the
+/// level `compress` when it is given, and decompresses when `decompress`.
+const fn save_options(prune: bool, compress: Option<u8>, decompress: bool) -> save::Options {
+    let streams = match (compress, decompress) {
+        (Some(level), _) => save::Streams::Compress(level),
+        (None, true) => save::Streams::Decompress,
+        (None, false) => save::Streams::Keep,
+    };
+    save::Options { prune, streams }
 }
 
 /// Reads the fields of a Python `DocumentLimits`.
