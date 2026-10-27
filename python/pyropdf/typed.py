@@ -438,7 +438,7 @@ def _numbers(value: _Array, count: int) -> tuple[float, ...] | None:
     return tuple(float(item) for item in items)
 
 
-def _read(typed: _Type, value: object) -> Any:  # noqa: ANN401, C901, PLR0911 - one branch per kind.
+def _read(typed: _Type, value: object) -> Any:  # noqa: ANN401, C901, PLR0911, PLR0912 - one branch per kind.
     """Return ``value`` as ``typed``, or ``_ABSENT`` when it is not of that type."""
     kind = typed.kind
     if kind == "boolean":
@@ -462,10 +462,24 @@ def _read(typed: _Type, value: object) -> Any:  # noqa: ANN401, C901, PLR0911 - 
         return numbers if kind == "rectangle" else _Matrix(*numbers)
     if kind in _TREE_KINDS:
         return value if isinstance(value, _Dictionary) and not isinstance(value, _Stream) else _ABSENT
+    if typed.links:
+        # The linked types decide what the value may be, as when the model
+        # declares a dictionary that links to stream types.
+        if not isinstance(value, _Dictionary | _Array):
+            return _ABSENT
+        links = tuple(name for name in typed.links if _handled(_class(name), value))
+        return _view(links, value) if links else _ABSENT
     container = {"array": _Array, "stream": _Stream}.get(kind, _Dictionary)
     if not isinstance(value, container) or (kind == "dictionary" and isinstance(value, _Stream)):
         return _ABSENT
-    return _view(typed.links, value) if typed.links else value
+    return value
+
+
+def _handled(view: type[View], value: object) -> bool:
+    """Return whether ``view`` views ``value``: a stream view a stream, a dictionary view a plain dictionary."""
+    if not isinstance(value, view._handle):  # noqa: SLF001
+        return False
+    return view._handle is not _Dictionary or not isinstance(value, _Stream)  # noqa: SLF001
 
 
 def _default(typed: _Type) -> Any:  # noqa: ANN401, PLR0911 - one branch per kind.
