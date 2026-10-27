@@ -102,7 +102,7 @@ reached = "A page's content streams, decoded and joined, are larger than 64 MiB 
 message = "the content is too large to parse"
 unit = "bytes"
 default = 67_108_864
-reached = "The content that `Operations.parse` reads is larger than the call's `max_size`."
+reached = "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an assignment to `Page.operations` writes is larger than 64 MiB."
 
 [codes.content_element_count]
 message = "the page paints too many items"
