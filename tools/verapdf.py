@@ -53,9 +53,16 @@ def saves(directory: Path) -> dict[str, list[Path]]:
     return out
 
 
+def cli(jar: Path, flavour: str) -> list[str]:
+    """Return the veraPDF command line that validates under ``flavour`` and reports in text."""
+    # The wrapper, unlike VeraPdfCli itself, installs the validation foundry.
+    wrapper = "org.verapdf.apps.GreenfieldCliWrapper"
+    return ["java", "-cp", str(jar), wrapper, "--flavour", flavour, "--format", "text"]
+
+
 def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
     """Return whether veraPDF accepts each of ``paths`` under ``flavour``, by file name."""
-    command = ["java", "-cp", str(jar), "org.verapdf.cli.VeraPdfCli", "--flavour", flavour, "--format", "text"]
+    command = cli(jar, flavour)
     result = subprocess.run([*command, *map(str, paths)], capture_output=True, text=True, check=False)  # noqa: S603 - a fixed command on generated files.
     verdicts: dict[str, bool] = {}
     for line in result.stdout.splitlines():
@@ -72,7 +79,7 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
 
 def details(jar: Path, flavour: str, path: Path) -> str:
     """Return veraPDF's text report of the rules that ``path`` fails."""
-    command = ["java", "-cp", str(jar), "org.verapdf.cli.VeraPdfCli", "--flavour", flavour, "--format", "text"]
+    command = cli(jar, flavour)
     result = subprocess.run([*command, "-v", str(path)], capture_output=True, text=True, check=False)  # noqa: S603 - a fixed command on a generated file.
     return result.stdout
 
