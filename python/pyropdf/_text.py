@@ -393,9 +393,7 @@ def _html_span(span: Span) -> str:
 
 def _css_string(value: str) -> str:
     """Quote a CSS string before the enclosing HTML attribute is escaped."""
-    quoted = "".join(
-        f"\\{ord(char):x} " if char in '\\"' or char < " " or char == "\x7f" else char for char in value
-    )
+    quoted = "".join(f"\\{ord(char):x} " if char in '\\"' or char < " " or char == "\x7f" else char for char in value)
     return f'"{quoted}"'
 
 
