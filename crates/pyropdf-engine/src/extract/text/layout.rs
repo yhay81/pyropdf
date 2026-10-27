@@ -144,15 +144,11 @@ impl Meter<'_> {
 /// One axis-aligned rule in display space.
 #[derive(Clone, Copy)]
 pub(super) struct RuleSegment {
-    x0: f64,
-    y0: f64,
-    x1: f64,
-    #[expect(
-        dead_code,
-        reason = "styles read horizontal rules; the tables of #101 read the extent of vertical ones"
-    )]
-    y1: f64,
-    horizontal: bool,
+    pub(super) x0: f64,
+    pub(super) y0: f64,
+    pub(super) x1: f64,
+    pub(super) y1: f64,
+    pub(super) horizontal: bool,
 }
 
 /// The most rules that one page collects.

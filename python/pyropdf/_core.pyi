@@ -138,6 +138,10 @@ def page_content(
     /,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]: ...
 
+_Box: TypeAlias = tuple[float, float, float, float]
+_CoreTable: TypeAlias = tuple[
+    _Box, int, int, list[tuple[_Box, str] | None], list[int], tuple[float, float | None, float | None, float | None]
+]
 _TextOptions: TypeAlias = tuple[tuple[float, float, float, float] | None, bool, int, bool, bool, bool, bool, bool]
 
 def page_text(
@@ -191,6 +195,16 @@ def page_selection(
     max_size: int | None,
     /,
 ) -> tuple[str, int]: ...
+def page_tables(
+    document: _Document,
+    number: int,
+    generation: int,
+    text_strategy: bool,
+    clip: tuple[float, float, float, float] | None,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[list[_CoreTable], int]: ...
 def begin_transaction(document: _Document, name: str, /) -> None: ...
 def end_transaction(document: _Document, commit: bool, /) -> None: ...
 def history_state(document: _Document, /) -> tuple[list[str], int, int | None, int]: ...

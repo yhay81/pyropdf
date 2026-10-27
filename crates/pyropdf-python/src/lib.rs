@@ -62,7 +62,9 @@ mod _core {
     #[pymodule_export]
     use super::security::{security_state, unlock};
     #[pymodule_export]
-    use super::text::{document_text, page_layout, page_search, page_selection, page_text};
+    use super::text::{
+        document_text, page_layout, page_search, page_selection, page_tables, page_text,
+    };
 
     #[cfg(windows)]
     #[pymodule_export]

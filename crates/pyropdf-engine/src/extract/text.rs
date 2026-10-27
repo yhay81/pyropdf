@@ -12,6 +12,7 @@
 mod layout;
 mod search;
 mod selection;
+mod tables;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,6 +33,7 @@ pub use self::layout::{
 };
 pub use self::search::{SearchHits, page_search};
 pub use self::selection::page_selection;
+pub use self::tables::{TableCell, TableDiagnosticsTuple, TableTuple, page_tables};
 use super::provenance::{RunCheck, Source, run_sources};
 use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER_FILL_STROKE};
 use crate::bridge::Bridged;
@@ -2348,6 +2350,19 @@ struct ViewedLines {
     charge: GlyphCharge,
 }
 
+/// A page's glyphs in paint order and its rules.
+struct CollectedGlyphs {
+    glyphs: Vec<GlyphRecord>,
+    /// The rules, collected with [`TextOptions::styles`].
+    rules: Vec<RuleSegment>,
+    /// The glyphs without Unicode that [`Unmapped::Skip`] left out.
+    skipped: usize,
+    /// The visible page in display space.
+    page_box: Rect,
+    /// What the glyphs hold of the budget, which the caller releases.
+    charge: GlyphCharge,
+}
+
 /// Collects the glyphs of a page, and its rules with
 /// [`TextOptions::styles`], and returns its lines in reading order as the
 /// text options view them. A refusal releases every charge.
@@ -2358,6 +2373,35 @@ fn viewed_page_lines(
     content: Option<&PageContent>,
     budget: &Budget,
 ) -> Result<ViewedLines, Error> {
+    let collected = collect_page_glyphs(bridged, index, options, content, budget)?;
+    let mut glyphs = collected.glyphs;
+    if options.styles {
+        layout::mark_styles(&mut glyphs, collected.rules);
+    }
+    match page_lines(glyphs).and_then(|lines| view_lines(lines, options)) {
+        Ok(lines) => Ok(ViewedLines {
+            lines,
+            skipped: collected.skipped,
+            page_box: collected.page_box,
+            charge: collected.charge,
+        }),
+        Err(error) => {
+            collected.charge.release(budget);
+            Err(error)
+        }
+    }
+}
+
+/// Collects the glyphs of a page in paint order, with the sources of
+/// `content`, and its rules with [`TextOptions::styles`]. A refusal releases
+/// every charge.
+fn collect_page_glyphs(
+    bridged: &Bridged,
+    index: usize,
+    options: &TextOptions,
+    content: Option<&PageContent>,
+    budget: &Budget,
+) -> Result<CollectedGlyphs, Error> {
     let pdf = bridged.pdf();
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(Error::NoPage(index))?;
@@ -2426,21 +2470,13 @@ fn viewed_page_lines(
         charge.release(budget);
         return Err(error);
     }
-    if options.styles {
-        layout::mark_styles(&mut glyphs, collector.rules);
-    }
-    match page_lines(glyphs).and_then(|lines| view_lines(lines, options)) {
-        Ok(lines) => Ok(ViewedLines {
-            lines,
-            skipped: collector.skipped_no_unicode,
-            page_box,
-            charge,
-        }),
-        Err(error) => {
-            charge.release(budget);
-            Err(error)
-        }
-    }
+    Ok(CollectedGlyphs {
+        glyphs,
+        rules: collector.rules,
+        skipped: collector.skipped_no_unicode,
+        page_box,
+        charge,
+    })
 }
 
 /// Names the operation of the page's own content that showed each glyph,

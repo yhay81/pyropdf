@@ -8,7 +8,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{
-    self, BBox, BlockTuple, Error, QuadTuple, SearchHits, TextOptions, TextPeak, Unmapped,
+    self, BBox, BlockTuple, Error, QuadTuple, SearchHits, TableTuple, TextOptions, TextPeak,
+    Unmapped,
 };
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
@@ -368,5 +369,41 @@ pub fn page_selection(
             .get(&version, &index, &budget)
             .map_err(|e| bridge_error(&e))?;
         extract::page_selection(&bridged, at, &options, start, end, &budget).map_err(text_error)
+    })
+}
+
+/// Returns the tables on the page whose object is `number` and
+/// `generation` whose whole box lies inside `clip`, from its vector rules or
+/// with `text_strategy` from its aligned rows, and the glyphs without
+/// Unicode that it left out, with the GIL released. The budgets are those of
+/// [`page_text`].
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the page, the strategy, the clip, and the two budgets of one call"
+)]
+pub fn page_tables(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    text_strategy: bool,
+    clip: Option<BBox>,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<(Vec<TableTuple>, usize)> {
+    let (version, index, budget) = crate::pages::index(document)?;
+    let budget = budget
+        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
+        .with_limit(LimitCode::TextSize, max_size);
+    py.detach(|| {
+        let at = index
+            .index_of(Reference::new(number, generation))
+            .ok_or_else(|| stale(number, generation))?;
+        let bridged = document
+            .bridge
+            .get(&version, &index, &budget)
+            .map_err(|e| bridge_error(&e))?;
+        extract::page_tables(&bridged, at, text_strategy, clip, &budget).map_err(text_error)
     })
 }
