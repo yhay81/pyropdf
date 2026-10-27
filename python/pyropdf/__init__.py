@@ -72,6 +72,7 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
+from pyropdf._form import Field, FieldChoice, FieldFlags, FieldType, Form, SignatureFlags
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
@@ -86,6 +87,7 @@ from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
+from pyropdf._widgets import Widget, Widgets
 
 for _public in (
     Array,
@@ -142,8 +144,13 @@ __all__ = [
     "DocumentLimits",
     "EncryptedDocumentError",
     "Encryption",
+    "Field",
+    "FieldChoice",
+    "FieldFlags",
+    "FieldType",
     "FillRule",
     "FontRef",
+    "Form",
     "Glyph",
     "GraphicsContext",
     "Highlight",
@@ -203,6 +210,7 @@ __all__ = [
     "Segment",
     "ShadingPattern",
     "ShadingType",
+    "SignatureFlags",
     "SoftMask",
     "SoftMaskType",
     "Span",
@@ -225,6 +233,8 @@ __all__ = [
     "TransparencyGroup",
     "Underline",
     "Unmapped",
+    "Widget",
+    "Widgets",
     "Word",
     "__version__",
     "open",

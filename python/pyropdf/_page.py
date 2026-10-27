@@ -38,6 +38,7 @@ from pyropdf._text import (
     build_words,
     text_options,
 )
+from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -147,6 +148,11 @@ class Page:
     def links(self) -> Links:
         """Return the page's link annotations, in ``/Annots`` order."""
         return Links(self)
+
+    @property
+    def widgets(self) -> Widgets:
+        """Return the page's form widgets, in ``/Annots`` order."""
+        return Widgets(self)
 
     @property
     def index(self) -> int:

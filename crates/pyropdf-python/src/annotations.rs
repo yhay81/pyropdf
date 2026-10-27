@@ -113,7 +113,7 @@ const RECT_SUBTYPES: [&str; 7] = [
 ];
 
 /// A display rectangle, `(x0, y0, x1, y1)`.
-type Rect = (f64, f64, f64, f64);
+pub(crate) type Rect = (f64, f64, f64, f64);
 
 /// One annotation that `page.annotations` lists: its position in `/Annots`;
 /// its object, `(0, 0)` for a direct dictionary; its subtype; its display
@@ -138,7 +138,7 @@ type Record = (
 );
 
 /// The annotations of one page in the version that reads see.
-struct Annots {
+pub(crate) struct Annots {
     version: Arc<Version>,
     index: Arc<PageIndex>,
     at: usize,
@@ -147,13 +147,17 @@ struct Annots {
     rotation: i64,
     /// The array object that the page's `/Annots` names, if it names one.
     array: Option<Reference>,
-    items: Array,
+    pub(crate) items: Array,
 }
 
 impl Annots {
     /// Reads the annotations of page object `(number, generation)`, or
     /// returns `None` when it is not a page of the document.
-    fn read(document: &_Document, number: u32, generation: u16) -> PyResult<Option<Self>> {
+    pub(crate) fn read(
+        document: &_Document,
+        number: u32,
+        generation: u16,
+    ) -> PyResult<Option<Self>> {
         Self::of(index(document)?, number, generation)
     }
 
@@ -207,7 +211,7 @@ impl Annots {
 
     /// Returns the object and dictionary of the entry `item`, or `None`
     /// for an entry that is not an annotation dictionary.
-    fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
+    pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
         let id = match item {
             Value::Reference(reference) => (reference.number(), reference.generation()),
             Value::Dict(dict) => return Ok(Some(((0, 0), dict.clone()))),
@@ -244,7 +248,7 @@ impl Annots {
 
     /// Returns the position and dictionary of the annotation that a handle
     /// names, as [`Annots::position`] finds it.
-    fn find(&self, index: u32, id: (u32, u16)) -> PyResult<(usize, Dict)> {
+    pub(crate) fn find(&self, index: u32, id: (u32, u16)) -> PyResult<(usize, Dict)> {
         let position = self.position(index, id)?;
         match self.entry(&self.items.as_slice()[position])? {
             Some((_, dict)) => Ok((position, dict)),
@@ -256,7 +260,7 @@ impl Annots {
     }
 
     /// Converts a PDF rectangle to display space.
-    fn to_display(&self, (x0, y0, x1, y1): Rect) -> Rect {
+    pub(crate) fn to_display(&self, (x0, y0, x1, y1): Rect) -> Rect {
         let (a, b) = to_display(self.crop, self.rotation, x0, y0);
         let (c, d) = to_display(self.crop, self.rotation, x1, y1);
         (a.min(c), b.min(d), a.max(c), b.max(d))
@@ -353,11 +357,11 @@ impl Annots {
         )))
     }
 
-    fn resolved(&self, value: Option<&Value>) -> PyResult<Option<Value>> {
+    pub(crate) fn resolved(&self, value: Option<&Value>) -> PyResult<Option<Value>> {
         resolve(&self.version, value, &self.budget)
     }
 
-    fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
+    pub(crate) fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
         Ok(match self.resolved(dict.get(key))? {
             Some(Value::Name(name)) => Some(name.as_bytes().to_vec()),
             _ => None,
@@ -373,7 +377,7 @@ impl Annots {
     }
 
     /// Reads a rectangle, its numbers resolved.
-    fn rect(&self, value: Option<&Value>) -> PyResult<Option<Rect>> {
+    pub(crate) fn rect(&self, value: Option<&Value>) -> PyResult<Option<Rect>> {
         let Some(Value::Array(items)) = self.resolved(value)? else {
             return Ok(None);
         };
