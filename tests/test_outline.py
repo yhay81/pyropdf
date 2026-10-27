@@ -182,6 +182,14 @@ def test_assigning_refuses_invalid_outlines(
         (lambda: OutlineEntry(1, "A", color=Color(1, 0, 0, 0.5)), ValueError),
         (lambda: OutlineEntry(1, "A", color=Color(2, 0, 0)), ValueError),
         (lambda: OutlineEntry(1, "A", bold=1), TypeError),  # ty: ignore[invalid-argument-type]
+        (lambda: Destination(-1), ValueError),
+        (lambda: Destination(0, zoom=-1), ValueError),
+        (lambda: Destination(0, zoom=float("nan")), ValueError),
+        # pyropdf's geometry refuses non-finite coordinates with PdfError.
+        (lambda: Destination(0, (1, float("inf"))), pyropdf.PdfError),
+        (lambda: RemoteDestination(""), ValueError),
+        (lambda: Launch(b"a.pdf"), TypeError),  # ty: ignore[invalid-argument-type]
+        (lambda: NamedAction(""), ValueError),
     ],
 )
 def test_records_validate_on_construction(make: object, error: type[Exception]) -> None:
