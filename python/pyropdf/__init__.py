@@ -1,5 +1,6 @@
 """Complete control of PDF as ISO 32000-2 defines it, implemented in Rust."""
 
+from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -66,6 +67,9 @@ for _public in (
     Probe,
     DocumentLimits,
     CancellationToken,
+    ChangeReport,
+    ClaimChange,
+    SignatureChange,
     History,
     InlineImage,
     Operation,
@@ -83,6 +87,8 @@ __all__ = [
     "Array",
     "BlendMode",
     "CancellationToken",
+    "ChangeReport",
+    "ClaimChange",
     "Clip",
     "ClosePath",
     "Color",
@@ -133,6 +139,7 @@ __all__ = [
     "Segment",
     "ShadingPattern",
     "ShadingType",
+    "SignatureChange",
     "SoftMask",
     "SoftMaskType",
     "StaleObjectError",

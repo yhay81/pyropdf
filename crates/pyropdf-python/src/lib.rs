@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 
 mod cancel;
+mod changes;
 mod content;
 mod document;
 mod errors;
@@ -27,6 +28,8 @@ mod windows_permissions;
 mod _core {
     #[pymodule_export]
     use super::cancel::CancellationToken;
+    #[pymodule_export]
+    use super::changes::changes;
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]

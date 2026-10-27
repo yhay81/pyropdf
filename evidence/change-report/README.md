@@ -82,3 +82,32 @@ whose report lists the signatures that the edits or the save mode
 invalidate and the PDF/A or PDF/UA claims that the edits break, each with
 the reason. `save` stays as it is. A refusing option on `save` can follow
 as its own issue once the report exists.
+
+## The report's cost (#158)
+
+`cost.py` builds a signed document with a PDF/A-1B claim and a number of
+filler objects, edits some of them, and times `doc.changes(incremental=True)`.
+Its output, on an Apple Silicon Mac with the extension that `uv sync` builds,
+is [`cost.md`](cost.md):
+
+Edits grow, document fixed at 100,000 objects:
+
+| Edits | Median ms |
+| ---: | ---: |
+| 1 | 0.004 |
+| 10 | 0.006 |
+| 100 | 0.024 |
+| 1,000 | 0.202 |
+
+Document grows, edits fixed at 10:
+
+| Objects | Median ms |
+| ---: | ---: |
+| 1,000 | 0.005 |
+| 10,000 | 0.005 |
+| 100,000 | 0.006 |
+
+The time grows with the edits, and not with the objects of the document:
+the report reads the change set since opening (`Version::opened` and
+`Version::changes`), the objects that the edits wrote, the signature
+fields of the opened file, and the metadata stream.
