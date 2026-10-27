@@ -141,7 +141,11 @@ impl Base for FileBase {
         ) {
             return Ok(Some(bytes));
         }
-        let value = Value::parse(&bytes, budget)?;
+        // The data of a stream whose `/Length` refers to an object is
+        // decrypted as the length gives it. The length is an integer, which
+        // is never encrypted, so the index gives its bytes as they are.
+        let fetch = |length| self.index.object(length, budget);
+        let value = Value::parse_with_lengths(&bytes, budget, &fetch)?;
         let plain = security::decrypt_value(handler, reference, &value, budget)?;
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, &plain)?;

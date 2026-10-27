@@ -155,6 +155,16 @@ def test_an_encrypted_document_renders_unedited_and_edited(name: str) -> None:
         assert bytes(memoryview(edited)) == bytes(memoryview(expected))
 
 
+def test_a_stream_with_an_indirect_length_decrypts_the_data_that_its_length_gives() -> None:
+    # generate.py ends the encrypted data of each content stream in a line
+    # feed, which a search for endstream would trim. RC4 keeps the length.
+    with pyropdf.open(ASSETS / "user-rc4-128-indirect-length.pdf", password="userpw") as doc:
+        for stream, length in ((6, 7), (8, 9)):
+            data = doc.objects[stream].read(decode=False)
+            assert len(data) == doc.objects[length]
+            assert data.startswith(b"BT /F1 24 Tf 72 720 Td (Encrypted page ")
+
+
 def test_keep_copies_the_encryption() -> None:
     doc = pyropdf.open(ASSETS / "user-aes-256.pdf", password="userpw")
     doc.pages[0].rotation = 90

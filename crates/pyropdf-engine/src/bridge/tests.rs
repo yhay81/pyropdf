@@ -378,7 +378,7 @@ fn encrypted_files_render_unedited_and_edited_as_their_decrypted_saves() {
         .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 9);
+    assert_eq!(files.len(), 10);
     for path in files {
         let (document, password) = open_encrypted(&path);
         let version = document.current();
