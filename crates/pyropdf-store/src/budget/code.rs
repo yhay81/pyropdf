@@ -45,11 +45,18 @@ pub enum LimitCode {
     /// when `Page.operations` reads them.
     ContentStreamSize,
     /// The content that `Operations.parse` reads is larger than the call's
-    /// `max_size`.
+    /// `max_size`, or the content that an assignment to `Page.operations`
+    /// writes is larger than 64 MiB.
     ContentInputSize,
     /// `Page.content` reads more glyphs, path and clip segments, dash lengths,
     /// and items than the call's `max_elements`.
     ContentElementCount,
+    /// `Page.text` or `Document.text` collects more glyphs of one page than the
+    /// call's `max_glyphs`.
+    TextGlyphCount,
+    /// The UTF-8 of a page's glyphs, or of the text that `Page.text` or
+    /// `Document.text` returns, is larger than the call's `max_size`.
+    TextSize,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -59,8 +66,16 @@ pub enum LimitCode {
     PdfOutputSize,
     /// Encoding a pixmap writes more bytes than the call's `max_size`.
     PixmapOutputSize,
+    /// A page's SVG holds more UTF-8 bytes than the call's `max_size`.
+    SvgOutputSize,
+    /// The images that `doc.render` encodes write more bytes in all than the
+    /// call's `max_size`.
+    RenderOutputSize,
     /// A password is longer in UTF-8 than PDF 2.0 allows.
     PasswordInputSize,
+    /// A list of pages, such as the `pages` of `doc.render`, holds more entries
+    /// than the larger of the page count and 4,096.
+    PageEntryCount,
     /// The collections of one operation would hold more memory than it allows,
     /// or the allocator refuses it.
     MemorySize,
@@ -73,7 +88,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 28] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -89,11 +104,16 @@ impl LimitCode {
         Self::ContentStreamSize,
         Self::ContentInputSize,
         Self::ContentElementCount,
+        Self::TextGlyphCount,
+        Self::TextSize,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::PdfOutputSize,
         Self::PixmapOutputSize,
+        Self::SvgOutputSize,
+        Self::RenderOutputSize,
         Self::PasswordInputSize,
+        Self::PageEntryCount,
         Self::MemorySize,
         Self::Deadline,
         Self::Cancelled,
@@ -118,11 +138,16 @@ impl LimitCode {
             Self::ContentStreamSize => "content_stream_size",
             Self::ContentInputSize => "content_input_size",
             Self::ContentElementCount => "content_element_count",
+            Self::TextGlyphCount => "text_glyph_count",
+            Self::TextSize => "text_size",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::PdfOutputSize => "pdf_output_size",
             Self::PixmapOutputSize => "pixmap_output_size",
+            Self::SvgOutputSize => "svg_output_size",
+            Self::RenderOutputSize => "render_output_size",
             Self::PasswordInputSize => "password_input_size",
+            Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
             Self::Cancelled => "cancelled",
@@ -149,11 +174,16 @@ impl LimitCode {
             Self::ContentStreamSize => "the page's content is too large",
             Self::ContentInputSize => "the content is too large to parse",
             Self::ContentElementCount => "the page paints too many items",
+            Self::TextGlyphCount => "the page holds too many glyphs to read as text",
+            Self::TextSize => "the text is too large",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::PdfOutputSize => "the PDF output is too large",
             Self::PixmapOutputSize => "the encoded image is too large",
+            Self::SvgOutputSize => "the SVG document is too large",
+            Self::RenderOutputSize => "the rendered images are too large",
             Self::PasswordInputSize => "the password is too long",
+            Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
             Self::Cancelled => "the operation was cancelled",
@@ -180,11 +210,16 @@ impl LimitCode {
             Self::ContentStreamSize => Some("bytes"),
             Self::ContentInputSize => Some("bytes"),
             Self::ContentElementCount => Some("elements"),
+            Self::TextGlyphCount => Some("glyphs"),
+            Self::TextSize => Some("bytes"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::PdfOutputSize => Some("bytes"),
             Self::PixmapOutputSize => Some("bytes"),
+            Self::SvgOutputSize => Some("bytes"),
+            Self::RenderOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
+            Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
             Self::Cancelled => None,
@@ -211,11 +246,16 @@ impl LimitCode {
             Self::ContentStreamSize => Some(67_108_864),
             Self::ContentInputSize => Some(67_108_864),
             Self::ContentElementCount => Some(262_144),
+            Self::TextGlyphCount => Some(262_144),
+            Self::TextSize => Some(67_108_864),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::PdfOutputSize => Some(536_870_912),
             Self::PixmapOutputSize => Some(67_108_864),
+            Self::SvgOutputSize => Some(67_108_864),
+            Self::RenderOutputSize => Some(536_870_912),
             Self::PasswordInputSize => Some(127),
+            Self::PageEntryCount => None,
             Self::MemorySize => None,
             Self::Deadline => None,
             Self::Cancelled => None,

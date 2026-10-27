@@ -99,3 +99,47 @@ fn a_shared_render_cache_renders_as_a_fresh_one() {
         }
     });
 }
+
+#[test]
+fn a_batch_renders_each_entry_as_raster_does_in_order() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let bridged = Arc::new(Bridged::of_bytes(fs::read(path).unwrap()));
+    let options = Options::new((0.5, 0.0, 0.0, 0.5), true);
+    let count = bridged.pdf().pages().len();
+    let indexes: Vec<usize> = (0..count).rev().chain(0..count).collect();
+    let alone: Vec<Raster> = indexes
+        .iter()
+        .map(|&at| raster(&bridged, at, &options).unwrap())
+        .collect();
+
+    for workers in [1, 3, MAX_WORKERS] {
+        let batched = batch(&bridged, &indexes, &options, workers, |raster| {
+            Ok::<_, RasterError>(raster)
+        })
+        .unwrap();
+        assert!(batched == alone, "workers={workers}");
+    }
+}
+
+#[test]
+fn a_batch_checks_every_page_before_rendering_any() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-type3.pdf");
+    let bridged = Bridged::of_bytes(fs::read(path).unwrap());
+    let count = bridged.pdf().pages().len();
+    let options = Options::new((1.0, 0.0, 0.0, 1.0), false);
+    let rendered = std::sync::atomic::AtomicUsize::new(0);
+
+    let result = batch(&bridged, &[0, count, 0], &options, 2, |raster| {
+        rendered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok::<_, RasterError>(raster)
+    });
+
+    assert_eq!(result.unwrap_err(), RasterError::NoPage(count));
+    assert_eq!(rendered.into_inner(), 0);
+    let failed = batch(&bridged, &[0, 0, 0, 0], &options, 2, |_| {
+        Err::<Raster, _>(RasterError::Clip("stop".to_owned()))
+    });
+    assert_eq!(failed.unwrap_err(), RasterError::Clip("stop".to_owned()));
+}

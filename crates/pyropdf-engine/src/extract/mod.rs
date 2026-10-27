@@ -20,6 +20,7 @@ use crate::bridge::Bridged;
 mod model;
 #[cfg(test)]
 mod tests;
+mod text;
 
 pub use model::{
     BBox, ClipTuple, ContentItem, ContentSink, FontTuple, GlyphStyle, GlyphsTuple, GroupTuple,
@@ -27,6 +28,7 @@ pub use model::{
     PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE, SoftMaskTuple,
     StateTuple, StrokeTuple, TextRunTuple,
 };
+pub use text::{TextOptions, Unmapped, page_text};
 
 /// Why reading a page's content stopped.
 #[derive(Clone, Debug, PartialEq, Eq)]

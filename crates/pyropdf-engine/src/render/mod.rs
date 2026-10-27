@@ -1,5 +1,5 @@
 //! Rasterizing a page through hayro, as much as `page.pixmap`
-//! (yhay81/pyropdf#35) needs.
+//! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
 use hayro::hayro_interpret::InterpreterSettings;
 use hayro::vello_cpu::color::AlphaColor;
@@ -12,8 +12,13 @@ use hayro::hayro_syntax::Pdf;
 
 use crate::bridge::{Bridged, Error, Result};
 
+mod batch;
+mod svg;
 #[cfg(test)]
 mod tests;
+
+pub use batch::{MAX_WORKERS, batch};
+pub use svg::svg;
 
 /// A rendered page: its size in pixels and its pixels, row by row from the
 /// top, as premultiplied RGBA with 8 bits per channel.
@@ -244,19 +249,15 @@ fn clip_viewport(
     Ok((x0, y0, (x1 - x0) as u16, (y1 - y0) as u16))
 }
 
-fn draw<'a>(
-    pdf: &'a Pdf,
-    cache: &RenderCache<'a>,
-    index: usize,
+/// The whole pixels that `page` covers through the matrix of `options`:
+/// the raster's offset from the transformed page's origin and its size,
+/// refused past the limits of one raster.
+fn extent(
+    page: &hayro::hayro_syntax::page::Page<'_>,
     options: &Options,
-) -> std::result::Result<Raster, RasterError> {
-    use hayro::hayro_interpret::TransformExt;
+) -> std::result::Result<(f64, f64, f64, f64), RasterError> {
     use hayro::kurbo::{Affine, Point};
-    use hayro::vello_cpu::peniko::ImageAlphaType;
-    use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
 
-    let pages = pdf.pages();
-    let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
     let (a, b, c, d) = options.matrix;
     if ![a, b, c, d].into_iter().all(f64::is_finite) || a * d - b * c == 0.0 {
         return Err(RasterError::Geometry(
@@ -301,6 +302,25 @@ fn draw<'a>(
             "render size {pixel_width:.0}x{pixel_height:.0} ({pixels} pixels) exceeds the {MAX_PIXELS}-pixel limit"
         )));
     }
+    Ok((x0, y0, pixel_width, pixel_height))
+}
+
+fn draw<'a>(
+    pdf: &'a Pdf,
+    cache: &RenderCache<'a>,
+    index: usize,
+    options: &Options,
+) -> std::result::Result<Raster, RasterError> {
+    use hayro::hayro_interpret::TransformExt;
+    use hayro::kurbo::Affine;
+    use hayro::vello_cpu::peniko::ImageAlphaType;
+    use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
+
+    let pages = pdf.pages();
+    let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
+    let (x0, y0, pixel_width, pixel_height) = extent(page, options)?;
+    let (a, b, c, d) = options.matrix;
+    let linear = Affine::new([a, b, c, d, 0.0, 0.0]);
     let page_to_raster = Affine::translate((-x0, -y0)) * linear;
     let (left, top, raster_width, raster_height) = match options.clip {
         Some(clip) => clip_viewport(
