@@ -17,6 +17,8 @@ per kind of defect:
 | `order.pdf` | a name tree's keys run `(b)`, `(a)` | `NameTree/Names` |
 | `struct-parent.pdf` | a structure element's `/P` is the catalog | `StructTreeRoot/K` |
 | `next-key.pdf` | `/ParentTreeNextKey` is 0 with key 0 in the parent tree | `StructTreeRoot/ParentTreeNextKey` |
+| `size.pdf` | the catalog refers to object 5, and the trailer's `/Size` is 5 | `FileTrailer/Size` |
+| `state.pdf` | an annotation with appearance states has no `/AS` | `AnnotSquare/AS` |
 | `limits.pdf` | a number tree's `/Limits` miss its last key | `NumberTree/Limits` |
 
 `cycle.pdf` is a page tree whose root lists itself among its kids, which

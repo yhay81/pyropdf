@@ -337,3 +337,50 @@ fn a_parent_tree_next_key_within_the_tree_is_found() {
         )]
     );
 }
+
+#[test]
+fn a_reference_beyond_the_trailer_size_is_found() {
+    let mut objects = valid();
+    objects[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        ("Outlines", V::Ref(9)),
+    ]);
+    objects.resize(10, V::Int(0));
+    objects[9] = V::Dict(vec![("Type", V::Name("Outlines"))]);
+    assert_eq!(
+        invariants(objects),
+        vec![(Some(9), String::new(), "FileTrailer/Size".into())]
+    );
+}
+
+#[test]
+fn a_missing_appearance_state_is_found() {
+    let annotated = |state: Option<&'static str>| {
+        let mut objects = valid();
+        let V::Dict(entries) = &mut objects[3] else {
+            unreachable!()
+        };
+        entries.push(("Annots", V::Array(vec![V::Ref(4)])));
+        let mut annotation = vec![
+            ("Type", V::Name("Annot")),
+            ("Subtype", V::Name("Square")),
+            (
+                "Rect",
+                V::Array(vec![V::Int(0), V::Int(0), V::Int(9), V::Int(9)]),
+            ),
+            ("AP", V::Dict(vec![("N", V::Dict(vec![("On", V::Int(0))]))])),
+        ];
+        if let Some(state) = state {
+            annotation.push(("AS", V::Name(state)));
+        }
+        objects.push(V::Dict(annotation));
+        invariants(objects)
+    };
+    assert_eq!(annotated(Some("On")), vec![]);
+    assert_eq!(annotated(Some("Off")), vec![]);
+    assert_eq!(
+        annotated(None),
+        vec![(Some(4), "AS".into(), "AnnotSquare/AS".into())]
+    );
+}
