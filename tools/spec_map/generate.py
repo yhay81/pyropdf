@@ -9,7 +9,9 @@ proved by the case of a test parametrized by object name. features.toml gives
 every other status with what that status needs: ``planned`` its milestone,
 ``partial`` what is missing with its issue and milestone, ``engine`` the
 upstream issue, ``n/a`` its reason, and ``non-goal`` its decision and reason.
-``partial`` and ``engine`` keep the tests of what is done. features.toml's
+``partial`` and ``engine`` keep the tests of what is done. An ``n/a`` reason
+starts with the clause it rests on: a policy exclusion is a ``non-goal``, and
+so is creating a feature that features.toml marks ``deprecated``. features.toml's
 ``[clauses]`` lists the feature-defining clauses of ISO 32000-2, its
 extensions, and the profiles it names, each with pyropdf's own title; every
 feature names one of them, and each of them has a feature.
@@ -53,6 +55,8 @@ NEEDS = {
     "non-goal": ("decision", "reason"),
 }
 EVIDENCED = frozenset({"partial", "engine"})
+# An n/a reason starts with the clause that makes the dimension meaningless.
+CITED = re.compile(r"(?:\d+(?:\.\d+)*|Annex [A-Z](?:\.\d+)*|ISO(?:/TS)? \d+(?:-\d+)?)(?::| )")
 FEATURE_NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 
 
@@ -115,6 +119,9 @@ def status(declared: object, where: str) -> dict[str, Any]:
     if kind not in NEEDS:
         msg = f"{where} has unknown status {kind!r}"
         raise MapError(msg)
+    if kind == "n/a" and not CITED.match(str(declared.get("reason", ""))):
+        msg = f"{where} is n/a with a reason that cites no clause; a policy exclusion is a non-goal"
+        raise MapError(msg)
     fields = set(declared) - {"status"}
     if fields != set(NEEDS[kind]):
         msg = f"{where} is {kind}, which takes {', '.join(NEEDS[kind])}, not {', '.join(sorted(fields)) or 'nothing'}"
@@ -144,18 +151,32 @@ def declared(root: Path, config: dict[str, Any], names: list[str]) -> dict[str, 
             if keys <= object_keys(root, name):
                 features[name].update(applied)
     for name, table in config.get("features", {}).items():
-        where = f"features.{name}"
-        if not FEATURE_NAME.fullmatch(name):
-            msg = f"{where} is named in lowercase words joined by hyphens"
-            raise MapError(msg)
-        about = {field: table.pop(field) for field in ("clause", "description", "objects") if field in table}
-        unknown = sorted(set(about.get("objects", [])) - set(names))
-        if unknown or set(about) != {"clause", "description", "objects"} or set(table) - set(DIMENSIONS):
-            msg = f"{where} takes a clause, a description, objects of the model, and statuses; {unknown or ''}"
-            raise MapError(msg)
-        statuses = {dimension: status(value, f"{where}.{dimension}") for dimension, value in table.items()}
-        features[name] = {"feature": name, **about, **statuses}
+        features[name] = feature(name, dict(table), names)
     return features
+
+
+def feature(name: str, table: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    """Return the feature ``name`` of features.toml with its declared statuses."""
+    where = f"features.{name}"
+    if not FEATURE_NAME.fullmatch(name):
+        msg = f"{where} is named in lowercase words joined by hyphens"
+        raise MapError(msg)
+    deprecated = table.pop("deprecated", False)
+    about = {field: table.pop(field) for field in ("clause", "description", "objects") if field in table}
+    unknown = sorted(set(about.get("objects", [])) - set(names))
+    if unknown or set(about) != {"clause", "description", "objects"} or set(table) - set(DIMENSIONS):
+        msg = f"{where} takes a clause, a description, objects of the model, and statuses; {unknown or ''}"
+        raise MapError(msg)
+    if deprecated is not True and deprecated is not False:
+        msg = f"{where}.deprecated is true or false"
+        raise MapError(msg)
+    if deprecated:
+        about["deprecated"] = True
+    statuses = {dimension: status(value, f"{where}.{dimension}") for dimension, value in table.items()}
+    if deprecated and statuses.get("create", {}).get("status") == "n/a":
+        msg = f"{where}.create is n/a, but creating a deprecated feature is a non-goal with its decision"
+        raise MapError(msg)
+    return {"feature": name, **about, **statuses}
 
 
 def feature_defaults(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
