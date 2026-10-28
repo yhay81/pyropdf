@@ -12,29 +12,22 @@ use std::collections::HashMap;
 use std::mem::size_of;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
+use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::value::{Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
-use pyropdf_store::{Error, Result};
+use pyropdf_store::{Error, LimitExceeded, Result};
 
-/// The deepest nesting of arrays and dictionaries that the walk copies.
-const MAX_DEPTH: usize = 1024;
-/// The keys that lead into the source's structure tree, which the imported
-/// objects leave behind until their elements are grafted.
+/// The parser and budgeted value copies both bound direct nesting at 64.
+const MAX_DEPTH: usize = 64;
 const STRUCTURE_KEYS: [&str; 2] = ["StructParent", "StructParents"];
 
-/// Imports `pages`, each a source page with the dictionary that the
-/// receiving document should hold for it, from `source` under the page-tree
-/// node `root`, and returns the new pages in order.
-///
-/// `overrides`, sorted by number, replaces source objects, such as links
-/// that now lead elsewhere: `Some` with the value to copy instead, `None`
-/// with null. The pages' `/Parent` becomes `root`; the caller
-/// adds the pages to `root`'s kids.
+/// Imports pages and their reachable objects into one receiving transaction.
+/// Overrides are sorted by the full source reference, including generation.
 pub fn import(
     transaction: &mut Transaction,
     source: &Version,
-    pages: &[(Reference, Dict)],
-    overrides: &[(u32, Option<Value>)],
+    pages: Vec<(Reference, Dict)>,
+    overrides: &[(Reference, Option<Value>)],
     root: Reference,
     budget: &Budget,
 ) -> Result<Vec<Reference>> {
@@ -47,36 +40,31 @@ pub fn import(
     };
     let mut added = BudgetVec::new(budget);
     added.try_reserve_exact(pages.len())?;
-    for (page, _) in pages {
+    for (page, _) in &pages {
+        budget.poll()?;
+        if source.generation(page.number()) != Some(page.generation()) {
+            return Err(Error::malformed("an imported page reference is stale"));
+        }
         let new = transaction.allocate()?;
-        walk.numbers.insert(page.number(), new)?;
+        walk.numbers.insert(*page, new)?;
         added.try_push(new)?;
     }
-    for ((_, dict), &new) in pages.iter().zip(added.iter()) {
-        let mut page = walk.dict(transaction, dict, 0)?;
-        page.insert(Name::from("Parent"), Value::Reference(root));
-        transaction.write(new.number(), &Value::Dict(page), budget)?;
+    for ((_, mut dict), &new) in pages.into_iter().zip(added.iter()) {
+        walk.dict(transaction, &mut dict, 1)?;
+        dict.insert(Name::from("Parent"), Value::Reference(root));
+        transaction.write(new.number(), &Value::Dict(dict), budget)?;
     }
-    while let Some((number, new)) = walk.pending.pop() {
-        let value = match walk.object(number)? {
-            Some(Value::Stream(mut stream)) => {
-                let dict = walk.dict(transaction, stream.dict(), 0)?;
-                *stream.dict_mut() = dict;
-                Value::Stream(stream)
-            }
-            Some(Value::Dict(dict)) => Value::Dict(walk.dict(transaction, &dict, 0)?),
-            Some(value) => walk.value(transaction, &value, 0)?,
-            None => Value::Null,
-        };
+    while let Some((reference, new)) = walk.pending.pop() {
+        budget.poll()?;
+        let mut value = walk.object(reference)?.unwrap_or(Value::Null);
+        walk.value(transaction, &mut value, 1)?;
         transaction.write(new.number(), &value, budget)?;
     }
     Ok(added.into_vec())
 }
 
-/// The source numbers that the import gave numbers of the receiving
-/// document, charged to the budget as they grow.
 struct Numbers<'b> {
-    map: HashMap<u32, Reference>,
+    map: HashMap<Reference, Reference>,
     budget: &'b Budget,
     charged: u64,
 }
@@ -90,16 +78,21 @@ impl<'b> Numbers<'b> {
         }
     }
 
-    fn get(&self, number: u32) -> Option<Reference> {
-        self.map.get(&number).copied()
+    fn get(&self, reference: Reference) -> Option<Reference> {
+        self.map.get(&reference).copied()
     }
 
-    fn insert(&mut self, number: u32, new: Reference) -> Result<()> {
-        // A hash map holds about twice its entries.
-        let amount = 2 * (size_of::<u32>() + size_of::<Reference>()) as u64;
-        self.budget.charge(LimitCode::MemorySize, amount)?;
-        self.charged += amount;
-        self.map.insert(number, new);
+    fn insert(&mut self, reference: Reference, new: Reference) -> Result<()> {
+        self.budget.poll()?;
+        if !self.map.contains_key(&reference) {
+            let amount = (64 + 2 * size_of::<(Reference, Reference)>()) as u64;
+            self.budget.charge(LimitCode::MemorySize, amount)?;
+            self.charged += amount;
+            self.map
+                .try_reserve(1)
+                .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
+        }
+        self.map.insert(reference, new);
         Ok(())
     }
 }
@@ -112,35 +105,45 @@ impl Drop for Numbers<'_> {
 
 struct Walk<'s, 'b> {
     source: &'s Version,
-    overrides: &'s [(u32, Option<Value>)],
+    overrides: &'s [(Reference, Option<Value>)],
     numbers: Numbers<'b>,
-    /// The source objects that have a new number and wait to be written.
-    pending: BudgetVec<'b, (u32, Reference)>,
+    pending: BudgetVec<'b, (Reference, Reference)>,
     budget: &'b Budget,
 }
 
 impl Walk<'_, '_> {
-    /// Returns source object `number`, or what replaces it.
-    fn object(&self, number: u32) -> Result<Option<Value>> {
+    /// A missing generation is never replaced by a different live object.
+    fn object(&self, reference: Reference) -> Result<Option<Value>> {
+        self.budget.poll()?;
+        if self.source.generation(reference.number()) != Some(reference.generation()) {
+            return Ok(None);
+        }
         if let Ok(at) = self
             .overrides
-            .binary_search_by_key(&number, |(number, _)| *number)
+            .binary_search_by_key(&reference, |(key, _)| *key)
         {
-            return Ok(self.overrides[at].1.clone());
+            return self.overrides[at]
+                .1
+                .as_ref()
+                .map(|value| copy_for_edit(value, self.budget))
+                .transpose();
         }
-        Ok(self
-            .source
-            .get(number, self.budget)?
-            .map(|object| Value::clone(object.value())))
+        self.source
+            .get(reference.number(), self.budget)?
+            .filter(|object| object.generation() == reference.generation())
+            .map(|object| copy_for_edit(object.value(), self.budget))
+            .transpose()
     }
 
-    /// Returns what `reference` becomes: the new number of an object that
-    /// the import copies, or null.
     fn reference(&mut self, transaction: &mut Transaction, reference: Reference) -> Result<Value> {
-        if let Some(new) = self.numbers.get(reference.number()) {
+        self.budget.poll()?;
+        if self.source.generation(reference.number()) != Some(reference.generation()) {
+            return Ok(Value::Null);
+        }
+        if let Some(new) = self.numbers.get(reference) {
             return Ok(Value::Reference(new));
         }
-        let Some(value) = self.object(reference.number())? else {
+        let Some(value) = self.object(reference)? else {
             return Ok(Value::Null);
         };
         let dict = match &value {
@@ -154,79 +157,129 @@ impl Walk<'_, '_> {
             return Ok(Value::Null);
         }
         let new = transaction.allocate()?;
-        self.numbers.insert(reference.number(), new)?;
-        self.pending.try_push((reference.number(), new))?;
+        self.numbers.insert(reference, new)?;
+        self.pending.try_push((reference, new))?;
         Ok(Value::Reference(new))
     }
 
-    fn dict(&mut self, transaction: &mut Transaction, dict: &Dict, depth: usize) -> Result<Dict> {
+    fn dict(&mut self, transaction: &mut Transaction, dict: &mut Dict, depth: usize) -> Result<()> {
+        self.budget.poll()?;
         if depth > MAX_DEPTH {
-            return Err(Error::malformed("an imported object nests too deeply"));
+            return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
         }
-        let mut copy = dict.clone();
         for key in STRUCTURE_KEYS {
-            copy.remove(key);
+            dict.remove(key);
         }
-        if !holds_references(dict, depth)? {
-            return Ok(copy);
+        for (_, value) in dict.iter_mut() {
+            self.value(transaction, value, depth + 1)?;
         }
-        for (_, value) in copy.iter_mut() {
-            *value = self.value(transaction, value, depth + 1)?;
-        }
-        Ok(copy)
+        Ok(())
     }
 
     fn value(
         &mut self,
         transaction: &mut Transaction,
-        value: &Value,
+        value: &mut Value,
         depth: usize,
-    ) -> Result<Value> {
-        if depth > MAX_DEPTH {
-            return Err(Error::malformed("an imported object nests too deeply"));
+    ) -> Result<()> {
+        self.budget.poll()?;
+        if depth > MAX_DEPTH && matches!(value, Value::Array(_) | Value::Dict(_) | Value::Stream(_))
+        {
+            return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
         }
-        Ok(match value {
-            &Value::Reference(reference) => self.reference(transaction, reference)?,
-            Value::Array(array) if holds(value, depth)? => {
-                let mut items = BudgetVec::new(self.budget);
-                items.try_reserve_exact(array.len())?;
-                for item in array.iter() {
-                    items.try_push(self.value(transaction, item, depth + 1)?)?;
+        if !needs_changes(value, self.budget)? {
+            return Ok(());
+        }
+        match value {
+            Value::Reference(reference) => *value = self.reference(transaction, *reference)?,
+            Value::Array(array) => {
+                for child in array.iter_mut() {
+                    self.value(transaction, child, depth + 1)?;
                 }
-                Value::Array(Array::from(items.into_vec()))
             }
-            Value::Dict(dict) => Value::Dict(self.dict(transaction, dict, depth)?),
-            value => value.clone(),
-        })
+            Value::Dict(dict) => self.dict(transaction, dict, depth)?,
+            Value::Stream(stream) => self.dict(transaction, stream.dict_mut(), depth)?,
+            _ => {}
+        }
+        Ok(())
     }
 }
 
-/// Returns whether `value` holds a reference, so that copying it keeps the
-/// bytes it was read from when it holds none.
-fn holds(value: &Value, depth: usize) -> Result<bool> {
-    if depth > MAX_DEPTH {
-        return Err(Error::malformed("an imported object nests too deeply"));
-    }
-    Ok(match value {
-        Value::Reference(_) => true,
-        Value::Array(array) => {
-            for item in array.iter() {
-                if holds(item, depth + 1)? {
+/// An iterative budgeted preflight lets unchanged subtrees retain their lexemes.
+fn needs_changes(value: &Value, budget: &Budget) -> Result<bool> {
+    let mut pending = BudgetVec::new(budget);
+    pending.try_push((value, 1_usize))?;
+    while let Some((value, depth)) = pending.pop() {
+        budget.poll()?;
+        if depth > MAX_DEPTH && matches!(value, Value::Array(_) | Value::Dict(_) | Value::Stream(_))
+        {
+            return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
+        }
+        match value {
+            Value::Reference(_) => return Ok(true),
+            Value::Array(array) => {
+                for child in array.iter() {
+                    pending.try_push((child, depth + 1))?;
+                }
+            }
+            Value::Dict(dict) => {
+                if STRUCTURE_KEYS.iter().any(|key| dict.get(key).is_some()) {
                     return Ok(true);
                 }
+                for (_, child) in dict.iter() {
+                    pending.try_push((child, depth + 1))?;
+                }
             }
-            false
-        }
-        Value::Dict(dict) => holds_references(dict, depth)?,
-        _ => false,
-    })
-}
-
-fn holds_references(dict: &Dict, depth: usize) -> Result<bool> {
-    for (_, value) in dict.iter() {
-        if holds(value, depth + 1)? {
-            return Ok(true);
+            Value::Stream(stream) => {
+                if STRUCTURE_KEYS
+                    .iter()
+                    .any(|key| stream.dict().get(key).is_some())
+                {
+                    return Ok(true);
+                }
+                for (_, child) in stream.dict().iter() {
+                    pending.try_push((child, depth + 1))?;
+                }
+            }
+            _ => {}
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyropdf_store::value::Bytes;
+    use pyropdf_store::version::{Document, MemoryBase};
+    use std::sync::Arc;
+
+    #[test]
+    fn importing_a_cached_value_charges_its_owned_buffers() {
+        let mut base = MemoryBase::new(Dict::new());
+        let reference = Reference::new(5, 0);
+        base.insert(
+            reference,
+            Bytes::new(format!("<< /Unknown ({}) >>", "x".repeat(1024 * 1024)).into_bytes()),
+        );
+        let document = Document::new(Arc::new(base), None);
+        let version = document.current();
+        version.get(5, &Budget::default()).unwrap();
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(32 * 1024));
+        let walk = Walk {
+            source: &version,
+            overrides: &[],
+            numbers: Numbers::new(&budget),
+            pending: BudgetVec::new(&budget),
+            budget: &budget,
+        };
+        let error = match walk.object(reference) {
+            Ok(_) => panic!("import ignored its memory budget"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.limit().map(pyropdf_store::LimitExceeded::code),
+            Some(LimitCode::MemorySize)
+        );
+    }
 }
