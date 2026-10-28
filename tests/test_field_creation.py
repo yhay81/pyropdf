@@ -1,14 +1,17 @@
-"""Creating form fields with page.widgets.add.
+"""Creating and removing form fields with page.widgets.add, del page.widgets[i], and del doc.form[name].
 
-Ported from the creation cases of pylopdf's ``tests/test_field_creation.py``
-at ebb01d3c4c742046e8ce7fd72957cd15a2933321. Intended differences: the
+Ported from pylopdf's ``tests/test_field_creation.py`` at
+ebb01d3c4c742046e8ce7fd72957cd15a2933321. Intended differences: the
 specifications take no ``font``, which waits for #194, so the validation
 case of a ``font`` that is no Font is left out; reading a widget's
-``caption`` and ``font`` back waits for #200; removal waits for #208.
+``caption`` and ``font`` back waits for #200; pyropdf's ``to_bytes`` has no
+``prune``.
 """
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from typing import Any, cast
 
 import pytest
@@ -247,3 +250,171 @@ def test_joining_a_merged_field_keeps_its_generation() -> None:
     reopened = pyropdf.open(doc.to_bytes())
     assert len(reopened.form["name"].widgets) == 2
     assert b"5 3 R" in doc.to_bytes()
+
+
+def test_widgets_and_fields_are_removed() -> None:
+    page = _page()
+    doc = page.document
+    page.widgets.add(TextField("name", (20, 20, 200, 40), value="Ada"))
+    page.widgets.add(RadioButton("plan", (20, 100, 35, 115), on_state="Basic"))
+    page.widgets.add(RadioButton("plan", (60, 100, 75, 115), on_state="Pro"))
+
+    del page.widgets[1]
+    assert len(doc.form["plan"].widgets) == 1
+    del page.widgets[1]
+    assert "plan" not in doc.form
+    del doc.form["name"]
+    assert len(doc.form) == 0
+    assert len(page.widgets) == 0
+    assert "Ada" not in page.text()
+    with pytest.raises(KeyError):
+        del doc.form["name"]
+
+
+def test_a_second_widget_is_removed_from_its_field() -> None:
+    page = _page()
+    doc = page.document
+    first = page.widgets.add(TextField("name", (20, 20, 200, 40), value="Ada"))
+    page.widgets.add(TextField("name", (20, 50, 200, 70)))
+
+    del page.widgets[1]
+
+    assert doc.form["name"].widgets == [first]
+    assert page.text().count("Ada") == 1
+
+
+def test_removing_from_an_existing_form_keeps_the_others() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    before = set(doc.form)
+
+    del doc.form["person.first"]
+    del doc.pages[0].widgets[0]
+
+    assert set(doc.form) == before - {"person.first", "customer"}
+    assert "person" not in {name.split(".")[0] for name in doc.form}
+    reopened = pyropdf.open(doc.to_bytes())
+    assert set(reopened.form) == set(doc.form)
+
+
+@pytest.mark.parametrize("widget_only", [False, True])
+def test_failed_removal_restores_widgets_on_earlier_pages(*, widget_only: bool) -> None:
+    doc = pyropdf.Document()
+    doc.pages.new()
+    doc.pages.new()
+    page = doc.pages[0]
+    widget = page.widgets.add(TextField("name", (0, 0, 100, 20), value="Ada"))
+    # The later page fails admission after the earlier page was visited.
+    doc.pages[1].obj["Annots"] = [None] * 4097
+
+    if widget_only:
+        with pytest.raises(pyropdf.PdfError, match="too many annotations"):
+            del page.widgets[0]
+    else:
+        with pytest.raises(pyropdf.PdfError, match="too many annotations"):
+            del doc.form["name"]
+
+    doc.pages[1].obj["Annots"] = []
+    assert doc.form["name"].widgets == [widget]
+    assert doc.form["name"].value == "Ada"
+    assert "Ada" in page.text()
+
+
+@pytest.mark.parametrize("indirect", [False, True])
+def test_calculation_order_follows_nested_field_splits_and_removals(*, indirect: bool) -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    form = doc.catalog["AcroForm"]
+    order = [doc.form["person.first"].obj, doc.form["customer"].obj]
+    form["CO"] = doc.objects[doc.objects.add(order)] if indirect else order
+    doc.pages[0].widgets.add(TextField("person.first", (0, 0, 100, 20)))
+
+    assert form["CO"][0].xref == doc.form["person.first"].xref
+    del doc.form["person.first"]
+    assert [entry.xref for entry in form["CO"]] == [doc.form["customer"].xref]
+    assert len(pyropdf.open(doc.to_bytes()).catalog["AcroForm"]["CO"]) == 1
+
+
+@pytest.mark.parametrize("selection", [slice(None), slice(None, None, -1), slice(0, 3, 2)])
+def test_slices_remove_direct_widgets(selection: slice) -> None:
+    page = _page()
+    page.obj["Annots"] = [
+        {"Subtype": pyropdf.Name("Widget"), "Rect": [index * 30, 0, index * 30 + 20, 20]} for index in range(3)
+    ]
+    expected = list(range(3))
+    del expected[selection]
+
+    del page.widgets[selection]
+
+    assert [widget.rect.x0 for widget in page.widgets] == [index * 30 for index in expected]
+
+
+def test_a_cyclic_parent_chain_is_refused_without_hanging() -> None:
+    script = """
+import pyropdf
+page = pyropdf.Document().pages.new()
+page.widgets.add(pyropdf.TextField('name', (0, 0, 100, 20)))
+field = page.document.form['name']
+field.obj['Parent'] = field.obj
+try:
+    del page.document.form['name']
+except pyropdf.PdfError as error:
+    assert 'cycle' in str(error), str(error)
+else:
+    raise AssertionError('a cyclic parent chain was accepted')
+assert len(page.widgets) == 1
+assert page.document.form['name'].xref == field.xref
+"""
+    result = subprocess.run(  # noqa: S603 - fixed script under the active interpreter.
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False, timeout=10
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_removing_a_widget_preserves_its_object_generation() -> None:
+    raw = _build_form_pdf().replace(b"[9 0 R", b"[9 2 R").replace(b"\n9 0 obj", b"\n9 2 obj")
+    head, tail = raw.rsplit(b"\nxref\n", 1)
+    lines = tail.splitlines(keepends=True)
+    lines[10] = lines[10].replace(b"00000 n", b"00002 n")
+    doc = pyropdf.open(head + b"\nxref\n" + b"".join(lines))
+    assert doc.pages[0].widgets[0].obj.generation == 2
+
+    del doc.pages[0].widgets[0]
+
+    assert "customer" not in doc.form
+    assert len(doc.pages[0].widgets) == 7
+
+
+def test_removing_widgets_is_one_edit() -> None:
+    page = _page()
+    doc = page.document
+    page.widgets.add(TextField("name", (20, 20, 200, 40), value="Ada"))
+    page.widgets.add(TextField("other", (20, 50, 200, 70)))
+
+    del page.widgets[:]
+
+    assert len(doc.form) == 0
+    doc.history.undo()
+    assert list(doc.form) == ["name", "other"]
+    assert "Ada" in page.text()
+
+
+def test_removing_a_field_with_a_nonzero_generation() -> None:
+    doc = pyropdf.open(_generation_pdf())
+    del doc.form["name"]
+    assert len(doc.form) == 0
+    assert len(doc.pages[0].widgets) == 0
+    assert b"5 3 R" not in doc.to_bytes()
+
+    doc = pyropdf.open(_generation_pdf())
+    del doc.pages[0].widgets[0]
+    assert len(doc.form) == 0
+    assert b"5 3 R" not in doc.to_bytes()
+
+
+def test_removal_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_generation_pdf(), limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages[0]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        del page.widgets[0]
+    assert caught.value.code == "cancelled"

@@ -19,7 +19,7 @@ use pyropdf_engine::forms::{self as widgets, WidgetError};
 use pyropdf_engine::standard::winansi_byte;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::{DerivedMap, ReadDependencies, ReadSet, Reads};
-use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
@@ -2887,7 +2887,7 @@ fn add_widget(
         Some(existing) => {
             let parent = join(transaction, holder, existing.id, budget)?;
             widget.insert(Name::from("Parent"), Value::Reference(parent));
-            edit_array(transaction, parent, "Kids", budget, |kids| {
+            edit_array(transaction, parent, "Kids", budget, true, |kids| {
                 kids.push(Value::Reference(reference));
             })?;
             id(parent)
@@ -2900,7 +2900,7 @@ fn add_widget(
                 .write(parent.number(), &Value::Dict(field), budget)
                 .map_err(store)?;
             widget.insert(Name::from("Parent"), Value::Reference(parent));
-            edit_array(transaction, holder, "Fields", budget, |fields| {
+            edit_array(transaction, holder, "Fields", budget, true, |fields| {
                 fields.push(Value::Reference(parent));
             })?;
             id(parent)
@@ -2909,7 +2909,7 @@ fn add_widget(
             for (key, value) in field.iter() {
                 widget.insert(key.clone(), value.clone());
             }
-            edit_array(transaction, holder, "Fields", budget, |fields| {
+            edit_array(transaction, holder, "Fields", budget, true, |fields| {
                 fields.push(Value::Reference(reference));
             })?;
             id(reference)
@@ -3066,13 +3066,15 @@ fn dict_at(
 }
 
 /// Edits the array that entry `key` of object `holder` holds: an array
-/// object that the entry names, or else the entry itself, which an entry
-/// that is no array starts empty. The copies are charged to `budget`.
+/// object that the entry names, or else the entry itself. An entry that is
+/// no array starts empty with `create`, and stays as it is without. The
+/// copies are charged to `budget`.
 fn edit_array(
     transaction: &mut Transaction,
     holder: Reference,
     key: &str,
     budget: &Budget,
+    create: bool,
     edit: impl FnOnce(&mut Array),
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
@@ -3100,7 +3102,8 @@ fn edit_array(
     }
     let mut items = match dict.remove(key) {
         Some(Value::Array(items)) => items,
-        _ => Array::new(),
+        _ if create => Array::new(),
+        _ => return Ok(()),
     };
     edit(&mut items);
     dict.insert(Name::from(key), Value::Array(items));
@@ -3186,12 +3189,335 @@ fn join(
         Some(grand) => (grand, "Kids"),
         None => (holder, "Fields"),
     };
-    edit_array(transaction, holder_of, key, budget, swap)?;
-    let form = dict_at(transaction, holder, budget)?;
-    if form.is_some_and(|form| form.get("CO").is_some()) {
-        edit_array(transaction, holder, "CO", budget, swap)?;
-    }
+    edit_array(transaction, holder_of, key, budget, true, swap)?;
+    edit_array(transaction, holder, "CO", budget, false, swap)?;
     Ok(parent)
+}
+
+/// Takes the widgets that `handles`, each `(index, object)`, name off page
+/// object `(number, generation)` and out of the form, in one edit that
+/// reads the page and the form after taking the writer lock. A widget that
+/// the form knows leaves every page that lists it and its field's `/Kids`;
+/// a field leaves with its last widget, as [`form_field_remove`] removes
+/// it. Returns `false` for a page that is gone.
+#[pyfunction]
+pub fn widget_remove(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    handles: Vec<(u32, Id)>,
+) -> PyResult<bool> {
+    let draft = document.in_transaction();
+    let cache = if draft {
+        &document.draft_fill_index
+    } else {
+        &document.fill_index
+    };
+    let removed = editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, budget| {
+            budget
+                .check(LimitCode::AnnotationCount, handles.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let mut positions = BudgetVec::new(budget);
+            let mut widgets = BudgetVec::new(budget);
+            for &(index, handle) in &handles {
+                let (position, dict) = annots.find(index, handle)?;
+                if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                    return Err(StaleObjectError::new_err(format!(
+                        "annotation {} is no longer a widget",
+                        handle.0
+                    )));
+                }
+                if handle == (0, 0) {
+                    positions.try_push(position)
+                } else {
+                    widgets.try_push(handle)
+                }
+                .map_err(|e| limit_error(&e))?;
+            }
+            let mut positions = positions.into_vec();
+            let mut widgets = widgets.into_vec();
+            positions.sort_unstable();
+            positions.dedup();
+            widgets.sort_unstable();
+            widgets.dedup();
+            if positions.is_empty() && widgets.is_empty() {
+                return Ok(());
+            }
+            remove_widgets(
+                transaction,
+                annots,
+                &positions,
+                &widgets,
+                budget,
+                (cache, draft),
+            )
+        },
+    )?;
+    Ok(removed.is_some())
+}
+
+/// Implements [`widget_remove`] in its transaction, for the sorted
+/// `widgets` and the sorted `positions` of direct widgets on the page of
+/// `annots`.
+fn remove_widgets(
+    transaction: &mut Transaction,
+    annots: &Annots<'_>,
+    positions: &[usize],
+    widgets: &[Id],
+    budget: &Budget,
+    (cache, draft): (&FillCache, bool),
+) -> PyResult<()> {
+    let before = base(transaction, draft);
+    let index = cache.get(&before, budget)?;
+    let form = &index.topology.form;
+    // The fields that leave with their last widget, and the widgets that
+    // only leave their field.
+    let mut fields = BudgetVec::new(budget);
+    let mut seen = HashSet::new();
+    let mut detached = BudgetVec::new(budget);
+    let mut unlisted = BudgetVec::new(budget);
+    for &widget in widgets {
+        unlisted.try_push(widget).map_err(|e| limit_error(&e))?;
+        let Some(owner) = form.owner(widget) else {
+            continue;
+        };
+        let field = form.field(owner).ok_or_else(|| stale(owner))?;
+        let last = owner == widget
+            || field
+                .widgets
+                .iter()
+                .all(|kid| widgets.binary_search(kid).is_ok());
+        if !last {
+            detached.try_push(widget).map_err(|e| limit_error(&e))?;
+        } else if insert_set(&mut seen, owner, budget)? {
+            fields.try_push(owner).map_err(|e| limit_error(&e))?;
+            for &kid in &field.widgets {
+                unlisted.try_push(kid).map_err(|e| limit_error(&e))?;
+            }
+        }
+    }
+    let mut unlisted = unlisted.into_vec();
+    unlisted.sort_unstable();
+    unlisted.dedup();
+    let (version, pages, page) = annots.pages();
+    unlist(
+        transaction,
+        (version, pages),
+        &unlisted,
+        (page, positions),
+        budget,
+    )?;
+    if fields.is_empty() && detached.is_empty() {
+        return Ok(());
+    }
+    let holder = form_object(transaction, budget)?;
+    for field in fields.into_vec() {
+        remove_field(transaction, holder, field, budget)?;
+    }
+    for widget in detached.into_vec() {
+        let widget = Reference::new(widget.0, widget.1);
+        let parent = parent(transaction, widget, budget)?;
+        detach(transaction, holder, parent, widget, budget)?;
+    }
+    Ok(())
+}
+
+/// Takes field `field` out of the form with its widgets, in one edit that
+/// reads the pages and the form after taking the writer lock: its widgets
+/// leave every page that lists them, and the field leaves the field tree
+/// and the calculation order with each named parent that it leaves without
+/// kids.
+#[pyfunction]
+pub fn form_field_remove(py: Python<'_>, document: &_Document, field: Id) -> PyResult<()> {
+    let draft = document.in_transaction();
+    let cache = if draft {
+        &document.draft_fill_index
+    } else {
+        &document.fill_index
+    };
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = (|| {
+            let before = base(transaction, draft);
+            let index = cache.get(&before, budget)?;
+            let found = index
+                .topology
+                .form
+                .field(field)
+                .ok_or_else(|| stale(field))?;
+            let mut widgets = BudgetVec::new(budget);
+            for &widget in &found.widgets {
+                widgets.try_push(widget).map_err(|e| limit_error(&e))?;
+            }
+            let mut widgets = widgets.into_vec();
+            widgets.sort_unstable();
+            widgets.dedup();
+            let version = transaction.snapshot();
+            let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
+                .map_err(|e| store_error(&e))?;
+            unlist(transaction, (&version, &pages), &widgets, (0, &[]), budget)?;
+            let holder = form_object(transaction, budget)?;
+            remove_field(transaction, holder, field, budget)
+        })();
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
+
+/// Takes the sorted `widgets` off every page of `pages`, a version and its
+/// page index that the edit has not yet changed, and the direct annotations
+/// at the sorted `positions` off its page `page`. A page whose `/Annots`
+/// changes has its other direct annotations stored as objects, so that a
+/// handle to one that moved goes stale rather than naming another.
+fn unlist(
+    transaction: &mut Transaction,
+    (version, index): (&Arc<Version>, &Arc<PageIndex>),
+    widgets: &[Id],
+    (page, positions): (usize, &[usize]),
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    for at in 0..index.pages().len() {
+        let annots = Annots::at(Arc::clone(version), Arc::clone(index), budget, at)?;
+        let listed = |position: usize, item: &Value| match item {
+            Value::Reference(reference) => widgets.binary_search(&id(*reference)).is_ok(),
+            _ => at == page && positions.binary_search(&position).is_ok(),
+        };
+        if !annots
+            .items
+            .iter()
+            .enumerate()
+            .any(|(position, item)| listed(position, item))
+        {
+            continue;
+        }
+        let mut items = BudgetVec::new(budget);
+        for (position, item) in annots.items.iter().enumerate() {
+            if listed(position, item) {
+                continue;
+            }
+            charge_copy(CopyPart::Value(item), budget)?;
+            let item = match item {
+                Value::Dict(entry) => {
+                    let reference = transaction.allocate().map_err(store)?;
+                    transaction
+                        .write(reference.number(), &Value::Dict(entry.clone()), budget)
+                        .map_err(store)?;
+                    Value::Reference(reference)
+                }
+                item => item.clone(),
+            };
+            items.try_push(item).map_err(|e| limit_error(&e))?;
+        }
+        annots.write_items(transaction, Array::from(items.into_vec()), budget)?;
+    }
+    Ok(())
+}
+
+/// Returns the `/Parent` reference of object `node`.
+fn parent(
+    transaction: &Transaction,
+    node: Reference,
+    budget: &Budget,
+) -> PyResult<Option<Reference>> {
+    let object = transaction
+        .version()
+        .get(node.number(), budget)
+        .map_err(|e| store_error(&e))?;
+    Ok(match object.as_ref() {
+        Some(object) if object.generation() == node.generation() => match &**object.value() {
+            Value::Dict(dict) => match dict.get("Parent") {
+                Some(Value::Reference(parent)) => Some(*parent),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// Takes field `field` out of the field tree of form `holder` and its
+/// calculation order, with each named parent that it leaves without kids.
+fn remove_field(
+    transaction: &mut Transaction,
+    holder: Reference,
+    field: Id,
+    budget: &Budget,
+) -> PyResult<()> {
+    let mut node = Reference::new(field.0, field.1);
+    let mut visited = HashSet::new();
+    loop {
+        if !visit(&mut visited, id(node), budget)? {
+            return Err(PdfError::new_err(
+                "the field's parent chain contains a cycle",
+            ));
+        }
+        let parent = parent(transaction, node, budget)?;
+        detach(transaction, holder, parent, node, budget)?;
+        let Some(parent) = parent else {
+            return Ok(());
+        };
+        let version = transaction.version();
+        let object = version
+            .get(parent.number(), budget)
+            .map_err(|e| store_error(&e))?;
+        let Some(object) = object.filter(|object| object.generation() == parent.generation())
+        else {
+            return Ok(());
+        };
+        let Value::Dict(dict) = &**object.value() else {
+            return Ok(());
+        };
+        let named = dict.get("T").is_some() || dict.get("FT").is_some();
+        if !named || !childless(transaction, dict, budget)? {
+            return Ok(());
+        }
+        node = parent;
+    }
+}
+
+/// Returns whether the `/Kids` of field `dict` lists no kid.
+fn childless(transaction: &Transaction, dict: &Dict, budget: &Budget) -> PyResult<bool> {
+    let kids = match dict.get("Kids") {
+        Some(Value::Reference(kids)) => *kids,
+        Some(Value::Array(kids)) => return Ok(kids.is_empty()),
+        _ => return Ok(true),
+    };
+    let object = transaction
+        .version()
+        .get(kids.number(), budget)
+        .map_err(|e| store_error(&e))?;
+    Ok(match object.as_ref() {
+        Some(object) if object.generation() == kids.generation() => {
+            !matches!(&**object.value(), Value::Array(kids) if !kids.is_empty())
+        }
+        _ => true,
+    })
+}
+
+/// Takes `node` out of its parent's `/Kids`, or the form's `/Fields`, and
+/// out of the calculation order.
+fn detach(
+    transaction: &mut Transaction,
+    holder: Reference,
+    parent: Option<Reference>,
+    node: Reference,
+    budget: &Budget,
+) -> PyResult<()> {
+    let gone = |items: &mut Array| items.retain(|item| *item != Value::Reference(node));
+    edit_array(transaction, holder, "CO", budget, false, gone)?;
+    match parent {
+        Some(parent) => edit_array(transaction, parent, "Kids", budget, false, gone),
+        None => edit_array(transaction, holder, "Fields", budget, false, gone),
+    }
 }
 
 /// Returns how many form walks the document's memos reused and how many

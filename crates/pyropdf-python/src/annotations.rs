@@ -255,6 +255,17 @@ impl<'b> Annots<'b> {
         let Some(at) = index.index_of(Reference::new(number, generation)) else {
             return Ok(None);
         };
+        Self::at(version, index, budget, at).map(Some)
+    }
+
+    /// Reads the annotations of the page at `at` of `index`, a page index
+    /// of `version`.
+    pub(crate) fn at(
+        version: Arc<Version>,
+        index: Arc<PageIndex>,
+        budget: &'b Budget,
+        at: usize,
+    ) -> PyResult<Self> {
         let page = &index.pages()[at];
         let crop = display_box(page);
         let rotation = rotation(page.rotate());
@@ -270,7 +281,7 @@ impl<'b> Annots<'b> {
         budget
             .check(LimitCode::AnnotationCount, items.len() as u64)
             .map_err(|e| limit_error(&e))?;
-        Ok(Some(Self {
+        Ok(Self {
             version,
             index,
             at,
@@ -279,11 +290,17 @@ impl<'b> Annots<'b> {
             rotation,
             array,
             items,
-        }))
+        })
     }
 
     pub(crate) fn page(&self) -> &Page {
         &self.index.pages()[self.at]
+    }
+
+    /// Returns the version that the annotations were read from, its page
+    /// index, and the position of their page in it.
+    pub(crate) fn pages(&self) -> (&Arc<Version>, &Arc<PageIndex>, usize) {
+        (&self.version, &self.index, self.at)
     }
 
     /// Returns the object and dictionary of the entry `item`, or `None`
