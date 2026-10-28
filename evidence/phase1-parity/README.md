@@ -12,6 +12,8 @@ their outputs is explained here.
 | `causes.toml` | Matches each kind of difference to a cause below |
 | `report.md` | Pages that are equal per document and output, with the causes of the rest |
 | `results.json` | The kind and measurements of every compared output |
+| `metadata.json` | The measured pyropdf revision, frozen oracle revision, runtimes, and corpus hashes |
+| `diagnose_annotations.py ORACLE_PYTHON` | Reproduces the annotation-isolation experiment and writes `annotation-diagnostic.json` |
 
 Per page, `dump.py` records:
 
@@ -28,7 +30,7 @@ Both engines run without fallback fonts: pylopdf is installed without
 extras, and pyropdf has none. `tests/test_parity.py` checks that the report
 covers the corpus and leaves no difference unexplained. When
 `PYROPDF_PARITY_PYLOPDF` names the Python of `target/parity/pylopdf-env`, it
-also redumps two documents and checks their kinds against `results.json`.
+also redumps three documents and checks their kinds against `results.json`.
 
 ```bash
 python3 evidence/phase1-parity/run.py ~/ghq/github.com/yhay81/pylopdf
@@ -49,14 +51,38 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 
 ## Causes
 
-None. On 2026-10-27, with pyropdf at the head of the stack through #148, every
-compared output of every page of all 14 documents (155 pages) was identical:
-the dumps of the two engines were byte-for-byte equal, and so was every
-raster. No output raised in either engine. `causes.toml` therefore lists no
-cause. A later difference gets a cause there and a paragraph here, or a fix.
+The review run on 2026-10-28 covers 14 documents and 155 pages. All JSON
+reading outputs and all document Markdown outputs match. Of the 155
+rasters, 154 match byte for byte; one is close under the stated tolerance.
+No output raises. `metadata.json` identifies the measured source revision
+and corpus hashes. The oracle cache is reused only with a matching freeze
+stamp and an importable package; an unstamped or different cache is rebuilt.
 
-Numbers are rounded to 3 decimals before they are compared, so the report
-says nothing about differences below 0.0005 point.
+### Missing highlight appearance
+
+`pdfium-links-highlights-annots.pdf`, page 1, differs only at its Highlight
+annotation without `/AP`: pixel bounds x=293..348, y=250..261, within the
+annotation's PDF rectangle [293, 530, 349, 542]. Pixels with a channel delta
+over 16 occupy 0.139% of the page (the threshold is 0.5%); the mean maximum
+channel delta over all pixels is 0.295. Disabling annotations makes the
+page byte-identical, as `annotation-diagnostic.json` records with hashes.
+
+Frozen pylopdf synthesizes missing appearances in
+`rust/src/document/rendering.rs` via `synthesize_missing_appearances_for_render`;
+its `rust/src/annotation_appearance.rs` gives highlights a Multiply blend.
+The measured pyropdf version passes annotations to hayro without that
+synthesis. The port is tracked by #169 / PR #172. This is an explained,
+within-tolerance difference, rather than byte-identical rendering.
+
+Review corrected the original comparator's early equality return for
+matching raster metadata: equal dimensions and stride now still compare
+actual pixels. Identical errors count as errors, not successful parity,
+and incomplete raster bytes fail the comparison. The report test checks
+actual corpus page counts and regenerates the report from results/causes.
+
+Numbers are rounded to 3 decimals before comparison, and numeric values
+within 0.01 point count as equal. Thus an equal result does not establish
+bitwise equality of unrounded floating-point geometry.
 
 ## Not compared
 
