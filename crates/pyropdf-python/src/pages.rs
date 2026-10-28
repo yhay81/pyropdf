@@ -390,9 +390,16 @@ pub fn import_pages(
         }
         let savepoint = transaction.savepoint();
         let result = (|| {
+            let defaults = if fields.is_empty() {
+                forms::ImportDefaults::default()
+            } else {
+                forms::plan_imported_defaults(&transaction.snapshot(), &version, budget)?
+            };
             let along = import::Along {
                 objects: &fields,
                 found: &calculation,
+                values: &defaults.values,
+                copies: defaults.renames(),
             };
             let imported = import::import(
                 transaction,
@@ -429,7 +436,15 @@ pub fn import_pages(
             for &field in imported.found.iter().flatten() {
                 calculation.try_push(field).map_err(limit)?;
             }
-            forms::register_imported(transaction, &fields, &calculation, budget)
+            forms::register_imported(
+                transaction,
+                &fields,
+                &calculation,
+                &defaults,
+                &imported.values,
+                &imported.copies,
+                budget,
+            )
         })();
         if result.is_err() {
             transaction.rollback(savepoint);

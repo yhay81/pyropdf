@@ -48,9 +48,6 @@ REJECTED: dict[str, str] = {
         for edit in ("add", "write")
         for mode in ("full", "incremental")
     },
-    # Deleting the only tagged page empties the structure parent tree's
-    # /Nums, which the Arlington model rejects.
-    **{f"arlington1.7 pdfua-1-delete_page-{mode}.pdf": "#338" for mode in ("full", "incremental")},
 }
 
 #: The Arlington extensions that a PDF/A part adds to the PDF version it is based on, by flavour.
