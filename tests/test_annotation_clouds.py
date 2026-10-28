@@ -147,3 +147,11 @@ def test_other_producers_clouds_are_read_and_drawn() -> None:
     # The clamped cloud leaves gaps in its top row; the solid border does not.
     assert len([x for x in _ink_columns(pixmap, 11) if x < 100]) < 70
     assert [x for x in _ink_columns(pixmap, 10) if x > 100] == list(range(110, 190))
+
+
+def test_overflowing_cloud_geometry_refuses_atomically() -> None:
+    page = pyropdf.Document().pages.new((100, 100))
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.MalformedPdfError, match="nonfinite"):
+        page.annotations.add(pyropdf.Circle((0, 0, 1e308, 1e308), clouds=2))
+    assert page.document.to_bytes() == before

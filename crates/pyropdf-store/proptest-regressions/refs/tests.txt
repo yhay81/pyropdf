@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7bc32c87a3d96ea1e15fc0dc35c3d75e770b4bed255839eea815b8ba0dbcf623 # shrinks to elements = [Element { parent: None, page: None, content: [], refers: None }, Element { parent: None, page: None, content: [], refers: None }, Element { parent: None, page: None, content: [], refers: None }, Element { parent: None, page: None, content: [], refers: None }, Element { parent: None, page: None, content: [], refers: Some(6) }, Element { parent: Some(4), page: Some(0), content: [Mcid], refers: None }, Element { parent: None, page: None, content: [Mcr(0)], refers: None }], flags = [84, 0, 0, 0, 0]
+cc f219ad7d5ed14b033ce88d6545dd02118853af7219cc820dc1ec1b84976d0789 # shrinks to elements = [Element { parent: None, page: None, content: [Objr(2)], refers: None }], flags = [0]

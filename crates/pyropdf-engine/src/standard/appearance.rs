@@ -20,7 +20,9 @@ pub const DA_FONTS: [(&str, &str); 14] = [
     ("ZaDb", "ZapfDingbats"),
 ];
 
-/// The longest `/DA` string that is read; a longer one reads as empty.
+use super::layout::LayoutError;
+
+/// The longest `/DA` string that is read.
 pub const MAX_DEFAULT_APPEARANCE: usize = 4_096;
 
 /// The font resource name, size, and colour of a `/DA` string.
@@ -37,17 +39,17 @@ pub struct DefaultAppearance {
 impl DefaultAppearance {
     /// Parses a `/DA` string: the last `Tf` and the last colour operator,
     /// `g`, `rg`, or `k`, whose CMYK converts naively to RGB. What the
-    /// string does not set is Helvetica (`Helv`), size 0, and black, and so
-    /// is everything of a string longer than [`MAX_DEFAULT_APPEARANCE`].
-    pub fn parse(bytes: &[u8]) -> Self {
+    /// string does not set defaults to Helvetica (`Helv`), size 0, and black.
+    /// A string longer than [`MAX_DEFAULT_APPEARANCE`] is refused.
+    pub fn parse(bytes: &[u8]) -> Result<Self, LayoutError> {
+        if bytes.len() > MAX_DEFAULT_APPEARANCE {
+            return Err(LayoutError::AppearanceTooLong);
+        }
         let mut result = Self {
             font: "Helv".to_owned(),
             size: 0.0,
             color: (0.0, 0.0, 0.0),
         };
-        if bytes.len() > MAX_DEFAULT_APPEARANCE {
-            return result;
-        }
         // The operators read at most four operands, so only the last four
         // are kept.
         let mut operands: [&[u8]; 4] = [b""; 4];
@@ -114,7 +116,7 @@ impl DefaultAppearance {
             }
             count = 0;
         }
-        result
+        Ok(result)
     }
 }
 

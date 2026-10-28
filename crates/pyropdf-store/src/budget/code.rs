@@ -64,9 +64,31 @@ pub enum LimitCode {
     SearchInputSize,
     /// `Page.search` finds more matches than the call's `max_hits`.
     SearchHitCount,
-    /// The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or
-    /// `Table.markdown` returns is larger than the call's `max_size`.
-    MarkdownOutputSize,
+    /// Styled text or table extraction collects more than 4,096 vector rules,
+    /// including inferred table dividers.
+    TextRuleCount,
+    /// A candidate table needs more than 4,096 row-column slots.
+    TableCellCount,
+    /// Reconstructing merged cells in one table examines more than 65,536
+    /// candidate spans.
+    TableSpanCandidateCount,
+    /// Text table detection encounters a row with more than 32 separated
+    /// columns.
+    TableColumnCount,
+    /// An invisible OCR layer has more than 4,096 words.
+    OcrLayerWordCount,
+    /// An invisible OCR layer has more than 1 MiB of UTF-8 text.
+    OcrLayerTextSize,
+    /// An invisible OCR layer needs more than 65,534 distinct character IDs.
+    OcrLayerCharacterCount,
+    /// The raster expanded to RGBA for OCR exceeds 512 MiB.
+    OcrRasterSize,
+    /// OCR detection finds more than 4,096 candidate regions across its tiles
+    /// before merging overlaps.
+    OcrDetectionCount,
+    /// OCR recognition produces more than 32 MiB of UTF-8 text before
+    /// confidence filtering.
+    OcrTextSize,
     /// The detector, recognizer, and dictionary that `OcrEngine` loads hold
     /// more bytes together than its `max_model_size`.
     OcrModelSize,
@@ -77,6 +99,9 @@ pub enum LimitCode {
     /// A value written to the document nests arrays and dictionaries deeper
     /// than its limit.
     ObjectValueDepth,
+    /// The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or
+    /// `Table.markdown` returns is larger than the call's `max_size`.
+    MarkdownOutputSize,
     /// Saving writes more bytes than the call's `max_size`.
     PdfOutputSize,
     /// Encoding a pixmap writes more bytes than the call's `max_size`.
@@ -94,19 +119,38 @@ pub enum LimitCode {
     /// An attachment's name, file name, or description is longer in UTF-8 than
     /// 1 MiB.
     EmbeddedFileInputSize,
+    /// A page's Annots array, including popups, links, and widgets, or an
+    /// annotation removal batch has more than 4,096 entries.
+    AnnotationCount,
+    /// An annotation read returns more than 1 MiB of text, or its encoded text
+    /// exceeds 1 MiB, counted across the page for a listing.
+    AnnotationTextSize,
+    /// An annotation border has more than 32 dash lengths.
+    AnnotationDashCount,
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
     /// The value that setting `Field.value` writes is longer than 1 MiB in
     /// UTF-8.
     FormFieldInputSize,
+    /// A form widget's inherited default appearance is longer than 4,096 bytes.
+    FormDefaultAppearanceSize,
+    /// A form widget's field parent chain contains more than 64 existing
+    /// fields.
+    FormFieldParentDepth,
+    /// A form script, or the scripts of one field or widget together, are
+    /// longer than 1 MiB in UTF-8, read or written.
+    ScriptSize,
     /// The text that a form field's appearance draws lays out in more than
     /// 4,096 lines.
     TextLineCount,
     /// The document's named destinations, its `/Names /Dests` tree and its
-    /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes,
-    /// or more than 131,072 tree edges.
+    /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
     NamedDestinationCount,
+    /// The named-destination tree has more than 131,072 child edges.
+    NamedDestinationEdgeCount,
+    /// The named-destination tree has more than 32 levels.
+    NamedDestinationDepth,
     /// The names of the document's named destinations are longer than 16 MiB
     /// together.
     NamedDestinationTextSize,
@@ -121,9 +165,9 @@ pub enum LimitCode {
     /// item writes are longer than 16 MiB together in UTF-8 or as PDF text
     /// strings, or leave the outline's text above that.
     TocInputSize,
-    /// A structural edit of pages walks a structure tree that nests elements
-    /// deeper than 256 levels, or whose parent tree or ID tree nests nodes
-    /// deeper than 32 levels.
+    /// A structural edit of pages walks a structure tree deeper than 256 levels
+    /// including its root, a parent tree or ID tree deeper than 32 levels, or
+    /// an acyclic reference chain longer than 32 references.
     StructureTreeCount,
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
@@ -136,11 +180,25 @@ pub enum LimitCode {
     Deadline,
     /// A cancellation token of the operation is cancelled.
     Cancelled,
+    /// A text-markup annotation has more than 4,096 quadrilaterals.
+    AnnotationQuadCount,
+    /// An annotation's geometry, including generated squiggly points, has more
+    /// than 65,536 points.
+    AnnotationPointCount,
+    /// One generated annotation appearance contains more than 16 MiB of
+    /// content.
+    AnnotationAppearanceSize,
+    /// One render synthesizes more than 4,096 missing annotation appearances
+    /// across the document.
+    AnnotationSynthesisCount,
+    /// Missing annotation appearances generated for one render contain more
+    /// than 262,144 path points together.
+    AnnotationSynthesisPointCount,
 }
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 44] = [
+    pub const ALL: [Self; 67] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -160,11 +218,21 @@ impl LimitCode {
         Self::TextSize,
         Self::SearchInputSize,
         Self::SearchHitCount,
-        Self::MarkdownOutputSize,
+        Self::TextRuleCount,
+        Self::TableCellCount,
+        Self::TableSpanCandidateCount,
+        Self::TableColumnCount,
+        Self::OcrLayerWordCount,
+        Self::OcrLayerTextSize,
+        Self::OcrLayerCharacterCount,
+        Self::OcrRasterSize,
+        Self::OcrDetectionCount,
+        Self::OcrTextSize,
         Self::OcrModelSize,
         Self::OcrDictionaryEntries,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
+        Self::MarkdownOutputSize,
         Self::PdfOutputSize,
         Self::PixmapOutputSize,
         Self::SvgOutputSize,
@@ -172,10 +240,18 @@ impl LimitCode {
         Self::PasswordInputSize,
         Self::EmbeddedFileSize,
         Self::EmbeddedFileInputSize,
+        Self::AnnotationCount,
+        Self::AnnotationTextSize,
+        Self::AnnotationDashCount,
         Self::AnnotationInputSize,
         Self::FormFieldInputSize,
+        Self::FormDefaultAppearanceSize,
+        Self::FormFieldParentDepth,
+        Self::ScriptSize,
         Self::TextLineCount,
         Self::NamedDestinationCount,
+        Self::NamedDestinationEdgeCount,
+        Self::NamedDestinationDepth,
         Self::NamedDestinationTextSize,
         Self::TocEntryCount,
         Self::TocTextSize,
@@ -185,6 +261,11 @@ impl LimitCode {
         Self::MemorySize,
         Self::Deadline,
         Self::Cancelled,
+        Self::AnnotationQuadCount,
+        Self::AnnotationPointCount,
+        Self::AnnotationAppearanceSize,
+        Self::AnnotationSynthesisCount,
+        Self::AnnotationSynthesisPointCount,
     ];
 
     /// The stable code, as Python's `LimitError.code` carries it.
@@ -210,11 +291,21 @@ impl LimitCode {
             Self::TextSize => "text_size",
             Self::SearchInputSize => "search_input_size",
             Self::SearchHitCount => "search_hit_count",
-            Self::MarkdownOutputSize => "markdown_output_size",
+            Self::TextRuleCount => "text_rule_count",
+            Self::TableCellCount => "table_cell_count",
+            Self::TableSpanCandidateCount => "table_span_candidate_count",
+            Self::TableColumnCount => "table_column_count",
+            Self::OcrLayerWordCount => "ocr_layer_word_count",
+            Self::OcrLayerTextSize => "ocr_layer_text_size",
+            Self::OcrLayerCharacterCount => "ocr_layer_character_count",
+            Self::OcrRasterSize => "ocr_raster_size",
+            Self::OcrDetectionCount => "ocr_detection_count",
+            Self::OcrTextSize => "ocr_text_size",
             Self::OcrModelSize => "ocr_model_size",
             Self::OcrDictionaryEntries => "ocr_dictionary_entries",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
+            Self::MarkdownOutputSize => "markdown_output_size",
             Self::PdfOutputSize => "pdf_output_size",
             Self::PixmapOutputSize => "pixmap_output_size",
             Self::SvgOutputSize => "svg_output_size",
@@ -222,10 +313,18 @@ impl LimitCode {
             Self::PasswordInputSize => "password_input_size",
             Self::EmbeddedFileSize => "embedded_file_size",
             Self::EmbeddedFileInputSize => "embedded_file_input_size",
+            Self::AnnotationCount => "annotation_count",
+            Self::AnnotationTextSize => "annotation_text_size",
+            Self::AnnotationDashCount => "annotation_dash_count",
             Self::AnnotationInputSize => "annotation_input_size",
             Self::FormFieldInputSize => "form_field_input_size",
+            Self::FormDefaultAppearanceSize => "form_default_appearance_size",
+            Self::FormFieldParentDepth => "form_field_parent_depth",
+            Self::ScriptSize => "script_size",
             Self::TextLineCount => "text_line_count",
             Self::NamedDestinationCount => "named_destination_count",
+            Self::NamedDestinationEdgeCount => "named_destination_edge_count",
+            Self::NamedDestinationDepth => "named_destination_depth",
             Self::NamedDestinationTextSize => "named_destination_text_size",
             Self::TocEntryCount => "toc_entry_count",
             Self::TocTextSize => "toc_text_size",
@@ -235,6 +334,11 @@ impl LimitCode {
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
             Self::Cancelled => "cancelled",
+            Self::AnnotationQuadCount => "annotation_quad_count",
+            Self::AnnotationPointCount => "annotation_point_count",
+            Self::AnnotationAppearanceSize => "annotation_appearance_size",
+            Self::AnnotationSynthesisCount => "annotation_synthesis_count",
+            Self::AnnotationSynthesisPointCount => "annotation_synthesis_point_count",
         }
     }
 
@@ -262,11 +366,21 @@ impl LimitCode {
             Self::TextSize => "the text is too large",
             Self::SearchInputSize => "the search text is too long",
             Self::SearchHitCount => "the search finds too many matches",
-            Self::MarkdownOutputSize => "the Markdown is too large",
+            Self::TextRuleCount => "the page has too many vector rules to read",
+            Self::TableCellCount => "the candidate table has too many cells",
+            Self::TableSpanCandidateCount => "the table needs too many cell span candidates",
+            Self::TableColumnCount => "the text table has too many columns",
+            Self::OcrLayerWordCount => "the OCR layer has too many words",
+            Self::OcrLayerTextSize => "the OCR layer text is too long",
+            Self::OcrLayerCharacterCount => "the OCR layer has too many distinct characters",
+            Self::OcrRasterSize => "the OCR raster is too large",
+            Self::OcrDetectionCount => "the OCR detector found too many text regions",
+            Self::OcrTextSize => "the recognized OCR text is too long",
             Self::OcrModelSize => "the OCR model set is too large",
             Self::OcrDictionaryEntries => "the OCR dictionary has too many entries",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
+            Self::MarkdownOutputSize => "the Markdown is too large",
             Self::PdfOutputSize => "the PDF output is too large",
             Self::PixmapOutputSize => "the encoded image is too large",
             Self::SvgOutputSize => "the SVG document is too large",
@@ -274,10 +388,18 @@ impl LimitCode {
             Self::PasswordInputSize => "the password is too long",
             Self::EmbeddedFileSize => "the attachment is too large",
             Self::EmbeddedFileInputSize => "the attachment's text is too long",
+            Self::AnnotationCount => "the page has too many annotations",
+            Self::AnnotationTextSize => "the annotation text is too long",
+            Self::AnnotationDashCount => "the annotation border has too many dash lengths",
             Self::AnnotationInputSize => "the annotation text is too long",
             Self::FormFieldInputSize => "the form field value is too long",
+            Self::FormDefaultAppearanceSize => "the form default appearance is too long",
+            Self::FormFieldParentDepth => "the form field parent chain is too deep",
+            Self::ScriptSize => "the form script is too long",
             Self::TextLineCount => "the text has too many lines",
             Self::NamedDestinationCount => "the named destinations are too many",
+            Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
+            Self::NamedDestinationDepth => "the named-destination tree is too deep",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
             Self::TocEntryCount => "the outline has too many items",
             Self::TocTextSize => "the outline text is too long",
@@ -287,6 +409,13 @@ impl LimitCode {
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
             Self::Cancelled => "the operation was cancelled",
+            Self::AnnotationQuadCount => "the annotation has too many quadrilaterals",
+            Self::AnnotationPointCount => "the annotation has too many points",
+            Self::AnnotationAppearanceSize => "the annotation appearance is too large",
+            Self::AnnotationSynthesisCount => "the render needs too many annotation appearances",
+            Self::AnnotationSynthesisPointCount => {
+                "the render needs too many annotation path points"
+            }
         }
     }
 
@@ -314,11 +443,21 @@ impl LimitCode {
             Self::TextSize => Some("bytes"),
             Self::SearchInputSize => Some("bytes"),
             Self::SearchHitCount => Some("matches"),
-            Self::MarkdownOutputSize => Some("bytes"),
+            Self::TextRuleCount => Some("rules"),
+            Self::TableCellCount => Some("cells"),
+            Self::TableSpanCandidateCount => Some("candidates"),
+            Self::TableColumnCount => Some("columns"),
+            Self::OcrLayerWordCount => Some("words"),
+            Self::OcrLayerTextSize => Some("bytes"),
+            Self::OcrLayerCharacterCount => Some("characters"),
+            Self::OcrRasterSize => Some("bytes"),
+            Self::OcrDetectionCount => Some("regions"),
+            Self::OcrTextSize => Some("bytes"),
             Self::OcrModelSize => Some("bytes"),
             Self::OcrDictionaryEntries => Some("entries"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
+            Self::MarkdownOutputSize => Some("bytes"),
             Self::PdfOutputSize => Some("bytes"),
             Self::PixmapOutputSize => Some("bytes"),
             Self::SvgOutputSize => Some("bytes"),
@@ -326,10 +465,18 @@ impl LimitCode {
             Self::PasswordInputSize => Some("bytes"),
             Self::EmbeddedFileSize => Some("bytes"),
             Self::EmbeddedFileInputSize => Some("bytes"),
+            Self::AnnotationCount => Some("entries"),
+            Self::AnnotationTextSize => Some("bytes"),
+            Self::AnnotationDashCount => Some("lengths"),
             Self::AnnotationInputSize => Some("bytes"),
             Self::FormFieldInputSize => Some("bytes"),
+            Self::FormDefaultAppearanceSize => Some("bytes"),
+            Self::FormFieldParentDepth => Some("levels"),
+            Self::ScriptSize => Some("bytes"),
             Self::TextLineCount => Some("lines"),
             Self::NamedDestinationCount => Some("entries"),
+            Self::NamedDestinationEdgeCount => Some("edges"),
+            Self::NamedDestinationDepth => Some("levels"),
             Self::NamedDestinationTextSize => Some("bytes"),
             Self::TocEntryCount => Some("entries"),
             Self::TocTextSize => Some("bytes"),
@@ -339,6 +486,11 @@ impl LimitCode {
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
             Self::Cancelled => None,
+            Self::AnnotationQuadCount => Some("quadrilaterals"),
+            Self::AnnotationPointCount => Some("points"),
+            Self::AnnotationAppearanceSize => Some("bytes"),
+            Self::AnnotationSynthesisCount => Some("appearances"),
+            Self::AnnotationSynthesisPointCount => Some("points"),
         }
     }
 
@@ -366,11 +518,21 @@ impl LimitCode {
             Self::TextSize => Some(67_108_864),
             Self::SearchInputSize => Some(4_096),
             Self::SearchHitCount => Some(4_096),
-            Self::MarkdownOutputSize => Some(67_108_864),
+            Self::TextRuleCount => Some(4_096),
+            Self::TableCellCount => Some(4_096),
+            Self::TableSpanCandidateCount => Some(65_536),
+            Self::TableColumnCount => Some(32),
+            Self::OcrLayerWordCount => Some(4_096),
+            Self::OcrLayerTextSize => Some(1_048_576),
+            Self::OcrLayerCharacterCount => Some(65_534),
+            Self::OcrRasterSize => Some(536_870_912),
+            Self::OcrDetectionCount => Some(4_096),
+            Self::OcrTextSize => Some(33_554_432),
             Self::OcrModelSize => Some(67_108_864),
             Self::OcrDictionaryEntries => Some(65_536),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
+            Self::MarkdownOutputSize => Some(67_108_864),
             Self::PdfOutputSize => Some(536_870_912),
             Self::PixmapOutputSize => Some(67_108_864),
             Self::SvgOutputSize => Some(67_108_864),
@@ -378,10 +540,18 @@ impl LimitCode {
             Self::PasswordInputSize => Some(127),
             Self::EmbeddedFileSize => Some(67_108_864),
             Self::EmbeddedFileInputSize => Some(1_048_576),
+            Self::AnnotationCount => Some(4_096),
+            Self::AnnotationTextSize => Some(1_048_576),
+            Self::AnnotationDashCount => Some(32),
             Self::AnnotationInputSize => Some(1_048_576),
             Self::FormFieldInputSize => Some(1_048_576),
+            Self::FormDefaultAppearanceSize => Some(4_096),
+            Self::FormFieldParentDepth => Some(64),
+            Self::ScriptSize => Some(1_048_576),
             Self::TextLineCount => Some(4_096),
             Self::NamedDestinationCount => Some(65_536),
+            Self::NamedDestinationEdgeCount => Some(131_072),
+            Self::NamedDestinationDepth => Some(32),
             Self::NamedDestinationTextSize => Some(16_777_216),
             Self::TocEntryCount => Some(65_536),
             Self::TocTextSize => Some(16_777_216),
@@ -391,6 +561,11 @@ impl LimitCode {
             Self::MemorySize => None,
             Self::Deadline => None,
             Self::Cancelled => None,
+            Self::AnnotationQuadCount => Some(4_096),
+            Self::AnnotationPointCount => Some(65_536),
+            Self::AnnotationAppearanceSize => Some(16_777_216),
+            Self::AnnotationSynthesisCount => Some(4_096),
+            Self::AnnotationSynthesisPointCount => Some(262_144),
         }
     }
 }

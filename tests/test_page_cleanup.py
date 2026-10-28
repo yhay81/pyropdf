@@ -21,11 +21,16 @@ differences from pylopdf:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
 
 import pyropdf
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _EXCLUDED_TEXT = "EXCLUDED-PAGE-CONTENT-9f7c"
 
@@ -198,8 +203,10 @@ def test_a_name_tree_past_the_limit_away_from_the_removed_page_stays(operation: 
     doc = pyropdf.open(_linked_pdf(excessive_names=True))
     _remove(doc, operation, 1, [0, 2])
     assert len(doc.pages) == 2
-    assert len(doc.catalog["Names"]["Dests"]["Kids"][1]["Names"]) == 2 * 65_537
-    with pytest.raises(pyropdf.LimitError, match="65536-entry safety limit") as caught:
+    # The leaf that named only the removed page left the tree.
+    assert len(doc.catalog["Names"]["Dests"]["Kids"]) == 1
+    assert len(doc.catalog["Names"]["Dests"]["Kids"][0]["Names"]) == 2 * 65_537
+    with pytest.raises(pyropdf.LimitError, match="over the limit of 65536") as caught:
         list(doc.pages[0].links)
     assert caught.value.code == "named_destination_count"
 
@@ -382,3 +389,92 @@ def test_a_shared_resource_stays_and_an_annotation_of_the_removed_page_goes() ->
     (note,) = reloaded.pages[0].annotations
     assert "P" not in note.obj
     assert note.obj["Contents"] == pyropdf.String(b"stays")
+
+
+@pytest.mark.parametrize("kind", ["direct_link", "indirect_legacy", "direct_name_tree"])
+def test_cleanup_handles_direct_links_and_destination_containers(kind: str) -> None:
+    catalog = "<< /Type /Catalog /Pages 2 0 R"
+    annots = "[5 0 R]"
+    if kind == "direct_link":
+        annots = "[<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [4 0 R /Fit] >>]"
+    elif kind == "indirect_legacy":
+        catalog += " /Dests 6 0 R"
+    else:
+        catalog += " /Names << /Dests << /Names [(gone) [4 0 R /Fit]] >> >>"
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: catalog + " >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 100 100] >>",
+                3: f"<< /Type /Page /Parent 2 0 R /Annots {annots} >>",
+                4: "<< /Type /Page /Parent 2 0 R >>",
+                5: "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest /gone >>",
+                6: "<< /gone [4 0 R /Fit] >>",
+            }
+        )
+    )
+    del doc.pages[1]
+    for current in (doc, pyropdf.open(doc.to_bytes())):
+        assert len(current.pages[0].obj["Annots"]) == 0
+        assert len(current.destinations) == 0
+
+
+def test_waiting_page_deletion_uses_the_first_writers_inherited_attributes() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [6 0 R 4 0 R] /Count 2 /MediaBox [0 0 100 100] >>",
+                3: "<< /Type /Page /Parent 6 0 R >>",
+                4: "<< /Type /Page /Parent 2 0 R >>",
+                6: "<< /Type /Pages /Parent 2 0 R /Kids [3 0 R] /Count 1 /MediaBox [0 0 100 100] >>",
+            }
+        )
+    )
+    started = Event()
+
+    def remove() -> None:
+        started.set()
+        del doc.pages[1]
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with doc.transaction("Resize the retained page"):
+            future = pool.submit(remove)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            doc.pages[0].obj["Parent"]["MediaBox"] = [0, 0, 200, 200]
+        future.result(timeout=10)
+    assert doc.pages[0].rect[2] == 200
+    assert pyropdf.open(doc.to_bytes()).pages[0].rect[2] == 200
+
+
+def test_deletion_preserves_a_destination_to_another_generation() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 100 100] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Annots [5 0 R] >>",
+                4: "<< /Type /Page /Parent 2 0 R >>",
+                5: "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [4 1 R /Fit] >>",
+            }
+        )
+    )
+    del doc.pages[1]
+    assert len(doc.pages[0].obj["Annots"]) == 1
+
+
+def test_select_generator_failure_leaves_repeated_pages_unchanged() -> None:
+    doc = pyropdf.open(_linked_pdf())
+    before = doc.to_bytes()
+
+    def indexes() -> Iterator[int]:
+        yield 0
+        yield 0
+        msg = "input failed after a repeated page"
+        raise AssertionError(msg)
+
+    with pytest.raises(AssertionError, match="input failed"):
+        doc.pages.select(indexes())
+    assert doc.to_bytes() == before

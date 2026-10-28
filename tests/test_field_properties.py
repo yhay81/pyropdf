@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
-from test_acroform import _build_form_pdf
+from test_acroform import _build_form_pdf, build_raw_pdf
 
 import pyropdf
 from pyropdf import FieldChoice, FieldFlags, _core
@@ -136,3 +136,58 @@ def test_an_edit_is_one_step_and_a_refused_edit_changes_nothing() -> None:
     code.max_length = 4
     doc.history.undo()
     assert (code.label, code.max_length) == ("Code", 6)
+
+
+def _inherited_default_pdf() -> bytes:
+    """Build a text field whose /DV and /MaxLen come from its parent."""
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Annots [6 0 R] >>",
+            4: "<< /Fields [5 0 R] /DA (/Helv 0 Tf 0 g) >>",
+            5: "<< /FT /Tx /T (parent) /DV (inherited) /MaxLen 12 /Kids [6 0 R] >>",
+            6: "<< /T (child) /Parent 5 0 R /V (typed) /Type /Annot /Subtype /Widget /Rect [10 10 190 40] >>",
+        }
+    )
+
+
+def test_reset_fills_an_inherited_default_value() -> None:
+    doc = pyropdf.open(_inherited_default_pdf())
+    child = doc.form["parent.child"]
+    assert (child.default_value, child.max_length, child.value) == ("inherited", 12, "typed")
+    child.label = "Child"
+    child.reset()
+    assert (child.label, child.value) == ("Child", "inherited")
+    reopened = pyropdf.open(doc.to_bytes()).form["parent.child"]
+    assert (reopened.label, reopened.value) == ("Child", "inherited")
+
+
+def test_edits_in_a_transaction_roll_back_together() -> None:
+    doc = _form()
+    customer = doc.form["customer"]
+    before = doc.to_bytes()
+
+    def edit_and_fail() -> None:
+        with doc.transaction("edits"):
+            customer.label = "Customer"
+            customer.value = "changed"
+            customer.reset()
+            assert (customer.label, customer.value) == ("Customer", None)
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        edit_and_fail()
+    assert (customer.label, customer.value) == (None, "initial")
+    assert doc.to_bytes() == before
+
+
+def test_a_field_edit_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_build_form_pdf(), limits=pyropdf.DocumentLimits(cancellation=token))
+    customer = doc.form["customer"]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        customer.label = "Customer"
+    assert caught.value.code == "cancelled"

@@ -611,3 +611,13 @@ def test_import_refuses_top_level_names_beyond_the_name_limit() -> None:
     with pytest.raises(pyropdf.PdfError, match="field-name text exceeds"):
         dst.pages.extend(pyropdf.open(_named_fields(["x" * (1024 * 1024 + 1)])).pages)
     assert dst.to_bytes() == before
+
+
+def test_import_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    dst = pyropdf.open(_named_fields(["a"]), limits=pyropdf.DocumentLimits(cancellation=token))
+    src = pyropdf.open(_named_fields(["a", "b"]))
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        dst.pages.extend(src.pages)
+    assert caught.value.code == "cancelled"

@@ -1,0 +1,24 @@
+{
+  "generated_at": "2026-10-28T00:08:25.194764+00:00",
+  "pylopdf_commit": "ebb01d3c4c742046e8ce7fd72957cd15a2933321",
+  "pyropdf_commit": "28252aa956343fb3763508a0b0830f66473e06e3",
+  "oracle_python": "3.15.0 (main, Oct  9 2026, 15:11:47) [Clang 22.1.3 ]",
+  "corpus_sha256": {
+    "bill-hr815.pdf": "0ced1efb0610dbb34ab437f16c53362a847b4fb69b3025b1c876a872611b9939",
+    "bunka-kokugo-series-019-p4.pdf": "f8d9d89a8b738ac2fc3108d01d1974ca413d3fa8dd32d4f812f075e3337ab9a3",
+    "f1040.pdf": "3d31c226df0d189ced80e039d01cf0f8820c1019681a0f0ca6264de277b7e982",
+    "mhlw-doc.pdf": "a5b743a648e983ac4a48522281cb1fe49786a11903a57fbb17120d5d83c61f0a",
+    "nics-background-checks-2015-11.pdf": "4f0ae6e017b0e97de211da8fd97316e55bd927af5740d6ce95e1b7b1539f9407",
+    "patent-us223898.pdf": "e6f4d7747a8af8451d81aa3d5fe564aed5c8091091cb408c752b8a3cd7c28764",
+    "pdf20-simple.pdf": "296d2a0b2ce19b606f29265694f194a754fbc61783982b5b8d730e8637482236",
+    "pdfium-jpx-lzw.pdf": "ba14897a4139944e56674fefe176a56f29326e69ff2baf3e07ba096b520def78",
+    "pdfium-links-highlights-annots.pdf": "d6b813376c52b326a0eac798d215eb135054ba77fdaa2c059f99e57d6726ac9f",
+    "pdfium-smask-blend.pdf": "9947d9c15d853823cedc1e87378dea89a665570e4f233b7a0ba215e5859134ab",
+    "pdfium-type3.pdf": "dc213b3d2952f06517ac487d9892b11628f4b5bedc2ad8278a4c05c1b40be8f6",
+    "senate-expenditures.pdf": "16921f0fc9b2c6039b23b694e0317917118ad7dd2b3a95a88518b7e144df527c",
+    "usrguide.pdf": "79ce884d013bea5c13479385a7bd7a819fdbc138c49cbc0d7805e36f401e19f2",
+    "wdl6812-manuscript.pdf": "da04b715cd876a00f79728faed5501e0697e4e0783201470a7f20eec67bd6e85"
+  },
+  "runner_python": "3.15.2 (main, Oct 25 2026, 16:57:51) [Clang 21.0.0 (clang-2100.3.34.2)]",
+  "pyropdf_python": "3.15.0 (main, Oct  9 2026, 15:11:47) [Clang 22.1.3 ]"
+}

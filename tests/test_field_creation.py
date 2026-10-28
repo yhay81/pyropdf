@@ -195,6 +195,63 @@ def test_adding_a_widget_is_one_edit() -> None:
     assert "AcroForm" not in doc.catalog
 
 
+def test_a_refused_widget_leaves_no_partial_writes() -> None:
+    """A widget that fails to draw after the form and its objects were written changes nothing."""
+    page = _page()
+    doc = page.document
+    before = (doc.to_bytes(), len(doc.objects))
+    with pytest.raises(pyropdf.PdfError, match="MaxLen"):
+        page.widgets.add(TextField("name", (20, 20, 200, 40), value="too long", max_length=2, flags=FieldFlags.COMB))
+    assert (doc.to_bytes(), len(doc.objects)) == before
+    assert "AcroForm" not in doc.catalog
+    assert len(page.widgets) == 0
+
+
+def test_adding_a_widget_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_page().document.to_bytes(), limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages[0]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.widgets.add(TextField("name", (20, 20, 200, 40)))
+    assert caught.value.code == "cancelled"
+
+
+def _generation_pdf() -> bytes:
+    """Build a form whose merged text field is object 5 with generation 3."""
+    objects = {
+        (1, 0): "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        (2, 0): "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (3, 0): "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [5 3 R] >>",
+        (4, 0): "<< /Fields [5 3 R] /DA (/Helv 0 Tf 0 g) >>",
+        (5, 3): "<< /FT /Tx /T (name) /V (Ada) /Type /Annot /Subtype /Widget /Rect [20 20 200 40] /P 3 0 R >>",
+    }
+    output = bytearray(b"%PDF-1.7\n")
+    offsets = {}
+    for (number, generation), value in objects.items():
+        offsets[number] = (len(output), generation)
+        output.extend(f"{number} {generation} obj\n{value}\nendobj\n".encode())
+    xref = len(output)
+    output.extend(b"xref\n0 6\n0000000000 65535 f \n")
+    for number in range(1, 6):
+        offset, generation = offsets[number]
+        output.extend(f"{offset:010} {generation:05} n \n".encode())
+    output.extend(f"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
+    return bytes(output)
+
+
+def test_joining_a_merged_field_keeps_its_generation() -> None:
+    doc = pyropdf.open(_generation_pdf())
+    page = doc.pages[0]
+    page.widgets.add(TextField("name", (20, 50, 200, 70)))
+    field = doc.form["name"]
+    assert field.value == "Ada"
+    assert field.widgets[0].xref == 5
+    reopened = pyropdf.open(doc.to_bytes())
+    assert len(reopened.form["name"].widgets) == 2
+    assert b"5 3 R" in doc.to_bytes()
+
+
 def test_widgets_and_fields_are_removed() -> None:
     page = _page()
     doc = page.document
@@ -250,10 +307,10 @@ def test_failed_removal_restores_widgets_on_earlier_pages(*, widget_only: bool) 
     doc.pages[1].obj["Annots"] = [None] * 4097
 
     if widget_only:
-        with pytest.raises(pyropdf.PdfError, match="4096-entry"):
+        with pytest.raises(pyropdf.PdfError, match="too many annotations"):
             del page.widgets[0]
     else:
-        with pytest.raises(pyropdf.PdfError, match="4096-entry"):
+        with pytest.raises(pyropdf.PdfError, match="too many annotations"):
             del doc.form["name"]
 
     doc.pages[1].obj["Annots"] = []
@@ -338,3 +395,26 @@ def test_removing_widgets_is_one_edit() -> None:
     doc.history.undo()
     assert list(doc.form) == ["name", "other"]
     assert "Ada" in page.text()
+
+
+def test_removing_a_field_with_a_nonzero_generation() -> None:
+    doc = pyropdf.open(_generation_pdf())
+    del doc.form["name"]
+    assert len(doc.form) == 0
+    assert len(doc.pages[0].widgets) == 0
+    assert b"5 3 R" not in doc.to_bytes()
+
+    doc = pyropdf.open(_generation_pdf())
+    del doc.pages[0].widgets[0]
+    assert len(doc.form) == 0
+    assert b"5 3 R" not in doc.to_bytes()
+
+
+def test_removal_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_generation_pdf(), limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages[0]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        del page.widgets[0]
+    assert caught.value.code == "cancelled"

@@ -270,3 +270,40 @@ def test_a_flattening_is_one_step() -> None:
     assert len(page.annotations) == 5
     assert len(page.widgets) == 3
     assert doc.form["name"].value == "Ada Lovelace"
+
+
+def test_flattening_a_page_takes_a_widget_with_a_generation_out_of_its_field() -> None:
+    from test_field_creation import _generation_pdf  # noqa: PLC0415 - shared fixture.
+
+    doc = pyropdf.open(_generation_pdf())
+
+    doc.pages[0].flatten()
+
+    assert len(doc.pages[0].widgets) == 0
+    assert "name" not in doc.form
+
+
+def test_flattenings_in_a_transaction_roll_back_together() -> None:
+    doc = _annotated()
+    before = doc.to_bytes()
+
+    def flatten_and_fail() -> None:
+        with doc.transaction("flatten"):
+            doc.pages[0].flatten()
+            assert len(doc.pages[0].widgets) == 0
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        flatten_and_fail()
+    assert doc.to_bytes() == before
+    assert doc.form["name"].value == "Ada Lovelace"
+
+
+def test_flattening_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_annotated().to_bytes(), limits=pyropdf.DocumentLimits(cancellation=token))
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        doc.flatten()
+    assert caught.value.code == "cancelled"
