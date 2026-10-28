@@ -33,6 +33,12 @@ impl ReadDependencies {
         }
     }
 
+    /// Returns whether any recorded result read this object number.
+    #[must_use]
+    pub fn contains(&self, number: u32) -> bool {
+        self.objects.get(number).is_some()
+    }
+
     /// Replaces the recorded reads of `key`, or removes them with `None`.
     /// On refusal the index is unchanged.
     pub fn replace(&mut self, key: u32, reads: Option<ReadSet>, budget: &Budget) -> Result<()> {

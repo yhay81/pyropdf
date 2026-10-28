@@ -2369,6 +2369,18 @@ impl FillIndex {
             .refresh(&updated.topology, version, changed, trailer_changed, budget)?;
         Ok(updated)
     }
+
+    /// A changed object matters only when the recorded topology, values, or
+    /// widget appearances read it. Pending changes are filtered this way so
+    /// unrelated edits cannot grow the cache without bound. A change that
+    /// introduces a new dependency is itself recorded; refreshing it reads
+    /// the dependency's final value, including any later edits.
+    fn depends_on(&self, number: u32) -> bool {
+        self.topology.reads.objects().binary_search(&number).is_ok()
+            || self.values.node_reads.contains(number)
+            || self.values.leaf_reads.contains(number)
+            || self.appearances.dependencies.contains(number)
+    }
 }
 
 #[derive(Clone)]
@@ -2497,7 +2509,10 @@ impl FillCache {
             if budget.poll().is_err() {
                 return;
             }
-            if pending.get(number).is_none() && pending.insert(number, (), budget).is_err() {
+            if entry.index.depends_on(number)
+                && pending.get(number).is_none()
+                && pending.insert(number, (), budget).is_err()
+            {
                 return;
             }
         }
@@ -3060,6 +3075,46 @@ mod appearance_tests {
             result.values.leaves.get(0).unwrap().as_deref(),
             Some("latest")
         );
+    }
+
+    #[test]
+    fn unrelated_edits_do_not_accumulate_in_the_fill_cache() {
+        let mut base = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        for (number, bytes) in [
+            (1, &b"<< /AcroForm 4 0 R >>"[..]),
+            (4, &b"<< /Fields [5 0 R] >>"[..]),
+            (5, &b"<< /FT /Tx /T (field) /V (old) >>"[..]),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(bytes));
+        }
+        let document = Document::new(Arc::new(base), Some(0));
+        let budget = Budget::default();
+        let cache = FillCache::new();
+        let original = cache.get(&document.current(), &budget).unwrap();
+        for number in 1000..2000 {
+            let before = document.current();
+            let mut transaction = document.begin();
+            transaction
+                .write(number, &Value::Integer(i64::from(number)), &budget)
+                .unwrap();
+            let after = transaction.commit(&budget).unwrap();
+            cache.carry_from(&cache, &before, &after, &budget);
+        }
+        let held = cache
+            .entry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+            .unwrap();
+        assert!(held.pending.iter().next().is_none());
+        assert!(Arc::ptr_eq(
+            &original,
+            &cache.get(&document.current(), &budget).unwrap()
+        ));
     }
 
     #[test]
