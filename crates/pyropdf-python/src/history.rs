@@ -179,7 +179,16 @@ impl _Document {
         budget: &Budget,
     ) -> PyResult<()> {
         let parent = Arc::clone(transaction.parent());
+        let anchor = transaction.derived_anchor().cloned();
         let committed = transaction.commit(budget).map_err(|e| store_error(&e))?;
+        if let Some(anchor) = anchor {
+            self.fill_index
+                .carry_from(&self.draft_fill_index, &anchor, &committed, budget);
+            self.fill_index
+                .carry_from(&self.fill_index, &anchor, &committed, budget);
+        }
+        self.fill_index
+            .carry_from(&self.fill_index, &parent, &committed, budget);
         let mut steps = lock(&self.history.steps);
         if !Arc::ptr_eq(&parent, &committed) {
             let position = steps.position;

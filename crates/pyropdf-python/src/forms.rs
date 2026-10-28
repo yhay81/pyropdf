@@ -72,10 +72,12 @@ struct Field {
     /// none.
     widgets: Vec<Id>,
     /// Its node in a fill walk's ancestry, absent in an ordinary read.
+    #[allow(dead_code, reason = "used by form filling in issue #193")]
     trace: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct TraceNode {
     id: Id,
     parent: Option<usize>,
@@ -92,6 +94,7 @@ pub(crate) struct Form {
     /// it, by widget.
     owners: Vec<(Id, usize)>,
     /// Nodes visited by a fill walk, in parent-before-child order.
+    #[allow(dead_code, reason = "used by form filling in issue #193")]
     trace: Vec<TraceNode>,
 }
 
@@ -1706,7 +1709,7 @@ pub fn form_walk_counts(document: &_Document) -> (u64, u64) {
 /// Whether a widget shows a normal text appearance or a selected button
 /// appearance. The resolver records every indirect object it examines.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 enum AppearanceKind {
     Normal,
     State,
@@ -1714,7 +1717,7 @@ enum AppearanceKind {
 
 /// A resolved value either borrows its container or shares an indirect
 /// object. Looking at an appearance never copies its stream data.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 enum AppearanceValue<'a> {
     Direct(&'a Value),
     Indirect(Arc<Value>),
@@ -1731,7 +1734,7 @@ impl std::ops::Deref for AppearanceValue<'_> {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn appearance_value<'a>(
     reads: &mut Reads<'_>,
     value: Option<&'a Value>,
@@ -1760,7 +1763,7 @@ fn appearance_value<'a>(
 
 /// Returns `None` for a missing or non-widget object, or whether the
 /// widget has a nonempty appearance for its field's kind.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn widget_appearance(
     reads: &mut Reads<'_>,
     widget: Id,
@@ -1806,7 +1809,7 @@ fn widget_appearance(
 
 /// One field's use of a widget; a shared widget can have several entries.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct IndexedWidget {
     field: Id,
     widget: Id,
@@ -1817,7 +1820,7 @@ struct IndexedWidget {
 /// The enclosing form index is responsible for discovering widget membership
 /// and comparing versions before asking this index to refresh.
 #[derive(Clone)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct AppearanceIndex {
     widgets: DerivedMap<IndexedWidget>,
     missing: DerivedMap<IndexedWidget>,
@@ -1834,7 +1837,7 @@ impl Default for AppearanceIndex {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl AppearanceIndex {
     fn record(
         &mut self,
@@ -1899,7 +1902,6 @@ impl AppearanceIndex {
 /// Form membership without field values. Value and appearance changes are
 /// checked separately from membership; callers must never use the discarded
 /// values from this cached walk.
-#[allow(dead_code)]
 struct FormTopology {
     form: Form,
     reads: ReadSet,
@@ -1909,7 +1911,7 @@ struct FormTopology {
     protected: [Option<u32>; 2],
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl FormTopology {
     fn build(version: &Version, budget: &Budget) -> PyResult<Self> {
         let mut reads = Reads::new(version, budget);
@@ -1996,7 +1998,6 @@ impl FormTopology {
 
 /// Compare the entries that the field-tree walk uses for membership and
 /// inherited type. Values and appearances are independently recorded.
-#[allow(dead_code)]
 fn same_field_structure(before: &Dict, after: &Dict, budget: &Budget) -> PyResult<bool> {
     for key in ["T", "FT", "Ff", "Subtype"] {
         budget.poll().map_err(|e| limit_error(&e))?;
@@ -2026,7 +2027,6 @@ fn same_field_structure(before: &Dict, after: &Dict, budget: &Budget) -> PyResul
 
 /// Compare only bounded scalar representations; an unusual direct value
 /// conservatively forces a fresh walk instead of recursively comparing it.
-#[allow(dead_code)]
 fn same_structure_atom(
     left: Option<&Value>,
     right: Option<&Value>,
@@ -2046,7 +2046,6 @@ fn same_structure_atom(
     })
 }
 
-#[allow(dead_code)]
 fn same_structure_bytes(left: &[u8], right: &[u8], budget: &Budget) -> PyResult<bool> {
     if left.len() != right.len() {
         return Ok(false);
@@ -2062,7 +2061,7 @@ fn same_structure_bytes(left: &[u8], right: &[u8], budget: &Budget) -> PyResult<
 
 /// Per-node contributions to the original walk's value limits.
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct ValueMetric {
     encoded: usize,
     decoded: usize,
@@ -2070,7 +2069,7 @@ struct ValueMetric {
 }
 
 #[derive(Clone, Default)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct ValueIndex {
     nodes: DerivedMap<ValueMetric>,
     node_reads: ReadDependencies,
@@ -2082,7 +2081,7 @@ struct ValueIndex {
     returned: usize,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl ValueIndex {
     fn build(topology: &FormTopology, version: &Version, budget: &Budget) -> PyResult<Self> {
         let mut index = Self::default();
@@ -2221,7 +2220,7 @@ impl ValueIndex {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn value_metric(
     version: &Version,
     identity: Id,
@@ -2244,7 +2243,7 @@ fn value_metric(
     ))
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn traced_value(
     version: &Version,
     trace: &[TraceNode],
@@ -2291,18 +2290,16 @@ fn traced_value(
     Ok((result, reads.finish().map_err(|e| store_error(&e))?))
 }
 
-/// Form membership and independently recorded widget appearances. Values
-/// are intentionally not cached here; the caller must read and validate them
-/// separately before using this index for an edit.
+/// Form membership, values and widget appearances, with their recorded reads.
 #[derive(Clone)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct FillIndex {
     topology: Arc<FormTopology>,
     appearances: AppearanceIndex,
     values: ValueIndex,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl FillIndex {
     fn build(version: &Version, budget: &Budget) -> PyResult<Self> {
         let topology = FormTopology::build(version, budget)?;
@@ -2345,6 +2342,7 @@ impl FillIndex {
     }
 
     /// Derives the next index, or walks again when membership changed.
+    #[cfg(test)]
     fn update(&self, old: &Version, new: &Version, budget: &Budget) -> PyResult<Self> {
         if !self.topology.unchanged(old, new, budget)? {
             return Self::build(new, budget);
@@ -2352,28 +2350,43 @@ impl FillIndex {
         let Some(changes) = old.changes(new, budget).map_err(|e| store_error(&e))? else {
             return Self::build(new, budget);
         };
+        self.refresh(new, changes.objects(), changes.trailer(), budget)
+    }
+
+    fn refresh(
+        &self,
+        version: &Version,
+        changed: &[u32],
+        trailer_changed: bool,
+        budget: &Budget,
+    ) -> PyResult<Self> {
         let mut updated = self.clone();
         updated
             .appearances
-            .refresh(new, changes.objects(), changes.trailer(), budget)?;
-        updated.values.refresh(
-            &updated.topology,
-            new,
-            changes.objects(),
-            changes.trailer(),
-            budget,
-        )?;
+            .refresh(version, changed, trailer_changed, budget)?;
+        updated
+            .values
+            .refresh(&updated.topology, version, changed, trailer_changed, budget)?;
         Ok(updated)
     }
+}
+
+#[derive(Clone)]
+struct FillEntry {
+    version: Weak<Version>,
+    index: Arc<FillIndex>,
+    /// Objects changed since `index` was computed, applied on the next read.
+    pending: DerivedMap<()>,
+    trailer: bool,
 }
 
 /// The last derived fill index. It never keeps a document version alive.
 #[derive(Default)]
 pub(crate) struct FillCache {
-    entry: Mutex<Option<(Weak<Version>, Arc<FillIndex>)>>,
+    entry: Mutex<Option<FillEntry>>,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl FillCache {
     pub(crate) fn new() -> Self {
         Self::default()
@@ -2393,12 +2406,49 @@ impl FillCache {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
-        let held = held.and_then(|(version, index)| Some((version.upgrade()?, index)));
+        let held = held.and_then(|entry| Some((entry.version.upgrade()?, entry)));
         let index = match held {
-            Some((old, index)) if Arc::ptr_eq(&old, version) => return Ok(index),
-            Some((old, index)) => index.update(&old, version, budget)?,
+            Some((old, entry)) => {
+                let mut changed = BudgetVec::new(budget);
+                for (number, ()) in entry.pending.iter() {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    changed.try_push(number).map_err(|e| limit_error(&e))?;
+                }
+                if changed.is_empty() && !entry.trailer && Arc::ptr_eq(&old, version) {
+                    return Ok(entry.index);
+                }
+                let mut trailer = entry.trailer;
+                if !Arc::ptr_eq(&old, version) {
+                    if !entry.index.topology.unchanged(&old, version, budget)? {
+                        return self.install(version, FillIndex::build(version, budget)?, budget);
+                    }
+                    let Some(changes) =
+                        old.changes(version, budget).map_err(|e| store_error(&e))?
+                    else {
+                        return self.install(version, FillIndex::build(version, budget)?, budget);
+                    };
+                    for &number in changes.objects() {
+                        changed.try_push(number).map_err(|e| limit_error(&e))?;
+                    }
+                    trailer |= changes.trailer();
+                }
+                if changed.is_empty() && !trailer {
+                    entry.index.as_ref().clone()
+                } else {
+                    entry.index.refresh(version, &changed, trailer, budget)?
+                }
+            }
             None => FillIndex::build(version, budget)?,
         };
+        self.install(version, index, budget)
+    }
+
+    fn install(
+        &self,
+        version: &Arc<Version>,
+        index: FillIndex,
+        budget: &Budget,
+    ) -> PyResult<Arc<FillIndex>> {
         budget
             .charge(
                 LimitCode::MemorySize,
@@ -2406,9 +2456,60 @@ impl FillCache {
             )
             .map_err(|e| limit_error(&e))?;
         let index = Arc::new(index);
-        *self.entry.lock().unwrap_or_else(PoisonError::into_inner) =
-            Some((Arc::downgrade(version), Arc::clone(&index)));
+        *self.entry.lock().unwrap_or_else(PoisonError::into_inner) = Some(FillEntry {
+            version: Arc::downgrade(version),
+            index: Arc::clone(&index),
+            pending: DerivedMap::new(),
+            trailer: false,
+        });
         Ok(index)
+    }
+
+    /// Carry a matching transaction result to the version that commit
+    /// published. A failed optional refresh leaves the cache untouched.
+    pub(crate) fn carry_from(
+        &self,
+        source: &Self,
+        anchor: &Arc<Version>,
+        committed: &Arc<Version>,
+        budget: &Budget,
+    ) {
+        let held = source
+            .entry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let Some((held, entry)) = held.and_then(|entry| Some((entry.version.upgrade()?, entry)))
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(&held, anchor) {
+            return;
+        }
+        let Ok(true) = entry.index.topology.unchanged(anchor, committed, budget) else {
+            return;
+        };
+        let Ok(Some(changes)) = anchor.changes(committed, budget) else {
+            return;
+        };
+        let mut pending = entry.pending.clone();
+        for &number in changes.objects() {
+            if budget.poll().is_err() {
+                return;
+            }
+            if pending.get(number).is_none() && pending.insert(number, (), budget).is_err() {
+                return;
+            }
+        }
+        if budget.poll().is_err() {
+            return;
+        }
+        *self.entry.lock().unwrap_or_else(PoisonError::into_inner) = Some(FillEntry {
+            version: Arc::downgrade(committed),
+            index: entry.index,
+            pending,
+            trailer: entry.trailer || changes.trailer(),
+        });
     }
 }
 
@@ -2909,6 +3010,107 @@ mod appearance_tests {
         let undone = document.undo().unwrap();
         let undone = cache.get(&undone, &budget).unwrap();
         assert_eq!(undone.values.leaves.get(0).unwrap().as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn deferred_changes_follow_new_dependencies_without_old_versions() {
+        let mut base = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        for (number, bytes) in [
+            (1, &b"<< /AcroForm 4 0 R >>"[..]),
+            (4, &b"<< /Fields [5 0 R] >>"[..]),
+            (5, &b"<< /FT /Tx /T (field) /V 9 0 R >>"[..]),
+            (9, &b"(old)"[..]),
+            (10, &b"(new)"[..]),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(bytes));
+        }
+        let document = Document::new(Arc::new(base), Some(0));
+        let budget = Budget::default();
+        let before = document.current();
+        let cache = FillCache::new();
+        let first = cache.get(&before, &budget).unwrap();
+        let mut transaction = document.begin();
+        let field = Value::parse(
+            &Bytes::new(&b"<< /FT /Tx /T (field) /V 10 0 R >>"[..]),
+            &budget,
+        )
+        .unwrap();
+        transaction.write(5, &field, &budget).unwrap();
+        let changed = transaction.commit(&budget).unwrap();
+        cache.carry_from(&cache, &before, &changed, &budget);
+        let mut transaction = document.begin();
+        transaction
+            .write(
+                10,
+                &Value::String(PdfString::literal(&b"latest"[..])),
+                &budget,
+            )
+            .unwrap();
+        let latest = transaction.commit(&budget).unwrap();
+        cache.carry_from(&cache, &changed, &latest, &budget);
+        drop(before);
+        drop(changed);
+        let result = cache.get(&latest, &budget).unwrap();
+        assert!(Arc::ptr_eq(&first.topology, &result.topology));
+        assert_eq!(
+            result.values.leaves.get(0).unwrap().as_deref(),
+            Some("latest")
+        );
+    }
+
+    #[test]
+    fn indexed_values_match_a_fresh_walk_for_varied_inheritance() {
+        let mut base = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        for (number, bytes) in [
+            (1, &b"<< /AcroForm 4 0 R >>"[..]),
+            (4, &b"<< /Fields [5 0 R] >>"[..]),
+            (
+                5,
+                &b"<< /FT /Tx /T (parent) /V (inherited) /Kids [6 0 R 7 0 R] >>"[..],
+            ),
+            (6, &b"<< /T (a) /Parent 5 0 R >>"[..]),
+            (7, &b"<< /T (b) /Parent 5 0 R /V (other) >>"[..]),
+            (9, &b"(indirect)"[..]),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(bytes));
+        }
+        let document = Document::new(Arc::new(base), None);
+        let budget = Budget::default();
+        let before = document.current();
+        let index = FillIndex::build(&before, &budget).unwrap();
+        let mut transaction = document.begin();
+        let start = transaction.savepoint();
+        for value in [
+            "null",
+            "(direct)",
+            "9 0 R",
+            "[(a) (b)]",
+            "123",
+            "<FEFF4E2D>",
+        ] {
+            let bytes = format!("<< /T (a) /Parent 5 0 R /V {value} >>").into_bytes();
+            let field = Value::parse(&Bytes::new(bytes), &budget).unwrap();
+            transaction.write(6, &field, &budget).unwrap();
+            let version = transaction.snapshot();
+            let updated = index.update(&before, &version, &budget).unwrap();
+            assert!(Arc::ptr_eq(&index.topology, &updated.topology));
+            let fresh = walk(&mut Reads::new(&version, &budget)).unwrap();
+            for (at, field) in fresh.fields.iter().enumerate() {
+                assert_eq!(
+                    updated.values.leaves.get(at as u32).unwrap().as_deref(),
+                    field.value.as_deref()
+                );
+            }
+        }
+        transaction.rollback(start);
     }
 
     #[test]
