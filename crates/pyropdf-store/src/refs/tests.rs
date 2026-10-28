@@ -1907,6 +1907,8 @@ fn form_impact_charges_memory_and_refuses_reference_cycles_at_the_bound() {
 #[ignore = "manual form-impact benchmark; run via evidence/page-deletion/measure_form_impact.py"]
 fn measure_form_impact() {
     use std::time::Instant;
+    let warm = document_of(&[(1, Value::Null)], Dict::new());
+    build(&warm.current(), &Budget::default()).unwrap();
     for count in [0_u32, 10, 100, 1_000, 4_000] {
         let mut fields = vec![reference(4)];
         fields.extend((20..20 + count).map(reference));
