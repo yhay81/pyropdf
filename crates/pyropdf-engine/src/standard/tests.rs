@@ -266,7 +266,7 @@ fn text_operators_place_and_align_each_line() {
     let rect = [10.0, 5.0, 110.0, 25.0];
     assert_eq!(
         draw(30.0, rect, &layout, Align::Left),
-        "q\nBT\n/Helv 10 Tf\n0 g\n0 Tw\n1 0 0 1 10 15.69 Tm\n(Hi) Tj\nET\nQ\n"
+        "q\n10 5 100 20 re\nW\nn\nBT\n/Helv 10 Tf\n0 g\n0 Tw\n1 0 0 1 10 15.69 Tm\n(Hi) Tj\nET\nQ\n"
     );
     assert!(draw(30.0, rect, &layout, Align::Center).contains("1 0 0 1 55.28 15.69 Tm"));
     assert!(draw(30.0, rect, &layout, Align::Right).contains("1 0 0 1 100.56 15.69 Tm"));
@@ -306,7 +306,7 @@ fn colours_and_names_are_written_as_content() {
         style,
     )
     .unwrap();
-    assert!(out.starts_with(b"q\nBT\n/F#201#2Fx 9.5 Tf\n0 0 1 rg\n"));
+    assert!(out.starts_with(b"q\n0 0 10 10 re\nW\nn\nBT\n/F#201#2Fx 9.5 Tf\n0 0 1 rg\n"));
 }
 
 #[test]
@@ -341,7 +341,7 @@ fn fields_without_a_size_shrink_until_their_text_fits() {
 
 #[test]
 fn default_appearances_read_their_last_font_and_colour() {
-    let parse = |da: &str| DefaultAppearance::parse(da.as_bytes());
+    let parse = |da: &str| DefaultAppearance::parse(da.as_bytes()).unwrap();
     assert_eq!(
         parse("/HeBo 9 Tf 0 0 1 rg"),
         DefaultAppearance {
@@ -376,7 +376,10 @@ fn default_appearances_read_their_last_font_and_colour() {
     };
     assert_eq!(parse(""), empty);
     let long = format!("/TiRo 12 Tf {}", " ".repeat(MAX_DEFAULT_APPEARANCE));
-    assert_eq!(parse(&long), empty);
+    assert_eq!(
+        DefaultAppearance::parse(long.as_bytes()).unwrap_err(),
+        LayoutError::AppearanceTooLong
+    );
 
     assert_eq!(da_font("HeBo"), "Helvetica-Bold");
     assert_eq!(da_font("ZaDb"), "ZapfDingbats");
@@ -402,4 +405,114 @@ fn single_line_fields_show_line_breaks_as_spaces() {
         single_line("abc", &budget).unwrap(),
         Cow::Borrowed("abc")
     ));
+}
+
+#[test]
+fn text_operators_clip_to_the_supplied_box() {
+    let layout = mono("long text", 100.0, false).unwrap();
+    let ops = draw(30.0, [10.0, 5.0, 110.0, 25.0], &layout, Align::Left);
+    assert!(ops.starts_with("q\n10 5 100 20 re\nW\nn\nBT\n"), "{ops}");
+}
+
+#[test]
+fn fitting_refuses_zero_height() {
+    let budget = Budget::default();
+    assert_eq!(
+        fit(
+            "Hello",
+            (100.0, 0.0),
+            Base14Font::Helvetica,
+            0.0,
+            false,
+            &budget
+        )
+        .unwrap_err(),
+        LayoutError::Unfit
+    );
+}
+
+#[test]
+fn cancelled_fast_paths_refuse_before_returning() {
+    use pyropdf_store::budget::CancellationToken;
+    let token = CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    assert_eq!(
+        single_line("plain", &budget).unwrap_err().code(),
+        LimitCode::Cancelled
+    );
+    let refusal = fit(
+        "hello",
+        (100.0, 20.0),
+        Base14Font::Helvetica,
+        0.0,
+        false,
+        &budget,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refusal, LayoutError::Limit(refusal) if refusal.code() == LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn invalid_geometry_cannot_emit_invalid_pdf_numbers() {
+    let budget = Budget::default();
+    assert_eq!(
+        fit(
+            "hello",
+            (100.0, f64::NAN),
+            Base14Font::Helvetica,
+            0.0,
+            false,
+            &budget
+        )
+        .unwrap_err(),
+        LayoutError::InvalidGeometry
+    );
+    let layout = mono("hello", 100.0, false).unwrap();
+    let mut out = BudgetVec::new(&budget);
+    let style = Style {
+        resource: "Helv",
+        size: 10.0,
+        color: DeviceColor::Gray(f64::INFINITY),
+    };
+    assert_eq!(
+        text_ops(
+            &mut out,
+            30.0,
+            [0.0, 0.0, 10.0, 10.0],
+            &layout,
+            Align::Left,
+            style
+        )
+        .unwrap_err(),
+        LayoutError::InvalidGeometry
+    );
+    assert!(out.is_empty());
+}
+
+#[test]
+fn resource_names_are_charged_to_the_output_budget() {
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128));
+    let layout = mono("hello", 100.0, false).unwrap();
+    let mut out = BudgetVec::new(&budget);
+    let resource = "long ".repeat(1000);
+    let style = Style {
+        resource: &resource,
+        size: 10.0,
+        color: DeviceColor::Gray(0.0),
+    };
+    let refusal = text_ops(
+        &mut out,
+        30.0,
+        [0.0, 0.0, 10.0, 10.0],
+        &layout,
+        Align::Left,
+        style,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(refusal, LayoutError::Limit(refusal) if refusal.code() == LimitCode::MemorySize)
+    );
 }

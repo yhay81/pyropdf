@@ -2,6 +2,7 @@
 //! their text is written in.
 
 use pdf_base14_metrics::{Base14Font, CharacterMetric};
+use pyropdf_store::{LimitExceeded, budget::Budget};
 
 use super::layout::LineMetrics;
 
@@ -23,10 +24,35 @@ pub fn font(name: &str) -> Option<Base14Font> {
 /// Symbol and ZapfDingbats read each WinAnsi byte as a code of their
 /// built-in encoding, and a code without a glyph is 250 units wide.
 pub fn text_width(text: &str, font: Base14Font, size: f64) -> Option<f64> {
+    text_width_inner(text, font, size, None).ok().flatten()
+}
+
+pub(super) fn text_width_budgeted(
+    text: &str,
+    font: Base14Font,
+    size: f64,
+    budget: &Budget,
+) -> Result<Option<f64>, LimitExceeded> {
+    text_width_inner(text, font, size, Some(budget))
+}
+
+fn text_width_inner(
+    text: &str,
+    font: Base14Font,
+    size: f64,
+    budget: Option<&Budget>,
+) -> Result<Option<f64>, LimitExceeded> {
     let symbolic = is_symbolic(font);
     let mut units = 0.0;
-    for character in text.chars() {
-        let byte = winansi_byte(character)?;
+    for (index, character) in text.chars().enumerate() {
+        if index % 1024 == 0
+            && let Some(budget) = budget
+        {
+            budget.poll()?;
+        }
+        let Some(byte) = winansi_byte(character) else {
+            return Ok(None);
+        };
         let width = if symbolic {
             coded(font, byte).map(|metric| metric.width_x)
         } else {
@@ -34,7 +60,7 @@ pub fn text_width(text: &str, font: Base14Font, size: f64) -> Option<f64> {
         };
         units += f64::from(width.unwrap_or(MISSING_WIDTH));
     }
-    Some(units * size / 1000.0)
+    Ok(Some(units * size / 1000.0))
 }
 
 /// Returns the ascent and descent, as positive fractions of the em, that a

@@ -16,17 +16,20 @@ use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::Reader;
 use pyropdf_engine::forms::{self as widgets, WidgetError};
-use pyropdf_engine::standard::is_winansi;
-use pyropdf_store::budget::Budget;
+use pyropdf_engine::standard::winansi_byte;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::annotations::{Annots, Rect};
 use crate::document::{_Document, Failed, text_string};
-use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
+use crate::errors::{
+    LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
+};
 use crate::pages::index;
 
 /// The most terminal fields that a walk returns.
@@ -61,6 +64,7 @@ const RADIO: i64 = 1 << 15;
 /// The keys of a radio button that a repaired group gives to its new
 /// parent field.
 const RADIO_KEYS: [&str; 7] = ["FT", "T", "TU", "TM", "Ff", "V", "DV"];
+const FIELD_TRIGGERS: [&str; 4] = ["K", "F", "V", "C"];
 
 /// An object number and generation.
 type Id = (u32, u16);
@@ -185,26 +189,86 @@ fn object(reads: &mut Reads<'_>, (number, generation): Id) -> PyResult<Option<Ar
         .map(|object| Arc::clone(object.value())))
 }
 
-/// Follows references from `value` through `reads`, at most [`MAX_CHAIN`];
-/// a null, an absent object, a missing entry, a reference cycle, or a
-/// longer chain is `None`, so a malformed entry reads as unusable.
-fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>> {
-    let mut current = match value {
-        None | Some(Value::Null) => return Ok(None),
-        Some(Value::Reference(reference)) => *reference,
-        Some(value) => return Ok(Some(value.clone())),
-    };
-    for _ in 0..MAX_CHAIN {
+/// Follow object aliases while retaining the final identity and one snapshot.
+fn object_location(
+    reads: &mut Reads<'_>,
+    reference: Reference,
+) -> PyResult<Option<(Id, Arc<Value>)>> {
+    let budget = reads.budget();
+    let mut current = reference;
+    let mut seen = [None; MAX_CHAIN];
+    for depth in 0..MAX_CHAIN {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        if seen[..depth].contains(&Some(current)) {
+            return Ok(None);
+        }
+        seen[depth] = Some(current);
         let Some(value) = object(reads, id(current))? else {
             return Ok(None);
         };
         match &*value {
             Value::Null => return Ok(None),
             Value::Reference(next) => current = *next,
-            value => return Ok(Some(value.clone())),
+            _ => return Ok(Some((id(current), value))),
         }
     }
-    Ok(None)
+    if seen.contains(&Some(current)) {
+        return Ok(None);
+    }
+    Err(MalformedPdfError::new_err(format!(
+        "a form reference chain exceeds {MAX_CHAIN} references"
+    )))
+}
+
+/// Resolve a value, charging owned buffers before copying them.
+fn located(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<(Value, Option<Id>)>> {
+    let budget = reads.budget();
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Reference(reference)) => match object_location(reads, *reference)? {
+            Some((identity, value)) => copy_for_edit(&value, budget)
+                .map(|value| Some((value, Some(identity))))
+                .map_err(|e| store_error(&e)),
+            None => Ok(None),
+        },
+        Some(value) => copy_for_edit(value, budget)
+            .map(|value| Some((value, None)))
+            .map_err(|e| store_error(&e)),
+    }
+}
+
+fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>> {
+    Ok(located(reads, value)?.map(|(value, _)| value))
+}
+
+/// Charge a fallible allocation before growing an owned input-sized vector.
+fn push<T>(items: &mut Vec<T>, value: T, budget: &Budget) -> PyResult<()> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    if items.len() == items.capacity() {
+        let count = items.len().max(4);
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                count.saturating_mul(2 * size_of::<T>()) as u64,
+            )
+            .map_err(|e| limit_error(&e))?;
+        items
+            .try_reserve(count)
+            .map_err(|_| limit_error(&pyropdf_store::LimitExceeded::new(LimitCode::MemorySize)))?;
+    }
+    items.push(value);
+    Ok(())
+}
+
+fn reserve_map<K: Eq + std::hash::Hash, V>(
+    map: &mut HashMap<K, V>,
+    budget: &Budget,
+) -> PyResult<()> {
+    budget
+        .charge(LimitCode::MemorySize, (64 + 2 * size_of::<(K, V)>()) as u64)
+        .map_err(|e| limit_error(&e))?;
+    map.try_reserve(1)
+        .map_err(|_| limit_error(&pyropdf_store::LimitExceeded::new(LimitCode::MemorySize)))
 }
 
 const fn id(reference: Reference) -> Id {
@@ -252,8 +316,7 @@ fn classify(reads: &mut Reads<'_>, kid: &Value) -> PyResult<Kid> {
     let Value::Reference(reference) = kid else {
         return Ok(Kid::Ignored);
     };
-    let kid = id(*reference);
-    let Some(value) = object(reads, kid)? else {
+    let Some((kid, value)) = object_location(reads, *reference)? else {
         return Ok(Kid::Ignored);
     };
     let child = match &*value {
@@ -276,8 +339,22 @@ fn classify(reads: &mut Reads<'_>, kid: &Value) -> PyResult<Kid> {
 
 /// Marks node `id` visited, refusing more than [`MAX_NODES`]; returns
 /// whether it was new.
-fn visit(visited: &mut HashSet<Id>, id: Id) -> PyResult<bool> {
-    if !visited.insert(id) {
+fn insert_set(visited: &mut HashSet<Id>, id: Id, budget: &Budget) -> PyResult<bool> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    if visited.contains(&id) {
+        return Ok(false);
+    }
+    budget
+        .charge(LimitCode::MemorySize, (64 + 2 * size_of::<Id>()) as u64)
+        .map_err(|e| limit_error(&e))?;
+    visited
+        .try_reserve(1)
+        .map_err(|_| limit_error(&pyropdf_store::LimitExceeded::new(LimitCode::MemorySize)))?;
+    Ok(visited.insert(id))
+}
+
+fn visit(visited: &mut HashSet<Id>, id: Id, budget: &Budget) -> PyResult<bool> {
+    if !insert_set(visited, id, budget)? {
         return Ok(false);
     }
     if visited.len() > MAX_NODES {
@@ -303,6 +380,7 @@ fn decode(
     totals: &mut (usize, usize),
     limit: usize,
     label: &str,
+    budget: &Budget,
 ) -> PyResult<String> {
     charge(
         &mut totals.0,
@@ -310,6 +388,12 @@ fn decode(
         limit,
         &format!("encoded {label}"),
     )?;
+    budget
+        .charge(
+            LimitCode::MemorySize,
+            encoded.as_bytes().len().saturating_mul(4) as u64,
+        )
+        .map_err(|e| limit_error(&e))?;
     let decoded = text_string(encoded.as_bytes());
     charge(
         &mut totals.1,
@@ -330,7 +414,9 @@ fn text(
     label: &str,
 ) -> PyResult<Option<String>> {
     match read(reads, Some(value))? {
-        Some(Value::String(encoded)) => decode(&encoded, totals, limit, label).map(Some),
+        Some(Value::String(encoded)) => {
+            decode(&encoded, totals, limit, label, reads.budget()).map(Some)
+        }
         _ => Ok(None),
     }
 }
@@ -353,6 +439,10 @@ fn field_value(
                 MAX_VALUE_BYTES,
                 "encoded field-value",
             )?;
+            reads
+                .budget()
+                .charge(LimitCode::MemorySize, name.len().saturating_mul(3) as u64)
+                .map_err(|e| limit_error(&e))?;
             let decoded = String::from_utf8_lossy(name).into_owned();
             charge(
                 &mut totals.1,
@@ -362,7 +452,9 @@ fn field_value(
             )?;
             Ok(Some(decoded))
         }
-        Some(Value::String(encoded)) => decode(&encoded, totals, MAX_VALUE_BYTES, label).map(Some),
+        Some(Value::String(encoded)) => {
+            decode(&encoded, totals, MAX_VALUE_BYTES, label, reads.budget()).map(Some)
+        }
         Some(Value::Array(array)) => {
             *items = items.saturating_add(array.len());
             if *items > MAX_VALUE_ITEMS {
@@ -370,10 +462,13 @@ fn field_value(
                     "AcroForm field values exceed the {MAX_VALUE_ITEMS}-item safety limit"
                 )));
             }
-            let mut values = Vec::new();
+            let budget = reads.budget();
+            let mut values = BudgetVec::new(budget);
             for item in array.iter() {
                 if let Some(Value::String(encoded)) = read(reads, Some(item))? {
-                    values.push(decode(&encoded, totals, MAX_VALUE_BYTES, label)?);
+                    values
+                        .try_push(decode(&encoded, totals, MAX_VALUE_BYTES, label, budget)?)
+                        .map_err(|e| limit_error(&e))?;
                 }
             }
             let separators = values.len().saturating_sub(1) * 2;
@@ -385,6 +480,12 @@ fn field_value(
                     "decoded field-value",
                 )?;
             }
+            let output = values
+                .iter()
+                .fold(separators, |total, value| total.saturating_add(value.len()));
+            budget
+                .charge(LimitCode::MemorySize, output as u64)
+                .map_err(|e| limit_error(&e))?;
             Ok(Some(values.join(", ")))
         }
         _ => Ok(None),
@@ -394,8 +495,10 @@ fn field_value(
 /// Returns the form's `/Fields` array, or `None` for a document without
 /// one.
 fn top_fields(reads: &mut Reads<'_>) -> PyResult<Option<Array>> {
-    let root = reads.trailer().get("Root").cloned();
-    let Some(Value::Dict(catalog)) = read(reads, root.as_ref())? else {
+    let Some(&Value::Reference(root)) = reads.trailer().get("Root") else {
+        return Ok(None);
+    };
+    let Some(Value::Dict(catalog)) = read(reads, Some(&Value::Reference(root)))? else {
         return Ok(None);
     };
     let Some(Value::Dict(form)) = read(reads, catalog.get("AcroForm"))? else {
@@ -455,18 +558,35 @@ fn node_entries(
         )?,
         None => None,
     };
-    // A node without a partial name shares the name above it.
+    let built_len = match &component {
+        Some(component) if !node.prefix.is_empty() => node
+            .prefix
+            .len()
+            .saturating_add(1)
+            .saturating_add(component.len()),
+        Some(component) => component.len(),
+        None => node.prefix.len(),
+    };
+    charge(
+        &mut text_budget.built,
+        built_len,
+        MAX_NAME_BYTES,
+        "materialized field-name",
+    )?;
+    if component.is_some() {
+        reads
+            .budget()
+            .charge(
+                LimitCode::MemorySize,
+                built_len.saturating_add(size_of::<String>() + 32) as u64,
+            )
+            .map_err(|e| limit_error(&e))?;
+    }
     let name = match component {
         Some(component) if node.prefix.is_empty() => Arc::new(component),
         Some(component) => Arc::new(format!("{}.{component}", node.prefix)),
         None => Arc::clone(&node.prefix),
     };
-    charge(
-        &mut text_budget.built,
-        name.len(),
-        MAX_NAME_BYTES,
-        "materialized field-name",
-    )?;
     let field_type = match read(reads, dict.get("FT"))? {
         Some(Value::Name(field_type)) => {
             let field_type = field_type.as_bytes();
@@ -477,6 +597,13 @@ fn node_entries(
                 MAX_NAME_BYTES,
                 "encoded field-name/type",
             )?;
+            reads
+                .budget()
+                .charge(
+                    LimitCode::MemorySize,
+                    field_type.len().saturating_mul(3).saturating_add(32) as u64,
+                )
+                .map_err(|e| limit_error(&e))?;
             let decoded = String::from_utf8_lossy(field_type).into_owned();
             charge(
                 &mut names.1,
@@ -499,7 +626,14 @@ fn node_entries(
             &mut text_budget.values,
             &mut text_budget.items,
         )?
-        .map(Arc::from),
+        .map(|value| {
+            reads
+                .budget()
+                .charge(LimitCode::MemorySize, value.len().saturating_add(32) as u64)
+                .map_err(|e| limit_error(&e))?;
+            Ok::<Arc<str>, PyErr>(Arc::from(value))
+        })
+        .transpose()?,
         None => node.value.clone(),
     };
     Ok((name, field_type, flags, value))
@@ -524,43 +658,51 @@ fn terminal_fields(reads: &mut Reads<'_>) -> PyResult<Vec<Leaf>> {
     // Each field with a type reserves its entry before its kids are read,
     // so that a nameless intermediate folded into it can withdraw the
     // entry when it holds a child field.
-    let mut leaves: Vec<Option<Leaf>> = Vec::new();
-    let mut stack = Vec::with_capacity(fields.len());
+    let budget = reads.budget();
+    let mut leaves: BudgetVec<'_, Option<Leaf>> = BudgetVec::new(budget);
+    let mut stack = BudgetVec::new(budget);
+    stack
+        .try_reserve_exact(fields.len())
+        .map_err(|e| limit_error(&e))?;
     let top = Arc::new(String::new());
     for field in fields.iter() {
         // As in `/Kids`, an omitted entry costs only its edge.
         if let Value::Reference(reference) = field
             && !omitted(reads, field)?
         {
-            stack.push(Node {
-                id: id(*reference),
-                prefix: Arc::clone(&top),
-                kind: None,
-                flags: 0,
-                value: None,
-                depth: 1,
-                role: Role::Field,
-            });
+            stack
+                .try_push(Node {
+                    id: id(*reference),
+                    prefix: Arc::clone(&top),
+                    kind: None,
+                    flags: 0,
+                    value: None,
+                    depth: 1,
+                    role: Role::Field,
+                })
+                .map_err(|e| limit_error(&e))?;
         }
     }
     let mut visited = HashSet::new();
     let mut edges = fields.len();
     let mut widgets = 0usize;
     let mut text_budget = Text::default();
-    while let Some(node) = stack.pop() {
-        if !visit(&mut visited, node.id)? {
-            continue;
-        }
-        let Some(value) = object(reads, node.id)? else {
+    while let Some(mut node) = stack.pop() {
+        let reference = Reference::new(node.id.0, node.id.1);
+        let Some((actual, object)) = object_location(reads, reference)? else {
             continue;
         };
-        let Value::Dict(dict) = &*value else {
+        node.id = actual;
+        if !visit(&mut visited, node.id, budget)? {
+            continue;
+        }
+        let Value::Dict(dict) = &*object else {
             continue;
         };
         let (name, field_type, flags, value) = node_entries(reads, dict, &node, &mut text_budget)?;
         let leaf = match node.role {
             Role::Field if field_type.is_some() => {
-                leaves.push(None);
+                leaves.try_push(None).map_err(|e| limit_error(&e))?;
                 Some(leaves.len() - 1)
             }
             Role::Field => None,
@@ -599,30 +741,41 @@ fn terminal_fields(reads: &mut Reads<'_>) -> PyResult<Vec<Leaf>> {
                     Kid::Widget(_) | Kid::Unusable | Kid::Ignored => continue,
                 };
                 if node.depth >= MAX_DEPTH {
+                    if visited.contains(&kid) {
+                        continue;
+                    }
                     return Err(limit(format!(
                         "AcroForm field tree exceeds the {MAX_DEPTH}-level safety limit"
                     )));
                 }
-                stack.push(Node {
-                    id: kid,
-                    prefix: Arc::clone(&name),
-                    kind: field_type.clone(),
-                    flags,
-                    value: value.clone(),
-                    depth: node.depth + 1,
-                    role,
-                });
+                stack
+                    .try_push(Node {
+                        id: kid,
+                        prefix: Arc::clone(&name),
+                        kind: field_type.clone(),
+                        flags,
+                        value: value.clone(),
+                        depth: node.depth + 1,
+                        role,
+                    })
+                    .map_err(|e| limit_error(&e))?;
             }
         }
         if let Some(at) = leaf {
             if has_child_fields {
                 leaves[at] = None;
             } else if let (Role::Field, Some(field_type)) = (node.role, field_type) {
+                budget
+                    .charge(LimitCode::MemorySize, name.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
                 leaves[at] = Some(((*name).clone(), node.id, field_type, flags, value));
             }
         }
     }
-    let mut out: Vec<Leaf> = leaves.into_iter().flatten().collect();
+    let mut out = BudgetVec::new(budget);
+    for leaf in leaves.into_vec().into_iter().flatten() {
+        out.try_push(leaf).map_err(|e| limit_error(&e))?;
+    }
     if out.len() > MAX_FIELDS {
         return Err(limit(format!(
             "AcroForm field tree exceeds the {MAX_FIELDS}-entry safety limit"
@@ -640,7 +793,7 @@ fn terminal_fields(reads: &mut Reads<'_>) -> PyResult<Vec<Leaf>> {
         }
     }
     out.sort_unstable_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
-    Ok(out)
+    Ok(out.into_vec())
 }
 
 /// Returns the widgets below field `field` in the order of its kids, or the
@@ -651,7 +804,8 @@ fn terminal_fields(reads: &mut Reads<'_>) -> PyResult<Vec<Leaf>> {
 /// returned the field visited every intermediate below it within the walk's
 /// limits; the limits here keep this traversal bounded on its own.
 fn field_widgets(reads: &mut Reads<'_>, field: Id) -> PyResult<Vec<Id>> {
-    let mut widgets = Vec::new();
+    let budget = reads.budget();
+    let mut widgets = BudgetVec::new(budget);
     let top = match object(reads, field)? {
         Some(value) => match &*value {
             Value::Dict(dict) => kids(reads, dict)?.unwrap_or_default(),
@@ -661,12 +815,22 @@ fn field_widgets(reads: &mut Reads<'_>, field: Id) -> PyResult<Vec<Id>> {
     };
     let mut edges = 0;
     add_edges(&mut edges, top.len())?;
-    let mut frames = vec![(top, 0usize)];
+    let mut frames = BudgetVec::new(budget);
+    frames
+        .try_push((top, 0usize))
+        .map_err(|e| limit_error(&e))?;
     let mut expanded = HashSet::new();
     while let Some((kids, at)) = frames.last_mut() {
-        let Some(kid) = kids.get(*at).cloned() else {
-            frames.pop();
-            continue;
+        let kid = match kids.get(*at) {
+            Some(Value::Reference(reference)) => Value::Reference(*reference),
+            Some(_) => {
+                *at += 1;
+                continue;
+            }
+            None => {
+                frames.pop();
+                continue;
+            }
         };
         *at += 1;
         let (kid, widget, folded) = match classify(reads, &kid)? {
@@ -680,55 +844,60 @@ fn field_widgets(reads: &mut Reads<'_>, field: Id) -> PyResult<Vec<Id>> {
                     "AcroForm field exceeds the {MAX_WIDGETS}-widget safety limit"
                 )));
             }
-            widgets.push(kid);
+            widgets.try_push(kid).map_err(|e| limit_error(&e))?;
         }
         let Some(kids) = folded else {
             continue;
         };
         // The field is the first expanded node, so a cycle back to it ends.
         if expanded.is_empty() {
-            visit(&mut expanded, field)?;
+            visit(&mut expanded, field, budget)?;
         }
-        if visit(&mut expanded, kid)? {
+        if visit(&mut expanded, kid, budget)? {
             add_edges(&mut edges, kids.len())?;
-            frames.push((kids, 0));
+            frames.try_push((kids, 0)).map_err(|e| limit_error(&e))?;
         }
     }
     if widgets.is_empty() {
-        widgets.push(field);
+        widgets.try_push(field).map_err(|e| limit_error(&e))?;
     }
-    Ok(widgets)
+    Ok(widgets.into_vec())
 }
 
 /// Walks the form of the version that `reads` reads.
 fn walk(reads: &mut Reads<'_>) -> PyResult<Form> {
-    let mut fields = Vec::new();
+    let budget = reads.budget();
+    let mut fields = BudgetVec::new(budget);
     for (name, id, field_type, flags, value) in terminal_fields(reads)? {
-        fields.push(Field {
-            name,
-            id,
-            kind: kind(&field_type, flags),
-            flags,
-            value,
-            widgets: field_widgets(reads, id)?,
-        });
+        fields
+            .try_push(Field {
+                name,
+                id,
+                kind: kind(&field_type, flags),
+                flags,
+                value,
+                widgets: field_widgets(reads, id)?,
+            })
+            .map_err(|e| limit_error(&e))?;
     }
-    let mut objects: Vec<(Id, usize)> = fields
-        .iter()
-        .enumerate()
-        .map(|(at, field)| (field.id, at))
-        .collect();
+    let mut objects = BudgetVec::new(budget);
+    let mut owners = BudgetVec::new(budget);
+    for (at, field) in fields.iter().enumerate() {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        objects
+            .try_push((field.id, at))
+            .map_err(|e| limit_error(&e))?;
+        for &widget in &field.widgets {
+            owners.try_push((widget, at)).map_err(|e| limit_error(&e))?;
+        }
+    }
     objects.sort_unstable();
-    let mut owners: Vec<(Id, usize)> = fields
-        .iter()
-        .enumerate()
-        .flat_map(|(at, field)| field.widgets.iter().map(move |&widget| (widget, at)))
-        .collect();
     owners.sort_unstable();
+    let mut owners = owners.into_vec();
     owners.dedup_by_key(|&mut (widget, _)| widget);
     Ok(Form {
-        fields,
-        objects,
+        fields: fields.into_vec(),
+        objects: objects.into_vec(),
         owners,
     })
 }
@@ -739,29 +908,56 @@ fn view(document: &_Document) -> PyResult<(Arc<Version>, Budget)> {
 }
 
 /// Returns the form of the version that reads see, memoized.
-fn memoized(document: &_Document) -> PyResult<Arc<Form>> {
-    let (version, parent) = document.reading_parent()?;
-    let budget = document.budget();
-    let (memo, version) = match &parent {
-        // An open transaction that has written nothing reads its parent.
-        Some(parent) => (&document.form, parent),
-        None if document.in_transaction() => (&document.draft_form, &version),
-        None => (&document.form, &version),
+fn memoized_at(
+    document: &_Document,
+    version: &Arc<Version>,
+    budget: &Budget,
+) -> PyResult<Arc<Form>> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    let parent = if document.in_transaction() {
+        Some(document.document()?.current())
+    } else {
+        None
     };
-    memo.get_or_compute(&(), version, &budget, |reads| walk(reads).map_err(Failed))
+    let (memo, version) = match parent.as_ref() {
+        Some(parent)
+            if Arc::ptr_eq(parent, version)
+                || parent
+                    .changes(version, budget)
+                    .map_err(|e| store_error(&e))?
+                    .is_some_and(|changes| changes.is_empty()) =>
+        {
+            (&document.form, parent)
+        }
+        Some(_) => (&document.draft_form, version),
+        None => (&document.form, version),
+    };
+    memo.get_or_compute(&(), version, budget, |reads| walk(reads).map_err(Failed))
         .map_err(|Failed(error)| error)
+}
+
+fn memoized(document: &_Document) -> PyResult<Arc<Form>> {
+    let (version, budget) = view(document)?;
+    memoized_at(document, &version, &budget)
 }
 
 /// Returns the full name and object of every terminal field, by name and
 /// then object.
 #[pyfunction]
 pub fn form_fields(py: Python<'_>, document: &_Document) -> PyResult<Vec<(String, Id)>> {
-    let form = py.detach(|| memoized(document))?;
-    Ok(form
-        .fields
-        .iter()
-        .map(|field| (field.name.clone(), field.id))
-        .collect())
+    py.detach(|| {
+        let (version, budget) = view(document)?;
+        let form = memoized_at(document, &version, &budget)?;
+        let mut out = BudgetVec::new(&budget);
+        for field in &form.fields {
+            budget
+                .charge(LimitCode::MemorySize, field.name.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            out.try_push((field.name.clone(), field.id))
+                .map_err(|e| limit_error(&e))?;
+        }
+        Ok(out.into_vec())
+    })
 }
 
 /// Returns the object of the first terminal field named `name`, or `None`.
@@ -786,14 +982,27 @@ pub fn form_field_read(
     document: &_Document,
     id: Id,
 ) -> PyResult<(String, &'static str, i64, Option<String>)> {
-    let form = py.detach(|| memoized(document))?;
-    let field = form.field(id).ok_or_else(|| stale(id))?;
-    Ok((
-        field.name.clone(),
-        field.kind,
-        field.flags,
-        field.value.as_deref().map(str::to_owned),
-    ))
+    py.detach(|| {
+        let (version, budget) = view(document)?;
+        let form = memoized_at(document, &version, &budget)?;
+        let field = form.field(id).ok_or_else(|| stale(id))?;
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                field
+                    .name
+                    .len()
+                    .saturating_add(field.value.as_ref().map_or(0, |value| value.len()))
+                    as u64,
+            )
+            .map_err(|e| limit_error(&e))?;
+        Ok((
+            field.name.clone(),
+            field.kind,
+            field.flags,
+            field.value.as_deref().map(str::to_owned),
+        ))
+    })
 }
 
 /// Returns entry `key` of field `id` or of the nearest field above it that
@@ -802,17 +1011,24 @@ fn inherited(reads: &mut Reads<'_>, id: Id, key: &str) -> PyResult<Option<Value>
     let mut current = Some(id);
     let mut visited = HashSet::new();
     while let Some(id) = current {
-        if !visited.insert(id) || visited.len() > MAX_PARENTS {
-            return Ok(None);
-        }
-        let Some(value) = object(reads, id)? else {
+        let Some((actual, value)) = object_location(reads, Reference::new(id.0, id.1))? else {
             return Ok(None);
         };
         let Value::Dict(dict) = &*value else {
             return Ok(None);
         };
+        if !insert_set(&mut visited, actual, reads.budget())? {
+            return Ok(None);
+        }
+        if visited.len() > MAX_PARENTS {
+            return Err(limit(format!(
+                "AcroForm parent chain exceeds the {MAX_PARENTS}-level safety limit"
+            )));
+        }
         if let Some(value) = own(reads, dict, key)? {
-            return Ok(Some(value.clone()));
+            return copy_for_edit(value, reads.budget())
+                .map(Some)
+                .map_err(|e| store_error(&e));
         }
         current = match dict.get("Parent") {
             Some(Value::Reference(parent)) => Some(self::id(*parent)),
@@ -832,8 +1048,10 @@ pub fn form_field_choices(
     id: Id,
 ) -> PyResult<Vec<(String, String)>> {
     py.detach(|| {
-        memoized(document)?.field(id).ok_or_else(|| stale(id))?;
         let (version, budget) = view(document)?;
+        memoized_at(document, &version, &budget)?
+            .field(id)
+            .ok_or_else(|| stale(id))?;
         let mut reads = Reads::new(&version, &budget);
         let Some(options) = inherited(&mut reads, id, "Opt")? else {
             return Ok(Vec::new());
@@ -847,7 +1065,7 @@ pub fn form_field_choices(
             )));
         }
         let mut totals = (0, 0);
-        let mut choices = Vec::new();
+        let mut choices = BudgetVec::new(&budget);
         for option in options.iter() {
             let mut text = |value: &Value| {
                 text(
@@ -866,13 +1084,18 @@ pub fn form_field_choices(
                     }
                 }
                 option => match text(option)? {
-                    Some(value) => (value.clone(), value),
+                    Some(value) => {
+                        budget
+                            .charge(LimitCode::MemorySize, value.len() as u64)
+                            .map_err(|e| limit_error(&e))?;
+                        (value.clone(), value)
+                    }
                     None => continue,
                 },
             };
-            choices.push(choice);
+            choices.try_push(choice).map_err(|e| limit_error(&e))?;
         }
-        Ok(choices)
+        Ok(choices.into_vec())
     })
 }
 
@@ -885,29 +1108,39 @@ pub fn form_field_widgets(
     id: Id,
 ) -> PyResult<Vec<(Id, Id, u32)>> {
     py.detach(|| {
-        let form = memoized(document)?;
-        let field = form.field(id).ok_or_else(|| stale(id))?;
-        let widgets: HashSet<Id> = field.widgets.iter().copied().collect();
         let (version, index, budget) = index(document)?;
+        let form = memoized_at(document, &version, &budget)?;
+        let field = form.field(id).ok_or_else(|| stale(id))?;
+        let mut widgets = HashSet::new();
+        for &widget in &field.widgets {
+            insert_set(&mut widgets, widget, &budget)?;
+        }
         let mut reads = Reads::new(&version, &budget);
-        let mut out = Vec::new();
+        let mut out = BudgetVec::new(&budget);
         for page in index.pages() {
+            budget.poll().map_err(|e| limit_error(&e))?;
             let Some(object) = page.object() else {
                 continue;
             };
             let Some(Value::Array(items)) = read(&mut reads, page.dict().get("Annots"))? else {
                 continue;
             };
+            budget
+                .check(LimitCode::AnnotationCount, items.len() as u64)
+                .map_err(|e| limit_error(&e))?;
             for (at, item) in items.iter().enumerate() {
+                budget.poll().map_err(|e| limit_error(&e))?;
                 if let Value::Reference(reference) = item
-                    && widgets.contains(&self::id(*reference))
+                    && let Some((actual, _)) = object_location(&mut reads, *reference)?
+                    && widgets.contains(&actual)
                 {
                     let at = u32::try_from(at).unwrap_or(u32::MAX);
-                    out.push((self::id(object), self::id(*reference), at));
+                    out.try_push((self::id(object), actual, at))
+                        .map_err(|e| limit_error(&e))?;
                 }
             }
         }
-        Ok(out)
+        Ok(out.into_vec())
     })
 }
 
@@ -927,6 +1160,7 @@ fn widget(
     id: Id,
     dict: &Dict,
     totals: &mut (usize, usize),
+    budget: &Budget,
 ) -> PyResult<Option<WidgetRecord>> {
     if annots.name(dict, "Subtype")?.as_deref() != Some(b"Widget") {
         return Ok(None);
@@ -946,6 +1180,9 @@ fn widget(
             MAX_STATE_BYTES,
             "encoded widget-state",
         )?;
+        budget
+            .charge(LimitCode::MemorySize, name.len().saturating_mul(3) as u64)
+            .map_err(|e| limit_error(&e))?;
         let state = String::from_utf8_lossy(name).into_owned();
         charge(
             &mut totals.1,
@@ -955,12 +1192,12 @@ fn widget(
         )?;
         Ok(state)
     };
-    let mut states = Vec::new();
+    let mut states = BudgetVec::new(budget);
     if let Some(Value::Dict(appearance)) = annots.resolved(dict.get("AP"))?
         && let Some(Value::Dict(normal)) = annots.resolved(appearance.get("N"))?
     {
         for name in normal.keys() {
-            states.push(state(name)?);
+            states.try_push(state(name)?).map_err(|e| limit_error(&e))?;
         }
     }
     let current = match annots.resolved(dict.get("AS"))? {
@@ -975,7 +1212,7 @@ fn widget(
         field,
         annots.to_display(area),
         flags,
-        states,
+        states.into_vec(),
         current,
     )))
 }
@@ -990,22 +1227,87 @@ pub fn widget_list(
     generation: u16,
 ) -> PyResult<Option<Vec<WidgetRecord>>> {
     py.detach(|| {
-        let Some(annots) = Annots::read(document, number, generation)? else {
+        let (version, page_index, budget) = crate::pages::index(document)?;
+        let Some(annots) = Annots::read(
+            Arc::clone(&version),
+            page_index,
+            &budget,
+            number,
+            generation,
+        )?
+        else {
             return Ok(None);
         };
-        let form = memoized(document)?;
-        let mut records = Vec::new();
+        let form = memoized_at(document, &version, &budget)?;
+        let mut records = BudgetVec::new(&budget);
+        let mut reads = Reads::new(&version, &budget);
         let mut totals = (0, 0);
         for (index, item) in annots.items.iter().enumerate() {
             let Some((id, dict)) = annots.entry(item)? else {
                 continue;
             };
-            if let Some(record) = widget(&annots, &form, index, id, &dict, &mut totals)? {
-                records.push(record);
+            let id = if id == (0, 0) {
+                id
+            } else {
+                let Some((actual, _)) = object_location(&mut reads, Reference::new(id.0, id.1))?
+                else {
+                    continue;
+                };
+                actual
+            };
+            if let Some(record) = widget(&annots, &form, index, id, &dict, &mut totals, &budget)? {
+                records.try_push(record).map_err(|e| limit_error(&e))?;
             }
         }
-        Ok(Some(records))
+        Ok(Some(records.into_vec()))
     })
+}
+
+/// Locate the same widget after its annotation reference changes through an alias.
+fn find_widget(
+    annots: &Annots,
+    index: u32,
+    id: Id,
+    reads: &mut Reads<'_>,
+) -> PyResult<(usize, Dict)> {
+    if id == (0, 0) {
+        return annots.find(index, id);
+    }
+    let matches = |item: &Value, reads: &mut Reads<'_>| -> PyResult<bool> {
+        let Value::Reference(reference) = item else {
+            return Ok(false);
+        };
+        Ok(object_location(reads, *reference)?.is_some_and(|(actual, _)| actual == id))
+    };
+    let hint = index as usize;
+    let mut position = None;
+    if let Some(item) = annots.items.get(hint)
+        && matches(item, reads)?
+    {
+        position = Some(hint);
+    }
+    if position.is_none() {
+        for (at, item) in annots.items.iter().enumerate() {
+            reads.budget().poll().map_err(|e| limit_error(&e))?;
+            if at != hint && matches(item, reads)? {
+                position = Some(at);
+                break;
+            }
+        }
+    }
+    let Some(position) = position else {
+        return Err(StaleObjectError::new_err(format!(
+            "widget {} is no longer in the page's /Annots",
+            id.0
+        )));
+    };
+    match annots.entry(&annots.items.as_slice()[position])? {
+        Some((_, dict)) => Ok((position, dict)),
+        None => Err(StaleObjectError::new_err(format!(
+            "widget {} is no longer a dictionary",
+            id.0
+        ))),
+    }
 }
 
 /// Reads the widget that a handle names. Returns `None` for a page that is
@@ -1020,12 +1322,21 @@ pub fn widget_read(
     id: Id,
 ) -> PyResult<Option<WidgetRecord>> {
     py.detach(|| {
-        let Some(annots) = Annots::read(document, number, generation)? else {
+        let (version, page_index, budget) = crate::pages::index(document)?;
+        let Some(annots) = Annots::read(
+            Arc::clone(&version),
+            page_index,
+            &budget,
+            number,
+            generation,
+        )?
+        else {
             return Ok(None);
         };
-        let (position, dict) = annots.find(index, id)?;
-        let form = memoized(document)?;
-        widget(&annots, &form, position, id, &dict, &mut (0, 0))?
+        let mut reads = Reads::new(&version, &budget);
+        let (position, dict) = find_widget(&annots, index, id, &mut reads)?;
+        let form = memoized_at(document, &version, &budget)?;
+        widget(&annots, &form, position, id, &dict, &mut (0, 0), &budget)?
             .map(Some)
             .ok_or_else(|| {
                 StaleObjectError::new_err(format!("annotation {} is no longer a widget", id.0))
@@ -1036,45 +1347,39 @@ pub fn widget_read(
 /// Where the form's `/Fields` array is written: as an object of its own,
 /// in the form dictionary's object, or in the catalog's.
 enum Holder {
-    Array(u32),
+    Array(Id),
     Form(Id),
     Catalog(Id),
 }
 
-/// Returns where the form's `/Fields` array is written, and the array.
+/// Resolve aliases to the actual object that owns the form or fields array.
 fn holder(reads: &mut Reads<'_>) -> PyResult<Option<(Holder, Array)>> {
-    let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
+    let Some(&Value::Reference(root)) = reads.trailer().get("Root") else {
         return Ok(None);
     };
-    let Some(catalog) = object(reads, id(root))? else {
+    let Some((Value::Dict(catalog), Some(root))) = located(reads, Some(&Value::Reference(root)))?
+    else {
         return Ok(None);
     };
-    let Value::Dict(catalog) = &*catalog else {
+    let Some((Value::Dict(form), form_object)) = located(reads, catalog.get("AcroForm"))? else {
         return Ok(None);
     };
-    let (form, owner) = match catalog.get("AcroForm") {
-        Some(Value::Reference(reference)) => match object(reads, id(*reference))? {
-            Some(form) => match &*form {
-                Value::Dict(form) => (form.clone(), Holder::Form(id(*reference))),
-                _ => return Ok(None),
-            },
-            None => return Ok(None),
-        },
-        Some(Value::Dict(form)) => (form.clone(), Holder::Catalog(id(root))),
-        _ => return Ok(None),
-    };
-    let owner = match form.get("Fields") {
-        Some(Value::Reference(reference)) => Holder::Array(reference.number()),
-        _ => owner,
-    };
-    Ok(match read(reads, form.get("Fields"))? {
-        Some(Value::Array(fields)) => Some((owner, fields)),
+    if matches!(form.get("Type"), Some(Value::Name(kind)) if matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog"))
+    {
+        return Err(MalformedPdfError::new_err(
+            "the form aliases a page, page tree, or catalog",
+        ));
+    }
+    let owner = form_object.map_or(Holder::Catalog(root), Holder::Form);
+    Ok(match located(reads, form.get("Fields"))? {
+        Some((Value::Array(fields), Some(object))) => Some((Holder::Array(object), fields)),
+        Some((Value::Array(fields), None)) => Some((owner, fields)),
         _ => None,
     })
 }
 
 /// A radio group to repair: the name its buttons share and their objects.
-type Group = (PdfString, Vec<Reference>);
+type Group = (PdfString, Vec<(Reference, Reference)>);
 
 /// Returns the top-level radio buttons that share a name, each a field
 /// merged with its widget, by name in `/Fields` order.
@@ -1082,15 +1387,23 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> PyResult<Vec<Group>> {
     if fields.len() > MAX_EDGES {
         return Err(edges_error());
     }
+    let budget = reads.budget();
     let mut groups: Vec<Group> = Vec::new();
-    let mut positions: HashMap<Vec<u8>, usize> = HashMap::new();
+    let mut positions: HashMap<String, usize> = HashMap::new();
+    let mut totals = (0, 0);
+    let mut seen = HashSet::new();
     for item in fields.iter() {
+        budget.poll().map_err(|e| limit_error(&e))?;
         let Value::Reference(reference) = item else {
             continue;
         };
-        let Some(value) = object(reads, id(*reference))? else {
+        let Some((actual, value)) = object_location(reads, *reference)? else {
             continue;
         };
+        if !insert_set(&mut seen, actual, budget)? {
+            continue;
+        }
+        let actual = Reference::new(actual.0, actual.1);
         let Value::Dict(field) = &*value else {
             continue;
         };
@@ -1106,11 +1419,33 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> PyResult<Vec<Group>> {
         let Some(Value::String(title)) = read(reads, field.get("T"))? else {
             continue;
         };
-        match positions.get(title.as_bytes()) {
-            Some(&at) => groups[at].1.push(*reference),
+        charge(
+            &mut totals.0,
+            title.as_bytes().len(),
+            MAX_NAME_BYTES,
+            "encoded field name",
+        )?;
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                title.as_bytes().len().saturating_mul(4) as u64,
+            )
+            .map_err(|e| limit_error(&e))?;
+        let decoded = text_string(title.as_bytes());
+        charge(
+            &mut totals.1,
+            decoded.len(),
+            MAX_NAME_BYTES,
+            "decoded field name",
+        )?;
+        match positions.get(decoded.as_str()) {
+            Some(&at) => push(&mut groups[at].1, (*reference, actual), budget)?,
             None => {
-                positions.insert(title.as_bytes().to_vec(), groups.len());
-                groups.push((title, vec![*reference]));
+                reserve_map(&mut positions, budget)?;
+                positions.insert(decoded, groups.len());
+                let mut members = Vec::new();
+                push(&mut members, (*reference, actual), budget)?;
+                push(&mut groups, (title, members), budget)?;
             }
         }
     }
@@ -1124,126 +1459,217 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> PyResult<Vec<Group>> {
 /// made. Viewers and the walk otherwise see only one of them.
 #[pyfunction]
 pub fn form_repair_radio_groups(py: Python<'_>, document: &_Document) -> PyResult<u32> {
-    let groups = py.detach(|| {
-        let (version, budget) = view(document)?;
-        let mut reads = Reads::new(&version, &budget);
-        match holder(&mut reads)? {
-            Some((_, fields)) => radio_groups(&mut reads, &fields),
-            None => Ok(Vec::new()),
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = repair_radio_groups(transaction, budget);
+        if result.is_err() {
+            transaction.rollback(savepoint);
         }
-    })?;
+        result
+    })
+}
+
+fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResult<u32> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let before = transaction.snapshot();
+    let mut reads = Reads::new(&before, budget);
+    let Some((owner, fields)) = holder(&mut reads)? else {
+        return Ok(0);
+    };
+    let groups = radio_groups(&mut reads, &fields)?;
     if groups.is_empty() {
         return Ok(0);
     }
-    document.edit(py, |transaction, budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let before = transaction.snapshot();
-        let mut reads = Reads::new(&before, budget);
-        let Some((owner, fields)) = holder(&mut reads)? else {
-            return Ok(0);
+    let mut replaced: HashMap<Reference, Option<Reference>> = HashMap::new();
+    for (title, members) in &groups {
+        let first = object(&mut reads, id(members[0].1))?;
+        let Some(Value::Dict(first)) = first.as_deref() else {
+            continue;
         };
-        let groups = radio_groups(&mut reads, &fields)?;
-        let mut replaced: HashMap<Reference, Option<Reference>> = HashMap::new();
-        for (title, members) in &groups {
-            let first = object(&mut reads, id(members[0]))?;
-            let Some(Value::Dict(first)) = first.as_deref() else {
-                continue;
-            };
-            let mut parent = Dict::new();
-            parent.insert(Name::from("FT"), Value::Name(Name::from("Btn")));
-            parent.insert(Name::from("T"), Value::String(title.clone()));
-            let kids = members.iter().map(|&member| Value::Reference(member));
-            parent.insert(
-                Name::from("Kids"),
-                Value::Array(Array::from(kids.collect::<Vec<_>>())),
-            );
-            for key in ["Ff", "TU", "TM", "DV"] {
-                if let Some(value) = first.get(key) {
-                    parent.insert(Name::from(key), value.clone());
-                }
-            }
-            // The group's value is the first value that one of its buttons
-            // holds.
-            for &member in members {
-                if let Some(Value::Dict(member)) = object(&mut reads, id(member))?.as_deref()
-                    && let Some(value) = member.get("V")
-                    && read(&mut reads, Some(value))?.is_some()
-                {
-                    parent.insert(Name::from("V"), value.clone());
-                    break;
-                }
-            }
-            let reference = transaction.allocate().map_err(store)?;
-            transaction
-                .write(reference.number(), &Value::Dict(parent), budget)
-                .map_err(store)?;
-            for &member in members {
-                let Some(Value::Dict(dict)) = object(&mut reads, id(member))?.as_deref().cloned()
-                else {
-                    continue;
-                };
-                let mut dict = dict;
-                for key in RADIO_KEYS {
-                    dict.remove(key);
-                }
-                dict.insert(Name::from("Parent"), Value::Reference(reference));
-                transaction
-                    .write(member.number(), &Value::Dict(dict), budget)
-                    .map_err(store)?;
-                replaced.insert(member, (member == members[0]).then_some(reference));
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                (32 * size_of::<(Name, Value)>()) as u64,
+            )
+            .map_err(|e| limit_error(&e))?;
+        let mut parent = Dict::new();
+        parent.insert(Name::from("FT"), Value::Name(Name::from("Btn")));
+        budget
+            .charge(LimitCode::MemorySize, title.as_bytes().len() as u64)
+            .map_err(|e| limit_error(&e))?;
+        parent.insert(Name::from("T"), Value::String(title.clone()));
+        let mut kids = BudgetVec::new(budget);
+        for &(entry, _) in members {
+            kids.try_push(Value::Reference(entry))
+                .map_err(|e| limit_error(&e))?;
+        }
+        parent.insert(
+            Name::from("Kids"),
+            Value::Array(Array::from(kids.into_vec())),
+        );
+        for key in ["Ff", "TU", "TM", "DV"] {
+            if let Some(value) = first.get(key) {
+                parent.insert(
+                    Name::from(key),
+                    copy_for_edit(value, budget).map_err(store)?,
+                );
             }
         }
-        let fields: Vec<Value> = fields
-            .iter()
-            .filter_map(|item| match item {
-                Value::Reference(reference) => match replaced.get(reference) {
-                    Some(Some(parent)) => Some(Value::Reference(*parent)),
-                    Some(None) => None,
-                    None => Some(item.clone()),
-                },
-                _ => Some(item.clone()),
-            })
-            .collect();
-        let fields = Value::Array(Array::from(fields));
-        let (number, value) = match owner {
-            Holder::Array(number) => (number, fields),
-            Holder::Form(form) => {
-                let Some(Value::Dict(mut dict)) = object(&mut reads, form)?.as_deref().cloned()
-                else {
-                    return Ok(0);
-                };
-                dict.insert(Name::from("Fields"), fields);
-                (form.0, Value::Dict(dict))
+        // The group's value is the first value that one of its buttons
+        // holds.
+        for &(_, member) in members {
+            if let Some(Value::Dict(member)) = object(&mut reads, id(member))?.as_deref()
+                && let Some(value) = member.get("V")
+                && read(&mut reads, Some(value))?.is_some()
+            {
+                parent.insert(
+                    Name::from("V"),
+                    copy_for_edit(value, budget).map_err(store)?,
+                );
+                break;
             }
-            Holder::Catalog((number, generation)) => {
-                let catalog = object(&mut reads, (number, generation))?;
-                let Some(Value::Dict(mut catalog)) = catalog.as_deref().cloned() else {
-                    return Ok(0);
-                };
-                let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
-                    return Ok(0);
-                };
-                form.insert(Name::from("Fields"), fields);
-                (number, Value::Dict(catalog))
+        }
+        let mut field_actions = Dict::new();
+        for &(_, member) in members {
+            if let Some(Value::Dict(member)) = object(&mut reads, id(member))?.as_deref()
+                && let Some(Value::Dict(mut actions)) = read(&mut reads, member.get("AA"))?
+            {
+                for trigger in FIELD_TRIGGERS {
+                    if field_actions.get(trigger).is_none()
+                        && let Some(action) = actions.remove(trigger)
+                    {
+                        field_actions.insert(Name::from(trigger), action);
+                    }
+                }
             }
+        }
+        if !field_actions.is_empty() {
+            parent.insert(Name::from("AA"), Value::Dict(field_actions));
+        }
+        let reference = transaction.allocate().map_err(store)?;
+        transaction
+            .write(reference.number(), &Value::Dict(parent), budget)
+            .map_err(store)?;
+        for &(_, member) in members {
+            let Some(value) = object(&mut reads, id(member))? else {
+                continue;
+            };
+            let Value::Dict(mut dict) = copy_for_edit(&value, budget).map_err(store)? else {
+                continue;
+            };
+            if matches!(dict.get("Type"), Some(Value::Name(kind)) if matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog"))
+            {
+                return Err(MalformedPdfError::new_err(
+                    "a radio widget aliases a page, page tree, or catalog",
+                ));
+            }
+            for key in RADIO_KEYS {
+                dict.remove(key);
+            }
+            if let Some(Value::Dict(mut actions)) = read(&mut reads, dict.get("AA"))? {
+                for trigger in FIELD_TRIGGERS {
+                    actions.remove(trigger);
+                }
+                if actions.is_empty() {
+                    dict.remove("AA");
+                } else {
+                    dict.insert(Name::from("AA"), Value::Dict(actions));
+                }
+            }
+            dict.insert(Name::from("Parent"), Value::Reference(reference));
+            transaction
+                .write(member.number(), &Value::Dict(dict), budget)
+                .map_err(store)?;
+            reserve_map(&mut replaced, budget)?;
+            replaced.insert(member, (member == members[0].1).then_some(reference));
+        }
+    }
+    let mut changed_fields = BudgetVec::new(budget);
+    let mut emitted = HashSet::new();
+    for item in fields.iter() {
+        let replacement = match item {
+            Value::Reference(reference) => {
+                let actual = object_location(&mut reads, *reference)?
+                    .map(|(id, _)| Reference::new(id.0, id.1));
+                match actual.and_then(|actual| {
+                    replaced
+                        .get(&actual)
+                        .map(|replacement| (actual, replacement))
+                }) {
+                    Some((actual, Some(parent)))
+                        if insert_set(&mut emitted, id(actual), budget)? =>
+                    {
+                        Some(Value::Reference(*parent))
+                    }
+                    Some(_) => None,
+                    None => Some(copy_for_edit(item, budget).map_err(store)?),
+                }
+            }
+            _ => Some(copy_for_edit(item, budget).map_err(store)?),
         };
-        transaction.write(number, &value, budget).map_err(store)?;
-        Ok(u32::try_from(groups.len()).unwrap_or(u32::MAX))
-    })
+        if let Some(value) = replacement {
+            changed_fields
+                .try_push(value)
+                .map_err(|e| limit_error(&e))?;
+        }
+    }
+    let fields = changed_fields.into_vec();
+    let fields = Value::Array(Array::from(fields));
+    let (number, value) = match owner {
+        Holder::Array((number, _)) => (number, fields),
+        Holder::Form(form) => {
+            let Some(value) = object(&mut reads, form)? else {
+                return Ok(0);
+            };
+            let Value::Dict(mut dict) = copy_for_edit(&value, budget).map_err(store)? else {
+                return Ok(0);
+            };
+            dict.insert(Name::from("Fields"), fields);
+            (form.0, Value::Dict(dict))
+        }
+        Holder::Catalog((number, generation)) => {
+            let catalog = object(&mut reads, (number, generation))?;
+            let Some(catalog) = catalog else {
+                return Ok(0);
+            };
+            let Value::Dict(mut catalog) = copy_for_edit(&catalog, budget).map_err(store)? else {
+                return Ok(0);
+            };
+            let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
+                return Ok(0);
+            };
+            form.insert(Name::from("Fields"), fields);
+            (number, Value::Dict(catalog))
+        }
+    };
+    transaction.write(number, &value, budget).map_err(store)?;
+    Ok(u32::try_from(groups.len()).unwrap_or(u32::MAX))
 }
 
 /// Returns `text` as a text string: ASCII without control characters as it
 /// is, and else UTF-16BE, in which the line breaks and other controls that
 /// PDFDocEncoding leaves unmapped read back.
-fn encode_value(text: &str) -> Value {
-    let bytes = if text.is_ascii() && !text.chars().any(char::is_control) {
-        text.as_bytes().to_vec()
-    } else {
-        let mut bytes = vec![0xFE, 0xFF];
-        bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+fn encode_value(text: &str, budget: &Budget) -> PyResult<Value> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    let mut bytes = BudgetVec::new(budget);
+    if text.is_ascii() && !text.chars().any(char::is_control) {
         bytes
-    };
-    Value::String(PdfString::literal(bytes))
+            .try_extend_from_slice(text.as_bytes())
+            .map_err(|e| limit_error(&e))?;
+    } else {
+        bytes
+            .try_extend_from_slice(&[0xFE, 0xFF])
+            .map_err(|e| limit_error(&e))?;
+        for (index, unit) in text.encode_utf16().enumerate() {
+            if index % 1024 == 0 {
+                budget.poll().map_err(|e| limit_error(&e))?;
+            }
+            bytes
+                .try_extend_from_slice(&unit.to_be_bytes())
+                .map_err(|e| limit_error(&e))?;
+        }
+    }
+    Ok(Value::String(PdfString::literal(bytes.into_vec())))
 }
 
 fn widget_error(error: WidgetError) -> PyErr {
@@ -1272,6 +1698,18 @@ fn widget_of(
 /// Returns whether a field of `kind` shows its value in text.
 fn shows_text(kind: &str) -> bool {
     matches!(kind, "text" | "combobox" | "listbox")
+}
+
+fn is_winansi(text: &str, budget: &Budget) -> PyResult<bool> {
+    for (index, character) in text.chars().enumerate() {
+        if index % 1024 == 0 {
+            budget.poll().map_err(|e| limit_error(&e))?;
+        }
+        if winansi_byte(character).is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Sets the value of field `id`, a text or choice field, to `value`, and
@@ -1322,16 +1760,19 @@ fn fill(transaction: &mut Transaction, id: Id, value: &str, budget: &Budget) -> 
         }
         _ => return Err(PdfError::new_err("unsupported field type")),
     }
-    let Some(Value::Dict(mut dict)) = object(&mut reads, id)?.as_deref().cloned() else {
+    let Some(original) = object(&mut reads, id)? else {
         return Err(stale(id));
     };
-    dict.insert(Name::from("V"), encode_value(value));
+    let Value::Dict(mut dict) = copy_for_edit(&original, budget).map_err(store)? else {
+        return Err(stale(id));
+    };
+    dict.insert(Name::from("V"), encode_value(value, budget)?);
     transaction
         .write(id.0, &Value::Dict(dict), budget)
         .map_err(store)?;
     // The widgets of the field are drawn or refused with the reason; those
     // of other fields that have no appearance are drawn where they can be.
-    let mut marks = Vec::new();
+    let mut marks = BudgetVec::new(budget);
     {
         let version = transaction.version();
         let reader = Reader { version, budget };
@@ -1340,13 +1781,15 @@ fn fill(transaction: &mut Transaction, id: Id, value: &str, budget: &Budget) -> 
                 && let Value::Dict(dict) = &*dict
             {
                 widgets::appearance(&reader, dict).map_err(widget_error)?;
-                marks.push(widget.0);
+                marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
             }
         }
         for other in &form.fields {
-            if other.name == field.name
-                || !shows_text(other.kind)
-                || !other.value.as_deref().is_none_or(is_winansi)
+            if other.name == field.name || !shows_text(other.kind) {
+                continue;
+            }
+            if let Some(value) = &other.value
+                && !is_winansi(value, budget)?
             {
                 continue;
             }
@@ -1355,12 +1798,12 @@ fn fill(transaction: &mut Transaction, id: Id, value: &str, budget: &Budget) -> 
                     && let Value::Dict(dict) = &*dict
                     && !widgets::has_normal_stream(&reader, dict).map_err(store)?
                 {
-                    marks.push(widget.0);
+                    marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
                 }
             }
         }
     }
-    for number in marks {
+    for number in marks.into_vec() {
         transaction
             .mark(Structure::Appearance, number, budget)
             .map_err(store)?;
@@ -1415,27 +1858,41 @@ fn set_need_appearances(
     let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
         return Ok(());
     };
-    let Some(Value::Dict(mut catalog)) = object(&mut reads, id(root))?.as_deref().cloned() else {
+    let Some(catalog_value) = object(&mut reads, id(root))? else {
         return Ok(());
     };
-    let (number, mut form) = match catalog.get("AcroForm") {
+    let Value::Dict(catalog) = &*catalog_value else {
+        return Ok(());
+    };
+    let (number, value) = match catalog.get("AcroForm") {
         Some(Value::Reference(reference)) => match object(&mut reads, id(*reference))?.as_deref() {
-            Some(Value::Dict(form)) => (Some(reference.number()), form.clone()),
+            Some(form @ Value::Dict(dict)) => {
+                if dict.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+                    return Ok(());
+                }
+                let Value::Dict(mut form) = copy_for_edit(form, budget).map_err(store)? else {
+                    unreachable!("a copied dictionary remains a dictionary");
+                };
+                form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+                (reference.number(), Value::Dict(form))
+            }
             _ => return Ok(()),
         },
-        Some(Value::Dict(form)) => (None, form.clone()),
-        _ => return Ok(()),
-    };
-    if form.get("NeedAppearances") == Some(&Value::Boolean(value)) {
-        return Ok(());
-    }
-    form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
-    let (number, value) = match number {
-        Some(number) => (number, Value::Dict(form)),
-        None => {
-            catalog.insert(Name::from("AcroForm"), Value::Dict(form));
+        Some(Value::Dict(form)) => {
+            if form.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+                return Ok(());
+            }
+            let Value::Dict(mut catalog) = copy_for_edit(&catalog_value, budget).map_err(store)?
+            else {
+                unreachable!("a copied dictionary remains a dictionary");
+            };
+            let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
+                unreachable!("the copied catalog retains its form dictionary");
+            };
+            form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
             (root.number(), Value::Dict(catalog))
         }
+        _ => return Ok(()),
     };
     transaction.write(number, &value, budget).map_err(store)?;
     Ok(())

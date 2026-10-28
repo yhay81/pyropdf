@@ -25,6 +25,10 @@ then the causes of the rest.
 | usrguide | 27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | equal |
 | wdl6812-manuscript | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
 
+## Rendering within tolerance
+
+- pdfium-links-highlights-annots page 1: missing-highlight-appearance {"differing": 0.00139, "mean": 0.295}
+
 ## Unexplained differences
 
 None.

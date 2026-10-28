@@ -38,3 +38,7 @@ with 6,829 objects, where pylopdf took 2.17 ms with 2,626 objects and
 process measured 3.6 ms for its first fill and 0.68 ms for one fill of the
 smallest document, the cost of a cold process; the table is the second of
 two later runs, which agreed within 0.1 ms.
+
+## Form-size scaling
+
+`field_scale.py` varies the number of fields while keeping a single page and a valid normal appearance for every widget. `results/review-field-scale.md` records the median of seven warm fills. Repeated fills currently scan the form and its widgets: the measured time rises from 0.037 ms for one field to 1.243 ms for 1,000. The original unrelated-page experiment does not establish that filling costs only the selected field and its widgets. Issue #328 tracks the missing incremental index and blocks the field-only cost criterion in #193.

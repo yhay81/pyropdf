@@ -20,14 +20,15 @@ use std::fmt;
 use std::sync::Arc;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Transaction;
 use pyropdf_store::{Error, LimitExceeded, Result};
 
-use crate::annotations::{Reader, numbers_array};
+use crate::annotations::{Reader, Resolved, numbers_array};
 use crate::standard::{
-    self, Align, Base14Font, DefaultAppearance, DeviceColor, FIT_STEP, LayoutError, MAX_FIT_SIZE,
-    MIN_FIT_SIZE, Style,
+    self, Align, Base14Font, DefaultAppearance, DeviceColor, FIT_STEP, LayoutError,
+    MAX_DEFAULT_APPEARANCE, MAX_FIT_SIZE, MIN_FIT_SIZE, Style,
 };
 
 /// The most fields of a `/Parent` chain that a widget reads entries from.
@@ -189,7 +190,10 @@ pub fn settle(
         Err(WidgetError::Store(error)) => return Err(error),
     };
     let mut appearances = match reader.entry(widget, "AP")?.as_deref() {
-        Some(Value::Dict(appearances)) => appearances.clone(),
+        Some(value @ Value::Dict(_)) => match copy_for_edit(value, budget)? {
+            Value::Dict(appearances) => appearances,
+            _ => unreachable!("a copied dictionary remains a dictionary"),
+        },
         _ => Dict::new(),
     };
     match drawing {
@@ -203,7 +207,14 @@ pub fn settle(
             appearances.insert(Name::from("N"), Value::Reference(reference));
         }
     }
-    let mut widget = widget.clone();
+    let Some(original) = transaction.version().get(number, budget)? else {
+        return Err(Error::malformed(
+            "a widget disappeared while settling its appearance",
+        ));
+    };
+    let Value::Dict(mut widget) = copy_for_edit(original.value(), budget)? else {
+        return Err(Error::malformed("a widget is no longer a dictionary"));
+    };
     if appearances.is_empty() {
         widget.remove("AP");
     } else {
@@ -299,14 +310,12 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
     };
     // A `/Q` on the chain wins even when it is unusable, and the form's
     // `/Q` is the default (ISO 32000-2 Table 225).
-    let quadding = match quadding {
-        Some(quadding) => Some(Arc::clone(quadding)),
-        None => match form {
-            Some(form) => reader.entry(form, "Q")?,
-            None => None,
-        },
+    let form_quadding = match form {
+        Some(form) if quadding.is_none() => reader.entry(form, "Q")?,
+        _ => None,
     };
-    let align = Align::from_quadding(integer(quadding.as_deref()).unwrap_or(0));
+    let quadding = quadding.as_deref().or_else(|| form_quadding.as_deref());
+    let align = Align::from_quadding(integer(quadding).unwrap_or(0));
     let value = value_text(reader, value.as_deref())?;
     let style = WidgetStyle::read(reader, widget)?;
     if let TextLayout::Comb(max_len) = layout {
@@ -318,8 +327,13 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
             ));
         }
     }
-    if !standard::is_winansi(&value) {
-        return Ok(Some(Drawing::Removed));
+    for (index, character) in value.chars().enumerate() {
+        if index % 1024 == 0 {
+            reader.budget.poll()?;
+        }
+        if standard::winansi_byte(character).is_none() {
+            return Ok(Some(Drawing::Removed));
+        }
     }
     let text = TextStyle::new(default_appearance(reader, widget, form)?);
     let mut ops = BudgetVec::new(reader.budget);
@@ -377,7 +391,10 @@ fn entries(reader: &Reader<'_>, widget: &Dict) -> Result<Entries> {
         };
         for (slot, key) in found.iter_mut().zip(KEYS) {
             if slot.is_none() {
-                *slot = reader.entry(dict, key)?;
+                *slot = reader
+                    .entry(dict, key)?
+                    .map(|value| owned(value, reader.budget))
+                    .transpose()?;
             }
         }
         if found.iter().all(Option::is_some) {
@@ -391,18 +408,47 @@ fn entries(reader: &Reader<'_>, widget: &Dict) -> Result<Entries> {
     Ok(found)
 }
 
-/// Returns the dictionary of the field that `dict`'s `/Parent` refers to,
-/// or `None` past [`MAX_PARENTS`] fields or for a field visited before.
-fn parent(reader: &Reader<'_>, dict: &Dict, visited: &mut Vec<u32>) -> Result<Option<Arc<Value>>> {
+/// Returns the field referred to by `/Parent`, refusing cycles and depth overflow.
+fn parent(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    visited: &mut Vec<Reference>,
+) -> Result<Option<Arc<Value>>> {
     let Some(parent @ Value::Reference(reference)) = dict.get("Parent") else {
         return Ok(None);
     };
-    if visited.len() >= MAX_PARENTS || visited.contains(&reference.number()) {
-        return Ok(None);
+    if visited.contains(reference) {
+        return Err(Error::malformed("a form field parent chain has a cycle"));
     }
-    visited.push(reference.number());
     let parent = reader.resolve(parent)?;
-    Ok(matches!(*parent, Value::Dict(_)).then_some(parent))
+    if matches!(*parent, Value::Dict(_)) {
+        let depth = visited.len() + 1;
+        reader
+            .budget
+            .check(LimitCode::FormFieldParentDepth, depth as u64)?;
+        if depth > MAX_PARENTS {
+            return Err(LimitExceeded::over(
+                LimitCode::FormFieldParentDepth,
+                MAX_PARENTS as u64,
+                depth as u64,
+            )
+            .into());
+        }
+        visited.push(*reference);
+        Ok(Some(owned(parent, reader.budget)?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn owned(value: Resolved<'_>, budget: &Budget) -> Result<Arc<Value>> {
+    match value {
+        Resolved::Shared(value) => Ok(value),
+        Resolved::Borrowed(value) => {
+            budget.charge(LimitCode::MemorySize, size_of::<Value>() as u64)?;
+            Ok(Arc::new(copy_for_edit(value, budget)?))
+        }
+    }
 }
 
 /// Returns the document's interactive form dictionary.
@@ -414,7 +460,10 @@ fn interactive_form(reader: &Reader<'_>) -> Result<Option<Arc<Value>>> {
     let Value::Dict(catalog) = &*catalog else {
         return Ok(None);
     };
-    reader.entry(catalog, "AcroForm")
+    reader
+        .entry(catalog, "AcroForm")?
+        .map(|value| owned(value, reader.budget))
+        .transpose()
 }
 
 /// Returns the `/DA` of a widget: its own, else the nearest of its
@@ -423,7 +472,7 @@ fn default_appearance(
     reader: &Reader<'_>,
     widget: &Dict,
     form: Option<&Dict>,
-) -> Result<Option<DefaultAppearance>> {
+) -> std::result::Result<Option<DefaultAppearance>, WidgetError> {
     let mut visited = Vec::new();
     let mut held = None;
     loop {
@@ -433,7 +482,10 @@ fn default_appearance(
             Some(_) => break,
         };
         if let Some(Value::String(da)) = reader.entry(dict, "DA")?.as_deref() {
-            return Ok(Some(DefaultAppearance::parse(da.as_bytes())));
+            return Ok(Some(parse_default_appearance(
+                da.as_bytes(),
+                reader.budget,
+            )?));
         }
         match parent(reader, dict, &mut visited)? {
             Some(parent) => held = Some(parent),
@@ -444,40 +496,49 @@ fn default_appearance(
         return Ok(None);
     };
     Ok(match reader.entry(form, "DA")?.as_deref() {
-        Some(Value::String(da)) => Some(DefaultAppearance::parse(da.as_bytes())),
+        Some(Value::String(da)) => Some(parse_default_appearance(da.as_bytes(), reader.budget)?),
         _ => None,
     })
+}
+
+fn parse_default_appearance(
+    bytes: &[u8],
+    budget: &Budget,
+) -> std::result::Result<DefaultAppearance, WidgetError> {
+    budget.check(LimitCode::FormDefaultAppearanceSize, bytes.len() as u64)?;
+    if bytes.len() > MAX_DEFAULT_APPEARANCE {
+        return Err(LimitExceeded::over(
+            LimitCode::FormDefaultAppearanceSize,
+            MAX_DEFAULT_APPEARANCE as u64,
+            bytes.len() as u64,
+        )
+        .into());
+    }
+    Ok(DefaultAppearance::parse(bytes)?)
 }
 
 /// Returns a field value as text: a text string, a name, or the text
 /// strings of an array joined by commas, as `Field.value` reads it; else
 /// empty. Charges the text to the budget's memory.
 fn value_text(reader: &Reader<'_>, value: Option<&Value>) -> Result<String> {
-    let text = match value {
-        Some(Value::String(encoded)) => text_string(encoded.as_bytes()),
-        Some(Value::Name(name)) => String::from_utf8_lossy(name.as_bytes()).into_owned(),
+    let mut text = BudgetVec::new(reader.budget);
+    match value {
+        Some(Value::String(encoded)) => text::append_text(&mut text, encoded.as_bytes())?,
+        Some(Value::Name(name)) => text::append_lossy(&mut text, name.as_bytes())?,
         Some(Value::Array(items)) => {
-            let mut text = String::new();
             for item in items.iter() {
+                reader.budget.poll()?;
                 if let Value::String(encoded) = &*reader.resolve(item)? {
-                    let item = text_string(encoded.as_bytes());
-                    reader
-                        .budget
-                        .charge(LimitCode::MemorySize, item.len() as u64 + 2)?;
                     if !text.is_empty() {
-                        text.push_str(", ");
+                        text.try_extend_from_slice(b", ")?;
                     }
-                    text.push_str(&item);
+                    text::append_text(&mut text, encoded.as_bytes())?;
                 }
             }
-            return Ok(text);
         }
-        _ => String::new(),
-    };
-    reader
-        .budget
-        .charge(LimitCode::MemorySize, text.len() as u64)?;
-    Ok(text)
+        _ => {}
+    }
+    Ok(String::from_utf8(text.into_vec()).expect("the decoder writes valid UTF-8"))
 }
 
 /// Returns an integer value.

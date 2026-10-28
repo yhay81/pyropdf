@@ -207,3 +207,80 @@ fn settling_refuses_what_the_budget_refuses() {
     let refusal: &LimitExceeded = error.limit().unwrap();
     assert_eq!(refusal.code(), LimitCode::MemorySize);
 }
+
+#[test]
+fn an_oversized_default_appearance_refuses_settling() {
+    let long = "/Helv 12 Tf ".repeat(400);
+    let document = form(
+        &format!("/DA ({long})"),
+        "/FT /Tx /V (Hi)",
+        "/Rect [0 0 100 20]",
+    );
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    let widget = transaction.version().get(4, &budget).unwrap().unwrap();
+    let Value::Dict(widget) = &**widget.value() else {
+        panic!("the widget is a dictionary")
+    };
+    let error = settle(&mut transaction, 4, widget, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().unwrap().code(),
+        LimitCode::FormDefaultAppearanceSize
+    );
+}
+
+#[test]
+fn parent_chains_refuse_depth_and_cycles_without_truncation() {
+    let mut objects = Vec::new();
+    for number in 1..=MAX_PARENTS + 2 {
+        objects.push(format!("<< /Parent {} 0 R >>", number + 1));
+    }
+    let strings: Vec<_> = objects.iter().map(String::as_str).collect();
+    let document = open(&strings);
+    let version = document.current();
+    let budget = Budget::default();
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut value = Arc::clone(version.get(1, &budget).unwrap().unwrap().value());
+    let mut visited = Vec::new();
+    for _ in 0..MAX_PARENTS {
+        let Value::Dict(dict) = &*value else {
+            panic!("a parent is a dictionary")
+        };
+        value = parent(&reader, dict, &mut visited).unwrap().unwrap();
+    }
+    let Value::Dict(dict) = &*value else {
+        panic!("a parent is a dictionary")
+    };
+    let error = parent(&reader, dict, &mut visited).unwrap_err();
+    assert_eq!(
+        error.limit().unwrap().code(),
+        LimitCode::FormFieldParentDepth
+    );
+
+    let cyclic = form("", "/FT /Tx /Parent 4 0 R", "/Rect [0 0 100 20]");
+    assert!(
+        matches!(draw(&cyclic), Err(WidgetError::Store(error)) if error.to_string().contains("cycle"))
+    );
+}
+
+#[test]
+fn appearance_values_decode_with_budgeted_memory() {
+    let examples: &[&[u8]] = &[
+        b"hello\x80",
+        b"\xfe\xff\x00A\xd8\x00",
+        b"\xef\xbb\xbfA\xffB",
+    ];
+    for &encoded in examples {
+        let budget = Budget::default();
+        let mut output = BudgetVec::new(&budget);
+        text::append_text(&mut output, encoded).unwrap();
+        assert_eq!(std::str::from_utf8(&output).unwrap(), text_string(encoded));
+    }
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(8));
+    let mut output = BudgetVec::new(&budget);
+    let error = text::append_text(&mut output, &vec![0x80; 100]).unwrap_err();
+    assert_eq!(error.code(), LimitCode::MemorySize);
+}

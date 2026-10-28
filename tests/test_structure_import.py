@@ -11,6 +11,8 @@ differences:
 
 from __future__ import annotations
 
+import pytest
+
 import pyropdf
 
 
@@ -230,3 +232,213 @@ def test_a_link_left_behind_takes_its_element_along() -> None:
     (document,) = _kids(target.catalog["StructTreeRoot"])
     assert [str(kid["S"]) for kid in _kids(document)] == ["P"]
     _check(target)
+
+
+def _one_tagged(extra: dict[int, str] | None = None) -> bytes:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /StructParents 0 >>",
+        6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R >>",
+        7: "<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 >>",
+        8: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>",
+    }
+    objects.update(extra or {})
+    return build_raw_pdf(objects)
+
+
+def test_import_preserves_receiving_parent_tree_behind_an_alias() -> None:
+    target = pyropdf.open(_one_tagged({8: "9 0 R", 9: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>"}))
+    source = pyropdf.open(_one_tagged())
+    target.pages.extend(source.pages[0])
+    root = target.catalog["StructTreeRoot"]
+    tree = _parent_tree(root)
+    assert list(tree) == [0, 1]
+    assert tree[0][0].xref == 7
+    assert tree[1][0]["Pg"].xref == target.pages[1].xref
+    assert list(root["ParentTree"]["Limits"]) == [0, 1]
+
+
+def test_import_preserves_receiving_structure_root_behind_an_alias() -> None:
+    target = pyropdf.open(_one_tagged({6: "10 0 R", 10: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R >>"}))
+    source = pyropdf.open(_one_tagged())
+    target.pages.extend(source.pages[0])
+    root = target.catalog["StructTreeRoot"]
+    assert root.xref == 10
+    assert len(_kids(root)) == 2
+    _check(target)
+
+
+def test_import_reparents_source_elements_when_the_root_is_aliased() -> None:
+    source = pyropdf.open(
+        _one_tagged(
+            {
+                6: "10 0 R",
+                7: "<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K 0 >>",
+                10: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R >>",
+            }
+        )
+    )
+    target = pyropdf.Document()
+    target.pages.extend(source.pages[0])
+    root = target.catalog["StructTreeRoot"]
+    (element,) = _kids(root)
+    assert element["P"].xref == root.xref
+    _check(target)
+
+
+@pytest.mark.parametrize("kind", ["Page", "Pages", "Catalog"])
+def test_import_refuses_receiving_parent_tree_with_another_document_identity(kind: str) -> None:
+    target = pyropdf.open(_one_tagged({8: f"<< /Type /{kind} /Nums [0 [7 0 R]] >>"}))
+    source = pyropdf.open(_one_tagged())
+    before = target.to_bytes()
+    with target.transaction("Catch a failed graft"), pytest.raises(pyropdf.MalformedPdfError):
+        target.pages.extend(source.pages[0])
+    assert target.to_bytes() == before
+
+
+def test_import_refuses_a_long_structure_reference_chain_without_partial_writes() -> None:
+    objects = {8: "20 0 R"}
+    objects.update({number: f"{number + 1} 0 R" for number in range(20, 53)})
+    objects[53] = "<< /Nums [0 [7 0 R]] >>"
+    target = pyropdf.open(_one_tagged(objects))
+    source = pyropdf.open(_one_tagged())
+    before = target.to_bytes()
+    with pytest.raises(pyropdf.MalformedPdfError):
+        target.pages.extend(source.pages[0])
+    assert target.to_bytes() == before
+
+
+def test_import_resolves_aliased_elements_before_reconciling_roles_and_ids() -> None:
+    source = pyropdf.open(
+        _one_tagged(
+            {
+                6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << /Para /P >> >>",
+                7: "10 0 R",
+                8: "<< /Nums [0 [7 0 R]] >>",
+                10: "<< /Type /StructElem /S /Para /P 6 0 R /Pg 3 0 R /K 0 /ID (A) >>",
+            }
+        )
+    )
+    target = pyropdf.open(
+        _one_tagged({6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << /Para /H1 >> >>"})
+    )
+    target.pages.extend(source.pages[0])
+    root = target.catalog["StructTreeRoot"]
+    element = _kids(root)[1]
+    assert element["S"] == "P"
+    assert element["ID"] == b"A"
+    assert list(root["IDTree"]["Names"])[1].xref == element.xref
+    _check(target)
+
+
+def test_import_extends_receiving_parent_tree_kids_behind_an_array_alias() -> None:
+    target = pyropdf.open(
+        _one_tagged(
+            {
+                8: "<< /Kids 9 0 R /Limits [0 0] >>",
+                9: "10 0 R",
+                10: "[11 0 R]",
+                11: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>",
+            }
+        )
+    )
+    source = pyropdf.open(_one_tagged())
+    target.pages.extend(source.pages[0])
+    tree = target.catalog["StructTreeRoot"]["ParentTree"]
+    assert len(tree["Kids"]) == 2
+    assert list(tree["Limits"]) == [0, 1]
+    _check(target)
+
+
+@pytest.mark.parametrize("cycle", [False, True])
+def test_import_refuses_unresolvable_role_map_chains_atomically(*, cycle: bool) -> None:
+    mapping = "/R0 /R1 /R1 /R0" if cycle else " ".join(f"/R{i} /R{i + 1}" for i in range(16)) + " /R16 /P"
+    source = pyropdf.open(
+        _one_tagged(
+            {
+                6: f"<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << {mapping} >> >>",
+                7: "<< /Type /StructElem /S /R0 /P 6 0 R /Pg 3 0 R /K 0 >>",
+            }
+        )
+    )
+    target = pyropdf.open(
+        _one_tagged({6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << /R0 /H1 >> >>"})
+    )
+    before = target.to_bytes()
+    error = pyropdf.MalformedPdfError if cycle else pyropdf.LimitError
+    with pytest.raises(error):
+        target.pages.extend(source.pages[0])
+    assert target.to_bytes() == before
+
+
+def test_import_accepts_a_visited_parent_tree_node_at_the_depth_limit() -> None:
+    objects = {number: f"<< /Kids [{number + 1} 0 R] >>" for number in range(8, 40)}
+    objects[40] = "<< /Nums [0 [7 0 R]] /Kids [8 0 R] >>"
+    target = pyropdf.open(_one_tagged(objects))
+    source = pyropdf.open(_one_tagged())
+    target.pages.extend(source.pages[0])
+    assert target.pages[0].obj["StructParents"] == 0
+    assert target.pages[1].obj["StructParents"] == 1
+    assert target.catalog["StructTreeRoot"]["ParentTreeNextKey"] == 2
+
+
+@pytest.mark.parametrize("shared", ["root_tree", "root_document", "tree_document"])
+def test_import_refuses_structure_objects_used_in_two_roles_atomically(shared: str) -> None:
+    changes = {
+        "root_tree": {6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 6 0 R /Nums [0 [7 0 R]] >>"},
+        "root_document": {6: "<< /Type /StructTreeRoot /S /Document /K [6 0 R] /ParentTree 8 0 R >>"},
+        "tree_document": {
+            6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 7 0 R >>",
+            7: "<< /Type /StructElem /S /Document /P 6 0 R /K [] /Nums [0 [7 0 R]] >>",
+        },
+    }
+    target = pyropdf.open(_one_tagged(changes[shared]))
+    source = pyropdf.open(_one_tagged())
+    before = target.to_bytes()
+    with target.transaction("Catch a conflicting structure identity"), pytest.raises(pyropdf.MalformedPdfError):
+        target.pages.extend(source.pages[0])
+    assert target.to_bytes() == before
+
+
+def test_import_preserves_aliased_namespaces_while_appending_new_ones() -> None:
+    target = pyropdf.open(
+        _one_tagged(
+            {
+                6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /Namespaces 9 0 R >>",
+                9: "10 0 R",
+                10: "[11 0 R]",
+                11: "<< /Type /Namespace /NS (target) >>",
+            }
+        )
+    )
+    source = pyropdf.open(
+        _one_tagged(
+            {
+                6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /Namespaces [11 0 R] >>",
+                11: "<< /Type /Namespace /NS (source) >>",
+            }
+        )
+    )
+    target.pages.extend(source.pages[0])
+    namespaces = target.catalog["StructTreeRoot"]["Namespaces"]
+    assert namespaces.xref == 10
+    assert [item["NS"] for item in namespaces] == [b"target", b"source"]
+    assert len(target.objects[10]) == 2
+
+
+def test_import_accepts_a_role_map_chain_at_the_limit() -> None:
+    mapping = " ".join(f"/R{i} /R{i + 1}" for i in range(15)) + " /R15 /P"
+    source = pyropdf.open(
+        _one_tagged(
+            {
+                6: f"<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << {mapping} >> >>",
+                7: "<< /Type /StructElem /S /R0 /P 6 0 R /Pg 3 0 R /K 0 >>",
+            }
+        )
+    )
+    target = pyropdf.open(
+        _one_tagged({6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /RoleMap << /R0 /H1 >> >>"})
+    )
+    target.pages.extend(source.pages[0])
+    assert _kids(target.catalog["StructTreeRoot"])[1]["S"] == "P"

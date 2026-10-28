@@ -92,11 +92,26 @@ def test_search_for_validates_hit_budget(usrguide: pyropdf.Page, value: object) 
         usrguide.search("authors", max_hits=value)  # ty: ignore[invalid-argument-type]
 
 
-def test_search_for_bounds_utf8_input_before_core_copy(usrguide: pyropdf.Page) -> None:
-    assert usrguide.search("é" * 2048) == []
+@pytest.mark.parametrize(("character", "count"), [("a", 4096), ("é", 2048), ("😀", 1024)])
+def test_search_for_bounds_utf8_input_before_core_copy(usrguide: pyropdf.Page, character: str, count: int) -> None:
+    assert usrguide.search(character * count) == []
 
     with pytest.raises(pyropdf.LimitError) as caught:
-        usrguide.search("é" * 2049)
+        usrguide.search(character * (count + 1))
+
+    assert caught.value.code == "search_input_size"
+
+
+def test_search_rejects_excessive_character_count_without_encoding(usrguide: pyropdf.Page) -> None:
+    class Unencoded(str):
+        __slots__ = ()
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            msg = "An oversized query must not allocate an encoded copy"
+            raise AssertionError(msg)
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        usrguide.search(Unencoded("a" * 4097))
 
     assert caught.value.code == "search_input_size"
 
