@@ -616,3 +616,44 @@ def test_attachments_replace_the_embfile_methods() -> None:
     doc = pyropdf.Document()
     for name in ("embfile_add", "embfile_get", "embfile_del", "embfile_names", "embfile_info", "embfile_upd"):
         assert not hasattr(doc, name)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_deleting_an_attachment_frees_its_objects(*, incremental: bool) -> None:
+    doc = pyropdf.open(pyropdf.open(build_pdf(["Hello"])).to_bytes())
+    doc.attachments.add("a.txt", b"data")
+    doc = pyropdf.open(doc.to_bytes())
+    filespec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+    numbers = {filespec.xref, filespec["EF"]["F"].xref}
+    assert None not in numbers
+
+    del doc.attachments["a.txt"]
+
+    assert not numbers & set(doc.objects)
+    reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
+    assert not numbers & set(reopened.objects)
+    doc.history.undo()
+    assert numbers <= set(doc.objects)
+    assert doc.attachments["a.txt"].read() == b"data"
+
+
+def test_a_file_specification_that_an_annotation_refers_to_survives_a_delete() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a.txt", b"data")
+    filespec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
+    stream = filespec["EF"]["F"].xref
+    annotation = doc.objects.add(
+        {
+            "Type": pyropdf.Name("Annot"),
+            "Subtype": pyropdf.Name("FileAttachment"),
+            "Rect": [10, 10, 30, 30],
+            "FS": filespec,
+        }
+    )
+    doc.pages[0].obj["Annots"] = [doc.objects[annotation]]
+
+    del doc.attachments["a.txt"]
+
+    assert {filespec.xref, stream} <= set(doc.objects)
+    reopened = pyropdf.open(doc.to_bytes())
+    assert reopened.pages[0].obj["Annots"][0]["FS"]["EF"]["F"].read() == b"data"
