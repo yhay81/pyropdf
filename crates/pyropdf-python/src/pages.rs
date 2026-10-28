@@ -26,6 +26,7 @@ use crate::annotations::links::{
 use crate::annotations::{CopyPart, charge_copy};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, store_error};
+use crate::forms;
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
@@ -344,14 +345,31 @@ pub fn import_pages(
             prepared.try_push((page, dict)).map_err(limit)?;
         }
         let mut overrides = links.overrides;
-        let pruned = pruned(
+        let (fields, calculation) =
+            refs::form_fields(&mut Reads::new(&version, budget)).map_err(store)?;
+        let (pruned, kept) = pruned(
             source,
             &version,
             &source_index,
             &imported,
             &overrides,
+            !fields.is_empty(),
             budget,
         )?;
+        // A complete import registers every top-level field, and a partial
+        // one those that keep a widget of its pages.
+        let fields = match kept {
+            Some(kept) => {
+                let mut out = BudgetVec::new(budget);
+                for field in fields {
+                    if kept.binary_search(&field.number()).is_ok() {
+                        out.try_push(field).map_err(limit)?;
+                    }
+                }
+                out.into_vec()
+            }
+            None => fields,
+        };
         for pair in pruned.into_vec() {
             overrides.try_push(pair).map_err(limit)?;
         }
@@ -372,15 +390,21 @@ pub fn import_pages(
         }
         let savepoint = transaction.savepoint();
         let result = (|| {
-            let added = import::import(
+            let along = import::Along {
+                objects: &fields,
+                found: &calculation,
+            };
+            let imported = import::import(
                 transaction,
                 &version,
                 prepared.into_vec(),
                 &overrides,
+                along,
                 root,
                 budget,
             )
             .map_err(store)?;
+            let added = imported.pages;
             let at = at.min(before.len());
             let mut order = BudgetVec::new(budget);
             order
@@ -394,7 +418,18 @@ pub fn import_pages(
                 order.try_push(page).map_err(limit)?;
             }
             let view = transaction.snapshot();
-            rewrite_with(transaction, &view, &index, &order, &added, budget)
+            rewrite_with(transaction, &view, &index, &order, &added, budget)?;
+            let mut fields = BudgetVec::new(budget);
+            for field in &imported.objects {
+                if let &Value::Reference(field) = field {
+                    fields.try_push(field).map_err(limit)?;
+                }
+            }
+            let mut calculation = BudgetVec::new(budget);
+            for &field in imported.found.iter().flatten() {
+                calculation.try_push(field).map_err(limit)?;
+            }
+            forms::register_imported(transaction, &fields, &calculation, budget)
         })();
         if result.is_err() {
             transaction.rollback(savepoint);
@@ -403,15 +438,27 @@ pub fn import_pages(
     })
 }
 
-/// Read source structure after planning the removal of pages left behind.
+/// Source objects that an import replaces: `Some` with the value to copy
+/// instead, `None` with null.
+type Overrides<'b> = BudgetVec<'b, (Reference, Option<Value>)>;
+
+/// Returns the overrides that leave the structure content of the source
+/// pages other than `imported` out of a tagged `source`, and the widgets
+/// and fields of those pages out of a source with a form (`form`), as
+/// deleting those pages would, with the links that `links` removes. Empty
+/// when neither applies or when every page comes along.
+///
+/// With a form and pages left behind, also returns the top-level fields
+/// that keep a widget of the imported pages, sorted by number.
 fn pruned<'b>(
     source: &_Document,
     version: &Arc<Version>,
     index: &PageIndex,
     imported: &[u32],
     links: &[(Reference, Option<Value>)],
+    form: bool,
     budget: &'b Budget,
-) -> PyResult<BudgetVec<'b, (Reference, Option<Value>)>> {
+) -> PyResult<(Overrides<'b>, Option<Vec<u32>>)> {
     let store = |e: pyropdf_store::Error| store_error(&e);
     let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
     let catalog = resolve(version, version.trailer().get("Root"), budget)?;
@@ -419,8 +466,8 @@ fn pruned<'b>(
         matches!(&catalog, Some(Value::Dict(catalog)) if catalog.get("StructTreeRoot").is_some());
     let mut removed = BudgetVec::new(budget);
     let mut out = BudgetVec::new(budget);
-    if !tagged {
-        return Ok(out);
+    if !(tagged || form) {
+        return Ok((out, None));
     }
     for page in index.pages().iter().filter_map(Page::object) {
         if imported.binary_search(&page.number()).is_err() {
@@ -428,7 +475,7 @@ fn pruned<'b>(
         }
     }
     if removed.is_empty() {
-        return Ok(out);
+        return Ok((out, None));
     }
     let mut removed = removed.into_vec();
     removed.sort_unstable();
@@ -449,8 +496,18 @@ fn pruned<'b>(
                 .map_err(store)?;
         }
     }
-    refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
-        .map_err(store)?;
+    if tagged {
+        refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
+            .map_err(store)?;
+    }
+    let kept = if form {
+        let mut kept = refs::prune_forms(&mut reads, &references, &removed, imported, &mut edits)
+            .map_err(store)?;
+        kept.sort_unstable();
+        Some(kept)
+    } else {
+        None
+    };
     // Computing the values removes the tree nodes that they empty.
     let values = edits.values(version, budget).map_err(store)?;
     for &number in edits.orphans() {
@@ -465,7 +522,7 @@ fn pruned<'b>(
                 .map_err(limit)?;
         }
     }
-    Ok(out)
+    Ok((out, kept))
 }
 
 /// The media box that a page without one gets: A4, as the renderer draws it.

@@ -1760,7 +1760,7 @@ fn form_pruning_charges_cached_field_dictionary_copies() {
     let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    let error = forms::plan(&mut reads, &index, &[4], &[], &mut edits).unwrap_err();
+    let error = forms::plan(&mut reads, &index, &[4], &[], false, &mut edits).unwrap_err();
     assert_eq!(
         error.limit().map(LimitExceeded::code),
         Some(LimitCode::MemorySize)
@@ -1810,7 +1810,7 @@ fn stale_widget_generation_on_retained_page_does_not_keep_field() {
     let index = build(&version, &budget).unwrap();
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    forms::plan(&mut reads, &index, &[4], &[5], &mut edits).unwrap();
+    forms::plan(&mut reads, &index, &[4], &[5], false, &mut edits).unwrap();
     let mut transaction = document.begin();
     edits.write(&mut transaction, &budget).unwrap();
     let form = transaction.version().get(2, &budget).unwrap().unwrap();
@@ -1848,7 +1848,7 @@ fn form_depth_limit_does_not_reject_a_cycle_to_a_visited_field() {
     let index = build(&version, &budget).unwrap();
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    forms::plan(&mut reads, &index, &[], &[], &mut edits).unwrap();
+    forms::plan(&mut reads, &index, &[], &[], false, &mut edits).unwrap();
 }
 
 #[test]
@@ -1892,7 +1892,7 @@ fn stale_annotation_array_generation_does_not_keep_a_removed_widget() {
     let index = build(&version, &budget).unwrap();
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    forms::plan(&mut reads, &index, &[4], &[5], &mut edits).unwrap();
+    forms::plan(&mut reads, &index, &[4], &[5], false, &mut edits).unwrap();
     let mut transaction = document.begin();
     edits.write(&mut transaction, &budget).unwrap();
     let form = transaction.version().get(2, &budget).unwrap().unwrap();
@@ -1940,7 +1940,7 @@ fn retained_widget_page_reference_is_repaired_when_generation_is_stale() {
     let affected = affected_form_objects(&mut reads, &index, &[4], &[5]).unwrap();
     assert!(affected.is_empty());
     let mut edits = Edits::new(&budget);
-    forms::plan(&mut reads, &index, &[4], &[5], &mut edits).unwrap();
+    forms::plan(&mut reads, &index, &[4], &[5], false, &mut edits).unwrap();
     let mut transaction = document.begin();
     edits.write(&mut transaction, &budget).unwrap();
     let widget = transaction.version().get(3, &budget).unwrap().unwrap();
@@ -1959,7 +1959,15 @@ fn form_pruning_polls_even_without_an_interactive_form() {
     let version = document.current();
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    let error = forms::plan(&mut reads, &References::default(), &[], &[], &mut edits).unwrap_err();
+    let error = forms::plan(
+        &mut reads,
+        &References::default(),
+        &[],
+        &[],
+        false,
+        &mut edits,
+    )
+    .unwrap_err();
     assert_eq!(
         error.limit().map(LimitExceeded::code),
         Some(LimitCode::Cancelled)
@@ -1996,7 +2004,7 @@ fn form_pruning_refuses_a_field_that_aliases_the_catalog() {
     let index = build(&version, &budget).unwrap();
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    assert!(forms::plan(&mut reads, &index, &[4], &[], &mut edits).is_err());
+    assert!(forms::plan(&mut reads, &index, &[4], &[], false, &mut edits).is_err());
 }
 
 #[test]
