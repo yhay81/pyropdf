@@ -51,7 +51,7 @@ pub struct Edits<'b> {
     /// number that they name, so that each is read once: the position in
     /// `found` of each object's.
     held: Table<usize>,
-    found: BudgetVec<'b, BudgetVec<'b, Found>>,
+    found: BudgetVec<'b, BudgetVec<'b, (usize, Found)>>,
 }
 
 impl<'b> Edits<'b> {
@@ -77,14 +77,16 @@ impl<'b> Edits<'b> {
         holder: u32,
         number: u32,
     ) -> Result<BudgetVec<'b, Found>> {
+        self.budget.poll()?;
         let at = if let Some(&at) = self.held.get(holder) {
             at
         } else {
             let mut found = BudgetVec::new(self.budget);
             for each in find_where(reads, Referrer::Object(holder), |_| true)?.into_vec() {
-                found.try_push(each)?;
+                found.try_push((found.len(), each))?;
             }
-            found.sort_by_key(|found| found.reference.number());
+            found.sort_unstable_by_key(|(ordinal, found)| (found.reference.number(), *ordinal));
+            self.budget.poll()?;
             self.found.try_push(found)?;
             self.held
                 .insert(holder, self.found.len() - 1, self.budget)?;
@@ -92,12 +94,19 @@ impl<'b> Edits<'b> {
         };
         let mut out = BudgetVec::new(self.budget);
         if let Some(found) = self.found.get(at) {
-            let start = found.partition_point(|found| found.reference.number() < number);
-            for found in found[start..]
+            let start = found.partition_point(|(_, found)| found.reference.number() < number);
+            for (_, found) in found[start..]
                 .iter()
-                .take_while(|found| found.reference.number() == number)
+                .take_while(|(_, found)| found.reference.number() == number)
             {
-                out.try_push(found.clone())?;
+                self.budget.poll()?;
+                out.try_push(Found {
+                    path: copy_path(&found.path, self.budget)?
+                        .into_vec()
+                        .into_boxed_slice(),
+                    reference: found.reference,
+                    role: found.role,
+                })?;
             }
         }
         Ok(out)
@@ -188,6 +197,7 @@ impl<'b> Edits<'b> {
             let mut value = copy_for_edit(object.value(), budget)?;
             let mut last: Option<&[Step]> = None;
             while at < self.edits.len() && self.edits[at].number == number {
+                budget.poll()?;
                 let edit = &self.edits[at];
                 let removals = removals(&self.edits[at..]);
                 if removals > 1 {
@@ -205,6 +215,8 @@ impl<'b> Edits<'b> {
             transaction.write(number, &value, budget)?;
         }
         self.edits.clear();
+        self.held = Table::new();
+        self.found.clear();
         budget.poll()?;
         Ok(())
     }

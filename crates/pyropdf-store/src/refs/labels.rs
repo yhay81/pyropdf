@@ -14,7 +14,8 @@ use crate::value::{Array, Dict, Name, Value};
 use crate::version::Transaction;
 use crate::version::table::Table;
 
-use super::navigation::{catalog, dict_of, readable};
+use super::copy::{copy_dict_for_edit, copy_for_edit};
+use super::navigation::{catalog, dict_of, is_aliasing, readable};
 
 /// The most levels of the page label tree that a structural edit rewrites.
 const MAX_TREE_DEPTH: usize = 32;
@@ -39,12 +40,12 @@ impl Labels<'_> {
     /// Writes the labels in `transaction`, over the catalog's other
     /// changes.
     pub fn write(&self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
-        let tree = Value::Dict(self.tree.clone());
+        let tree = Value::Dict(copy_dict_for_edit(&self.tree, budget)?);
         let value = if self.in_catalog {
             let Some(object) = transaction.version().get(self.number, budget)? else {
                 return Ok(());
             };
-            let mut catalog = (**object.value()).clone();
+            let mut catalog = copy_for_edit(object.value(), budget)?;
             let Value::Dict(dict) = &mut catalog else {
                 return Ok(());
             };
@@ -67,6 +68,7 @@ impl Labels<'_> {
 struct Range {
     start: usize,
     label: Dict,
+    ordinal: usize,
 }
 
 /// Returns the page labels that keep the label of each page of `after`, a
@@ -120,30 +122,38 @@ pub fn relabel<'b>(
         if follows {
             continue;
         }
-        let Range { start, label } = &ranges[range];
+        let Range { start, label, .. } = &ranges[range];
         let Some(first) = i64::try_from(old - start)
             .ok()
             .and_then(|offset| first_number(label).checked_add(offset))
         else {
             return Ok(None);
         };
-        pairs.try_push((at, labelled(label, first)))?;
+        pairs.try_push((at, range, first))?;
     }
     let same = pairs.len() == ranges.len()
-        && pairs.iter().zip(ranges.iter()).all(|((at, label), range)| {
-            *at == range.start && *label == labelled(&range.label, first_number(&range.label))
-        });
+        && pairs.iter().zip(ranges.iter()).enumerate().all(
+            |(position, (&(at, index, first), range))| {
+                at == range.start && index == position && first == first_number(&range.label)
+            },
+        );
     if same {
         return Ok(None);
     }
     let mut nums = BudgetVec::new(budget);
-    for (at, label) in pairs.into_vec() {
+    for (at, index, first) in pairs.into_vec() {
+        budget.poll()?;
+        let label = labelled(&ranges[index].label, first, budget)?;
         nums.try_push(Value::Integer(i64::try_from(at).unwrap_or(i64::MAX)))?;
         nums.try_push(Value::Dict(label))?;
     }
+    budget.charge(
+        crate::budget::LimitCode::MemorySize,
+        (8 * size_of::<(Name, Value)>()) as u64,
+    )?;
     #[expect(
         clippy::disallowed_methods,
-        reason = "the tree holds one entry, and its array grew through the budget"
+        reason = "the tree holds one charged entry, and its array grew through the budget"
     )]
     let tree: Dict = [(
         Name::from("Nums"),
@@ -172,7 +182,7 @@ fn read<'b>(
     let mut ranges = BudgetVec::new(budget);
     let mut seen: Table<()> = Table::new();
     let mut pending = BudgetVec::new(budget);
-    pending.try_push((tree.clone(), 1))?;
+    pending.try_push((copy_for_edit(tree, budget)?, 1))?;
     while let Some((value, depth)) = pending.pop() {
         budget.poll()?;
         if let Value::Reference(node) = &value {
@@ -182,36 +192,59 @@ fn read<'b>(
             seen.insert(node.number(), (), budget)?;
         }
         let Some(Value::Dict(node)) = deref(reads, &value, root, nodes)? else {
-            continue;
+            return Ok(None);
         };
-        if let Some(nums) = node.get("Nums")
-            && let Some(Value::Array(nums)) = deref(reads, nums, root, nodes)?
-        {
+        if is_aliasing(&node) {
+            return Err(crate::Error::malformed(
+                "page label tree cannot alias a page or catalog dictionary",
+            ));
+        }
+        if let Some(nums) = node.get("Nums") {
+            let Some(Value::Array(nums)) = deref(reads, nums, root, nodes)? else {
+                return Ok(None);
+            };
+            if nums.len() % 2 != 0 {
+                return Ok(None);
+            }
             let mut items = nums.iter();
             while let (Some(key), Some(label)) = (items.next(), items.next()) {
+                budget.poll()?;
                 let Some(Value::Integer(start)) = deref(reads, key, root, nodes)? else {
-                    continue;
+                    return Ok(None);
                 };
                 let (Ok(start), Some(Value::Dict(label))) =
                     (usize::try_from(start), deref(reads, label, root, nodes)?)
                 else {
-                    continue;
+                    return Ok(None);
                 };
-                ranges.try_push(Range { start, label })?;
+                ranges.try_push(Range {
+                    start,
+                    label,
+                    ordinal: ranges.len(),
+                })?;
             }
         }
-        if let Some(kids) = node.get("Kids")
-            && let Some(Value::Array(kids)) = deref(reads, kids, root, nodes)?
-        {
-            if depth >= MAX_TREE_DEPTH {
+        if let Some(kids) = node.get("Kids") {
+            let Some(Value::Array(kids)) = deref(reads, kids, root, nodes)? else {
                 return Ok(None);
-            }
+            };
             for kid in kids.iter() {
-                pending.try_push((kid.clone(), depth + 1))?;
+                budget.poll()?;
+                if let Value::Reference(reference) = kid
+                    && seen.get(reference.number()).is_some()
+                    && reads.generation(reference.number())? == Some(reference.generation())
+                {
+                    continue;
+                }
+                if depth >= MAX_TREE_DEPTH {
+                    return Ok(None);
+                }
+                pending.try_push((copy_for_edit(kid, budget)?, depth + 1))?;
             }
         }
     }
-    ranges.sort_by_key(|range| range.start);
+    ranges.sort_unstable_by_key(|range| (range.start, range.ordinal));
+    budget.poll()?;
     let mut first = BudgetVec::new(budget);
     for range in ranges.into_vec() {
         if first
@@ -233,15 +266,18 @@ fn deref(
     nodes: &mut BudgetVec<'_, u32>,
 ) -> Result<Option<Value>> {
     let Value::Reference(reference) = value else {
-        return Ok(Some(value.clone()));
+        return Ok(Some(copy_for_edit(value, reads.budget())?));
     };
     let number = reference.number();
+    let Some(object) =
+        readable(reads, number)?.filter(|object| object.generation() == reference.generation())
+    else {
+        return Ok(None);
+    };
     if root != Some(number) {
         nodes.try_push(number)?;
     }
-    Ok(readable(reads, number)?
-        .filter(|object| object.generation() == reference.generation())
-        .map(|object| (**object.value()).clone()))
+    Ok(Some(copy_for_edit(object.value(), reads.budget())?))
 }
 
 /// Returns the number of the first page of a range, its `/St`.
@@ -253,8 +289,8 @@ fn first_number(label: &Dict) -> i64 {
 }
 
 /// Returns `label` with `first` as the number of its first page.
-fn labelled(label: &Dict, first: i64) -> Dict {
-    let mut label = label.clone();
+fn labelled(label: &Dict, first: i64, budget: &Budget) -> Result<Dict> {
+    let mut label = copy_dict_for_edit(label, budget)?;
     if first == 1 {
         label.remove("St");
     } else {
@@ -264,5 +300,5 @@ fn labelled(label: &Dict, first: i64) -> Dict {
         )]
         label.insert(Name::from("St"), Value::Integer(first));
     }
-    label
+    Ok(label)
 }

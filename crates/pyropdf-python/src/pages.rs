@@ -232,7 +232,11 @@ fn remove_pages(
         retained,
     } = *pages;
     let before = transaction.snapshot();
-    let numbers: Vec<u32> = order.iter().map(|page| page.number()).collect();
+    let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
+    let mut numbers = BudgetVec::new(budget);
+    for page in order {
+        numbers.try_push(page.number()).map_err(limit)?;
+    }
     let labels = refs::relabel(&mut Reads::new(&before, budget), old, &numbers).map_err(store)?;
     if removed.is_empty()
         && labels
@@ -279,9 +283,14 @@ fn remove_pages(
             .map_err(store)?,
         None => return Ok(()),
     };
-    let mut candidates = edits.orphans().to_vec();
+    let mut candidates = BudgetVec::new(budget);
+    candidates
+        .try_extend_from_slice(edits.orphans())
+        .map_err(limit)?;
     if let Some(labels) = &labels {
-        candidates.extend_from_slice(labels.nodes());
+        candidates
+            .try_extend_from_slice(labels.nodes())
+            .map_err(limit)?;
     }
     let freed = refs::unreferenced(&references, removed, &candidates, budget).map_err(store)?;
     for &number in freed.iter() {
