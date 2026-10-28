@@ -77,7 +77,6 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
-from pyropdf._form import Field, FieldChoice, FieldFlags, FieldType, Form, SignatureFlags
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._limits import CancellationToken, DocumentLimits
@@ -85,15 +84,13 @@ from pyropdf._links import Destinations, Link, Links
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
-from pyropdf._outline import Outline, OutlineEntry, OutlineItem
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
-from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
-from pyropdf._widgets import Widget, Widgets
+from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 
 for _public in (
     Attachment,
@@ -144,6 +141,7 @@ __all__ = [
     "CancellationToken",
     "ChangeReport",
     "Char",
+    "Chars",
     "Circle",
     "ClaimChange",
     "Clip",
@@ -161,13 +159,8 @@ __all__ = [
     "DocumentLimits",
     "EncryptedDocumentError",
     "Encryption",
-    "Field",
-    "FieldChoice",
-    "FieldFlags",
-    "FieldType",
     "FillRule",
     "FontRef",
-    "Form",
     "Glyph",
     "GraphicsContext",
     "Highlight",
@@ -204,9 +197,6 @@ __all__ = [
     "OcrWord",
     "Operation",
     "Operations",
-    "Outline",
-    "OutlineEntry",
-    "OutlineItem",
     "OutputIntent",
     "Page",
     "Pages",
@@ -230,7 +220,6 @@ __all__ = [
     "ShadingPattern",
     "ShadingType",
     "SignatureChange",
-    "SignatureFlags",
     "SoftMask",
     "SoftMaskType",
     "Span",
@@ -255,8 +244,6 @@ __all__ = [
     "TransparencyGroup",
     "Underline",
     "Unmapped",
-    "Widget",
-    "Widgets",
     "Word",
     "__version__",
     "open",

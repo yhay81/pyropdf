@@ -4,18 +4,17 @@
 use pyo3::prelude::*;
 
 mod annotations;
+mod buffers;
 mod cancel;
 mod changes;
 mod check;
 mod content;
 mod document;
 mod errors;
-mod forms;
 mod history;
 mod items;
 mod objects;
 mod ocr;
-mod outline;
 mod pages;
 mod pixmap;
 mod render;
@@ -43,6 +42,8 @@ mod _core {
         annotation_open, annotation_popup, annotation_read, annotation_remove, annotation_reply,
     };
     #[pymodule_export]
+    use super::buffers::{CharColumns, Column};
+    #[pymodule_export]
     use super::cancel::CancellationToken;
     #[pymodule_export]
     use super::changes::changes;
@@ -51,16 +52,13 @@ mod _core {
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
-    use super::document::{_Document, page_result_counts, probe, web_limits};
+    use super::document::{
+        _Document, document_header_version, page_result_counts, probe, web_limits,
+    };
     #[pymodule_export]
     use super::errors::{
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,
         PasswordError, PdfError, StaleObjectError,
-    };
-    #[pymodule_export]
-    use super::forms::{
-        form_field, form_field_choices, form_field_read, form_field_widgets, form_fields,
-        form_repair_radio_groups, form_walk_counts, widget_list, widget_read,
     };
     #[pymodule_export]
     use super::history::{
@@ -78,13 +76,8 @@ mod _core {
     #[pymodule_export]
     use super::ocr::{_OcrEngine, insert_ocr_layer};
     #[pymodule_export]
-    use super::outline::{
-        outline_children, outline_entries, outline_item, outline_set_open, outline_set_style,
-        outline_set_target, outline_set_title, outline_walk_counts, outline_write,
-    };
-    #[pymodule_export]
     use super::pages::{
-        import_pages, new_page, page_count, page_geometry, page_index, page_object, page_objects,
+        new_page, page_count, page_geometry, page_index, page_object, page_objects,
         set_page_rotation, set_pages,
     };
     #[pymodule_export]
@@ -97,7 +90,7 @@ mod _core {
     use super::security::{security_state, unlock};
     #[pymodule_export]
     use super::text::{
-        document_text, page_layout, page_search, page_selection, page_tables, page_text,
+        document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,
     };
 
     #[cfg(windows)]

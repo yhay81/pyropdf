@@ -11,19 +11,13 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
-use pyropdf_engine::pages::copy::Copies;
-use pyropdf_engine::pages::import;
 use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
-use pyropdf_store::refs::{self, Edits, Rule};
+use pyropdf_store::refs::{self, Edits};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use crate::annotations::MAX_PAGE_ANNOTATIONS;
-use crate::annotations::links::{
-    Destination, Lead, LeadReader, NamedDestinations, lead, named, read,
-};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, store_error};
 
@@ -34,21 +28,7 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 const A4: (f64, f64) = (595.0, 842.0);
 
 pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    index_of(document, document.reading_parent()?)
-}
-
-/// Returns the page index of the version that an edit of annotations reads,
-/// as [`_Document::editing_parent`] gives it.
-pub(crate) fn editing_index(
-    document: &_Document,
-) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    index_of(document, document.editing_parent()?)
-}
-
-fn index_of(
-    document: &_Document,
-    (version, parent): (Arc<Version>, Option<Arc<Version>>),
-) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
+    let (version, parent) = document.reading_parent()?;
     let budget = document.budget();
     let index = match &parent {
         // An open transaction that has written nothing reads its parent.
@@ -174,481 +154,75 @@ pub fn set_page_rotation(
 }
 
 /// Lists `pages`, objects of current pages, as the document's pages in
-/// order, in one transaction. An entry that `copies` marks becomes a copy
-/// of the page that it names, with annotations and structure of its own;
-/// every other entry names a page that stays, at most once. The pages that
-/// leave run the rules of the references to them (DESIGN.md section 8):
-/// the navigation that leads to them goes, and they and the objects that
-/// only they referred to are freed. A refusal leaves the document as it
-/// was.
+/// order, in one transaction. The pages that leave run the rules of the
+/// references to them (DESIGN.md section 8): the navigation that leads to
+/// them goes, and they and the objects that only they referred to are
+/// freed. A refusal leaves the document as it was.
 #[pyfunction]
-#[pyo3(signature = (document, pages, copies=Vec::new()))]
-pub fn set_pages(
-    py: Python<'_>,
-    document: &_Document,
-    pages: Vec<(u32, u16)>,
-    copies: Vec<bool>,
-) -> PyResult<()> {
-    if !copies.is_empty() && copies.len() != pages.len() {
-        return Err(PyValueError::new_err("copies must mark every page or none"));
-    }
-    let (_, index, _) = index(document)?;
-    let order = pages
-        .into_iter()
-        .map(|(number, generation)| Reference::new(number, generation))
-        .collect::<Vec<_>>();
-    let copied = |at: usize| copies.get(at).copied().unwrap_or(false);
-    for (at, &page) in order.iter().enumerate() {
-        if copied(at) && index.index_of(page).is_none() {
-            return Err(not_a_page(page));
-        }
-    }
-    let mut retained: Vec<u32> = order
-        .iter()
-        .enumerate()
-        .filter(|&(at, _)| !copied(at))
-        .map(|(_, page)| page.number())
-        .collect();
-    retained.sort_unstable();
-    if retained.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(PyValueError::new_err(
-            "a page stays at most once; copies repeat it",
-        ));
-    }
-    let sources = order.iter().map(|page| page.number()).collect::<Vec<_>>();
-    let before = current_order(&index)?
-        .iter()
-        .map(|page| page.number())
-        .collect::<Vec<_>>();
-    let mut removed = before
-        .iter()
-        .copied()
-        .filter(|number| retained.binary_search(number).is_err())
-        .collect::<Vec<_>>();
-    removed.sort_unstable();
-    removed.dedup();
+pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -> PyResult<()> {
     document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let mut order = order.clone();
-        let result =
-            copy_pages(transaction, &index, &mut order, &copies, budget).and_then(|added| {
-                let mut retained = retained.clone();
-                retained.extend(added.iter().map(|page| page.number()));
-                retained.sort_unstable();
-                let pages = Pages {
-                    before: &before,
-                    order: &order,
-                    sources: &sources,
-                    removed: &removed,
-                    retained: &retained,
-                    added: &added,
-                };
-                remove_pages(document, transaction, &index, &pages, budget)
-            });
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
-}
-
-/// Inserts copies of the pages of `source` at `at`, with what they reach,
-/// in one transaction. Links between the imported pages keep leading to
-/// them; other links within `source` go.
-#[pyfunction]
-pub fn import_pages(
-    py: Python<'_>,
-    document: &_Document,
-    source: &_Document,
-    pages: Vec<(u32, u16)>,
-    at: usize,
-) -> PyResult<()> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    let (target, index, budget) = index(document)?;
-    let (_, root_dict) = root(&target, &budget)?;
-    let (version, source_index, _) = self::index(source)?;
-    let pages = pages
-        .into_iter()
-        .map(|(number, generation)| Reference::new(number, generation))
-        .collect::<Vec<_>>();
-    let mut imported = Vec::with_capacity(pages.len());
-    for &page in &pages {
-        if source_index.index_of(page).is_none() {
-            return Err(not_a_page(page));
-        }
-        imported.push(page.number());
-    }
-    imported.sort_unstable();
-    if imported.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(PyValueError::new_err(
-            "a page of another document can be inserted once per call",
-        ));
-    }
-    let mut links = Links {
-        source,
-        index: &source_index,
-        imported: &imported,
-        reads: Reads::new(&version, &budget),
-        named: None,
-        overrides: BudgetVec::new(&budget),
-    };
-    let mut prepared = BudgetVec::new(&budget);
-    prepared
-        .try_reserve_exact(pages.len())
-        .map_err(|e| store(e.into()))?;
-    for &page in &pages {
-        let entry = source_index
-            .index_of(page)
-            .and_then(|at| source_index.get(at))
-            .ok_or_else(|| not_a_page(page))?;
-        let mut dict = entry.dict().clone();
-        for key in INHERITABLE {
-            match entry.inherited(key) {
-                Some(value) => {
-                    dict.insert(Name::from(key), value.clone());
-                }
-                None => {
-                    dict.remove(key);
-                }
-            }
-        }
-        // What the page would otherwise inherit from the receiving root.
-        for key in INHERITABLE {
-            if dict.get(key).is_some() || root_dict.get(key).is_none() {
-                continue;
-            }
-            let default = match key {
-                "CropBox" => dict.get("MediaBox").cloned().unwrap_or_else(a4),
-                "MediaBox" => a4(),
-                "Rotate" => Value::Integer(0),
-                _ => Value::Dict(Dict::new()),
-            };
-            dict.insert(Name::from(key), default);
-        }
-        match links.annots(&dict)? {
-            Some(annots) if annots.is_empty() => {
-                dict.remove("Annots");
-            }
-            Some(annots) => {
-                dict.insert(Name::from("Annots"), Value::Array(annots));
-            }
-            None => {}
-        }
-        prepared
-            .try_push((page, dict))
-            .map_err(|e| store(e.into()))?;
-    }
-    let mut overrides = links.overrides.into_vec();
-    // A link that two pages share is prepared once per page, alike.
-    overrides.sort_by_key(|(number, _)| *number);
-    overrides.dedup_by_key(|(number, _)| *number);
-    let pruned = pruned(
-        source,
-        &version,
-        &source_index,
-        &imported,
-        &overrides,
-        &budget,
-    )?;
-    if !pruned.is_empty() {
-        // The links' own overrides come first and win.
-        overrides.extend(pruned);
-        overrides.sort_by_key(|(number, _)| *number);
-        overrides.dedup_by_key(|(number, _)| *number);
-    }
-    let mut order = current_order(&index)?;
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = (|| {
-            let (root, _) = root(transaction.version(), budget)?;
-            let added = import::import(transaction, &version, &prepared, &overrides, root, budget)
-                .map_err(store)?;
-            let at = at.min(order.len());
-            order.splice(at..at, added.iter().copied());
-            let view = transaction.snapshot();
-            rewrite_with(transaction, &view, &index, &order, &added, budget)
-        })();
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
-}
-
-/// Returns the overrides that leave the structure content of the source
-/// pages other than `imported` out of a tagged `source`, as deleting those
-/// pages would, with the links that `links` removes. Empty for an untagged
-/// source, or when every page comes along.
-fn pruned(
-    source: &_Document,
-    version: &Arc<Version>,
-    index: &PageIndex,
-    imported: &[u32],
-    links: &[(u32, Option<Value>)],
-    budget: &Budget,
-) -> PyResult<Vec<(u32, Option<Value>)>> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    let catalog = resolve(version, version.trailer().get("Root"), budget)?;
-    let tagged =
-        matches!(&catalog, Some(Value::Dict(catalog)) if catalog.get("StructTreeRoot").is_some());
-    let mut removed = index
-        .pages()
-        .iter()
-        .filter_map(Page::object)
-        .map(|page| page.number())
-        .filter(|number| imported.binary_search(number).is_err())
-        .collect::<Vec<_>>();
-    if !tagged || removed.is_empty() {
-        return Ok(Vec::new());
-    }
-    removed.sort_unstable();
-    removed.dedup();
-    let references = source.references.get(version, budget).map_err(store)?;
-    let mut reads = Reads::new(version, budget);
-    let mut edits = Edits::new(budget);
-    for &(number, ref value) in links {
-        if value.is_none() {
-            edits
-                .apply(&mut reads, &references, number, &[], Rule::RemoveReferrer)
-                .map_err(store)?;
-        }
-    }
-    refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
-        .map_err(store)?;
-    let mut out = edits
-        .orphans()
-        .iter()
-        .map(|&number| (number, None))
-        .collect::<Vec<_>>();
-    for (number, value) in edits.values(version, budget).map_err(store)?.into_vec() {
-        out.push((number, Some(value)));
-    }
-    Ok(out)
-}
-
-/// The media box that a page without one gets: A4, as the renderer draws it.
-fn a4() -> Value {
-    Value::Array(Array::from(vec![
-        Value::Integer(0),
-        Value::Integer(0),
-        Value::Integer(595),
-        Value::Integer(842),
-    ]))
-}
-
-/// Prepares the links of pages that an import brings from `source`.
-struct Links<'a, 'b> {
-    source: &'a _Document,
-    index: &'a PageIndex,
-    /// The numbers of the imported pages, sorted.
-    imported: &'a [u32],
-    reads: Reads<'b>,
-    named: Option<Arc<NamedDestinations>>,
-    /// The link objects that lead elsewhere once imported, or go.
-    overrides: BudgetVec<'b, (u32, Option<Value>)>,
-}
-
-impl Links<'_, '_> {
-    /// Returns the annotations of `page` without the links within `source`
-    /// that lead to a page left behind, and with explicit destinations for
-    /// the others; `None` when the page has no annotation array.
-    fn annots(&mut self, page: &Dict) -> PyResult<Option<Array>> {
         let store = |e: pyropdf_store::Error| store_error(&e);
-        let Some(Value::Array(items)) = self.resolved(page.get("Annots"))? else {
-            return Ok(None);
-        };
-        if items.len() > MAX_PAGE_ANNOTATIONS {
-            return Err(MalformedPdfError::new_err(format!(
-                "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
-            )));
+        let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
+        // Read the draft only after acquiring the writer lock.
+        let view = transaction.snapshot();
+        let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
+        let mut order = BudgetVec::new(budget);
+        let mut retained = BudgetVec::new(budget);
+        for (number, generation) in pages {
+            order
+                .try_push(Reference::new(number, generation))
+                .map_err(limit)?;
+            retained.try_push(number).map_err(limit)?;
         }
-        let mut kept = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            let Some(Value::Dict(annotation)) = self.resolved(Some(item))? else {
-                kept.push(item.clone());
-                continue;
-            };
-            let link = matches!(
-                self.resolved(annotation.get("Subtype"))?,
-                Some(Value::Name(subtype)) if subtype.as_bytes() == b"Link"
-            );
-            if !link {
-                kept.push(item.clone());
-                continue;
-            }
-            let destination = match lead(self, &annotation)? {
-                Lead::Target(_) => {
-                    kept.push(item.clone());
-                    continue;
-                }
-                Lead::Destination(destination) => destination,
-                Lead::Name(name) => self.lookup(&name)?,
-            };
-            let prepared = destination
-                .page_in(self.index)
-                .filter(|page| self.imported.binary_search(&page.number()).is_ok())
-                .map(|page| self.retarget(&annotation, &destination, page))
-                .transpose()?;
-            match item {
-                Value::Reference(reference) => {
-                    if prepared.is_some() {
-                        kept.push(item.clone());
-                    }
-                    self.overrides
-                        .try_push((reference.number(), prepared.map(Value::Dict)))
-                        .map_err(|e| store(e.into()))?;
-                }
-                _ => kept.extend(prepared.map(Value::Dict)),
+        retained.sort_unstable();
+        if retained.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(PyValueError::new_err("select keeps each page at most once"));
+        }
+        let mut removed = BudgetVec::new(budget);
+        for (at, page) in index.pages().iter().enumerate() {
+            let number = indirect(page, at)?.number();
+            if retained.binary_search(&number).is_err() {
+                removed.try_push(number).map_err(limit)?;
             }
         }
-        Ok(Some(Array::from(kept)))
-    }
-
-    /// Returns `link` leading to `destination` on `page` with an explicit
-    /// array, in its `/GoTo` action if it has one.
-    fn retarget(
-        &mut self,
-        link: &Dict,
-        destination: &Destination,
-        page: Reference,
-    ) -> PyResult<Dict> {
-        let array = Value::Array(destination.array(page));
-        let mut link = link.clone();
-        if let Some(Value::Dict(mut action)) = self.resolved(link.get("A"))? {
-            action.insert(Name::from("D"), array);
-            link.insert(Name::from("A"), Value::Dict(action));
-            link.remove("Dest");
-        } else {
-            link.insert(Name::from("Dest"), array);
-            link.remove("A");
-        }
-        Ok(link)
-    }
-
-    fn lookup(&mut self, name: &[u8]) -> PyResult<Destination> {
-        if self.named.is_none() {
-            self.named = Some(named(self.source)?);
-        }
-        Ok(self
-            .named
-            .as_ref()
-            .and_then(|named| named.get(name))
-            .unwrap_or(Destination::UNRESOLVED))
-    }
-}
-
-impl LeadReader for Links<'_, '_> {
-    fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>> {
-        read(&mut self.reads, value)
-    }
-
-    /// The import reads no text of a link.
-    fn text(&mut self, _: &[u8], _: &str, _: bool) -> PyResult<String> {
-        Ok(String::new())
-    }
-}
-
-fn not_a_page(page: Reference) -> PyErr {
-    PyValueError::new_err(format!(
-        "object {} {} is not a page of the document",
-        page.number(),
-        page.generation()
-    ))
-}
-
-/// Writes a copy of each page of `order` that `copies` marks and puts it
-/// in its place, and returns the copies.
-fn copy_pages(
-    transaction: &mut Transaction,
-    index: &PageIndex,
-    order: &mut [Reference],
-    copies: &[bool],
-    budget: &Budget,
-) -> PyResult<Vec<Reference>> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    let mut added = Vec::new();
-    if !copies.contains(&true) {
-        return Ok(added);
-    }
-    let (root, _) = root(transaction.version(), budget)?;
-    let mut copier = Copies::new(transaction, budget).map_err(store)?;
-    for (entry, _) in order.iter_mut().zip(copies).filter(|(_, copy)| **copy) {
-        let source = *entry;
-        let at = index.index_of(source).ok_or_else(|| not_a_page(source))?;
-        let page = &index.pages()[at];
-        // The edits of the transaction so far, with what the page inherits.
-        let mut dict = match resolve(
-            transaction.version(),
-            Some(&Value::Reference(source)),
+        let mut removed = removed.into_vec();
+        removed.sort_unstable();
+        removed.dedup();
+        let savepoint = transaction.savepoint();
+        let result = remove_pages(
+            document,
+            transaction,
+            &index,
+            &order,
+            &removed,
+            &retained,
             budget,
-        )? {
-            Some(Value::Dict(dict)) => dict,
-            _ => page.dict().clone(),
-        };
-        dict.insert(Name::from("Parent"), Value::Reference(root));
-        for key in INHERITABLE {
-            match page.inherited(key) {
-                Some(value) => {
-                    dict.insert(Name::from(key), value.clone());
-                }
-                None => {
-                    dict.remove(key);
-                }
-            }
+        );
+        if result.is_err() {
+            transaction.rollback(savepoint);
         }
-        let copy = copier.copy(transaction, source, dict).map_err(store)?;
-        added.push(copy);
-        *entry = copy;
-    }
-    copier.finish(transaction).map_err(store)?;
-    Ok(added)
+        result
+    })
 }
 
-/// The pages of [`set_pages`]: in their order before, in the new order,
-/// the pages that the new order copies its entries from, the numbers of
-/// those that leave and of those that stay, ascending, and the copies.
-struct Pages<'p> {
-    before: &'p [u32],
-    order: &'p [Reference],
-    sources: &'p [u32],
-    removed: &'p [u32],
-    retained: &'p [u32],
-    added: &'p [Reference],
-}
-
-/// Runs the rules for the removed pages, writes the page tree with the new
-/// order and the page labels that follow the pages, and frees what the
-/// removed pages and the labels before leave unreferenced.
+/// Runs the rules for `removed`, writes the page tree with `order` as its
+/// pages, and frees what the removed pages leave unreferenced.
 fn remove_pages(
     document: &_Document,
     transaction: &mut Transaction,
     index: &PageIndex,
-    pages: &Pages<'_>,
+    order: &[Reference],
+    removed: &[u32],
+    retained: &[u32],
     budget: &Budget,
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
-    let Pages {
-        before: old,
-        order,
-        sources,
-        removed,
-        retained,
-        added,
-    } = *pages;
-    let before = transaction.snapshot();
-    let labels = refs::relabel(&mut Reads::new(&before, budget), old, sources).map_err(store)?;
-    if removed.is_empty()
-        && labels
-            .as_ref()
-            .is_none_or(|labels| labels.nodes().is_empty())
-    {
-        if let Some(labels) = &labels {
-            labels.write(transaction, budget).map_err(store)?;
-        }
+    if removed.is_empty() {
         let view = transaction.snapshot();
-        return rewrite_with(transaction, &view, index, order, added, budget);
+        return rewrite_with(transaction, &view, index, order, None, budget);
     }
     let parent = Arc::clone(transaction.parent());
+    let before = transaction.snapshot();
     let references = document.references.get(&parent, budget).map_err(store)?;
     let references = match parent.changes(&before, budget).map_err(store)? {
         Some(changes) if !changes.is_empty() => Arc::new(
@@ -659,22 +233,17 @@ fn remove_pages(
         _ => references,
     };
     let mut edits = Edits::new(budget);
-    if !removed.is_empty() {
-        refs::remove_pages(
-            &mut Reads::new(&before, budget),
-            &references,
-            removed,
-            retained,
-            &mut edits,
-        )
-        .map_err(store)?;
-    }
+    refs::remove_pages(
+        &mut Reads::new(&before, budget),
+        &references,
+        removed,
+        retained,
+        &mut edits,
+    )
+    .map_err(store)?;
     edits.write(transaction, budget).map_err(store)?;
-    if let Some(labels) = &labels {
-        labels.write(transaction, budget).map_err(store)?;
-    }
     let view = transaction.snapshot();
-    rewrite_with(transaction, &view, index, order, added, budget)?;
+    rewrite_with(transaction, &view, index, order, None, budget)?;
     let after = transaction.snapshot();
     let references = match before.changes(&after, budget).map_err(store)? {
         Some(changes) => references
@@ -682,11 +251,7 @@ fn remove_pages(
             .map_err(store)?,
         None => return Ok(()),
     };
-    let mut candidates = edits.orphans().to_vec();
-    if let Some(labels) = &labels {
-        candidates.extend_from_slice(labels.nodes());
-    }
-    let freed = refs::unreferenced(&references, removed, &candidates, budget).map_err(store)?;
+    let freed = refs::unreferenced(&references, removed, edits.orphans(), budget).map_err(store)?;
     for &number in freed.iter() {
         transaction.free(number, budget).map_err(store)?;
     }
@@ -733,7 +298,7 @@ pub fn new_page(
             .map_err(store)?;
         order.insert(at.min(order.len()), reference);
         let view = transaction.snapshot();
-        rewrite_with(transaction, &view, &index, &order, &[reference], budget)?;
+        rewrite_with(transaction, &view, &index, &order, Some(reference), budget)?;
         Ok((reference.number(), reference.generation()))
     })
 }
@@ -748,14 +313,14 @@ fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
 }
 
 /// Writes the root node with `order` as its kids, and each page that the
-/// flattening changes. `added` are pages that the transaction wrote, which
+/// flattening changes. `added` is a page that the transaction wrote, which
 /// the index does not list yet.
 fn rewrite_with(
     transaction: &mut Transaction,
     version: &Version,
     index: &PageIndex,
     order: &[Reference],
-    added: &[Reference],
+    added: Option<Reference>,
     budget: &Budget,
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
@@ -765,7 +330,7 @@ fn rewrite_with(
         .map(|key| resolve(version, root_dict.get(key), budget))
         .collect::<PyResult<_>>()?;
     for &reference in order {
-        if added.contains(&reference) {
+        if Some(reference) == added {
             continue;
         }
         let at = index.index_of(reference).ok_or_else(|| {
@@ -790,13 +355,20 @@ fn rewrite_with(
         // The rules may have edited the page in this transaction.
         let mut dict = match resolve(version, Some(&Value::Reference(reference)), budget)? {
             Some(Value::Dict(dict)) => dict,
-            _ => page.dict().clone(),
+            _ => {
+                return Err(MalformedPdfError::new_err(
+                    "a retained page is no longer a dictionary",
+                ));
+            }
         };
         dict.insert(Name::from("Parent"), Value::Reference(root));
         for key in INHERITABLE {
             match page.inherited(key) {
                 Some(value) => {
-                    dict.insert(Name::from(key), value.clone());
+                    dict.insert(
+                        Name::from(key),
+                        refs::copy_for_edit(value, budget).map_err(store)?,
+                    );
                 }
                 None => {
                     dict.remove(key);
@@ -807,11 +379,13 @@ fn rewrite_with(
             .write(reference.number(), &Value::Dict(dict), budget)
             .map_err(store)?;
     }
-    let kids = order
-        .iter()
-        .map(|&r| Value::Reference(r))
-        .collect::<Vec<_>>();
-    root_dict.insert(Name::from("Kids"), Value::Array(Array::from(kids)));
+    let mut kids = BudgetVec::new(budget);
+    kids.try_extend(order.iter().copied().map(Value::Reference))
+        .map_err(|e| store_error(&e.into()))?;
+    root_dict.insert(
+        Name::from("Kids"),
+        Value::Array(Array::from(kids.into_vec())),
+    );
     root_dict.insert(Name::from("Count"), Value::Integer(order.len() as i64));
     transaction
         .write(root.number(), &Value::Dict(root_dict), budget)
@@ -848,7 +422,11 @@ pub(crate) fn resolve(
     let mut current = match value {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::Reference(reference)) => *reference,
-        Some(value) => return Ok(Some(value.clone())),
+        Some(value) => {
+            return refs::copy_for_edit(value, budget)
+                .map(Some)
+                .map_err(|e| store_error(&e));
+        }
     };
     for _ in 0..MAX_CHAIN {
         let Some(object) = version
@@ -861,7 +439,11 @@ pub(crate) fn resolve(
         match &**object.value() {
             Value::Null => return Ok(None),
             Value::Reference(next) => current = *next,
-            value => return Ok(Some(value.clone())),
+            value => {
+                return refs::copy_for_edit(value, budget)
+                    .map(Some)
+                    .map_err(|e| store_error(&e));
+            }
         }
     }
     Err(MalformedPdfError::new_err(

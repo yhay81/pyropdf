@@ -387,16 +387,6 @@ impl Array {
         self.lexeme = None;
         Some(self.items.remove(index))
     }
-
-    /// Keeps the values for which `keep` returns true, in their order, and
-    /// forgets the lexeme when any goes.
-    pub fn retain(&mut self, keep: impl FnMut(&Value) -> bool) {
-        let len = self.items.len();
-        self.items.retain(keep);
-        if self.items.len() != len {
-            self.lexeme = None;
-        }
-    }
 }
 
 impl PartialEq for Array {

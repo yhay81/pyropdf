@@ -577,29 +577,6 @@ fn removing_entries_keeps_the_positions_of_the_others() {
         **value.value(),
         array(vec![Value::Integer(0), reference(2)])
     );
-
-    // Removals from one array around an edit inside one of its items.
-    let objects = vec![
-        (
-            1,
-            array(vec![
-                reference(3),
-                reference(3),
-                dict(vec![("A", reference(3)), ("B", reference(2))]),
-                reference(3),
-                reference(3),
-            ]),
-        ),
-        (2, Value::Integer(0)),
-        (3, Value::Integer(0)),
-    ];
-    let document = document_of(&objects, Dict::new());
-    apply_everywhere(&document, 3, None, Rule::RemoveEntry).unwrap();
-    let value = document.current().get(1, &budget).unwrap().unwrap();
-    assert_eq!(
-        **value.value(),
-        array(vec![dict(vec![("B", reference(2))])])
-    );
 }
 
 #[test]
@@ -682,286 +659,323 @@ fn unreferenced_frees_a_candidate_with_what_refers_only_to_it() {
     assert_eq!(&*freed, &[2, 3, 6]);
 }
 
-/// One element of a generated tagged document: the position of its
-/// parent among the elements before it (none for the root), its page, its
-/// content, and the element that its `/Ref` names.
-#[derive(Clone, Debug)]
-struct Element {
-    parent: Option<usize>,
-    page: Option<usize>,
-    content: Vec<Content>,
-    refers: Option<usize>,
-}
-
-/// A content item of a generated element: a marked-content identifier on
-/// its page, a marked-content reference to a page, or an object reference
-/// to an annotation.
-#[derive(Clone, Debug)]
-enum Content {
-    Mcid,
-    Mcr(usize),
-    Objr(usize),
-}
-
-fn content() -> impl Strategy<Value = Content> {
-    prop_oneof![
-        Just(Content::Mcid),
-        (0..8usize).prop_map(Content::Mcr),
-        (0..8usize).prop_map(Content::Objr),
-    ]
-}
-
-fn elements() -> impl Strategy<Value = Vec<Element>> {
-    proptest::collection::vec(
-        (
-            proptest::option::of(0..16usize),
-            proptest::option::of(0..8usize),
-            proptest::collection::vec(content(), 0..3),
-            proptest::option::of(0..16usize),
-        ),
-        1..12,
-    )
-    .prop_map(|raw| {
-        raw.into_iter()
-            .enumerate()
-            .map(|(at, (parent, page, content, refers))| Element {
-                parent: parent.filter(|_| at > 0).map(|parent| parent % at),
-                page,
-                content,
-                refers,
-            })
-            .collect()
-    })
-}
-
-/// Returns a tagged document of `pages` pages, the annotations whose pages
-/// `annotations` gives, and `elements`, with each element's `/P` naming
-/// the parent whose `/K` holds it. Pages are objects 10 and on,
-/// annotations 30 and on, elements 50 and on. The parent tree lists the
-/// annotations that an element holds, and is one dictionary, or when
-/// `leaf` is given, object 69 whose kids are leaves of `leaf` pairs at
-/// most, objects 70 and on.
-fn tagged_of(
-    pages: usize,
-    annotations: &[usize],
-    elements: &[Element],
-    leaf: Option<usize>,
-) -> Document {
-    let page = |at: usize| u32::try_from(10 + at % pages).unwrap();
-    let annotation = |at: usize| u32::try_from(30 + at % annotations.len()).unwrap();
-    let element = |at: usize| u32::try_from(50 + at).unwrap();
-    let mut objects = vec![
-        (
-            1,
-            dict(vec![
-                ("Type", name("Catalog")),
-                ("Pages", reference(2)),
-                ("StructTreeRoot", reference(3)),
-            ]),
-        ),
-        (
-            2,
-            dict(vec![
-                ("Type", name("Pages")),
-                (
-                    "Kids",
-                    array((0..pages).map(|at| reference(page(at))).collect()),
-                ),
-                ("Count", Value::Integer(i64::try_from(pages).unwrap())),
-            ]),
-        ),
-    ];
-    let mut kids = vec![Vec::new(); elements.len()];
-    let mut top = Vec::new();
-    let mut on_page = vec![Vec::new(); pages];
-    let mut holder = vec![None; annotations.len()];
-    let mut mcid = 0;
-    for (at, spec) in elements.iter().enumerate() {
-        match spec.parent {
-            Some(parent) => kids[parent].push(reference(element(at))),
-            None => top.push(reference(element(at))),
-        }
-        for item in &spec.content {
-            mcid += 1;
-            let item = match item {
-                Content::Mcid => Value::Integer(mcid),
-                Content::Mcr(target) => {
-                    on_page[*target % pages].push(reference(element(at)));
-                    dict(vec![
-                        ("Type", name("MCR")),
-                        ("Pg", reference(page(*target))),
-                        ("MCID", Value::Integer(mcid)),
-                    ])
-                }
-                Content::Objr(_) if annotations.is_empty() => continue,
-                Content::Objr(target) => {
-                    holder[*target % annotations.len()] = Some(element(at));
-                    dict(vec![
-                        ("Type", name("OBJR")),
-                        ("Obj", reference(annotation(*target))),
-                    ])
-                }
-            };
-            kids[at].push(item);
-        }
-        if let Some(target) = spec.page
-            && spec
-                .content
-                .iter()
-                .any(|item| matches!(item, Content::Mcid))
-        {
-            on_page[target % pages].push(reference(element(at)));
-        }
-    }
-    for at in 0..pages {
-        let listed: Vec<Value> = (0..annotations.len())
-            .filter(|&listed| annotations[listed] % pages == at)
-            .map(|listed| reference(annotation(listed)))
-            .collect();
-        let mut entries = vec![
-            ("Type", name("Page")),
-            ("Parent", reference(2)),
-            ("StructParents", Value::Integer(i64::try_from(at).unwrap())),
-        ];
-        if !listed.is_empty() {
-            entries.push(("Annots", array(listed)));
-        }
-        objects.push((page(at), dict(entries)));
-    }
-    let mut pairs = Vec::new();
-    for (at, elements) in on_page.into_iter().enumerate() {
-        pairs.push((i64::try_from(at).unwrap(), array(elements)));
-    }
-    for (at, holder) in holder.into_iter().enumerate() {
-        if let Some(holder) = holder {
-            pairs.push((i64::try_from(100 + at).unwrap(), reference(holder)));
-        }
-    }
-    let nums = |pairs: &[(i64, Value)]| {
-        array(
-            pairs
-                .iter()
-                .flat_map(|(key, value)| [Value::Integer(*key), value.clone()])
-                .collect(),
-        )
-    };
-    let parent_tree = match leaf {
-        None => dict(vec![("Nums", nums(&pairs))]),
-        Some(leaf) => {
-            let mut kids = Vec::new();
-            for (at, chunk) in pairs.chunks(leaf).enumerate() {
-                let number = 70 + u32::try_from(at).unwrap();
-                let limits = vec![
-                    Value::Integer(chunk[0].0),
-                    Value::Integer(chunk[chunk.len() - 1].0),
-                ];
-                objects.push((
-                    number,
-                    dict(vec![("Limits", array(limits)), ("Nums", nums(chunk))]),
-                ));
-                kids.push(reference(number));
-            }
-            objects.push((69, dict(vec![("Kids", array(kids))])));
-            reference(69)
-        }
-    };
-    for (at, &on) in annotations.iter().enumerate() {
-        objects.push((
-            annotation(at),
-            dict(vec![
-                ("Type", name("Annot")),
-                ("Subtype", name("Square")),
-                ("P", reference(page(on))),
-                (
-                    "StructParent",
-                    Value::Integer(i64::try_from(100 + at).unwrap()),
-                ),
-            ]),
-        ));
-    }
-    objects.push((
-        3,
-        dict(vec![
-            ("Type", name("StructTreeRoot")),
-            ("K", array(top)),
-            ("ParentTree", parent_tree),
-        ]),
-    ));
-    for (at, (spec, kids)) in elements.iter().zip(kids).enumerate() {
-        let parent = spec.parent.map_or(3, element);
-        let mut entries = vec![
-            ("Type", name("StructElem")),
-            ("S", name("P")),
-            ("P", reference(parent)),
-            ("K", array(kids)),
-        ];
-        if let Some(target) = spec.page {
-            entries.push(("Pg", reference(page(target))));
-        }
-        if let Some(target) = spec.refers {
-            entries.push((
-                "Ref",
-                array(vec![reference(element(target % elements.len()))]),
-            ));
-        }
-        objects.push((element(at), dict(entries)));
-    }
-    let Value::Dict(trailer) = dict(vec![("Root", reference(1))]) else {
-        unreachable!()
-    };
-    document_of(&objects, trailer)
-}
-
-/// Plans the rules for removing the pages `removed` of `document` with the
-/// structure rules of `reach`, and returns the reach that planned them,
-/// the values of the objects that the edits leave, and the orphans.
-fn planned_with(
-    document: &Document,
-    removed: &[u32],
-    retained: &[u32],
-    reach: structure::Reach,
-) -> (structure::Reach, Vec<Option<Value>>, Vec<u32>) {
-    let budget = Budget::default();
+#[test]
+fn find_charges_every_owned_key_copy() {
+    let long_key = "k".repeat(64 * 1024);
+    let document = document_of(
+        &[(1, dict(vec![(&long_key, array(vec![reference(2); 8]))]))],
+        Dict::new(),
+    );
     let version = document.current();
+    // Warm the parsed-object cache: the operation pays for its own copies.
+    version.get(1, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let error = find(&mut reads, Referrer::Object(1), 2)
+        .map(|found| found.len())
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn warm_cache_and_empty_update_obey_cancellation() {
+    let document = tagged();
+    let version = document.current();
+    let cache = Cache::new();
+    let index = cache.get(&version, &Budget::default()).unwrap();
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let error = cache.get(&version, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    let changes = version
+        .changes(&version, &Budget::default())
+        .unwrap()
+        .unwrap();
+    let error = index
+        .update(&mut Reads::new(&version, &budget), &changes)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn malformed_objects_cannot_produce_a_complete_index() {
+    let mut base = MemoryBase::new(Dict::new());
+    base.insert(
+        Reference::new(1, 0),
+        Bytes::new(b"<< /Next 2 0 R /Broken (".to_vec()),
+    );
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+    let budget = Budget::default();
+    assert!(version.get(1, &budget).is_err());
+    assert!(build(&version, &budget).is_err());
+    assert!(find(&mut Reads::new(&version, &budget), Referrer::Object(1), 2).is_err());
+
+    let cache = Cache::new();
+    let readable = tagged();
+    let good = readable.current();
+    let previous = cache.get(&good, &budget).unwrap();
+    assert!(cache.get(&version, &budget).is_err());
+    assert!(Arc::ptr_eq(&previous, &cache.get(&good, &budget).unwrap()));
+}
+
+#[test]
+fn warm_cache_obeys_an_expired_deadline() {
+    let document = tagged();
+    let version = document.current();
+    let cache = Cache::new();
+    cache.get(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_deadline(std::time::Instant::now());
+    let error = cache.get(&version, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Deadline)
+    );
+}
+
+#[test]
+fn sparse_referrer_numbers_preserve_every_reference_generation() {
+    let document = document_of(
+        &[(
+            u32::MAX,
+            array(vec![
+                Value::Reference(Reference::new(1, 7)),
+                Value::Reference(Reference::new(1, 9)),
+            ]),
+        )],
+        Dict::new(),
+    );
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
     let index = build(&version, &budget).unwrap();
+    assert_eq!(index.targets(u32::MAX), &[1]);
+    assert_eq!(index.referrers(1), &[u32::MAX]);
+    let mut reads = Reads::new(&version, &budget);
+    let found = find(&mut reads, Referrer::Object(u32::MAX), 1).unwrap();
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].reference, Reference::new(1, 9));
+    assert_eq!(found[1].reference, Reference::new(1, 7));
+}
+
+#[test]
+fn the_trailer_is_a_container_for_the_depth_limit() {
+    let document = document_of(
+        &[],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(0));
+    let error = find(&mut Reads::new(&version, &budget), Referrer::Trailer, 1).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(1));
+    assert_eq!(build(&version, &budget).unwrap().trailer(), &[1]);
+}
+
+#[test]
+fn removing_a_link_preserves_references_from_other_arrays() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("Custom", reference(6))]),
+            ),
+            (2, dict(vec![("Type", name("Page"))])),
+            (
+                3,
+                dict(vec![("Type", name("Page")), ("Annots", reference(4))]),
+            ),
+            (4, array(vec![reference(5)])),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Annot")),
+                    ("Subtype", name("Link")),
+                    ("Dest", array(vec![reference(2), name("Fit")])),
+                ]),
+            ),
+            (6, array(vec![reference(5)])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let index = apply_everywhere(&document, 2, Some(5), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(5), &[6]);
+    assert_eq!(index.targets(4), &[] as &[u32]);
+}
+
+#[test]
+fn orphan_cycles_are_freed_but_shared_cycles_stay() {
+    for shared in [false, true] {
+        let document = document_of(
+            &[
+                (1, if shared { reference(3) } else { Value::Null }),
+                (2, reference(3)),
+                (3, reference(4)),
+                (4, reference(3)),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
+        assert_eq!(&*freed, if shared { &[2][..] } else { &[2, 3, 4][..] });
+    }
+}
+
+#[test]
+fn planned_paths_and_edit_copies_pay_for_owned_bytes() {
+    let path = [Step::Key(Name::from("k".repeat(64 * 1024).as_str()))];
+    let document = document_of(&[], Dict::new());
+    let version = document.current();
+    let index = References::default();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
     let mut reads = Reads::new(&version, &budget);
     let mut edits = Edits::new(&budget);
-    navigation::plan(&mut reads, &index, removed, retained, &mut edits).unwrap();
-    let used = structure::plan(&mut reads, &index, removed, retained, &mut edits, reach).unwrap();
-    let orphans = edits.orphans().to_vec();
-    let mut transaction = document.begin();
-    edits.write(&mut transaction, &budget).unwrap();
-    let after = transaction.snapshot();
-    let values = (1..80)
-        .map(|number| {
-            after
-                .get(number, &budget)
-                .unwrap()
-                .map(|object| (**object.value()).clone())
-        })
-        .collect();
-    (used, values, orphans)
+    edits
+        .apply(&mut reads, &index, 1, &path, Rule::RemoveEntry)
+        .unwrap();
+    let error = edits
+        .apply(&mut reads, &index, 2, &path, Rule::RemoveEntry)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+
+    let value = string(&"x".repeat(1024));
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(512));
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn edit_copies_preserve_lexemes_and_bound_recursive_cloning() {
+    let source = Bytes::new(b"<< /Odd#20Key [1.000  2 0 R] /Text <0061> >>".to_vec());
+    let budget = Budget::default();
+    let value = Value::parse(&source, &budget).unwrap();
+    assert_eq!(bytes_of(&copy_for_edit(&value, &budget).unwrap()), source);
+    let mut value = Value::Null;
+    for _ in 0..65 {
+        value = array(vec![value]);
+    }
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
 }
 
 proptest! {
     #[test]
-    fn the_affected_walk_plans_what_the_whole_walk_plans(
-        pages in 1..5usize,
-        annotations in proptest::collection::vec(0..8usize, 0..4),
-        elements in elements(),
-        removed in proptest::collection::vec(any::<bool>(), 4),
-        leaf in proptest::option::of(1..4usize),
+    fn orphan_collection_matches_reachability(
+        graph in proptest::collection::vec(proptest::collection::vec(1..=8u32, 0..5), 8),
+        seeds in proptest::collection::vec(1..=8u32, 0..5),
+        candidates in proptest::collection::vec(1..=8u32, 0..5),
     ) {
-        let document = tagged_of(pages, &annotations, &elements, leaf);
-        let page = |at: usize| u32::try_from(10 + at).unwrap();
-        // The first page leaves when no other does.
-        let leaves = |at: usize| removed[at] || (at == 0 && !removed[..pages].contains(&true));
-        let removed_pages: Vec<u32> = (0..pages).filter(|&at| leaves(at)).map(page).collect();
-        let retained: Vec<u32> = (0..pages).filter(|&at| !leaves(at)).map(page).collect();
-        let affected = planned_with(&document, &removed_pages, &retained, structure::Reach::Affected);
-        let whole = planned_with(&document, &removed_pages, &retained, structure::Reach::Whole);
-        prop_assert_eq!(affected.0, structure::Reach::Affected);
-        prop_assert_eq!(&affected.1, &whole.1);
-        prop_assert_eq!(&affected.2, &whole.2);
+        let objects: Vec<_> = graph.iter().enumerate().map(|(at, links)| {
+            ((at + 1) as u32, array(links.iter().copied().map(reference).collect()))
+        }).collect();
+        let document = document_of(&objects, [(Name::from("Root"), reference(1))].into_iter().collect());
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let actual = unreferenced(&index, &seeds, &candidates, &budget).unwrap();
+        // Independent fixed-size reachability oracle: first find the
+        // affected closure, then mark every surviving root's descendants.
+        let mut closure = [false; 9];
+        let mut forced = [false; 9];
+        for &number in seeds.iter().chain(&candidates) { closure[number as usize] = true; }
+        for &number in &seeds { forced[number as usize] = number != 1; }
+        for (at, links) in graph.iter().enumerate() {
+            if links.iter().any(|target| candidates.contains(target)) { closure[at + 1] = true; }
+        }
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if closure[at + 1] {
+                    for &next in links { closure[next as usize] = true; }
+                }
+            }
+        }
+        let mut live = closure.map(|affected| !affected);
+        live[1] = true;
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if live[at + 1] && !forced[at + 1] {
+                    for &next in links {
+                        if !forced[next as usize] { live[next as usize] = true; }
+                    }
+                }
+            }
+        }
+        let expected: Vec<_> = (1..=8u32).filter(|&number| {
+            closure[number as usize] && !live[number as usize] && number != 1
+        }).collect();
+        prop_assert_eq!(&*actual, &*expected);
     }
+}
+
+#[test]
+fn structure_planning_charges_copies_of_unknown_fields() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    ("StructTreeRoot", reference(6)),
+                ]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+            (4, dict(vec![("Type", name("Page"))])),
+            (
+                6,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", reference(7)),
+                    ("Unknown", string(&"x".repeat(1024 * 1024))),
+                ]),
+            ),
+            (
+                7,
+                dict(vec![
+                    ("S", name("P")),
+                    ("Pg", reference(4)),
+                    ("K", Value::Integer(0)),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let mut edits = Edits::new(&budget);
+    let error = super::structure::plan(
+        &mut Reads::new(&version, &budget),
+        &index,
+        &[3],
+        &[4],
+        &mut edits,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert!(edits.is_empty());
+    assert!(Arc::ptr_eq(&version, &document.current()));
 }

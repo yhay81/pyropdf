@@ -7,7 +7,6 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, overload
 
 from pyropdf import _core
-from pyropdf._errors import LimitError
 from pyropdf._page import Page
 
 if TYPE_CHECKING:
@@ -16,34 +15,11 @@ if TYPE_CHECKING:
 #: The largest finite PDF real that readers keep (a 32-bit float).
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
 _A4 = (595.0, 842.0)
-_MIN_PAGE_ENTRY_LIMIT = 4096
 
 
 def _is_int(value: object) -> bool:
     """Return whether ``value`` is an integer other than a bool."""
     return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _page_entries(pages: Iterable[int], count: int) -> list[int]:
-    """Check page entries against ``count`` pages, reading at most one entry past their limit.
-
-    The limit is the larger of ``count`` and 4,096, so that repeating pages
-    never costs more than one pass over a large document.
-    """
-    limit = max(count, _MIN_PAGE_ENTRY_LIMIT)
-    entries: list[int] = []
-    for index in pages:
-        if len(entries) >= limit:
-            raise _entry_limit_error(limit)
-        _resolve(index, count)
-        entries.append(index)
-    return entries
-
-
-def _entry_limit_error(limit: int) -> LimitError:
-    """Return the error for more than ``limit`` page entries in one call."""
-    msg = f"pages cannot hold more than {limit} entries (the larger of the page count and {_MIN_PAGE_ENTRY_LIMIT})"
-    return LimitError("page_entry_count", msg)
 
 
 def _resolve(index: object, count: int) -> int:
@@ -63,9 +39,8 @@ class Pages(Sequence[Page]):
     """The pages of a document, in order.
 
     Indexing, slicing, and iteration give :class:`Page` handles, which keep
-    naming their pages through later edits. :meth:`new`, :meth:`insert`,
-    ``del``, :meth:`select`, and :meth:`move` each change the page tree in
-    one transaction.
+    naming their pages through later edits. :meth:`new`, ``del``, and
+    :meth:`move` each change the page tree in one transaction.
     """
 
     __slots__ = ("_document",)
@@ -150,59 +125,24 @@ class Pages(Sequence[Page]):
         number, generation = _core.new_page(doc, at, width, height)
         return Page(self._document, number, generation)
 
-    def insert(self, index: int, pages: Page | Iterable[Page]) -> None:
-        """Insert copies of ``pages`` before ``index``, clamped as ``list.insert`` clamps it, in one transaction.
-
-        ``pages`` is one :class:`Page` or an iterable of pages of one open
-        document, this one or another. Pages of this document may repeat;
-        each copy is a new page object that shares the content streams and
-        resources of its original, with annotations, widgets, and structure
-        elements of its own. Pages of another document are imported with
-        what they reach, once each per call; their links to pages imported
-        with them keep leading there, and their other links within that
-        document go. Their structure elements join this document's
-        structure tree, under its single ``Document`` element when it has
-        one. The iterable may hold up to the larger of the source's page
-        count and 4,096 pages.
-        """
-        if not _is_int(index):
-            msg = f"the insertion index must be an integer, not {type(index).__name__}"
-            raise TypeError(msg)
-        doc = self._document._core()  # noqa: SLF001
-        objects = _core.page_objects(doc)
-        count = len(objects)
-        source, chosen = _source_pages(pages)
-        if source is None:
-            return
-        at = max(0, index + count) if index < 0 else min(index, count)
-        if source is not self._document:
-            source_objects = _core.page_objects(source._core())  # noqa: SLF001
-            _core.import_pages(doc, source._core(), [source_objects[page] for page in chosen], at)  # noqa: SLF001
-            return
-        order = [*objects[:at], *[objects[page] for page in chosen], *objects[at:]]
-        copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
-        _core.set_pages(doc, order, copies)
-
-    def extend(self, pages: Page | Iterable[Page]) -> None:
-        """Append copies of ``pages``, as :meth:`insert` at the end inserts them."""
-        self.insert(len(self), pages)
-
     def select(self, indexes: Iterable[int], /) -> None:
         """Keep the pages at ``indexes``, in that order, and remove the others, in one transaction.
 
-        Negative indexes count from the end. A repeated index adds a copy, as
-        :meth:`insert` copies a page. The navigation that leads to a removed
-        page goes, as for ``del``.
+        Negative indexes count from the end. The navigation that leads to a
+        removed page goes, as for ``del``. Each page may appear once.
         """
         doc = self._document._core()  # noqa: SLF001
         objects = _core.page_objects(doc)
-        chosen = [_resolve(index, len(objects)) for index in _page_entries(indexes, len(objects))]
+        chosen: list[int] = []
         seen: set[int] = set()
-        copies = []
-        for at in chosen:
-            copies.append(at in seen)
+        for index in indexes:
+            at = _resolve(index, len(objects))
+            if at in seen:
+                msg = "select keeps each page at most once"
+                raise ValueError(msg)
             seen.add(at)
-        _core.set_pages(doc, [objects[at] for at in chosen], copies)
+            chosen.append(at)
+        _core.set_pages(doc, [objects[at] for at in chosen])
 
     def move(self, index: int, to: int) -> None:
         """Move page ``index`` so that it ends at index ``to``, in one transaction."""
@@ -219,34 +159,6 @@ class Pages(Sequence[Page]):
     def __repr__(self) -> str:
         """Return a representation naming the document."""
         return f"<Pages of {self._document!r}>"
-
-
-def _source_pages(pages: Page | Iterable[Page]) -> tuple[Document | None, list[int]]:
-    """Return the document that ``pages`` belong to and their indexes there."""
-    if isinstance(pages, Page):
-        items: Iterable[object] = (pages,)
-    elif isinstance(pages, Iterable) and not isinstance(pages, (str, bytes)):
-        items = pages
-    else:
-        msg = f"pages must be a Page or an iterable of pages: {pages!r}"
-        raise TypeError(msg)
-    source: Document | None = None
-    limit = 0
-    indexes: list[int] = []
-    for page in items:
-        if not isinstance(page, Page):
-            msg = f"pages must be Page views: {page!r}"
-            raise TypeError(msg)
-        if source is None:
-            source = page.document
-            limit = max(len(source.pages), _MIN_PAGE_ENTRY_LIMIT)
-        elif page.document is not source:
-            msg = "the pages of one call must come from one document"
-            raise ValueError(msg)
-        if len(indexes) >= limit:
-            raise _entry_limit_error(limit)
-        indexes.append(page.index)
-    return source, indexes
 
 
 def _validate_size(size: object) -> tuple[float, float]:

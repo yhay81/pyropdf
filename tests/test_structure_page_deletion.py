@@ -3,15 +3,17 @@
 pylopdf's tests/test_structure_page_deletion.py at ebb01d3c, ported.
 Intended differences from pylopdf:
 
-- Selecting a page twice copies it as ``insert`` does, so the copy gets
-  structure elements and parent-tree keys of its own, which the repeated
-  selection case checks apart from the rest.
+- Selecting a page twice needs page copies (yhay81/pyropdf#175), so the
+  repeated-selection case is not ported.
 - Saved objects are compared without the whitespace next to delimiters,
   which pyropdf's writer places where lopdf's left none.
 - pylopdf also refused a structure tree of more than 1,048,576 nodes or
   4,194,304 edges, and a chain of more than 32 references. pyropdf bounds
-  the walk by the operation's memory and deadline, and reads a chain of
-  more than 32 references as absent, as it reads a cycle.
+  the walk by the operation's memory and deadline. A chain of more than
+  32 references refuses; a detected cycle reads as absent.
+- Structure roots, kids, and lookup nodes that alias a page, page-tree
+  node, or catalog refuse atomically. Explicitly freeing a page must not
+  leave these malformed aliases dangling.
 - The removed elements and what only they referred to are freed, so that a
   full save no longer holds them; pylopdf's save dropped unreachable
   objects.
@@ -172,32 +174,6 @@ def test_deleting_a_page_removes_its_structure_content(edit: str) -> None:
     reopened = pyropdf.open(saved)
     texts = [page.text() for page in reopened.pages]
     assert "Beta" not in "".join(texts)
-    assert "Gamma 0" in texts[-1]
-
-
-def test_selecting_a_page_twice_removes_the_dropped_content_and_copies_the_kept() -> None:
-    doc = pyropdf.open(_tagged_pdf())
-    doc.pages.select([0, 0, 2])
-    saved = doc.to_bytes()
-    objects = _objects(saved)
-
-    for number in (4, 7, 13, 15, 17, 21, 22, 23, 25, 26):
-        assert number not in objects, number
-    _assert_references_resolve(objects)
-    _assert_object(objects, 14, b"<</S/Sect/P 11 0 R/Pg 3 0 R/K[1]>>")
-    _assert_object(objects, 32, b"<</Limits[(pa)(span)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
-    kept = b"12 0 R 14 0 R 16 0 R 18 0 R 24 0 R 27 0 R"
-    assert _compact(objects[11]).startswith(_compact(b"<</S/Document/P 10 0 R/K[" + kept))
-    copy = doc.pages[1]
-    copied = [number for number in _references(_kids(objects[11])) if number not in _references(kept)]
-    assert copied
-    assert all(f"/Pg {copy.xref} 0 R".encode() in objects[number] for number in copied)
-    assert _compact(objects[30]).startswith(_compact(b"<</Nums[0[12 0 R 14 0 R 24 0 R] 2[18 0 R] 3 16 0 R 6 27 0 R"))
-
-    reopened = pyropdf.open(saved)
-    texts = [page.text() for page in reopened.pages]
-    assert "Beta" not in "".join(texts)
-    assert texts[0] == texts[1]
     assert "Gamma 0" in texts[-1]
 
 
@@ -373,3 +349,51 @@ def test_links_that_navigation_cleanup_removes_leave_the_structure_tree() -> Non
     assert {4, 20}.isdisjoint(objects)
     _assert_object(objects, 16, b"<</S/Link/P 11 0 R/Pg 3 0 R/K[5]>>")
     _assert_object(objects, 30, b"<</Nums[0[12 0 R 14 0 R 24 0 R] 2[18 0 R] 6 27 0 R]>>")
+
+
+@pytest.mark.parametrize("ending", ["[]", "[33 0 R]"])
+def test_a_parent_tree_at_32_levels_allows_empty_kids_or_a_cycle(ending: str) -> None:
+    first = 33
+    extra = {first + level: f"<< /Kids [{first + level + 1} 0 R] >>" for level in range(31)}
+    extra[first + 31] = f"<< /Nums [0 12 0 R 1 13 0 R] /Kids {ending} >>"
+    doc = pyropdf.open(_tagged_with({10: "<< /Type /StructTreeRoot /K 11 0 R /ParentTree 33 0 R >>"}, extra))
+    del doc.pages[1:2]
+    assert _references(_objects(doc.to_bytes())[first + 31])[:1] == [12]
+
+
+def test_a_long_acyclic_structure_reference_chain_refuses_atomically() -> None:
+    extra = {33 + at: f"{34 + at} 0 R" for at in range(33)}
+    extra[66] = "<< /S /P /Pg 4 0 R /K 0 >>"
+    _assert_refused(_tagged_with({11: "<< /S /Document /P 10 0 R /K [12 0 R 33 0 R] >>"}, extra))
+
+
+def test_structure_cleanup_preserves_references_to_other_generations() -> None:
+    replacements = {
+        12: "<< /S /P /P 11 0 R /Pg 3 0 R /K 0 /Ref [17 1 R] >>",
+        13: "<< /S /P /P 11 0 R /Pg 4 1 R /K 0 /ID (pb) >>",
+        16: "<< /S /Link /P 11 0 R /Pg 3 0 R /K << /Type /OBJR /Obj 21 1 R /Pg 3 0 R >> >>",
+    }
+    doc = pyropdf.open(_tagged_with(replacements, {}))
+    del doc.pages[1:2]
+    objects = _objects(doc.to_bytes())
+    assert 13 in objects
+    assert 16 in objects
+    assert b"17 1 R" in objects[12]
+    assert b"21 1 R" in objects[16]
+
+
+@pytest.mark.parametrize("where", ["root", "parent_tree", "id_tree", "kid"])
+def test_structure_aliasing_a_removed_page_refuses_atomically(where: str) -> None:
+    objects = _tagged_objects()
+    if where == "root":
+        objects[1] = "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 4 0 R >>"
+    elif where == "kid":
+        objects[11] = "<< /S /Document /P 10 0 R /K [12 0 R 4 0 R] >>"
+    else:
+        key = "ParentTree" if where == "parent_tree" else "IDTree"
+        objects[10] = f"<< /Type /StructTreeRoot /K 11 0 R /{key} 4 0 R >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.MalformedPdfError, match="alias"):
+        del doc.pages[1:2]
+    assert doc.to_bytes() == before

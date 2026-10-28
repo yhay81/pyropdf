@@ -6,18 +6,21 @@
 //! a removed named destination makes a walk of the links and the outline
 //! that name it.
 
+use std::ops::Deref;
+use std::sync::Arc;
+
 use crate::Result;
 use crate::budget::BudgetVec;
 use crate::memo::Reads;
 use crate::value::{Dict, Value};
 use crate::version::table::Table;
 
-use super::rules::aliasing;
-use super::{Edits, References, Role, Rule, Step};
+use super::rules::{aliasing, annotation_array, copy_path};
+use super::{Edits, References, Referrer, Role, Rule, Step, find};
 
-/// The most steps from a reference to a page up to the navigation that
-/// holds it: an indirect destination, then an indirect action.
-const MAX_INDIRECTION: usize = 2;
+/// Bounds recursive indirection through destinations and actions, including
+/// malformed cycles. Direct dictionary paths are consumed iteratively.
+const MAX_INDIRECTION: usize = crate::pages::MAX_CHAIN;
 
 /// Plans the rules for the navigation to `removed`, the pages that leave;
 /// see [`super::remove_pages`].
@@ -43,14 +46,24 @@ pub(super) fn plan(
         index,
         removed,
         catalog,
+        legacy: readable(reads, catalog)?.and_then(|object| {
+            match dict_of(&object).and_then(|dict| dict.get("Dests")) {
+                Some(Value::Reference(reference)) => Some(reference.number()),
+                _ => None,
+            }
+        }),
         names: BudgetVec::new(budget),
     };
     for &page in removed {
+        let generation = reads.generation(page)?;
         for &referrer in index.referrers(page) {
             if is_in(removed, referrer) {
                 continue;
             }
-            for found in edits.find(reads, referrer, page)?.iter() {
+            for found in find(reads, Referrer::Object(referrer), page)?.iter() {
+                if generation != Some(found.reference.generation()) {
+                    continue;
+                }
                 match found.role {
                     Some(Role::Destination) => {
                         let holder = &found.path[..found.path.len() - 1];
@@ -81,6 +94,7 @@ struct Planner<'a, 'b> {
     index: &'a References,
     removed: &'a [u32],
     catalog: u32,
+    legacy: Option<u32>,
     /// The names of the named destinations that the rules remove.
     names: BudgetVec<'b, Box<[u8]>>,
 }
@@ -97,11 +111,28 @@ impl Planner<'_, '_> {
         path: &[Step],
         depth: usize,
     ) -> Result<()> {
-        // A destination dictionary's or a GoTo action's `/D`.
-        if let Some((Step::Key(key), parent)) = path.split_last()
+        reads.budget().poll()?;
+        // A legacy key may itself be named D, A, or Dest.
+        let legacy_name = match path {
+            [Step::Key(name)] if self.legacy == Some(referrer) => Some(name),
+            [Step::Key(key), Step::Key(name)]
+                if referrer == self.catalog && key.as_bytes() == b"Dests" =>
+            {
+                Some(name)
+            }
+            _ => None,
+        };
+        if let Some(name) = legacy_name {
+            self.name(name.as_bytes())?;
+            return edits.apply(reads, self.index, referrer, path, Rule::RemoveEntry);
+        }
+        // Strip direct destination dictionaries iteratively.
+        let mut path = path;
+        while let Some((Step::Key(key), parent)) = path.split_last()
             && key.as_bytes() == b"D"
         {
-            return self.navigation(reads, edits, referrer, parent, depth);
+            reads.budget().poll()?;
+            path = parent;
         }
         let Some(object) = readable(reads, referrer)? else {
             return Ok(());
@@ -110,22 +141,68 @@ impl Planner<'_, '_> {
             // An indirect destination or action: the rule follows whatever
             // holds it.
             if depth >= MAX_INDIRECTION {
-                return Ok(());
+                return Err(crate::Error::malformed(
+                    "navigation reference chain is too deep or cyclic",
+                ));
             }
             for &holder in self.index.referrers(referrer) {
                 if is_in(self.removed, holder) {
                     continue;
                 }
-                for found in edits.find(reads, holder, referrer)?.iter() {
+                for found in find(reads, Referrer::Object(holder), referrer)?.iter() {
+                    if found.reference.generation() != object.generation() {
+                        continue;
+                    }
                     self.navigation(reads, edits, holder, &found.path, depth + 1)?;
                 }
             }
             return Ok(());
         }
+        let top = &**object.value();
+        let index = self.index;
+        if let Some((Step::Key(key), parent)) = path.split_last()
+            && matches!(key.as_bytes(), b"Dest" | b"A")
+            && let Some(Value::Dict(link)) = at(top, parent)
+            && is_link(link)
+        {
+            let inline = match parent {
+                [Step::Key(key), Step::Index(_)] if key.as_bytes() == b"Annots" => {
+                    dict_of(&object).is_some_and(|dict| type_of(dict) == Some(b"Page"))
+                }
+                [Step::Index(_)] => annotation_array(reads, index, referrer)?,
+                _ => false,
+            };
+            if inline {
+                if is_aliasing(link) {
+                    return Err(aliasing());
+                }
+                return edits.apply(reads, index, referrer, parent, Rule::RemoveEntry);
+            }
+        }
+        // Name tree leaves may be direct dictionaries nested in a catalog.
+        if let [prefix @ .., Step::Key(key), Step::Index(position)] = path
+            && key.as_bytes() == b"Names"
+            && position % 2 == 1
+            && let Some(Value::Dict(node)) = at(top, prefix)
+        {
+            if is_aliasing(node) {
+                return Err(aliasing());
+            }
+            if let Some(Value::Array(items)) = node.get("Names")
+                && let Some(name) = items.get(position - 1)
+                && let Some(held) = resolved(reads, name)?
+                && let Value::String(name) = &*held
+            {
+                self.name(name.as_bytes())?;
+            }
+            edits.apply(reads, index, referrer, path, Rule::RemoveEntry)?;
+            let mut key = copy_path(path, reads.budget())?;
+            *key.last_mut().expect("nonempty name-tree path") = Step::Index(position - 1);
+            return edits.apply(reads, index, referrer, &key, Rule::RemoveEntry);
+        }
         let Some(dict) = dict_of(&object) else {
             return Ok(());
         };
-        let index = self.index;
         match path {
             [Step::Key(key)] if matches!(key.as_bytes(), b"Dest" | b"A") => {
                 if is_aliasing(dict) {
@@ -140,29 +217,6 @@ impl Planner<'_, '_> {
             }
             [Step::Key(key)] if key.as_bytes() == b"OpenAction" && referrer == self.catalog => {
                 edits.apply(reads, index, referrer, path, Rule::RemoveEntry)
-            }
-            [Step::Key(key), Step::Key(name)]
-                if key.as_bytes() == b"Dests" && referrer == self.catalog =>
-            {
-                self.name(name.as_bytes())?;
-                edits.apply(reads, index, referrer, path, Rule::RemoveEntry)
-            }
-            [Step::Key(key), Step::Index(at)] if key.as_bytes() == b"Names" && at % 2 == 1 => {
-                if is_aliasing(dict) {
-                    return Err(aliasing());
-                }
-                let name = match dict.get("Names") {
-                    Some(Value::Array(items)) => items.get(at - 1).cloned(),
-                    _ => None,
-                };
-                if let Some(name) = name
-                    && let Some(Value::String(name)) = resolved(reads, &name)?
-                {
-                    self.name(name.as_bytes())?;
-                }
-                edits.apply(reads, index, referrer, path, Rule::RemoveEntry)?;
-                let key = [Step::Key("Names".into()), Step::Index(at - 1)];
-                edits.apply(reads, index, referrer, &key, Rule::RemoveEntry)
             }
             _ => Ok(()),
         }
@@ -192,26 +246,27 @@ fn named(
         let Some(object) = readable(reads, page)? else {
             continue;
         };
-        let (holder, prefix, items) = match dict_of(&object).and_then(|dict| dict.get("Annots")) {
-            Some(Value::Array(items)) => (page, Some(Step::Key("Annots".into())), items.clone()),
-            Some(&Value::Reference(annots)) => match readable(reads, annots.number())? {
-                Some(array) => match &**array.value() {
-                    Value::Array(items) => (annots.number(), None, items.clone()),
-                    _ => continue,
-                },
-                None => continue,
-            },
-            _ => continue,
+        let Some(annots) = dict_of(&object).and_then(|dict| dict.get("Annots")) else {
+            continue;
+        };
+        let (holder, prefix) = match annots {
+            Value::Reference(reference) => (reference.number(), None),
+            _ => (page, Some(Step::Key("Annots".into()))),
+        };
+        let held = resolved(reads, annots)?;
+        let Some(Value::Array(items)) = held.as_deref() else {
+            continue;
         };
         for (at, item) in items.iter().enumerate() {
             budget.poll()?;
-            let Some(Value::Dict(dict)) = resolved(reads, item)? else {
+            let held = resolved(reads, item)?;
+            let Some(Value::Dict(dict)) = held.as_deref() else {
                 continue;
             };
-            if !is_link(&dict) || !names_one(reads, &dict, names)? {
+            if !is_link(dict) || !names_one(reads, dict, names)? {
                 continue;
             }
-            if is_aliasing(&dict) {
+            if is_aliasing(dict) {
                 return Err(aliasing());
             }
             if let Value::Reference(link) = item {
@@ -240,10 +295,7 @@ fn outline(
     let Some(catalog_object) = readable(reads, catalog)? else {
         return Ok(());
     };
-    let Some(root) = dict_of(&catalog_object)
-        .and_then(|dict| dict.get("Outlines"))
-        .cloned()
-    else {
+    let Some(root) = dict_of(&catalog_object).and_then(|dict| dict.get("Outlines")) else {
         return Ok(());
     };
     let Value::Reference(root) = root else {
@@ -310,7 +362,8 @@ fn names_one(reads: &mut Reads<'_>, dict: &Dict, names: &[Box<[u8]>]) -> Result<
 /// Returns whether `action`, or the object it refers to, is a GoTo action
 /// whose `/D` names a destination of `names`.
 fn action_names(reads: &mut Reads<'_>, action: &Value, names: &[Box<[u8]>]) -> Result<bool> {
-    let Some(Value::Dict(action)) = resolved(reads, action)? else {
+    let held = resolved(reads, action)?;
+    let Some(Value::Dict(action)) = held.as_deref() else {
         return Ok(false);
     };
     if !matches!(action.get("S"), Some(Value::Name(kind)) if kind.as_bytes() == b"GoTo") {
@@ -325,12 +378,15 @@ fn action_names(reads: &mut Reads<'_>, action: &Value, names: &[Box<[u8]>]) -> R
 /// Returns whether `value`, or the object it refers to, is a name or a
 /// string of `names`.
 fn is_named(reads: &mut Reads<'_>, value: &Value, names: &[Box<[u8]>]) -> Result<bool> {
-    let bytes = match resolved(reads, value)? {
-        Some(Value::Name(name)) => Box::<[u8]>::from(name.as_bytes()),
-        Some(Value::String(string)) => Box::<[u8]>::from(string.as_bytes()),
+    let held = resolved(reads, value)?;
+    let bytes = match held.as_deref() {
+        Some(Value::Name(name)) => name.as_bytes(),
+        Some(Value::String(string)) => string.as_bytes(),
         _ => return Ok(false),
     };
-    Ok(names.binary_search(&bytes).is_ok())
+    Ok(names
+        .binary_search_by(|name| name.as_ref().cmp(bytes))
+        .is_ok())
 }
 
 /// Returns the catalog's object number, if the trailer refers to one.
@@ -354,16 +410,18 @@ fn check_roots(reads: &mut Reads<'_>, catalog: u32) -> Result<()> {
         let Some(root) = dict.get(key) else {
             continue;
         };
-        let Some(Value::Dict(root)) = resolved(reads, root)? else {
+        let held = resolved(reads, root)?;
+        let Some(Value::Dict(root)) = held.as_deref() else {
             continue;
         };
-        if is_aliasing(&root) {
+        if is_aliasing(root) {
             return Err(aliasing());
         }
         if key == "Names"
             && let Some(dests) = root.get("Dests")
-            && let Some(Value::Dict(dests)) = resolved(reads, dests)?
-            && is_aliasing(&dests)
+            && let Some(held) = resolved(reads, dests)?
+            && let Value::Dict(dests) = &*held
+            && is_aliasing(dests)
         {
             return Err(aliasing());
         }
@@ -371,14 +429,29 @@ fn check_roots(reads: &mut Reads<'_>, catalog: u32) -> Result<()> {
     Ok(())
 }
 
-/// Returns `value`, or the object that it refers to; `None` for a
-/// reference to an object that the store cannot read.
-fn resolved(reads: &mut Reads<'_>, value: &Value) -> Result<Option<Value>> {
+/// A direct value is borrowed; an indirect value shares the store's parse.
+enum Resolved<'a> {
+    Borrowed(&'a Value),
+    Shared(Arc<Value>),
+}
+
+impl Deref for Resolved<'_> {
+    type Target = Value;
+    fn deref(&self) -> &Value {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Shared(value) => value,
+        }
+    }
+}
+
+fn resolved<'a>(reads: &mut Reads<'_>, value: &'a Value) -> Result<Option<Resolved<'a>>> {
+    reads.budget().poll()?;
     match value {
         Value::Reference(reference) => Ok(readable(reads, reference.number())?
             .filter(|object| object.generation() == reference.generation())
-            .map(|object| (**object.value()).clone())),
-        _ => Ok(Some(value.clone())),
+            .map(|object| Resolved::Shared(Arc::clone(object.value())))),
+        _ => Ok(Some(Resolved::Borrowed(value))),
     }
 }
 
@@ -386,11 +459,7 @@ pub(super) fn readable(
     reads: &mut Reads<'_>,
     number: u32,
 ) -> Result<Option<crate::version::Object>> {
-    match reads.get(number) {
-        Ok(object) => Ok(object),
-        Err(error) if error.limit().is_some() => Err(error),
-        Err(_) => Ok(None),
-    }
+    reads.get(number)
 }
 
 pub(super) fn dict_of(object: &crate::version::Object) -> Option<&Dict> {
@@ -418,4 +487,15 @@ fn is_link(dict: &Dict) -> bool {
 
 pub(super) fn is_in(sorted: &[u32], number: u32) -> bool {
     sorted.binary_search(&number).is_ok()
+}
+
+/// Looks up a direct path without copying containers.
+fn at<'a>(top: &'a Value, path: &[Step]) -> Option<&'a Value> {
+    path.iter()
+        .try_fold(top, |value, step| match (value, step) {
+            (Value::Dict(dict), Step::Key(key)) => dict.get(key.as_bytes()),
+            (Value::Stream(stream), Step::Key(key)) => stream.dict().get(key.as_bytes()),
+            (Value::Array(array), Step::Index(index)) => array.get(*index),
+            _ => None,
+        })
 }

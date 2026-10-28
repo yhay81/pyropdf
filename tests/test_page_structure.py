@@ -1,15 +1,12 @@
-"""doc.pages.select, insert, and extend: keep, repeat, copy, and import pages.
+"""doc.pages.select: keep pages in a new order and remove the others.
 
-The select, copy, and import cases of pylopdf's tests/test_page_structure.py
-at ebb01d3c, ported. Its len, indexing, iteration, new, del, and move cases
-are in tests/test_pages.py. Intended differences:
+The select case of pylopdf's tests/test_page_structure.py at ebb01d3c,
+ported. Its len, indexing, iteration, new, del, and move cases are in
+tests/test_pages.py. Not ported here:
 
-- the copy's independence is shown with its rotation and annotations,
-  since pyropdf has no ``page.draw`` yet;
-- a stale page is one that was deleted, since a page handle keeps naming
-  its page through other edits.
-
-Not ported here: ``labeled``, since pyropdf reads no page labels yet.
+- repeating a page in a selection, and ``insert``, which copy pages
+  (yhay81/pyropdf#175) or import them (yhay81/pyropdf#176);
+- ``labeled``, since pyropdf reads no page labels yet.
 """
 
 from __future__ import annotations
@@ -84,8 +81,8 @@ def test_select_refuses_before_changing() -> None:
         doc.pages.select([3])
     with pytest.raises(TypeError):
         doc.pages.select([1.0])  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError):
-        doc.pages.select([0, None])  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="at most once"):
+        doc.pages.select([0, 0])
     assert doc.to_bytes() == before
     assert numbers(doc) == [0, 1, 2]
 
@@ -96,117 +93,3 @@ def test_selecting_every_page_in_order_keeps_the_pages() -> None:
     doc.pages.select([0, 1])
 
     assert numbers(doc) == [0, 1]
-
-
-def test_select_keeps_and_repeats_pages_in_order() -> None:
-    doc = doc_of(3)
-    first = doc.pages[0]
-
-    doc.pages.select([2, 0, 0, -1])
-
-    assert numbers(doc) == [2, 0, 0, 2]
-    assert first.index == 1
-    assert len({page.xref for page in doc.pages}) == 4
-    assert numbers(pyropdf.open(doc.to_bytes())) == [2, 0, 0, 2]
-    doc.history.undo()
-    assert numbers(doc) == [0, 1, 2]
-
-
-def test_insert_copies_pages_of_the_same_document() -> None:
-    doc = doc_of(3)
-
-    doc.pages.extend(doc.pages[0])
-    doc.pages.insert(0, doc.pages[2])
-    doc.pages.insert(-1, [doc.pages[1], doc.pages[1]])
-
-    assert numbers(doc) == [2, 0, 1, 2, 0, 0, 0]
-    assert numbers(pyropdf.open(doc.to_bytes())) == [2, 0, 1, 2, 0, 0, 0]
-
-
-def test_insert_imports_pages_of_another_document_in_any_order() -> None:
-    target = doc_of(1)
-    source = doc_of(4)
-
-    target.pages.insert(0, source.pages[::-2])
-    target.pages.insert(40, source.pages[0])
-    target.pages.extend(source.pages)
-
-    assert numbers(target) == [3, 1, 0, 0, 0, 1, 2, 3]
-    assert len(source.pages) == 4
-    assert numbers(pyropdf.open(target.to_bytes())) == [3, 1, 0, 0, 0, 1, 2, 3]
-    target.history.undo()
-    assert numbers(target) == [3, 1, 0, 0]
-
-
-@pytest.mark.parametrize(("index", "expected"), [(-99, [1, 0, 1]), (99, [0, 1, 1]), (-1, [0, 1, 1])])
-def test_insert_clamps_the_index_as_list_insert_does(index: int, expected: list[int]) -> None:
-    doc = doc_of(2)
-
-    doc.pages.insert(index, doc.pages[1])
-
-    assert numbers(doc) == expected
-
-
-def test_a_copy_is_independent_of_the_original() -> None:
-    doc = doc_of(1)
-    xref = doc.pages[0].xref
-    doc.pages.extend(doc.pages[0])
-
-    doc.pages[1].rotation = 90
-    doc.pages[1].annotations.add(pyropdf.Square((10, 10, 50, 50)))
-
-    assert doc.pages[0].xref == xref
-    assert doc.pages[1].xref != xref
-    assert doc.pages[0].rotation == 0
-    assert len(doc.pages[0].annotations) == 0
-    reopened = pyropdf.open(doc.to_bytes())
-    assert (reopened.pages[0].rotation, reopened.pages[1].rotation) == (0, 90)
-    assert [len(page.annotations) for page in reopened.pages] == [0, 1]
-
-
-def test_insert_refuses_bad_sources_before_changing() -> None:
-    doc = doc_of(2)
-    other = doc_of(2)
-    before = doc.to_bytes()
-
-    with pytest.raises(ValueError, match="one document"):
-        doc.pages.extend([doc.pages[0], other.pages[0]])
-    with pytest.raises(ValueError, match="one document"):
-        doc.pages.extend([other.pages[0], doc_of(2).pages[0]])
-    with pytest.raises(ValueError, match="once per call"):
-        doc.pages.extend([other.pages[0], other.pages[0]])
-    with pytest.raises(TypeError, match="Page"):
-        doc.pages.extend([0, 1])  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="Page"):
-        doc.pages.extend(other)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="insertion index"):
-        doc.pages.insert(0.5, doc.pages)  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="insertion index"):
-        doc.pages.insert(0.5, other.pages)  # ty: ignore[invalid-argument-type]
-    assert doc.to_bytes() == before
-    stale = doc.pages[1]
-    del doc.pages[1]
-    before = doc.to_bytes()
-    with pytest.raises(pyropdf.StalePageError):
-        doc.pages.extend(stale)
-    with pytest.raises(pyropdf.StalePageError):
-        doc.pages.extend([doc.pages[0], stale])
-    gone = other.pages[0]
-    del other.pages[0]
-    with pytest.raises(pyropdf.StalePageError):
-        doc.pages.extend(gone)
-
-    assert doc.to_bytes() == before
-    doc.pages.extend([])
-    assert doc.to_bytes() == before
-    assert numbers(doc) == [0]
-
-
-def test_insert_limits_its_entries() -> None:
-    doc = doc_of(1)
-
-    with pytest.raises(pyropdf.LimitError) as raised:
-        doc.pages.extend(doc.pages[0] for _ in range(4097))
-
-    assert raised.value.code == "page_entry_count"
-    assert len(doc.pages) == 1
