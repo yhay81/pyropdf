@@ -64,8 +64,9 @@ mod _core {
     };
     #[pymodule_export]
     use super::forms::{
-        form_field, form_field_choices, form_field_fill, form_field_read, form_field_widgets,
-        form_fields, form_repair_radio_groups, form_walk_counts, widget_list, widget_read,
+        form_field, form_field_choices, form_field_details, form_field_edit, form_field_fill,
+        form_field_read, form_field_widgets, form_fields, form_repair_radio_groups,
+        form_set_need_appearances, form_walk_counts, widget_list, widget_read,
     };
     #[pymodule_export]
     use super::history::{

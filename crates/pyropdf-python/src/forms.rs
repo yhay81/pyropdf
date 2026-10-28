@@ -9,6 +9,7 @@
 //! pylopdf's `rust/src/document/forms.rs` at
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
@@ -1780,7 +1781,7 @@ fn is_winansi(text: &str, budget: &Budget) -> PyResult<bool> {
 type States = Vec<(Id, Vec<Name>)>;
 
 /// A value that setting a field writes: text, or a check box's state.
-#[derive(FromPyObject)]
+#[derive(Clone, FromPyObject)]
 pub enum FillValue {
     Flag(bool),
     Text(String),
@@ -1834,6 +1835,48 @@ fn fill(
     cache: &FillCache,
     draft: bool,
 ) -> PyResult<()> {
+    change(
+        transaction,
+        id,
+        budget,
+        cache,
+        draft,
+        |field, _, _| match field.kind {
+            kind if shows_text(kind) || is_button(kind) => Ok(After::Fill(Cow::Borrowed(value))),
+            "pushbutton" => Err(PdfError::new_err(
+                "pushbutton fields do not have fillable values",
+            )),
+            "signature" => Err(PdfError::new_err(
+                "filling signature fields is not supported (see the pyHanko integration for digital signatures)",
+            )),
+            _ => Err(PdfError::new_err("unsupported field type")),
+        },
+    )
+}
+
+/// What follows an edit of a field's dictionary.
+enum After<'v> {
+    /// Nothing: the field shows no value.
+    Keep,
+    /// The field's widgets are drawn again.
+    Draw,
+    /// The value is set and the field's widgets are drawn again.
+    Fill(Cow<'v, FillValue>),
+}
+
+/// Edits field `id` in one write: `edit` checks the field and changes a
+/// copy of its dictionary, read from the version before the edit, and
+/// says what follows. A value is then set as [`form_field_fill`] sets it,
+/// and the widgets of the field are drawn or refused with the reason; those
+/// of other fields that have no appearance are drawn where they can be.
+fn change<'v>(
+    transaction: &mut Transaction,
+    id: Id,
+    budget: &Budget,
+    cache: &FillCache,
+    draft: bool,
+    edit: impl FnOnce(&Field, &mut Reads<'_>, &mut Dict) -> PyResult<After<'v>>,
+) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
     let before = if draft {
         transaction.snapshot()
@@ -1844,51 +1887,52 @@ fn fill(
     let mut reads = Reads::new(&before, budget);
     let form = &index.topology.form;
     let field = form.field(id).ok_or_else(|| stale(id))?;
-    let button = is_button(field.kind);
-    match field.kind {
-        kind if shows_text(kind) || button => {}
-        "pushbutton" => {
-            return Err(PdfError::new_err(
-                "pushbutton fields do not have fillable values",
-            ));
-        }
-        "signature" => {
-            return Err(PdfError::new_err(
-                "filling signature fields is not supported (see the pyHanko integration for digital signatures)",
-            ));
-        }
-        _ => return Err(PdfError::new_err("unsupported field type")),
-    }
-    let states = if button {
-        button_states(&before, field, budget)?
-    } else {
-        Vec::new()
-    };
-    let on = match value {
-        FillValue::Flag(true) => on_state(&states, budget)?,
-        _ => None,
-    };
-    let text = match value {
-        FillValue::Text(text) => text.as_str(),
-        FillValue::Flag(false) => widgets::OFF,
-        FillValue::Flag(true) => on.as_deref().unwrap_or("Yes"),
-    };
     let Some(original) = object(&mut reads, id)? else {
         return Err(stale(id));
     };
     let Value::Dict(mut dict) = copy_for_edit(&original, budget).map_err(store)? else {
         return Err(stale(id));
     };
-    if button {
-        plan(&states, text).map_err(limit)?;
-        dict.insert(Name::from("V"), Value::Name(Name::from(text)));
+    let after = edit(field, &mut reads, &mut dict)?;
+    let value = match &after {
+        After::Keep => {
+            transaction
+                .write(id.0, &Value::Dict(dict), budget)
+                .map_err(store)?;
+            return Ok(());
+        }
+        After::Draw => None,
+        After::Fill(value) => Some(&**value),
+    };
+    let button = is_button(field.kind);
+    let states = if button && value.is_some() {
+        button_states(&before, field, budget)?
     } else {
-        dict.insert(Name::from("V"), encode_value(text, budget)?);
+        Vec::new()
+    };
+    let on = match value {
+        Some(FillValue::Flag(true)) => on_state(&states, budget)?,
+        _ => None,
+    };
+    let text = value.map(|value| match value {
+        FillValue::Text(text) => text.as_str(),
+        FillValue::Flag(false) => widgets::OFF,
+        FillValue::Flag(true) => on.as_deref().unwrap_or("Yes"),
+    });
+    match text {
+        Some(text) if button => {
+            plan(&states, text).map_err(limit)?;
+            dict.insert(Name::from("V"), Value::Name(Name::from(text)));
+        }
+        Some(text) => {
+            dict.insert(Name::from("V"), encode_value(text, budget)?);
+        }
+        None => {}
     }
     transaction
         .write(id.0, &Value::Dict(dict), budget)
         .map_err(store)?;
-    if button {
+    if button && let Some(text) = text {
         select(transaction, &states, text, budget)?;
     }
     let after_write = transaction.snapshot();
@@ -2154,29 +2198,30 @@ fn select<'s>(
 }
 
 /// Sets the form's `/NeedAppearances` to `value` where the form dictionary
-/// is written: as an object of its own, or in the catalog's.
+/// is written: as an object of its own, or in the catalog's. Returns
+/// whether the document has a form dictionary.
 fn set_need_appearances(
     transaction: &mut Transaction,
     value: bool,
     budget: &Budget,
-) -> PyResult<()> {
+) -> PyResult<bool> {
     let store = |e: pyropdf_store::Error| store_error(&e);
     let version = transaction.snapshot();
     let mut reads = Reads::new(&version, budget);
     let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(catalog_value) = object(&mut reads, id(root))? else {
-        return Ok(());
+        return Ok(false);
     };
     let Value::Dict(catalog) = &*catalog_value else {
-        return Ok(());
+        return Ok(false);
     };
     let (number, value) = match catalog.get("AcroForm") {
         Some(Value::Reference(reference)) => match object(&mut reads, id(*reference))?.as_deref() {
             Some(form @ Value::Dict(dict)) => {
                 if dict.get("NeedAppearances") == Some(&Value::Boolean(value)) {
-                    return Ok(());
+                    return Ok(true);
                 }
                 let Value::Dict(mut form) = copy_for_edit(form, budget).map_err(store)? else {
                     unreachable!("a copied dictionary remains a dictionary");
@@ -2184,11 +2229,11 @@ fn set_need_appearances(
                 form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
                 (reference.number(), Value::Dict(form))
             }
-            _ => return Ok(()),
+            _ => return Ok(false),
         },
         Some(Value::Dict(form)) => {
             if form.get("NeedAppearances") == Some(&Value::Boolean(value)) {
-                return Ok(());
+                return Ok(true);
             }
             let Value::Dict(mut catalog) = copy_for_edit(&catalog_value, budget).map_err(store)?
             else {
@@ -2200,10 +2245,287 @@ fn set_need_appearances(
             form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
             (root.number(), Value::Dict(catalog))
         }
-        _ => return Ok(()),
+        _ => return Ok(false),
     };
     transaction.write(number, &value, budget).map_err(store)?;
-    Ok(())
+    Ok(true)
+}
+
+/// Sets the form's `/NeedAppearances`, which asks viewers to draw the
+/// widgets again; a document without a form dictionary refuses.
+#[pyfunction]
+pub fn form_set_need_appearances(
+    py: Python<'_>,
+    document: &_Document,
+    value: bool,
+) -> PyResult<()> {
+    document.edit(py, |transaction, budget| {
+        if set_need_appearances(transaction, value, budget)? {
+            Ok(())
+        } else {
+            Err(PdfError::new_err("the document has no interactive form"))
+        }
+    })
+}
+
+/// Reads field `id`'s label (`/TU`), maximum length (inherited `/MaxLen`,
+/// unless negative), and default value (inherited `/DV`, a name or a text
+/// string), all from one version.
+#[pyfunction]
+pub fn form_field_details(
+    py: Python<'_>,
+    document: &_Document,
+    id: Id,
+) -> PyResult<(Option<String>, Option<i64>, Option<String>)> {
+    py.detach(|| {
+        let (version, budget) = view(document)?;
+        memoized_at(document, &version, &budget)?
+            .field(id)
+            .ok_or_else(|| stale(id))?;
+        let mut reads = Reads::new(&version, &budget);
+        let mut totals = (0, 0);
+        let field = object(&mut reads, id)?;
+        let label = match field.as_deref() {
+            Some(Value::Dict(dict)) => match own(&mut reads, dict, "TU")? {
+                Some(label) => text(
+                    &mut reads,
+                    label,
+                    &mut totals,
+                    MAX_VALUE_BYTES,
+                    "field label",
+                )?,
+                None => None,
+            },
+            _ => None,
+        };
+        let length = inherited(&mut reads, id, "MaxLen")?;
+        let max_length = match read(&mut reads, length.as_ref())? {
+            Some(Value::Integer(length)) if length >= 0 => Some(length),
+            _ => None,
+        };
+        let default = inherited(&mut reads, id, "DV")?;
+        let default = match read(&mut reads, default.as_ref())? {
+            Some(Value::Name(name)) => Some(String::from_utf8_lossy(name.as_bytes()).into_owned()),
+            Some(Value::String(encoded)) => Some(decode(
+                &encoded,
+                &mut totals,
+                MAX_VALUE_BYTES,
+                "field default value",
+                &budget,
+            )?),
+            _ => None,
+        };
+        Ok((label, max_length, default))
+    })
+}
+
+/// The `/Ff` bits that decide a field's kind, which an edit keeps: radio,
+/// pushbutton, and combo box.
+const KIND_FLAGS: i64 = (1 << 15) | (1 << 16) | (1 << 17);
+
+/// The properties that one edit of a field sets, as `Field._edit` passes
+/// them, and the names of those that it removes.
+#[derive(FromPyObject)]
+#[pyo3(from_item_all)]
+pub struct FieldEdit {
+    #[pyo3(default)]
+    label: Option<String>,
+    #[pyo3(default)]
+    max_length: Option<i64>,
+    #[pyo3(default)]
+    flags: Option<i64>,
+    #[pyo3(default)]
+    choices: Option<Vec<(String, String)>>,
+    #[pyo3(default)]
+    default_value: Option<String>,
+    #[pyo3(default)]
+    reset: bool,
+    clear: Vec<String>,
+}
+
+/// Edits field `id`: sets or removes its label, maximum length, and
+/// default value, sets its flags and choices, or resets its value to the
+/// default value, and draws its widgets again as setting its value does.
+/// A reset without a default value removes the value of a text or choice
+/// field and turns a button off. Refuses flags that change the field's
+/// kind, a maximum length outside a text field, and choices outside a
+/// choice field, leaving the document as it was.
+#[pyfunction]
+pub fn form_field_edit(
+    py: Python<'_>,
+    document: &_Document,
+    id: Id,
+    edit: FieldEdit,
+) -> PyResult<()> {
+    let texts: usize = edit
+        .label
+        .iter()
+        .chain(&edit.default_value)
+        .map(String::len)
+        .chain(
+            edit.choices
+                .iter()
+                .flatten()
+                .map(|(value, label)| value.len() + label.len()),
+        )
+        .sum();
+    if texts > MAX_INPUT_BYTES {
+        return Err(LimitError::new_err((
+            "form_field_input_size",
+            format!("field texts exceed the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
+        )));
+    }
+    if let Some(flags) = edit.flags
+        && !(0..=i64::from(u32::MAX)).contains(&flags)
+    {
+        return Err(PdfError::new_err("field flags are a 32-bit value"));
+    }
+    if let Some(property) = edit
+        .clear
+        .iter()
+        .find(|property| cleared(property).is_none())
+    {
+        return Err(PdfError::new_err(format!(
+            "a field property that cannot be removed: {property:?}"
+        )));
+    }
+    let draft = document.in_transaction();
+    let cache = if draft {
+        &document.draft_fill_index
+    } else {
+        &document.fill_index
+    };
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = edit_field(transaction, id, &edit, budget, cache, draft);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
+
+/// Returns the key of a field property that an edit can remove.
+fn cleared(property: &str) -> Option<&'static str> {
+    match property {
+        "label" => Some("TU"),
+        "max_length" => Some("MaxLen"),
+        "default_value" => Some("DV"),
+        _ => None,
+    }
+}
+
+fn edit_field(
+    transaction: &mut Transaction,
+    id: Id,
+    edit: &FieldEdit,
+    budget: &Budget,
+    cache: &FillCache,
+    draft: bool,
+) -> PyResult<()> {
+    change(
+        transaction,
+        id,
+        budget,
+        cache,
+        draft,
+        |field, reads, dict| {
+            let buttons = is_button(field.kind);
+            if let Some(flags) = edit.flags
+                && flags & KIND_FLAGS != field.flags & KIND_FLAGS
+            {
+                return Err(PdfError::new_err(
+                    "the radio, pushbutton, and combo box flags decide a field's kind; create a field of the other kind instead",
+                ));
+            }
+            if let Some(length) = edit.max_length
+                && (field.kind != "text" || !(0..=1_000_000).contains(&length))
+            {
+                return Err(PdfError::new_err(
+                    "only a text field has a maximum length, from 0 to 1000000",
+                ));
+            }
+            if let Some(choices) = &edit.choices
+                && (!matches!(field.kind, "combobox" | "listbox")
+                    || choices.len() > MAX_VALUE_ITEMS)
+            {
+                return Err(PdfError::new_err(format!(
+                    "only a choice field has choices, at most {MAX_VALUE_ITEMS}"
+                )));
+            }
+            // A reset fills the default value that the field had before the edit.
+            let default = if edit.reset {
+                inherited(reads, id, "DV")?
+            } else {
+                None
+            };
+            let default = match read(reads, default.as_ref())? {
+                Some(Value::Name(state)) if buttons => Some(FillValue::Text(
+                    String::from_utf8_lossy(state.as_bytes()).into_owned(),
+                )),
+                Some(Value::String(encoded)) => Some(FillValue::Text(decode(
+                    &encoded,
+                    &mut (0, 0),
+                    MAX_VALUE_BYTES,
+                    "field default value",
+                    budget,
+                )?)),
+                _ if buttons && edit.reset => Some(FillValue::Flag(false)),
+                _ => None,
+            };
+            if let Some(label) = &edit.label {
+                dict.insert(Name::from("TU"), encode_value(label, budget)?);
+            }
+            if let Some(length) = edit.max_length {
+                dict.insert(Name::from("MaxLen"), Value::Integer(length));
+            }
+            if let Some(flags) = edit.flags {
+                dict.insert(Name::from("Ff"), Value::Integer(flags));
+            }
+            if let Some(value) = &edit.default_value {
+                let value = if matches!(field.kind, "checkbox" | "radio" | "pushbutton") {
+                    Value::Name(Name::from(value.as_str()))
+                } else {
+                    encode_value(value, budget)?
+                };
+                dict.insert(Name::from("DV"), value);
+            }
+            if let Some(choices) = &edit.choices {
+                let mut options = BudgetVec::new(budget);
+                for (value, label) in choices {
+                    let option = if value == label {
+                        encode_value(value, budget)?
+                    } else {
+                        let mut pair = BudgetVec::new(budget);
+                        pair.try_push(encode_value(value, budget)?)
+                            .map_err(|e| limit_error(&e))?;
+                        pair.try_push(encode_value(label, budget)?)
+                            .map_err(|e| limit_error(&e))?;
+                        Value::Array(Array::from(pair.into_vec()))
+                    };
+                    options.try_push(option).map_err(|e| limit_error(&e))?;
+                }
+                dict.insert(
+                    Name::from("Opt"),
+                    Value::Array(Array::from(options.into_vec())),
+                );
+            }
+            for property in &edit.clear {
+                if let Some(key) = cleared(property) {
+                    dict.remove(key);
+                }
+            }
+            let fillable = buttons || shows_text(field.kind);
+            if edit.reset && fillable && default.is_none() {
+                dict.remove("V");
+            }
+            Ok(match default {
+                _ if !fillable => After::Keep,
+                Some(value) => After::Fill(Cow::Owned(value)),
+                None => After::Draw,
+            })
+        },
+    )
 }
 
 /// Returns how many form walks the document's memos reused and how many
