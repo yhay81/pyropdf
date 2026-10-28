@@ -134,11 +134,65 @@ unit = "matches"
 default = 4_096
 reached = "`Page.search` finds more matches than the call's `max_hits`."
 
-[codes.markdown_output_size]
-message = "the Markdown is too large"
+[codes.text_rule_count]
+message = "the page has too many vector rules to read"
+unit = "rules"
+default = 4_096
+reached = "Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers."
+
+[codes.table_cell_count]
+message = "the candidate table has too many cells"
+unit = "cells"
+default = 4_096
+reached = "A candidate table needs more than 4,096 row-column slots."
+
+[codes.table_span_candidate_count]
+message = "the table needs too many cell span candidates"
+unit = "candidates"
+default = 65_536
+reached = "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
+
+[codes.table_column_count]
+message = "the text table has too many columns"
+unit = "columns"
+default = 32
+reached = "Text table detection encounters a row with more than 32 separated columns."
+
+[codes.ocr_layer_word_count]
+message = "the OCR layer has too many words"
+unit = "words"
+default = 4_096
+reached = "An invisible OCR layer has more than 4,096 words."
+
+[codes.ocr_layer_text_size]
+message = "the OCR layer text is too long"
 unit = "bytes"
-default = 67_108_864
-reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
+default = 1_048_576
+reached = "An invisible OCR layer has more than 1 MiB of UTF-8 text."
+
+[codes.ocr_layer_character_count]
+message = "the OCR layer has too many distinct characters"
+unit = "characters"
+default = 65_534
+reached = "An invisible OCR layer needs more than 65,534 distinct character IDs."
+
+[codes.ocr_raster_size]
+message = "the OCR raster is too large"
+unit = "bytes"
+default = 536_870_912
+reached = "The raster expanded to RGBA for OCR exceeds 512 MiB."
+
+[codes.ocr_detection_count]
+message = "the OCR detector found too many text regions"
+unit = "regions"
+default = 4_096
+reached = "OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps."
+
+[codes.ocr_text_size]
+message = "the recognized OCR text is too long"
+unit = "bytes"
+default = 33_554_432
+reached = "OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering."
 
 [codes.ocr_model_size]
 message = "the OCR model set is too large"
@@ -167,6 +221,12 @@ default = 32
 reached = "A value written to the document nests arrays and dictionaries deeper than its limit."
 
 # Output.
+
+[codes.markdown_output_size]
+message = "the Markdown is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
 
 [codes.pdf_output_size]
 message = "the PDF output is too large"

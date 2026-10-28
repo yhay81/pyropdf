@@ -10,7 +10,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::budget::CancellationToken;
-use crate::value::{Bytes, Name};
+use crate::value::{Bytes, Name, Stream};
 use crate::version::{Base, Document, MemoryBase};
 
 fn corpus() -> Vec<PathBuf> {
@@ -488,4 +488,256 @@ fn qpdf_accepts_corpus_outputs_without_new_warnings() {
         }
         doc = open(saved(&version, true));
     }
+}
+
+fn dict(entries: &[(&str, Value)]) -> Value {
+    Value::Dict(
+        entries
+            .iter()
+            .map(|(name, value)| (Name::from(*name), value.clone()))
+            .collect(),
+    )
+}
+
+fn to(number: u32) -> Value {
+    Value::Reference(Reference::new(number, 0))
+}
+
+#[test]
+fn pruning_keeps_what_the_trailer_reaches_through_cycles_and_deep_chains() {
+    let budget = Budget::default();
+    let doc = open(saved(&memory().current(), false));
+    let mut tx = doc.begin();
+    let catalog = dict(&[
+        ("Type", Value::Name(Name::from("Catalog"))),
+        ("Pages", to(2)),
+        ("Cycle", to(10)),
+        ("Chain", to(100)),
+    ]);
+    tx.write(1, &catalog, &budget).unwrap();
+    tx.write(10, &dict(&[("Next", to(11))]), &budget).unwrap();
+    tx.write(11, &dict(&[("Next", to(10))]), &budget).unwrap();
+    let last = 100 + 5_000;
+    for number in 100..last {
+        tx.write(number, &dict(&[("Next", to(number + 1))]), &budget)
+            .unwrap();
+    }
+    tx.write(last, &Value::Integer(1), &budget).unwrap();
+    // Object 3 and the orphan that refers to it are unreachable.
+    tx.write(20, &dict(&[("Orphan", to(3))]), &budget).unwrap();
+    let version = tx.commit(&budget).unwrap();
+
+    let mut bytes = Vec::new();
+    let options = Options {
+        prune: true,
+        ..Options::default()
+    };
+    full_with(&version, &mut bytes, &budget, None, options).unwrap();
+    let reopened = open(bytes).current();
+    for number in [3, 20] {
+        assert_eq!(reopened.generation(number), None, "object {number}");
+    }
+    assert_eq!(reopened.base().free_generation(3), Some(8));
+    for number in [1, 2, 10, 11, 100, 2_600, last] {
+        assert_eq!(
+            reopened.get(number, &budget).unwrap().unwrap().value(),
+            version.get(number, &budget).unwrap().unwrap().value(),
+            "object {number}"
+        );
+    }
+
+    let mut plain = Vec::new();
+    full_with(&version, &mut plain, &budget, None, Options::default()).unwrap();
+    assert_eq!(open(plain).current().generation(20), Some(0));
+}
+
+#[test]
+fn pruning_stops_when_the_operation_is_cancelled() {
+    let version = memory().current();
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let budget = Budget::default().with_cancellation(cancelled);
+    let options = Options {
+        prune: true,
+        ..Options::default()
+    };
+    assert!(full_with(&version, &mut Vec::new(), &budget, None, options).is_err());
+}
+
+fn stream(entries: &[(&str, Value)], data: &[u8]) -> Stream {
+    let Value::Dict(dict) = dict(entries) else {
+        unreachable!()
+    };
+    Stream::new(dict, Bytes::new(data.to_vec()))
+}
+
+fn recoded_stream(stream: &Stream, streams: Streams) -> Option<Stream> {
+    let value = Value::Stream(Box::new(stream.clone()));
+    match recode::recoded(&value, streams, &Budget::default()).unwrap() {
+        Some(Value::Stream(stream)) => Some(*stream),
+        Some(other) => panic!("not a stream: {other:?}"),
+        None => None,
+    }
+}
+
+fn name(name: &str) -> Value {
+    Value::Name(Name::from(name))
+}
+
+#[test]
+fn compressing_flates_unfiltered_data_only_where_it_shrinks() {
+    let data = b"0 0 m 10 10 l S\n".repeat(200);
+    let plain = stream(&[], &data);
+    let flated = recoded_stream(&plain, Streams::Compress(9)).unwrap();
+    assert_eq!(flated.dict().get("Filter"), Some(&name("FlateDecode")));
+    assert!(flated.data().len() < data.len());
+    assert_eq!(flated.decoded(&Budget::default()).unwrap(), data);
+
+    // Stored blocks at level 0 are longer than the data.
+    assert_eq!(recoded_stream(&plain, Streams::Compress(0)), None);
+    for entries in [
+        &[("Type", name("Metadata"))][..],
+        &[("Filter", name("DCTDecode"))],
+        &[("DecodeParms", dict(&[("Predictor", Value::Integer(12))]))],
+        &[("F", Value::String(PdfString::literal(&b"data.bin"[..])))],
+    ] {
+        let kept = stream(entries, &data);
+        assert_eq!(
+            recoded_stream(&kept, Streams::Compress(9)),
+            None,
+            "{entries:?}"
+        );
+    }
+    assert_eq!(
+        recoded_stream(&stream(&[], b""), Streams::Compress(9)),
+        None
+    );
+}
+
+#[test]
+fn decompressing_decodes_the_leading_filters_and_keeps_image_filters() {
+    let data = b"BT /F1 12 Tf (Hello) Tj ET\n".repeat(50);
+    let flated = recoded_stream(&stream(&[], &data), Streams::Compress(6)).unwrap();
+    let plain = recoded_stream(&flated, Streams::Decompress).unwrap();
+    assert_eq!(plain.dict().get("Filter"), None);
+    assert_eq!(plain.data().as_slice(), &data[..]);
+
+    // The Flate output of the JPEG bytes, with the JPEG filter after it.
+    let jpeg = b"\xFF\xD8 not really a JPEG \xFF\xD9".repeat(20);
+    let parameters = dict(&[("ColorTransform", Value::Integer(0))]);
+    let chained = stream(
+        &[
+            (
+                "Filter",
+                Value::Array(vec![name("FlateDecode"), name("DCTDecode")].into()),
+            ),
+            (
+                "DecodeParms",
+                Value::Array(vec![Value::Null, parameters.clone()].into()),
+            ),
+        ],
+        recoded_stream(&stream(&[], &jpeg), Streams::Compress(6))
+            .unwrap()
+            .data(),
+    );
+    let image = recoded_stream(&chained, Streams::Decompress).unwrap();
+    assert_eq!(
+        image.dict().get("Filter"),
+        Some(&Value::Array(vec![name("DCTDecode")].into()))
+    );
+    assert_eq!(
+        image.dict().get("DecodeParms"),
+        Some(&Value::Array(vec![parameters].into()))
+    );
+    assert_eq!(image.data().as_slice(), &jpeg[..]);
+
+    // An image filter first, and data that does not decode, stay.
+    let jpeg_only = stream(&[("Filter", name("DCTDecode"))], &jpeg);
+    assert_eq!(recoded_stream(&jpeg_only, Streams::Decompress), None);
+    let broken = stream(&[("Filter", name("FlateDecode"))], b"not flate data");
+    assert_eq!(recoded_stream(&broken, Streams::Decompress), None);
+}
+
+#[test]
+fn a_compressed_save_round_trips_the_corpus_values_except_stream_encoding() {
+    for path in corpus() {
+        let doc = open(fs::read(&path).unwrap());
+        let version = doc.current();
+        let plain = saved(&version, false);
+        let mut bytes = Vec::new();
+        let options = Options {
+            streams: Streams::Compress(6),
+            ..Options::default()
+        };
+        full_with(&version, &mut bytes, &Budget::default(), None, options).unwrap();
+        assert!(bytes.len() <= plain.len(), "{}", path.display());
+        let reopened = open(bytes).current();
+        assert_eq!(
+            reopened.next_number(),
+            version.next_number(),
+            "{}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn saves_renew_the_second_identifier_of_edits_and_incremental_saves_refuse_rewrites() {
+    let doc = open(fs::read(&corpus()[0]).unwrap());
+    let Some(Value::Array(read)) = doc.current().trailer().get("ID").cloned() else {
+        panic!("the corpus file has no /ID");
+    };
+    let unedited = doc.current();
+    let edited = edited(&doc, 7);
+    let options = Options {
+        renew_id: true,
+        ..Options::default()
+    };
+    for incremental_mode in [false, true] {
+        let save = if incremental_mode {
+            incremental_with
+        } else {
+            full_with_plain
+        };
+        let mut bytes = Vec::new();
+        save(&edited, &mut bytes, &Budget::default(), options).unwrap();
+        let mut again = Vec::new();
+        save(&edited, &mut again, &Budget::default(), options).unwrap();
+        assert_eq!(bytes, again);
+        let Some(Value::Array(id)) = open(bytes).current().trailer().get("ID").cloned() else {
+            panic!("no /ID");
+        };
+        assert_eq!(id.get(0), read.get(0));
+        assert!(matches!(id.get(1), Some(Value::String(second)) if second.as_bytes().len() == 16));
+        assert_ne!(id.get(1), read.get(1));
+        // An unedited save writes /ID as read.
+        let mut bytes = Vec::new();
+        save(&unedited, &mut bytes, &Budget::default(), options).unwrap();
+        let reread = open(bytes).current().trailer().get("ID").cloned();
+        assert_eq!(reread, Some(Value::Array(read.clone())));
+    }
+    for options in [
+        Options {
+            prune: true,
+            ..Options::default()
+        },
+        Options {
+            streams: Streams::Decompress,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(
+            incremental_with(&edited, &mut Vec::new(), &Budget::default(), options),
+            Err(Error::Refused(Refusal::FullSaveOption))
+        ));
+    }
+}
+
+fn full_with_plain(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    options: Options,
+) -> Result<u64> {
+    full_with(version, target, budget, None, options)
 }
