@@ -33,7 +33,7 @@ const MAX_REAL: f64 = f32::MAX as f64;
 /// `"goto"`, or of another for `"gotor"`; a display point; a zoom; a URI or
 /// a file; and a name. The kind `"none"` stands for an action that pyropdf
 /// does not read, or a destination that names no page.
-type Target = (
+pub(crate) type Target = (
     String,
     Option<u32>,
     Option<(f64, f64)>,
@@ -54,7 +54,7 @@ type Place = (u32, Option<(f64, f64)>, Option<f64>);
 /// names no page.
 type Named = (String, Option<Place>);
 
-fn none() -> Target {
+pub(crate) fn none() -> Target {
     ("none".to_owned(), None, None, None, None, None)
 }
 
@@ -80,7 +80,7 @@ enum Fit {
 
 /// A destination array, reduced to what a target reports.
 #[derive(Clone, Copy, Debug)]
-struct Destination {
+pub(crate) struct Destination {
     page: DestinationPage,
     fit: Fit,
     /// Array elements 2 to 4: the fit's coordinates and the zoom.
@@ -88,7 +88,7 @@ struct Destination {
 }
 
 impl Destination {
-    const UNRESOLVED: Self = Self {
+    pub(crate) const UNRESOLVED: Self = Self {
         page: DestinationPage::Missing,
         fit: Fit::Other,
         numbers: [None; 3],
@@ -182,7 +182,7 @@ pub(crate) struct NamedDestinations {
 }
 
 impl NamedDestinations {
-    fn get(&self, name: &[u8]) -> Option<Destination> {
+    pub(crate) fn get(&self, name: &[u8]) -> Option<Destination> {
         let at = self
             .sorted
             .binary_search_by(|at| (*self.names[*at].0).cmp(name))
@@ -261,7 +261,7 @@ impl NamedDestinations {
 
 /// Follows references from `value` through `reads`, at most [`MAX_CHAIN`];
 /// a null, an absent object, or a missing entry is `None`.
-fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>> {
+pub(crate) fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>> {
     let mut current = match value {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::Reference(reference)) => *reference,
@@ -288,7 +288,7 @@ fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>>
         }
     }
     Err(PdfError::new_err(format!(
-        "named destinations contain a reference cycle or a chain of more than {MAX_CHAIN} references"
+        "a reference cycle or a chain of more than {MAX_CHAIN} references"
     )))
 }
 
@@ -380,7 +380,7 @@ fn charge_names(amount: usize, budget: &Budget) -> PyResult<()> {
 }
 
 /// Returns the named destinations of the version that reads see.
-fn named(
+pub(crate) fn named(
     document: &_Document,
     version: &Arc<Version>,
     budget: &Budget,
@@ -429,108 +429,10 @@ impl<'a> Links<'a> {
 
     /// Returns where a link leads: its `/A` action, else its `/Dest`.
     fn target(&mut self, link: &Dict) -> PyResult<Target> {
-        let Some(Value::Dict(action)) = self.annots.resolved(link.get("A"))? else {
-            return match link.get("Dest") {
-                Some(destination) => self.destination(destination),
-                None => Ok(none()),
-            };
-        };
-        Ok(match self.annots.name(&action, "S")?.as_deref() {
-            Some(b"URI") => {
-                let uri = match self.annots.resolved(action.get("URI"))? {
-                    Some(Value::String(uri)) => Some(charge_text(
-                        uri.as_bytes(),
-                        &mut self.budget,
-                        self.annots.budget,
-                    )?),
-                    _ => None,
-                };
-                ("uri".to_owned(), None, None, None, uri, None)
-            }
-            Some(b"GoTo") => match action.get("D") {
-                Some(destination) => return self.destination(destination),
-                None => none(),
-            },
-            Some(b"GoToR") => {
-                let file = self.file(action.get("F"))?;
-                let (page, name) = match self.annots.resolved(action.get("D"))? {
-                    Some(Value::String(name)) => (
-                        None,
-                        Some(charge_text(
-                            name.as_bytes(),
-                            &mut self.budget,
-                            self.annots.budget,
-                        )?),
-                    ),
-                    Some(Value::Name(name)) => (
-                        None,
-                        Some(charge_text(
-                            name.as_bytes(),
-                            &mut self.budget,
-                            self.annots.budget,
-                        )?),
-                    ),
-                    Some(Value::Array(items)) => (
-                        match items.get(0) {
-                            Some(Value::Integer(page)) => u32::try_from(*page).ok(),
-                            _ => None,
-                        },
-                        None,
-                    ),
-                    _ => (None, None),
-                };
-                ("gotor".to_owned(), page, None, None, file, name)
-            }
-            Some(b"Launch") => {
-                let file = self.file(action.get("F"))?;
-                ("launch".to_owned(), None, None, None, file, None)
-            }
-            Some(b"Named") => {
-                let name = self
-                    .annots
-                    .name(&action, "N")?
-                    .map(|name| charge_text(&name, &mut self.budget, self.annots.budget))
-                    .transpose()?;
-                ("named".to_owned(), None, None, None, None, name)
-            }
-            _ => none(),
-        })
-    }
-
-    /// Returns the name of a file specification: its `/UF`, else its `/F`,
-    /// or the string itself.
-    fn file(&mut self, value: Option<&Value>) -> PyResult<Option<String>> {
-        let name = match self.annots.resolved(value)? {
-            Some(Value::Dict(spec)) => match self.annots.resolved(spec.get("UF"))? {
-                Some(name) => Some(name),
-                None => self.annots.resolved(spec.get("F"))?,
-            },
-            value => value,
-        };
-        let Some(Value::String(name)) = name else {
-            return Ok(None);
-        };
-        Ok(Some(charge_decoded(
-            name.as_bytes(),
-            &mut self.budget,
-            self.annots.budget,
-        )?))
-    }
-
-    /// Returns a destination of this document as a `"goto"` target, or
-    /// `"none"` when it names no page.
-    fn destination(&mut self, value: &Value) -> PyResult<Target> {
-        let destination = match self.annots.resolved(Some(value))? {
-            Some(Value::Name(name)) => self.lookup(name.as_bytes())?,
-            Some(Value::String(name)) => self.lookup(name.as_bytes())?,
-            value => {
-                let annots = self.annots;
-                Destination::read(value, &mut |value| annots.resolved(value))?
-            }
-        };
-        Ok(match destination.place(&self.annots.index) {
-            Some((page, point, zoom)) => ("goto".to_owned(), Some(page), point, zoom, None, None),
-            None => none(),
+        let lead = lead(self, link)?;
+        let annots = self.annots;
+        settle(&lead, &annots.index, annots.budget, &mut |name| {
+            self.lookup(name)
         })
     }
 
@@ -549,6 +451,176 @@ impl<'a> Links<'a> {
             .and_then(|named| named.get(name))
             .unwrap_or(Destination::UNRESOLVED))
     }
+}
+
+impl LeadReader for Links<'_> {
+    fn budget(&self) -> &Budget {
+        self.annots.budget
+    }
+
+    fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>> {
+        self.annots.resolved(value)
+    }
+
+    fn text(&mut self, bytes: &[u8], _label: &str, decode: bool) -> PyResult<String> {
+        if decode {
+            charge_decoded(bytes, &mut self.budget, self.annots.budget)
+        } else {
+            charge_text(bytes, &mut self.budget, self.annots.budget)
+        }
+    }
+}
+
+/// Where a link or an outline item leads before its destination resolves:
+/// a target, a destination, or the name of a named destination.
+#[derive(Clone, Debug)]
+pub(crate) enum Lead {
+    Target(Target),
+    Destination(Destination),
+    Name(Box<[u8]>),
+}
+
+/// What reading a [`Lead`] needs: the values that references name, and
+/// text that a budget charges.
+pub(crate) trait LeadReader {
+    /// The shared operation budget for owned target buffers.
+    fn budget(&self) -> &Budget;
+
+    /// Copies a named destination only after charging its owned bytes.
+    fn name(&self, bytes: &[u8]) -> PyResult<Box<[u8]>> {
+        self.budget()
+            .charge(LimitCode::MemorySize, bytes.len() as u64)
+            .map_err(|e| limit_error(&e))?;
+        Ok(Box::from(bytes))
+    }
+
+    /// Returns `value`, or what it refers to; `None` for a null.
+    fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>>;
+
+    /// Returns `bytes` as text, decoded as a PDF text string when
+    /// `decode`, after charging them as `label`.
+    fn text(&mut self, bytes: &[u8], label: &str, decode: bool) -> PyResult<String>;
+}
+
+/// Returns where `dict`, a link or an outline item, leads: its `/A`
+/// action, else its `/Dest`.
+pub(crate) fn lead(reader: &mut impl LeadReader, dict: &Dict) -> PyResult<Lead> {
+    let Some(Value::Dict(action)) = reader.resolved(dict.get("A"))? else {
+        return match dict.get("Dest") {
+            Some(destination) => destination_lead(reader, destination),
+            None => Ok(Lead::Target(none())),
+        };
+    };
+    let kind = match reader.resolved(action.get("S"))? {
+        Some(Value::Name(kind)) => kind,
+        _ => return Ok(Lead::Target(none())),
+    };
+    Ok(Lead::Target(match kind.as_bytes() {
+        b"URI" => {
+            let uri = match reader.resolved(action.get("URI"))? {
+                Some(Value::String(uri)) => Some(reader.text(uri.as_bytes(), "URI text", false)?),
+                _ => None,
+            };
+            ("uri".to_owned(), None, None, None, uri, None)
+        }
+        b"GoTo" => match action.get("D") {
+            Some(destination) => return destination_lead(reader, destination),
+            None => none(),
+        },
+        b"GoToR" => {
+            let file = file(reader, action.get("F"))?;
+            let (page, name) = match reader.resolved(action.get("D"))? {
+                Some(Value::String(name)) => (
+                    None,
+                    Some(reader.text(name.as_bytes(), "named destination", false)?),
+                ),
+                Some(Value::Name(name)) => (
+                    None,
+                    Some(reader.text(name.as_bytes(), "named destination", false)?),
+                ),
+                Some(Value::Array(items)) => (
+                    match items.get(0) {
+                        Some(Value::Integer(page)) => u32::try_from(*page).ok(),
+                        _ => None,
+                    },
+                    None,
+                ),
+                _ => (None, None),
+            };
+            ("gotor".to_owned(), page, None, None, file, name)
+        }
+        b"Launch" => {
+            let file = file(reader, action.get("F"))?;
+            ("launch".to_owned(), None, None, None, file, None)
+        }
+        b"Named" => {
+            let name = match reader.resolved(action.get("N"))? {
+                Some(Value::Name(name)) => {
+                    Some(reader.text(name.as_bytes(), "named action", false)?)
+                }
+                _ => None,
+            };
+            ("named".to_owned(), None, None, None, None, name)
+        }
+        _ => none(),
+    }))
+}
+
+/// Returns the name of a file specification: its `/UF`, else its `/F`,
+/// or the string itself.
+fn file(reader: &mut impl LeadReader, value: Option<&Value>) -> PyResult<Option<String>> {
+    let name = match reader.resolved(value)? {
+        Some(Value::Dict(spec)) => match reader.resolved(spec.get("UF"))? {
+            Some(name) => Some(name),
+            None => reader.resolved(spec.get("F"))?,
+        },
+        value => value,
+    };
+    let Some(Value::String(name)) = name else {
+        return Ok(None);
+    };
+    reader.text(name.as_bytes(), "file name", true).map(Some)
+}
+
+/// Returns a destination of this document, or the name of one.
+fn destination_lead(reader: &mut impl LeadReader, value: &Value) -> PyResult<Lead> {
+    Ok(match reader.resolved(Some(value))? {
+        Some(Value::Name(name)) => Lead::Name(reader.name(name.as_bytes())?),
+        Some(Value::String(name)) => Lead::Name(reader.name(name.as_bytes())?),
+        value => Lead::Destination(Destination::read(value, &mut |value| {
+            reader.resolved(value)
+        })?),
+    })
+}
+
+/// Returns the target of `lead` in `index`, with `lookup` giving the
+/// destination of a name: `"goto"` for a destination that names a page,
+/// `"none"` for one that does not.
+pub(crate) fn settle(
+    lead: &Lead,
+    index: &PageIndex,
+    budget: &Budget,
+    lookup: &mut dyn FnMut(&[u8]) -> PyResult<Destination>,
+) -> PyResult<Target> {
+    let destination = match lead {
+        Lead::Target(target) => {
+            let bytes = target
+                .0
+                .len()
+                .saturating_add(target.4.as_deref().map_or(0, str::len))
+                .saturating_add(target.5.as_deref().map_or(0, str::len));
+            budget
+                .charge(LimitCode::MemorySize, bytes as u64)
+                .map_err(|e| limit_error(&e))?;
+            return Ok(target.clone());
+        }
+        Lead::Destination(destination) => *destination,
+        Lead::Name(name) => lookup(name)?,
+    };
+    Ok(match destination.place(index) {
+        Some((page, point, zoom)) => ("goto".to_owned(), Some(page), point, zoom, None, None),
+        None => none(),
+    })
 }
 
 /// Returns the links of page object `(number, generation)` in `/Annots`
@@ -764,7 +836,7 @@ fn real(value: f64, label: &str) -> PyResult<Value> {
 /// Returns the key and value that make a link lead to `target`: `/Dest`
 /// for a page of this document, `/A` for an action, or nothing.
 fn entry(annots: &Annots, target: &Target) -> PyResult<Option<(&'static str, Value)>> {
-    let (kind, page, point, zoom, text, name) = target;
+    let (_, _, _, _, text, name) = target;
     let size = 4 + text.as_deref().map_or(0, str::len) + name.as_deref().map_or(0, str::len);
     annots
         .budget
@@ -774,6 +846,17 @@ fn entry(annots: &Annots, target: &Target) -> PyResult<Option<(&'static str, Val
         .budget
         .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
         .map_err(|e| limit_error(&e))?;
+    target_entry(&annots.index, target)
+}
+
+/// Returns the key and value that make a link or an outline item lead to
+/// `target`, a page of `index` for `"goto"`: `/Dest` for a page of this
+/// document, `/A` for an action, or nothing.
+pub(crate) fn target_entry(
+    index: &PageIndex,
+    target: &Target,
+) -> PyResult<Option<(&'static str, Value)>> {
+    let (kind, page, point, zoom, text, name) = target;
     let text = |label: &str| {
         text.as_deref()
             .filter(|text| !text.is_empty())
@@ -794,7 +877,7 @@ fn entry(annots: &Annots, target: &Target) -> PyResult<Option<(&'static str, Val
         "none" => None,
         "goto" => {
             let at = page.ok_or_else(|| PdfError::new_err("a destination needs a page"))?;
-            let pages = annots.index.pages();
+            let pages = index.pages();
             let Some(target) = pages.get(at as usize) else {
                 return Err(PdfError::new_err(format!(
                     "destination page {at} is out of range (0..{})",

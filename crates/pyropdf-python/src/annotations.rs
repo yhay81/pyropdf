@@ -132,7 +132,7 @@ type Record = (
 );
 
 /// A borrowed part of an object whose clone allocates owned values.
-enum CopyPart<'a> {
+pub(crate) enum CopyPart<'a> {
     Value(&'a Value),
     Array(&'a Array),
     Dict(&'a Dict),
@@ -141,7 +141,7 @@ enum CopyPart<'a> {
 /// Charges owned buffers before a clone, including unknown nested fields.
 /// The explicit work stack is budgeted; shared source spans and stream bytes
 /// need no copy. Array and dictionary capacity includes room for an edit.
-fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
+pub(crate) fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
     let mut pending = BudgetVec::new(budget);
     pending.try_push(part).map_err(|e| limit_error(&e))?;
     while let Some(part) = pending.pop() {
@@ -719,7 +719,7 @@ fn charge_decoded(
 
 /// Encodes a text string as `String.text` reads it: ASCII as is, anything
 /// else as UTF-16BE.
-fn encode_text(text: &str) -> Value {
+pub(crate) fn encode_text(text: &str) -> Value {
     let bytes = if text.is_ascii() {
         text.as_bytes().to_vec()
     } else {

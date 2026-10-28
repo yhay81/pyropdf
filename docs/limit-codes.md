@@ -52,6 +52,9 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |
 | `named_destination_depth` | 32 levels | The named-destination tree has more than 32 levels. |
 | `named_destination_text_size` | 16 MiB | The names of the document's named destinations are longer than 16 MiB together. |
+| `toc_entry_count` | 65,536 entries | The outline holds more than 65,536 items or 131,072 links between them, a list of items holds more than 65,536 children, or `doc.outline` is set to more than 65,536 entries. |
+| `toc_text_size` | 16 MiB | The titles and target texts of the outline are longer than 16 MiB together, as the document encodes them or as they are returned. |
+| `toc_input_size` | 16 MiB | The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB together in UTF-8 or as PDF text strings, or leave the outline's text above that. |
 | `structure_tree_count` | 256 levels | A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |

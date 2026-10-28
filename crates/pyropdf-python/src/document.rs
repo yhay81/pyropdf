@@ -26,6 +26,7 @@ use pyropdf_store::{Error, write};
 use crate::annotations::links::NamedDestinations;
 use crate::errors::{DocumentClosedError, MalformedPdfError, save_error, store_error};
 use crate::history::DEFAULT_HISTORY_LIMIT;
+use crate::outline::Outline;
 use crate::source;
 
 /// The metadata text that `probe` returns, in UTF-8 bytes at most.
@@ -52,6 +53,10 @@ pub struct _Document {
     pub(crate) destinations: Memo<(), NamedDestinations>,
     /// The named destinations of what an open transaction has written.
     pub(crate) draft_destinations: Memo<(), NamedDestinations>,
+    /// The items of the outline, memoized by what walking them read.
+    pub(crate) outline: Memo<(), Outline>,
+    /// The outline items of what an open transaction has written.
+    pub(crate) draft_outline: Memo<(), Outline>,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
     /// The reverse-reference index of the latest version that a structural
@@ -81,6 +86,8 @@ impl _Document {
             draft_results: Memo::new(RESULT_CAPACITY),
             destinations: Memo::new(1),
             draft_destinations: Memo::new(1),
+            outline: Memo::new(1),
+            draft_outline: Memo::new(1),
             bridge: pyropdf_engine::bridge::Cache::new(),
             references: pyropdf_store::refs::Cache::new(),
             history: crate::history::State::default(),
@@ -114,6 +121,8 @@ impl _Document {
         self.draft_results.clear();
         self.destinations.clear();
         self.draft_destinations.clear();
+        self.outline.clear();
+        self.draft_outline.clear();
         self.history.clear();
     }
 
@@ -340,6 +349,8 @@ impl _Document {
         self.draft_results.clear();
         self.destinations.clear();
         self.draft_destinations.clear();
+        self.outline.clear();
+        self.draft_outline.clear();
         self.history.clear();
     }
 }

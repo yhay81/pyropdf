@@ -84,6 +84,7 @@ from pyropdf._links import Destinations, Link, Links
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
+from pyropdf._outline import Outline, OutlineEntry, OutlineItem
 from pyropdf._page import Page
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
@@ -197,6 +198,9 @@ __all__ = [
     "OcrWord",
     "Operation",
     "Operations",
+    "Outline",
+    "OutlineEntry",
+    "OutlineItem",
     "OutputIntent",
     "Page",
     "Pages",

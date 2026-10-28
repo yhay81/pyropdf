@@ -24,6 +24,7 @@ from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
+from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box
 from pyropdf._pages import Pages, _page_entries
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
@@ -112,6 +113,25 @@ class Document:
         """Return the named destinations, a read-only mapping from name to :class:`Destination`."""
         self._ensure_open()
         return Destinations(self)
+
+    @property
+    def outline(self) -> Outline:
+        """Return the outline (bookmarks) as its top-level items.
+
+        Assigning an iterable of :class:`OutlineEntry` records replaces the
+        outline, and ``del doc.outline`` removes it; either frees the items
+        before that nothing else refers to.
+        """
+        self._ensure_open()
+        return Outline(self)
+
+    @outline.setter
+    def outline(self, entries: Iterable[OutlineEntry]) -> None:
+        _write_outline(self, entries)
+
+    @outline.deleter
+    def outline(self) -> None:
+        _write_outline(self, ())
 
     @property
     def trailer(self) -> Dictionary:
