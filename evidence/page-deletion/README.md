@@ -33,25 +33,34 @@ Each row is the median of 7 rounds of deleting the middle page
 uv run python evidence/page-deletion/measure.py
 ```
 
-## Reviewed results
+## Reviewed structure-planning comparison
 
-`results/review-macos-arm64.md` records the reviewed implementation and
-measurement time. The same script and seven-round protocol give:
+`results/review-structure-before-macos-arm64.md` and
+`results/review-structure-after-macos-arm64.md` use the same script, including
+nested structure and parent-tree groups of 64. Both record the implementation
+and script object identifiers. The before run used the already-built reviewed
+#185 extension before rebuilding #186. Reproduce either run by using the same
+script with `uv run python` in the corresponding implementation checkout.
 
-- With 4,000 pages, repeated deletion is 3.12 ms without links and
-  15.19 ms with 10,000 links, about 1.2 microseconds per additional link.
-- With 64,000 pages, repeated deletion is 54.27 ms untagged and 164.77 ms
-  tagged. Selection is 66.44 ms and 175.30 ms respectively.
-- Page-list rewriting, reference updates, garbage collection, and the
-  current whole structure-tree traversal still contribute work that grows
-  with document size. This measurement does not establish the stronger
-  claim that the complete operation costs only incoming references.
-  #184 addresses structure planning; the page list remains linear.
+At 64,000 pages, repeated deletion changes as follows:
 
-The reviewed stack includes charged copying, reference-generation checks,
-writer-lock ordering, and collection of unreachable cycles. These figures
-are an end-to-end remeasurement, not an isolated timing of any one fix.
-The historical 10 ms figure below does not describe the reviewed head.
+| Workload | Reviewed #185 | Targeted structure planning |
+| --- | ---: | ---: |
+| Untagged | 58.14 ms | 57.82 ms |
+| Flat tagged | 171.87 ms | 128.99 ms |
+| Nested tagged | 134.44 ms | 78.79 ms |
+
+This improves targeted planning while retaining malformed-input behavior.
+It does not yet establish #184's full performance acceptance: collection still
+follows live page-tree and structure-root edges into retained subtrees.
+#324 addresses that remaining traversal separately. The page list itself,
+reference updates, and scans for page keys/annotations also remain linear.
+
+`results/review-macos-arm64.md` preserves the earlier reviewed #185 workload:
+3.12 ms without links and 15.19 ms with 10,000 links on 4,000 pages; 54.27 ms
+untagged and 164.77 ms flat tagged for 64,000 pages. Different runs have normal
+measurement variation. These are end-to-end timings, not isolated timings of
+a single safety fix, and the historical 10 ms figure below is not current.
 
 ## Original results
 
