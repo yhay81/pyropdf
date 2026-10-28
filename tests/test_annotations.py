@@ -16,6 +16,8 @@ Intended differences from pylopdf:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -571,3 +573,155 @@ def test_direct_annotations_become_objects_for_popups() -> None:
     assert note.xref > 0
     assert note.obj["Popup"]["Parent"] == note.obj
     assert note.popup_rect == Rect(40, 10, 120, 60)
+
+
+@pytest.mark.parametrize("operation", ["subject", "popup_rect", "is_open", "in_reply_to"])
+def test_a_waiting_edit_reads_after_the_writer_lock(operation: str) -> None:
+    page = _notes(2)
+    note = page.annotations[0]
+    started = Event()
+
+    def edit() -> None:
+        started.set()
+        setattr(
+            note,
+            operation,
+            {
+                "subject": "Second writer",
+                "popup_rect": Rect(40, 10, 160, 80),
+                "is_open": True,
+                "in_reply_to": page.annotations[1],
+            }[operation],
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("First writer"):
+            future = pool.submit(edit)
+            assert started.wait(timeout=10)
+            # The worker must wait for this transaction's writer lock.
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            note.author = "First writer"
+        future.result(timeout=10)
+    assert note.author == "First writer"
+    if operation == "subject":
+        assert note.subject == "Second writer"
+
+
+def test_annotation_text_rejects_excessive_character_count_without_encoding() -> None:
+    class Unencoded(str):
+        __slots__ = ()
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            msg = "An oversized annotation must not allocate an encoded copy"
+            raise AssertionError(msg)
+
+    note = _notes().annotations[0]
+    with pytest.raises(pyropdf.LimitError) as caught:
+        note.contents = Unencoded("a" * (1024 * 1024 + 1))
+    assert caught.value.code == "annotation_input_size"
+
+
+def test_annotation_count_refuses_with_a_registered_limit() -> None:
+    page = _page_of(
+        "[" + "4 0 R " * 4097 + "]",
+        {4: "<< /Subtype /Text /Rect [0 0 10 10] >>"},
+    )
+    with pytest.raises(pyropdf.LimitError) as caught:
+        list(page.annotations)
+    assert caught.value.code == "annotation_count"
+
+
+def test_annotation_text_budget_is_shared_by_the_page() -> None:
+    page = _page_of(
+        "[4 0 R 5 0 R]",
+        dict.fromkeys((4, 5), f"<< /Subtype /Text /Rect [0 0 10 10] /Contents ({'a' * 600_000}) >>"),
+    )
+    with pytest.raises(pyropdf.LimitError) as caught:
+        list(page.annotations)
+    assert caught.value.code == "annotation_text_size"
+
+
+def test_a_long_valid_dash_pattern_is_refused_without_substitution() -> None:
+    page = _page_of(
+        "[4 0 R]",
+        {4: "<< /Subtype /Square /Rect [0 0 10 10] /BS << /S /D /D [" + "1 " * 33 + "] >> >>"},
+    )
+    with pytest.raises(pyropdf.LimitError) as caught:
+        _ = page.annotations[0].border
+    assert caught.value.code == "annotation_dash_count"
+
+
+def test_a_waiting_removal_keeps_a_popup_added_by_the_first_writer() -> None:
+    page = _notes(2)
+    remaining = page.annotations[1]
+    started = Event()
+
+    def remove() -> None:
+        started.set()
+        del page.annotations[0]
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("Add popup"):
+            future = pool.submit(remove)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            remaining.popup_rect = Rect(40, 10, 160, 80)
+        future.result(timeout=10)
+    assert len(page.annotations) == 1
+    assert _subtypes(page) == ["Text", "Popup"]
+    assert remaining.popup_rect == Rect(40, 10, 160, 80)
+
+
+def test_a_waiting_add_preserves_the_first_writers_annotation() -> None:
+    page = _notes()
+    started = Event()
+
+    def add() -> None:
+        started.set()
+        page.annotations.add(Highlight((10, 10, 20, 20), contents="second"))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("Add first"):
+            future = pool.submit(add)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            page.annotations.add(Highlight((30, 10, 40, 20), contents="first"))
+        future.result(timeout=10)
+    assert [annotation.contents for annotation in page.annotations] == [None, "first", "second"]
+
+
+def test_an_excessive_existing_squiggly_rolls_back_a_restyle() -> None:
+    page = _page_of(
+        "[4 0 R]",
+        {
+            4: "<< /Type /Annot /Subtype /Squiggly /Rect [0 0 150000 10] "
+            "/C [1 0 0] /QuadPoints [0 10 150000 10 0 0 150000 0] >>"
+        },
+    )
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.annotations[0].color = Color(0, 1, 0)
+    assert raised.value.code == "annotation_point_count"
+    assert page.document.to_bytes() == before
+
+
+def test_highlight_appearance_preserves_subpixel_coordinates() -> None:
+    page = pyropdf.Document().pages.new((100, 100))
+    annotation = page.annotations.add(Highlight((0, 0, 0.000001, 1)))
+    assert b"0.000001 1 l" in annotation.obj["AP"]["N"].read()
+
+
+def test_highlight_text_rejects_excessive_character_count_without_encoding() -> None:
+    class Unencoded(str):
+        __slots__ = ()
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            msg = "An oversized annotation specification must not allocate an encoded copy"
+            raise AssertionError(msg)
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        Highlight((0, 0, 1, 1), contents=Unencoded("a" * (1024 * 1024 + 1)))
+    assert caught.value.code == "annotation_input_size"

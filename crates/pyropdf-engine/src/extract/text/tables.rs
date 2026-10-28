@@ -2,25 +2,19 @@
 //! aligns, ported from pylopdf's `TablePage` and table detection in
 //! `rust/src/extract.rs` at 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
 use super::layout::{RuleSegment, glyphs_bbox};
 use super::{
-    BBox, Error, GlyphRecord, LINE_SEGMENT_GAP, LINE_TOLERANCE, RtlLineOrder, TextOptions,
+    BBox, Error, GlyphRecord, LINE_SEGMENT_GAP, LINE_TOLERANCE, RtlLineOrder, TextOptions, as_u64,
     cluster_lines, collect_page_glyphs, glyph_end, glyph_is_nonspacing_mark, glyph_progress,
     glyphs_rtl_order, has_vertical_baseline, line_bbox, line_segment_count, needs_gap,
     try_push_glyph_text, try_push_str_text, try_push_text,
 };
 use crate::bridge::Bridged;
 
-/// Most slots a single detected table can contain before detection skips it.
-const MAX_TABLE_CELLS: usize = 4096;
-/// Most cell-span candidates one grid examines before detection skips it.
-const MAX_TABLE_SPAN_CANDIDATES: usize = 65_536;
 /// Fewest rows that a borderless text table holds.
 const MIN_TEXT_TABLE_ROWS: usize = 3;
-/// Most columns that a borderless text table holds.
-const MAX_TEXT_TABLE_COLUMNS: usize = 32;
 /// How far, in ems, the column edges of a text table's rows may differ.
 const TEXT_TABLE_ALIGNMENT_TOLERANCE: f64 = 1.0;
 /// The widest gap, in ems, between two rows of one text table.
@@ -76,9 +70,9 @@ pub fn page_tables(
     let charge = collected.charge;
     let detected = cluster_lines(collected.glyphs).and_then(|lines| {
         if text_strategy {
-            detect_text_tables(&lines)
+            detect_text_tables(&lines, budget)
         } else {
-            detect_grid_tables(&lines, &collected.rules)
+            detect_grid_tables(&lines, &collected.rules, budget)
         }
     });
     charge.release(budget);
@@ -102,6 +96,16 @@ fn try_filled_text<T: Clone>(len: usize, value: T, label: &str) -> Result<Vec<T>
         .map_err(|error| Error::Allocation(format!("failed to reserve {label}: {error}")))?;
     values.resize(len, value);
     Ok(values)
+}
+
+/// Checks one candidate before allocating its grid or inferring dividers.
+fn table_slots(rows: usize, columns: usize, budget: &Budget) -> Result<usize, Error> {
+    budget.check(
+        LimitCode::TableCellCount,
+        as_u64(rows).saturating_mul(as_u64(columns)),
+    )?;
+    rows.checked_mul(columns)
+        .ok_or_else(|| Error::Allocation("table slots exceed the address space".to_owned()))
 }
 
 /// Borrows the independently positioned columns or cells of one line.
@@ -212,11 +216,17 @@ impl RuleComponents {
     }
 
     fn find(&mut self, index: usize) -> usize {
-        let parent = self.parent[index];
-        if parent != index {
-            self.parent[index] = self.find(parent);
+        let mut root = index;
+        while self.parent[root] != root {
+            root = self.parent[root];
         }
-        self.parent[index]
+        let mut at = index;
+        while self.parent[at] != at {
+            let parent = self.parent[at];
+            self.parent[at] = root;
+            at = parent;
+        }
+        root
     }
 
     fn union(&mut self, left: usize, right: usize) {
@@ -347,22 +357,20 @@ fn materialize_grid_cells(
     xs: &[f64],
     ys: &[f64],
     word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &Budget,
 ) -> Result<Option<MaterializedGrid>, Error> {
     let row_count = ys.len() - 1;
     let column_count = xs.len() - 1;
-    let Some(slot_count) = row_count.checked_mul(column_count) else {
-        return Ok(None);
-    };
-    if slot_count > MAX_TABLE_CELLS {
-        return Ok(None);
-    }
+    let slot_count = table_slots(row_count, column_count, budget)?;
 
     let mut cells = try_filled_text(slot_count, None, "bordered table cells")?;
     let mut cell_anchors = try_filled_text(slot_count, 0, "bordered table cell anchors")?;
     let mut covered = try_filled_text(slot_count, false, "bordered table coverage map")?;
     let mut span_candidates = 0;
     for row_start in 0..row_count {
+        budget.poll()?;
         for column_start in 0..column_count {
+            budget.poll()?;
             let slot = row_start * column_count + column_start;
             if covered[slot] {
                 continue;
@@ -380,9 +388,7 @@ fn materialize_grid_cells(
                 for row_end in row_start + 1..=row_count {
                     for column_end in column_start + 1..=column_count {
                         span_candidates += 1;
-                        if span_candidates > MAX_TABLE_SPAN_CANDIDATES {
-                            return Ok(None);
-                        }
+                        budget.check(LimitCode::TableSpanCandidateCount, span_candidates)?;
                         let overlaps = (row_start..row_end).any(|row| {
                             (column_start..column_end)
                                 .any(|column| covered[row * column_count + column])
@@ -416,7 +422,7 @@ fn materialize_grid_cells(
                 return Ok(None);
             };
             let bbox = (xs[column_start], ys[row_start], xs[column_end], ys[row_end]);
-            cells[slot] = Some((bbox, cell_text(word_lines, bbox)?));
+            cells[slot] = Some((bbox, cell_text(word_lines, bbox, budget)?));
             let Ok(anchor) = u32::try_from(slot) else {
                 return Ok(None);
             };
@@ -443,16 +449,14 @@ fn grid_interval(bounds: &[f64], coordinate: f64) -> Option<usize> {
 }
 
 /// Return the cross-axis grid slots occupied by one physical text line.
-fn line_grid_slots(
+fn line_grid_slots<'b>(
     line: &[GlyphRecord],
     bounds: &[f64],
     horizontal: bool,
-) -> Result<Vec<bool>, Error> {
-    let mut occupied = try_filled_text(
-        bounds.len().saturating_sub(1),
-        false,
-        "hybrid-grid slot signature",
-    )?;
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, bool>, Error> {
+    let mut occupied = BudgetVec::new(budget);
+    occupied.try_extend(std::iter::repeat_n(false, bounds.len().saturating_sub(1)))?;
     for ((x0, y0, x1, y1), _) in split_word_slices(line)? {
         let coordinate = if horizontal {
             (x0 + x1) * 0.5
@@ -497,6 +501,7 @@ fn infer_hybrid_grid_rules(
     axis_bounds: &[f64],
     cross_bounds: &[f64],
     horizontal: bool,
+    budget: &Budget,
 ) -> Result<Vec<RuleSegment>, Error> {
     let cross_count = cross_bounds.len().saturating_sub(1);
     if axis_bounds.len() < 2 || cross_count < 2 {
@@ -506,7 +511,8 @@ fn infer_hybrid_grid_rules(
         ((cross_count as f64 * HYBRID_GRID_OCCUPANCY_RATIO).ceil() as usize).max(2);
     let mut inferred = Vec::new();
     for interval in axis_bounds.windows(2) {
-        let mut candidates = Vec::new();
+        budget.poll()?;
+        let mut candidates = BudgetVec::new(budget);
         for line in physical_lines {
             let Some(glyph) = line.first() else {
                 continue;
@@ -523,16 +529,12 @@ fn infer_hybrid_grid_rules(
             {
                 continue;
             }
-            let slots = line_grid_slots(line, cross_bounds, horizontal)?;
+            let slots = line_grid_slots(line, cross_bounds, horizontal, budget)?;
             if slots.iter().filter(|occupied| **occupied).count() < minimum_occupancy {
                 continue;
             }
             let size = line.iter().map(|glyph| glyph.size).fold(0.0, f64::max);
-            try_push_text(
-                &mut candidates,
-                (center, size, slots),
-                "hybrid-grid row candidates",
-            )?;
+            candidates.try_push((center, size, slots))?;
         }
         if candidates.len() < MIN_HYBRID_GRID_ROWS {
             continue;
@@ -586,6 +588,10 @@ fn infer_hybrid_grid_rules(
                     horizontal: false,
                 }
             };
+            budget.check(
+                LimitCode::TextRuleCount,
+                as_u64(inferred.len()).saturating_add(1),
+            )?;
             try_push_text(&mut inferred, rule, "hybrid-grid inferred rules")?;
         }
     }
@@ -593,10 +599,15 @@ fn infer_hybrid_grid_rules(
 }
 
 /// Extract physical-order text whose word centers fall inside a cell.
-fn cell_text(lines: &[Vec<BorrowedWord<'_>>], (x0, y0, x1, y1): BBox) -> Result<String, Error> {
+fn cell_text(
+    lines: &[Vec<BorrowedWord<'_>>],
+    (x0, y0, x1, y1): BBox,
+    budget: &Budget,
+) -> Result<String, Error> {
     let mut text = String::new();
     let mut has_row = false;
     for line in lines {
+        budget.poll()?;
         let mut has_word = false;
         let inside_cell = |&&((word_x0, word_y0, word_x1, word_y1), _): &&BorrowedWord<'_>| {
             let center_x = (word_x0 + word_x1) * 0.5;
@@ -791,21 +802,20 @@ fn text_table_diagnostics(rows: &[Vec<&[GlyphRecord]>]) -> TableDiagnosticsTuple
 }
 
 /// Materialize one run of aligned borderless rows.
-fn text_table_from_rows(rows: &[Vec<&[GlyphRecord]>]) -> Result<Option<TableTuple>, Error> {
+fn text_table_from_rows(
+    rows: &[Vec<&[GlyphRecord]>],
+    budget: &Budget,
+) -> Result<Option<TableTuple>, Error> {
     if rows.len() < MIN_TEXT_TABLE_ROWS {
         return Ok(None);
     }
     let row_count_usize = rows.len();
     let column_count_usize = rows[0].len();
-    if !(2..=MAX_TEXT_TABLE_COLUMNS).contains(&column_count_usize) {
+    if column_count_usize < 2 {
         return Ok(None);
     }
-    let Some(slot_count) = row_count_usize.checked_mul(column_count_usize) else {
-        return Ok(None);
-    };
-    if slot_count > MAX_TABLE_CELLS {
-        return Ok(None);
-    }
+    budget.check(LimitCode::TableColumnCount, as_u64(column_count_usize))?;
+    let slot_count = table_slots(row_count_usize, column_count_usize, budget)?;
 
     let Some(first_x) = rows.iter().map(|row| line_bbox(row[0]).0).reduce(f64::min) else {
         return Ok(None);
@@ -870,6 +880,7 @@ fn text_table_from_rows(rows: &[Vec<&[GlyphRecord]>]) -> Result<Option<TableTupl
 
     let mut cells = Vec::new();
     for (row_index, row) in rows.iter().enumerate() {
+        budget.poll()?;
         for (column_index, segment) in row.iter().enumerate() {
             let cell = Some((
                 (
@@ -915,8 +926,9 @@ fn text_table_from_rows(rows: &[Vec<&[GlyphRecord]>]) -> Result<Option<TableTupl
 fn flush_text_table_run(
     run: &mut Vec<Vec<&[GlyphRecord]>>,
     tables: &mut Vec<TableTuple>,
+    budget: &Budget,
 ) -> Result<(), Error> {
-    if let Some(table) = text_table_from_rows(run)? {
+    if let Some(table) = text_table_from_rows(run, budget)? {
         try_push_text(tables, table, "borderless tables")?;
     }
     run.clear();
@@ -924,23 +936,26 @@ fn flush_text_table_run(
 }
 
 /// Detect opt-in borderless tables from sustained aligned text segments.
-fn detect_text_tables(physical_lines: &[Vec<GlyphRecord>]) -> Result<Vec<TableTuple>, Error> {
+fn detect_text_tables(
+    physical_lines: &[Vec<GlyphRecord>],
+    budget: &Budget,
+) -> Result<Vec<TableTuple>, Error> {
     let mut tables = Vec::new();
     let mut run = Vec::new();
 
     for line in physical_lines {
+        budget.poll()?;
         let segment_count = line_segment_count(line);
-        let segments = if !line.is_empty()
-            && !has_vertical_baseline(&line[0])
-            && (2..=MAX_TEXT_TABLE_COLUMNS).contains(&segment_count)
+        let segments = if !line.is_empty() && !has_vertical_baseline(&line[0]) && segment_count >= 2
         {
+            budget.check(LimitCode::TableColumnCount, as_u64(segment_count))?;
             let segments = split_line_segment_slices(line)?;
             (segments.len() == segment_count).then_some(segments)
         } else {
             None
         };
         let Some(segments) = segments else {
-            flush_text_table_run(&mut run, &mut tables)?;
+            flush_text_table_run(&mut run, &mut tables, budget)?;
             continue;
         };
         if run.is_empty()
@@ -950,13 +965,14 @@ fn detect_text_tables(physical_lines: &[Vec<GlyphRecord>]) -> Result<Vec<TableTu
                 &segments,
             )
         {
+            table_slots(run.len() + 1, segment_count, budget)?;
             try_push_text(&mut run, segments, "borderless table row run")?;
         } else {
-            flush_text_table_run(&mut run, &mut tables)?;
+            flush_text_table_run(&mut run, &mut tables, budget)?;
             try_push_text(&mut run, segments, "borderless table row run")?;
         }
     }
-    flush_text_table_run(&mut run, &mut tables)?;
+    flush_text_table_run(&mut run, &mut tables, budget)?;
     Ok(tables)
 }
 
@@ -978,7 +994,9 @@ fn rule_coordinates(rules: &[RuleSegment], horizontal: bool) -> Result<Vec<f64>,
 fn detect_grid_tables(
     physical_lines: &[Vec<GlyphRecord>],
     rules: &[RuleSegment],
+    budget: &Budget,
 ) -> Result<Vec<TableTuple>, Error> {
+    budget.check(LimitCode::TextRuleCount, as_u64(rules.len()))?;
     let mut word_lines = Vec::new();
     for line in physical_lines {
         try_push_text(
@@ -1002,6 +1020,7 @@ fn detect_grid_tables(
     }
     let mut components = RuleComponents::new(rules.len())?;
     for &horizontal_index in &horizontal_indices {
+        budget.poll()?;
         for &vertical_index in &vertical_indices {
             if rules_intersect(rules[horizontal_index], rules[vertical_index]) {
                 components.union(horizontal_index, vertical_index);
@@ -1019,6 +1038,7 @@ fn detect_grid_tables(
     let mut tables = Vec::new();
     let mut group_start = 0;
     while group_start < grouped_rules.len() {
+        budget.poll()?;
         let root = grouped_rules[group_start].0;
         let mut group_end = group_start + 1;
         while group_end < grouped_rules.len() && grouped_rules[group_end].0 == root {
@@ -1035,12 +1055,23 @@ fn detect_grid_tables(
         if original_xs.len() < 3 || original_ys.len() < 3 {
             continue;
         }
+        table_slots(original_ys.len() - 1, original_xs.len() - 1, budget)?;
         let mut inferred_rules =
-            infer_hybrid_grid_rules(physical_lines, &original_ys, &original_xs, true)?;
-        for rule in infer_hybrid_grid_rules(physical_lines, &original_xs, &original_ys, false)? {
+            infer_hybrid_grid_rules(physical_lines, &original_ys, &original_xs, true, budget)?;
+        for rule in
+            infer_hybrid_grid_rules(physical_lines, &original_xs, &original_ys, false, budget)?
+        {
+            budget.check(
+                LimitCode::TextRuleCount,
+                as_u64(inferred_rules.len()).saturating_add(1),
+            )?;
             try_push_text(&mut inferred_rules, rule, "hybrid-grid inferred rules")?;
         }
         let is_hybrid = !inferred_rules.is_empty();
+        budget.check(
+            LimitCode::TextRuleCount,
+            as_u64(component_rules.len()).saturating_add(as_u64(inferred_rules.len())),
+        )?;
         for rule in inferred_rules {
             try_push_text(&mut component_rules, rule, "table component rules")?;
         }
@@ -1049,7 +1080,7 @@ fn detect_grid_tables(
         let row_count_usize = ys.len() - 1;
         let column_count_usize = xs.len() - 1;
         let Some((cells, cell_anchors)) =
-            materialize_grid_cells(&component_rules, &xs, &ys, &word_lines)?
+            materialize_grid_cells(&component_rules, &xs, &ys, &word_lines, budget)?
         else {
             continue;
         };
@@ -1086,4 +1117,47 @@ fn detect_grid_tables(
             .then(left.2.cmp(&right.2))
     });
     Ok(tables)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_components_compress_a_long_chain_without_recursion() {
+        let mut components = RuleComponents::new(65_536).unwrap();
+        for index in 1..components.parent.len() {
+            components.parent[index] = index - 1;
+        }
+        assert_eq!(components.find(components.parent.len() - 1), 0);
+        assert!(components.parent.iter().all(|parent| *parent == 0));
+    }
+
+    #[test]
+    fn candidate_limits_refuse_instead_of_discarding_a_grid() {
+        let bounds = [0.0, 10.0, 20.0];
+        for (code, maximum) in [
+            (LimitCode::TableCellCount, 3),
+            (LimitCode::TableSpanCandidateCount, 1),
+        ] {
+            let budget = Budget::default().with_limit(code, Some(maximum));
+            let error = materialize_grid_cells(&[], &bounds, &bounds, &[], &budget).unwrap_err();
+            assert!(matches!(error, Error::Limit(refusal) if refusal.code() == code));
+        }
+    }
+
+    #[test]
+    fn hybrid_slot_signatures_charge_memory_and_release_on_refusal() {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(1));
+        let error = line_grid_slots(&[], &[0.0, 10.0, 20.0], true, &budget).unwrap_err();
+        assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::MemorySize));
+        assert_eq!(budget.used(LimitCode::MemorySize), 0);
+    }
+
+    #[test]
+    fn detection_polls_the_operation_deadline() {
+        let budget = Budget::default().with_timeout(std::time::Duration::ZERO);
+        let error = detect_grid_tables(&[], &[], &budget).unwrap_err();
+        assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::Deadline));
+    }
 }

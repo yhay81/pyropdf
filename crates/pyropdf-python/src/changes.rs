@@ -326,38 +326,37 @@ fn claims(version: &Version, written: &[u32], budget: &Budget) -> PyResult<Vec<F
     };
     let xmp = metadata.decoded(budget).map_err(|e| store_error(&e))?;
     for claim in read_claims(&xmp) {
-        let mut breaking = Vec::new();
+        // The written objects that break the claim, by reason, in the
+        // order the reasons are first met.
+        let mut found: Vec<(&str, Vec<u32>)> = Vec::new();
         for &number in written {
             let Some(value) = object(version, number, budget)? else {
                 continue;
             };
-            if breaks(claim, &value) {
-                breaking.push(number);
-                if breaking.len() == MAX_NAMED {
-                    break;
+            for reason in breaks(claim, &value, budget)? {
+                match found.iter_mut().find(|(known, _)| *known == reason) {
+                    Some((_, objects)) if objects.len() < MAX_NAMED => objects.push(number),
+                    Some(_) => {}
+                    None => found.push((reason, vec![number])),
                 }
             }
         }
-        if !breaking.is_empty() {
-            let reason = match claim {
-                Claim::A(..) => "the edits add transparency, which PDF/A-1 forbids",
-                Claim::Ua(_) => "the edits add an annotation that is not in the structure tree",
-            };
+        for (reason, breaking) in found {
             out.push((claim.name(), 0, reason.to_owned(), breaking));
         }
     }
     Ok(out)
 }
 
-/// Returns the PDF/A-1 and PDF/UA claims of XMP metadata. The claims of
-/// later PDF/A parts are read but break on nothing that the report checks.
+/// Returns the PDF/A-1, PDF/A-2, PDF/A-4, and PDF/UA claims of XMP
+/// metadata. A PDF/A-3 claim breaks on nothing that the report checks.
 fn read_claims(xmp: &[u8]) -> Vec<Claim> {
     let mut out = Vec::new();
     if let Some(part) = property(xmp, b"pdfaid:part").and_then(number) {
         let level = property(xmp, b"pdfaid:conformance")
             .and_then(|level| level.first().copied())
             .map_or(0, |level| level.to_ascii_uppercase());
-        if part == 1 {
+        if matches!(part, 1 | 2 | 4) {
             out.push(Claim::A(part, level));
         }
     }
@@ -390,7 +389,8 @@ fn property<'a>(xmp: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
             if let Some(end) = rest.iter().position(|&byte| byte == quote) {
                 return Some(trim(&rest[..end]));
             }
-        } else if xmp[start - 1] == b'<'
+        } else if start > 0
+            && xmp[start - 1] == b'<'
             && let Some(rest) = rest.strip_prefix(b">")
             && let Some(end) = rest.iter().position(|&byte| byte == b'<')
         {
@@ -427,13 +427,101 @@ fn number(bytes: &[u8]) -> Option<u32> {
     std::str::from_utf8(bytes).ok()?.parse().ok()
 }
 
-/// Returns whether a written object breaks `claim`: transparency anywhere
-/// in it for PDF/A-1, or an annotation without `/StructParent` for PDF/UA.
-fn breaks(claim: Claim, value: &Value) -> bool {
+/// Returns the reasons for which a written object breaks `claim`.
+///
+/// PDF/A-1 forbids transparency and embedded files (ISO 19005-1 sections
+/// 6.4 and 6.1.11). PDF/A-2 allows an embedded file that is PDF/A-1 or
+/// PDF/A-2, and PDF/A-4, other than PDF/A-4f, one that is PDF/A-1, PDF/A-2,
+/// or PDF/A-4 (ISO 19005-2 section 6.8, ISO 19005-4 section 6.9). PDF/UA
+/// requires every annotation in the structure tree.
+fn breaks(claim: Claim, value: &Value, budget: &Budget) -> PyResult<Vec<&'static str>> {
+    let mut out = Vec::new();
     match claim {
-        Claim::A(..) => has_transparency(value),
-        Claim::Ua(_) => dict(Some(value.clone())).is_some_and(|dict| is_untagged_annotation(&dict)),
+        Claim::A(1, _) => {
+            if has_transparency(value) {
+                out.push("the edits add transparency, which PDF/A-1 forbids");
+            }
+            if has_embedded_file(value) {
+                out.push("the edits add an embedded file, which PDF/A-1 forbids");
+            }
+        }
+        Claim::A(2, _) => {
+            if is_embedded_file_outside(value, &[1, 2], budget)? {
+                out.push("the edits add an embedded file that is not PDF/A-1 or PDF/A-2, which PDF/A-2 forbids");
+            }
+        }
+        Claim::A(4, level) if level != b'F' => {
+            if is_embedded_file_outside(value, &[1, 2, 4], budget)? {
+                out.push(
+                    "the edits add an embedded file that is not PDF/A-1, PDF/A-2, or PDF/A-4, which PDF/A-4 forbids",
+                );
+            }
+        }
+        Claim::A(..) => {}
+        Claim::Ua(_) => {
+            if dict(Some(value.clone())).is_some_and(|dict| is_untagged_annotation(&dict)) {
+                out.push("the edits add an annotation that is not in the structure tree");
+            }
+        }
     }
+    Ok(out)
+}
+
+/// Returns whether `value` holds, in itself or in its direct containers, a
+/// file specification with an embedded file or a name dictionary with
+/// embedded files: the `/EF` and `/EmbeddedFiles` keys that PDF/A-1
+/// forbids.
+fn has_embedded_file(value: &Value) -> bool {
+    let mut pending = vec![(value, 0)];
+    while let Some((value, depth)) = pending.pop() {
+        let dict = match value {
+            Value::Dict(dict) => dict,
+            Value::Stream(stream) => stream.dict(),
+            Value::Array(items) => {
+                if depth < MAX_NESTING {
+                    pending.extend(items.iter().map(|item| (item, depth + 1)));
+                }
+                continue;
+            }
+            _ => continue,
+        };
+        for (key, entry) in dict.iter() {
+            if matches!(key.as_bytes(), b"EF" | b"EmbeddedFiles") {
+                return true;
+            }
+            if depth < MAX_NESTING {
+                pending.push((entry, depth + 1));
+            }
+        }
+    }
+    false
+}
+
+/// Returns whether `value` is an embedded file stream whose data is not a
+/// PDF file that claims one of the PDF/A `parts`.
+///
+/// The claim is the `pdfaid:part` of the file's XMP metadata, which PDF/A
+/// writes unfiltered; this is not a validation of the embedded file.
+fn is_embedded_file_outside(value: &Value, parts: &[u32], budget: &Budget) -> PyResult<bool> {
+    let Value::Stream(stream) = value else {
+        return Ok(false);
+    };
+    if !matches!(stream.dict().get("Type"), Some(Value::Name(kind)) if kind.as_bytes() == b"EmbeddedFile")
+    {
+        return Ok(false);
+    }
+    // Data that does not decode is no PDF/A file; a refusal for a limit
+    // stays an error.
+    let data = match stream.decoded(budget) {
+        Ok(data) => data,
+        Err(error) if error.limit().is_some() => return Err(store_error(&error)),
+        Err(_) => return Ok(true),
+    };
+    let claimed = data.starts_with(b"%PDF-")
+        && property(&data, b"pdfaid:part")
+            .and_then(number)
+            .is_some_and(|part| parts.contains(&part));
+    Ok(!claimed)
 }
 
 /// Returns whether `value` holds, in itself or in its direct containers,

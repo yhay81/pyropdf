@@ -1,0 +1,834 @@
+diff --git a/crates/krilla/src/chunk_container.rs b/crates/krilla/src/chunk_container.rs
+index 7410327..5f4a31d 100644
+--- a/crates/krilla/src/chunk_container.rs
++++ b/crates/krilla/src/chunk_container.rs
+@@ -102,21 +102,25 @@ impl ChunkContainer {
+         }
+     }
+ 
+-    /// Assigns each object of every chunk its final reference, from
+-    /// `allocate`, and returns the mapping with the total length of the
+-    /// chunks.
++    /// Assigns each object of every chunk its final reference, from `pinned`
++    /// where it names one and from `allocate` otherwise, and returns the
++    /// mapping, which also holds every entry of `pinned`, with the total
++    /// length of the chunks.
+     fn remap(
+         &self,
+         sc: &mut SerializeContext,
++        pinned: &HashMap<Ref, Ref>,
+         allocate: &mut dyn FnMut() -> Ref,
+     ) -> KrillaResult<(HashMap<Ref, Ref>, usize)> {
+-        let mut remapper = HashMap::new();
++        let mut remapper = pinned.clone();
+         let mut chunks_byte_len = 0;
+ 
+         self.visit(sc, &mut |chunk| {
+             for object_ref in chunk.refs() {
+-                let existing = remapper.insert(object_ref, allocate());
+-                debug_assert!(existing.is_none());
++                if !pinned.contains_key(&object_ref) {
++                    let existing = remapper.insert(object_ref, allocate());
++                    debug_assert!(existing.is_none());
++                }
+             }
+             chunks_byte_len += chunk.len();
+         })?;
+@@ -124,15 +128,15 @@ impl ChunkContainer {
+         Ok((remapper, chunks_byte_len))
+     }
+ 
+-    /// Writes every chunk into `sink` instead of a PDF file, numbered with
+-    /// references that the sink allocates, and returns the references that
+-    /// a document catalog would hold.
+-    pub(crate) fn finish_into(
+-        self,
++    /// Writes every chunk into `sink`, numbered as [`ChunkContainer::remap`]
++    /// numbers them with `pinned`, and returns the mapping.
++    pub(crate) fn write_into(
++        &self,
+         sc: &mut SerializeContext,
+         sink: &mut dyn ObjectSink,
+-    ) -> KrillaResult<SinkOutput> {
+-        let (remapper, _) = self.remap(sc, &mut || Ref::new(sink.allocate()))?;
++        pinned: &HashMap<Ref, Ref>,
++    ) -> KrillaResult<HashMap<Ref, Ref>> {
++        let (remapper, _) = self.remap(sc, pinned, &mut || Ref::new(sink.allocate()))?;
+ 
+         let mut limits = Limits::new();
+         self.visit(sc, &mut |chunk| {
+@@ -142,6 +146,21 @@ impl ChunkContainer {
+         })?;
+         sc.register_limits(&limits);
+ 
++        Ok(remapper)
++    }
++
++    /// Writes every chunk into `sink` instead of a PDF file, numbered with
++    /// references that the sink allocates or that `pinned` names, and
++    /// returns the references that a document catalog would hold, with the
++    /// mapping.
++    pub(crate) fn finish_into(
++        self,
++        sc: &mut SerializeContext,
++        sink: &mut dyn ObjectSink,
++        pinned: &HashMap<Ref, Ref>,
++    ) -> KrillaResult<(SinkOutput, HashMap<Ref, Ref>)> {
++        let remapper = self.write_into(sc, sink, pinned)?;
++
+         let mut named_destinations = sc
+             .global_objects
+             .named_destinations
+@@ -165,7 +184,7 @@ impl ChunkContainer {
+             .as_ref()
+             .expect("page tree should exist");
+ 
+-        Ok(SinkOutput {
++        let output = SinkOutput {
+             pages: remapper[&page_tree.0].get(),
+             acro_form: get(&self.non_stream.forms),
+             page_labels: get(&self.non_stream.page_label_tree),
+@@ -174,7 +193,9 @@ impl ChunkContainer {
+             outlines: get(&self.non_stream.outline),
+             named_destinations,
+             embedded_files,
+-        })
++        };
++
++        Ok((output, remapper))
+     }
+ 
+     pub(crate) fn finish(self, sc: &mut SerializeContext) -> KrillaResult<Pdf> {
+@@ -187,7 +208,8 @@ impl ChunkContainer {
+         // easier down the road.
+         //
+         // It also allows us to estimate the capacity we will need for the new PDF.
+-        let (remapper, chunks_byte_len) = self.remap(sc, &mut || remapped_ref.bump())?;
++        let (remapper, chunks_byte_len) =
++            self.remap(sc, &HashMap::new(), &mut || remapped_ref.bump())?;
+ 
+         // Chunk length is not an exact number because the length might change as we renumber,
+         // so we add a bit of a padding by multiplying with 1.1. The 200 is additional padding
+diff --git a/crates/krilla/src/document.rs b/crates/krilla/src/document.rs
+index 7acfc42..24f7730 100644
+--- a/crates/krilla/src/document.rs
++++ b/crates/krilla/src/document.rs
+@@ -25,6 +25,7 @@ use crate::interchange::tagging::TagTree;
+ use crate::page::{Page, PageSettings};
+ #[cfg(feature = "pdf")]
+ use crate::pdf::PdfDocument;
++use crate::resources::Resources;
+ use crate::serialize::{SerializeContext, SerializeSettings};
+ use crate::sink::{ObjectSink, SinkOutput};
+ use crate::surface::Location;
+@@ -64,6 +65,21 @@ impl Document {
+         }
+     }
+ 
++    /// Create a new document that draws with the fonts and images of
++    /// `resources`, and with their serialize settings.
++    ///
++    /// The document must be finished with
++    /// [`Document::finish_with_resources`], which returns the resources.
++    pub fn new_with_resources(resources: Resources) -> Self {
++        let serializer_context = SerializeContext::new_with_resources(resources);
++        let chunk_container = ChunkContainer::new(&serializer_context);
++
++        Self {
++            serializer_context,
++            chunk_container,
++        }
++    }
++
+     /// Start a new page with default settings.
+     pub fn start_page(&mut self) -> Page<'_> {
+         let page_index = self.serializer_context.page_infos().iter().len();
+@@ -147,7 +163,14 @@ impl Document {
+     }
+ 
+     /// Attempt to export the document to a PDF file.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the document was created with
++    /// [`Document::new_with_resources`].
+     pub fn finish(mut self) -> KrillaResult<Vec<u8>> {
++        self.assert_without_resources();
++
+         // Write empty page if none has been created yet.
+         if self.serializer_context.page_infos().is_empty() {
+             self.start_page();
+@@ -165,7 +188,14 @@ impl Document {
+     ///
+     /// The objects are numbered with numbers that the sink allocates, and the
+     /// result names the objects that a document catalog would reference.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the document was created with
++    /// [`Document::new_with_resources`].
+     pub fn finish_into(mut self, sink: &mut dyn ObjectSink) -> KrillaResult<SinkOutput> {
++        self.assert_without_resources();
++
+         // Write empty page if none has been created yet.
+         if self.serializer_context.page_infos().is_empty() {
+             self.start_page();
+@@ -178,4 +208,43 @@ impl Document {
+ 
+         serializer_context.finish_into(chunk_container, sink)
+     }
++
++    /// Write the objects of a document created with
++    /// [`Document::new_with_resources`] into `sink`, as
++    /// [`Document::finish_into`] does, apart from its fonts and the images
++    /// that an earlier document wrote. Its content refers to them by the
++    /// numbers that the resources keep, and
++    /// [`Resources::finalize_into`] writes the fonts.
++    ///
++    /// Returns the resources, with the glyphs that the document drew, whether
++    /// or not writing succeeded. When it fails, the resources keep no number
++    /// that this call allocated.
++    ///
++    /// # Panics
++    ///
++    /// Panics if the document was not created with
++    /// [`Document::new_with_resources`].
++    pub fn finish_with_resources(
++        mut self,
++        sink: &mut dyn ObjectSink,
++    ) -> (KrillaResult<SinkOutput>, Resources) {
++        // Write empty page if none has been created yet.
++        if self.serializer_context.page_infos().is_empty() {
++            self.start_page();
++        }
++
++        let Self {
++            serializer_context,
++            chunk_container,
++        } = self;
++
++        serializer_context.finish_with_resources(chunk_container, sink)
++    }
++
++    fn assert_without_resources(&self) {
++        assert!(
++            self.serializer_context.resources.is_none(),
++            "a document with resources is finished with finish_with_resources"
++        );
++    }
+ }
+diff --git a/crates/krilla/src/lib.rs b/crates/krilla/src/lib.rs
+index 78916bb..9429e22 100644
+--- a/crates/krilla/src/lib.rs
++++ b/crates/krilla/src/lib.rs
+@@ -167,6 +167,7 @@ pub mod num;
+ pub mod page;
+ #[cfg(feature = "pdf")]
+ pub mod pdf;
++pub mod resources;
+ pub mod sink;
+ pub mod stream;
+ pub mod surface;
+diff --git a/crates/krilla/src/resources.rs b/crates/krilla/src/resources.rs
+new file mode 100644
+index 0000000..e5a6cfc
+--- /dev/null
++++ b/crates/krilla/src/resources.rs
+@@ -0,0 +1,298 @@
++//! Fonts and images that outlive one document.
++//!
++//! A [`Document`](crate::Document) writes every font it uses, subset to the
++//! glyphs it drew, and every image it drew. An application that writes many
++//! documents into one [`ObjectSink`], for example one drawing per page of a
++//! file it edits, would embed one font program per document.
++//!
++//! [`Resources`] keeps fonts and images across those documents:
++//!
++//! - **Registration.** A font gets the number of its PDF font object from the
++//!   sink when a document that uses it is written, and keeps it; an image
++//!   gets the number of its XObject when the first document that draws it is
++//!   written, and later documents refer to that object.
++//! - **Accumulation.** The glyphs of a font accumulate across documents.
++//! - **Finalization.** [`Resources::finalize_into`] writes each font, subset
++//!   to every glyph drawn so far, under the number that the documents refer
++//!   to. It may run more than once; each run writes the fonts again.
++//! - **Glyph IDs.** A glyph keeps the code it got in the document that first
++//!   drew it. The subset places each glyph at its code, so content that
++//!   earlier documents wrote stays valid after any finalization.
++
++use std::collections::HashMap;
++
++use indexmap::IndexMap;
++use pdf_writer::Ref;
++
++use crate::chunk_container::ChunkContainer;
++use crate::error::KrillaResult;
++use crate::serialize::{SerializeContext, SerializeSettings};
++use crate::sink::ObjectSink;
++use crate::text::{Font, FontContainer, FontIdentifier};
++
++/// Fonts and images shared by documents that write into one sink.
++///
++/// A document draws with them from
++/// [`Document::new_with_resources`](crate::Document::new_with_resources)
++/// until [`Document::finish_with_resources`](crate::Document::finish_with_resources)
++/// returns them.
++pub struct Resources {
++    pub(crate) settings: SerializeSettings,
++    /// The fonts drawn so far, with their glyphs.
++    pub(crate) fonts: IndexMap<Font, FontContainer>,
++    /// The numbers of the PDF fonts that written documents refer to.
++    pub(crate) font_numbers: HashMap<FontIdentifier, i32>,
++    /// The numbers of the images that written documents hold, by hash.
++    pub(crate) images: HashMap<u128, i32>,
++}
++
++impl Resources {
++    /// Creates empty resources for documents written with `settings`.
++    pub fn new(settings: SerializeSettings) -> Self {
++        Self {
++            settings,
++            fonts: IndexMap::new(),
++            font_numbers: HashMap::new(),
++            images: HashMap::new(),
++        }
++    }
++
++    /// Writes every font that a written document uses into `sink`, subset
++    /// to the glyphs that all documents drew so far, under the number that
++    /// the documents refer to. The objects that a font depends on, such as
++    /// its program, get new numbers from `sink` on every call.
++    pub fn finalize_into(&self, sink: &mut dyn ObjectSink) -> KrillaResult<()> {
++        let mut sc = SerializeContext::new(self.settings.clone());
++        let mut chunk_container = ChunkContainer::new(&sc);
++        let mut pinned = HashMap::new();
++
++        for container in self.fonts.values() {
++            for t3_font in container.type3_mapper().fonts() {
++                if let Some(&number) = self.font_numbers.get(&t3_font.identifier()) {
++                    let root_ref = sc.new_ref();
++                    t3_font.serialize(&mut sc, &mut chunk_container, root_ref);
++                    pinned.insert(root_ref, Ref::new(number));
++                }
++            }
++
++            let cid_font = container.cid_font();
++            if let Some(&number) = self.font_numbers.get(&cid_font.identifier()) {
++                let root_ref = sc.new_ref();
++                cid_font.serialize(&mut sc, &mut chunk_container, root_ref)?;
++                pinned.insert(root_ref, Ref::new(number));
++            }
++        }
++
++        chunk_container.write_into(&mut sc, sink, &pinned)?;
++        sc.check_errors()
++    }
++
++    /// Forgets every number for which `keep` returns `false`, for example
++    /// the numbers that a sink rolled back. A document that uses the font or
++    /// the image again gets a new number for it.
++    pub fn retain_numbers(&mut self, mut keep: impl FnMut(i32) -> bool) {
++        self.font_numbers.retain(|_, number| keep(*number));
++        self.images.retain(|_, number| keep(*number));
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::Resources;
++    use crate::geom::Point;
++    use crate::page::PageSettings;
++    use crate::serialize::SerializeSettings;
++    use crate::sink::ObjectSink;
++    use crate::text::{Font, TextDirection};
++    use crate::Document;
++
++    #[derive(Default)]
++    struct Collector {
++        next: i32,
++        bytes: Vec<u8>,
++    }
++
++    impl ObjectSink for Collector {
++        fn allocate(&mut self) -> i32 {
++            self.next += 1;
++            self.next
++        }
++
++        fn write(&mut self, objects: &[u8]) {
++            self.bytes.extend_from_slice(objects);
++        }
++    }
++
++    impl Collector {
++        /// Returns the bytes written since the last call.
++        fn take(&mut self) -> Vec<u8> {
++            std::mem::take(&mut self.bytes)
++        }
++    }
++
++    fn settings() -> SerializeSettings {
++        SerializeSettings {
++            compress_content_streams: false,
++            ..SerializeSettings::default()
++        }
++    }
++
++    fn font() -> Font {
++        let data = std::fs::read(concat!(
++            env!("CARGO_MANIFEST_DIR"),
++            "/../../assets/fonts/NotoSans-Regular.ttf"
++        ))
++        .unwrap();
++        Font::new(data.into(), 0).unwrap()
++    }
++
++    /// Draws `text` on one page of a document with `resources` into `sink`,
++    /// and returns the resources and the bytes the document wrote.
++    fn draw(
++        resources: Resources,
++        sink: &mut Collector,
++        font: &Font,
++        text: &str,
++    ) -> (Resources, Vec<u8>) {
++        let mut document = Document::new_with_resources(resources);
++        let mut page = document.start_page_with(PageSettings::from_wh(200.0, 200.0).unwrap());
++        let mut surface = page.surface();
++        surface.draw_text(
++            Point::from_xy(10.0, 100.0),
++            font.clone(),
++            12.0,
++            text,
++            false,
++            TextDirection::Auto,
++        );
++        surface.finish();
++        page.finish();
++
++        let (result, resources) = document.finish_with_resources(sink);
++        result.unwrap();
++        (resources, sink.take())
++    }
++
++    fn count(bytes: &[u8], needle: &[u8]) -> usize {
++        bytes.windows(needle.len()).filter(|w| *w == needle).count()
++    }
++
++    /// Returns the number that the `/f0` font resource names.
++    fn font_number(bytes: &[u8]) -> i32 {
++        let text = String::from_utf8_lossy(bytes);
++        let start = text.find("/f0 ").expect("a font resource") + 4;
++        text[start..].split(' ').next().unwrap().parse().unwrap()
++    }
++
++    /// Returns whether `bytes` define the object `number`.
++    fn defines(bytes: &[u8], number: i32) -> bool {
++        let header = format!("{number} 0 obj");
++        bytes
++            .split(|b| *b == b'\n')
++            .any(|line| line == header.as_bytes())
++    }
++
++    #[test]
++    fn documents_refer_to_one_font_that_finalization_writes_once() {
++        let font = font();
++        let mut sink = Collector::default();
++        let mut resources = Resources::new(settings());
++        let mut numbers = vec![];
++        for text in ["Hello", "world", "again"] {
++            let (next, bytes) = draw(resources, &mut sink, &font, text);
++            resources = next;
++            assert_eq!(count(&bytes, b"/FontFile2"), 0);
++            numbers.push(font_number(&bytes));
++            assert!(!defines(&bytes, numbers[0]));
++        }
++        assert!(numbers.iter().all(|number| *number == numbers[0]));
++
++        resources.finalize_into(&mut sink).unwrap();
++        let bytes = sink.take();
++        assert_eq!(count(&bytes, b"/FontFile2"), 1);
++        assert!(defines(&bytes, numbers[0]));
++
++        // A second finalization writes the font again under its number.
++        resources.finalize_into(&mut sink).unwrap();
++        let again = sink.take();
++        assert_eq!(count(&again, b"/FontFile2"), 1);
++        assert!(defines(&again, numbers[0]));
++    }
++
++    #[test]
++    fn glyphs_keep_their_codes_across_documents_and_finalization() {
++        let font = font();
++        let mut sink = Collector::default();
++        let (resources, first) = draw(Resources::new(settings()), &mut sink, &font, "AB");
++        let (resources, second) = draw(resources, &mut sink, &font, "BC");
++
++        // A is 1 and B is 2 in the first document; the second keeps B and
++        // gives C the next code.
++        assert_eq!(count(&first, br"[(\000\001\000\002)]TJ"), 1);
++        assert_eq!(count(&second, br"[(\000\002\000\003)]TJ"), 1);
++
++        resources.finalize_into(&mut sink).unwrap();
++        let text = String::from_utf8_lossy(&sink.bytes);
++        for entry in ["<0001> <0041>", "<0002> <0042>", "<0003> <0043>"] {
++            assert!(text.contains(entry), "{entry}");
++        }
++    }
++
++    #[test]
++    fn forgotten_numbers_are_allocated_again() {
++        let font = font();
++        let mut sink = Collector::default();
++        let (mut resources, first) = draw(Resources::new(settings()), &mut sink, &font, "A");
++        let first = font_number(&first);
++        resources.retain_numbers(|number| number != first);
++        let (resources, second) = draw(resources, &mut sink, &font, "A");
++        let second = font_number(&second);
++        assert_ne!(second, first);
++
++        resources.finalize_into(&mut sink).unwrap();
++        assert!(defines(&sink.bytes, second));
++        assert!(!defines(&sink.bytes, first));
++    }
++
++    #[cfg(feature = "raster-images")]
++    #[test]
++    fn an_image_is_written_by_the_first_document_that_draws_it() {
++        use crate::geom::Size;
++        use crate::graphics::image::Image;
++
++        let data = std::fs::read(concat!(
++            env!("CARGO_MANIFEST_DIR"),
++            "/../../assets/images/rgb8.png"
++        ))
++        .unwrap();
++        let image = Image::from_png(data.into(), true).unwrap();
++        let mut sink = Collector::default();
++        let mut resources = Resources::new(settings());
++        let mut written = vec![];
++        for _ in 0..3 {
++            let mut document = Document::new_with_resources(resources);
++            let mut page = document.start_page_with(PageSettings::from_wh(200.0, 200.0).unwrap());
++            let mut surface = page.surface();
++            surface.draw_image(image.clone(), Size::from_wh(50.0, 50.0).unwrap());
++            surface.finish();
++            page.finish();
++            let (result, next) = document.finish_with_resources(&mut sink);
++            result.unwrap();
++            resources = next;
++            written.push(count(&sink.take(), b"/Subtype/Image"));
++        }
++        assert_eq!(written, [1, 0, 0]);
++    }
++
++    #[test]
++    #[should_panic(expected = "finish_with_resources")]
++    fn a_document_with_resources_does_not_finish_into_a_file() {
++        let _ = Document::new_with_resources(Resources::new(settings())).finish();
++    }
++
++    #[test]
++    fn resources_move_between_threads() {
++        fn send<T: Send>() {}
++        send::<Resources>();
++    }
++}
+diff --git a/crates/krilla/src/serialize.rs b/crates/krilla/src/serialize.rs
+index 0bb66c4..b80f88e 100644
+--- a/crates/krilla/src/serialize.rs
++++ b/crates/krilla/src/serialize.rs
+@@ -34,6 +34,7 @@ use crate::page::{InternalPage, PageLabel, PageLabelContainer};
+ use crate::pdf::{PdfDocument, PdfSerializerContext};
+ use crate::resource;
+ use crate::resource::{Resource, Resourceable};
++use crate::resources::Resources;
+ use crate::sink::{ObjectSink, SinkOutput};
+ use crate::surface::{Location, Surface};
+ use crate::text::{Font, FontContainer, FontIdentifier, GlyphId, StandardFont};
+@@ -292,6 +293,19 @@ pub(crate) struct SerializeContext {
+     /// The current location, if set.
+     pub(crate) location: Option<Location>,
+     pub(crate) xobject_tags: XObjectTags,
++    /// The fonts and images that outlive this document, if it draws with
++    /// any. Its fonts are in `global_objects.font_map` while the document
++    /// lives.
++    pub(crate) resources: Option<Resources>,
++    /// The references of objects that the sink numbered before this
++    /// document, with their numbers.
++    pinned: HashMap<Ref, Ref>,
++    /// The fonts of `resources` that this document uses, with their
++    /// references in this document.
++    resource_fonts: Vec<(FontIdentifier, Ref)>,
++    /// The images that this document writes and that `resources` keeps
++    /// afterwards, by hash, with their references in this document.
++    resource_images: Vec<(u128, Ref)>,
+ }
+ 
+ impl SerializeContext {
+@@ -326,9 +340,26 @@ impl SerializeContext {
+             limits: Limits::new(),
+             xobject_tags: XObjectTags::default(),
+             validation_store: ValidationStore::new(),
++            resources: None,
++            pinned: HashMap::new(),
++            resource_fonts: vec![],
++            resource_images: vec![],
+         }
+     }
+ 
++    /// Creates a context that draws with the fonts and images of
++    /// `resources`.
++    pub(crate) fn new_with_resources(mut resources: Resources) -> Self {
++        let mut sc = Self::new(resources.settings.clone());
++        *sc.global_objects.font_map = std::mem::take(&mut resources.fonts)
++            .into_iter()
++            .map(|(font, container)| (font, Rc::new(RefCell::new(container))))
++            .collect();
++        sc.resources = Some(resources);
++
++        sc
++    }
++
+     pub(crate) fn page_infos(&self) -> &[PageInfo] {
+         &self.page_infos
+     }
+@@ -478,12 +509,70 @@ impl SerializeContext {
+         sink: &mut dyn ObjectSink,
+     ) -> KrillaResult<SinkOutput> {
+         self.serialize_deferred(&mut chunk_container)?;
+-        let output = chunk_container.finish_into(&mut self, sink)?;
++        let pinned = std::mem::take(&mut self.pinned);
++        let (output, _) = chunk_container.finish_into(&mut self, sink, &pinned)?;
+         self.check()?;
+ 
+         Ok(output)
+     }
+ 
++    /// Writes the objects of `chunk_container` into `sink`, apart from the
++    /// fonts and images of the resources that it refers to, and returns the
++    /// resources whether or not writing succeeded.
++    pub(crate) fn finish_with_resources(
++        mut self,
++        chunk_container: ChunkContainer,
++        sink: &mut dyn ObjectSink,
++    ) -> (KrillaResult<SinkOutput>, Resources) {
++        let result = self.write_with_resources(chunk_container, sink);
++        let mut resources = self
++            .resources
++            .take()
++            .expect("the document should draw with resources");
++        if !self.global_objects.font_map.is_taken() {
++            resources.fonts = unwrap_fonts(self.global_objects.font_map.take());
++        }
++
++        (result, resources)
++    }
++
++    fn write_with_resources(
++        &mut self,
++        mut chunk_container: ChunkContainer,
++        sink: &mut dyn ObjectSink,
++    ) -> KrillaResult<SinkOutput> {
++        self.serialize_deferred(&mut chunk_container)?;
++
++        // A font that no document used before gets its number now. The
++        // resources keep it only once the document is written.
++        let resources = self.resources.as_ref().expect("resources");
++        let mut pinned = std::mem::take(&mut self.pinned);
++        let mut new_fonts = vec![];
++        for (identifier, ref_) in std::mem::take(&mut self.resource_fonts) {
++            let number = match resources.font_numbers.get(&identifier) {
++                Some(&number) => number,
++                None => {
++                    let number = sink.allocate();
++                    new_fonts.push((identifier, number));
++                    number
++                }
++            };
++            pinned.insert(ref_, Ref::new(number));
++        }
++
++        let (output, remapper) = chunk_container.finish_into(self, sink, &pinned)?;
++        self.check()?;
++
++        let images = std::mem::take(&mut self.resource_images);
++        let resources = self.resources.as_mut().expect("resources");
++        resources.font_numbers.extend(new_fonts);
++        for (hash, ref_) in images {
++            resources.images.insert(hash, remapper[&ref_].get());
++        }
++
++        Ok(output)
++    }
++
+     pub(crate) fn finish(mut self, mut chunk_container: ChunkContainer) -> KrillaResult<Pdf> {
+         self.serialize_deferred(&mut chunk_container)?;
+ 
+@@ -521,7 +610,17 @@ impl SerializeContext {
+         Ok(())
+     }
+ 
+-    fn check(mut self) -> KrillaResult<()> {
++    fn check(&mut self) -> KrillaResult<()> {
++        self.check_errors()?;
++
++        // Just a sanity check that we've actually processed all items.
++        self.global_objects.assert_all_taken();
++
++        Ok(())
++    }
++
++    /// Returns the validation errors and the exceeded limits.
++    pub(crate) fn check_errors(&mut self) -> KrillaResult<()> {
+         self.check_validator_limits();
+ 
+         if !self.validation_errors.is_empty() {
+@@ -533,7 +632,7 @@ impl SerializeContext {
+             )]
+             let mut seen = HashSet::new();
+ 
+-            for error in self.validation_errors {
++            for error in std::mem::take(&mut self.validation_errors) {
+                 if !seen.contains(&error) {
+                     seen.insert(error.clone());
+                     errors.push(error);
+@@ -547,9 +646,6 @@ impl SerializeContext {
+             return Err(KrillaError::Limit(limit_error));
+         }
+ 
+-        // Just a sanity check that we've actually processed all items.
+-        self.global_objects.assert_all_taken();
+-
+         Ok(())
+     }
+ }
+@@ -688,9 +784,31 @@ impl SerializeContext {
+         chunk_container: &mut ChunkContainer,
+         image: Image,
+     ) -> Ref {
+-        self.register_cached(image, |sc, object, root_ref| {
+-            object.serialize(sc, chunk_container, root_ref);
+-        })
++        let hash = image.sip_hash();
++        if let Some(&ref_) = self.cached_mappings.get(&hash) {
++            return ref_;
++        }
++
++        let root_ref = self.new_ref();
++        self.cached_mappings.insert(hash, root_ref);
++        let written = self
++            .resources
++            .as_ref()
++            .and_then(|resources| resources.images.get(&hash).copied());
++        match written {
++            // A document before this one wrote the image.
++            Some(number) => {
++                self.pinned.insert(root_ref, Ref::new(number));
++            }
++            None => {
++                image.serialize(self, chunk_container, root_ref);
++                if self.resources.is_some() {
++                    self.resource_images.push((hash, root_ref));
++                }
++            }
++        }
++
++        root_ref
+     }
+ 
+     pub(crate) fn register_xyz_destination(&mut self, dest: XyzDestination) -> Ref {
+@@ -827,6 +945,51 @@ impl SerializeContext {
+ 
+     fn serialize_fonts(&mut self, chunk_container: &mut ChunkContainer) -> KrillaResult<()> {
+         let fonts = self.global_objects.font_map.take();
++        if let Some(resources) = &mut self.resources {
++            // The resources write their fonts when they are finalized. The
++            // document only refers to the ones it uses.
++            for font_container in fonts.values() {
++                let borrowed = font_container.borrow();
++                let cid_font = borrowed.cid_font();
++                let identifiers = borrowed
++                    .type3_mapper()
++                    .fonts()
++                    .iter()
++                    .map(|t3_font| t3_font.identifier())
++                    .chain((!cid_font.is_empty()).then(|| cid_font.identifier()));
++                for identifier in identifiers {
++                    if let Some(&ref_) = self.cached_mappings.get(&identifier.sip_hash()) {
++                        self.resource_fonts.push((identifier, ref_));
++                    }
++                }
++            }
++            resources.fonts = unwrap_fonts(fonts);
++        } else {
++            self.serialize_own_fonts(chunk_container, &fonts)?;
++        }
++
++        for font in StandardFont::ALL {
++            let identifier = FontIdentifier::Standard(font);
++            if let Some(&ref_) = self.cached_mappings.get(&identifier.sip_hash()) {
++                if self.serialize_settings.pdf_version() >= PdfVersion::Pdf20 {
++                    panic!("cannot use standard fonts in PDF 2.0");
++                }
++                chunk_container
++                    .non_stream
++                    .fonts
++                    .type1_font(ref_)
++                    .base_font(font.base_font().to_pdf_name());
++            }
++        }
++
++        Ok(())
++    }
++
++    fn serialize_own_fonts(
++        &mut self,
++        chunk_container: &mut ChunkContainer,
++        fonts: &IndexMap<Font, Rc<RefCell<FontContainer>>>,
++    ) -> KrillaResult<()> {
+         for font_container in fonts.values() {
+             let borrowed = font_container.borrow();
+ 
+@@ -845,20 +1008,6 @@ impl SerializeContext {
+             }
+         }
+ 
+-        for font in StandardFont::ALL {
+-            let identifier = FontIdentifier::Standard(font);
+-            if let Some(&ref_) = self.cached_mappings.get(&identifier.sip_hash()) {
+-                if self.serialize_settings.pdf_version() >= PdfVersion::Pdf20 {
+-                    panic!("cannot use standard fonts in PDF 2.0");
+-                }
+-                chunk_container
+-                    .non_stream
+-                    .fonts
+-                    .type1_font(ref_)
+-                    .base_font(font.base_font().to_pdf_name());
+-            }
+-        }
+-
+         Ok(())
+     }
+ 
+@@ -1155,6 +1304,21 @@ pub(crate) struct Pdf2Namespaces {
+     pub(crate) krilla_ref: Ref,
+ }
+ 
++/// Takes the font containers out of the context that a finished document
++/// leaves.
++fn unwrap_fonts(
++    fonts: IndexMap<Font, Rc<RefCell<FontContainer>>>,
++) -> IndexMap<Font, FontContainer> {
++    fonts
++        .into_iter()
++        .map(|(font, container)| {
++            let container = Rc::try_unwrap(container)
++                .unwrap_or_else(|_| panic!("a font container should not outlive its document"));
++            (font, container.into_inner())
++        })
++        .collect()
++}
++
+ #[derive(Default)]
+ pub(crate) struct GlobalObjects {
+     /// All named destinations that have been registered, including a Ref to their destination and

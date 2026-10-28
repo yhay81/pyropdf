@@ -187,6 +187,18 @@ class Widget:
         self._set(clear=["caption"])
 
     @property
+    def rotation(self) -> int:
+        """Return or set the rotation of the widget's appearance, ``/MK /R``: 0, 90, 180, or 270 degrees."""
+        return self._style()[0][3]
+
+    @rotation.setter
+    def rotation(self, rotation: int) -> None:
+        if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation % 90:
+            msg = f"rotation is a multiple of 90 degrees: {rotation!r}"
+            raise ValueError(msg)
+        self._set(rotation=rotation % 360)
+
+    @property
     def text_color(self) -> Color:
         """Return or set the color of the widget's text, from the ``/DA`` that it draws with."""
         appearance = self._style()[2]
