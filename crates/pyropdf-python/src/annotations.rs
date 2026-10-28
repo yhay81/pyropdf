@@ -303,6 +303,14 @@ impl<'b> Annots<'b> {
         (&self.version, &self.index, self.at)
     }
 
+    /// Returns a reader of the version that the annotations were read in.
+    pub(crate) fn reader(&self) -> Reader<'_> {
+        Reader {
+            version: &self.version,
+            budget: self.budget,
+        }
+    }
+
     /// Returns the object and dictionary of the entry `item`, or `None`
     /// for an entry that is not an annotation dictionary.
     pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
@@ -523,12 +531,12 @@ impl<'b> Annots<'b> {
     }
 
     /// Reads a `/C` or `/IC` array of up to four numbers, empty otherwise.
-    fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
+    pub(crate) fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
         Ok(self.numbers(dict.get(key), 4)?.unwrap_or_default())
     }
 
     /// Reads the border that `/BS`, else `/Border`, describes.
-    fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
+    pub(crate) fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
         if let Some(Value::Dict(style)) = self.resolved(dict.get("BS"))? {
             let width = self
                 .number(style.get("W"))?
@@ -587,9 +595,9 @@ impl<'b> Annots<'b> {
     /// `change` edit the annotation's dictionary and the page's
     /// `/Annots`, and writes both. `change` gets the annotation's
     /// reference and returns whether it changed `/Annots`. With `look`, the
-    /// edit marks the annotation's appearance stale. Returns the
-    /// annotation's object.
-    fn write(
+    /// edit marks the annotation's appearance stale. A refused edit
+    /// changes nothing. Returns the annotation's object.
+    pub(crate) fn write(
         &self,
         transaction: &mut Transaction,
         position: usize,

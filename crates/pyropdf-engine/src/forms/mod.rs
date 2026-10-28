@@ -195,10 +195,24 @@ pub fn settle(
         version: transaction.version(),
         budget,
     };
-    let drawing = match appearance(&reader, widget) {
-        Ok(Some(drawing)) => drawing,
-        Ok(None) | Err(WidgetError::Malformed(_) | WidgetError::Lines) => return Ok(()),
-        Err(WidgetError::Store(error)) => return Err(error),
+    match appearance(&reader, widget) {
+        Ok(Some(drawing)) => write(transaction, number, widget, drawing, budget),
+        Ok(None) | Err(WidgetError::Malformed(_) | WidgetError::Lines) => Ok(()),
+        Err(WidgetError::Store(error)) => Err(error),
+    }
+}
+
+/// Writes `drawing` into the appearances of widget `number`, `widget`.
+pub fn write(
+    transaction: &mut Transaction,
+    number: u32,
+    widget: &Dict,
+    drawing: Drawing,
+    budget: &Budget,
+) -> Result<()> {
+    let reader = Reader {
+        version: transaction.version(),
+        budget,
     };
     let mut appearances = match reader.entry(widget, "AP")?.as_deref() {
         Some(value @ Value::Dict(_)) => match copy_for_edit(value, budget)? {
@@ -325,6 +339,21 @@ enum TextLayout {
 /// comb value with more graphemes than `/MaxLen`, and text that does not
 /// fit, as pylopdf does when it fills the field.
 pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>, WidgetError> {
+    draw(reader, widget, false)
+}
+
+/// Draws every normal appearance of `widget` again after its style
+/// changed, as [`appearance`] draws what it lacks: a check box or radio
+/// button widget gets each state that its normal appearance names, `Off`,
+/// and the state that its `/AS` names, and a pushbutton widget its caption
+/// in place of the appearance it has. A signature widget keeps an
+/// appearance that it has.
+pub fn restyled(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>, WidgetError> {
+    draw(reader, widget, true)
+}
+
+/// Implements [`appearance`] and, with `every`, [`restyled`].
+fn draw(reader: &Reader<'_>, widget: &Dict, every: bool) -> Result<Option<Drawing>, WidgetError> {
     let entries = entries(reader, widget)?;
     let [field_type, flags, value, quadding, max_len] = &entries;
     let flags = integer(flags.as_deref()).unwrap_or(0);
@@ -332,10 +361,11 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
         Some(Value::Name(name)) if name.as_bytes() == b"Tx" => true,
         Some(Value::Name(name)) if name.as_bytes() == b"Ch" => false,
         Some(Value::Name(name)) if name.as_bytes() == b"Btn" && flags & PUSHBUTTON == 0 => {
-            return button_states(reader, widget, flags & RADIO != 0);
+            return button_states(reader, widget, flags & RADIO != 0, every);
         }
         Some(Value::Name(name)) if matches!(name.as_bytes(), b"Btn" | b"Sig") => {
-            if has_normal_stream(reader, widget)? {
+            let keep = !every || name.as_bytes() == b"Sig";
+            if keep && has_normal_stream(reader, widget)? {
                 return Ok(None);
             }
             let style = WidgetStyle::read(reader, widget)?;
@@ -470,23 +500,37 @@ fn drawn(
 }
 
 /// Draws the states that a check box or radio button widget lacks: `Off`,
-/// and the state that its `/AS` names, as a check mark or a dot.
+/// and the state that its `/AS` names, as a check mark or a dot. With
+/// `every`, it draws these and each state of its normal appearance anew.
 fn button_states(
     reader: &Reader<'_>,
     widget: &Dict,
     radio: bool,
+    every: bool,
 ) -> Result<Option<Drawing>, WidgetError> {
     let style = WidgetStyle::read(reader, widget)?;
     let current = match reader.entry(widget, "AS")?.as_deref() {
         Some(Value::Name(state)) => state.clone(),
         _ => Name::from(OFF),
     };
+    let mut named = Vec::new();
+    if every {
+        with_normal_states(reader, widget, |normal| -> Result<()> {
+            for state in normal.keys() {
+                let size = state.as_bytes().len() as u64;
+                reader.budget.charge(LimitCode::MemorySize, size)?;
+                named.push(state.clone());
+            }
+            Ok(())
+        })?
+        .transpose()?;
+    }
     let mut states = Vec::new();
-    for state in [Name::from(OFF), current] {
+    for state in named.into_iter().chain([Name::from(OFF), current]) {
         if states.iter().any(|(drawn, _)| *drawn == state) {
             continue;
         }
-        if has_state(reader, widget, state.as_bytes())? {
+        if !every && has_state(reader, widget, state.as_bytes())? {
             continue;
         }
         let on = state.as_bytes() != OFF.as_bytes();
@@ -596,6 +640,20 @@ fn interactive_form(reader: &Reader<'_>) -> Result<Option<Arc<Value>>> {
         .entry(catalog, "AcroForm")?
         .map(|value| owned(value, reader.budget))
         .transpose()
+}
+
+/// Returns the `/DA` that `widget` draws its text with, as
+/// [`default_appearance`] finds it with the document's interactive form.
+pub fn text_appearance(
+    reader: &Reader<'_>,
+    widget: &Dict,
+) -> std::result::Result<Option<DefaultAppearance>, WidgetError> {
+    let form = interactive_form(reader)?;
+    let form = match form.as_deref() {
+        Some(Value::Dict(form)) => Some(form),
+        _ => None,
+    };
+    default_appearance(reader, widget, form)
 }
 
 /// Returns the `/DA` of a widget: its own, else the nearest of its
