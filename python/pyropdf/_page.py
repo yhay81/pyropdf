@@ -27,6 +27,7 @@ from pyropdf._tables import Table, build_tables
 from pyropdf._text import (
     _DEFAULT_MAX_TEXT_GLYPHS,
     _DEFAULT_MAX_TEXT_SIZE,
+    Chars,
     Layout,
     Unmapped,
     Word,
@@ -41,6 +42,7 @@ from pyropdf._text import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from pyropdf._core import CharColumns
     from pyropdf._document import Document
     from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
@@ -525,7 +527,7 @@ class Page:
             max_size=max_size,
             exact_bboxes=exact_bboxes,
         )
-        _, _, blocks = self._layout(options, chars=False, max_glyphs=max_glyphs, max_size=max_size)
+        _, _, blocks, _ = self._layout(options, chars=False, max_glyphs=max_glyphs, max_size=max_size)
         return build_words(blocks)
 
     def layout(  # noqa: PLR0913 - the text options are all keyword-only
@@ -579,12 +581,60 @@ class Page:
         )
         return build_layout(*self._layout(options, chars=chars, max_glyphs=max_glyphs, max_size=max_size))
 
+    def chars(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        exact_bboxes: bool = False,
+        styles: bool = False,
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> Chars:
+        """Return the chars of the current version of the page as :class:`Chars` columns, in layout order.
+
+        The rows are the chars of :meth:`layout` with ``chars=True`` and the
+        same options, built without a Python object per char: their
+        ``block``, ``line``, and ``span`` columns index that layout, and the
+        row view builds each :class:`Char` on demand. The options are those
+        of :meth:`layout`.
+        """
+        options = text_options(
+            clip=None if clip is None else _clip_box(clip),
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+            exact_bboxes=exact_bboxes,
+            styles=styles,
+        )
+        try:
+            columns, skipped = _core.page_chars(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                options,
+                max_glyphs,
+                max_size,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        _warn_skipped(skipped)
+        return Chars(columns)
+
     def _layout(
         self, options: _TextOptions, *, chars: bool, max_glyphs: int | None, max_size: int | None
-    ) -> tuple[float, float, list[_CoreBlock]]:
-        """Return the core's layout of the page and warn of the glyphs it skipped."""
+    ) -> tuple[float, float, list[_CoreBlock], CharColumns | None]:
+        """Return the core's layout of the page and the columns of its chars, and warn of the glyphs it skipped."""
         try:
-            width, height, blocks, skipped = _core.page_layout(
+            width, height, blocks, skipped, columns = _core.page_layout(
                 self._document._core(),  # noqa: SLF001
                 self._number,
                 self._generation,
@@ -596,7 +646,7 @@ class Page:
         except StaleObjectError as error:
             raise self._stale() from error
         _warn_skipped(skipped)
-        return width, height, blocks
+        return width, height, blocks, columns
 
     @overload
     def search(

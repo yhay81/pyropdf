@@ -738,7 +738,7 @@ def _page_layout(page: Page) -> tuple[TextPageDict, list[Word]]:
         max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS,
         max_size=_DEFAULT_MAX_TEXT_SIZE,
     )
-    width, height, blocks = page._layout(  # noqa: SLF001
+    width, height, blocks, _ = page._layout(  # noqa: SLF001
         options, chars=False, max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS, max_size=_DEFAULT_MAX_TEXT_SIZE
     )
     return build_layout(width, height, blocks).to_dict(), build_words(blocks)
