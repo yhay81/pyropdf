@@ -1,0 +1,14 @@
+# Builds against a krilla checkout with krilla-object-sink.patch and
+# krilla-resources.patch applied, which build.sh prepares under
+# target/krilla-resources/. Not a workspace member.
+[package]
+name = "krilla-resources-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+krilla = { path = "../../../target/krilla-resources/krilla/crates/krilla" }
+pyropdf-store = { path = "../../../crates/pyropdf-store" }
+
+[workspace]
