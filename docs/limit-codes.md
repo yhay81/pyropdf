@@ -22,11 +22,21 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `text_size` | 64 MiB | The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`. |
 | `search_input_size` | 4 KiB | The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8. |
 | `search_hit_count` | 4,096 matches | `Page.search` finds more matches than the call's `max_hits`. |
-| `markdown_output_size` | 64 MiB | The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`. |
+| `text_rule_count` | 4,096 rules | Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers. |
+| `table_cell_count` | 4,096 cells | A candidate table needs more than 4,096 row-column slots. |
+| `table_span_candidate_count` | 65,536 candidates | Reconstructing merged cells in one table examines more than 65,536 candidate spans. |
+| `table_column_count` | 32 columns | Text table detection encounters a row with more than 32 separated columns. |
+| `ocr_layer_word_count` | 4,096 words | An invisible OCR layer has more than 4,096 words. |
+| `ocr_layer_text_size` | 1 MiB | An invisible OCR layer has more than 1 MiB of UTF-8 text. |
+| `ocr_layer_character_count` | 65,534 characters | An invisible OCR layer needs more than 65,534 distinct character IDs. |
+| `ocr_raster_size` | 512 MiB | The raster expanded to RGBA for OCR exceeds 512 MiB. |
+| `ocr_detection_count` | 4,096 regions | OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps. |
+| `ocr_text_size` | 32 MiB | OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering. |
 | `ocr_model_size` | 64 MiB | The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its `max_model_size`. |
 | `ocr_dictionary_entries` | 65,536 entries | The dictionary that `OcrEngine` loads has more lines than the limit. |
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
+| `markdown_output_size` | 64 MiB | The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |
 | `pixmap_output_size` | 64 MiB | Encoding a pixmap writes more bytes than the call's `max_size`. |
 | `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |
@@ -34,10 +44,20 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
 | `embedded_file_size` | 64 MiB | An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`. |
 | `embedded_file_input_size` | 1 MiB | An attachment's name, file name, or description is longer in UTF-8 than 1 MiB. |
+| `annotation_count` | 4,096 entries | A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than 4,096 entries. |
+| `annotation_text_size` | 1 MiB | An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the page for a listing. |
+| `annotation_dash_count` | 32 lengths | An annotation border has more than 32 dash lengths. |
 | `annotation_input_size` | 1 MiB | The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together. |
-| `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges. |
+| `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes. |
+| `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |
+| `named_destination_depth` | 32 levels | The named-destination tree has more than 32 levels. |
 | `named_destination_text_size` | 16 MiB | The names of the document's named destinations are longer than 16 MiB together. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
 | `cancelled` | — | A cancellation token of the operation is cancelled. |
+| `annotation_quad_count` | 4,096 quadrilaterals | A text-markup annotation has more than 4,096 quadrilaterals. |
+| `annotation_point_count` | 65,536 points | An annotation's geometry, including generated squiggly points, has more than 65,536 points. |
+| `annotation_appearance_size` | 16 MiB | One generated annotation appearance contains more than 16 MiB of content. |
+| `annotation_synthesis_count` | 4,096 appearances | One render synthesizes more than 4,096 missing annotation appearances across the document. |
+| `annotation_synthesis_point_count` | 262,144 points | Missing annotation appearances generated for one render contain more than 262,144 path points together. |

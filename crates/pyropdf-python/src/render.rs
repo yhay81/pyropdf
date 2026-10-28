@@ -31,7 +31,7 @@ pub fn render_page_svg(
             })?;
         let bridged = document
             .bridge
-            .get(&version, &index, &budget)
+            .get_for_render(&version, &index, &budget, annotations)
             .map_err(|e| bridge_error(&e))?;
         let svg =
             render::svg(&bridged, at, annotations).map_err(|e| PdfError::new_err(e.to_string()))?;

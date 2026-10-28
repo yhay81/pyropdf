@@ -2,6 +2,8 @@
 //! endings and cloudy borders, as pylopdf draws them.
 
 use super::{Canvas, KAPPA, Paint, ellipse};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::{Error, Result};
 
 /// The line-ending styles of `/LE` (ISO 32000-2 Table 179), in order.
 pub const LINE_ENDINGS: [&str; 10] = [
@@ -17,9 +19,9 @@ pub const LINE_ENDINGS: [&str; 10] = [
     "Slash",
 ];
 
-/// The most bumps that a cloudy border draws; a longer outline spaces them
-/// further apart.
-const MAX_CLOUD_BUMPS: usize = 1_024;
+/// The target tessellation density; each edge still draws at least one
+/// bump. Actual generated points are checked against the operation budget.
+const TARGET_CLOUD_BUMPS: usize = 1_024;
 
 /// Returns the half size of a line ending drawn with stroke `width`.
 #[must_use]
@@ -34,19 +36,19 @@ pub fn cloud_radius(intensity: f64, width: f64) -> f64 {
     4.0f64.mul_add(intensity, width).max(2.0)
 }
 
-/// Returns the path operators and canvas coordinates of a polyline.
-pub(super) fn polyline(
+/// Emits a polyline directly without an input-sized intermediate path.
+fn polyline(
+    canvas: &mut Canvas,
     points: &[(f64, f64)],
     to_canvas: impl Fn((f64, f64)) -> (f64, f64),
-) -> (String, Vec<f64>) {
-    let mut operators = String::with_capacity(points.len() + 1);
-    let mut coordinates = Vec::with_capacity(points.len() * 2 + 2);
+) {
     for (index, &point) in points.iter().enumerate() {
-        operators.push(if index == 0 { 'm' } else { 'l' });
+        if canvas.out.refusal.is_some() {
+            return;
+        }
         let (x, y) = to_canvas(point);
-        coordinates.extend([x, y]);
+        canvas.path(if index == 0 { "m" } else { "l" }, &[x, y]);
     }
-    (operators, coordinates)
 }
 
 /// Draws a square, or the ellipse inscribed in it for a circle, inside the
@@ -59,11 +61,11 @@ pub(super) fn boxed(
     size: (f64, f64),
     insets: [f64; 4],
     intensity: f64,
-) {
+) -> Result<()> {
     let stroke = paint.stroke(0, 0);
     let fill = paint.interior;
     if stroke.is_none() && fill.is_none() {
-        return;
+        return Ok(());
     }
     let [left, top, right, bottom] = insets;
     let bumps = if intensity > 0.0 {
@@ -80,16 +82,21 @@ pub(super) fn boxed(
     let (a0, b0) = (left + inset, top + inset);
     let (a1, b1) = (size.0 - right - inset, size.1 - bottom - inset);
     if !(a1 > a0 && b1 > b0) {
-        return;
+        return Ok(());
     }
-    let (operators, coordinates) = match (circle, bumps > 0.0) {
-        (true, true) => cloud(&ellipse_vertices(a0, b0, a1, b1, bumps), bumps),
-        (true, false) => ("mcccch".to_owned(), ellipse(a0, b0, a1, b1).to_vec()),
-        (false, true) => cloud(&[(a0, b0), (a1, b0), (a1, b1), (a0, b1)], bumps),
-        (false, false) => ("mlllh".to_owned(), vec![a0, b0, a1, b0, a1, b1, a0, b1]),
-    };
-    canvas.path(&operators, &coordinates);
+    let budget = canvas.out.bytes.budget();
+    match (circle, bumps > 0.0) {
+        (true, true) => cloud(
+            canvas,
+            &ellipse_vertices(a0, b0, a1, b1, bumps, budget)?,
+            bumps,
+        )?,
+        (true, false) => canvas.path("mcccch", &ellipse(a0, b0, a1, b1)),
+        (false, true) => cloud(canvas, &[(a0, b0), (a1, b0), (a1, b1), (a0, b1)], bumps)?,
+        (false, false) => canvas.path("mlllh", &[a0, b0, a1, b0, a1, b1, a0, b1]),
+    }
     canvas.draw(fill, stroke.as_ref());
+    Ok(())
 }
 
 /// Draws a line, polygon, polyline, or ink annotation of `subtype` through
@@ -104,47 +111,45 @@ pub(super) fn lines(
     intensity: f64,
     endings: [usize; 2],
     to_canvas: impl Fn((f64, f64)) -> (f64, f64) + Copy,
-) -> bool {
+) -> Result<bool> {
     if subtype == b"Ink" {
         let Some(stroke) = paint.stroke(1, 1) else {
-            return true;
+            return Ok(true);
         };
         for line in lists.iter().filter(|line| !line.is_empty()) {
-            let (mut operators, mut coordinates) = polyline(line, to_canvas);
+            canvas.out.bytes.budget().poll()?;
+            polyline(canvas, line, to_canvas);
             if line.len() == 1 {
                 // A single point draws a dot with the round cap.
-                operators.push('l');
-                coordinates.extend_from_within(..2);
+                let (x, y) = to_canvas(line[0]);
+                canvas.path("l", &[x, y]);
             }
-            canvas.path(&operators, &coordinates);
             canvas.draw(None, Some(&stroke));
         }
-        return true;
+        return Ok(true);
     }
     let Some(vertices) = lists.first().filter(|vertices| vertices.len() >= 2) else {
-        return false;
+        return Ok(false);
     };
     if subtype == b"Polygon" {
         let stroke = paint.stroke(0, 1);
         if stroke.is_none() && paint.interior.is_none() {
-            return true;
+            return Ok(true);
         }
-        let (operators, coordinates) = if intensity > 0.0 && vertices.len() >= 3 {
-            let points: Vec<(f64, f64)> = vertices.iter().copied().map(to_canvas).collect();
-            cloud(&points, cloud_radius(intensity, paint.width))
+        if intensity > 0.0 && vertices.len() >= 3 {
+            let mut points = BudgetVec::new(canvas.out.bytes.budget());
+            points.try_extend(vertices.iter().copied().map(to_canvas))?;
+            cloud(canvas, &points, cloud_radius(intensity, paint.width))?;
         } else {
-            let (mut operators, coordinates) = polyline(vertices, to_canvas);
-            operators.push('h');
-            (operators, coordinates)
-        };
-        canvas.path(&operators, &coordinates);
+            polyline(canvas, vertices, to_canvas);
+            canvas.path("h", &[]);
+        }
         canvas.draw(paint.interior, stroke.as_ref());
-        return true;
+        return Ok(true);
     }
     // A line or polyline, and its two endings.
     if let Some(stroke) = paint.stroke(0, 1) {
-        let (operators, coordinates) = polyline(vertices, to_canvas);
-        canvas.path(&operators, &coordinates);
+        polyline(canvas, vertices, to_canvas);
         canvas.draw(None, Some(&stroke));
     }
     let last = vertices.len() - 1;
@@ -152,9 +157,9 @@ pub(super) fn lines(
         (endings[0], vertices[0], vertices[1]),
         (endings[1], vertices[last], vertices[last - 1]),
     ] {
-        draw_ending(canvas, paint, ending, tip, from, to_canvas);
+        draw_ending(canvas, paint, ending, tip, from, to_canvas)?;
     }
-    true
+    Ok(true)
 }
 
 /// Draws the line ending `ending` at `tip` of the segment that comes from
@@ -166,11 +171,17 @@ fn draw_ending(
     tip: (f64, f64),
     from: (f64, f64),
     to_canvas: impl Fn((f64, f64)) -> (f64, f64),
-) {
+) -> Result<()> {
     let (dx, dy) = (tip.0 - from.0, tip.1 - from.1);
     let length = dx.hypot(dy);
-    if ending == 0 || !(length.is_finite() && length > 0.0) {
-        return;
+    if ending == 0 {
+        return Ok(());
+    }
+    if !length.is_finite() {
+        return Err(Error::malformed("an annotation line length is nonfinite"));
+    }
+    if length <= 0.0 {
+        return Ok(());
     }
     let size = ending_size(paint.width);
     // u points out of the line at the tip, n across it.
@@ -218,45 +229,63 @@ fn draw_ending(
                 );
                 canvas.draw(paint.interior, stroke.as_ref());
             }
-            return;
+            return Ok(());
         }
     };
     let fill = if closed { paint.interior } else { None };
     if fill.is_none() && stroke.is_none() {
-        return;
+        return Ok(());
     }
-    let (mut operators, coordinates) = polyline(&points, |point| point);
+    polyline(canvas, &points, |point| point);
     if closed {
-        operators.push('h');
+        canvas.path("h", &[]);
     }
-    canvas.path(&operators, &coordinates);
     canvas.draw(fill, stroke.as_ref());
+    Ok(())
 }
 
 /// Returns a closed outline through canvas `vertices` drawn as a cloud:
 /// each edge split into chords about twice `radius` long, each chord a
 /// semicircle bulging outward.
-fn cloud(vertices: &[(f64, f64)], radius: f64) -> (String, Vec<f64>) {
+fn cloud(canvas: &mut Canvas, vertices: &[(f64, f64)], radius: f64) -> Result<()> {
+    let budget = canvas.out.bytes.budget();
+    if vertices.is_empty() {
+        return Ok(());
+    }
     let n = vertices.len();
     let edge = |i: usize| (vertices[i], vertices[(i + 1) % n]);
     let length = |((x0, y0), (x1, y1)): ((f64, f64), (f64, f64))| (x1 - x0).hypot(y1 - y0);
-    let perimeter: f64 = (0..n).map(|i| length(edge(i))).sum();
+    let mut perimeter = 0.0;
+    for i in 0..n {
+        budget.poll()?;
+        perimeter += length(edge(i));
+    }
+    if !(perimeter.is_finite() && radius.is_finite()) {
+        return Err(Error::malformed(
+            "a cloudy outline has nonfinite dimensions",
+        ));
+    }
     #[expect(
         clippy::cast_precision_loss,
         reason = "the bump limit is small and exact"
     )]
-    let spacing = (2.0 * radius).max(perimeter / MAX_CLOUD_BUMPS as f64);
+    let spacing = (2.0 * radius).max(perimeter / TARGET_CLOUD_BUMPS as f64);
     // The shoelace sign tells which side of each edge is outside.
+    let scale = vertices
+        .iter()
+        .flat_map(|&(x, y)| [x.abs(), y.abs()])
+        .fold(1.0f64, f64::max);
     let area: f64 = (0..n)
         .map(|i| {
             let ((x0, y0), (x1, y1)) = edge(i);
-            x0.mul_add(y1, -(x1 * y0))
+            (x0 / scale).mul_add(y1 / scale, -((x1 / scale) * (y0 / scale)))
         })
         .sum();
     let side = if area >= 0.0 { 1.0 } else { -1.0 };
-    let mut operators = String::from("m");
-    let mut coordinates = vec![vertices[0].0, vertices[0].1];
+    canvas.path("m", &[vertices[0].0, vertices[0].1]);
+    let mut generated_points = 1usize;
     for i in 0..n {
+        budget.poll()?;
         let ((x0, y0), (x1, y1)) = edge(i);
         let total = length(edge(i));
         if total <= 0.0 {
@@ -264,14 +293,16 @@ fn cloud(vertices: &[(f64, f64)], radius: f64) -> (String, Vec<f64>) {
         }
         let (tx, ty) = ((x1 - x0) / total, (y1 - y0) / total);
         let (nx, ny) = (side * ty, -side * tx);
-        // Rounding up keeps every chord, and so every bump, within `radius`;
-        // the spacing keeps the bumps of one outline within the limit.
+        // Each edge remains complete. Check the actual generated point
+        // count because rounding per edge can exceed the target density.
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             reason = "the count is at least one and at most the bump limit per edge"
         )]
         let bumps = (total / spacing).ceil().max(1.0) as usize;
+        generated_points = generated_points.saturating_add(bumps.saturating_mul(6));
+        budget.check(LimitCode::AnnotationPointCount, generated_points as u64)?;
         #[expect(clippy::cast_precision_loss, reason = "the count is small")]
         let chord = total / bumps as f64;
         let (r, k) = (chord / 2.0, chord / 2.0 * KAPPA);
@@ -281,60 +312,75 @@ fn cloud(vertices: &[(f64, f64)], radius: f64) -> (String, Vec<f64>) {
             let (px, py) = (tx.mul_add(along, x0), ty.mul_add(along, y0));
             let (qx, qy) = (tx.mul_add(chord, px), ty.mul_add(chord, py));
             let (ax, ay) = (
-                nx.mul_add(r, (px + qx) / 2.0),
-                ny.mul_add(r, (py + qy) / 2.0),
+                nx.mul_add(r, px / 2.0 + qx / 2.0),
+                ny.mul_add(r, py / 2.0 + qy / 2.0),
             );
-            operators.push_str("cc");
-            coordinates.extend_from_slice(&[
-                nx.mul_add(k, px),
-                ny.mul_add(k, py),
-                (-tx).mul_add(k, ax),
-                (-ty).mul_add(k, ay),
-                ax,
-                ay,
-                tx.mul_add(k, ax),
-                ty.mul_add(k, ay),
-                nx.mul_add(k, qx),
-                ny.mul_add(k, qy),
-                qx,
-                qy,
-            ]);
+            canvas.path(
+                "cc",
+                &[
+                    nx.mul_add(k, px),
+                    ny.mul_add(k, py),
+                    (-tx).mul_add(k, ax),
+                    (-ty).mul_add(k, ay),
+                    ax,
+                    ay,
+                    tx.mul_add(k, ax),
+                    ty.mul_add(k, ay),
+                    nx.mul_add(k, qx),
+                    ny.mul_add(k, qy),
+                    qx,
+                    qy,
+                ],
+            );
         }
     }
-    operators.push('h');
-    (operators, coordinates)
+    canvas.path("h", &[]);
+    Ok(())
 }
 
 /// Returns the vertices of an ellipse inside a box, spaced about twice
 /// `radius` apart along its outline, so that every bump of its cloud is
 /// alike.
-fn ellipse_vertices(x0: f64, y0: f64, x1: f64, y1: f64, radius: f64) -> Vec<(f64, f64)> {
+fn ellipse_vertices(
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    radius: f64,
+    budget: &Budget,
+) -> Result<BudgetVec<'_, (f64, f64)>> {
     const STEPS: usize = 1_440;
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (cx, cy) = (x0 / 2.0 + x1 / 2.0, y0 / 2.0 + y1 / 2.0);
     let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
     #[expect(clippy::cast_precision_loss, reason = "the steps are few")]
     let angle = |step: f64| std::f64::consts::TAU * step / STEPS as f64;
     let at = |angle: f64| (rx.mul_add(angle.cos(), cx), ry.mul_add(angle.sin(), cy));
-    let mut lengths = Vec::with_capacity(STEPS + 1);
-    lengths.push(0.0);
+    let mut lengths = BudgetVec::new(budget);
+    lengths.try_reserve_exact(STEPS + 1)?;
+    lengths.try_push(0.0)?;
     for step in 1..=STEPS {
         #[expect(clippy::cast_precision_loss, reason = "the steps are few")]
         let ((ax, ay), (bx, by)) = (at(angle((step - 1) as f64)), at(angle(step as f64)));
-        lengths.push(lengths[step - 1] + (bx - ax).hypot(by - ay));
+        budget.poll()?;
+        lengths.try_push(lengths[step - 1] + (bx - ax).hypot(by - ay))?;
     }
     let perimeter = lengths[STEPS];
+    if !perimeter.is_finite() {
+        return Err(Error::malformed("a cloudy ellipse has nonfinite perimeter"));
+    }
     // A little closer than twice the radius, so that no chord needs two bumps.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "the count is clamped to the bump limit"
     )]
-    let count = ((perimeter / (1.9 * radius)).ceil() as usize).clamp(6, MAX_CLOUD_BUMPS);
-    let mut vertices = Vec::with_capacity(count);
+    let count = ((perimeter / (1.9 * radius)).ceil() as usize).clamp(6, TARGET_CLOUD_BUMPS);
+    let mut vertices = BudgetVec::new(budget);
+    vertices.try_reserve_exact(count)?;
     let mut step = 0;
     for i in 0..count {
         #[expect(clippy::cast_precision_loss, reason = "the count is small")]
-        let target = perimeter * i as f64 / count as f64;
+        let target = (perimeter / count as f64) * i as f64;
         while step < STEPS - 1 && lengths[step + 1] < target {
             step += 1;
         }
@@ -344,8 +390,8 @@ fn ellipse_vertices(x0: f64, y0: f64, x1: f64, y1: f64, radius: f64) -> Vec<(f64
         } else {
             0.0
         };
-        #[expect(clippy::cast_precision_loss, reason = "the steps are few")]
-        vertices.push(at(angle(step as f64 + fraction)));
+        budget.poll()?;
+        vertices.try_push(at(angle(step as f64 + fraction)))?;
     }
-    vertices
+    Ok(vertices)
 }

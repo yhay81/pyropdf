@@ -19,6 +19,10 @@ aes = "0.9.3"
 md-5 = "0.11.0"
 sha2 = "0.11.1"
 
+# The Flate encoder of a save that compresses streams (DESIGN.md section
+# 4.4), the version that the binding and hayro already pull in.
+flate2 = "1.1.10"
+
 [dev-dependencies]
 # Property tests of the store's invariants (DESIGN.md F9).
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
