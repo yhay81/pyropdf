@@ -1,21 +1,22 @@
-//! `page.text`, `doc.text`, `page.words`, `page.layout`, `page.search`, and
-//! `page.selection`: the text of pages in reading order, ported from
-//! pylopdf's `extract_text`, `extract_layout`, `search_page`, and
-//! `select_text` in `rust/src/document/extraction.rs` at
+//! `page.text`, `doc.text`, `page.words`, `page.layout`, `page.chars`,
+//! `page.search`, and `page.selection`: the text of pages in reading order,
+//! ported from pylopdf's `extract_text`, `extract_layout`, `search_page`,
+//! and `select_text` in `rust/src/document/extraction.rs` at
 //! 036be111cafe77755db4bb2be17bc70a8f2f9d82.
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::extract::{
-    self, BBox, BlockTuple, Error, QuadTuple, SearchHits, TableTuple, TextOptions, TextPeak,
-    Unmapped,
+    self, BBox, BlockTuple, Error, PageLayout, QuadTuple, SearchHits, TableTuple, TextOptions,
+    TextPeak, Unmapped,
 };
 use pyropdf_store::ErrorKind;
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::value::Reference;
 
+use crate::buffers::CharColumns;
 use crate::document::{_Document, PageKey, PageKind, PageResult};
 use crate::errors::{PdfError, StaleObjectError, limit_error, store_error};
 use crate::pixmap::bridge_error;
@@ -207,9 +208,14 @@ pub fn document_text(
     })
 }
 
+/// The layout of a page as `page_layout` returns it: `(width, height,
+/// blocks, skipped, columns)`, with the columns of the chars when the layout
+/// has them.
+type LayoutTuple = (f64, f64, Vec<BlockTuple>, usize, Option<CharColumns>);
+
 /// Returns the layout of the page whose object is `number` and
-/// `generation`: `(width, height, blocks, skipped)`, each span with its
-/// characters when `chars` is set, with the GIL released. The budgets are
+/// `generation`, each span with its characters when `chars` is set, with
+/// the GIL released, and the columns of those characters. The budgets are
 /// those of [`page_text`], and `max_size` also bounds the layout's strings.
 /// The layout is memoized with what interpreting the page may read.
 #[pyfunction]
@@ -226,7 +232,71 @@ pub fn page_layout(
     chars: bool,
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
-) -> PyResult<(f64, f64, Vec<BlockTuple>, usize)> {
+) -> PyResult<LayoutTuple> {
+    let limits = (max_glyphs, max_size);
+    with_layout(
+        py,
+        document,
+        (number, generation),
+        options,
+        chars,
+        limits,
+        |layout| {
+            let columns = if chars {
+                Some(CharColumns::new(&layout.blocks)?)
+            } else {
+                None
+            };
+            Ok((
+                layout.width,
+                layout.height,
+                layout.blocks.clone(),
+                layout.skipped,
+                columns,
+            ))
+        },
+    )
+}
+
+/// Returns the columns of the characters of the page whose object is
+/// `number` and `generation`, in the order of [`page_layout`] with `chars`,
+/// and the glyphs without Unicode that it left out, with the GIL released
+/// and no Python object per character. It shares the memoized layout.
+#[pyfunction]
+pub fn page_chars(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    options: OptionsTuple,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<(CharColumns, usize)> {
+    let limits = (max_glyphs, max_size);
+    with_layout(
+        py,
+        document,
+        (number, generation),
+        options,
+        true,
+        limits,
+        |layout| Ok((CharColumns::new(&layout.blocks)?, layout.skipped)),
+    )
+}
+
+/// Calls `then` with the memoized layout of the page `(number,
+/// generation)`, computing it with `options`, chars when `chars` is set, and
+/// the budgets `(max_glyphs, max_size)` where the memo has none, with the
+/// GIL released.
+fn with_layout<T: Send>(
+    py: Python<'_>,
+    document: &_Document,
+    (number, generation): (u32, u16),
+    options: OptionsTuple,
+    chars: bool,
+    (max_glyphs, max_size): (Option<u64>, Option<u64>),
+    then: impl FnOnce(&PageLayout) -> PyResult<T> + Send,
+) -> PyResult<T> {
     let key = text_key(options);
     let options = text_options(options)?;
     let (version, index, budget) = crate::pages::index(document)?;
@@ -273,12 +343,7 @@ pub fn page_layout(
             },
         )?;
         match &*result {
-            PageResult::Layout(layout) => Ok((
-                layout.width,
-                layout.height,
-                layout.blocks.clone(),
-                layout.skipped,
-            )),
+            PageResult::Layout(layout) => then(layout),
             _ => Err(mismatch()),
         }
     })
