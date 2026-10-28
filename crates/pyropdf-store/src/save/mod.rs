@@ -10,6 +10,7 @@ mod pack;
 mod prune;
 mod raw;
 mod recode;
+mod renumber;
 
 #[cfg(test)]
 mod tests;
@@ -25,6 +26,7 @@ use crate::security::{self, Encryption, Handler};
 use crate::value::{Array, Bytes, Dict, PdfString, Reference, Stream, Value};
 use crate::version::{Slot, Version};
 use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
+use renumber::Renumbering;
 
 pub use base::FileBase;
 pub use recode::Streams;
@@ -50,14 +52,24 @@ pub enum Refusal {
     RepairedBase,
     /// Encryption is implemented separately in issue #28.
     Encryption,
-    /// Pruning, decompressing, another cross-reference form, and object
-    /// streams rewrite the original file, whose objects and cross-reference
-    /// form an incremental save keeps.
+    /// Pruning, decompressing, another cross-reference form, object
+    /// streams, and renumbering rewrite the original file, whose objects,
+    /// numbers, and cross-reference form an incremental save keeps.
     FullSaveOption,
 }
 
 /// The result of saving to an output writer.
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl Error {
+    /// Adds `context` to a store error, as [`StoreError::context`] does.
+    fn context(self, context: impl fmt::Display) -> Self {
+        match self {
+            Self::Store(error) => Self::Store(error.context(context)),
+            error => error,
+        }
+    }
+}
 
 impl From<StoreError> for Error {
     fn from(error: StoreError) -> Self {
@@ -87,7 +99,7 @@ impl fmt::Display for Error {
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
                 Refusal::FullSaveOption => {
-                    "prune, decompress, a new cross-reference form, and object streams require a full save"
+                    "prune, decompress, a new cross-reference form, object streams, and renumbering require a full save"
                 }
             }),
         }
@@ -173,6 +185,13 @@ pub struct Options {
     /// the level of [`Streams::Compress`], or 6, and with
     /// [`Streams::Decompress`] not at all.
     pub object_streams: bool,
+    /// Numbers the objects that the save writes 1, 2, 3, and so on in the
+    /// order of their numbers, with generation 0, and the objects that it
+    /// adds after them. Each reference follows its object, and a reference
+    /// to an object that the save does not write becomes null, as ISO
+    /// 32000-2 section 7.3.10 reads it. The cross-reference data then lists
+    /// no free number but 0.
+    pub renumber: bool,
 }
 
 /// The form of the cross-reference data that a save writes.
@@ -226,7 +245,7 @@ pub fn full_with(
     encryption: Option<&Encryption>,
     options: Options,
 ) -> Result<u64> {
-    let mode = Mode::of(version, encryption, budget)?;
+    let mut mode = Mode::of(version, encryption, budget)?;
     budget.poll()?;
     let mut numbers = BudgetVec::new(budget);
     version.base().numbers(&mut numbers)?;
@@ -255,6 +274,18 @@ pub fn full_with(
         let encrypt = !matches!(mode, Mode::New { .. });
         prune::free_unreachable(version, &mut rows, encrypt, budget)?;
     }
+    let renumbering = if options.renumber {
+        let renumbering = Renumbering::new(&rows, budget)?;
+        if let Mode::New { number, .. } = &mut mode {
+            // The new /Encrypt dictionary follows the renumbered objects.
+            let mut after = renumbering.len() + 1;
+            *number = pack::take(&mut after)?;
+        }
+        Some(renumbering)
+    } else {
+        None
+    };
+    let renumbering = renumbering.as_ref();
     let stream = options.object_streams || options.cross_reference.stream(version);
     let mut out = Output::new(target, budget, 0, options.renew_id);
     let header = version
@@ -281,9 +312,10 @@ pub fn full_with(
         Some(Value::Reference(root)) => Some(root.number()),
         _ => None,
     };
-    // The objects that the save adds take the numbers after the version's
-    // and the new /Encrypt's.
-    let next = version.next_number() + u64::from(matches!(mode, Mode::New { .. }));
+    // The objects that the save adds take the numbers after the version's,
+    // or the renumbered objects', and the new /Encrypt's.
+    let size = renumbering.map_or_else(|| version.next_number(), |r| r.len() + 1);
+    let next = size + u64::from(matches!(mode, Mode::New { .. }));
     let level = level(options.streams);
     let mut packer = options
         .object_streams
@@ -294,11 +326,11 @@ pub fn full_with(
     };
     let mut place = |row: &mut Row, out: &mut Output<'_>| {
         if let Some(packer) = &mut packer
-            && packer.pack(version, row, encrypt, out, &mode)?
+            && packer.pack(version, row, encrypt, renumbering, out, &mode)?
         {
             return Ok(());
         }
-        write_object(version, row, out, &mode, options.streams)
+        write_object(version, row, renumbering, out, &mode, options.streams)
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
@@ -308,6 +340,9 @@ pub fn full_with(
         if Some(row.number) != root {
             place(row, &mut out)?;
         }
+    }
+    if let Some(renumbering) = renumbering {
+        rows = renumbering.rows(&rows, budget)?;
     }
     if let Mode::New { dict, number, .. } = &mode {
         // The new /Encrypt dictionary, which is never encrypted, takes the
@@ -336,12 +371,14 @@ pub fn full_with(
     }
     let ending = Ending {
         previous: None,
+        size,
         renew_id: options.renew_id,
         stream: if stream {
             Some((pack::take(&mut next)?, level))
         } else {
             None
         },
+        renumbering,
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
@@ -361,10 +398,10 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
 
 /// Writes the update as [`incremental`] does, compressing the streams that
 /// it writes as [`Streams::Compress`] asks and renewing `/ID` as
-/// [`Options::renew_id`] asks. The objects of the original file and the
-/// form of its cross-reference data stay as they are, so `prune`,
-/// [`Streams::Decompress`], another [`CrossReference`], and
-/// `object_streams` are refused before writing.
+/// [`Options::renew_id`] asks. The objects of the original file, their
+/// numbers, and the form of its cross-reference data stay as they are, so
+/// `prune`, [`Streams::Decompress`], another [`CrossReference`],
+/// `object_streams`, and `renumber` are refused before writing.
 pub fn incremental_with(
     version: &Version,
     target: &mut dyn Write,
@@ -375,6 +412,7 @@ pub fn incremental_with(
         || options.streams == Streams::Decompress
         || options.cross_reference != CrossReference::Base
         || options.object_streams
+        || options.renumber
     {
         return Err(Error::Refused(Refusal::FullSaveOption));
     }
@@ -406,7 +444,7 @@ pub fn incremental_with(
         budget.poll()?;
         if number != 0 {
             let mut row = row(version, number);
-            write_object(version, &mut row, &mut out, &mode, options.streams)?;
+            write_object(version, &mut row, None, &mut out, &mode, options.streams)?;
             rows.try_push(row)?;
         }
     }
@@ -420,12 +458,14 @@ pub fn incremental_with(
     let mut next = version.next_number();
     let ending = Ending {
         previous: Some(previous as u64),
+        size: version.next_number(),
         renew_id: options.renew_id,
         stream: if CrossReference::Base.stream(version) {
             Some((pack::take(&mut next)?, level(options.streams)))
         } else {
             None
         },
+        renumbering: None,
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
@@ -529,6 +569,7 @@ fn row(version: &Version, number: u32) -> Row {
 fn write_object(
     version: &Version,
     row: &mut Row,
+    renumbering: Option<&Renumbering<'_>>,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
     streams: Streams,
@@ -536,6 +577,23 @@ fn write_object(
     out.budget.poll()?;
     if row.offset.is_none() {
         return Ok(());
+    }
+    if let Some(renumbering) = renumbering {
+        let number = renumbering.number(row.number)?;
+        let reference = Reference::new(row.number, row.generation);
+        let plain = renumbering.bytes(version, reference, streams, out.budget)?;
+        // The keys of an encrypted object derive from its new number.
+        let bytes = match (mode, mode.handler()) {
+            (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
+            (_, Some(handler)) => {
+                security::encrypt_bytes(handler, Reference::new(number, 0), &plain, out.budget)?
+            }
+            (_, None) => plain,
+        };
+        row.offset = Some(out.offset()?);
+        out.display(format_args!("{number} 0 obj\n"))?;
+        out.bytes(&bytes)?;
+        return out.bytes(b"\nendobj\n");
     }
     let reference = Reference::new(row.number, row.generation);
     let budget = out.budget;
@@ -563,17 +621,13 @@ fn write_object(
             security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
         }
     };
-    let bytes =
-        match recode(version, reference, streams, mode, budget).map_err(|error| match error {
-            Error::Store(error) => Error::Store(context(error)),
-            error => error,
-        })? {
-            // A compressed stream replaces the data only where it is shorter.
-            Some(recoded) if streams == Streams::Decompress || recoded.len() < bytes.len() => {
-                recoded
-            }
-            _ => bytes,
-        };
+    let bytes = match recode(version, reference, streams, mode, budget).map_err(|error| {
+        error.context(format!("saving object {} {}", row.number, row.generation))
+    })? {
+        // A compressed stream replaces the data only where it is shorter.
+        Some(recoded) if streams == Streams::Decompress || recoded.len() < bytes.len() => recoded,
+        _ => bytes,
+    };
     row.offset = Some(out.offset()?);
     out.display(format_args!("{} {} obj\n", row.number, row.generation))?;
     out.bytes(&bytes)?;
@@ -612,14 +666,20 @@ fn recode(
 }
 
 /// How [`finish`] ends a save.
-struct Ending {
+struct Ending<'a> {
     /// The offset of the base's last cross-reference section, for an
     /// incremental save.
     previous: Option<u64>,
+    /// The `/Size` of a save that writes no cross-reference stream and no
+    /// new encryption.
+    size: u64,
     renew_id: bool,
     /// The object number of the cross-reference stream and the Flate level
     /// of its data, for a save that writes one instead of a table.
     stream: Option<(u32, Option<u8>)>,
+    /// The renumbering of a save that renumbers, which the trailer's
+    /// references follow.
+    renumbering: Option<&'a Renumbering<'a>>,
 }
 
 fn finish(
@@ -627,7 +687,7 @@ fn finish(
     rows: &mut [Row],
     out: &mut Output<'_>,
     mode: &Mode<'_>,
-    ending: Ending,
+    ending: Ending<'_>,
 ) -> Result<()> {
     let mut next_free = 0;
     for row in rows.iter_mut().rev() {
@@ -642,7 +702,7 @@ fn finish(
     let xref = out.offset()?;
     let mut size = match mode {
         Mode::New { number, .. } => u64::from(*number) + 1,
-        _ => version.next_number(),
+        _ => ending.size,
     };
     if let Some((number, _)) = ending.stream {
         // The cross-reference stream takes the last number.
@@ -653,18 +713,23 @@ fn finish(
         out.bytes(b"trailer\n<<")?;
     }
     if let Mode::New { id, number, .. } = mode {
-        trailer(version.trailer(), out, &[b"Encrypt", b"ID"])?;
+        trailer(
+            version.trailer(),
+            out,
+            &[b"Encrypt", b"ID"],
+            ending.renumbering,
+        )?;
         out.display(format_args!(" /Encrypt {number} 0 R"))?;
         // The keys derive from the first element.
         let first = Value::String(PdfString::hexadecimal(id.as_slice()));
         let second = out.digest().unwrap_or_else(|| first.clone());
         identifier(out, first, second)?;
     } else if let Some(first) = renews(version, ending.renew_id) {
-        trailer(version.trailer(), out, &[b"ID"])?;
+        trailer(version.trailer(), out, &[b"ID"], ending.renumbering)?;
         let digest = out.digest().expect("a renewing save keeps a digest");
         identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
     } else {
-        trailer(version.trailer(), out, &[])?;
+        trailer(version.trailer(), out, &[], ending.renumbering)?;
     }
     out.display(format_args!(" /Size {size}"))?;
     if let Some(previous) = ending.previous {
@@ -806,7 +871,12 @@ fn identifier(out: &mut Output<'_>, first: Value, second: Value) -> Result<()> {
     out.bytes(&bytes)
 }
 
-fn trailer(dict: &Dict, out: &mut Output<'_>, replaced: &[&[u8]]) -> Result<()> {
+fn trailer(
+    dict: &Dict,
+    out: &mut Output<'_>,
+    replaced: &[&[u8]],
+    renumbering: Option<&Renumbering<'_>>,
+) -> Result<()> {
     for (name, value) in dict.iter() {
         if replaced.contains(&name.as_bytes()) {
             continue;
@@ -833,7 +903,10 @@ fn trailer(dict: &Dict, out: &mut Output<'_>, replaced: &[&[u8]]) -> Result<()> 
             .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)?;
         write::value(&mut bytes, &Value::Name(name.clone()))?;
         bytes.try_push(b' ')?;
-        write::value(&mut bytes, value)?;
+        match renumbering {
+            Some(renumbering) => write::value(&mut bytes, &renumbering.copy(value, out.budget)?)?,
+            None => write::value(&mut bytes, value)?,
+        }
         out.bytes(b" ")?;
         out.bytes(&bytes)?;
     }

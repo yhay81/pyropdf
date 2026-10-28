@@ -399,3 +399,68 @@ def test_cross_reference_options_are_checked() -> None:
         doc.to_bytes(object_streams=True, cross_reference="table")
     with pytest.raises(TypeError, match="object_streams must be a bool"):
         doc.to_bytes(object_streams=1)  # ty: ignore[invalid-argument-type]
+
+
+def _content(doc: pyropdf.Document) -> tuple[int, list[str], dict[str, bytes]]:
+    """Return the page count, the text of each page, and the attachments of ``doc``."""
+    attachments = {name: attachment.read() for name, attachment in doc.attachments.items()}
+    return len(doc.pages), [page.text(unmapped="glyph_id") for page in doc.pages], attachments
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_a_renumbered_corpus_save_numbers_objects_one_through_n(name: str, tmp_path: Path) -> None:
+    source = pyropdf.open(ASSETS / name)
+    count = len(source.objects)
+    data = source.to_bytes(renumber=True)
+    saved = pyropdf.open(data)
+    assert not saved.is_repaired
+    numbers = sorted(saved.objects)
+    # A cross-reference stream follows the renumbered objects.
+    assert numbers[:count] == list(range(1, count + 1))
+    assert len(numbers) == count + (_form(data) == "stream")
+    assert all(generation == 0 for _, generation, _ in saved._core()._objects())  # noqa: SLF001
+    assert _content(saved) == _content(source)
+    path = tmp_path / "renumbered.pdf"
+    path.write_bytes(data)
+    _require_qpdf()
+    assert qpdf_findings(path) - qpdf_findings(ASSETS / name) == set()
+
+
+def test_a_renumbered_save_follows_each_reference_with_the_other_options() -> None:
+    doc = pyropdf.open(build_pdf(["Hello", "World"]))
+    doc.attachments.add("a.txt", b"data")
+    numbers = list(doc.objects)
+    del doc.attachments["a.txt"]
+    doc.attachments.add("b.txt", b"other")
+    data = doc.to_bytes(renumber=True, prune=True, object_streams=True, compress=True)
+    saved = pyropdf.open(data)
+    # The objects that the edits unlinked leave, and the rest close up.
+    assert len(saved.objects) < len(numbers) + 3
+    assert sorted(saved.objects) == list(range(1, len(saved.objects) + 1))
+    assert _content(saved) == _content(doc)
+    # The document in memory keeps its numbers.
+    assert list(doc.objects)[: len(numbers)] == numbers
+
+
+@pytest.mark.parametrize("encryption", ["new", "kept"])
+@pytest.mark.parametrize("name", ["user-r4-rc4-128.pdf", "user-aes-256-object-streams.pdf"])
+def test_an_encrypted_renumbered_save_reopens_with_its_password(name: str, encryption: str, tmp_path: Path) -> None:
+    doc = pyropdf.open(ENCRYPTED / name, password="userpw")
+    # qpdf opens the source and the save with the same password.
+    new = Encryption(user_password="userpw", owner_password="owner")
+    data = doc.to_bytes(encryption=new if encryption == "new" else Encryption.KEEP, renumber=True)
+    reopened = pyropdf.open(data, password="userpw")
+    assert not reopened.is_repaired
+    assert max(reopened.objects) == len(reopened.objects)
+    assert _content(reopened) == _content(doc)
+    path = tmp_path / "renumbered.pdf"
+    path.write_bytes(data)
+    assert _new_qpdf_warnings(path, ENCRYPTED / name, "userpw") == set()
+
+
+def test_renumber_requires_a_full_save_and_a_bool() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    with pytest.raises(ValueError, match="renumber requires a full save"):
+        doc.to_bytes(incremental=True, renumber=True)
+    with pytest.raises(TypeError, match="renumber must be a bool"):
+        doc.to_bytes(renumber=1)  # ty: ignore[invalid-argument-type]
