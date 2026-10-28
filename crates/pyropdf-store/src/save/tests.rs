@@ -680,3 +680,64 @@ fn a_compressed_save_round_trips_the_corpus_values_except_stream_encoding() {
         );
     }
 }
+
+#[test]
+fn saves_renew_the_second_identifier_of_edits_and_incremental_saves_refuse_rewrites() {
+    let doc = open(fs::read(&corpus()[0]).unwrap());
+    let Some(Value::Array(read)) = doc.current().trailer().get("ID").cloned() else {
+        panic!("the corpus file has no /ID");
+    };
+    let unedited = doc.current();
+    let edited = edited(&doc, 7);
+    let options = Options {
+        renew_id: true,
+        ..Options::default()
+    };
+    for incremental_mode in [false, true] {
+        let save = if incremental_mode {
+            incremental_with
+        } else {
+            full_with_plain
+        };
+        let mut bytes = Vec::new();
+        save(&edited, &mut bytes, &Budget::default(), options).unwrap();
+        let mut again = Vec::new();
+        save(&edited, &mut again, &Budget::default(), options).unwrap();
+        assert_eq!(bytes, again);
+        let Some(Value::Array(id)) = open(bytes).current().trailer().get("ID").cloned() else {
+            panic!("no /ID");
+        };
+        assert_eq!(id.get(0), read.get(0));
+        assert!(matches!(id.get(1), Some(Value::String(second)) if second.as_bytes().len() == 16));
+        assert_ne!(id.get(1), read.get(1));
+        // An unedited save writes /ID as read.
+        let mut bytes = Vec::new();
+        save(&unedited, &mut bytes, &Budget::default(), options).unwrap();
+        let reread = open(bytes).current().trailer().get("ID").cloned();
+        assert_eq!(reread, Some(Value::Array(read.clone())));
+    }
+    for options in [
+        Options {
+            prune: true,
+            ..Options::default()
+        },
+        Options {
+            streams: Streams::Decompress,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(
+            incremental_with(&edited, &mut Vec::new(), &Budget::default(), options),
+            Err(Error::Refused(Refusal::FullSaveOption))
+        ));
+    }
+}
+
+fn full_with_plain(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    options: Options,
+) -> Result<u64> {
+    full_with(version, target, budget, None, options)
+}
