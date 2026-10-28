@@ -12,7 +12,6 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
-use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::Reader;
 use pyropdf_engine::forms::{self as widgets, WidgetError};
@@ -59,6 +58,11 @@ const MAX_STATE_BYTES: usize = 1024 * 1024;
 /// The UTF-8 bytes of the value that setting a field writes
 /// (`form_field_input_size`).
 const MAX_INPUT_BYTES: usize = 1024 * 1024;
+/// The most appearance states of the widgets of one button field.
+const MAX_BUTTON_STATES: usize = 8_192;
+/// The most distinct appearance states that setting a check box to `True`
+/// reads.
+const MAX_BUTTON_NAMES: usize = 4_096;
 /// The `/Ff` bit of radio buttons.
 const RADIO: i64 = 1 << 15;
 /// The keys of a radio button that a repaired group gives to its new
@@ -1756,6 +1760,10 @@ fn shows_text(kind: &str) -> bool {
     matches!(kind, "text" | "combobox" | "listbox")
 }
 
+fn is_button(kind: &str) -> bool {
+    matches!(kind, "checkbox" | "radio")
+}
+
 fn is_winansi(text: &str, budget: &Budget) -> PyResult<bool> {
     for (index, character) in text.chars().enumerate() {
         if index % 1024 == 0 {
@@ -1768,14 +1776,35 @@ fn is_winansi(text: &str, budget: &Budget) -> PyResult<bool> {
     Ok(true)
 }
 
-/// Sets the value of field `id`, a text or choice field, to `value`, and
-/// draws its widgets through the appearance settler, with those of the
-/// other text and choice fields that have no appearance yet; then sets the
-/// form's `/NeedAppearances` when a widget is left without one. Refuses
-/// what pylopdf refuses, leaving the document as it was.
+/// The appearance states of each widget of a button field, by widget.
+type States = Vec<(Id, Vec<Name>)>;
+
+/// A value that setting a field writes: text, or a check box's state.
+#[derive(FromPyObject)]
+pub enum FillValue {
+    Flag(bool),
+    Text(String),
+}
+
+/// Sets the value of field `id` to `value`, and draws its widgets through
+/// the appearance settler, with those of the other fields that have no
+/// appearance yet: a text or choice field shows its text, and a check box
+/// or radio button selects the state that `value` names in each widget
+/// that has it, or else in its first widget. `True` names a button's first
+/// state that is not `Off`, or `Yes`, and `False` names `Off`. Then sets
+/// the form's `/NeedAppearances` when a widget is left without an
+/// appearance. Refuses what pylopdf refuses, leaving the document as it
+/// was.
 #[pyfunction]
-pub fn form_field_fill(py: Python<'_>, document: &_Document, id: Id, value: &str) -> PyResult<()> {
-    if value.len() > MAX_INPUT_BYTES {
+pub fn form_field_fill(
+    py: Python<'_>,
+    document: &_Document,
+    id: Id,
+    value: FillValue,
+) -> PyResult<()> {
+    if let FillValue::Text(text) = &value
+        && text.len() > MAX_INPUT_BYTES
+    {
         return Err(LimitError::new_err((
             "form_field_input_size",
             format!("form field value exceeds the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
@@ -1789,7 +1818,7 @@ pub fn form_field_fill(py: Python<'_>, document: &_Document, id: Id, value: &str
     };
     document.edit(py, |transaction, budget| {
         let savepoint = transaction.savepoint();
-        let result = fill(transaction, id, value, budget, cache, draft);
+        let result = fill(transaction, id, &value, budget, cache, draft);
         if result.is_err() {
             transaction.rollback(savepoint);
         }
@@ -1800,7 +1829,7 @@ pub fn form_field_fill(py: Python<'_>, document: &_Document, id: Id, value: &str
 fn fill(
     transaction: &mut Transaction,
     id: Id,
-    value: &str,
+    value: &FillValue,
     budget: &Budget,
     cache: &FillCache,
     draft: bool,
@@ -1815,16 +1844,12 @@ fn fill(
     let mut reads = Reads::new(&before, budget);
     let form = &index.topology.form;
     let field = form.field(id).ok_or_else(|| stale(id))?;
+    let button = is_button(field.kind);
     match field.kind {
-        kind if shows_text(kind) => {}
+        kind if shows_text(kind) || button => {}
         "pushbutton" => {
             return Err(PdfError::new_err(
                 "pushbutton fields do not have fillable values",
-            ));
-        }
-        "checkbox" | "radio" => {
-            return Err(PyNotImplementedError::new_err(
-                "setting the value of a check box or radio button is not supported yet",
             ));
         }
         "signature" => {
@@ -1834,16 +1859,38 @@ fn fill(
         }
         _ => return Err(PdfError::new_err("unsupported field type")),
     }
+    let states = if button {
+        button_states(&before, field, budget)?
+    } else {
+        Vec::new()
+    };
+    let on = match value {
+        FillValue::Flag(true) => on_state(&states, budget)?,
+        _ => None,
+    };
+    let text = match value {
+        FillValue::Text(text) => text.as_str(),
+        FillValue::Flag(false) => widgets::OFF,
+        FillValue::Flag(true) => on.as_deref().unwrap_or("Yes"),
+    };
     let Some(original) = object(&mut reads, id)? else {
         return Err(stale(id));
     };
     let Value::Dict(mut dict) = copy_for_edit(&original, budget).map_err(store)? else {
         return Err(stale(id));
     };
-    dict.insert(Name::from("V"), encode_value(value, budget)?);
+    if button {
+        plan(&states, text).map_err(limit)?;
+        dict.insert(Name::from("V"), Value::Name(Name::from(text)));
+    } else {
+        dict.insert(Name::from("V"), encode_value(text, budget)?);
+    }
     transaction
         .write(id.0, &Value::Dict(dict), budget)
         .map_err(store)?;
+    if button {
+        select(transaction, &states, text, budget)?;
+    }
     let after_write = transaction.snapshot();
     let changes = before
         .changes(&after_write, budget)
@@ -1854,6 +1901,7 @@ fn fill(
     // The widgets of the field are drawn or refused with the reason; those
     // of other fields that have no appearance are drawn where they can be.
     let mut marks = BudgetVec::new(budget);
+    let mut buttons = BudgetVec::new(budget);
     {
         let version = transaction.version();
         let reader = Reader { version, budget };
@@ -1869,16 +1917,17 @@ fn fill(
             let Some(other) = form.field(missing.field) else {
                 return Err(PdfError::new_err("appearance index names a missing field"));
             };
-            if other.name == field.name || !shows_text(other.kind) {
+            if other.name == field.name {
                 continue;
             }
-            let Ok(at) = form.objects.binary_search_by_key(&other.id, |&(id, _)| id) else {
-                return Err(PdfError::new_err("appearance index names a missing field"));
-            };
-            let key = u32::try_from(form.objects[at].1).map_err(|_| edges_error())?;
-            let Some(value) = index.values.leaves.get(key) else {
-                return Err(PdfError::new_err("value index names a missing field"));
-            };
+            if is_button(other.kind) {
+                buttons.try_push(other.id).map_err(|e| limit_error(&e))?;
+                continue;
+            }
+            if !shows_text(other.kind) {
+                continue;
+            }
+            let value = indexed_value(&index, form, other.id)?;
             if let Some(value) = value
                 && !is_winansi(value, budget)?
             {
@@ -1888,6 +1937,31 @@ fn fill(
             if let Some(dict) = widget_of(version, widget, budget)?
                 && let Value::Dict(dict) = &*dict
                 && !widgets::has_normal_stream(&reader, dict).map_err(store)?
+            {
+                marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
+            }
+        }
+    }
+    // A button field without an appearance selects the state of its value
+    // in each widget, which then draws the states that it lacks; a field
+    // whose states exceed a limit refuses the fill, as pylopdf does.
+    let mut buttons = buttons.into_vec();
+    buttons.sort_unstable();
+    buttons.dedup();
+    for other in buttons {
+        let Some(other) = form.field(other) else {
+            return Err(PdfError::new_err("appearance index names a missing field"));
+        };
+        let states = button_states(transaction.version(), other, budget)?;
+        let value = indexed_value(&index, form, other.id)?.unwrap_or(widgets::OFF);
+        plan(&states, value).map_err(limit)?;
+        for (widget, state) in select(transaction, &states, value, budget)? {
+            let version = transaction.version();
+            let reader = Reader { version, budget };
+            if let Some(dict) = widget_of(version, widget, budget)?
+                && let Value::Dict(dict) = &*dict
+                && !(widgets::has_state(&reader, dict, widgets::OFF.as_bytes()).map_err(store)?
+                    && widgets::has_state(&reader, dict, state.as_bytes()).map_err(store)?)
             {
                 marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
             }
@@ -1911,6 +1985,172 @@ fn fill(
     set_need_appearances(transaction, !complete, budget)?;
     transaction.retain_derived_version(Arc::clone(&before));
     Ok(())
+}
+
+/// Returns the value that the index records for field `id` of `form`.
+fn indexed_value<'i>(index: &'i FillIndex, form: &Form, id: Id) -> PyResult<Option<&'i str>> {
+    let Ok(at) = form.objects.binary_search_by_key(&id, |&(id, _)| id) else {
+        return Err(PdfError::new_err("appearance index names a missing field"));
+    };
+    let key = u32::try_from(form.objects[at].1).map_err(|_| edges_error())?;
+    let Some(value) = index.values.leaves.get(key) else {
+        return Err(PdfError::new_err("value index names a missing field"));
+    };
+    Ok(value.as_deref())
+}
+
+/// Returns the appearance states of each widget of button `field`, charged
+/// to `budget`, refusing more than 8,192 entries or 1 MiB of names in all.
+fn button_states(version: &Version, field: &Field, budget: &Budget) -> PyResult<States> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let reader = Reader { version, budget };
+    let (mut entries, mut bytes) = (0, 0);
+    let mut states = BudgetVec::new(budget);
+    for &widget in &field.widgets {
+        let Some(dict) = widget_of(version, widget, budget)? else {
+            continue;
+        };
+        let Value::Dict(dict) = &*dict else {
+            continue;
+        };
+        let names = widgets::with_normal_states(&reader, dict, |normal| {
+            let mut names = BudgetVec::new(budget);
+            entries += normal.len();
+            if entries > MAX_BUTTON_STATES {
+                return Err(limit(format!(
+                    "AcroForm button states exceed the {MAX_BUTTON_STATES}-entry safety limit"
+                )));
+            }
+            for name in normal.keys() {
+                bytes += name.as_bytes().len();
+                if bytes > MAX_STATE_BYTES {
+                    return Err(limit(state_bytes_error()));
+                }
+                budget
+                    .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                names.try_push(name.clone()).map_err(|e| limit_error(&e))?;
+            }
+            Ok(names.into_vec())
+        })
+        .map_err(store)?
+        .transpose()?
+        .unwrap_or_default();
+        states
+            .try_push((widget, names))
+            .map_err(|e| limit_error(&e))?;
+    }
+    Ok(states.into_vec())
+}
+
+fn state_bytes_error() -> String {
+    format!(
+        "AcroForm encoded button-state name text exceeds the {MAX_STATE_BYTES}-byte safety limit"
+    )
+}
+
+/// Returns the first state of `states` that is not `Off`, refusing more
+/// than 4,096 names.
+fn on_state(states: &States, budget: &Budget) -> PyResult<Option<String>> {
+    let mut seen = HashSet::new();
+    let mut first = None;
+    for name in states.iter().flat_map(|(_, names)| names) {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        if seen.contains(name) {
+            continue;
+        }
+        if seen.len() == MAX_BUTTON_NAMES {
+            return Err(limit(format!(
+                "AcroForm button states exceed the {MAX_BUTTON_NAMES}-name safety limit"
+            )));
+        }
+        budget
+            .charge(LimitCode::MemorySize, (64 + 2 * size_of::<&Name>()) as u64)
+            .map_err(|e| limit_error(&e))?;
+        seen.try_reserve(1)
+            .map_err(|_| limit_error(&pyropdf_store::LimitExceeded::new(LimitCode::MemorySize)))?;
+        seen.insert(name);
+        if first.is_none() && name.as_bytes() != widgets::OFF.as_bytes() {
+            first = Some(String::from_utf8_lossy(name.as_bytes()).into_owned());
+        }
+    }
+    Ok(first)
+}
+
+/// Returns the state that each widget of `states` selects for `value`.
+fn selected<'s>(states: &'s States, value: &'s str) -> impl Iterator<Item = (Id, &'s str)> {
+    let known = states
+        .iter()
+        .any(|(_, names)| names.iter().any(|name| name.as_bytes() == value.as_bytes()));
+    states
+        .iter()
+        .enumerate()
+        .map(move |(index, (widget, names))| {
+            let chosen = value != widgets::OFF
+                && (names.iter().any(|name| name.as_bytes() == value.as_bytes())
+                    || (!known && index == 0));
+            (*widget, if chosen { value } else { widgets::OFF })
+        })
+}
+
+/// Refuses a selection of `value` that would give the widgets more than
+/// 8,192 states, or 1 MiB of names, with the states that it draws.
+fn plan(states: &States, value: &str) -> Result<(), String> {
+    let mut entries: usize = states.iter().map(|(_, names)| names.len()).sum();
+    let mut bytes: usize = states
+        .iter()
+        .flat_map(|(_, names)| names)
+        .map(|name| name.as_bytes().len())
+        .sum();
+    for ((_, names), (_, state)) in states.iter().zip(selected(states, value)) {
+        let on = (state != widgets::OFF).then_some(state);
+        for state in std::iter::once(widgets::OFF).chain(on) {
+            if names.iter().any(|name| name.as_bytes() == state.as_bytes()) {
+                continue;
+            }
+            entries += 1;
+            if entries > MAX_BUTTON_STATES {
+                return Err(format!(
+                    "AcroForm button state update exceeds the {MAX_BUTTON_STATES}-entry safety limit"
+                ));
+            }
+            bytes += state.len();
+            if bytes > MAX_STATE_BYTES {
+                return Err(state_bytes_error());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Sets each widget's `/AS` to the state that it selects for `value`, and
+/// returns the states.
+fn select<'s>(
+    transaction: &mut Transaction,
+    states: &'s States,
+    value: &'s str,
+    budget: &Budget,
+) -> PyResult<Vec<(Id, &'s str)>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let mut chosen = BudgetVec::new(budget);
+    for (widget, state) in selected(states, value) {
+        if let Some(original) = widget_of(transaction.version(), widget, budget)?
+            && let Value::Dict(dict) = &*original
+            && !matches!(dict.get("AS"), Some(Value::Name(current)) if current.as_bytes() == state.as_bytes())
+        {
+            let Value::Dict(mut dict) = copy_for_edit(&original, budget).map_err(store)? else {
+                unreachable!("a copied dictionary remains a dictionary");
+            };
+            dict.insert(Name::from("AS"), Value::Name(Name::from(state)));
+            transaction
+                .write(widget.0, &Value::Dict(dict), budget)
+                .map_err(store)?;
+        }
+        chosen
+            .try_push((widget, state))
+            .map_err(|e| limit_error(&e))?;
+    }
+    Ok(chosen.into_vec())
 }
 
 /// Sets the form's `/NeedAppearances` to `value` where the form dictionary

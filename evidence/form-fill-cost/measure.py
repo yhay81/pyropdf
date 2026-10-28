@@ -13,6 +13,8 @@ Each row reports:
   the other text and choice widgets that have no appearance yet.
 - one fill: the best of seven later fills of that field, as the pylopdf
   script times them.
+- check box: the best of seven fills of the first check box, alternately
+  checked and cleared.
 """
 
 from __future__ import annotations
@@ -32,8 +34,8 @@ def main() -> None:
     form, filler = Path(sys.argv[1]), Path(sys.argv[2])
     print(f"- Python {platform.python_version()} on {platform.system()} {platform.machine()}")  # noqa: T201
     print()  # noqa: T201
-    print("| Pages | Objects | First fill | One fill |")  # noqa: T201
-    print("| ---: | ---: | ---: | ---: |")  # noqa: T201
+    print("| Pages | Objects | First fill | One fill | Check box |")  # noqa: T201
+    print("| ---: | ---: | ---: | ---: | ---: |")  # noqa: T201
     for copies in (0, 4, 16):
         doc = pyropdf.open(form)
         for _ in range(copies):
@@ -48,8 +50,15 @@ def main() -> None:
             start = time.perf_counter()
             field.value = f"value {round_}"
             times.append(time.perf_counter() - start)
+        box = next(field for field in doc.form.values() if field.type == pyropdf.FieldType.CHECKBOX)
+        checks = []
+        for round_ in range(ROUNDS):
+            start = time.perf_counter()
+            box.value = round_ % 2 == 0
+            checks.append(time.perf_counter() - start)
         print(  # noqa: T201
-            f"| {len(doc.pages):,} | {len(doc.objects):,} | {first * 1e3:.2f} ms | {min(times) * 1e3:.2f} ms |"
+            f"| {len(doc.pages):,} | {len(doc.objects):,} | {first * 1e3:.2f} ms | {min(times) * 1e3:.2f} ms"
+            f" | {min(checks) * 1e3:.2f} ms |"
         )
 
 
