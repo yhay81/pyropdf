@@ -173,6 +173,14 @@ impl<'b> Tree<'_, 'b> {
             Some(tree) => leaves(reads, at, "ParentTree", tree, "Nums", marked.as_ref())?,
             None => BudgetVec::new(budget),
         };
+        // A root that is the tree's only leaf; both walks read it whole.
+        let single = match root.get("ParentTree") {
+            Some(tree) => matches!(
+                resolve(reads, None, tree)?,
+                Some((_, Value::Dict(node))) if node.get("Kids").is_none()
+            ),
+            None => false,
+        };
         if marked.is_some()
             && let Some(tree) = root.get("ParentTree")
             && !holds(&parent_leaves, &dropped, budget)?
@@ -199,13 +207,32 @@ impl<'b> Tree<'_, 'b> {
             }
         }
         walk.plan_references(reads, edits)?;
+        let mut goes = BudgetVec::new(budget);
         for leaf in parent_leaves.iter() {
-            walk.pairs(reads, edits, leaf, |reads, walk, key, value| {
+            walk.goes(reads, leaf, &mut goes, |reads, walk, key, value| {
                 if matches!(key, Value::Integer(key) if keys.is_dropped(*key)) {
                     return Ok(true);
                 }
                 walk.names_only_removed(reads, value)
             })?;
+        }
+        // A parent tree that would keep no pair leaves the root, as an
+        // empty `/Nums` is no valid number tree.
+        if single && !goes.is_empty() && !goes.contains(&false) {
+            at.apply(
+                reads,
+                walk.index,
+                edits,
+                Step::Key("ParentTree".into()),
+                Rule::RemoveEntry,
+            )?;
+        } else {
+            let mut goes = goes.iter().copied();
+            for leaf in parent_leaves.iter() {
+                walk.pairs(reads, edits, leaf, |_, _, _, _| {
+                    Ok(goes.next() == Some(true))
+                })?;
+            }
         }
         for leaf in id_leaves.iter() {
             walk.pairs(reads, edits, leaf, |reads, walk, _, value| {
@@ -1376,6 +1403,22 @@ impl<'b> Walk<'_, 'b> {
     }
 
     /// Plans the removal of the pairs of `leaf` that `goes` selects.
+    /// Pushes onto `out` whether each pair of `leaf` goes, in order.
+    fn goes(
+        &self,
+        reads: &mut Reads<'b>,
+        leaf: &Leaf<'b>,
+        out: &mut BudgetVec<'_, bool>,
+        mut goes: impl FnMut(&mut Reads<'b>, &Self, &Value, &Value) -> Result<bool>,
+    ) -> Result<()> {
+        let mut items = leaf.items.iter();
+        while let (Some(key), Some(value)) = (items.next(), items.next()) {
+            self.budget.poll()?;
+            out.try_push(goes(reads, self, key, value)?)?;
+        }
+        Ok(())
+    }
+
     fn pairs(
         &self,
         reads: &mut Reads<'b>,

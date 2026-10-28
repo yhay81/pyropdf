@@ -23,6 +23,7 @@ Intended differences from pylopdf:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -424,3 +425,13 @@ def test_structure_aliasing_a_removed_page_refuses_atomically(where: str) -> Non
     with pytest.raises(pyropdf.MalformedPdfError, match="alias"):
         del doc.pages[1:2]
     assert doc.to_bytes() == before
+
+
+def test_deleting_every_tagged_page_drops_the_parent_tree() -> None:
+    doc = pyropdf.open(Path(__file__).parent / "assets" / "pdfua" / "pdfua-1.pdf")
+    doc.pages.new((200, 300))
+    del doc.pages[0]
+    for saved in (doc, pyropdf.open(doc.to_bytes()), pyropdf.open(doc.to_bytes(incremental=True))):
+        root = saved.catalog["StructTreeRoot"]
+        assert "ParentTree" not in root
+        assert root["ParentTreeNextKey"] == 1
