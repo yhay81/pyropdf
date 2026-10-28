@@ -170,7 +170,7 @@ def test_deleting_a_page_removes_its_structure_content(edit: str) -> None:
     _assert_object(objects, 24, b"<</S/Div/P 11 0 R/K[<</Type/MCR/Pg 3 0 R/MCID 2>>]>>")
     _assert_object(objects, 27, b"<</S/Link/P 11 0 R/K[<</Type/OBJR/Obj 28 0 R/Pg 3 0 R>>]>>")
     _assert_object(objects, 30, b"<</Nums[0[12 0 R 14 0 R 24 0 R] 2[18 0 R] 3 16 0 R 6 27 0 R]>>")
-    _assert_object(objects, 32, b"<</Limits[(pa)(span)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
+    _assert_object(objects, 32, b"<</Limits[(pa)(pc)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
 
     reopened = pyropdf.open(saved)
     texts = [page.text() for page in reopened.pages]
@@ -188,7 +188,7 @@ def test_selecting_a_page_twice_removes_the_dropped_content_and_copies_the_kept(
         assert number not in objects, number
     _assert_references_resolve(objects)
     _assert_object(objects, 14, b"<</S/Sect/P 11 0 R/Pg 3 0 R/K[1]>>")
-    _assert_object(objects, 32, b"<</Limits[(pa)(span)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
+    _assert_object(objects, 32, b"<</Limits[(pa)(pc)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
     kept = b"12 0 R 14 0 R 16 0 R 18 0 R 24 0 R 27 0 R"
     assert _compact(objects[11]).startswith(_compact(b"<</S/Document/P 10 0 R/K[" + kept))
     copy = doc.pages[1]
@@ -213,7 +213,7 @@ def test_deleting_every_page_but_one_keeps_the_root() -> None:
     _assert_object(objects, 11, b"<</S/Document/P 10 0 R/K[18 0 R]>>")
     assert b"/StructTreeRoot 10 0 R" in objects[1]
     _assert_object(objects, 30, b"<</Nums[2[18 0 R]]>>")
-    _assert_object(objects, 32, b"<</Limits[(pa)(span)]/Names[(pc) 18 0 R]>>")
+    _assert_object(objects, 32, b"<</Limits[(pc)(pc)]/Names[(pc) 18 0 R]>>")
     assert {3, 4, 20, 21, 25, 28}.isdisjoint(objects)
 
 
@@ -341,7 +341,7 @@ def test_elements_that_only_the_lookup_trees_name_are_walked() -> None:
     _assert_references_resolve(objects)
     assert {4, 13, 15, 17, 21, 23, 25, 26}.isdisjoint(objects)
     _assert_object(objects, 30, b"<</Nums[0[12 0 R 14 0 R 24 0 R] 2[18 0 R] 3 16 0 R 6 27 0 R]>>")
-    _assert_object(objects, 32, b"<</Limits[(pa)(span)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
+    _assert_object(objects, 32, b"<</Limits[(pa)(pc)]/Names[(pa) 12 0 R(pc) 18 0 R]>>")
 
 
 def test_remaining_elements_lose_references_to_removed_elements() -> None:
