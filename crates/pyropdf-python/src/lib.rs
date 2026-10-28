@@ -45,7 +45,9 @@ mod _core {
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
-    use super::document::{_Document, page_result_counts, probe, web_limits};
+    use super::document::{
+        _Document, document_header_version, page_result_counts, probe, web_limits,
+    };
     #[pymodule_export]
     use super::errors::{
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,

@@ -1204,7 +1204,6 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
     let version = document.reading()?;
     Ok(version
         .stale()
-        .iter()
         .filter(|mark| mark.structure == Structure::Appearance)
         .map(|mark| mark.number)
         .collect())
