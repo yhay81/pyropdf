@@ -22,6 +22,7 @@
 //! and never follows them, so reference chains and cycles cost nothing.
 
 mod copy;
+mod form_impact;
 mod labels;
 mod navigation;
 mod roles;
@@ -41,6 +42,7 @@ use crate::version::table::Table;
 use crate::version::{ChangeSet, Version};
 
 pub use copy::copy_for_edit;
+pub use form_impact::affected_form_objects;
 pub use labels::{Labels, relabel};
 pub use roles::Role;
 pub use rules::{Edits, Rule, unreferenced};
