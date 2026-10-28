@@ -1,0 +1,302 @@
+"""field.scripts and widget.scripts: JavaScript actions, stored and removed, never run.
+
+Ported from pylopdf ebb01d3c's ``tests/test_form_scripts.py``. Intended
+differences:
+
+- pyropdf has no core function for scripts, so the core's refusal of an
+  unknown trigger is the mapping's refusal of an ``/AA`` key, and its size
+  check the mapping's.
+- pyropdf never renumbers objects, so a saved mapping goes stale only when
+  its document closes.
+"""
+
+from __future__ import annotations
+
+from typing import Any, cast
+
+import pytest
+
+import pyropdf
+from pyropdf import PushButton, ScriptTrigger, TextField
+
+
+def build_raw_pdf(objects: dict[int, str]) -> bytes:
+    """Return a PDF of ``objects`` by number; absent numbers below the highest are free entries."""
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += f"{number} 0 obj\n{objects[number]}\nendobj\n".encode("latin-1")
+    size = max(objects) + 1
+    xref = len(out)
+    out += f"xref\n0 {size}\n0000000000 65535 f \n".encode()
+    for number in range(1, size):
+        out += f"{offsets[number]:010} 00000 n \n".encode() if number in offsets else b"0000000000 65535 f \n"
+    out += f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
+
+
+def _form() -> pyropdf.Document:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    page.widgets.add(TextField("total", (20, 20, 200, 40)))
+    page.widgets.add(PushButton("go", (220, 20, 280, 40), caption="Go"))
+    return doc
+
+
+def test_field_scripts_are_set_listed_and_removed() -> None:
+    doc = _form()
+    total = doc.form["total"]
+    assert dict(total.scripts) == {}
+
+    total.scripts[ScriptTrigger.FORMAT] = 'AFNumber_Format(2, 0, 0, 0, "", true);'
+    total.scripts[ScriptTrigger.KEYSTROKE] = 'AFNumber_Keystroke(2, 0, 0, 0, "", true);'
+    total.scripts[ScriptTrigger.CALCULATE] = "event.value = 1 + 2;"
+    total.scripts[cast("Any", "validate")] = "event.rc = true;"
+
+    assert list(total.scripts) == [
+        ScriptTrigger.KEYSTROKE,
+        ScriptTrigger.FORMAT,
+        ScriptTrigger.VALIDATE,
+        ScriptTrigger.CALCULATE,
+    ]
+    assert total.scripts[ScriptTrigger.CALCULATE] == "event.value = 1 + 2;"
+    assert list(doc.catalog["AcroForm"]["CO"]) == [total.obj]
+    assert total.obj["AA"]["F"]["S"] == "JavaScript"
+    reopened = pyropdf.open(doc.to_bytes()).form["total"]
+    assert len(reopened.scripts) == 4
+
+    del total.scripts[ScriptTrigger.CALCULATE]
+    assert ScriptTrigger.CALCULATE not in total.scripts
+    assert "CO" not in doc.catalog["AcroForm"]
+    for trigger in (ScriptTrigger.FORMAT, ScriptTrigger.KEYSTROKE, ScriptTrigger.VALIDATE):
+        del total.scripts[trigger]
+    assert len(total.scripts) == 0
+    assert "AA" not in total.obj
+    with pytest.raises(KeyError):
+        del total.scripts[ScriptTrigger.FORMAT]
+
+
+def test_widget_scripts_hold_the_widget_triggers_and_the_action() -> None:
+    doc = _form()
+    button = doc.pages[0].widgets[1]
+    field_widget = doc.pages[0].widgets[0]
+
+    button.scripts[ScriptTrigger.ACTIVATE] = 'app.alert("Submitted");'
+    field_widget.scripts[ScriptTrigger.FOCUS] = "console.println('in');"
+    doc.form["total"].scripts[ScriptTrigger.FORMAT] = "event.value = event.value;"
+
+    assert dict(button.scripts) == {ScriptTrigger.ACTIVATE: 'app.alert("Submitted");'}
+    assert button.obj["A"]["JS"].text == 'app.alert("Submitted");'
+    # A field merged with its widget holds both kinds of trigger in one /AA.
+    assert dict(field_widget.scripts) == {ScriptTrigger.FOCUS: "console.println('in');"}
+    assert list(doc.form["total"].scripts) == [ScriptTrigger.FORMAT]
+    with pytest.raises(ValueError, match="not a trigger of this widget"):
+        button.scripts[ScriptTrigger.FORMAT] = "x"
+    with pytest.raises(ValueError, match="not a trigger of this field"):
+        doc.form["total"].scripts[ScriptTrigger.ACTIVATE] = "x"
+    with pytest.raises(TypeError, match="a script is a str"):
+        button.scripts[ScriptTrigger.UP] = cast("Any", 5)
+    with pytest.raises(pyropdf.LimitError) as raised:
+        button.scripts[ScriptTrigger.UP] = "x" * (1024 * 1024 + 1)
+    assert raised.value.code == "script_size"
+    del button.scripts[ScriptTrigger.ACTIVATE]
+    assert "A" not in button.obj
+
+
+def test_scripts_of_other_producers_are_read() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Annots [4 0 R] >>",
+                4: (
+                    "<< /FT /Tx /T (a) /Type /Annot /Subtype /Widget /Rect [10 10 90 30] "
+                    "/AA << /F << /S /JavaScript /JS 5 0 R >> /K << /S /URI /URI (http://e.test) >> "
+                    "/Bl 6 0 R >> >>"
+                ),
+                5: "<< /Length 20 >>\nstream\nevent.value = 'x';  \nendstream",
+                6: "<< /S /JavaScript /JS (blur\\(\\);) >>",
+            }
+        )
+    )
+
+    field = doc.form["a"]
+
+    assert dict(field.scripts) == {ScriptTrigger.FORMAT: "event.value = 'x';  "}
+    assert dict(doc.pages[0].widgets[0].scripts) == {ScriptTrigger.BLUR: "blur();"}
+    # Setting one trigger copies an indirect /AA into the field.
+    field.scripts[ScriptTrigger.VALIDATE] = "v();"
+    assert set(field.scripts) == {ScriptTrigger.FORMAT, ScriptTrigger.VALIDATE}
+
+
+def test_the_mapping_refuses_unknown_triggers() -> None:
+    doc = _form()
+    scripts = doc.form["total"].scripts
+    with pytest.raises(ValueError, match="'Fo' is not a valid ScriptTrigger"):
+        scripts[cast("Any", "Fo")] = "x"
+    with pytest.raises(pyropdf.LimitError):
+        scripts[ScriptTrigger.FORMAT] = "x" * (1024 * 1024 + 1)
+
+
+def test_an_indirect_calculation_order_keeps_its_fields() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R] /CO 6 0 R >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Annots [4 0 R 5 0 R] >>",
+                4: (
+                    "<< /FT /Tx /T (a) /Type /Annot /Subtype /Widget /Rect [10 10 90 30] "
+                    "/AA << /C << /S /JavaScript /JS (event.value = 1;) >> >> >>"
+                ),
+                5: "<< /FT /Tx /T (b) /Type /Annot /Subtype /Widget /Rect [10 40 90 60] >>",
+                6: "[4 0 R]",
+            }
+        )
+    )
+
+    doc.form["b"].scripts[ScriptTrigger.CALCULATE] = "event.value = 2;"
+
+    assert list(doc.catalog["AcroForm"]["CO"]) == [doc.form["a"].obj, doc.form["b"].obj]
+
+
+def test_replacing_a_calculation_preserves_its_position() -> None:
+    doc = _form()
+    doc.pages[0].widgets.add(TextField("other", (20, 60, 200, 80)))
+    total = doc.form["total"]
+    other = doc.form["other"]
+    total.scripts[ScriptTrigger.CALCULATE] = "event.value = 1;"
+    other.scripts[ScriptTrigger.CALCULATE] = "event.value = 2;"
+
+    total.scripts[ScriptTrigger.CALCULATE] = "event.value = 3;"
+
+    assert list(doc.catalog["AcroForm"]["CO"]) == [total.obj, other.obj]
+
+
+def test_splitting_a_merged_field_keeps_widget_actions_on_the_widget() -> None:
+    doc = _form()
+    first = doc.pages[0].widgets[0]
+    first.scripts[ScriptTrigger.FOCUS] = "focus();"
+    doc.form["total"].scripts[ScriptTrigger.FORMAT] = "format();"
+    doc.form["total"].scripts[ScriptTrigger.CALCULATE] = "calculate();"
+
+    second = doc.pages[0].widgets.add(TextField("total", (20, 60, 200, 80)))
+
+    assert dict(first.scripts) == {ScriptTrigger.FOCUS: "focus();"}
+    assert dict(second.scripts) == {}
+    assert dict(doc.form["total"].scripts) == {
+        ScriptTrigger.FORMAT: "format();",
+        ScriptTrigger.CALCULATE: "calculate();",
+    }
+    assert list(doc.catalog["AcroForm"]["CO"]) == [doc.form["total"].obj]
+
+
+def test_utf16_script_streams_are_decoded_as_text() -> None:
+    doc = _form()
+    source = "event.value = '日本語';"
+    stream = doc.objects.add_stream(b"\xfe\xff" + source.encode("utf-16-be"))
+    doc.form["total"].obj["AA"] = {"F": {"S": pyropdf.Name("JavaScript"), "JS": doc.objects[stream]}}
+
+    assert doc.form["total"].scripts[ScriptTrigger.FORMAT] == source
+
+
+def test_saved_script_mappings_validate_their_field_handle() -> None:
+    doc = _form()
+    scripts = doc.form["total"].scripts
+    scripts[ScriptTrigger.FORMAT] = "format();"
+    doc.close()
+
+    with pytest.raises(pyropdf.DocumentClosedError):
+        list(scripts)
+
+
+@pytest.mark.parametrize("widget", [False, True])
+def test_script_writes_cannot_make_the_mapping_exceed_its_read_limit(*, widget: bool) -> None:
+    doc = _form()
+    scripts = doc.pages[0].widgets[0].scripts if widget else doc.form["total"].scripts
+    first, second = (
+        (ScriptTrigger.FOCUS, ScriptTrigger.BLUR) if widget else (ScriptTrigger.FORMAT, ScriptTrigger.KEYSTROKE)
+    )
+    scripts[first] = "x" * 600_000
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        scripts[second] = "y" * 600_000
+
+    assert caught.value.code == "script_size"
+    assert dict(scripts) == {first: "x" * 600_000}
+
+
+def test_a_unicode_script_at_the_utf8_limit_round_trips() -> None:
+    doc = _form()
+    source = "x" * (1024 * 1024 - 2) + "é"
+
+    doc.form["total"].scripts[ScriptTrigger.FORMAT] = source
+
+    assert doc.form["total"].scripts[ScriptTrigger.FORMAT] == source
+    assert pyropdf.open(doc.to_bytes()).form["total"].scripts[ScriptTrigger.FORMAT] == source
+
+
+def test_a_calculation_and_its_order_undo_as_one_step() -> None:
+    doc = _form()
+    total = doc.form["total"]
+    steps = doc.history.position
+
+    total.scripts[ScriptTrigger.CALCULATE] = "event.value = 1;"
+
+    assert doc.history.position == steps + 1
+    doc.history.undo()
+    assert dict(total.scripts) == {}
+    assert "CO" not in doc.catalog["AcroForm"]
+
+
+def test_a_long_script_is_refused_before_it_is_encoded() -> None:
+    doc = _form()
+    total = doc.form["total"]
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        total.scripts[ScriptTrigger.FORMAT] = "x" * (1024 * 1024 + 1)
+
+    assert caught.value.code == "script_size"
+    assert dict(total.scripts) == {}
+
+
+def test_script_writes_in_a_transaction_roll_back_together() -> None:
+    doc = _form()
+    total = doc.form["total"]
+    before = doc.to_bytes()
+
+    def write_and_fail() -> None:
+        with doc.transaction("scripts"):
+            total.scripts[ScriptTrigger.CALCULATE] = "event.value = 1;"
+            assert list(doc.catalog["AcroForm"]["CO"]) == [total.obj]
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        write_and_fail()
+    assert dict(total.scripts) == {}
+    assert doc.to_bytes() == before
+
+
+def test_a_removed_script_is_checked_in_its_transaction() -> None:
+    doc = _form()
+    total = doc.form["total"]
+    scripts = total.scripts
+    scripts[ScriptTrigger.FORMAT] = "AFNumber_Format(2);"
+    # Another handle removes the script after this mapping was made.
+    del doc.form["total"].scripts[ScriptTrigger.FORMAT]
+
+    with pytest.raises(KeyError):
+        del scripts[ScriptTrigger.FORMAT]
+
+
+def test_a_script_write_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_form().to_bytes(), limits=pyropdf.DocumentLimits(cancellation=token))
+    total = doc.form["total"]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        total.scripts[ScriptTrigger.FORMAT] = "AFNumber_Format(2);"
+    assert caught.value.code == "cancelled"

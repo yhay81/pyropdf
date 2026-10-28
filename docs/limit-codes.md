@@ -51,6 +51,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `form_field_input_size` | 1 MiB | The value that setting `Field.value` writes is longer than 1 MiB in UTF-8. |
 | `form_default_appearance_size` | 4 KiB | A form widget's inherited default appearance is longer than 4,096 bytes. |
 | `form_field_parent_depth` | 64 levels | A form widget's field parent chain contains more than 64 existing fields. |
+| `script_size` | 1 MiB | A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written. |
 | `text_line_count` | 4,096 lines | The text that a form field's appearance draws lays out in more than 4,096 lines. |
 | `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes. |
 | `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |

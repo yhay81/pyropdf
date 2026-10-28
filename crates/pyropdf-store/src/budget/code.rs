@@ -138,6 +138,9 @@ pub enum LimitCode {
     /// A form widget's field parent chain contains more than 64 existing
     /// fields.
     FormFieldParentDepth,
+    /// A form script, or the scripts of one field or widget together, are
+    /// longer than 1 MiB in UTF-8, read or written.
+    ScriptSize,
     /// The text that a form field's appearance draws lays out in more than
     /// 4,096 lines.
     TextLineCount,
@@ -195,7 +198,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 66] = [
+    pub const ALL: [Self; 67] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -244,6 +247,7 @@ impl LimitCode {
         Self::FormFieldInputSize,
         Self::FormDefaultAppearanceSize,
         Self::FormFieldParentDepth,
+        Self::ScriptSize,
         Self::TextLineCount,
         Self::NamedDestinationCount,
         Self::NamedDestinationEdgeCount,
@@ -316,6 +320,7 @@ impl LimitCode {
             Self::FormFieldInputSize => "form_field_input_size",
             Self::FormDefaultAppearanceSize => "form_default_appearance_size",
             Self::FormFieldParentDepth => "form_field_parent_depth",
+            Self::ScriptSize => "script_size",
             Self::TextLineCount => "text_line_count",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
@@ -390,6 +395,7 @@ impl LimitCode {
             Self::FormFieldInputSize => "the form field value is too long",
             Self::FormDefaultAppearanceSize => "the form default appearance is too long",
             Self::FormFieldParentDepth => "the form field parent chain is too deep",
+            Self::ScriptSize => "the form script is too long",
             Self::TextLineCount => "the text has too many lines",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
@@ -466,6 +472,7 @@ impl LimitCode {
             Self::FormFieldInputSize => Some("bytes"),
             Self::FormDefaultAppearanceSize => Some("bytes"),
             Self::FormFieldParentDepth => Some("levels"),
+            Self::ScriptSize => Some("bytes"),
             Self::TextLineCount => Some("lines"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationEdgeCount => Some("edges"),
@@ -540,6 +547,7 @@ impl LimitCode {
             Self::FormFieldInputSize => Some(1_048_576),
             Self::FormDefaultAppearanceSize => Some(4_096),
             Self::FormFieldParentDepth => Some(64),
+            Self::ScriptSize => Some(1_048_576),
             Self::TextLineCount => Some(4_096),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationEdgeCount => Some(131_072),

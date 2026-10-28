@@ -314,6 +314,12 @@ unit = "levels"
 default = 64
 reached = "A form widget's field parent chain contains more than 64 existing fields."
 
+[codes.script_size]
+message = "the form script is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written."
+
 [codes.text_line_count]
 message = "the text has too many lines"
 unit = "lines"

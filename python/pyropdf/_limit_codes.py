@@ -58,6 +58,7 @@ LimitCode: TypeAlias = Literal[
     "form_field_input_size",
     "form_default_appearance_size",
     "form_field_parent_depth",
+    "script_size",
     "text_line_count",
     "named_destination_count",
     "named_destination_edge_count",
@@ -179,6 +180,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "form_field_input_size": "The value that setting `Field.value` writes is longer than 1 MiB in UTF-8.",
         "form_default_appearance_size": "A form widget's inherited default appearance is longer than 4,096 bytes.",
         "form_field_parent_depth": "A form widget's field parent chain contains more than 64 existing fields.",
+        "script_size": (
+            "A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or "
+            "written."
+        ),
         "text_line_count": "The text that a form field's appearance draws lays out in more than 4,096 lines.",
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
