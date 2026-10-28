@@ -38,11 +38,6 @@ const MAX_LOOKUP_TREE_DEPTH: u64 = 32;
 /// a longer acyclic chain refuses instead of hiding structure content.
 const MAX_REFERENCE_DEPTH: usize = 32;
 
-/// The most objects between a removed page or an annotation that leaves
-/// and the element that refers to it: a marked-content or object
-/// reference, an annotation, and an array.
-const MAX_HOPS: usize = 3;
-
 /// How much of the structure tree the rules read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Reach {
@@ -240,18 +235,18 @@ fn affected<'b>(
     let mut pending = BudgetVec::new(budget);
     for &page in removed {
         for &referrer in index.referrers(page) {
-            pending.try_push((referrer, 0))?;
+            pending.try_push(referrer)?;
         }
     }
     for (annotation, ()) in annotations.listed.iter() {
         if annotations.leaves(annotation) {
-            pending.try_push((annotation, 0))?;
+            pending.try_push(annotation)?;
         }
     }
     for &link in annotations.links.iter() {
-        pending.try_push((link, 0))?;
+        pending.try_push(link)?;
     }
-    while let Some((number, hops)) = pending.pop() {
+    while let Some(number) = pending.pop() {
         budget.poll()?;
         if number == root || affected.get(number).is_some() {
             continue;
@@ -260,7 +255,7 @@ fn affected<'b>(
             continue;
         };
         let through = match &**object.value() {
-            Value::Array(_) => true,
+            Value::Array(_) | Value::Reference(_) => true,
             Value::Dict(dict) if is_element(dict) => {
                 affected.insert(number, (), budget)?;
                 seeds.try_push(number)?;
@@ -272,10 +267,10 @@ fn affected<'b>(
             }
             _ => false,
         };
-        if through && hops < MAX_HOPS {
+        if through {
             affected.insert(number, (), budget)?;
             for &referrer in index.referrers(number) {
-                pending.try_push((referrer, hops + 1))?;
+                pending.try_push(referrer)?;
             }
         }
     }
@@ -301,17 +296,47 @@ fn affected<'b>(
     Ok((affected, seeds))
 }
 
-/// Returns whether the object `number` is an array.
-fn is_array(reads: &mut Reads<'_>, number: u32) -> Result<bool> {
-    Ok(readable(reads, number)?.is_some_and(|object| matches!(**object.value(), Value::Array(_))))
+/// Finds owners through array and reference objects, including alias chains.
+/// The visited table and work list are budgeted; cycles visit each object once.
+fn container_referrers<'b>(
+    reads: &mut Reads<'b>,
+    index: &References,
+    numbers: &[u32],
+) -> Result<BudgetVec<'b, u32>> {
+    let budget = reads.budget();
+    let mut seen = Table::new();
+    let mut pending = BudgetVec::new(budget);
+    let mut owners = BudgetVec::new(budget);
+    for &number in numbers {
+        pending.try_extend_from_slice(index.referrers(number))?;
+    }
+    while let Some(number) = pending.pop() {
+        budget.poll()?;
+        if seen.get(number).is_some() {
+            continue;
+        }
+        seen.insert(number, (), budget)?;
+        let Some(object) = readable(reads, number)? else {
+            continue;
+        };
+        if matches!(&**object.value(), Value::Array(_) | Value::Reference(_)) {
+            pending.try_extend_from_slice(index.referrers(number))?;
+        } else {
+            owners.try_push(number)?;
+        }
+    }
+    Ok(owners)
 }
 
-/// Returns whether `dict` is a structure element: a structure type, and a
-/// parent, kids, or a page, which an action's `/S` has none of.
+/// Uses the whole walk's permissive element classification, with a
+/// structural entry to distinguish unrelated actions that also have /S.
 fn is_element(dict: &Dict) -> bool {
-    matches!(dict.get("S"), Some(Value::Name(_)))
-        && matches!(type_of(dict), None | Some(b"StructElem"))
-        && ["P", "K", "Pg"].iter().any(|key| dict.get(key).is_some())
+    dict.get("S").is_some()
+        && !is_aliasing(dict)
+        && !matches!(type_of(dict), Some(b"MCR" | b"OBJR"))
+        && ["P", "K", "Pg", "Ref"]
+            .iter()
+            .any(|key| dict.get(key).is_some())
 }
 
 /// Where a value is: the object that holds it and the path to it there.
@@ -797,16 +822,20 @@ impl<'b> Walk<'_, 'b> {
     /// without reading it: an object that it does not read, under an
     /// element whose own content stays, which no kid inherits.
     fn skips(&self, frame: &Frame<'_>, number: u32) -> bool {
-        !self.reads(number) && self.states.get(number).is_none() && !self.dropped(frame.page)
+        !self.reads(number)
+            && !is_in(self.removed, number)
+            && self.states.get(number).is_none()
+            && !self.dropped(frame.page)
     }
 
     /// Records that the walk of the affected elements might plan otherwise
     /// than the walk of the whole tree when another object refers to the
     /// array `number` too.
-    fn shares(&mut self, number: u32) {
-        if self.affected.is_some() && self.index.referrers(number).len() > 1 {
+    fn shares(&mut self, reads: &mut Reads<'b>, number: u32) -> Result<()> {
+        if self.affected.is_some() && container_referrers(reads, self.index, &[number])?.len() > 1 {
             self.consistent = false;
         }
+        Ok(())
     }
 
     /// Walks the elements, not walked yet, that refer to a removed element,
@@ -815,19 +844,26 @@ impl<'b> Walk<'_, 'b> {
     fn referring(&mut self, reads: &mut Reads<'b>, edits: &mut Edits<'_>) -> Result<()> {
         let mut gone = BudgetVec::new(self.budget);
         for (number, state) in self.states.iter() {
+            self.budget.poll()?;
             if *state == State::Removed {
                 gone.try_push(number)?;
             }
         }
-        let index = self.index;
-        for &element in gone.iter() {
-            for &holder in index.referrers(element) {
+        for &holder in container_referrers(reads, self.index, &gone)?.iter() {
+            // Only actual structure owners participate. Unrelated catalog
+            // or page entries may also refer to a removed element.
+            if self.unwalked_element(reads, holder)? {
                 self.element(reads, edits, holder)?;
-                if is_array(reads, holder)? {
-                    for &holder in index.referrers(holder) {
-                        self.element(reads, edits, holder)?;
-                    }
-                }
+            }
+        }
+        // A later walk can discover that a previously skipped child leaves
+        // (for example, after following /Ref around a wrong /P). Its original
+        // parent has already recorded it as kept, so rebuild the whole plan.
+        for (number, state) in self.states.iter() {
+            self.budget.poll()?;
+            if *state == State::Removed && gone.binary_search(&number).is_err() {
+                self.consistent = false;
+                break;
             }
         }
         Ok(())
@@ -841,21 +877,16 @@ impl<'b> Walk<'_, 'b> {
         if !self.consistent || seeds.iter().any(|&seed| self.states.get(seed).is_none()) {
             return Ok(false);
         }
+        let mut gone = BudgetVec::new(self.budget);
         for (number, state) in self.states.iter() {
-            if *state != State::Removed {
-                continue;
+            self.budget.poll()?;
+            if *state == State::Removed {
+                gone.try_push(number)?;
             }
-            for &holder in self.index.referrers(number) {
-                if self.unwalked_element(reads, holder)? {
-                    return Ok(false);
-                }
-                if is_array(reads, holder)? {
-                    for &holder in self.index.referrers(holder) {
-                        if self.unwalked_element(reads, holder)? {
-                            return Ok(false);
-                        }
-                    }
-                }
+        }
+        for &holder in container_referrers(reads, self.index, &gone)?.iter() {
+            if self.unwalked_element(reads, holder)? {
+                return Ok(false);
             }
         }
         Ok(true)
@@ -869,14 +900,20 @@ impl<'b> Walk<'_, 'b> {
         let mut marked = Table::new();
         let mut pending = BudgetVec::new(self.budget);
         for (number, _) in self.states.iter() {
+            self.budget.poll()?;
             for &holder in self.index.referrers(number) {
-                pending.try_push((holder, 0))?;
+                pending.try_push(holder)?;
             }
         }
-        let most = usize::try_from(MAX_LOOKUP_TREE_DEPTH).unwrap_or(usize::MAX) + MAX_HOPS;
-        while let Some((number, hops)) = pending.pop() {
+        // Include malformed lookup nodes that alias a removed page, so
+        // pruning cannot leave the lookup tree with a dangling reference.
+        for &number in self.removed {
+            marked.insert(number, (), self.budget)?;
+            pending.try_extend_from_slice(self.index.referrers(number))?;
+        }
+        while let Some(number) = pending.pop() {
             self.budget.poll()?;
-            if number == root || hops > most || marked.get(number).is_some() {
+            if number == root || marked.get(number).is_some() {
                 continue;
             }
             let Some(object) = readable(reads, number)? else {
@@ -892,7 +929,7 @@ impl<'b> Walk<'_, 'b> {
             if node {
                 marked.insert(number, (), self.budget)?;
                 for &holder in self.index.referrers(number) {
-                    pending.try_push((holder, hops + 1))?;
+                    pending.try_push(holder)?;
                 }
             }
         }
@@ -935,7 +972,7 @@ impl<'b> Walk<'_, 'b> {
                         // A malformed tree shares the array with an element
                         // that the walk planned already.
                         Some(array) => {
-                            self.shares(array.number);
+                            self.shares(reads, array.number)?;
                             self.once(array.number)?.then_some(array)
                         }
                         None => Some(at.child(Step::Key("K".into()))?),
@@ -956,7 +993,7 @@ impl<'b> Walk<'_, 'b> {
                 Some((resolved, Value::Array(items))) => {
                     let array = match resolved {
                         Some(array) => {
-                            self.shares(array.number);
+                            self.shares(reads, array.number)?;
                             self.once(array.number)?.then_some(array)
                         }
                         None => Some(at.child(Step::Key("Ref".into()))?),
@@ -1072,6 +1109,9 @@ impl<'b> Walk<'_, 'b> {
         let Value::Reference(element) = value else {
             return Ok(());
         };
+        if reads.generation(element.number())? != Some(element.generation()) {
+            return Ok(());
+        }
         self.element(reads, edits, element.number())
     }
 
@@ -1080,9 +1120,7 @@ impl<'b> Walk<'_, 'b> {
         if self.states.get(number).is_some() {
             return Ok(());
         }
-        let Some(object) =
-            readable(reads, number)?.filter(|object| object.generation() == element.generation())
-        else {
+        let Some(object) = readable(reads, number)? else {
             return Ok(());
         };
         let Value::Dict(dict) = &**object.value() else {

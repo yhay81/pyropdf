@@ -932,7 +932,16 @@ fn planned_with(
     let mut transaction = document.begin();
     edits.write(&mut transaction, &budget).unwrap();
     let after = transaction.snapshot();
-    let values = (1..80)
+    let mut numbers = BudgetVec::new(&budget);
+    after.base().numbers(&mut numbers).unwrap();
+    for (number, _) in after.slots() {
+        numbers.try_push(number).unwrap();
+    }
+    numbers.sort_unstable();
+    dedup(&mut numbers);
+    let values = numbers
+        .iter()
+        .copied()
         .map(|number| {
             after
                 .get(number, &budget)
@@ -1363,4 +1372,229 @@ fn writing_rules_invalidates_the_cached_reference_paths() {
             .path,
         &[Step::Index(0)]
     );
+}
+
+fn small_structure(element: Value, extra: &[(u32, Value)]) -> Document {
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![
+                ("Type", name("Catalog")),
+                ("Pages", reference(2)),
+                ("StructTreeRoot", reference(3)),
+            ]),
+        ),
+        (
+            2,
+            dict(vec![
+                ("Type", name("Pages")),
+                ("Kids", array(vec![reference(10), reference(11)])),
+            ]),
+        ),
+        (
+            3,
+            dict(vec![("Type", name("StructTreeRoot")), ("K", reference(50))]),
+        ),
+        (
+            10,
+            dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+        ),
+        (
+            11,
+            dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+        ),
+        (50, element),
+    ];
+    objects.extend_from_slice(extra);
+    document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    )
+}
+
+fn assert_structure_plans_match(document: &Document) {
+    let affected = planned_with(document, &[10], &[11], structure::Reach::Affected);
+    let whole = planned_with(document, &[10], &[11], structure::Reach::Whole);
+    assert_eq!(affected.1, whole.1);
+    assert_eq!(affected.2, whole.2);
+}
+
+#[test]
+fn affected_structure_keeps_whole_walk_semantics_for_non_name_types() {
+    let document = small_structure(
+        dict(vec![
+            ("S", Value::Integer(7)),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[],
+    );
+    assert_structure_plans_match(&document);
+}
+
+#[test]
+fn affected_structure_keeps_whole_walk_semantics_for_unknown_types() {
+    let document = small_structure(
+        dict(vec![
+            ("Type", name("Unknown")),
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[],
+    );
+    assert_structure_plans_match(&document);
+}
+
+#[test]
+fn affected_structure_follows_reference_aliases_to_marked_content() {
+    let document = small_structure(
+        dict(vec![
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("K", reference(60)),
+        ]),
+        &[
+            (60, reference(61)),
+            (
+                61,
+                dict(vec![
+                    ("Type", name("MCR")),
+                    ("Pg", reference(10)),
+                    ("MCID", Value::Integer(0)),
+                ]),
+            ),
+        ],
+    );
+    assert_structure_plans_match(&document);
+}
+
+#[test]
+fn affected_structure_does_not_skip_aliases_of_removed_pages() {
+    for key in ["K", "ParentTree", "IDTree"] {
+        let entry = if key == "K" {
+            reference(10)
+        } else {
+            dict(vec![("Kids", array(vec![reference(10)]))])
+        };
+        let document = document_of(
+            &[
+                (
+                    1,
+                    dict(vec![
+                        ("Type", name("Catalog")),
+                        ("Pages", reference(2)),
+                        ("StructTreeRoot", reference(3)),
+                    ]),
+                ),
+                (
+                    2,
+                    dict(vec![
+                        ("Type", name("Pages")),
+                        ("Kids", array(vec![reference(10), reference(11)])),
+                    ]),
+                ),
+                (
+                    3,
+                    dict(vec![("Type", name("StructTreeRoot")), (key, entry)]),
+                ),
+                (
+                    10,
+                    dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+                ),
+                (
+                    11,
+                    dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+                ),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        for reach in [structure::Reach::Whole, structure::Reach::Affected] {
+            let result = structure::plan(
+                &mut Reads::new(&version, &budget),
+                &index,
+                &[10],
+                &[11],
+                &mut Edits::new(&budget),
+                reach,
+            );
+            assert!(result.is_err(), "{key}: {reach:?} must refuse the alias");
+        }
+    }
+}
+
+#[test]
+fn affected_structure_reaches_ref_arrays_through_reference_aliases() {
+    let document = small_structure(
+        dict(vec![
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[
+            (
+                3,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", array(vec![reference(50), reference(51)])),
+                ]),
+            ),
+            (
+                51,
+                dict(vec![
+                    ("S", name("P")),
+                    ("P", reference(3)),
+                    ("Pg", reference(11)),
+                    ("K", Value::Integer(0)),
+                    ("Ref", reference(65)),
+                ]),
+            ),
+            (64, array(vec![reference(50)])),
+            (65, reference(64)),
+        ],
+    );
+    assert_structure_plans_match(&document);
+}
+
+proptest! {
+    #[test]
+    fn affected_structure_matches_whole_walk_with_malformed_types_and_aliases(
+        elements in elements(),
+        flags in proptest::collection::vec(any::<u8>(), 1..12),
+    ) {
+        let document = tagged_of(4, &[0, 1], &elements, Some(2));
+        let budget = Budget::default();
+        let version = document.current();
+        let mut transaction = document.begin();
+        for at in 0..elements.len() {
+            let number = 50 + u32::try_from(at).unwrap();
+            let object = version.get(number, &budget).unwrap().unwrap();
+            let Value::Dict(mut value) = (**object.value()).clone() else { unreachable!() };
+            let bits = flags[at % flags.len()];
+            if bits & 1 != 0 { value.insert("S".into(), Value::Integer(7)); }
+            if bits & 2 != 0 { value.insert("Type".into(), name("Unknown")); }
+            if bits & 4 != 0 { value.insert("P".into(), reference(3)); }
+            for (key, mask) in [("K", 8), ("Ref", 16)] {
+                if bits & mask != 0 && let Some(item) = value.get(key).cloned() {
+                    let inner = transaction.allocate().unwrap();
+                    transaction.write(inner.number(), &item, &budget).unwrap();
+                    let outer = transaction.allocate().unwrap();
+                    transaction.write(outer.number(), &Value::Reference(inner), &budget).unwrap();
+                    value.insert(key.into(), Value::Reference(outer));
+                }
+            }
+            transaction.write(number, &Value::Dict(value), &budget).unwrap();
+        }
+        transaction.commit(&budget).unwrap();
+        let affected = planned_with(&document, &[10], &[11, 12, 13], structure::Reach::Affected);
+        let whole = planned_with(&document, &[10], &[11, 12, 13], structure::Reach::Whole);
+        prop_assert_eq!(&affected.1, &whole.1);
+        prop_assert_eq!(&affected.2, &whole.2);
+    }
 }
