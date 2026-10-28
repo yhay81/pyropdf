@@ -927,3 +927,55 @@ proptest! {
         prop_assert_eq!(&*actual, &*expected);
     }
 }
+
+#[test]
+fn structure_planning_charges_copies_of_unknown_fields() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    ("StructTreeRoot", reference(6)),
+                ]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+            (4, dict(vec![("Type", name("Page"))])),
+            (
+                6,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", reference(7)),
+                    ("Unknown", string(&"x".repeat(1024 * 1024))),
+                ]),
+            ),
+            (
+                7,
+                dict(vec![
+                    ("S", name("P")),
+                    ("Pg", reference(4)),
+                    ("K", Value::Integer(0)),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let mut edits = Edits::new(&budget);
+    let error = super::structure::plan(
+        &mut Reads::new(&version, &budget),
+        &index,
+        &[3],
+        &[4],
+        &mut edits,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert!(edits.is_empty());
+    assert!(Arc::ptr_eq(&version, &document.current()));
+}

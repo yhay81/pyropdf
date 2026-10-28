@@ -140,9 +140,9 @@ pub enum LimitCode {
     /// The names of the document's named destinations are longer than 16 MiB
     /// together.
     NamedDestinationTextSize,
-    /// A structural edit of pages walks a structure tree that nests elements
-    /// deeper than 256 levels, or whose parent tree or ID tree nests nodes
-    /// deeper than 32 levels.
+    /// A structural edit of pages walks a structure tree deeper than 256 levels
+    /// including its root, a parent tree or ID tree deeper than 32 levels, or
+    /// an acyclic reference chain longer than 32 references.
     StructureTreeCount,
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
