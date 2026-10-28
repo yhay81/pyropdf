@@ -68,6 +68,13 @@ def _render(a: dict[str, int], b: dict[str, int], first: Path, second: Path) -> 
     if (a["width"], a["height"]) != (b["width"], b["height"]):
         return "size", {"sizes": [[a["width"], a["height"]], [b["width"], b["height"]]]}
     x, y = first.read_bytes(), second.read_bytes()
+    for metadata, samples in ((a, x), (b, y)):
+        if metadata["width"] < 1 or metadata["height"] < 1 or metadata["stride"] < metadata["width"] * 3:
+            msg = "invalid RGB raster dimensions or stride"
+            raise ValueError(msg)
+        if len(samples) != metadata["stride"] * metadata["height"]:
+            msg = "raster byte count does not match its dimensions and stride"
+            raise ValueError(msg)
     if x == y:
         return "equal", {}
     width, height = a["width"], a["height"]
@@ -88,12 +95,12 @@ def _render(a: dict[str, int], b: dict[str, int], first: Path, second: Path) -> 
 def _compare(output: str, a: Any, b: Any, rasters: tuple[Path, Path]) -> tuple[str, dict[str, Any]]:  # noqa: ANN401, PLR0911 - one return per output
     errors = [isinstance(value, dict) and "error" in value for value in (a, b)]
     if any(errors):
-        if a == b:
-            return "equal", {}
         return "error", {
             "pylopdf": a.get("error") if errors[0] else None,
             "pyropdf": b.get("error") if errors[1] else None,
         }
+    if output == "render":
+        return _render(a, b, *rasters)
     if a == b:
         return "equal", {}
     if output in ("text", "markdown"):
@@ -161,6 +168,7 @@ def _report(results: dict[str, Any], causes: list[dict[str, Any]]) -> str:
         "| --- | --- | " + " | ".join("---" for _ in OUTPUTS) + " | --- |",
     ]
     unexplained: list[str] = []
+    close_rasters: list[str] = []
     for document, result in results.items():
         cells = []
         for output in OUTPUTS:
@@ -170,6 +178,12 @@ def _report(results: dict[str, Any], causes: list[dict[str, Any]]) -> str:
                 kind, detail = page[output]
                 if kind in ("equal", "close"):
                     same += 1
+                    if kind == "close":
+                        cause = _cause(causes, document, output, kind, index)
+                        note = f"- {document} page {index + 1}: {cause or 'unexplained'} {json.dumps(detail)}"
+                        close_rasters.append(note)
+                        if cause is None:
+                            unexplained.append(note)
                     continue
                 cause = _cause(causes, document, output, kind, index)
                 if cause is None:
@@ -187,6 +201,8 @@ def _report(results: dict[str, Any], causes: list[dict[str, Any]]) -> str:
             if whole == "unexplained":
                 unexplained.append(f"- {document}, document markdown: {kind} {json.dumps(detail, ensure_ascii=False)}")
         lines.append(f"| {document} | {len(result['pages'])} | " + " | ".join(cells) + f" | {whole} |")
+    lines += ["", "## Rendering within tolerance", ""]
+    lines += close_rasters or ["None."]
     lines += ["", "## Unexplained differences", ""]
     lines += unexplained or ["None."]
     return "\n".join(lines) + "\n"

@@ -202,7 +202,8 @@ impl<'a> Places<'a> {
         let index = Arc::clone(&self.index);
         settle(lead, &index, &mut |name| {
             if self.named.is_none() {
-                self.named = Some(named(self.document)?);
+                let (version, budget) = view(self.document)?;
+                self.named = Some(named(self.document, &version, &budget)?);
             }
             Ok(self
                 .named

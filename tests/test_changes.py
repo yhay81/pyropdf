@@ -166,6 +166,61 @@ def test_a_later_pdfa_part_allows_transparency() -> None:
     assert doc.changes(incremental=True).claims == ()
 
 
+def _pdfa_file(part: str) -> bytes:
+    """Return the start of a PDF whose metadata claims PDF/A part ``part``."""
+    return f'%PDF-1.7\n<rdf:Description pdfaid:part="{part}" pdfaid:conformance="B"/>'.encode()
+
+
+@pytest.mark.spec("pdfa", "interpret")
+def test_an_embedded_file_breaks_a_pdfa_1_claim() -> None:
+    doc = _claiming('pdfaid:part="1" pdfaid:conformance="B"')
+    doc.attachments.add("a.pdf", _pdfa_file("1"))
+    (claim,) = doc.changes(incremental=True).claims
+    assert claim.claim == "PDF/A-1B"
+    assert doc.catalog["Names"]["EmbeddedFiles"]["Names"][1].xref in claim.objects
+    assert "embedded file" in claim.reason
+
+
+@pytest.mark.spec("pdfa", "interpret")
+@pytest.mark.parametrize(
+    ("properties", "claimed"), [('pdfaid:part="2" pdfaid:conformance="U"', "PDF/A-2U"), ('pdfaid:part="4"', "PDF/A-4")]
+)
+def test_an_embedded_file_that_is_not_pdfa_breaks_a_pdfa_2_or_4_claim(properties: str, claimed: str) -> None:
+    doc = _claiming(properties)
+    doc.attachments.add("a.txt", b"data")
+    doc.attachments.add("b.pdf", _pdfa_file("3"))
+    (claim,) = doc.changes(incremental=True).claims
+    assert claim.claim == claimed
+    files = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+    assert claim.objects == (files[1]["EF"]["F"].xref, files[3]["EF"]["F"].xref)
+    assert "embedded file that is not PDF/A-1" in claim.reason
+
+
+@pytest.mark.spec("pdfa", "interpret")
+@pytest.mark.parametrize(
+    ("properties", "data"),
+    [
+        ('pdfaid:part="2" pdfaid:conformance="B"', _pdfa_file("1")),
+        ('pdfaid:part="2" pdfaid:conformance="B"', _pdfa_file("2")),
+        ('pdfaid:part="4"', _pdfa_file("4")),
+        ('pdfaid:part="4" pdfaid:conformance="F"', b"data"),
+        ('pdfaid:part="3" pdfaid:conformance="B"', b"data"),
+    ],
+    ids=["2-with-1", "2-with-2", "4-with-4", "4f", "3"],
+)
+def test_embedded_files_that_a_pdfa_part_allows_keep_its_claim(properties: str, data: bytes) -> None:
+    doc = _claiming(properties)
+    doc.attachments.add("a.bin", data)
+    assert doc.changes(incremental=True).claims == ()
+
+
+def test_metadata_that_starts_with_a_property_name_claims_nothing() -> None:
+    doc = _claiming("")
+    doc.objects[4].write(b"pdfaid:part")
+    doc.objects.add({"ca": 0.5})
+    assert doc.changes(incremental=True).claims == ()
+
+
 @pytest.mark.spec("pdfua", "interpret")
 def test_an_untagged_annotation_breaks_a_pdfua_claim() -> None:
     doc = _claiming('pdfuaid:part="1"')

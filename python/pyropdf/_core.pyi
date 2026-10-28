@@ -38,10 +38,52 @@ class _Document:
         data: bytes | bytearray | memoryview, limits: object, password: bytes | None = None, /
     ) -> _Document: ...
     def is_repaired(self) -> bool: ...
-    def save_path(self, path: str, incremental: bool, encryption: object = None, /) -> None: ...
-    def to_bytes(self, incremental: bool, max_size: int | None, encryption: object = None, /) -> bytes: ...
+    def save_path(
+        self,
+        path: str,
+        incremental: bool,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        renew_id: bool = False,
+        cross_reference_stream: bool | None = None,
+        object_streams: bool = False,
+        renumber: bool = False,
+        dedupe: bool = False,
+        /,
+    ) -> None: ...
+    def to_bytes(
+        self,
+        incremental: bool,
+        max_size: int | None,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        renew_id: bool = False,
+        cross_reference_stream: bool | None = None,
+        object_streams: bool = False,
+        renumber: bool = False,
+        dedupe: bool = False,
+        /,
+    ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...
     def close(self) -> None: ...
+
+@final
+class CharColumns:
+    def __len__(self) -> int: ...
+    def rows(
+        self, start: int, stop: int, /
+    ) -> list[tuple[str, tuple[float, float, float, float], tuple[float, float], bool, tuple[int, int] | None]]: ...
+    def column(self, name: str, start: int, stop: int, /) -> Column: ...
+    def arrow_schema(self) -> object: ...
+    def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
+
+@final
+class Column:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
 
 @final
 class Pixmap:
@@ -90,6 +132,7 @@ class _OcrEngine:
         overlap: int = 192,
         min_confidence: float = 0.5,
         rotation: int = 0,
+        document: _Document | None = None,
     ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
@@ -129,6 +172,7 @@ def probe(
     password: bytes | None = None,
     /,
 ) -> tuple[int, str, bool, bool, dict[str, str]]: ...
+def header_version(document: _Document, /) -> str | None: ...
 def page_count(document: _Document, /) -> int: ...
 def page_object(document: _Document, at: int, /) -> tuple[int, int]: ...
 def page_index(document: _Document, number: int, generation: int, /) -> int | None: ...
@@ -280,7 +324,16 @@ def page_layout(
     max_glyphs: int | None,
     max_size: int | None,
     /,
-) -> tuple[float, float, list[Any], int]: ...
+) -> tuple[float, float, list[Any], int, CharColumns | None]: ...
+def page_chars(
+    document: _Document,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[CharColumns, int]: ...
 def page_search(
     document: _Document,
     number: int,

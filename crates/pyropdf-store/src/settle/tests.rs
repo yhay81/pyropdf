@@ -4,8 +4,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::budget::DocumentLimits;
+use crate::budget::{DocumentLimits, LimitCode};
 use crate::value::{Dict, Name, Reference, Value};
+use crate::version::Stale;
 use crate::version::{Document, MemoryBase, Version};
 use crate::{ErrorKind, LimitExceeded};
 
@@ -98,7 +99,7 @@ fn three_writes_that_mark_one_structure_settle_it_once_at_the_commit() {
     assert_eq!(appearance.calls(), 1);
     assert_eq!(*appearance.numbers.lock().unwrap(), [vec![5, 7]]);
     assert_eq!(integer(&settled, 1007), Some(1));
-    assert!(settled.stale().is_empty());
+    assert!(settled.stale().next().is_none());
     // Settling is part of the transaction's step.
     assert!(Arc::ptr_eq(&document.undo().unwrap(), &parent));
     assert!(Arc::ptr_eq(&document.redo().unwrap(), &settled));
@@ -156,11 +157,11 @@ fn font_subsets_settle_only_at_a_save() {
     drop(save);
     assert_eq!(subsets.calls(), 1);
     assert_eq!(integer(&saved, 1009), Some(1));
-    assert!(saved.stale().is_empty());
+    assert!(saved.stale().next().is_none());
     assert!(Arc::ptr_eq(&document.current(), &current));
     assert_eq!(document.history().undo, 1);
     // Undo restores the version before the font, without its mark.
-    assert!(document.undo().unwrap().stale().is_empty());
+    assert!(document.undo().unwrap().stale().next().is_none());
     assert!(document.redo().unwrap().is_stale(Structure::FontSubset, 9));
 }
 
@@ -188,7 +189,6 @@ fn a_settler_that_marks_another_structure_settles_it_in_the_same_commit() {
     // Font subsets wait for a save, and no settler is registered for them.
     let fonts: Vec<_> = settled
         .stale()
-        .iter()
         .map(|mark| (mark.structure, mark.number))
         .collect();
     assert_eq!(
@@ -223,18 +223,148 @@ fn settlers_that_keep_marking_each_other_refuse_the_commit() {
 fn a_mark_counts_against_the_memory_budget() {
     let document = document(Settlers::default());
     let budget = Budget::new(&DocumentLimits::default())
-        .with_limit(LimitCode::MemorySize, Some(Stale::MARK_SIZE));
+        .with_limit(LimitCode::MemorySize, Some(Stale::FIRST_MARK_SIZE));
 
     let mut transaction = document.begin();
     transaction.mark(Structure::Appearance, 1, &budget).unwrap();
     transaction.mark(Structure::Appearance, 1, &budget).unwrap();
     let error = transaction
-        .mark(Structure::Appearance, 2, &budget)
+        .mark(Structure::Appearance, 16, &budget)
         .unwrap_err();
 
     assert_eq!(
         error.limit().map(LimitExceeded::code),
         Some(LimitCode::MemorySize)
     );
-    assert!(!transaction.is_stale(Structure::Appearance, 2));
+    assert!(!transaction.is_stale(Structure::Appearance, 16));
+}
+
+#[test]
+fn a_mark_only_commit_keeps_the_mark_in_history() {
+    let document = document(Settlers::default());
+    let parent = document.current();
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.mark(Structure::FontSubset, 9, &budget).unwrap();
+    let marked = transaction.commit(&budget).unwrap();
+    assert!(marked.is_stale(Structure::FontSubset, 9));
+    assert!(Arc::ptr_eq(&document.undo().unwrap(), &parent));
+    assert!(Arc::ptr_eq(&document.redo().unwrap(), &marked));
+    // A repeated mark is a no-op and preserves the same version.
+    let mut transaction = document.begin();
+    transaction.mark(Structure::FontSubset, 9, &budget).unwrap();
+    assert!(Arc::ptr_eq(&transaction.commit(&budget).unwrap(), &marked));
+}
+
+struct FailsOnce(AtomicUsize);
+
+impl Settler for FailsOnce {
+    fn settle(
+        &self,
+        transaction: &mut Transaction,
+        numbers: &[u32],
+        budget: &Budget,
+    ) -> Result<()> {
+        transaction.write(1007, &Value::Integer(42), budget)?;
+        transaction.mark(Structure::FontSubset, 7, budget)?;
+        assert_eq!(numbers, [7]);
+        if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(Error::malformed("a recoverable settler failure"));
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn a_failed_settle_restores_writes_and_marks_for_a_retry() {
+    let document = document(Settlers::default().with(
+        Structure::Appearance,
+        Arc::new(FailsOnce(AtomicUsize::new(0))),
+    ));
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(7, &Value::Integer(1), &budget).unwrap();
+    transaction.mark(Structure::Appearance, 7, &budget).unwrap();
+    assert!(transaction.settle(Scope::Commit, &budget).is_err());
+    assert_eq!(integer(transaction.version(), 7), Some(1));
+    assert_eq!(integer(transaction.version(), 1007), None);
+    assert!(transaction.is_stale(Structure::Appearance, 7));
+    assert!(!transaction.is_stale(Structure::FontSubset, 7));
+    transaction.settle(Scope::Commit, &budget).unwrap();
+    assert_eq!(integer(transaction.version(), 1007), Some(42));
+    assert!(!transaction.is_stale(Structure::Appearance, 7));
+    assert!(transaction.is_stale(Structure::FontSubset, 7));
+}
+
+#[test]
+fn a_refused_number_buffer_keeps_marks_without_calling_the_settler() {
+    let appearance = Arc::new(Counting::default());
+    let document = document(Settlers::default().with(Structure::Appearance, appearance.clone()));
+    let mut transaction = document.begin();
+    transaction
+        .mark(Structure::Appearance, 7, &Budget::default())
+        .unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    let error = transaction.settle(Scope::Commit, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert_eq!(appearance.calls(), 0);
+    assert!(transaction.is_stale(Structure::Appearance, 7));
+    transaction
+        .settle(Scope::Commit, &Budget::default())
+        .unwrap();
+    assert_eq!(appearance.calls(), 1);
+}
+
+#[test]
+fn snapshots_share_marks_and_new_marks_charge_only_their_table_path() {
+    let document = document(Settlers::default());
+    let mut transaction = document.begin();
+    let budget = Budget::default();
+    for number in 0..10_000 {
+        transaction
+            .mark(Structure::FontSubset, number, &budget)
+            .unwrap();
+    }
+    let snapshot = transaction.snapshot();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(4096));
+    transaction
+        .mark(Structure::FontSubset, 10_000, &budget)
+        .unwrap();
+    assert!(budget.used(LimitCode::MemorySize) >= Stale::FIRST_MARK_SIZE);
+    assert!(!snapshot.is_stale(Structure::FontSubset, 10_000));
+    assert!(snapshot.is_stale(Structure::FontSubset, 9999));
+    assert!(transaction.is_stale(Structure::FontSubset, 10_000));
+}
+
+struct NoWrites;
+
+impl Settler for NoWrites {
+    fn settle(&self, _: &mut Transaction, _: &[u32], _: &Budget) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn clearing_only_marks_commits_and_history_counts_the_retained_tables() {
+    let document = document(Settlers::default());
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    for number in 0..1000 {
+        transaction
+            .mark(Structure::Appearance, number * 16, &budget)
+            .unwrap();
+    }
+    let marked = transaction.commit(&budget).unwrap();
+    document.set_settlers(Settlers::default().with(Structure::Appearance, Arc::new(NoWrites)));
+    let settled = document.begin().commit(&budget).unwrap();
+    assert!(!settled.has_stale());
+    // The old marked version retains at least 1000 distinct chunks, even
+    // though neither commit changed an object or the trailer.
+    assert!(document.history().size > 16_000);
+    assert!(Arc::ptr_eq(&document.undo().unwrap(), &marked));
+    assert_eq!(document.current().stale().count(), 1000);
+    assert!(Arc::ptr_eq(&document.redo().unwrap(), &settled));
 }
