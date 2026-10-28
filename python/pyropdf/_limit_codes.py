@@ -33,6 +33,11 @@ LimitCode: TypeAlias = Literal[
     "table_cell_count",
     "table_span_candidate_count",
     "table_column_count",
+    "ocr_raster_size",
+    "ocr_detection_count",
+    "ocr_text_size",
+    "ocr_model_size",
+    "ocr_dictionary_entries",
     "stream_data_size",
     "object_value_depth",
     "markdown_output_size",
@@ -103,6 +108,16 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
         ),
         "table_column_count": "Text table detection encounters a row with more than 32 separated columns.",
+        "ocr_raster_size": "The raster expanded to RGBA for OCR exceeds 512 MiB.",
+        "ocr_detection_count": (
+            "OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps."
+        ),
+        "ocr_text_size": "OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering.",
+        "ocr_model_size": (
+            "The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its "
+            "`max_model_size`."
+        ),
+        "ocr_dictionary_entries": "The dictionary that `OcrEngine` loads has more lines than the limit.",
         "stream_data_size": "Reading a stream returns more bytes than the call's `max_size`.",
         "object_value_depth": "A value written to the document nests arrays and dictionaries deeper than its limit.",
         "markdown_output_size": (

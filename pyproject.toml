@@ -24,6 +24,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 
+[project.optional-dependencies]
+# pylopdf's PP-OCR models, which `OcrEngine` discovers (DESIGN.md section 14).
+ocr = ["pylopdf-ocr-models>=0.1.0,<0.2"]
+
 [project.urls]
 Homepage = "https://github.com/yhay81/pyropdf"
 Issues = "https://github.com/yhay81/pyropdf/issues"
@@ -49,6 +53,8 @@ dev = [
     # ty is pre-1.0 and its diagnostics change between releases; uv.lock pins
     # the version that CI runs.
     "ty>=0.0.91",
+    # The OCR tests run the models of the `ocr` extra.
+    "pylopdf-ocr-models>=0.1.0,<0.2",
 ]
 # Independent readers that tools/oracles.py compares saves with, outside CI.
 # pymupdf 2 depends on onnxruntime, which has no wheel for every Python here.

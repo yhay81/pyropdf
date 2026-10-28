@@ -75,6 +75,19 @@ pub enum LimitCode {
     /// Text table detection encounters a row with more than 32 separated
     /// columns.
     TableColumnCount,
+    /// The raster expanded to RGBA for OCR exceeds 512 MiB.
+    OcrRasterSize,
+    /// OCR detection finds more than 4,096 candidate regions across its tiles
+    /// before merging overlaps.
+    OcrDetectionCount,
+    /// OCR recognition produces more than 32 MiB of UTF-8 text before
+    /// confidence filtering.
+    OcrTextSize,
+    /// The detector, recognizer, and dictionary that `OcrEngine` loads hold
+    /// more bytes together than its `max_model_size`.
+    OcrModelSize,
+    /// The dictionary that `OcrEngine` loads has more lines than the limit.
+    OcrDictionaryEntries,
     /// Reading a stream returns more bytes than the call's `max_size`.
     StreamDataSize,
     /// A value written to the document nests arrays and dictionaries deeper
@@ -115,7 +128,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 37] = [
+    pub const ALL: [Self; 42] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -139,6 +152,11 @@ impl LimitCode {
         Self::TableCellCount,
         Self::TableSpanCandidateCount,
         Self::TableColumnCount,
+        Self::OcrRasterSize,
+        Self::OcrDetectionCount,
+        Self::OcrTextSize,
+        Self::OcrModelSize,
+        Self::OcrDictionaryEntries,
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::MarkdownOutputSize,
@@ -182,6 +200,11 @@ impl LimitCode {
             Self::TableCellCount => "table_cell_count",
             Self::TableSpanCandidateCount => "table_span_candidate_count",
             Self::TableColumnCount => "table_column_count",
+            Self::OcrRasterSize => "ocr_raster_size",
+            Self::OcrDetectionCount => "ocr_detection_count",
+            Self::OcrTextSize => "ocr_text_size",
+            Self::OcrModelSize => "ocr_model_size",
+            Self::OcrDictionaryEntries => "ocr_dictionary_entries",
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::MarkdownOutputSize => "markdown_output_size",
@@ -227,6 +250,11 @@ impl LimitCode {
             Self::TableCellCount => "the candidate table has too many cells",
             Self::TableSpanCandidateCount => "the table needs too many cell span candidates",
             Self::TableColumnCount => "the text table has too many columns",
+            Self::OcrRasterSize => "the OCR raster is too large",
+            Self::OcrDetectionCount => "the OCR detector found too many text regions",
+            Self::OcrTextSize => "the recognized OCR text is too long",
+            Self::OcrModelSize => "the OCR model set is too large",
+            Self::OcrDictionaryEntries => "the OCR dictionary has too many entries",
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::MarkdownOutputSize => "the Markdown is too large",
@@ -272,6 +300,11 @@ impl LimitCode {
             Self::TableCellCount => Some("cells"),
             Self::TableSpanCandidateCount => Some("candidates"),
             Self::TableColumnCount => Some("columns"),
+            Self::OcrRasterSize => Some("bytes"),
+            Self::OcrDetectionCount => Some("regions"),
+            Self::OcrTextSize => Some("bytes"),
+            Self::OcrModelSize => Some("bytes"),
+            Self::OcrDictionaryEntries => Some("entries"),
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::MarkdownOutputSize => Some("bytes"),
@@ -317,6 +350,11 @@ impl LimitCode {
             Self::TableCellCount => Some(4_096),
             Self::TableSpanCandidateCount => Some(65_536),
             Self::TableColumnCount => Some(32),
+            Self::OcrRasterSize => Some(536_870_912),
+            Self::OcrDetectionCount => Some(4_096),
+            Self::OcrTextSize => Some(33_554_432),
+            Self::OcrModelSize => Some(67_108_864),
+            Self::OcrDictionaryEntries => Some(65_536),
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::MarkdownOutputSize => Some(67_108_864),

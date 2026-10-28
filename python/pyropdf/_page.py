@@ -12,6 +12,7 @@ from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary
+from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord, _default_ocr_engine
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
 from pyropdf._tables import Table, build_tables
@@ -182,6 +183,39 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
+
+    def ocr(  # noqa: PLR0913 - OCR resource controls are keyword-only.
+        self,
+        *,
+        engine: OcrEngine | None = None,
+        dpi: float = 300,
+        clip: Sequence[float] | None = None,
+        rotation: OcrRotation = 0,
+        tile_size: int = 1408,
+        overlap: int = 192,
+        min_confidence: float = 0.5,
+    ) -> list[OcrWord]:
+        """Recognize the rendered page's text without changing the document.
+
+        The default engine is loaded lazily from ``pyropdf[ocr]`` and reused.
+        Pass an explicit :class:`OcrEngine` to control the model set or its
+        lifetime. ``clip`` recognizes one display-space region and returns
+        boxes in full-page display space. ``rotation`` corrects sideways input
+        clockwise without editing the page.
+        """
+        resolved_engine = _default_ocr_engine() if engine is None else engine
+        if not isinstance(resolved_engine, OcrEngine):
+            msg = f"engine must be an OcrEngine or None: {engine!r}"
+            raise TypeError(msg)
+        return resolved_engine._recognize_page(  # noqa: SLF001
+            self,
+            dpi=dpi,
+            tile_size=tile_size,
+            overlap=overlap,
+            min_confidence=min_confidence,
+            rotation=rotation,
+            clip=None if clip is None else _clip_box(clip),
+        )
 
     def svg(self, *, annotations: bool = True, max_size: int | None = _DEFAULT_MAX_SVG_SIZE) -> str:
         """Render the current version of the page to an SVG string at 72 dpi, with text drawn as paths.
