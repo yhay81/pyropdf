@@ -180,6 +180,25 @@ def test_a_transaction_reads_its_own_edits_and_a_discarded_one_restores_them() -
     assert _views(page) == before
 
 
+def test_optional_content_configuration_invalidates_page_results() -> None:
+    document = pyropdf.open(build_memo_pdf())
+    group = document.objects[document.objects.add({"Type": Name("OCG"), "Name": "Text"})]
+    configuration = document.objects[document.objects.add({"BaseState": Name("ON"), "OFF": []})]
+    document.catalog["OCProperties"] = {"OCGs": [group], "D": configuration}
+    document.objects[PAGES]["Resources"]["Properties"] = {"Layer": group}
+    document.objects[CONTENTS].write(b"/OC /Layer BDC BT /F1 20 Tf 20 250 Td (Alpha) Tj ET EMC")
+    page = document.pages[0]
+    before = _views(page)
+    computations = _counts(document)[1]
+
+    configuration["OFF"] = [group]
+
+    after = _views(page)
+    assert after != before
+    assert after == _views(_fresh(document))
+    assert _counts(document)[1] == computations + VIEWS
+
+
 def _outcome(call: Callable[[], object]) -> object:
     try:
         return call()

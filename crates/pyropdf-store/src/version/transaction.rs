@@ -191,20 +191,29 @@ impl Transaction {
     ///
     /// Refuses with what a settler refuses, and with a malformed input error
     /// when the settlers keep marking one another's structures. The
-    /// transaction keeps what the settlers wrote until then, so a caller
-    /// that goes on rolls back to a savepoint first.
+    /// transaction restores its writes and marks to before the call on any
+    /// error, so a read may retry without observing a partial settlement.
     pub fn settle(&mut self, scope: Scope, budget: &Budget) -> Result<()> {
         if !self.draft.stale.any(scope) {
             return Ok(());
         }
         let settlers = self.settlers.clone();
-        settle::settle(self, &settlers, scope, budget)
+        let savepoint = self.savepoint();
+        let result = settle::settle(self, &settlers, scope, budget);
+        if result.is_err() {
+            self.rollback(savepoint);
+        }
+        result
     }
 
     /// Removes the marks of `structure` for a settler, and returns the
     /// numbers they named.
-    pub(crate) fn take_stale(&mut self, structure: Structure) -> Vec<u32> {
-        self.draft.stale.take(structure)
+    pub(crate) fn take_stale<'b>(
+        &mut self,
+        structure: Structure,
+        budget: &'b Budget,
+    ) -> Result<BudgetVec<'b, u32>> {
+        self.draft.stale.take(structure, budget)
     }
 
     /// Returns what the transaction has written so far as a version of its
@@ -235,8 +244,8 @@ impl Transaction {
     /// version, and returns that version.
     ///
     /// The new version is current at once for every thread, and the history
-    /// records it as one step. A transaction that wrote no object and no
-    /// trailer publishes nothing and returns the version it started from.
+    /// records it as one step. A transaction that changed no object, trailer,
+    /// or stale mark returns the version it started from.
     ///
     /// The commit first settles every stale structure but font subsets
     /// ([`Scope::Commit`]), as part of the same step. It refuses with what
@@ -251,7 +260,7 @@ impl Transaction {
             settlers: _,
         } = self;
         let difference = difference(&parent, &draft, budget)?;
-        if difference.changes.is_empty() {
+        if difference.changes.is_empty() && !difference.stale {
             return Ok(parent);
         }
         budget.charge(LimitCode::MemorySize, Version::OVERHEAD)?;

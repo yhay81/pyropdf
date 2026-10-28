@@ -308,9 +308,11 @@ def _span_interval(span: TextSpan, direction: tuple[float, float]) -> tuple[floa
     """Return a span's extent along its line's baseline direction."""
     x0, y0, x1, y1 = span["bbox"]
     projections = [x * direction[0] + y * direction[1] for x in (x0, x1) for y in (y0, y1)]
-    # glyph_bbox uses ASCENT + DESCENT == 1; projecting its axis-aligned
-    # bounds adds this cross-axis padding at each end of a rotated baseline.
-    padding = abs(direction[0] * direction[1]) * span["size"]
+    # Glyph boxes span at least one em, or the font's larger line height.
+    # Their axis-aligned bounds add this cross-axis padding at each end
+    # when projected back onto a rotated baseline.
+    height = max(1.0, span.get("ascender", 0.8) - span.get("descender", -0.2))
+    padding = abs(direction[0] * direction[1]) * span["size"] * height
     return min(projections) + padding, max(projections) - padding
 
 
@@ -736,7 +738,7 @@ def _page_layout(page: Page) -> tuple[TextPageDict, list[Word]]:
         max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS,
         max_size=_DEFAULT_MAX_TEXT_SIZE,
     )
-    width, height, blocks = page._layout(  # noqa: SLF001
+    width, height, blocks, _ = page._layout(  # noqa: SLF001
         options, chars=False, max_glyphs=_DEFAULT_MAX_TEXT_GLYPHS, max_size=_DEFAULT_MAX_TEXT_SIZE
     )
     return build_layout(width, height, blocks).to_dict(), build_words(blocks)
