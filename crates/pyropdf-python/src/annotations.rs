@@ -18,8 +18,8 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::{
-    LINE_ENDINGS, MAX_ANNOTATION_POINTS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points,
-    is_text_markup, valid_dashes, zigzag_points,
+    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points, is_text_markup, valid_dashes,
+    zigzag_points,
 };
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
@@ -28,9 +28,7 @@ use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::{_Document, text_string};
-use crate::errors::{
-    LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
-};
+use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
 use crate::pages::{display_box, index as page_index, number, rect, rotation};
 
 /// The text entries of a [`Record`], in its order.
@@ -943,7 +941,7 @@ impl Edit {
         }
         if let Some(border) = &self.border {
             dict.remove("Border");
-            dict.insert(Name::from("BS"), border_style(border)?);
+            dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
         }
         if let Some(intensity) = self.clouds {
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
@@ -1008,7 +1006,13 @@ impl Edit {
 
 /// Returns the `/BS` dictionary of a border: its width, `/S` style, and
 /// dash lengths, which a dashed border needs and no other takes.
-fn border_style((width, style, dashes): &(f64, String, Vec<f64>)) -> PyResult<Value> {
+fn border_style(
+    (width, style, dashes): &(f64, String, Vec<f64>),
+    budget: &Budget,
+) -> PyResult<Value> {
+    budget
+        .check(LimitCode::AnnotationDashCount, dashes.len() as u64)
+        .map_err(|e| limit_error(&e))?;
     if !(width.is_finite() && *width >= 0.0) {
         return Err(PdfError::new_err(
             "an annotation border width is finite and not negative",
@@ -1077,6 +1081,18 @@ fn point_entry(
     subtype: &str,
     lists: &[Vec<(f64, f64)>],
 ) -> PyResult<(&'static str, Value)> {
+    annots
+        .budget
+        .check(LimitCode::AnnotationPointCount, lists.len() as u64)
+        .map_err(|e| limit_error(&e))?;
+    let mut count = 0usize;
+    for points in lists {
+        count = count.saturating_add(points.len());
+        annots
+            .budget
+            .check(LimitCode::AnnotationPointCount, count as u64)
+            .map_err(|e| limit_error(&e))?;
+    }
     let fits = match subtype {
         "Line" => lists.len() == 1 && lists[0].len() == 2,
         "Polygon" | "PolyLine" => lists.len() == 1 && lists[0].len() >= 2,
@@ -1097,28 +1113,27 @@ fn point_entry(
             }
         )));
     }
-    if lists.iter().map(Vec::len).fold(0, usize::saturating_add) > MAX_ANNOTATION_POINTS {
-        return Err(LimitError::new_err((
-            "annotation_point_count",
-            format!("an annotation holds at most {MAX_ANNOTATION_POINTS} points"),
-        )));
-    }
-    let mut arrays = Vec::with_capacity(lists.len());
+    let mut arrays = BudgetVec::new(annots.budget);
     for points in lists {
-        let mut array = Vec::with_capacity(points.len() * 2);
+        let mut array = BudgetVec::new(annots.budget);
         for &(x, y) in points {
             if !(x.is_finite() && y.is_finite()) {
                 return Err(PdfError::new_err("annotation points are finite"));
             }
             let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
-            array.extend([number(x), number(y)]);
+            annots.budget.poll().map_err(|e| limit_error(&e))?;
+            array
+                .try_extend_from_slice(&[number(x), number(y)])
+                .map_err(|e| limit_error(&e))?;
         }
-        arrays.push(Value::Array(Array::from(array)));
+        arrays
+            .try_push(Value::Array(Array::from(array.into_vec())))
+            .map_err(|e| limit_error(&e))?;
     }
     Ok(match subtype {
-        "Line" => ("L", arrays.swap_remove(0)),
-        "Ink" => ("InkList", Value::Array(Array::from(arrays))),
-        _ => ("Vertices", arrays.swap_remove(0)),
+        "Line" => ("L", arrays.pop().expect("validated one list")),
+        "Ink" => ("InkList", Value::Array(Array::from(arrays.into_vec()))),
+        _ => ("Vertices", arrays.pop().expect("validated one list")),
     })
 }
 
@@ -1152,32 +1167,19 @@ pub fn annotation_geometry(
     }
     let reader = Reader {
         version: &annots.version,
-        budget: &annots.budget,
+        budget: annots.budget,
     };
-    if reader
-        .point_count(&dict, &subtype)
-        .map_err(|e| store_error(&e))?
-        > MAX_ANNOTATION_POINTS
-    {
-        return Err(LimitError::new_err((
-            "annotation_point_count",
-            format!("an annotation's geometry holds more than {MAX_ANNOTATION_POINTS} points"),
-        )));
-    }
-    let points = reader
+    let mut points = reader
         .point_lists(&dict, &subtype)
-        .map_err(|e| store_error(&e))?
-        .map(|lists| {
-            lists
-                .into_iter()
-                .map(|points| {
-                    points
-                        .into_iter()
-                        .map(|(x, y)| to_display(annots.crop, annots.rotation, x, y))
-                        .collect()
-                })
-                .collect()
-        });
+        .map_err(|e| store_error(&e))?;
+    if let Some(lists) = &mut points {
+        for list in lists {
+            for point in list {
+                budget.poll().map_err(|e| limit_error(&e))?;
+                *point = to_display(annots.crop, annots.rotation, point.0, point.1);
+            }
+        }
+    }
     let endings = if matches!(&*subtype, b"Line" | b"PolyLine") {
         let [start, end] = reader.line_endings(&dict).map_err(|e| store_error(&e))?;
         Some((LINE_ENDINGS[start], LINE_ENDINGS[end]))
@@ -1748,7 +1750,7 @@ impl Spec {
             dict.insert(Name::from("IC"), rgb(color, "interior color")?);
         }
         if let Some(border) = &self.border {
-            dict.insert(Name::from("BS"), border_style(border)?);
+            dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
         }
         if let Some(intensity) = self.clouds {
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);

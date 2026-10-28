@@ -365,7 +365,7 @@ impl<'b> Reader<'b> {
             .unwrap_or(1.0);
             let dashed = self.name(style, "S")?.as_deref() == Some(b"D".as_slice());
             let dashes = if dashed {
-                self.numbers(style, "D", MAX_BORDER_DASHES)?
+                self.dashes(style.get("D"))?
                     .filter(|dashes| valid_dashes(dashes))
                     .map(BudgetVec::into_vec)
                     .unwrap_or_else(|| vec![3.0])
@@ -375,6 +375,16 @@ impl<'b> Reader<'b> {
             return Ok(Some(Border { width, dashes }));
         }
         self.legacy_border(dict)
+    }
+
+    fn dashes(&self, value: Option<&Value>) -> Result<Option<BudgetVec<'b, f64>>> {
+        let Some(value) = value else { return Ok(None) };
+        let resolved = self.resolve(value)?;
+        if let Value::Array(items) = &*resolved {
+            self.budget
+                .check(LimitCode::AnnotationDashCount, items.len() as u64)?;
+        }
+        self.numbers_of(&resolved, MAX_BORDER_DASHES)
     }
 
     /// Reads the `[h v width dashes]` array of `/Border`.
@@ -393,7 +403,7 @@ impl<'b> Reader<'b> {
             return Ok(None);
         };
         let dashes = match items.get(3) {
-            Some(pattern) => match self.numbers_of(pattern, MAX_BORDER_DASHES)? {
+            Some(pattern) => match self.dashes(Some(pattern))? {
                 Some(dashes) if valid_dashes(&dashes) => dashes.into_vec(),
                 _ => return Ok(None),
             },
@@ -487,62 +497,69 @@ impl<'b> Reader<'b> {
             return Ok(0);
         };
         if subtype != b"Ink" {
-            return Ok(items.len() / 2);
+            return Ok(items.len().div_ceil(2));
         }
-        let mut numbers = items.len();
+        // Empty or malformed strokes still count as visited containers.
+        self.budget
+            .check(LimitCode::AnnotationPointCount, items.len() as u64)?;
+        let mut points = 0usize;
         for stroke in items.iter() {
+            self.budget.poll()?;
             if let Value::Array(stroke) = &*self.resolve(stroke)? {
-                numbers = numbers.saturating_add(stroke.len());
+                points = points.saturating_add(stroke.len().div_ceil(2));
+                self.budget
+                    .check(LimitCode::AnnotationPointCount, points as u64)?;
             }
         }
-        Ok(numbers / 2)
+        Ok(points)
     }
 
-    /// Reads the point lists of a line, polygon, polyline, or ink
-    /// annotation in user space, or `None` when the geometry is missing,
-    /// malformed, or holds more than [`MAX_ANNOTATION_POINTS`] points.
+    /// Reads complete point lists. Malformed geometry is absent; excessive
+    /// geometry refuses before allocation rather than appearing absent.
     pub fn point_lists(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<PointLists>> {
+        self.budget.check(
+            LimitCode::AnnotationPointCount,
+            self.point_count(dict, subtype)? as u64,
+        )?;
         let Some(array) = self.point_array(dict, subtype)? else {
             return Ok(None);
         };
         let Value::Array(items) = &*array else {
             return Ok(None);
         };
-        let mut left = MAX_ANNOTATION_POINTS;
-        let mut pairs = |value: &Value| -> Result<Option<Vec<(f64, f64)>>> {
-            let Some(numbers) = self.numbers_of(value, 2 * left)? else {
+        let pairs = |value: &Value| -> Result<Option<Vec<(f64, f64)>>> {
+            let Some(numbers) = self.numbers_of(value, 2 * MAX_ANNOTATION_POINTS)? else {
                 return Ok(None);
             };
             if !numbers.len().is_multiple_of(2) {
                 return Ok(None);
             }
-            left -= numbers.len() / 2;
-            Ok(Some(
-                numbers
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|&[x, y]| (x, y))
-                    .collect(),
-            ))
+            let mut points = BudgetVec::new(self.budget);
+            for &[x, y] in numbers.as_chunks::<2>().0 {
+                self.budget.poll()?;
+                points.try_push((x, y))?;
+            }
+            Ok(Some(points.into_vec()))
         };
+        let mut strokes = BudgetVec::new(self.budget);
         if subtype != b"Ink" {
             if subtype == b"Line" && items.len() != 4 {
                 return Ok(None);
             }
-            return Ok(pairs(&array)?.map(|points| vec![points]));
-        }
-        if items.len() > MAX_ANNOTATION_POINTS {
-            return Ok(None);
-        }
-        let mut strokes = Vec::with_capacity(items.len());
-        for stroke in items.iter() {
-            match pairs(stroke)? {
-                Some(points) => strokes.push(points),
-                None => return Ok(None),
+            let Some(points) = pairs(&array)? else {
+                return Ok(None);
+            };
+            strokes.try_push(points)?;
+        } else {
+            for stroke in items.iter() {
+                self.budget.poll()?;
+                let Some(points) = pairs(stroke)? else {
+                    return Ok(None);
+                };
+                strokes.try_push(points)?;
             }
         }
-        Ok(Some(strokes))
+        Ok(Some(strokes.into_vec()))
     }
 }
 
@@ -739,7 +756,13 @@ fn fit(
     if reader.line_endings(dict)? != [0, 0] {
         pad += 2.0 * ending_size(width);
     }
-    Ok(Some([x0 - pad, y0 - pad, x1 + pad, y1 + pad]))
+    let rect = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+    if !rect.iter().all(|value| value.is_finite()) {
+        return Err(Error::malformed(
+            "an annotation fitted rectangle is nonfinite",
+        ));
+    }
+    Ok(Some(rect))
 }
 
 /// Returns the rectangle that the geometry of the annotation `dict` gives
@@ -830,7 +853,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
                 size,
                 insets,
                 intensity,
-            );
+            )?;
         }
         (b"Highlight", Geometry::Quads(quads)) => {
             if let Some(color) = paint.stroke {
@@ -869,7 +892,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
                 intensity,
                 endings,
                 to_canvas,
-            ) {
+            )? {
                 return Ok(None);
             }
         }
@@ -1069,7 +1092,7 @@ impl<'b> Canvas<'b> {
 /// Returns the coordinates of the ellipse inscribed in a rectangle, as a
 /// move and four Béziers.
 fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 26] {
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (cx, cy) = (x0 / 2.0 + x1 / 2.0, y0 / 2.0 + y1 / 2.0);
     let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
     let (kx, ky) = (rx * KAPPA, ry * KAPPA);
     [

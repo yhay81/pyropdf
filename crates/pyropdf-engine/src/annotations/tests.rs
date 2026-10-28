@@ -87,7 +87,7 @@ fn cloud_bumps_stay_inside_the_box_of_a_cloudy_square() {
     };
     let budget = Budget::default();
     let mut canvas = Canvas::new(60.0, &budget);
-    shapes::boxed(&mut canvas, &paint, false, (100.0, 60.0), [0.0; 4], 2.0);
+    shapes::boxed(&mut canvas, &paint, false, (100.0, 60.0), [0.0; 4], 2.0).unwrap();
     let output = String::from_utf8(canvas.out.finish().unwrap()).unwrap();
     let numbers: Vec<f64> = output
         .lines()
@@ -118,15 +118,18 @@ fn line_endings_fill_only_closed_shapes() {
     for (ending, closed) in [(1, true), (4, false), (5, true), (6, false), (9, false)] {
         let budget = Budget::default();
         let mut canvas = Canvas::new(100.0, &budget);
-        assert!(shapes::lines(
-            &mut canvas,
-            &paint,
-            b"Line",
-            &[vec![(10.0, 50.0), (90.0, 50.0)]],
-            0.0,
-            [0, ending],
-            |point| point,
-        ));
+        assert!(
+            shapes::lines(
+                &mut canvas,
+                &paint,
+                b"Line",
+                &[vec![(10.0, 50.0), (90.0, 50.0)]],
+                0.0,
+                [0, ending],
+                |point| point,
+            )
+            .unwrap()
+        );
         let output = String::from_utf8(canvas.out.finish().unwrap()).unwrap();
         let painted: Vec<&str> = output
             .lines()
@@ -138,15 +141,18 @@ fn line_endings_fill_only_closed_shapes() {
     }
     let budget = Budget::default();
     let mut canvas = Canvas::new(100.0, &budget);
-    assert!(!shapes::lines(
-        &mut canvas,
-        &paint,
-        b"PolyLine",
-        &[vec![(10.0, 50.0)]],
-        0.0,
-        [0, 0],
-        |point| point,
-    ));
+    assert!(
+        !shapes::lines(
+            &mut canvas,
+            &paint,
+            b"PolyLine",
+            &[vec![(10.0, 50.0)]],
+            0.0,
+            [0, 0],
+            |point| point,
+        )
+        .unwrap()
+    );
 }
 
 #[test]
@@ -284,4 +290,102 @@ fn overflowing_geometry_is_refused_without_generating_a_path() {
         ),
     );
     assert!(appearance(&reader, &dict).is_err());
+}
+
+#[test]
+fn ink_point_count_counts_points_not_stroke_headers() {
+    use pyropdf_store::version::{Document, MemoryBase};
+    let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+    let version = document.current();
+    let budget = Budget::default();
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut dict = Dict::new();
+    dict.insert(
+        Name::from("InkList"),
+        Value::Array(
+            [numbers_array(&[0.0, 0.0]), numbers_array(&[1.0, 1.0])]
+                .into_iter()
+                .collect(),
+        ),
+    );
+    assert_eq!(reader.point_count(&dict, b"Ink").unwrap(), 2);
+}
+
+#[test]
+fn excessive_point_arrays_and_dashes_refuse_instead_of_becoming_absent() {
+    use pyropdf_store::version::{Document, MemoryBase};
+    let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+    let version = document.current();
+    let budget = Budget::default();
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut dict = Dict::new();
+    dict.insert(
+        Name::from("Vertices"),
+        Value::Array(
+            (0..2 * (MAX_ANNOTATION_POINTS + 1))
+                .map(|_| Value::Integer(0))
+                .collect(),
+        ),
+    );
+    assert!(reader.point_lists(&dict, b"PolyLine").is_err());
+    let mut style = Dict::new();
+    style.insert(Name::from("S"), Value::Name(Name::from("D")));
+    style.insert(
+        Name::from("D"),
+        numbers_array(&[1.0; MAX_BORDER_DASHES + 1]),
+    );
+    dict.insert(Name::from("BS"), Value::Dict(style));
+    assert!(reader.border(&dict).is_err());
+}
+
+#[test]
+fn returned_point_lists_retain_their_memory_charge() {
+    use pyropdf_store::version::{Document, MemoryBase};
+    let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+    let version = document.current();
+    let budget = Budget::default();
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut dict = Dict::new();
+    dict.insert(Name::from("Vertices"), numbers_array(&[0.0, 0.0, 1.0, 1.0]));
+    let points = reader.point_lists(&dict, b"PolyLine").unwrap().unwrap();
+    assert_eq!(points[0].len(), 2);
+    assert!(budget.used(LimitCode::MemorySize) >= 2 * size_of::<(f64, f64)>() as u64);
+}
+
+#[test]
+fn cloudy_polygons_count_all_generated_control_points() {
+    let paint = Paint {
+        stroke: Some((1.0, 0.0, 0.0)),
+        interior: None,
+        width: 1.0,
+        dashes: Vec::new(),
+    };
+    let budget = Budget::default();
+    let mut canvas = Canvas::new(10.0, &budget);
+    let vertices: Vec<_> = (0..11_000)
+        .map(|index| (f64::from(index % 2), 0.0))
+        .collect();
+    let error = shapes::lines(
+        &mut canvas,
+        &paint,
+        b"Polygon",
+        &[vertices],
+        1.0,
+        [0, 0],
+        |point| point,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.limit().unwrap().code(),
+        LimitCode::AnnotationPointCount
+    );
 }

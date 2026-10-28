@@ -294,3 +294,21 @@ def test_points_and_endings_are_set_through_handles() -> None:
         ink.strokes = []
     with pytest.raises(pyropdf.PdfError, match="its points"):
         line.rect = (0, 0, 10, 10)
+
+
+def test_ink_with_two_strokes_at_the_exact_point_limit_reads_back() -> None:
+    page = pyropdf.Document().pages.new((100, 100))
+    stroke = [(1.0, 1.0)] * 32768
+    annotation = page.annotations.add(Ink([stroke, stroke]))
+    assert annotation.strokes is not None
+    assert [len(points) for points in annotation.strokes] == [32768, 32768]
+
+
+def test_restyling_excessive_existing_points_refuses_atomically() -> None:
+    entries = "/Subtype /PolyLine /Rect [0 0 200 100] /C [0 0 1] /Vertices [" + "1 1 " * 65537 + "]"
+    doc = _without_appearance(entries)
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages[0].annotations[0].color = pyropdf.Color(1, 0, 0)
+    assert raised.value.code == "annotation_point_count"
+    assert doc.to_bytes() == before
