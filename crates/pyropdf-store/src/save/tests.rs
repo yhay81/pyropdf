@@ -10,7 +10,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::budget::CancellationToken;
-use crate::value::{Bytes, Name};
+use crate::value::{Bytes, Name, Stream};
 use crate::version::{Base, Document, MemoryBase};
 
 fn corpus() -> Vec<PathBuf> {
@@ -528,7 +528,10 @@ fn pruning_keeps_what_the_trailer_reaches_through_cycles_and_deep_chains() {
     let version = tx.commit(&budget).unwrap();
 
     let mut bytes = Vec::new();
-    let options = Options { prune: true };
+    let options = Options {
+        prune: true,
+        ..Options::default()
+    };
     full_with(&version, &mut bytes, &budget, None, options).unwrap();
     let reopened = open(bytes).current();
     for number in [3, 20] {
@@ -554,6 +557,126 @@ fn pruning_stops_when_the_operation_is_cancelled() {
     let cancelled = CancellationToken::new();
     cancelled.cancel();
     let budget = Budget::default().with_cancellation(cancelled);
-    let options = Options { prune: true };
+    let options = Options {
+        prune: true,
+        ..Options::default()
+    };
     assert!(full_with(&version, &mut Vec::new(), &budget, None, options).is_err());
+}
+
+fn stream(entries: &[(&str, Value)], data: &[u8]) -> Stream {
+    let Value::Dict(dict) = dict(entries) else {
+        unreachable!()
+    };
+    Stream::new(dict, Bytes::new(data.to_vec()))
+}
+
+fn recoded_stream(stream: &Stream, streams: Streams) -> Option<Stream> {
+    let value = Value::Stream(Box::new(stream.clone()));
+    match recode::recoded(&value, streams, &Budget::default()).unwrap() {
+        Some(Value::Stream(stream)) => Some(*stream),
+        Some(other) => panic!("not a stream: {other:?}"),
+        None => None,
+    }
+}
+
+fn name(name: &str) -> Value {
+    Value::Name(Name::from(name))
+}
+
+#[test]
+fn compressing_flates_unfiltered_data_only_where_it_shrinks() {
+    let data = b"0 0 m 10 10 l S\n".repeat(200);
+    let plain = stream(&[], &data);
+    let flated = recoded_stream(&plain, Streams::Compress(9)).unwrap();
+    assert_eq!(flated.dict().get("Filter"), Some(&name("FlateDecode")));
+    assert!(flated.data().len() < data.len());
+    assert_eq!(flated.decoded(&Budget::default()).unwrap(), data);
+
+    // Stored blocks at level 0 are longer than the data.
+    assert_eq!(recoded_stream(&plain, Streams::Compress(0)), None);
+    for entries in [
+        &[("Type", name("Metadata"))][..],
+        &[("Filter", name("DCTDecode"))],
+        &[("DecodeParms", dict(&[("Predictor", Value::Integer(12))]))],
+        &[("F", Value::String(PdfString::literal(&b"data.bin"[..])))],
+    ] {
+        let kept = stream(entries, &data);
+        assert_eq!(
+            recoded_stream(&kept, Streams::Compress(9)),
+            None,
+            "{entries:?}"
+        );
+    }
+    assert_eq!(
+        recoded_stream(&stream(&[], b""), Streams::Compress(9)),
+        None
+    );
+}
+
+#[test]
+fn decompressing_decodes_the_leading_filters_and_keeps_image_filters() {
+    let data = b"BT /F1 12 Tf (Hello) Tj ET\n".repeat(50);
+    let flated = recoded_stream(&stream(&[], &data), Streams::Compress(6)).unwrap();
+    let plain = recoded_stream(&flated, Streams::Decompress).unwrap();
+    assert_eq!(plain.dict().get("Filter"), None);
+    assert_eq!(plain.data().as_slice(), &data[..]);
+
+    // The Flate output of the JPEG bytes, with the JPEG filter after it.
+    let jpeg = b"\xFF\xD8 not really a JPEG \xFF\xD9".repeat(20);
+    let parameters = dict(&[("ColorTransform", Value::Integer(0))]);
+    let chained = stream(
+        &[
+            (
+                "Filter",
+                Value::Array(vec![name("FlateDecode"), name("DCTDecode")].into()),
+            ),
+            (
+                "DecodeParms",
+                Value::Array(vec![Value::Null, parameters.clone()].into()),
+            ),
+        ],
+        recoded_stream(&stream(&[], &jpeg), Streams::Compress(6))
+            .unwrap()
+            .data(),
+    );
+    let image = recoded_stream(&chained, Streams::Decompress).unwrap();
+    assert_eq!(
+        image.dict().get("Filter"),
+        Some(&Value::Array(vec![name("DCTDecode")].into()))
+    );
+    assert_eq!(
+        image.dict().get("DecodeParms"),
+        Some(&Value::Array(vec![parameters].into()))
+    );
+    assert_eq!(image.data().as_slice(), &jpeg[..]);
+
+    // An image filter first, and data that does not decode, stay.
+    let jpeg_only = stream(&[("Filter", name("DCTDecode"))], &jpeg);
+    assert_eq!(recoded_stream(&jpeg_only, Streams::Decompress), None);
+    let broken = stream(&[("Filter", name("FlateDecode"))], b"not flate data");
+    assert_eq!(recoded_stream(&broken, Streams::Decompress), None);
+}
+
+#[test]
+fn a_compressed_save_round_trips_the_corpus_values_except_stream_encoding() {
+    for path in corpus() {
+        let doc = open(fs::read(&path).unwrap());
+        let version = doc.current();
+        let plain = saved(&version, false);
+        let mut bytes = Vec::new();
+        let options = Options {
+            streams: Streams::Compress(6),
+            ..Options::default()
+        };
+        full_with(&version, &mut bytes, &Budget::default(), None, options).unwrap();
+        assert!(bytes.len() <= plain.len(), "{}", path.display());
+        let reopened = open(bytes).current();
+        assert_eq!(
+            reopened.next_number(),
+            version.next_number(),
+            "{}",
+            path.display()
+        );
+    }
 }
