@@ -315,9 +315,11 @@ enum TextLayout {
     Comb(usize),
 }
 
-/// Draws the normal appearance of `widget` from the value of its field, or
-/// the states that a check box or radio button widget lacks; returns `None`
-/// for a widget of another field, or a button that lacks no state.
+/// Draws the normal appearance of `widget` from the value of its field,
+/// the states that a check box or radio button widget lacks, or the border
+/// and `/MK` caption of a pushbutton or signature widget that lacks a
+/// normal appearance; returns `None` for a widget of another field, or one
+/// that lacks nothing.
 ///
 /// Refuses a widget without a usable `/Rect`, a malformed comb field, a
 /// comb value with more graphemes than `/MaxLen`, and text that does not
@@ -331,6 +333,38 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
         Some(Value::Name(name)) if name.as_bytes() == b"Ch" => false,
         Some(Value::Name(name)) if name.as_bytes() == b"Btn" && flags & PUSHBUTTON == 0 => {
             return button_states(reader, widget, flags & RADIO != 0);
+        }
+        Some(Value::Name(name)) if matches!(name.as_bytes(), b"Btn" | b"Sig") => {
+            if has_normal_stream(reader, widget)? {
+                return Ok(None);
+            }
+            let style = WidgetStyle::read(reader, widget)?;
+            let caption = match reader.entry(widget, "MK")?.as_deref() {
+                Some(Value::Dict(mark)) if name.as_bytes() == b"Btn" => {
+                    value_text(reader, reader.entry(mark, "CA")?.as_deref())?
+                }
+                _ => String::new(),
+            };
+            let caption = if standard::is_winansi(&caption) {
+                caption
+            } else {
+                String::new()
+            };
+            let form = interactive_form(reader)?;
+            let form = match form.as_deref() {
+                Some(Value::Dict(form)) => Some(form),
+                _ => None,
+            };
+            return drawn(
+                reader,
+                widget,
+                form,
+                &style,
+                &caption,
+                TextLayout::SingleLine,
+                Align::Center,
+            )
+            .map(Some);
         }
         _ => return Ok(None),
     };
@@ -384,15 +418,29 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
             return Ok(Some(Drawing::Removed));
         }
     }
+    drawn(reader, widget, form, &style, &value, layout, align).map(Some)
+}
+
+/// Draws `widget`'s border and background with `value` laid out inside
+/// them in the font of its `/DA`.
+fn drawn(
+    reader: &Reader<'_>,
+    widget: &Dict,
+    form: Option<&Dict>,
+    style: &WidgetStyle,
+    value: &str,
+    layout: TextLayout,
+    align: Align,
+) -> Result<Drawing, WidgetError> {
     let text = TextStyle::new(default_appearance(reader, widget, form)?);
     let mut ops = BudgetVec::new(reader.budget);
     match layout {
         TextLayout::Comb(max_len) => {
-            comb_ops(&mut ops, &style, &text, &value, max_len, align)?;
+            comb_ops(&mut ops, style, &text, value, max_len, align)?;
         }
         TextLayout::SingleLine | TextLayout::Multiline => {
             let multiline = matches!(layout, TextLayout::Multiline);
-            text_ops(&mut ops, &style, &text, &value, multiline, align)?;
+            text_ops(&mut ops, style, &text, value, multiline, align)?;
         }
     }
     let mut content = BudgetVec::new(reader.budget);
@@ -413,12 +461,12 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
         content.try_extend_from_slice(b"Q\n")?;
         Some((text.resource, text.base_font))
     };
-    Ok(Some(Drawing::Drawn(WidgetAppearance {
+    Ok(Drawing::Drawn(WidgetAppearance {
         content: content.into_vec(),
         size: (style.width, style.height),
         matrix: style.matrix,
         font,
-    })))
+    }))
 }
 
 /// Draws the states that a check box or radio button widget lacks: `Off`,

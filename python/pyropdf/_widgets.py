@@ -18,7 +18,7 @@ from pyropdf._objects import Dictionary
 
 if TYPE_CHECKING:
     from pyropdf._core import _Widget
-    from pyropdf._form import Field
+    from pyropdf._form import Field, FieldSpecification
     from pyropdf._page import Page
 
 
@@ -146,6 +146,30 @@ class Widgets(Sequence[Widget]):
     def __getitem__(self, index: int | slice) -> Widget | list[Widget]:
         """Return one widget, or a list of them for a slice."""
         return self._handles()[index]
+
+    def add(self, specification: FieldSpecification) -> Widget:
+        """Add the widget that ``specification`` describes, and return it.
+
+        A new name creates the field with this widget; the name of an
+        existing field of the same kind adds another widget to it, and a
+        field merged with its only widget becomes their parent. The widget
+        is drawn as setting the field's value draws it, and the edit is one
+        transaction. A name with dots, the name of a field that has fields
+        below it, and an existing field of another kind raise
+        :class:`PdfError`.
+        """
+        from pyropdf._form import _FIELD_SPECIFICATIONS  # noqa: PLC0415 - _form imports this module.
+
+        if not isinstance(specification, _FIELD_SPECIFICATIONS):
+            msg = f"page.widgets.add takes a field specification: {type(specification).__name__}"
+            raise TypeError(msg)
+        page = self._page
+        payload = specification._payload()  # noqa: SLF001
+        result = _core.widget_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
+        if result is None:
+            raise page._stale()  # noqa: SLF001
+        widget, index = result
+        return Widget(page, widget, index)
 
     def __len__(self) -> int:
         """Return the number of widgets on the page."""

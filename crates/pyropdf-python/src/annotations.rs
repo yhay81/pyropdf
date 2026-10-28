@@ -236,7 +236,7 @@ pub(crate) struct Annots<'b> {
     at: usize,
     budget: &'b Budget,
     crop: [f64; 4],
-    rotation: i64,
+    pub(crate) rotation: i64,
     /// The array object that the page's `/Annots` names, if it names one.
     array: Option<Reference>,
     pub(crate) items: Array,
@@ -282,7 +282,7 @@ impl<'b> Annots<'b> {
         }))
     }
 
-    fn page(&self) -> &Page {
+    pub(crate) fn page(&self) -> &Page {
         &self.index.pages()[self.at]
     }
 
@@ -347,7 +347,7 @@ impl<'b> Annots<'b> {
     }
 
     /// Converts a display rectangle to a PDF `/Rect` array.
-    fn to_pdf(&self, (x0, y0, x1, y1): Rect) -> Value {
+    pub(crate) fn to_pdf(&self, (x0, y0, x1, y1): Rect) -> Value {
         let (a, b) = to_pdf(self.crop, self.rotation, x0, y0);
         let (c, d) = to_pdf(self.crop, self.rotation, x1, y1);
         Value::Array(Array::from(vec![
@@ -627,7 +627,7 @@ impl<'b> Annots<'b> {
     /// Writes the page's `/Annots` as `items`: into the array object that
     /// it names, unless another page shares that array, else into the page
     /// dictionary.
-    fn write_items(
+    pub(crate) fn write_items(
         &self,
         transaction: &mut Transaction,
         items: Array,
@@ -730,7 +730,7 @@ pub(crate) fn encode_text(text: &str) -> Value {
     Value::String(PdfString::literal(bytes))
 }
 
-fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
+pub(crate) fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
     let (red, green, blue) = components;
     if ![red, green, blue]
         .iter()
@@ -1006,7 +1006,7 @@ impl Edit {
 
 /// Returns the `/BS` dictionary of a border: its width, `/S` style, and
 /// dash lengths, which a dashed border needs and no other takes.
-fn border_style(
+pub(crate) fn border_style(
     (width, style, dashes): &(f64, String, Vec<f64>),
     budget: &Budget,
 ) -> PyResult<Value> {
@@ -1191,7 +1191,7 @@ pub fn annotation_geometry(
 
 /// Reads the draft only after acquiring its writer lock. A refused edit
 /// restores its own writes even when the caller catches it in a transaction.
-fn editing<T>(
+pub(crate) fn editing<T>(
     py: Python<'_>,
     document: &_Document,
     number: u32,
