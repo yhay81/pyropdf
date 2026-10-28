@@ -1299,3 +1299,72 @@ fn a_deduplicating_save_keeps_cycles_identities_and_its_version() {
         Err(Error::Refused(Refusal::FullSaveOption))
     ));
 }
+
+#[test]
+fn full_save_refuses_live_object_zero_before_output() {
+    // Minimized from save-fuzz crash 48ddebe9596f7ddd421a47eb48cc7105a4d0f49c.
+    let doc = open(b"%PDF-1.7\n0 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n".to_vec());
+    let version = doc.current();
+    assert_eq!(version.generation(0), Some(0));
+    let encryption = Encryption {
+        user: b"user".to_vec(),
+        owner: b"owner".to_vec(),
+        permissions: u32::MAX,
+        aes256: true,
+        random: [7; 64],
+    };
+    for options in [
+        Options::default(),
+        Options {
+            prune: true,
+            ..Options::default()
+        },
+        Options {
+            renumber: true,
+            ..Options::default()
+        },
+        Options {
+            prune: true,
+            dedupe: true,
+            ..Options::default()
+        },
+        Options {
+            object_streams: true,
+            cross_reference: CrossReference::Stream,
+            ..Options::default()
+        },
+    ] {
+        for encryption in [None, Some(&encryption)] {
+            let mut output = Vec::new();
+            let result = full_with(
+                &version,
+                &mut output,
+                &Budget::default(),
+                encryption,
+                options,
+            );
+            assert!(
+                matches!(result, Err(Error::Store(ref error))
+                if matches!(error.kind(), ErrorKind::Malformed(_))),
+                "{result:?}"
+            );
+            assert!(output.is_empty());
+            assert!(Arc::ptr_eq(&version, &doc.current()));
+            assert_eq!(version.generation(0), Some(0));
+        }
+    }
+}
+
+#[test]
+fn full_save_accepts_object_zero_explicitly_freed_after_repair() {
+    let doc = open(b"%PDF-1.7\n0 0 obj (invalid live zero) endobj\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [] /Count 0 >> endobj\n".to_vec());
+    let budget = Budget::default();
+    let mut transaction = doc.begin();
+    assert!(transaction.free(0, &budget).unwrap());
+    let version = transaction.commit(&budget).unwrap();
+    assert_eq!(version.generation(0), None);
+    assert_objects(&version, saved(&version, false));
+    // A normal file whose zero is already free also remains saveable.
+    let normal = open(saved(&version, false));
+    assert_objects(&normal.current(), saved(&normal.current(), false));
+}
