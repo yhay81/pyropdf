@@ -140,6 +140,10 @@ pub enum LimitCode {
     /// The names of the document's named destinations are longer than 16 MiB
     /// together.
     NamedDestinationTextSize,
+    /// A structural edit of pages walks a structure tree deeper than 256 levels
+    /// including its root, a parent tree or ID tree deeper than 32 levels, or
+    /// an acyclic reference chain longer than 32 references.
+    StructureTreeCount,
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
@@ -169,7 +173,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 58] = [
+    pub const ALL: [Self; 59] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -219,6 +223,7 @@ impl LimitCode {
         Self::NamedDestinationEdgeCount,
         Self::NamedDestinationDepth,
         Self::NamedDestinationTextSize,
+        Self::StructureTreeCount,
         Self::PageEntryCount,
         Self::MemorySize,
         Self::Deadline,
@@ -283,6 +288,7 @@ impl LimitCode {
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
             Self::NamedDestinationDepth => "named_destination_depth",
             Self::NamedDestinationTextSize => "named_destination_text_size",
+            Self::StructureTreeCount => "structure_tree_count",
             Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
@@ -349,6 +355,7 @@ impl LimitCode {
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
             Self::NamedDestinationDepth => "the named-destination tree is too deep",
             Self::NamedDestinationTextSize => "the names of the named destinations are too long",
+            Self::StructureTreeCount => "the structure tree is too deep",
             Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
@@ -417,6 +424,7 @@ impl LimitCode {
             Self::NamedDestinationEdgeCount => Some("edges"),
             Self::NamedDestinationDepth => Some("levels"),
             Self::NamedDestinationTextSize => Some("bytes"),
+            Self::StructureTreeCount => Some("levels"),
             Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
@@ -483,6 +491,7 @@ impl LimitCode {
             Self::NamedDestinationEdgeCount => Some(131_072),
             Self::NamedDestinationDepth => Some(32),
             Self::NamedDestinationTextSize => Some(16_777_216),
+            Self::StructureTreeCount => Some(256),
             Self::PageEntryCount => None,
             Self::MemorySize => None,
             Self::Deadline => None,

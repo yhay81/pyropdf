@@ -91,7 +91,16 @@ impl<'b> Edits<'b> {
         }
     }
 
-    /// Returns the referrers that the edits remove, ascending.
+    /// Records that the edits remove `number`, which is freed once nothing
+    /// but other removed objects refers to it.
+    pub(super) fn orphan(&mut self, number: u32) -> Result<()> {
+        self.orphans.try_push(number)?;
+        Ok(())
+    }
+
+    /// Returns the objects that the edits remove, ascending: the referrers
+    /// of [`Rule::RemoveReferrer`] and the structure elements that removed
+    /// pages leave empty.
     pub fn orphans(&mut self) -> &[u32] {
         self.orphans.sort_unstable();
         &self.orphans
@@ -265,10 +274,12 @@ fn at_mut<'v>(value: &'v mut Value, path: &[Step]) -> Option<&'v mut Value> {
 }
 
 /// Returns the objects that a structural edit frees, ascending: `seeds`,
-/// which leave whatever refers to them, and every object of `candidates`
-/// or that a freed object refers to whose referrers are all freed. An
-/// object that the trailer refers to stays. `index` is the index of the
-/// version after the edit's other changes.
+/// which leave whatever refers to them; the objects of `candidates`, and
+/// the objects that refer to them, that nothing refers to but freed objects
+/// and other such objects, so that a cycle of a candidate and what refers
+/// to it goes; and every object that a freed object refers to whose
+/// referrers are all freed. An object that the trailer refers to stays.
+/// `index` is the index of the version after the edit's other changes.
 pub fn unreferenced<'b>(
     index: &References,
     seeds: &[u32],
@@ -288,6 +299,11 @@ pub fn unreferenced<'b>(
         pending.try_push(seed)?;
     }
     pending.try_extend_from_slice(candidates)?;
+    // One level of referrers may leave with an orphaned structure element
+    // or annotation (for example, its otherwise unreferenced parent).
+    for &candidate in candidates {
+        pending.try_extend_from_slice(index.referrers(candidate))?;
+    }
     // First collect the possible garbage, including strongly connected
     // components. Reference counting alone cannot collect an orphan cycle.
     while let Some(number) = pending.pop() {

@@ -320,6 +320,12 @@ unit = "bytes"
 default = 16_777_216
 reached = "The names of the document's named destinations are longer than 16 MiB together."
 
+[codes.structure_tree_count]
+message = "the structure tree is too deep"
+unit = "levels"
+default = 256
+reached = "A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references."
+
 [codes.page_entry_count]
 message = "the list of pages is too long"
 unit = "entries"

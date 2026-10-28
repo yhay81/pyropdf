@@ -640,6 +640,26 @@ fn unreferenced_frees_what_only_freed_objects_refer_to() {
 }
 
 #[test]
+fn unreferenced_frees_a_candidate_with_what_refers_only_to_it() {
+    let objects = vec![
+        (1, dict(vec![("K", array(vec![reference(4)]))])),
+        // A removed element and its parent, which only the element names.
+        (2, dict(vec![("P", reference(1)), ("K", reference(3))])),
+        (3, dict(vec![("P", reference(2)), ("Pg", reference(6))])),
+        // A removed element that an element that stays still names.
+        (4, dict(vec![("K", reference(5))])),
+        (5, dict(vec![("P", reference(4))])),
+        (6, Value::Integer(0)),
+    ];
+    let trailer = [(Name::from("Root"), reference(1))].into_iter().collect();
+    let document = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let index = build(&document.current(), &budget).unwrap();
+    let freed = unreferenced(&index, &[], &[3, 5], &budget).unwrap();
+    assert_eq!(&*freed, &[2, 3, 6]);
+}
+
+#[test]
 fn find_charges_every_owned_key_copy() {
     let long_key = "k".repeat(64 * 1024);
     let document = document_of(
@@ -880,6 +900,9 @@ proptest! {
         let mut forced = [false; 9];
         for &number in seeds.iter().chain(&candidates) { closure[number as usize] = true; }
         for &number in &seeds { forced[number as usize] = number != 1; }
+        for (at, links) in graph.iter().enumerate() {
+            if links.iter().any(|target| candidates.contains(target)) { closure[at + 1] = true; }
+        }
         for _ in 0..8 {
             for (at, links) in graph.iter().enumerate() {
                 if closure[at + 1] {
@@ -903,4 +926,56 @@ proptest! {
         }).collect();
         prop_assert_eq!(&*actual, &*expected);
     }
+}
+
+#[test]
+fn structure_planning_charges_copies_of_unknown_fields() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    ("StructTreeRoot", reference(6)),
+                ]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+            (4, dict(vec![("Type", name("Page"))])),
+            (
+                6,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", reference(7)),
+                    ("Unknown", string(&"x".repeat(1024 * 1024))),
+                ]),
+            ),
+            (
+                7,
+                dict(vec![
+                    ("S", name("P")),
+                    ("Pg", reference(4)),
+                    ("K", Value::Integer(0)),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let mut edits = Edits::new(&budget);
+    let error = super::structure::plan(
+        &mut Reads::new(&version, &budget),
+        &index,
+        &[3],
+        &[4],
+        &mut edits,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert!(edits.is_empty());
+    assert!(Arc::ptr_eq(&version, &document.current()));
 }

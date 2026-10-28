@@ -25,6 +25,7 @@ mod copy;
 mod navigation;
 mod roles;
 mod rules;
+mod structure;
 #[cfg(test)]
 mod tests;
 
@@ -39,9 +40,27 @@ use crate::version::table::Table;
 use crate::version::{ChangeSet, Version};
 
 pub use copy::copy_for_edit;
-pub use navigation::remove_pages;
 pub use roles::Role;
 pub use rules::{Edits, Rule, unreferenced};
+
+/// Plans in `edits` the rules for `removed`, the pages that leave the
+/// version that `reads` reads, whose index is `index`. `retained` lists
+/// the pages that stay. Both are ascending.
+///
+/// The navigation to a removed page goes or keeps no destination, and the
+/// structure content that lay only on removed pages goes. Refuses, before
+/// writing anything, navigation that is a page, a page tree node, or the
+/// catalog, and a structure tree past its limits.
+pub fn remove_pages(
+    reads: &mut Reads<'_>,
+    index: &References,
+    removed: &[u32],
+    retained: &[u32],
+    edits: &mut Edits<'_>,
+) -> Result<()> {
+    navigation::plan(reads, index, removed, retained, edits)?;
+    structure::plan(reads, index, removed, retained, edits)
+}
 
 /// The references of one version, both ways.
 #[derive(Clone, Default)]

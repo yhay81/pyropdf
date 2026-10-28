@@ -59,6 +59,7 @@ LimitCode: TypeAlias = Literal[
     "named_destination_edge_count",
     "named_destination_depth",
     "named_destination_text_size",
+    "structure_tree_count",
     "page_entry_count",
     "memory_size",
     "deadline",
@@ -176,6 +177,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "named_destination_depth": "The named-destination tree has more than 32 levels.",
         "named_destination_text_size": (
             "The names of the document's named destinations are longer than 16 MiB together."
+        ),
+        "structure_tree_count": (
+            "A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent "
+            "tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references."
         ),
         "page_entry_count": (
             "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page "
