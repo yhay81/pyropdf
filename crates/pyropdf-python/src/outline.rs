@@ -29,7 +29,7 @@ use crate::annotations::links::{
 };
 use crate::document::{_Document, Failed, text_string};
 use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
-use crate::pages::{editing_index, index, number};
+use crate::pages::{index, number};
 
 /// The most items of the outline, and of one write.
 const MAX_ITEMS: usize = 65_536;
@@ -594,7 +594,7 @@ pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> 
             "cannot write more than {MAX_ITEMS} outline items"
         )));
     }
-    let (_, index, _) = editing_index(document)?;
+    let (_, index, _) = index(document)?;
     let mut input = Input::default();
     let mut prepared = Vec::with_capacity(specs.len());
     let mut previous = 0;
@@ -846,7 +846,7 @@ pub fn outline_set_target(
     target: Target,
 ) -> PyResult<()> {
     Input::default().target(&target)?;
-    let (_, index, _) = editing_index(document)?;
+    let (_, index, _) = index(document)?;
     let entry = target_entry(&index, &target)?;
     edit_item(py, document, id, true, |dict| {
         dict.remove("Dest");
