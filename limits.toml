@@ -340,3 +340,21 @@ reached = "The operation runs past its deadline, which `DocumentLimits.max_durat
 [codes.cancelled]
 message = "the operation was cancelled"
 reached = "A cancellation token of the operation is cancelled."
+
+[codes.annotation_quad_count]
+message = "the annotation has too many quadrilaterals"
+unit = "quadrilaterals"
+default = 4_096
+reached = "A text-markup annotation has more than 4,096 quadrilaterals."
+
+[codes.annotation_point_count]
+message = "the annotation has too many points"
+unit = "points"
+default = 65_536
+reached = "An annotation's geometry, including generated squiggly points, has more than 65,536 points."
+
+[codes.annotation_appearance_size]
+message = "the annotation appearance is too large"
+unit = "bytes"
+default = 16_777_216
+reached = "One generated annotation appearance contains more than 16 MiB of content."

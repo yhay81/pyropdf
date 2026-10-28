@@ -17,9 +17,7 @@ pub mod links;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyropdf_engine::annotations::{
-    MAX_ANNOTATION_POINTS, MAX_QUADS, is_text_markup, zigzag_points,
-};
+use pyropdf_engine::annotations::{MAX_QUADS, is_text_markup, zigzag_points};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::settle::Structure;
@@ -27,9 +25,7 @@ use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::{_Document, text_string};
-use crate::errors::{
-    LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
-};
+use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
 use crate::pages::{display_box, index as page_index, number, rect, rotation};
 
 /// The most dash lengths of a border.
@@ -1434,33 +1430,53 @@ impl Spec {
         dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
         dict.insert(Name::from("Subtype"), Value::Name(Name::from(subtype)));
         if let Some(rects) = &self.rects {
-            if rects.is_empty() || rects.len() > MAX_QUADS {
+            if rects.is_empty() {
                 return Err(PdfError::new_err(format!(
                     "text markup covers 1 to {MAX_QUADS} rectangles"
                 )));
             }
-            let mut quads = Vec::with_capacity(rects.len());
+            annots
+                .budget
+                .check(LimitCode::AnnotationQuadCount, rects.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let mut quads = BudgetVec::new(annots.budget);
+            quads
+                .try_reserve_exact(rects.len())
+                .map_err(|e| limit_error(&e))?;
             for &(x0, y0, x1, y1) in rects {
                 if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
                     return Err(PdfError::new_err("text markup rectangles are finite"));
                 }
                 // Display corners TL, TR, BL, BR, as /QuadPoints lists them.
-                quads.push(
-                    [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
-                        .map(|(x, y)| to_pdf(annots.crop, annots.rotation, x, y)),
-                );
+                quads
+                    .try_push(
+                        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+                            .map(|(x, y)| to_pdf(annots.crop, annots.rotation, x, y)),
+                    )
+                    .map_err(|e| limit_error(&e))?;
             }
-            if subtype == "Squiggly" && zigzag_points(&quads) > MAX_ANNOTATION_POINTS {
-                return Err(LimitError::new_err((
-                    "annotation_point_count",
-                    format!("a squiggly line of more than {MAX_ANNOTATION_POINTS} points"),
-                )));
+            if subtype == "Squiggly" {
+                annots
+                    .budget
+                    .check(
+                        LimitCode::AnnotationPointCount,
+                        zigzag_points(&quads) as u64,
+                    )
+                    .map_err(|e| limit_error(&e))?;
             }
-            let points = quads
-                .iter()
-                .flatten()
-                .flat_map(|&(x, y)| [number(x), number(y)]);
-            dict.insert(Name::from("QuadPoints"), Value::Array(points.collect()));
+            let mut points = BudgetVec::new(annots.budget);
+            points
+                .try_extend(
+                    quads
+                        .iter()
+                        .flatten()
+                        .flat_map(|&(x, y)| [number(x), number(y)]),
+                )
+                .map_err(|e| limit_error(&e))?;
+            dict.insert(
+                Name::from("QuadPoints"),
+                Value::Array(Array::from(points.into_vec())),
+            );
             let bounds = quads.iter().flatten().fold(
                 (
                     f64::INFINITY,

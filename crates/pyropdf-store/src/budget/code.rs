@@ -151,11 +151,19 @@ pub enum LimitCode {
     Deadline,
     /// A cancellation token of the operation is cancelled.
     Cancelled,
+    /// A text-markup annotation has more than 4,096 quadrilaterals.
+    AnnotationQuadCount,
+    /// An annotation's geometry, including generated squiggly points, has more
+    /// than 65,536 points.
+    AnnotationPointCount,
+    /// One generated annotation appearance contains more than 16 MiB of
+    /// content.
+    AnnotationAppearanceSize,
 }
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 56] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -209,6 +217,9 @@ impl LimitCode {
         Self::MemorySize,
         Self::Deadline,
         Self::Cancelled,
+        Self::AnnotationQuadCount,
+        Self::AnnotationPointCount,
+        Self::AnnotationAppearanceSize,
     ];
 
     /// The stable code, as Python's `LimitError.code` carries it.
@@ -268,6 +279,9 @@ impl LimitCode {
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
             Self::Cancelled => "cancelled",
+            Self::AnnotationQuadCount => "annotation_quad_count",
+            Self::AnnotationPointCount => "annotation_point_count",
+            Self::AnnotationAppearanceSize => "annotation_appearance_size",
         }
     }
 
@@ -329,6 +343,9 @@ impl LimitCode {
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
             Self::Cancelled => "the operation was cancelled",
+            Self::AnnotationQuadCount => "the annotation has too many quadrilaterals",
+            Self::AnnotationPointCount => "the annotation has too many points",
+            Self::AnnotationAppearanceSize => "the annotation appearance is too large",
         }
     }
 
@@ -390,6 +407,9 @@ impl LimitCode {
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
             Self::Cancelled => None,
+            Self::AnnotationQuadCount => Some("quadrilaterals"),
+            Self::AnnotationPointCount => Some("points"),
+            Self::AnnotationAppearanceSize => Some("bytes"),
         }
     }
 
@@ -451,6 +471,9 @@ impl LimitCode {
             Self::MemorySize => None,
             Self::Deadline => None,
             Self::Cancelled => None,
+            Self::AnnotationQuadCount => Some(4_096),
+            Self::AnnotationPointCount => Some(65_536),
+            Self::AnnotationAppearanceSize => Some(16_777_216),
         }
     }
 }

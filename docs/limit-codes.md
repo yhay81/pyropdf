@@ -56,3 +56,6 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
 | `cancelled` | — | A cancellation token of the operation is cancelled. |
+| `annotation_quad_count` | 4,096 quadrilaterals | A text-markup annotation has more than 4,096 quadrilaterals. |
+| `annotation_point_count` | 65,536 points | An annotation's geometry, including generated squiggly points, has more than 65,536 points. |
+| `annotation_appearance_size` | 16 MiB | One generated annotation appearance contains more than 16 MiB of content. |

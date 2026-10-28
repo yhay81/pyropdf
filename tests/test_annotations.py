@@ -672,3 +672,56 @@ def test_a_waiting_removal_keeps_a_popup_added_by_the_first_writer() -> None:
     assert len(page.annotations) == 1
     assert _subtypes(page) == ["Text", "Popup"]
     assert remaining.popup_rect == Rect(40, 10, 160, 80)
+
+
+def test_a_waiting_add_preserves_the_first_writers_annotation() -> None:
+    page = _notes()
+    started = Event()
+
+    def add() -> None:
+        started.set()
+        page.annotations.add(Highlight((10, 10, 20, 20), contents="second"))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("Add first"):
+            future = pool.submit(add)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            page.annotations.add(Highlight((30, 10, 40, 20), contents="first"))
+        future.result(timeout=10)
+    assert [annotation.contents for annotation in page.annotations] == [None, "first", "second"]
+
+
+def test_an_excessive_existing_squiggly_rolls_back_a_restyle() -> None:
+    page = _page_of(
+        "[4 0 R]",
+        {
+            4: "<< /Type /Annot /Subtype /Squiggly /Rect [0 0 150000 10] "
+            "/C [1 0 0] /QuadPoints [0 10 150000 10 0 0 150000 0] >>"
+        },
+    )
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.annotations[0].color = Color(0, 1, 0)
+    assert raised.value.code == "annotation_point_count"
+    assert page.document.to_bytes() == before
+
+
+def test_highlight_appearance_preserves_subpixel_coordinates() -> None:
+    page = pyropdf.Document().pages.new((100, 100))
+    annotation = page.annotations.add(Highlight((0, 0, 0.000001, 1)))
+    assert b"0.000001 1 l" in annotation.obj["AP"]["N"].read()
+
+
+def test_highlight_text_rejects_excessive_character_count_without_encoding() -> None:
+    class Unencoded(str):
+        __slots__ = ()
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            msg = "An oversized annotation specification must not allocate an encoded copy"
+            raise AssertionError(msg)
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        Highlight((0, 0, 1, 1), contents=Unencoded("a" * (1024 * 1024 + 1)))
+    assert caught.value.code == "annotation_input_size"

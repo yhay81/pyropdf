@@ -766,8 +766,10 @@ def _contents(value: object) -> str | None:
 def _bound_input(subtype: str, contents: str | None) -> None:
     """Bound the subtype, contents, and dates that an added annotation writes to 1 MiB of UTF-8."""
     texts = (subtype, contents or "", _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
-    if sum(len(text) for text in texts) * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE and (
-        sum(len(text.encode()) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+    characters = sum(len(text) for text in texts)
+    if characters > _MAX_ANNOTATION_INPUT_TEXT_SIZE or (
+        characters * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+        and sum(len(text.encode()) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
     ):
         code = "annotation_input_size"
         msg = f"annotation subtype and contents input exceeds the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte UTF-8 limit"
