@@ -36,8 +36,10 @@ const MAX_WIDGETS: usize = 4_096;
 /// fields whose widgets all belonged there, a button field's matching
 /// `/Opt` loses the same entries, and such top-level fields leave
 /// `/Fields` and `/CO`. A retained widget whose `/P` names no retained page
-/// points at the retained page that lists it. Fields that never had a
-/// widget stay. Refuses, before planning anything, a field tree beyond the
+/// points at the retained page that lists it. A removal reads only the
+/// top-level fields that the removed pages reach
+/// ([`super::form_impact::affected_form_objects`]), so these repairs stay
+/// within them. Fields that never had a widget stay. Refuses, before planning anything, a field tree beyond the
 /// limits of the form's walk.
 ///
 /// For a `copy` of the retained pages, a widget that no page lists stays
@@ -52,9 +54,35 @@ pub(super) fn plan(
     copy: bool,
     edits: &mut Edits<'_>,
 ) -> Result<Vec<u32>> {
+    plan_with(reads, index, removed, retained, copy, !copy, edits)
+}
+
+/// [`plan`], reading only the fields that the removed pages reach when
+/// `bounded`, or every field without.
+pub(super) fn plan_with(
+    reads: &mut Reads<'_>,
+    index: &References,
+    removed: &[u32],
+    retained: &[u32],
+    copy: bool,
+    bounded: bool,
+    edits: &mut Edits<'_>,
+) -> Result<Vec<u32>> {
     reads.budget().poll()?;
     let Some(form) = form(reads, removed, retained)? else {
         return Ok(Vec::new());
+    };
+    // A removal reads only the fields that the removed pages reach, and
+    // repairs `/P` only there; a copy takes every field that keeps a
+    // widget, so it walks them all.
+    let affected = if !bounded {
+        None
+    } else {
+        let affected = super::form_impact::affected_form_objects(reads, index, removed, retained)?;
+        if affected.is_empty() {
+            return Ok(Vec::new());
+        }
+        Some(affected)
     };
     let fields = form.array(reads, "Fields")?;
     let top_level = top_level(
@@ -62,6 +90,7 @@ pub(super) fn plan(
         fields.as_ref().map(|(_, items)| items),
         removed,
         retained,
+        affected.as_ref().map(|affected| affected.as_slice()),
     )?;
     if top_level.is_empty() {
         return Ok(Vec::new());
@@ -137,7 +166,13 @@ pub(super) fn fields(reads: &mut Reads<'_>) -> Result<(Vec<Reference>, Vec<Refer
         return Ok((Vec::new(), Vec::new()));
     };
     let fields = form.array(reads, "Fields")?;
-    let top_level = top_level(reads, fields.as_ref().map(|(_, items)| items), &[], &[])?;
+    let top_level = top_level(
+        reads,
+        fields.as_ref().map(|(_, items)| items),
+        &[],
+        &[],
+        None,
+    )?;
     let mut order = BudgetVec::new(reads.budget());
     if let Some((_, items)) = form.array(reads, "CO")? {
         for entry in items.iter() {
@@ -214,12 +249,14 @@ fn form(reads: &mut Reads<'_>, removed: &[u32], retained: &[u32]) -> Result<Opti
 
 /// Returns the distinct field dictionaries of `fields`, in order. Some
 /// producers list every annotation in `/Fields`; entries that are no field
-/// stay out of the walk.
+/// stay out of the walk. With `only`, sorted by number, only the entries
+/// that it names are read.
 fn top_level<'b>(
     reads: &mut Reads<'b>,
     fields: Option<&Array>,
     removed: &[u32],
     retained: &[u32],
+    only: Option<&[Reference]>,
 ) -> Result<BudgetVec<'b, Reference>> {
     let budget = reads.budget();
     let mut out = BudgetVec::new(budget);
@@ -229,6 +266,13 @@ fn top_level<'b>(
         let &Value::Reference(reference) = entry else {
             continue;
         };
+        if let Some(only) = only
+            && only
+                .binary_search_by_key(&reference.number(), |at| at.number())
+                .is_err()
+        {
+            continue;
+        }
         let Some(dict) = dict_object(reads, reference)? else {
             continue;
         };

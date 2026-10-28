@@ -131,7 +131,7 @@ pub fn affected_form_objects<'b>(
             }
             if depth >= MAX_DEPTH {
                 return Err(Error::malformed(
-                    "form impact reference chain exceeds 64 levels",
+                    "AcroForm field tree exceeds the 64-level safety limit",
                 ));
             }
             seeds
