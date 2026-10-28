@@ -1224,7 +1224,7 @@ impl Output<'_> {
 
 /// Rust's display format preserves small coordinates without PDF-invalid
 /// exponent notation. Normalize negative zero as well.
-fn fmt(value: f64) -> String {
+pub(crate) fn fmt(value: f64) -> String {
     if value == 0.0 {
         "0".to_owned()
     } else {
