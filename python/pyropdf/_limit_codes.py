@@ -33,6 +33,9 @@ LimitCode: TypeAlias = Literal[
     "table_cell_count",
     "table_span_candidate_count",
     "table_column_count",
+    "ocr_layer_word_count",
+    "ocr_layer_text_size",
+    "ocr_layer_character_count",
     "ocr_raster_size",
     "ocr_detection_count",
     "ocr_text_size",
@@ -108,6 +111,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
         ),
         "table_column_count": "Text table detection encounters a row with more than 32 separated columns.",
+        "ocr_layer_word_count": "An invisible OCR layer has more than 4,096 words.",
+        "ocr_layer_text_size": "An invisible OCR layer has more than 1 MiB of UTF-8 text.",
+        "ocr_layer_character_count": "An invisible OCR layer needs more than 65,534 distinct character IDs.",
         "ocr_raster_size": "The raster expanded to RGBA for OCR exceeds 512 MiB.",
         "ocr_detection_count": (
             "OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps."

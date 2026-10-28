@@ -158,6 +158,24 @@ unit = "columns"
 default = 32
 reached = "Text table detection encounters a row with more than 32 separated columns."
 
+[codes.ocr_layer_word_count]
+message = "the OCR layer has too many words"
+unit = "words"
+default = 4_096
+reached = "An invisible OCR layer has more than 4,096 words."
+
+[codes.ocr_layer_text_size]
+message = "the OCR layer text is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "An invisible OCR layer has more than 1 MiB of UTF-8 text."
+
+[codes.ocr_layer_character_count]
+message = "the OCR layer has too many distinct characters"
+unit = "characters"
+default = 65_534
+reached = "An invisible OCR layer needs more than 65,534 distinct character IDs."
+
 [codes.ocr_raster_size]
 message = "the OCR raster is too large"
 unit = "bytes"

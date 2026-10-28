@@ -61,7 +61,7 @@ mod _core {
         object_set, stream_read, stream_write,
     };
     #[pymodule_export]
-    use super::ocr::_OcrEngine;
+    use super::ocr::{_OcrEngine, insert_ocr_layer};
     #[pymodule_export]
     use super::pages::{
         new_page, page_count, page_geometry, page_index, page_object, page_objects,

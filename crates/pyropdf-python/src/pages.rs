@@ -117,18 +117,9 @@ pub fn page_geometry(
     };
     let page = &index.pages()[at];
     let rotation = rotation(page.rotate());
-    let media = page
-        .media_box()
-        .and_then(rect)
-        .unwrap_or((0.0, 0.0, A4.0, A4.1));
-    let crop = page.crop_box().and_then(rect).unwrap_or(media);
-    let (x0, y0) = (crop.0.max(media.0), crop.1.max(media.1));
-    let (x1, y1) = (crop.2.min(media.2), crop.3.min(media.3));
-    let (mut width, mut height) = if x1 - x0 < 1e-6 || y1 - y0 < 1e-6 {
-        A4
-    } else {
+    let (mut width, mut height) = visible(page).map_or(A4, |(x0, y0, x1, y1)| {
         ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
-    };
+    });
     if rotation % 180 == 90 {
         std::mem::swap(&mut width, &mut height);
     }
@@ -318,7 +309,11 @@ fn root(version: &Version, budget: &Budget) -> PyResult<(Reference, Dict)> {
 
 /// Follows references from `value`, at most [`MAX_CHAIN`]; a null, an
 /// absent object, or a missing entry is `None`.
-fn resolve(version: &Version, value: Option<&Value>, budget: &Budget) -> PyResult<Option<Value>> {
+pub(crate) fn resolve(
+    version: &Version,
+    value: Option<&Value>,
+    budget: &Budget,
+) -> PyResult<Option<Value>> {
     let mut current = match value {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::Reference(reference)) => *reference,
@@ -348,8 +343,30 @@ fn indirect(page: &Page, at: usize) -> PyResult<Reference> {
         .ok_or_else(|| MalformedPdfError::new_err(format!("page {at} is not an indirect object")))
 }
 
+/// Returns the crop box of `page` clipped to its media box, in unrotated
+/// user space, or `None` when nothing is visible.
+fn visible(page: &Page) -> Option<(f64, f64, f64, f64)> {
+    let media = page
+        .media_box()
+        .and_then(rect)
+        .unwrap_or((0.0, 0.0, A4.0, A4.1));
+    let crop = page.crop_box().and_then(rect).unwrap_or(media);
+    let (x0, y0) = (crop.0.max(media.0), crop.1.max(media.1));
+    let (x1, y1) = (crop.2.min(media.2), crop.3.min(media.3));
+    (x1 - x0 >= 1e-6 && y1 - y0 >= 1e-6).then_some((x0, y0, x1, y1))
+}
+
+/// Returns the display box of `page` in unrotated user space, whose size
+/// [`page_geometry`] reports: the visible crop box, at least one point on a
+/// side, or hayro's A4.
+pub(crate) fn display_box(page: &Page) -> [f64; 4] {
+    visible(page).map_or([0.0, 0.0, A4.0, A4.1], |(x0, y0, x1, y1)| {
+        [x0, y0, x0 + (x1 - x0).max(1.0), y0 + (y1 - y0).max(1.0)]
+    })
+}
+
 /// Normalizes `/Rotate` to 0, 90, 180, or 270, as hayro reads it.
-fn rotation(value: Option<&Value>) -> i64 {
+pub(crate) fn rotation(value: Option<&Value>) -> i64 {
     match value {
         Some(&Value::Integer(rotate)) => match rotate.rem_euclid(360) {
             r @ (0 | 90 | 180 | 270) => r,

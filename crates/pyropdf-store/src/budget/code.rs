@@ -75,6 +75,12 @@ pub enum LimitCode {
     /// Text table detection encounters a row with more than 32 separated
     /// columns.
     TableColumnCount,
+    /// An invisible OCR layer has more than 4,096 words.
+    OcrLayerWordCount,
+    /// An invisible OCR layer has more than 1 MiB of UTF-8 text.
+    OcrLayerTextSize,
+    /// An invisible OCR layer needs more than 65,534 distinct character IDs.
+    OcrLayerCharacterCount,
     /// The raster expanded to RGBA for OCR exceeds 512 MiB.
     OcrRasterSize,
     /// OCR detection finds more than 4,096 candidate regions across its tiles
@@ -128,7 +134,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 45] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -152,6 +158,9 @@ impl LimitCode {
         Self::TableCellCount,
         Self::TableSpanCandidateCount,
         Self::TableColumnCount,
+        Self::OcrLayerWordCount,
+        Self::OcrLayerTextSize,
+        Self::OcrLayerCharacterCount,
         Self::OcrRasterSize,
         Self::OcrDetectionCount,
         Self::OcrTextSize,
@@ -200,6 +209,9 @@ impl LimitCode {
             Self::TableCellCount => "table_cell_count",
             Self::TableSpanCandidateCount => "table_span_candidate_count",
             Self::TableColumnCount => "table_column_count",
+            Self::OcrLayerWordCount => "ocr_layer_word_count",
+            Self::OcrLayerTextSize => "ocr_layer_text_size",
+            Self::OcrLayerCharacterCount => "ocr_layer_character_count",
             Self::OcrRasterSize => "ocr_raster_size",
             Self::OcrDetectionCount => "ocr_detection_count",
             Self::OcrTextSize => "ocr_text_size",
@@ -250,6 +262,9 @@ impl LimitCode {
             Self::TableCellCount => "the candidate table has too many cells",
             Self::TableSpanCandidateCount => "the table needs too many cell span candidates",
             Self::TableColumnCount => "the text table has too many columns",
+            Self::OcrLayerWordCount => "the OCR layer has too many words",
+            Self::OcrLayerTextSize => "the OCR layer text is too long",
+            Self::OcrLayerCharacterCount => "the OCR layer has too many distinct characters",
             Self::OcrRasterSize => "the OCR raster is too large",
             Self::OcrDetectionCount => "the OCR detector found too many text regions",
             Self::OcrTextSize => "the recognized OCR text is too long",
@@ -300,6 +315,9 @@ impl LimitCode {
             Self::TableCellCount => Some("cells"),
             Self::TableSpanCandidateCount => Some("candidates"),
             Self::TableColumnCount => Some("columns"),
+            Self::OcrLayerWordCount => Some("words"),
+            Self::OcrLayerTextSize => Some("bytes"),
+            Self::OcrLayerCharacterCount => Some("characters"),
             Self::OcrRasterSize => Some("bytes"),
             Self::OcrDetectionCount => Some("regions"),
             Self::OcrTextSize => Some("bytes"),
@@ -350,6 +368,9 @@ impl LimitCode {
             Self::TableCellCount => Some(4_096),
             Self::TableSpanCandidateCount => Some(65_536),
             Self::TableColumnCount => Some(32),
+            Self::OcrLayerWordCount => Some(4_096),
+            Self::OcrLayerTextSize => Some(1_048_576),
+            Self::OcrLayerCharacterCount => Some(65_534),
             Self::OcrRasterSize => Some(536_870_912),
             Self::OcrDetectionCount => Some(4_096),
             Self::OcrTextSize => Some(33_554_432),

@@ -3,9 +3,9 @@
 Ported from pylopdf 036be111 ``tests/test_markdown.py`` and the Markdown
 tests of ``tests/test_tables.py``. The differences:
 
-- pylopdf adds text with ``page.apply_ocr``, which pyropdf does not have
-  (#102); these tests show the same strings with a font whose ToUnicode CMap
-  maps one code to each whole string.
+- pylopdf adds text with ``page.apply_ocr``; these tests show the same
+  strings with a font whose ToUnicode CMap maps one code to each whole
+  string, so that Markdown does not depend on the OCR layer.
 - pylopdf's ``page.document.markdown()`` is ``document.markdown()``.
 """
 

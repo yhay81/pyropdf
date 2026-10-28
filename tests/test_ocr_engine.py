@@ -2,8 +2,8 @@
 
 Ported from pylopdf 036be111 ``tests/test_ocr_engine.py``. The differences:
 
-- The ``apply_ocr`` tests are not ported; ``Page.apply_ocr`` writes a text
-  layer, which is #146.
+- The ``apply_ocr`` tests embed the raster of a source page as an image
+  XObject, where pylopdf draws its PNG with ``page.draw``.
 - pylopdf reads the models from its repository's ``models/`` directory;
   these tests read them from the installed ``pylopdf-ocr-models``, the
   ``ocr`` extra, and skip without it.
@@ -17,6 +17,7 @@ Ported from pylopdf 036be111 ``tests/test_ocr_engine.py``. The differences:
 from __future__ import annotations
 
 import hashlib
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event, Lock
 from typing import TYPE_CHECKING, Any
@@ -60,6 +61,46 @@ def _text_page(size: tuple[int, int], *texts: tuple[str, float, float, float]) -
             }
         )
     ).pages[0]
+
+
+def _scanned_page(
+    size: tuple[int, int],
+    raster: pyropdf.Pixmap,
+    box: tuple[float, float, float, float] | None = None,
+    *texts: tuple[str, float, float, float],
+) -> pyropdf.Page:
+    """Return a page of ``size`` that draws an RGB ``raster`` into the display ``box`` and shows ``texts``."""
+    width, height = size
+    x0, y0, x1, y1 = box or (0, 0, width, height)
+    assert (raster.channels, raster.stride) == (3, raster.width * 3)
+    samples = zlib.compress(bytes(raster))
+    image = (
+        (
+            f"<< /Type /XObject /Subtype /Image /Width {raster.width} /Height {raster.height} /ColorSpace /DeviceRGB"
+            f" /BitsPerComponent 8 /Filter /FlateDecode /Length {len(samples)} >>\nstream\n"
+        ).encode()
+        + samples
+        + b"\nendstream"
+    )
+    shows = " ".join(f"BT /F1 {font} Tf {x} {height - y} Td ({text}) Tj ET" for text, x, y, font in texts)
+    content = f"q {x1 - x0} 0 0 {y1 - y0} {x0} {height - y1} cm /Im0 Do Q {shows}"
+    return pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: f"<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 {width} {height}]"
+                " /Resources << /Font << /F1 3 0 R >> /XObject << /Im0 6 0 R >> >> >>",
+                3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: f"<< /Length {len(content)} >>\nstream\n{content}\nendstream",
+                6: image,
+            }
+        )
+    ).pages[0]
+
+
+def _white(page: pyropdf.Page) -> bytes:
+    return bytes(page.pixmap(background=(255, 255, 255), alpha=True))
 
 
 def _blank_page(size: tuple[int, int] = (100, 100)) -> pyropdf.Page:
@@ -261,6 +302,75 @@ def test_ocr_engine_can_raise_measured_concurrency(model_paths: Any, monkeypatch
     assert results == [[], []]
     assert probe.max_active == 2
     assert engine.max_concurrent == 2
+
+
+def test_apply_ocr_adds_searchable_invisible_text(ocr_engine: pyropdf.OcrEngine) -> None:
+    raster = _text_page((360, 120), ("Search 456", 20, 75, 36)).pixmap(dpi=150)
+    target = _scanned_page((360, 120), raster)
+    before = _white(target)
+
+    words = target.apply_ocr(dpi=150, engine=ocr_engine, tile_size=512, overlap=64)
+
+    assert [word.text for word in words] == ["Search 456"]
+    assert target.search("Search 456")
+    assert _white(target) == before
+    reopened = pyropdf.open(target.document.to_bytes()).pages[0]
+    assert reopened.search("Search 456")
+    assert _white(reopened) == before
+
+
+def test_apply_ocr_clip_handles_mixed_content(ocr_engine: pyropdf.OcrEngine) -> None:
+    raster = _text_page((360, 120), ("Region 789", 20, 75, 36)).pixmap(dpi=150)
+    target = _scanned_page((360, 220), raster, (0, 80, 360, 200), ("Digital header", 20, 30, 14))
+    before = _white(target)
+
+    words = target.apply_ocr(dpi=150, engine=ocr_engine, tile_size=512, overlap=64, clip=(0, 70, 360, 210))
+
+    assert [word.text for word in words] == ["Region 789"]
+    assert words[0].bbox.y0 > 70
+    assert target.search("Region 789")
+    assert _white(target) == before
+
+
+@pytest.mark.parametrize(("page_rotation", "ocr_rotation"), [(90, 270), (180, 180), (270, 90)])
+def test_apply_ocr_corrects_rotated_scan_without_rotating_page(
+    ocr_engine: pyropdf.OcrEngine,
+    page_rotation: int,
+    ocr_rotation: pyropdf.OcrRotation,
+) -> None:
+    raster = _text_page((360, 200), ("First line 111", 20, 65, 28), ("Second line 222", 20, 145, 28)).pixmap(dpi=150)
+    target = _scanned_page((360, 200), raster)
+    target.rotation = page_rotation
+    before = _white(target)
+
+    words = target.apply_ocr(dpi=150, engine=ocr_engine, tile_size=512, overlap=64, rotation=ocr_rotation)
+
+    assert [word.text for word in words] == ["First line 111", "Second line 222"]
+    assert target.text() == "First line 111\nSecond line 222\n"
+    for word in words:
+        if page_rotation in (90, 270):
+            assert word.bbox.height > word.bbox.width
+        else:
+            assert word.bbox.width > word.bbox.height
+        hits = target.search(word.text)
+        assert len(hits) == 1
+        assert tuple(hits[0]) == pytest.approx(tuple(word.bbox), abs=0.2)
+    assert target.rotation == page_rotation
+    assert _white(target) == before
+    reopened = pyropdf.open(target.document.to_bytes()).pages[0]
+    assert reopened.text() == "First line 111\nSecond line 222\n"
+    assert reopened.search("First line 111")
+    assert reopened.search("Second line 222")
+    assert reopened.rotation == page_rotation
+    assert _white(reopened) == before
+
+
+def test_apply_ocr_skips_existing_text_by_default() -> None:
+    page = _text_page((200, 100), ("Already searchable", 20, 50, 12))
+
+    assert page.apply_ocr() == []
+    with pytest.raises(TypeError, match="skip_existing"):
+        page.apply_ocr(skip_existing=1)  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("dpi", [0, -1, float("inf"), float("nan"), "bad"])

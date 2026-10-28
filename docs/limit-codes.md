@@ -26,6 +26,9 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `table_cell_count` | 4,096 cells | A candidate table needs more than 4,096 row-column slots. |
 | `table_span_candidate_count` | 65,536 candidates | Reconstructing merged cells in one table examines more than 65,536 candidate spans. |
 | `table_column_count` | 32 columns | Text table detection encounters a row with more than 32 separated columns. |
+| `ocr_layer_word_count` | 4,096 words | An invisible OCR layer has more than 4,096 words. |
+| `ocr_layer_text_size` | 1 MiB | An invisible OCR layer has more than 1 MiB of UTF-8 text. |
+| `ocr_layer_character_count` | 65,534 characters | An invisible OCR layer needs more than 65,534 distinct character IDs. |
 | `ocr_raster_size` | 512 MiB | The raster expanded to RGBA for OCR exceeds 512 MiB. |
 | `ocr_detection_count` | 4,096 regions | OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps. |
 | `ocr_text_size` | 32 MiB | OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering. |
