@@ -9,8 +9,6 @@ comes with their appearances (#161). Intended differences from pylopdf:
   writes every live object; the page's ``/Annots`` no longer names them.
 - A handle of a page that another page's deletion moved keeps working, as
   pages do (tests/test_pages.py); deleting its own page makes it stale.
-- Links are counted in the page's raw ``/Annots`` until ``page.links``
-  exists (#163).
 - pymupdf's names, such as ``PDF_ANNOT_3D``, are absent with no hint of the
   pyropdf name.
 """
@@ -142,6 +140,7 @@ def test_links_widgets_and_popups_are_not_listed() -> None:
         AnnotationType.UNKNOWN,
     ]
     assert _subtypes(page) == ["Text", "Popup", "Link", "Widget", "FreeText", None]
+    assert len(page.links) == 1
 
 
 def test_handles_compare_by_annotation() -> None:
@@ -216,6 +215,7 @@ def test_deleting_an_annotation_removes_its_popup() -> None:
     del page.annotations[:]
     assert len(page.annotations) == 0
     assert _subtypes(page) == ["Link", "Widget"]
+    assert [link.xref for link in page.links] == [page.obj["Annots"][0].xref]
 
 
 def test_annotation_enums_keep_pymupdf_values() -> None:

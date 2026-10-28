@@ -12,6 +12,8 @@
 //! and the appearance settler draws it again once per transaction (section
 //! 7).
 
+pub mod links;
+
 use std::sync::Arc;
 
 use pyo3::prelude::*;

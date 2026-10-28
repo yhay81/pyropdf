@@ -22,6 +22,7 @@ from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg
 from pyropdf._errors import DocumentClosedError, LimitError, PdfError
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
+from pyropdf._links import Destinations
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._page import _clip_box
 from pyropdf._pages import Pages, _resolve
@@ -106,6 +107,12 @@ class Document:
         objects = Objects(self)
         objects._core()  # noqa: SLF001 - refuses a locked document now.
         return objects
+
+    @property
+    def destinations(self) -> Destinations:
+        """Return the named destinations, a read-only mapping from name to :class:`Destination`."""
+        self._ensure_open()
+        return Destinations(self)
 
     @property
     def trailer(self) -> Dictionary:

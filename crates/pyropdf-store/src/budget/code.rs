@@ -130,6 +130,16 @@ pub enum LimitCode {
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
+    /// The document's named destinations, its `/Names /Dests` tree and its
+    /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
+    NamedDestinationCount,
+    /// The named-destination tree has more than 131,072 child edges.
+    NamedDestinationEdgeCount,
+    /// The named-destination tree has more than 32 levels.
+    NamedDestinationDepth,
+    /// The names of the document's named destinations are longer than 16 MiB
+    /// together.
+    NamedDestinationTextSize,
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
@@ -145,7 +155,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 53] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -191,6 +201,10 @@ impl LimitCode {
         Self::AnnotationTextSize,
         Self::AnnotationDashCount,
         Self::AnnotationInputSize,
+        Self::NamedDestinationCount,
+        Self::NamedDestinationEdgeCount,
+        Self::NamedDestinationDepth,
+        Self::NamedDestinationTextSize,
         Self::PageEntryCount,
         Self::MemorySize,
         Self::Deadline,
@@ -246,6 +260,10 @@ impl LimitCode {
             Self::AnnotationTextSize => "annotation_text_size",
             Self::AnnotationDashCount => "annotation_dash_count",
             Self::AnnotationInputSize => "annotation_input_size",
+            Self::NamedDestinationCount => "named_destination_count",
+            Self::NamedDestinationEdgeCount => "named_destination_edge_count",
+            Self::NamedDestinationDepth => "named_destination_depth",
+            Self::NamedDestinationTextSize => "named_destination_text_size",
             Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
@@ -303,6 +321,10 @@ impl LimitCode {
             Self::AnnotationTextSize => "the annotation text is too long",
             Self::AnnotationDashCount => "the annotation border has too many dash lengths",
             Self::AnnotationInputSize => "the annotation text is too long",
+            Self::NamedDestinationCount => "the named destinations are too many",
+            Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
+            Self::NamedDestinationDepth => "the named-destination tree is too deep",
+            Self::NamedDestinationTextSize => "the names of the named destinations are too long",
             Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
@@ -360,6 +382,10 @@ impl LimitCode {
             Self::AnnotationTextSize => Some("bytes"),
             Self::AnnotationDashCount => Some("lengths"),
             Self::AnnotationInputSize => Some("bytes"),
+            Self::NamedDestinationCount => Some("entries"),
+            Self::NamedDestinationEdgeCount => Some("edges"),
+            Self::NamedDestinationDepth => Some("levels"),
+            Self::NamedDestinationTextSize => Some("bytes"),
             Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
@@ -417,6 +443,10 @@ impl LimitCode {
             Self::AnnotationTextSize => Some(1_048_576),
             Self::AnnotationDashCount => Some(32),
             Self::AnnotationInputSize => Some(1_048_576),
+            Self::NamedDestinationCount => Some(65_536),
+            Self::NamedDestinationEdgeCount => Some(131_072),
+            Self::NamedDestinationDepth => Some(32),
+            Self::NamedDestinationTextSize => Some(16_777_216),
             Self::PageEntryCount => None,
             Self::MemorySize => None,
             Self::Deadline => None,
