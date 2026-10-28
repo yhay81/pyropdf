@@ -2067,3 +2067,40 @@ fn form_impact_refuses_catalog_reached_through_a_reference_alias() {
     let mut reads = Reads::new(&version, &budget);
     assert!(affected_form_objects(&mut reads, &index, &[3], &[]).is_err());
 }
+
+#[test]
+fn form_impact_detects_a_direct_widget_nested_in_a_form_object() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (
+                2,
+                dict(vec![(
+                    "Fields",
+                    array(vec![dict(vec![
+                        ("FT", name("Tx")),
+                        ("T", string("field")),
+                        (
+                            "Kids",
+                            array(vec![dict(vec![
+                                ("Subtype", name("Widget")),
+                                ("P", reference(3)),
+                            ])]),
+                        ),
+                    ])]),
+                )]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+    assert!(affected.iter().any(|reference| reference.number() == 2));
+}

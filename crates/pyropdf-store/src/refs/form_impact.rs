@@ -10,8 +10,8 @@ use crate::value::{Reference, Value};
 use crate::version::table::Table;
 use crate::{Error, Result};
 
-use super::References;
 use super::navigation::{dict_of, is_aliasing, is_in};
+use super::{References, Referrer, Step, find};
 
 /// The longest chain of indirect values that page annotations may use.
 const MAX_CHAIN: usize = crate::pages::MAX_CHAIN;
@@ -160,6 +160,9 @@ fn seed_page_referrers(
             let Some(object) = reads.get(owner)? else {
                 continue;
             };
+            if root.contains(&Some(owner)) || is_in(removed, owner) || is_in(retained, owner) {
+                continue;
+            }
             let reference = Reference::new(owner, object.generation());
             match &**object.value() {
                 Value::Reference(to) if *to == target => {
@@ -172,13 +175,18 @@ fn seed_page_referrers(
                         aliases.try_push((reference, depth + 1))?;
                     }
                 }
-                Value::Dict(dict)
-                    if !protected(owner, root, removed, retained, dict)
-                        && matches!(dict.get("P"), Some(Value::Reference(to)) if *to == target) =>
-                {
-                    queue.try_push((reference, 1))?;
+                value => {
+                    if matches!(value, Value::Dict(dict) if is_aliasing(dict)) {
+                        continue;
+                    }
+                    let found = find(reads, Referrer::Object(owner), target.number())?;
+                    if found.iter().any(|found| {
+                        found.reference == target
+                            && matches!(found.path.last(), Some(Step::Key(key)) if key.as_bytes() == b"P")
+                    }) {
+                        queue.try_push((reference, 1))?;
+                    }
                 }
-                _ => {}
             }
         }
     }
