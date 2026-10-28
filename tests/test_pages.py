@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from operator import delitem
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -349,3 +350,39 @@ def test_page_index_takes_constant_time() -> None:
     large = _index_time(1_760)
     # Sixteen times the pages; a cost that grew with them would show it.
     assert large < small * 3, (small, large)
+
+
+def test_flattening_the_page_tree_keeps_inherited_and_own_references() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 2 /MediaBox [0 0 612 792] >>",
+                3: "<< /Type /Pages /Parent 2 0 R /Kids [4 0 R 5 0 R] /Count 2 /Resources 6 0 R >>",
+                4: "<< /Type /Page /Parent 3 0 R >>",
+                5: "<< /Type /Page /Parent 3 0 R /Resources 7 0 R >>",
+                6: "<< /Font << /F1 8 0 R >> >>",
+                7: "<< /Font << /F2 8 0 R >> >>",
+                8: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            }
+        )
+    )
+
+    doc.pages.new((200, 300))
+
+    for current in (doc, pyropdf.open(doc.to_bytes())):
+        inherited, own = current.pages[0].obj, current.pages[1].obj
+        assert inherited["Parent"] == own["Parent"] == current.catalog["Pages"]
+        assert (inherited["Resources"].xref, own["Resources"].xref) == (6, 7)
+        assert list(inherited["Resources"]["Font"]) == ["F1"]
+
+
+def test_adding_a_page_to_a_nested_tree_shares_the_resources() -> None:
+    doc = pyropdf.open(Path(__file__).parent.joinpath("assets", "real_world", "bill-hr815.pdf").read_bytes())
+    before = {page.obj.xref: page.obj["Resources"].xref for page in doc.pages}
+    assert None not in before.values()
+
+    doc.pages.new()
+
+    after = {page.obj.xref: page.obj["Resources"].xref for page in doc.pages if page.obj.xref in before}
+    assert after == before

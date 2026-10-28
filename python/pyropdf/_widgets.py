@@ -28,7 +28,7 @@ from pyropdf._objects import Dictionary
 
 if TYPE_CHECKING:
     from pyropdf._core import _Widget, _WidgetStyle
-    from pyropdf._form import Field, FieldSpecification
+    from pyropdf._form import Field, FieldSpecification, Scripts
     from pyropdf._page import Page
 
 
@@ -94,6 +94,14 @@ class Widget:
         if self._id[0]:
             return Dictionary(self._page._document, self._id)  # noqa: SLF001
         return self._page.obj["Annots"][self._index]
+
+    @property
+    def scripts(self) -> Scripts:
+        """Return the widget's JavaScript by trigger: focus, blur, enter, exit, down, up, and activate."""
+        from pyropdf._form import _WIDGET_TRIGGERS, Scripts  # noqa: PLC0415 - the form module imports this one.
+
+        self._read()
+        return Scripts(self._page._document, lambda: self.obj, _WIDGET_TRIGGERS)  # noqa: SLF001
 
     @property
     def field(self) -> Field | None:
@@ -185,6 +193,18 @@ class Widget:
     @caption.deleter
     def caption(self) -> None:
         self._set(clear=["caption"])
+
+    @property
+    def rotation(self) -> int:
+        """Return or set the rotation of the widget's appearance, ``/MK /R``: 0, 90, 180, or 270 degrees."""
+        return self._style()[0][3]
+
+    @rotation.setter
+    def rotation(self, rotation: int) -> None:
+        if isinstance(rotation, bool) or not isinstance(rotation, int) or rotation % 90:
+            msg = f"rotation is a multiple of 90 degrees: {rotation!r}"
+            raise ValueError(msg)
+        self._set(rotation=rotation % 360)
 
     @property
     def text_color(self) -> Color:

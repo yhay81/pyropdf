@@ -89,6 +89,8 @@ from pyropdf._form import (
     ListBox,
     PushButton,
     RadioButton,
+    Scripts,
+    ScriptTrigger,
     SignatureField,
     SignatureFlags,
     TextField,
@@ -107,7 +109,7 @@ from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
-from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
+from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 from pyropdf._widgets import Widget, Widgets
 
 for _public in (
@@ -159,6 +161,7 @@ __all__ = [
     "CancellationToken",
     "ChangeReport",
     "Char",
+    "Chars",
     "CheckBox",
     "Circle",
     "ClaimChange",
@@ -247,6 +250,8 @@ __all__ = [
     "Real",
     "Rect",
     "RemoteDestination",
+    "ScriptTrigger",
+    "Scripts",
     "Segment",
     "ShadingPattern",
     "ShadingType",

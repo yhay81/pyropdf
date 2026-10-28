@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import io
 import os
+import re
 import shutil
 import subprocess
 from typing import TYPE_CHECKING
@@ -29,6 +30,11 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 QPDF = shutil.which("qpdf")
+
+#: qpdf 11 reads every object of an object stream into its xref table, so an
+#: object that a later revision frees gets an entry of no type, which
+#: ``--check`` reports; qpdf 12 does not.
+_FREED_IN_STREAM = re.compile(r"object (\d+)/\d+ has unexpected xref entry type")
 
 
 def defects(data: bytes) -> set[tuple[int | None, str, str, str]]:
@@ -75,7 +81,13 @@ def test_an_edit_and_a_save_add_no_qpdf_finding(name: str, edit: str, *, increme
     EDITS[edit](doc)
     saved = tmp_path / "saved.pdf"
     saved.write_bytes(doc.to_bytes(incremental=incremental))
-    assert qpdf_findings(saved) - qpdf_findings(ASSETS / name) == set()
+    live = set(pyropdf.open(saved).objects)
+    findings = {
+        finding
+        for finding in qpdf_findings(saved)
+        if not ((match := _FREED_IN_STREAM.fullmatch(finding)) and int(match[1]) not in live)
+    }
+    assert findings - qpdf_findings(ASSETS / name) == set()
 
 
 def pikepdf_problems(source: Path | io.BytesIO) -> tuple[int, set[str]]:
