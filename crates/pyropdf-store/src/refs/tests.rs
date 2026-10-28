@@ -1732,8 +1732,8 @@ fn form_impact_finds_ancestors_without_reading_unrelated_fields() {
         [(Name::from("Root"), reference(1))].into_iter().collect(),
     );
     let version = document.current();
-    let budget = Budget::default();
-    let index = build(&version, &budget).unwrap();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
     let mut reads = Reads::new(&version, &budget);
     let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
     let numbers: Vec<_> = affected
@@ -1965,5 +1965,81 @@ fn measure_form_impact() {
         }
         times.sort_by(f64::total_cmp);
         println!("FORM_IMPACT|{count}|{index_ms:.3}|{:.4}", times[3]);
+    }
+}
+
+#[test]
+fn form_impact_follows_indirect_annotation_aliases_and_keeps_shared_candidates() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(4)]))])),
+            (
+                3,
+                dict(vec![("Type", name("Page")), ("Annots", reference(6))]),
+            ),
+            (
+                4,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Kids", array(vec![reference(5)])),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![("Subtype", name("Widget")), ("P", reference(3))]),
+            ),
+            (6, reference(7)),
+            (7, array(vec![reference(8)])),
+            (8, reference(5)),
+            (
+                9,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(5)])),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[9]).unwrap();
+    let numbers: Vec<_> = affected
+        .iter()
+        .map(|reference| reference.number())
+        .collect();
+    assert_eq!(numbers, [2, 4, 5, 6, 7, 8]);
+}
+
+#[test]
+fn form_impact_refuses_catalog_aliases_and_cyclic_annotation_arrays() {
+    for annotations in [reference(1), reference(6)] {
+        let document = document_of(
+            &[
+                (1, dict(vec![("Type", name("Catalog"))])),
+                (
+                    3,
+                    dict(vec![
+                        ("Type", name("Page")),
+                        ("Annots", array(vec![annotations])),
+                    ]),
+                ),
+                (6, reference(7)),
+                (7, reference(6)),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        let mut reads = Reads::new(&version, &budget);
+        assert!(affected_form_objects(&mut reads, &index, &[3], &[]).is_err());
     }
 }
