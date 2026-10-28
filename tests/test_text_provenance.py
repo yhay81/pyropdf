@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 from corpus import ASSETS, NAMES
+from test_content import _page as build_text_pdf
 from test_content import build_raw_pdf
 
 import pyropdf
@@ -106,6 +107,41 @@ def test_a_content_that_uses_the_marking_tags_has_no_sources() -> None:
 
     assert page.text().startswith("Ab")
     assert all(char.operation is None for char in _chars(page))
+
+
+@pytest.mark.parametrize("prefix", ["", "EMC ", "/pyropdf.operation.form BMC "])
+def test_a_form_cannot_claim_a_page_operation_with_a_marking_tag(prefix: str) -> None:
+    document = pyropdf.open(build_provenance_pdf("BT /F1 20 Tf 20 250 Td (A) Tj ET /X1 Do"))
+    page = document.pages[0]
+    operation = _shows(page)[0]
+    document.objects[8].write(
+        f"{prefix}/pyropdf.operation.{operation} BMC BT /F1 10 Tf 150 280 Td (Form) Tj ET EMC".encode()
+    )
+
+    sources = _sources(page)
+
+    assert ("A", 11, operation) in sources
+    assert ("F", None, None) in sources
+    assert all(stream is None and index is None for text, stream, index in sources if text in "Form")
+
+
+@pytest.mark.parametrize(
+    ("limits", "code"),
+    [
+        (pyropdf.DocumentLimits(max_page_content_size=16), "page_content_size"),
+        (pyropdf.DocumentLimits(max_decompressed_size=16), "decompressed_size"),
+        (pyropdf.DocumentLimits(max_total_decompressed_size=16), "total_decompressed_size"),
+    ],
+)
+def test_provenance_propagates_content_reading_limits(limits: pyropdf.DocumentLimits, code: str) -> None:
+    document = pyropdf.open(build_text_pdf(b"BT /F1 20 Tf 20 250 Td (Ab) Tj ET", filtered=True), limits=limits)
+    with pytest.raises(pyropdf.LimitError) as operations_error:
+        _ = document.pages[0].operations
+    assert operations_error.value.code == code
+    for _ in range(2):
+        with pytest.raises(pyropdf.LimitError) as error:
+            document.pages[0].layout(chars=True)
+        assert error.value.code == code
 
 
 def test_sources_follow_an_edit_and_leave_words_and_text_unchanged() -> None:

@@ -262,6 +262,7 @@ class Document:
         *,
         incremental: bool = False,
         encryption: Encryption | None = None,
+        prune: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -278,11 +279,16 @@ class Document:
         :attr:`Encryption.KEEP` keeps it in a full save too, copying its
         untouched encrypted bytes, and an :class:`Encryption` encrypts a full
         save anew.
+
+        ``prune=True`` writes only the objects that the trailer reaches, so
+        what an edit unlinked leaves the file; the document in memory keeps
+        them. An incremental save keeps the objects of the opened file, so
+        it refuses ``prune``.
         """
         self._ensure_open()
-        _validate_bool("incremental", incremental)
+        _validate_save_options(incremental=incremental, prune=prune)
         arg = _encryption_arg(encryption)
-        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg))
+        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, prune))
 
     def to_bytes(
         self,
@@ -290,17 +296,18 @@ class Document:
         incremental: bool = False,
         encryption: Encryption | None = None,
         max_size: int | None = _DEFAULT_MAX_PDF_OUTPUT_SIZE,
+        prune: bool = False,
     ) -> bytes:
-        """Return the document as PDF bytes, as :meth:`save` writes them, with its ``encryption``.
+        """Return the document as PDF bytes, as :meth:`save` writes them, with its ``encryption`` and ``prune``.
 
         ``max_size`` bounds the output, 512 MiB by default, and refuses the
         write that would pass it with :class:`LimitError` code
         ``pdf_output_size``; ``None`` leaves it unbounded for trusted input.
         """
         self._ensure_open()
-        _validate_bool("incremental", incremental)
+        _validate_save_options(incremental=incremental, prune=prune)
         _validate_optional_positive_int("max_size", max_size)
-        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption))
+        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), prune)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,
@@ -486,6 +493,15 @@ def _validate_bool(name: str, value: object) -> None:
     if not isinstance(value, bool):
         msg = f"{name} must be a bool: {value!r}"
         raise TypeError(msg)
+
+
+def _validate_save_options(*, incremental: object, prune: object) -> None:
+    """Refuse save options that are not bools, and ``prune`` with an incremental save."""
+    _validate_bool("incremental", incremental)
+    _validate_bool("prune", prune)
+    if incremental and prune:
+        msg = "prune requires a full save: an incremental save keeps the objects of the opened file"
+        raise ValueError(msg)
 
 
 def _resolve_limits(limits: object) -> DocumentLimits:

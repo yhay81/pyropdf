@@ -489,3 +489,71 @@ fn qpdf_accepts_corpus_outputs_without_new_warnings() {
         doc = open(saved(&version, true));
     }
 }
+
+fn dict(entries: &[(&str, Value)]) -> Value {
+    Value::Dict(
+        entries
+            .iter()
+            .map(|(name, value)| (Name::from(*name), value.clone()))
+            .collect(),
+    )
+}
+
+fn to(number: u32) -> Value {
+    Value::Reference(Reference::new(number, 0))
+}
+
+#[test]
+fn pruning_keeps_what_the_trailer_reaches_through_cycles_and_deep_chains() {
+    let budget = Budget::default();
+    let doc = open(saved(&memory().current(), false));
+    let mut tx = doc.begin();
+    let catalog = dict(&[
+        ("Type", Value::Name(Name::from("Catalog"))),
+        ("Pages", to(2)),
+        ("Cycle", to(10)),
+        ("Chain", to(100)),
+    ]);
+    tx.write(1, &catalog, &budget).unwrap();
+    tx.write(10, &dict(&[("Next", to(11))]), &budget).unwrap();
+    tx.write(11, &dict(&[("Next", to(10))]), &budget).unwrap();
+    let last = 100 + 5_000;
+    for number in 100..last {
+        tx.write(number, &dict(&[("Next", to(number + 1))]), &budget)
+            .unwrap();
+    }
+    tx.write(last, &Value::Integer(1), &budget).unwrap();
+    // Object 3 and the orphan that refers to it are unreachable.
+    tx.write(20, &dict(&[("Orphan", to(3))]), &budget).unwrap();
+    let version = tx.commit(&budget).unwrap();
+
+    let mut bytes = Vec::new();
+    let options = Options { prune: true };
+    full_with(&version, &mut bytes, &budget, None, options).unwrap();
+    let reopened = open(bytes).current();
+    for number in [3, 20] {
+        assert_eq!(reopened.generation(number), None, "object {number}");
+    }
+    assert_eq!(reopened.base().free_generation(3), Some(8));
+    for number in [1, 2, 10, 11, 100, 2_600, last] {
+        assert_eq!(
+            reopened.get(number, &budget).unwrap().unwrap().value(),
+            version.get(number, &budget).unwrap().unwrap().value(),
+            "object {number}"
+        );
+    }
+
+    let mut plain = Vec::new();
+    full_with(&version, &mut plain, &budget, None, Options::default()).unwrap();
+    assert_eq!(open(plain).current().generation(20), Some(0));
+}
+
+#[test]
+fn pruning_stops_when_the_operation_is_cancelled() {
+    let version = memory().current();
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let budget = Budget::default().with_cancellation(cancelled);
+    let options = Options { prune: true };
+    assert!(full_with(&version, &mut Vec::new(), &budget, None, options).is_err());
+}

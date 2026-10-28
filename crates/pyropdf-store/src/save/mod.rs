@@ -6,6 +6,7 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod prune;
 mod raw;
 
 #[cfg(test)]
@@ -108,7 +109,7 @@ struct Row {
 /// Returns the number of bytes written. On an error, discard partial
 /// output. The caller owns flushing, closing, and atomic file replacement.
 pub fn full(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
-    full_with(version, target, budget, None)
+    full_with(version, target, budget, None, Options::default())
 }
 
 /// Writes all live objects to `target` as [`full`] does, encrypting every
@@ -120,14 +121,33 @@ pub fn full_encrypted(
     budget: &Budget,
     encryption: &Encryption,
 ) -> Result<u64> {
-    full_with(version, target, budget, Some(encryption))
+    full_with(
+        version,
+        target,
+        budget,
+        Some(encryption),
+        Options::default(),
+    )
 }
 
-fn full_with(
+/// What a full save changes beyond writing every live object (DESIGN.md
+/// section 4.4). Every option is off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Writes only the objects that the trailer reaches, and the numbers of
+    /// the others as free entries.
+    pub prune: bool,
+}
+
+/// Writes the objects of `version` to `target` as [`full`] does, encrypted
+/// with `encryption` as [`full_encrypted`] does when it is given, and
+/// changed as `options` asks.
+pub fn full_with(
     version: &Version,
     target: &mut dyn Write,
     budget: &Budget,
     encryption: Option<&Encryption>,
+    options: Options,
 ) -> Result<u64> {
     let mode = Mode::of(version, encryption, budget)?;
     budget.poll()?;
@@ -154,6 +174,10 @@ fn full_with(
         rows.try_push(row(version, number))?;
     }
     drop(numbers);
+    if options.prune {
+        let encrypt = !matches!(mode, Mode::New { .. });
+        prune::free_unreachable(version, &mut rows, encrypt, budget)?;
+    }
     let mut out = Output::new(target, budget, 0);
     let header = version
         .base()
