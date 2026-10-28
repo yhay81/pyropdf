@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::memo::Reads;
+use pyropdf_store::memo::{DerivedMap, ReadDependencies, Reads};
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
@@ -1645,4 +1645,368 @@ pub fn form_walk_counts(document: &_Document) -> (u64, u64) {
         form.hits + drafts.hits,
         form.computations + drafts.computations,
     )
+}
+
+/// Whether a widget shows a normal text appearance or a selected button
+/// appearance. The resolver records every indirect object it examines.
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum AppearanceKind {
+    Normal,
+    State,
+}
+
+/// A resolved value either borrows its container or shares an indirect
+/// object. Looking at an appearance never copies its stream data.
+#[allow(dead_code)]
+enum AppearanceValue<'a> {
+    Direct(&'a Value),
+    Indirect(Arc<Value>),
+}
+
+impl std::ops::Deref for AppearanceValue<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        match self {
+            Self::Direct(value) => value,
+            Self::Indirect(value) => value,
+        }
+    }
+}
+
+#[allow(dead_code)]
+fn appearance_value<'a>(
+    reads: &mut Reads<'_>,
+    value: Option<&'a Value>,
+) -> PyResult<Option<AppearanceValue<'a>>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let Value::Reference(reference) = value else {
+        return Ok(Some(AppearanceValue::Direct(value)));
+    };
+    let mut reference = *reference;
+    for _ in 0..MAX_CHAIN {
+        reads.budget().poll().map_err(|e| limit_error(&e))?;
+        let Some(object) = object(reads, id(reference))? else {
+            return Ok(None);
+        };
+        match &*object {
+            Value::Reference(next) => reference = *next,
+            _ => return Ok(Some(AppearanceValue::Indirect(object))),
+        }
+    }
+    Err(MalformedPdfError::new_err(
+        "an annotation appearance reference chain is too long",
+    ))
+}
+
+/// Returns `None` for a missing or non-widget object, or whether the
+/// widget has a nonempty appearance for its field's kind.
+#[allow(dead_code)]
+fn widget_appearance(
+    reads: &mut Reads<'_>,
+    widget: Id,
+    kind: AppearanceKind,
+) -> PyResult<Option<bool>> {
+    let Some(widget) = object(reads, widget)? else {
+        return Ok(None);
+    };
+    let Value::Dict(widget) = &*widget else {
+        return Ok(None);
+    };
+    if !looks_like_widget(widget) {
+        return Ok(None);
+    }
+    let state = match kind {
+        AppearanceKind::State => match widget.get("AS") {
+            Some(Value::Name(state)) => Some(state),
+            _ => return Ok(Some(false)),
+        },
+        AppearanceKind::Normal => None,
+    };
+    let Some(appearances) = appearance_value(reads, widget.get("AP"))? else {
+        return Ok(Some(false));
+    };
+    let Value::Dict(appearances) = &*appearances else {
+        return Ok(Some(false));
+    };
+    let Some(normal) = appearance_value(reads, appearances.get("N"))? else {
+        return Ok(Some(false));
+    };
+    let selected = match state {
+        Some(state) => match &*normal {
+            Value::Dict(states) => appearance_value(reads, states.get(state.as_bytes()))?,
+            _ => None,
+        },
+        None => Some(normal),
+    };
+    Ok(Some(matches!(
+        selected.as_deref(),
+        Some(Value::Stream(stream)) if !stream.data().is_empty()
+    )))
+}
+
+/// One field's use of a widget; a shared widget can have several entries.
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+struct IndexedWidget {
+    field: Id,
+    widget: Id,
+    kind: AppearanceKind,
+}
+
+/// Recorded widget appearance results and the reads that produced them.
+/// The enclosing form index is responsible for discovering widget membership
+/// and comparing versions before asking this index to refresh.
+#[derive(Clone)]
+#[allow(dead_code)]
+struct AppearanceIndex {
+    widgets: DerivedMap<IndexedWidget>,
+    missing: DerivedMap<IndexedWidget>,
+    dependencies: ReadDependencies,
+}
+
+impl Default for AppearanceIndex {
+    fn default() -> Self {
+        Self {
+            widgets: DerivedMap::new(),
+            missing: DerivedMap::new(),
+            dependencies: ReadDependencies::new(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl AppearanceIndex {
+    fn record(
+        &mut self,
+        key: u32,
+        widget: IndexedWidget,
+        version: &Version,
+        budget: &Budget,
+    ) -> PyResult<()> {
+        let mut reads = Reads::new(version, budget);
+        let present = widget_appearance(&mut reads, widget.widget, widget.kind)?;
+        let dependencies = reads.finish().map_err(|e| store_error(&e))?;
+        let mut next = self.clone();
+        next.dependencies
+            .replace(key, Some(dependencies), budget)
+            .map_err(|e| store_error(&e))?;
+        next.widgets
+            .insert(key, widget, budget)
+            .map_err(|e| store_error(&e))?;
+        if present == Some(false) {
+            next.missing
+                .insert(key, widget, budget)
+                .map_err(|e| store_error(&e))?;
+        } else {
+            next.missing
+                .remove(key, budget)
+                .map_err(|e| store_error(&e))?;
+        }
+        budget.poll().map_err(|e| limit_error(&e))?;
+        *self = next;
+        Ok(())
+    }
+
+    /// Refreshes only entries whose recorded reads intersect the changes.
+    /// A failure leaves the whole index unchanged.
+    fn refresh(
+        &mut self,
+        version: &Version,
+        changed: &[u32],
+        trailer_changed: bool,
+        budget: &Budget,
+    ) -> PyResult<()> {
+        let affected = self
+            .dependencies
+            .affected(changed, trailer_changed, budget)
+            .map_err(|e| store_error(&e))?;
+        let mut next = self.clone();
+        for &key in affected.iter() {
+            budget.poll().map_err(|e| limit_error(&e))?;
+            if let Some(widget) = next.widgets.get(key).copied() {
+                next.record(key, widget, version, budget)?;
+            }
+        }
+        budget.poll().map_err(|e| limit_error(&e))?;
+        *self = next;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod appearance_tests {
+    use super::*;
+    use pyropdf_store::value::Bytes;
+    use pyropdf_store::version::{Document, MemoryBase};
+
+    fn document(widget: &'static [u8], normal: &'static [u8]) -> Document {
+        let mut base = MemoryBase::new(Dict::new());
+        base.insert(Reference::new(4, 0), Bytes::new(widget));
+        base.insert(Reference::new(8, 0), Bytes::new(widget));
+        base.insert(Reference::new(5, 0), Bytes::new(&b"<< /N 6 0 R >>"[..]));
+        base.insert(Reference::new(6, 0), Bytes::new(normal));
+        base.insert(
+            Reference::new(7, 0),
+            Bytes::new(&b"<< /Length 3 >>\nstream\nq Q\nendstream"[..]),
+        );
+        Document::new(Arc::new(base), None)
+    }
+
+    fn version(widget: &'static [u8], normal: &'static [u8]) -> Arc<Version> {
+        document(widget, normal).current()
+    }
+
+    #[test]
+    fn selected_appearance_records_indirect_dependencies() {
+        let version = version(
+            b"<< /Subtype /Widget /AS /On /AP 5 0 R >>",
+            b"<< /On 7 0 R >>",
+        );
+        let budget = Budget::default();
+        let mut reads = Reads::new(&version, &budget);
+        assert_eq!(
+            widget_appearance(&mut reads, (4, 0), AppearanceKind::State).unwrap(),
+            Some(true)
+        );
+        assert_eq!(reads.finish().unwrap().objects(), &[4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn missing_and_stale_appearances_are_recorded() {
+        let version = version(b"<< /Subtype /Widget /AP 5 0 R >>", b"7 1 R");
+        let budget = Budget::default();
+        let mut reads = Reads::new(&version, &budget);
+        assert_eq!(
+            widget_appearance(&mut reads, (4, 0), AppearanceKind::Normal).unwrap(),
+            Some(false)
+        );
+        assert_eq!(reads.finish().unwrap().objects(), &[4, 5, 6, 7]);
+    }
+
+    #[test]
+    fn shared_appearance_changes_and_rollback_refresh_only_its_readers() {
+        let document = document(b"<< /Subtype /Widget /AP 5 0 R >>", b"7 0 R");
+        let before = document.current();
+        let budget = Budget::default();
+        let mut index = AppearanceIndex::default();
+        for key in [1, 2, 3] {
+            index
+                .record(
+                    key,
+                    IndexedWidget {
+                        field: (key, 0),
+                        widget: (if key == 2 { 8 } else { 4 }, 0),
+                        kind: AppearanceKind::Normal,
+                    },
+                    &before,
+                    &budget,
+                )
+                .unwrap();
+        }
+        let saved = index.clone();
+        assert_eq!(index.missing.iter().count(), 0);
+        assert_eq!(
+            index
+                .dependencies
+                .affected(&[7], false, &budget)
+                .unwrap()
+                .into_vec(),
+            vec![1, 2, 3]
+        );
+
+        let mut transaction = document.begin();
+        let savepoint = transaction.savepoint();
+        transaction.write(7, &Value::Null, &budget).unwrap();
+        let changed = transaction.snapshot();
+        let changes = before.changes(&changed, &budget).unwrap().unwrap();
+        index
+            .refresh(&changed, changes.objects(), changes.trailer(), &budget)
+            .unwrap();
+        assert_eq!(
+            index.missing.iter().map(|(key, _)| key).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(saved.missing.iter().count(), 0);
+
+        transaction.rollback(savepoint);
+        let restored = transaction.snapshot();
+        let changes = changed.changes(&restored, &budget).unwrap().unwrap();
+        index
+            .refresh(&restored, changes.objects(), changes.trailer(), &budget)
+            .unwrap();
+        assert_eq!(index.missing.iter().count(), 0);
+    }
+
+    #[test]
+    fn refused_appearance_refresh_leaves_the_prior_index_unchanged() {
+        let document = document(b"<< /Subtype /Widget /AP 5 0 R >>", b"7 0 R");
+        let before = document.current();
+        let budget = Budget::default();
+        let mut index = AppearanceIndex::default();
+        index
+            .record(
+                1,
+                IndexedWidget {
+                    field: (1, 0),
+                    widget: (4, 0),
+                    kind: AppearanceKind::Normal,
+                },
+                &before,
+                &budget,
+            )
+            .unwrap();
+        let mut transaction = document.begin();
+        transaction.write(7, &Value::Null, &budget).unwrap();
+        let changed = transaction.snapshot();
+        let limited = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+        assert!(index.refresh(&changed, &[7], false, &limited).is_err());
+        assert_eq!(index.missing.iter().count(), 0);
+        index.refresh(&changed, &[7], false, &budget).unwrap();
+        assert_eq!(index.missing.iter().count(), 1);
+    }
+
+    #[test]
+    fn appearance_index_follows_undo_and_redo() {
+        let document = document(b"<< /Subtype /Widget /AP 5 0 R >>", b"7 0 R");
+        let before = document.current();
+        let budget = Budget::default();
+        let mut index = AppearanceIndex::default();
+        index
+            .record(
+                1,
+                IndexedWidget {
+                    field: (1, 0),
+                    widget: (4, 0),
+                    kind: AppearanceKind::Normal,
+                },
+                &before,
+                &budget,
+            )
+            .unwrap();
+        let mut transaction = document.begin();
+        transaction.write(7, &Value::Null, &budget).unwrap();
+        let after = transaction.commit(&budget).unwrap();
+        let changes = before.changes(&after, &budget).unwrap().unwrap();
+        index
+            .refresh(&after, changes.objects(), changes.trailer(), &budget)
+            .unwrap();
+        assert_eq!(index.missing.iter().count(), 1);
+
+        let undone = document.undo().unwrap();
+        let changes = after.changes(&undone, &budget).unwrap().unwrap();
+        index
+            .refresh(&undone, changes.objects(), changes.trailer(), &budget)
+            .unwrap();
+        assert_eq!(index.missing.iter().count(), 0);
+        let redone = document.redo().unwrap();
+        let changes = undone.changes(&redone, &budget).unwrap().unwrap();
+        index
+            .refresh(&redone, changes.objects(), changes.trailer(), &budget)
+            .unwrap();
+        assert_eq!(index.missing.iter().count(), 1);
+    }
 }
