@@ -2104,3 +2104,67 @@ fn form_impact_detects_a_direct_widget_nested_in_a_form_object() {
     let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
     assert!(affected.iter().any(|reference| reference.number() == 2));
 }
+
+#[test]
+fn form_impact_detects_a_direct_form_embedded_in_the_catalog() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    (
+                        "AcroForm",
+                        dict(vec![(
+                            "Fields",
+                            array(vec![dict(vec![
+                                ("FT", name("Tx")),
+                                ("T", string("field")),
+                                (
+                                    "Kids",
+                                    array(vec![dict(vec![
+                                        ("Subtype", name("Widget")),
+                                        ("P", reference(3)),
+                                    ])]),
+                                ),
+                            ])]),
+                        )]),
+                    ),
+                ]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+    assert!(affected.iter().any(|reference| reference.number() == 1));
+}
+
+#[test]
+fn form_impact_ignores_unrelated_or_stale_page_references_in_catalog() {
+    for (key, page) in [
+        ("Other", Reference::new(3, 0)),
+        ("AcroForm", Reference::new(3, 1)),
+    ] {
+        let document = document_of(
+            &[
+                (
+                    1,
+                    dict(vec![(key, dict(vec![("P", Value::Reference(page))]))]),
+                ),
+                (3, dict(vec![("Type", name("Page"))])),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        let mut reads = Reads::new(&version, &budget);
+        let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+        assert!(affected.is_empty());
+    }
+}

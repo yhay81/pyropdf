@@ -22,7 +22,9 @@ const MAX_DEPTH: usize = 64;
 ///
 /// Seeds are indirect entries in the pages' `/Annots` and objects whose
 /// `/P` names a removed page. The walk follows incoming references, stopping
-/// at the catalog and page or page-tree dictionaries. It intentionally
+/// at the catalog and page or page-tree dictionaries. A catalog containing
+/// a direct affected form can itself be returned as a holder; callers must
+/// preserve the catalog and edit only its embedded form. It intentionally
 /// over-approximates: a reverse edge may have a stale generation or an
 /// unrelated role. A caller must verify membership and generations before
 /// editing. The result includes each live object's current generation, once,
@@ -39,7 +41,10 @@ pub fn affected_form_objects<'b>(
 ) -> Result<BudgetVec<'b, Reference>> {
     let budget = reads.budget();
     budget.poll()?;
-    let mut queue = BudgetVec::new(budget);
+    let mut seeds = Seeds {
+        queue: BudgetVec::new(budget),
+        catalog_holders: BudgetVec::new(budget),
+    };
     let mut result = BudgetVec::new(budget);
     if removed.is_empty() {
         return Ok(result);
@@ -80,7 +85,7 @@ pub fn affected_form_objects<'b>(
                             "a page annotation aliases a page or catalog",
                         ));
                     }
-                    queue.try_push((reference, 1_usize))?;
+                    seeds.queue.try_push((reference, 1_usize))?;
                 }
             }
         }
@@ -91,10 +96,10 @@ pub fn affected_form_objects<'b>(
             root,
             removed,
             retained,
-            &mut queue,
+            &mut seeds,
         )?;
     }
-    while let Some((reference, depth)) = queue.pop() {
+    while let Some((reference, depth)) = seeds.queue.pop() {
         budget.poll()?;
         if seen.insert(reference.number(), (), budget)?.is_some() {
             continue;
@@ -129,12 +134,25 @@ pub fn affected_form_objects<'b>(
                     "form impact reference chain exceeds 64 levels",
                 ));
             }
-            queue.try_push((Reference::new(owner, object.generation()), depth + 1))?;
+            seeds
+                .queue
+                .try_push((Reference::new(owner, object.generation()), depth + 1))?;
+        }
+    }
+    for reference in seeds.catalog_holders.iter().copied() {
+        budget.poll()?;
+        if seen.insert(reference.number(), (), budget)?.is_none() {
+            result.try_push(reference)?;
         }
     }
     result.sort_unstable_by_key(|reference| (reference.number(), reference.generation()));
     budget.poll()?;
     Ok(result)
+}
+
+struct Seeds<'b> {
+    queue: BudgetVec<'b, (Reference, usize)>,
+    catalog_holders: BudgetVec<'b, Reference>,
 }
 
 fn seed_page_referrers(
@@ -144,7 +162,7 @@ fn seed_page_referrers(
     root: [Option<u32>; 2],
     removed: &[u32],
     retained: &[u32],
-    queue: &mut BudgetVec<'_, (Reference, usize)>,
+    seeds: &mut Seeds<'_>,
 ) -> Result<()> {
     let budget = reads.budget();
     let mut aliases = BudgetVec::new(budget);
@@ -160,7 +178,18 @@ fn seed_page_referrers(
             let Some(object) = reads.get(owner)? else {
                 continue;
             };
-            if root.contains(&Some(owner)) || is_in(removed, owner) || is_in(retained, owner) {
+            if root.contains(&Some(owner)) {
+                let found = find(reads, Referrer::Object(owner), target.number())?;
+                if found.iter().any(|found| {
+                    found.reference == target
+                        && matches!(found.path.first(), Some(Step::Key(key)) if key.as_bytes() == b"AcroForm")
+                        && matches!(found.path.last(), Some(Step::Key(key)) if key.as_bytes() == b"P")
+                }) {
+                    seeds.catalog_holders.try_push(Reference::new(owner, object.generation()))?;
+                }
+                continue;
+            }
+            if is_in(removed, owner) || is_in(retained, owner) {
                 continue;
             }
             let reference = Reference::new(owner, object.generation());
@@ -184,7 +213,7 @@ fn seed_page_referrers(
                         found.reference == target
                             && matches!(found.path.last(), Some(Step::Key(key)) if key.as_bytes() == b"P")
                     }) {
-                        queue.try_push((reference, 1))?;
+                        seeds.queue.try_push((reference, 1))?;
                     }
                 }
             }
