@@ -6,7 +6,9 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod prune;
 mod raw;
+mod recode;
 
 #[cfg(test)]
 mod tests;
@@ -14,14 +16,17 @@ mod tests;
 use std::fmt;
 use std::io::{self, Write};
 
+use md5::{Digest, Md5};
+
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::index::{Index, Location};
 use crate::security::{self, Encryption, Handler};
-use crate::value::{Dict, PdfString, Reference, Value};
+use crate::value::{Array, Bytes, Dict, PdfString, Reference, Value};
 use crate::version::{Slot, Version};
-use crate::{Error as StoreError, LimitExceeded, write};
+use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
 
 pub use base::FileBase;
+pub use recode::Streams;
 
 /// A save either reports a typed store error, preserves the sink's I/O
 /// error, or refuses a mode unsupported by this base.
@@ -44,6 +49,9 @@ pub enum Refusal {
     RepairedBase,
     /// Encryption is implemented separately in issue #28.
     Encryption,
+    /// Pruning and decompressing rewrite the objects of the original file,
+    /// which an incremental save keeps.
+    FullSaveOption,
 }
 
 /// The result of saving to an output writer.
@@ -76,6 +84,7 @@ impl fmt::Display for Error {
                 Refusal::NoOriginalFile => "incremental save requires an original PDF file",
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
+                Refusal::FullSaveOption => "prune and decompress require a full save",
             }),
         }
     }
@@ -108,7 +117,7 @@ struct Row {
 /// Returns the number of bytes written. On an error, discard partial
 /// output. The caller owns flushing, closing, and atomic file replacement.
 pub fn full(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
-    full_with(version, target, budget, None)
+    full_with(version, target, budget, None, Options::default())
 }
 
 /// Writes all live objects to `target` as [`full`] does, encrypting every
@@ -120,14 +129,43 @@ pub fn full_encrypted(
     budget: &Budget,
     encryption: &Encryption,
 ) -> Result<u64> {
-    full_with(version, target, budget, Some(encryption))
+    full_with(
+        version,
+        target,
+        budget,
+        Some(encryption),
+        Options::default(),
+    )
 }
 
-fn full_with(
+/// What a full save changes beyond writing every live object (DESIGN.md
+/// section 4.4). Every option is off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Writes only the objects that the trailer reaches, and the numbers of
+    /// the others as free entries.
+    pub prune: bool,
+    /// How the save writes the data of streams.
+    pub streams: Streams,
+    /// Renews the file identifier (ISO 32000-2 section 14.4) with the MD5
+    /// digest of what the save writes before it, so that the same version
+    /// saves to the same bytes. A save of a version with changes keeps the
+    /// first element of the trailer's `/ID` and writes the digest as the
+    /// second, and a save of a trailer without `/ID` writes it as both.
+    /// Otherwise, and without this option, `/ID` stays as the trailer has
+    /// it.
+    pub renew_id: bool,
+}
+
+/// Writes the objects of `version` to `target` as [`full`] does, encrypted
+/// with `encryption` as [`full_encrypted`] does when it is given, and
+/// changed as `options` asks.
+pub fn full_with(
     version: &Version,
     target: &mut dyn Write,
     budget: &Budget,
     encryption: Option<&Encryption>,
+    options: Options,
 ) -> Result<u64> {
     let mode = Mode::of(version, encryption, budget)?;
     budget.poll()?;
@@ -154,7 +192,11 @@ fn full_with(
         rows.try_push(row(version, number))?;
     }
     drop(numbers);
-    let mut out = Output::new(target, budget, 0);
+    if options.prune {
+        let encrypt = !matches!(mode, Mode::New { .. });
+        prune::free_unreachable(version, &mut rows, encrypt, budget)?;
+    }
+    let mut out = Output::new(target, budget, 0, options.renew_id);
     let header = version
         .base()
         .file()
@@ -171,11 +213,11 @@ fn full_with(
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
-        write_object(version, &mut rows[at], &mut out, &mode)?;
+        write_object(version, &mut rows[at], &mut out, &mode, options.streams)?;
     }
     for row in &mut rows {
         if Some(row.number) != root {
-            write_object(version, row, &mut out, &mode)?;
+            write_object(version, row, &mut out, &mode, options.streams)?;
         }
     }
     if let Mode::New { dict, number, .. } = &mode {
@@ -195,7 +237,7 @@ fn full_with(
         row.next_free = 0;
         rows.try_push(row)?;
     }
-    finish(version, &mut rows, None, &mut out, &mode)?;
+    finish(version, &mut rows, None, &mut out, &mode, options.renew_id)?;
     Ok(out.position)
 }
 
@@ -207,6 +249,22 @@ fn full_with(
 /// Refuses repaired and non-file bases and encryption before writing.
 /// Returns bytes written; partial output after an error must be discarded.
 pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
+    incremental_with(version, target, budget, Options::default())
+}
+
+/// Writes the update as [`incremental`] does, compressing the streams that
+/// it writes as [`Streams::Compress`] asks and renewing `/ID` as
+/// [`Options::id`] asks. The objects of the original file stay as they
+/// are, so `prune` and [`Streams::Decompress`] are refused before writing.
+pub fn incremental_with(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    options: Options,
+) -> Result<u64> {
+    if options.prune || options.streams == Streams::Decompress {
+        return Err(Error::Refused(Refusal::FullSaveOption));
+    }
     let file = version
         .base()
         .file()
@@ -221,7 +279,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
         .and_then(|r| r.sections().first())
         .and_then(|s| s.offset().checked_sub(file.origin()))
         .ok_or_else(|| StoreError::malformed("the original file has no cross-reference offset"))?;
-    let mut out = Output::new(target, budget, file.origin() as u64);
+    let mut out = Output::new(target, budget, file.origin() as u64, options.renew_id);
     out.bytes(file.bytes())?;
     if !version.has_changes() {
         return Ok(out.position);
@@ -235,7 +293,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
         budget.poll()?;
         if number != 0 {
             let mut row = row(version, number);
-            write_object(version, &mut row, &mut out, &mode)?;
+            write_object(version, &mut row, &mut out, &mode, options.streams)?;
             rows.try_push(row)?;
         }
     }
@@ -245,7 +303,14 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
     {
         rows.try_push(row(version, last))?;
     }
-    finish(version, &mut rows, Some(previous as u64), &mut out, &mode)?;
+    finish(
+        version,
+        &mut rows,
+        Some(previous as u64),
+        &mut out,
+        &mode,
+        options.renew_id,
+    )?;
     Ok(out.position)
 }
 
@@ -347,6 +412,7 @@ fn write_object(
     row: &mut Row,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
+    streams: Streams,
 ) -> Result<()> {
     out.budget.poll()?;
     if row.offset.is_none() {
@@ -378,10 +444,52 @@ fn write_object(
             security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
         }
     };
+    let bytes =
+        match recode(version, reference, streams, mode, budget).map_err(|error| match error {
+            Error::Store(error) => Error::Store(context(error)),
+            error => error,
+        })? {
+            // A compressed stream replaces the data only where it is shorter.
+            Some(recoded) if streams == Streams::Decompress || recoded.len() < bytes.len() => {
+                recoded
+            }
+            _ => bytes,
+        };
     row.offset = Some(out.offset()?);
     out.display(format_args!("{} {} obj\n", row.number, row.generation))?;
     out.bytes(&bytes)?;
     out.bytes(b"\nendobj\n")
+}
+
+/// Returns the bytes of the object `reference` with its stream recoded as
+/// `streams` asks, encrypted as `mode` encrypts, or `None` when it stays as
+/// it is. An object that does not parse stays as it is.
+fn recode(
+    version: &Version,
+    reference: Reference,
+    streams: Streams,
+    mode: &Mode<'_>,
+    budget: &Budget,
+) -> Result<Option<Bytes>> {
+    if streams == Streams::Keep {
+        return Ok(None);
+    }
+    let object = match version.get(reference.number(), budget) {
+        Ok(Some(object)) => object,
+        Ok(None) => return Ok(None),
+        Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(value) = recode::recoded(object.value(), streams, budget)? else {
+        return Ok(None);
+    };
+    let mut plain = BudgetVec::new(budget);
+    write::value(&mut plain, &value)?;
+    let plain = Bytes::new(plain.into_vec());
+    Ok(Some(match mode.handler() {
+        Some(handler) => security::encrypt_bytes(handler, reference, &plain, budget)?,
+        None => plain,
+    }))
 }
 
 fn finish(
@@ -390,6 +498,7 @@ fn finish(
     previous: Option<u64>,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
+    renew_id: bool,
 ) -> Result<()> {
     let mut next_free = 0;
     for row in rows.iter_mut().rev() {
@@ -433,17 +542,16 @@ fn finish(
     let mut size = version.next_number();
     if let Mode::New { id, number, .. } = mode {
         trailer(version.trailer(), out, &[b"Encrypt", b"ID"])?;
-        out.display(format_args!(" /Encrypt {number} 0 R /ID ["))?;
-        for _ in 0..2 {
-            let mut bytes = BudgetVec::new(out.budget);
-            write::value(
-                &mut bytes,
-                &Value::String(PdfString::hexadecimal(id.as_slice())),
-            )?;
-            out.bytes(&bytes)?;
-        }
-        out.bytes(b"]")?;
+        out.display(format_args!(" /Encrypt {number} 0 R"))?;
+        // The keys derive from the first element.
+        let first = Value::String(PdfString::hexadecimal(id.as_slice()));
+        let second = out.digest().unwrap_or_else(|| first.clone());
+        identifier(out, first, second)?;
         size = u64::from(*number) + 1;
+    } else if let Some(first) = renews(version, renew_id) {
+        trailer(version.trailer(), out, &[b"ID"])?;
+        let digest = out.digest().expect("a renewing save keeps a digest");
+        identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
     } else {
         trailer(version.trailer(), out, &[])?;
     }
@@ -456,6 +564,30 @@ fn finish(
 
 /// Write each original trailer entry separately, avoiding a clone of its
 /// input-derived dictionary. Layout-only entries are rebuilt for this save.
+/// Returns whether a save that `renew_id` asks for writes a new `/ID` for
+/// `version`, and then the first element that it keeps, if any: the
+/// trailer's for a version with changes, none for a trailer without one.
+fn renews(version: &Version, renew_id: bool) -> Option<Option<Value>> {
+    if !renew_id {
+        return None;
+    }
+    match version.trailer().get("ID") {
+        Some(Value::Array(id)) => match id.get(0) {
+            Some(first @ Value::String(_)) => version.has_changes().then(|| Some(first.clone())),
+            _ => Some(None),
+        },
+        _ => Some(None),
+    }
+}
+
+/// Writes the trailer entry `/ID [first second]`.
+fn identifier(out: &mut Output<'_>, first: Value, second: Value) -> Result<()> {
+    let mut bytes = BudgetVec::new(out.budget);
+    write::value(&mut bytes, &Value::Array(Array::from(vec![first, second])))?;
+    out.bytes(b" /ID ")?;
+    out.bytes(&bytes)
+}
+
 fn trailer(dict: &Dict, out: &mut Output<'_>, replaced: &[&[u8]]) -> Result<()> {
     for (name, value) in dict.iter() {
         if replaced.contains(&name.as_bytes()) {
@@ -497,16 +629,26 @@ struct Output<'a> {
     budget: &'a Budget,
     position: u64,
     origin: u64,
+    /// The digest of the bytes written, for a save that renews `/ID`.
+    digest: Option<Md5>,
 }
 
 impl<'a> Output<'a> {
-    fn new(target: &'a mut dyn Write, budget: &'a Budget, origin: u64) -> Self {
+    fn new(target: &'a mut dyn Write, budget: &'a Budget, origin: u64, digest: bool) -> Self {
         Self {
             target,
             budget,
             position: 0,
             origin,
+            digest: digest.then(Md5::new),
         }
+    }
+
+    /// Returns the digest of the bytes written so far as a string, for a
+    /// save that renews `/ID`.
+    fn digest(&self) -> Option<Value> {
+        let digest = self.digest.clone()?.finalize();
+        Some(Value::String(PdfString::hexadecimal(digest.as_slice())))
     }
 
     fn offset(&self) -> Result<u64> {
@@ -521,6 +663,9 @@ impl<'a> Output<'a> {
             self.budget
                 .charge(LimitCode::PdfOutputSize, chunk.len() as u64)?;
             self.target.write_all(chunk)?;
+            if let Some(digest) = &mut self.digest {
+                digest.update(chunk);
+            }
             self.position = self
                 .position
                 .checked_add(chunk.len() as u64)

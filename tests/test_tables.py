@@ -411,6 +411,37 @@ def test_tables_rejects_unknown_strategy() -> None:
         page.tables(strategy="guess")  # ty: ignore[invalid-argument-type]
 
 
+def test_tables_refuse_an_oversized_grid_instead_of_omitting_it() -> None:
+    # 65 by 65 slots exceeds the 4,096-cell bound, with only 132 rules.
+    rules = [f"0 {i * 4} m 260 {i * 4} l {i * 4} 0 m {i * 4} 260 l" for i in range(66)]
+    page = pyropdf.open(_table_pdf("\n".join([*rules, "S"]))).pages[0]
+
+    for _ in range(2):
+        with pytest.raises(pyropdf.LimitError) as caught:
+            page.tables()
+        assert caught.value.code == "table_cell_count"
+
+
+def test_tables_and_styles_refuse_excess_rules_instead_of_truncating() -> None:
+    page = pyropdf.open(_table_pdf("0 20 m 200 20 l S\n" * 4097)).pages[0]
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.tables()
+    assert caught.value.code == "text_rule_count"
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.layout(styles=True)
+    assert caught.value.code == "text_rule_count"
+    assert page.tables(strategy="text") == []
+
+
+def test_text_tables_refuse_excess_columns_instead_of_omitting_rows() -> None:
+    stream = "\n".join(f"BT /F1 1 Tf {column * 10} 240 Td (x) Tj ET" for column in range(33))
+    page = pyropdf.open(_table_pdf(stream)).pages[0]
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.tables(strategy="text")
+    assert caught.value.code == "table_column_count"
+
+
 def test_tables_read_the_current_version_within_the_text_budgets() -> None:
     document = pyropdf.open(_borderless_table_pdf())
     page = document.pages[0]

@@ -32,7 +32,10 @@ class ClaimChange:
 
     ``claim`` names it, such as ``"PDF/A-1B"`` or ``"PDF/UA-1"``, and
     ``objects`` lists the edited objects that break it. The report checks
-    what the edits wrote, not the whole document against the claim.
+    what the edits wrote, not the whole document against the claim: added
+    transparency and embedded files break PDF/A-1, an embedded file that is
+    not PDF/A-1 or PDF/A-2 breaks PDF/A-2, one that is not PDF/A-1, -2, or -4
+    breaks PDF/A-4 but not PDF/A-4f, and untagged annotations break PDF/UA.
     """
 
     claim: str
