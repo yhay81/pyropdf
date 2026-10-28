@@ -300,7 +300,19 @@ reached = "The texts that one edit of an annotation writes, such as its contents
 message = "the named destinations are too many"
 unit = "entries"
 default = 65_536
-reached = "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges."
+reached = "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes."
+
+[codes.named_destination_edge_count]
+message = "the named-destination tree has too many edges"
+unit = "edges"
+default = 131_072
+reached = "The named-destination tree has more than 131,072 child edges."
+
+[codes.named_destination_depth]
+message = "the named-destination tree is too deep"
+unit = "levels"
+default = 32
+reached = "The named-destination tree has more than 32 levels."
 
 [codes.named_destination_text_size]
 message = "the names of the named destinations are too long"

@@ -11,26 +11,21 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyropdf_store::LimitExceeded;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
+use pyropdf_store::version::Version;
 
 use super::{
-    Annots, MAX_ANNOTATION_TEXT_BYTES, MAX_PAGE_ANNOTATIONS, Rect, charge, charge_text, edited,
-    encode_text, to_display, to_pdf,
+    Annots, CopyPart, Rect, charge, charge_copy, charge_decoded, charge_text, editing, encode_text,
+    to_display, to_pdf,
 };
-use crate::document::{_Document, Failed, text_string};
-use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
-use crate::pages::{display_box, index, number, rotation};
+use crate::document::{_Document, Failed};
+use crate::errors::{PdfError, StaleObjectError, limit_error, store_error};
+use crate::pages::{display_box, index as page_index, number, rotation};
 
-/// The most entries, and tree nodes, of the named destinations.
-const MAX_NAMED_ENTRIES: usize = 65_536;
-/// The most edges of the `/Names /Dests` tree.
-const MAX_NAMED_EDGES: usize = 131_072;
-/// The most levels of the `/Names /Dests` tree.
-const MAX_NAMED_DEPTH: usize = 32;
-/// The bytes of all the names of the named destinations.
-const MAX_NAMED_TEXT_BYTES: usize = 16 * 1024 * 1024;
 /// The largest magnitude of a PDF real number, which readers hold as `f32`.
 const MAX_REAL: f64 = f32::MAX as f64;
 
@@ -197,48 +192,69 @@ impl NamedDestinations {
 
     /// Indexes the named destinations that `reads` reads.
     fn build(reads: &mut Reads<'_>) -> PyResult<Self> {
-        let root = reads.trailer().get("Root").cloned();
-        let catalog = match read(reads, root.as_ref())? {
+        let budget = reads.budget();
+        let version = reads.version();
+        let catalog = match read(reads, version.trailer().get("Root"))? {
             Some(Value::Dict(catalog)) => catalog,
             _ => Dict::new(),
         };
-        let mut found = Vec::new();
-        let mut text = 0;
+        let mut found = BudgetVec::new(budget);
         let tree = match read(reads, catalog.get("Names"))? {
-            Some(Value::Dict(names)) => names.get("Dests").cloned(),
+            Some(Value::Dict(names)) => match names.get("Dests") {
+                Some(tree) => {
+                    charge_copy(CopyPart::Value(tree), budget)?;
+                    Some(tree.clone())
+                }
+                None => None,
+            },
             _ => None,
         };
         if let Some(tree) = tree {
-            walk(reads, tree, &mut text, &mut found)?;
+            walk(reads, tree, &mut found)?;
         }
         if let Some(Value::Dict(legacy)) = read(reads, catalog.get("Dests"))? {
             for (key, value) in legacy.iter() {
-                if found.len() >= MAX_NAMED_ENTRIES {
-                    return Err(count_error(format!(
-                        "named destinations exceed the {MAX_NAMED_ENTRIES}-entry safety limit"
-                    )));
-                }
-                charge_names(&mut text, key.as_bytes().len())?;
+                budget
+                    .charge(LimitCode::NamedDestinationCount, 1)
+                    .map_err(|e| limit_error(&e))?;
+                charge_names(key.as_bytes().len(), budget)?;
                 let value = read(reads, Some(value))?;
                 let destination = Destination::read(value, &mut |value| read(reads, value))?;
-                found.push((Box::from(key.as_bytes()), destination));
+                found
+                    .try_push((Box::from(key.as_bytes()), destination))
+                    .map_err(|e| limit_error(&e))?;
             }
         }
-        // A stable sort by name keeps each name's first entry first.
-        let mut sorted: Vec<usize> = (0..found.len()).collect();
-        sorted.sort_by(|a, b| found[*a].0.cmp(&found[*b].0));
+        // Break name ties by input position, so the first occurrence wins
+        // without the extra allocation of a stable sort.
+        let mut sorted = BudgetVec::new(budget);
+        for at in 0..found.len() {
+            sorted.try_push(at).map_err(|e| limit_error(&e))?;
+        }
+        let mut sorted = sorted.into_vec();
+        sorted.sort_unstable_by(|a, b| found[*a].0.cmp(&found[*b].0).then(a.cmp(b)));
         sorted.dedup_by(|later, earlier| found[*later].0 == found[*earlier].0);
-        let mut kept = vec![false; found.len()];
+        let mut kept = BudgetVec::new(budget);
+        for _ in 0..found.len() {
+            kept.try_push(false).map_err(|e| limit_error(&e))?;
+        }
         for at in &sorted {
             kept[*at] = true;
         }
-        let names: Vec<_> = found
-            .into_iter()
-            .zip(kept)
-            .filter_map(|(entry, kept)| kept.then_some(entry))
-            .collect();
-        let mut sorted: Vec<usize> = (0..names.len()).collect();
-        sorted.sort_by(|a, b| names[*a].0.cmp(&names[*b].0));
+        let mut names = BudgetVec::new(budget);
+        for (entry, kept) in found.into_vec().into_iter().zip(kept.into_vec()) {
+            if kept {
+                names.try_push(entry).map_err(|e| limit_error(&e))?;
+            }
+        }
+        let mut sorted = BudgetVec::new(budget);
+        for at in 0..names.len() {
+            sorted.try_push(at).map_err(|e| limit_error(&e))?;
+        }
+        sorted.sort_unstable_by(|a, b| names[*a].0.cmp(&names[*b].0));
+        budget.poll().map_err(|e| limit_error(&e))?;
+        let names = names.into_vec();
+        let sorted = sorted.into_vec();
         Ok(Self { names, sorted })
     }
 }
@@ -249,7 +265,10 @@ fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>>
     let mut current = match value {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::Reference(reference)) => *reference,
-        Some(value) => return Ok(Some(value.clone())),
+        Some(value) => {
+            charge_copy(CopyPart::Value(value), reads.budget())?;
+            return Ok(Some(value.clone()));
+        }
     };
     for _ in 0..MAX_CHAIN {
         let Some(object) = reads
@@ -262,7 +281,10 @@ fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>>
         match &**object.value() {
             Value::Null => return Ok(None),
             Value::Reference(next) => current = *next,
-            value => return Ok(Some(value.clone())),
+            value => {
+                charge_copy(CopyPart::Value(value), reads.budget())?;
+                return Ok(Some(value.clone()));
+            }
         }
     }
     Err(PdfError::new_err(format!(
@@ -276,89 +298,99 @@ fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>>
 fn walk(
     reads: &mut Reads<'_>,
     root: Value,
-    text: &mut usize,
-    found: &mut Vec<(Box<[u8]>, Destination)>,
+    found: &mut BudgetVec<'_, (Box<[u8]>, Destination)>,
 ) -> PyResult<()> {
-    let mut stack = vec![(root, 1_usize)];
+    let budget = reads.budget();
+    let mut stack = BudgetVec::new(budget);
+    stack
+        .try_push((root, 1_usize))
+        .map_err(|e| limit_error(&e))?;
     let mut visited = HashSet::new();
-    let (mut nodes, mut edges, mut entries) = (0_usize, 0_usize, 0_usize);
+    let (mut nodes, mut edges) = (0_usize, 0_usize);
     while let Some((node, depth)) = stack.pop() {
-        if let Value::Reference(reference) = node
-            && !visited.insert(reference)
-        {
-            continue;
+        budget.poll().map_err(|e| limit_error(&e))?;
+        if let Value::Reference(reference) = node {
+            if visited.contains(&reference) {
+                continue;
+            }
+            // Key storage, hash-table slack, and temporary rehash space.
+            budget
+                .charge(LimitCode::MemorySize, 64)
+                .map_err(|e| limit_error(&e))?;
+            visited
+                .try_reserve(1)
+                .map_err(|_| limit_error(&LimitExceeded::new(LimitCode::MemorySize)))?;
+            visited.insert(reference);
         }
         let Some(Value::Dict(node)) = read(reads, Some(&node))? else {
             continue;
         };
         nodes += 1;
-        if nodes > MAX_NAMED_ENTRIES {
-            return Err(count_error(format!(
-                "named-destination tree exceeds the {MAX_NAMED_ENTRIES}-node safety limit"
-            )));
-        }
+        budget
+            .check(LimitCode::NamedDestinationCount, nodes as u64)
+            .map_err(|e| limit_error(&e))?;
         if let Some(Value::Array(names)) = read(reads, node.get("Names"))? {
-            entries += names.len().div_ceil(2);
-            if entries > MAX_NAMED_ENTRIES {
-                return Err(count_error(format!(
-                    "named-destination tree exceeds the {MAX_NAMED_ENTRIES}-entry safety limit"
-                )));
-            }
+            budget
+                .charge(
+                    LimitCode::NamedDestinationCount,
+                    names.len().div_ceil(2) as u64,
+                )
+                .map_err(|e| limit_error(&e))?;
             for pair in names.as_slice().chunks(2) {
                 let [key, value] = pair else { continue };
                 let Some(Value::String(key)) = read(reads, Some(key))? else {
                     continue;
                 };
-                charge_names(text, key.as_bytes().len())?;
+                charge_names(key.as_bytes().len(), budget)?;
                 let value = read(reads, Some(value))?;
                 let destination = Destination::read(value, &mut |value| read(reads, value))?;
-                found.push((Box::from(key.as_bytes()), destination));
+                found
+                    .try_push((Box::from(key.as_bytes()), destination))
+                    .map_err(|e| limit_error(&e))?;
             }
         }
         if let Some(Value::Array(kids)) = read(reads, node.get("Kids"))? {
-            if !kids.is_empty() && depth >= MAX_NAMED_DEPTH {
-                return Err(PdfError::new_err(format!(
-                    "named-destination tree exceeds the {MAX_NAMED_DEPTH}-level safety limit"
-                )));
+            if !kids.is_empty() {
+                budget
+                    .check(LimitCode::NamedDestinationDepth, (depth + 1) as u64)
+                    .map_err(|e| limit_error(&e))?;
             }
             edges += kids.len();
-            if edges > MAX_NAMED_EDGES {
-                return Err(count_error(format!(
-                    "named-destination tree exceeds the {MAX_NAMED_EDGES}-edge safety limit"
-                )));
+            budget
+                .check(LimitCode::NamedDestinationEdgeCount, edges as u64)
+                .map_err(|e| limit_error(&e))?;
+            for kid in kids.iter().rev() {
+                charge_copy(CopyPart::Value(kid), budget)?;
+                stack
+                    .try_push((kid.clone(), depth + 1))
+                    .map_err(|e| limit_error(&e))?;
             }
-            stack.extend(kids.iter().rev().map(|kid| (kid.clone(), depth + 1)));
         }
     }
     Ok(())
 }
 
-fn count_error(message: String) -> PyErr {
-    LimitError::new_err(("named_destination_count", message))
-}
-
-fn charge_names(total: &mut usize, amount: usize) -> PyResult<()> {
-    *total = total.saturating_add(amount);
-    if *total > MAX_NAMED_TEXT_BYTES {
-        return Err(LimitError::new_err((
-            "named_destination_text_size",
-            format!("named-destination text exceeds the {MAX_NAMED_TEXT_BYTES}-byte safety limit"),
-        )));
-    }
-    Ok(())
+fn charge_names(amount: usize, budget: &Budget) -> PyResult<()> {
+    budget
+        .charge(LimitCode::NamedDestinationTextSize, amount as u64)
+        .map_err(|e| limit_error(&e))?;
+    budget
+        .charge(LimitCode::MemorySize, amount as u64)
+        .map_err(|e| limit_error(&e))
 }
 
 /// Returns the named destinations of the version that reads see.
-fn named(document: &_Document) -> PyResult<Arc<NamedDestinations>> {
-    let (version, parent) = document.reading_parent()?;
-    let budget = document.budget();
-    let (memo, version) = match &parent {
-        // An open transaction that has written nothing reads its parent.
-        Some(parent) => (&document.destinations, parent),
-        None if document.in_transaction() => (&document.draft_destinations, &version),
-        None => (&document.destinations, &version),
+fn named(
+    document: &_Document,
+    version: &Arc<Version>,
+    budget: &Budget,
+) -> PyResult<Arc<NamedDestinations>> {
+    let memo = if document.in_transaction() {
+        &document.draft_destinations
+    } else {
+        &document.destinations
     };
-    memo.get_or_compute(&(), version, &budget, |reads| {
+    memo.get_or_compute(&(), version, budget, |reads| {
         NamedDestinations::build(reads).map_err(Failed)
     })
     .map_err(|Failed(error)| error)
@@ -368,13 +400,13 @@ fn named(document: &_Document) -> PyResult<Arc<NamedDestinations>> {
 /// call. `budget` holds the text bytes that the call encoded and returned.
 struct Links<'a> {
     document: &'a _Document,
-    annots: &'a Annots,
+    annots: &'a Annots<'a>,
     named: Option<Arc<NamedDestinations>>,
     budget: (usize, usize),
 }
 
 impl<'a> Links<'a> {
-    const fn new(document: &'a _Document, annots: &'a Annots) -> Self {
+    const fn new(document: &'a _Document, annots: &'a Annots<'a>) -> Self {
         Self {
             document,
             annots,
@@ -406,9 +438,11 @@ impl<'a> Links<'a> {
         Ok(match self.annots.name(&action, "S")?.as_deref() {
             Some(b"URI") => {
                 let uri = match self.annots.resolved(action.get("URI"))? {
-                    Some(Value::String(uri)) => {
-                        Some(charge_text(uri.as_bytes(), &mut self.budget, "URI text")?)
-                    }
+                    Some(Value::String(uri)) => Some(charge_text(
+                        uri.as_bytes(),
+                        &mut self.budget,
+                        self.annots.budget,
+                    )?),
                     _ => None,
                 };
                 ("uri".to_owned(), None, None, None, uri, None)
@@ -425,7 +459,7 @@ impl<'a> Links<'a> {
                         Some(charge_text(
                             name.as_bytes(),
                             &mut self.budget,
-                            "named destination",
+                            self.annots.budget,
                         )?),
                     ),
                     Some(Value::Name(name)) => (
@@ -433,7 +467,7 @@ impl<'a> Links<'a> {
                         Some(charge_text(
                             name.as_bytes(),
                             &mut self.budget,
-                            "named destination",
+                            self.annots.budget,
                         )?),
                     ),
                     Some(Value::Array(items)) => (
@@ -455,7 +489,7 @@ impl<'a> Links<'a> {
                 let name = self
                     .annots
                     .name(&action, "N")?
-                    .map(|name| charge_text(&name, &mut self.budget, "named action"))
+                    .map(|name| charge_text(&name, &mut self.budget, self.annots.budget))
                     .transpose()?;
                 ("named".to_owned(), None, None, None, None, name)
             }
@@ -476,11 +510,11 @@ impl<'a> Links<'a> {
         let Some(Value::String(name)) = name else {
             return Ok(None);
         };
-        let (encoded, returned) = &mut self.budget;
-        charge(encoded, name.as_bytes().len(), "encoded file name")?;
-        let text = text_string(name.as_bytes());
-        charge(returned, text.len(), "returned file name")?;
-        Ok(Some(text))
+        Ok(Some(charge_decoded(
+            name.as_bytes(),
+            &mut self.budget,
+            self.annots.budget,
+        )?))
     }
 
     /// Returns a destination of this document as a `"goto"` target, or
@@ -501,9 +535,13 @@ impl<'a> Links<'a> {
     }
 
     fn lookup(&mut self, name: &[u8]) -> PyResult<Destination> {
-        charge(&mut self.budget.0, name.len(), "encoded named destination")?;
+        charge(&mut self.budget.0, name.len(), self.annots.budget)?;
         if self.named.is_none() {
-            self.named = Some(named(self.document)?);
+            self.named = Some(named(
+                self.document,
+                &self.annots.version,
+                self.annots.budget,
+            )?);
         }
         Ok(self
             .named
@@ -521,25 +559,27 @@ pub fn link_list(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<Record>>> {
-    let Some(annots) = Annots::read(document, number, generation)? else {
+    let (version, pages, budget) = page_index(document)?;
+    let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
         return Ok(None);
     };
     let mut links = Links::new(document, &annots);
-    let mut out = Vec::new();
+    let mut out = BudgetVec::new(&budget);
     for (position, item) in annots.items.iter().enumerate() {
         let Some((id, dict)) = annots.entry(item)? else {
             continue;
         };
         if let Some((area, target)) = links.link(&dict)? {
-            out.push((
+            out.try_push((
                 u32::try_from(position).unwrap_or(u32::MAX),
                 id,
                 area,
                 target,
-            ));
+            ))
+            .map_err(|e| limit_error(&e))?;
         }
     }
-    Ok(Some(out))
+    Ok(Some(out.into_vec()))
 }
 
 /// Returns the link that a handle names, or `None` for a page that is gone.
@@ -551,9 +591,11 @@ pub fn link_read(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<Record>> {
-    let Some((annots, position, dict)) = edited(document, number, generation, index, id)? else {
+    let (version, pages, budget) = page_index(document)?;
+    let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
         return Ok(None);
     };
+    let (position, dict) = annots.find(index, id)?;
     match Links::new(document, &annots).link(&dict)? {
         Some((area, target)) => Ok(Some((
             u32::try_from(position).unwrap_or(u32::MAX),
@@ -572,18 +614,20 @@ pub fn link_read(
 /// `doc.destinations` lists them.
 #[pyfunction]
 pub fn named_destinations(document: &_Document) -> PyResult<Vec<Named>> {
-    let (_, index, _) = index(document)?;
-    let named = named(document)?;
-    Ok(named
-        .names
-        .iter()
-        .map(|(name, destination)| {
-            (
-                String::from_utf8_lossy(name).into_owned(),
-                destination.place(&index),
-            )
-        })
-        .collect())
+    let (version, index, budget) = page_index(document)?;
+    let named = named(document, &version, &budget)?;
+    let mut out = BudgetVec::new(&budget);
+    for (name, destination) in &named.names {
+        budget
+            .charge(LimitCode::MemorySize, name.len().saturating_mul(3) as u64)
+            .map_err(|e| limit_error(&e))?;
+        out.try_push((
+            String::from_utf8_lossy(name).into_owned(),
+            destination.place(&index),
+        ))
+        .map_err(|e| limit_error(&e))?;
+    }
+    Ok(out.into_vec())
 }
 
 /// Adds a link over a display rectangle of page object `(number,
@@ -598,48 +642,51 @@ pub fn link_add(
     area: Rect,
     target: Target,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some(annots) = Annots::read(document, number, generation)? else {
-        return Ok(None);
-    };
-    if annots.items.len() >= MAX_PAGE_ANNOTATIONS {
-        return Err(PdfError::new_err(format!(
-            "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
-        )));
-    }
-    if !matches!(
-        annots.resolved(annots.page().dict().get("Annots"))?,
-        None | Some(Value::Array(_))
-    ) {
-        return Err(PdfError::new_err("the page's /Annots is not an array"));
-    }
-    let rect = link_rect(&annots, area)?;
-    let entry = entry(&annots, &target)?;
-    let page = annots.page().object();
-    document.edit(py, |transaction, budget| {
-        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-        let mut dict = Dict::new();
-        dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
-        dict.insert(Name::from("Subtype"), Value::Name(Name::from("Link")));
-        dict.insert(Name::from("Rect"), rect);
-        dict.insert(
-            Name::from("Border"),
-            Value::Array(Array::from(vec![Value::Integer(0); 3])),
-        );
-        dict.insert(Name::from("F"), Value::Integer(4));
-        if let Some(page) = page {
-            dict.insert(Name::from("P"), Value::Reference(page));
-        }
-        if let Some((key, value)) = entry {
-            dict.insert(Name::from(key), value);
-        }
-        transaction
-            .write(reference.number(), &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))?;
-        let mut items = annots.items.clone();
-        items.push(Value::Reference(reference));
-        annots.write_items(transaction, items, budget)?;
-        Ok(Some((reference.number(), reference.generation())))
-    })
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, budget| {
+            budget
+                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                .map_err(|e| limit_error(&e))?;
+            if !matches!(
+                annots.resolved(annots.page().dict().get("Annots"))?,
+                None | Some(Value::Array(_))
+            ) {
+                return Err(PdfError::new_err("the page's /Annots is not an array"));
+            }
+            let rect = link_rect(annots, area)?;
+            let entry = entry(annots, &target)?;
+            let page = annots.page().object();
+
+            let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+            let mut dict = Dict::new();
+            dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+            dict.insert(Name::from("Subtype"), Value::Name(Name::from("Link")));
+            dict.insert(Name::from("Rect"), rect);
+            dict.insert(
+                Name::from("Border"),
+                Value::Array(Array::from(vec![Value::Integer(0); 3])),
+            );
+            dict.insert(Name::from("F"), Value::Integer(4));
+            if let Some(page) = page {
+                dict.insert(Name::from("P"), Value::Reference(page));
+            }
+            if let Some((key, value)) = entry {
+                dict.insert(Name::from(key), value);
+            }
+            transaction
+                .write(reference.number(), &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))?;
+            charge_copy(CopyPart::Array(&annots.items), budget)?;
+            let mut items = annots.items.clone();
+            items.push(Value::Reference(reference));
+            annots.write_items(transaction, items, budget)?;
+            Ok((reference.number(), reference.generation()))
+        },
+    )
 }
 
 /// Moves the link that a handle names to a display rectangle, makes it lead
@@ -661,32 +708,36 @@ pub fn link_edit(
     area: Option<Rect>,
     target: Option<Target>,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some((annots, position, dict)) = edited(document, number, generation, index, id)? else {
-        return Ok(None);
-    };
-    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Link") {
-        return Err(StaleObjectError::new_err(format!(
-            "annotation {} at index {position} is no longer a link",
-            id.0
-        )));
-    }
-    let rect = area.map(|area| link_rect(&annots, area)).transpose()?;
-    let entry = target.map(|target| entry(&annots, &target)).transpose()?;
-    annots
-        .write(py, document, position, false, dict, |_, _, dict, _, _| {
-            if let Some(rect) = rect {
-                dict.insert(Name::from("Rect"), rect);
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, _budget| {
+            let (position, dict) = annots.find(index, id)?;
+            if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Link") {
+                return Err(StaleObjectError::new_err(format!(
+                    "annotation {} at index {position} is no longer a link",
+                    id.0
+                )));
             }
-            if let Some(entry) = entry {
-                dict.remove("Dest");
-                dict.remove("A");
-                if let Some((key, value)) = entry {
-                    dict.insert(Name::from(key), value);
+            let rect = area.map(|area| link_rect(annots, area)).transpose()?;
+            let entry = target.map(|target| entry(annots, &target)).transpose()?;
+            annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
+                if let Some(rect) = rect {
+                    dict.insert(Name::from("Rect"), rect);
                 }
-            }
-            Ok(false)
-        })
-        .map(Some)
+                if let Some(entry) = entry {
+                    dict.remove("Dest");
+                    dict.remove("A");
+                    if let Some((key, value)) = entry {
+                        dict.insert(Name::from(key), value);
+                    }
+                }
+                Ok(false)
+            })
+        },
+    )
 }
 
 /// Returns the PDF `/Rect` of a link's display rectangle.
@@ -715,14 +766,14 @@ fn real(value: f64, label: &str) -> PyResult<Value> {
 fn entry(annots: &Annots, target: &Target) -> PyResult<Option<(&'static str, Value)>> {
     let (kind, page, point, zoom, text, name) = target;
     let size = 4 + text.as_deref().map_or(0, str::len) + name.as_deref().map_or(0, str::len);
-    if size > MAX_ANNOTATION_TEXT_BYTES {
-        return Err(LimitError::new_err((
-            "annotation_input_size",
-            format!(
-                "link subtype and target input exceeds the {MAX_ANNOTATION_TEXT_BYTES}-byte UTF-8 limit"
-            ),
-        )));
-    }
+    annots
+        .budget
+        .charge(LimitCode::AnnotationInputSize, size as u64)
+        .map_err(|e| limit_error(&e))?;
+    annots
+        .budget
+        .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
+        .map_err(|e| limit_error(&e))?;
     let text = |label: &str| {
         text.as_deref()
             .filter(|text| !text.is_empty())

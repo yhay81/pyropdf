@@ -48,7 +48,9 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `annotation_text_size` | 1 MiB | An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the page for a listing. |
 | `annotation_dash_count` | 32 lengths | An annotation border has more than 32 dash lengths. |
 | `annotation_input_size` | 1 MiB | The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together. |
-| `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges. |
+| `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes. |
+| `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |
+| `named_destination_depth` | 32 levels | The named-destination tree has more than 32 levels. |
 | `named_destination_text_size` | 16 MiB | The names of the document's named destinations are longer than 16 MiB together. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |

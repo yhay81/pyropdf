@@ -56,6 +56,8 @@ LimitCode: TypeAlias = Literal[
     "annotation_dash_count",
     "annotation_input_size",
     "named_destination_count",
+    "named_destination_edge_count",
+    "named_destination_depth",
     "named_destination_text_size",
     "page_entry_count",
     "memory_size",
@@ -163,8 +165,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
-            "than 65,536 entries or tree nodes, or more than 131,072 tree edges."
+            "than 65,536 entries or tree nodes."
         ),
+        "named_destination_edge_count": "The named-destination tree has more than 131,072 child edges.",
+        "named_destination_depth": "The named-destination tree has more than 32 levels.",
         "named_destination_text_size": (
             "The names of the document's named destinations are longer than 16 MiB together."
         ),

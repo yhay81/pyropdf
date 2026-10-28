@@ -28,8 +28,10 @@ def _link_target(target: object, page: Page) -> _Target:
         raise TypeError(msg)
     spec = _target_to_core(target, len(page._document.pages))  # noqa: SLF001
     texts = ("Link", spec[4] or "", spec[5] or "")
-    if sum(len(text) for text in texts) * 4 > _MAX_LINK_INPUT_TEXT_SIZE and (
-        sum(len(text.encode()) for text in texts) > _MAX_LINK_INPUT_TEXT_SIZE
+    characters = sum(len(text) for text in texts)
+    if characters > _MAX_LINK_INPUT_TEXT_SIZE or (
+        characters * 4 > _MAX_LINK_INPUT_TEXT_SIZE
+        and sum(len(text.encode()) for text in texts) > _MAX_LINK_INPUT_TEXT_SIZE
     ):
         code = "annotation_input_size"
         msg = f"link subtype and target input exceeds the {_MAX_LINK_INPUT_TEXT_SIZE}-byte UTF-8 limit"
