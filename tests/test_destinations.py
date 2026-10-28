@@ -1,6 +1,6 @@
 """doc.destinations and the named destinations that links read.
 
-Ported from pyropdf's tests/test_destinations.py and the link cases of
+Ported from pylopdf's tests/test_destinations.py and the link cases of
 tests/test_named_destinations.py at ebb01d3. The outline, page cleanup, and
 ``insert_pdf`` cases of the latter wait for those features in pyropdf.
 """
@@ -32,7 +32,7 @@ Shape = Literal["entries", "nodes", "edges", "text"]
 SHAPE_CODES: dict[Shape, str] = {
     "entries": "named_destination_count",
     "nodes": "named_destination_count",
-    "edges": "named_destination_count",
+    "edges": "named_destination_edge_count",
     "text": "named_destination_text_size",
 }
 
@@ -371,3 +371,13 @@ def test_name_tree_index_keeps_first_occurrences_of_unsorted_keys() -> None:
     for _ in range(2):
         # zeta, alpha, "", twice, legacy, shadowed, and missing.
         assert [_page_of(link) for link in doc.pages[0].links] == [1, 0, 1, 1, 1, None, None]
+
+
+def test_invalid_name_tree_pairs_still_count_with_legacy_entries() -> None:
+    doc = _named(
+        "<< /Names [" + "null [3 0 R /Fit] " * MAX_NAMED_DEST_ENTRIES + "] >>",
+        "/Dests << /extra [3 0 R /Fit] >> ",
+    )
+    with pytest.raises(pyropdf.LimitError) as caught:
+        list(doc.destinations)
+    assert caught.value.code == "named_destination_count"

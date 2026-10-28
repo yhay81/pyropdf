@@ -319,7 +319,9 @@ def _text_value(value: object, name: str) -> str:
     if not isinstance(value, str):
         msg = f"{name} must be a str: {type(value).__name__}"
         raise TypeError(msg)
-    if len(value) * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE and len(value.encode()) > _MAX_ANNOTATION_INPUT_TEXT_SIZE:
+    if len(value) > _MAX_ANNOTATION_INPUT_TEXT_SIZE or (
+        len(value) * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE and len(value.encode()) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+    ):
         code = "annotation_input_size"
         msg = f"annotation {name} exceeds the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte UTF-8 limit"
         raise LimitError(code, msg)

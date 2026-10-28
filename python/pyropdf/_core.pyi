@@ -38,8 +38,32 @@ class _Document:
         data: bytes | bytearray | memoryview, limits: object, password: bytes | None = None, /
     ) -> _Document: ...
     def is_repaired(self) -> bool: ...
-    def save_path(self, path: str, incremental: bool, encryption: object = None, /) -> None: ...
-    def to_bytes(self, incremental: bool, max_size: int | None, encryption: object = None, /) -> bytes: ...
+    def save_path(
+        self,
+        path: str,
+        incremental: bool,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        renew_id: bool = False,
+        cross_reference_stream: bool | None = None,
+        object_streams: bool = False,
+        /,
+    ) -> None: ...
+    def to_bytes(
+        self,
+        incremental: bool,
+        max_size: int | None,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        renew_id: bool = False,
+        cross_reference_stream: bool | None = None,
+        object_streams: bool = False,
+        /,
+    ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...
     def close(self) -> None: ...
 
@@ -90,6 +114,7 @@ class _OcrEngine:
         overlap: int = 192,
         min_confidence: float = 0.5,
         rotation: int = 0,
+        document: _Document | None = None,
     ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
@@ -129,6 +154,7 @@ def probe(
     password: bytes | None = None,
     /,
 ) -> tuple[int, str, bool, bool, dict[str, str]]: ...
+def header_version(document: _Document, /) -> str | None: ...
 def page_count(document: _Document, /) -> int: ...
 def page_object(document: _Document, at: int, /) -> tuple[int, int]: ...
 def page_index(document: _Document, number: int, generation: int, /) -> int | None: ...
