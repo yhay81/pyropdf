@@ -682,6 +682,299 @@ fn unreferenced_frees_a_candidate_with_what_refers_only_to_it() {
     assert_eq!(&*freed, &[2, 3, 6]);
 }
 
+/// One element of a generated tagged document: the position of its
+/// parent among the elements before it (none for the root), its page, its
+/// content, and the element that its `/Ref` names.
+#[derive(Clone, Debug)]
+struct Element {
+    parent: Option<usize>,
+    page: Option<usize>,
+    content: Vec<Content>,
+    refers: Option<usize>,
+}
+
+/// A content item of a generated element: a marked-content identifier on
+/// its page, a marked-content reference to a page, or an object reference
+/// to an annotation.
+#[derive(Clone, Debug)]
+enum Content {
+    Mcid,
+    Mcr(usize),
+    Objr(usize),
+}
+
+fn content() -> impl Strategy<Value = Content> {
+    prop_oneof![
+        Just(Content::Mcid),
+        (0..8usize).prop_map(Content::Mcr),
+        (0..8usize).prop_map(Content::Objr),
+    ]
+}
+
+fn elements() -> impl Strategy<Value = Vec<Element>> {
+    proptest::collection::vec(
+        (
+            proptest::option::of(0..16usize),
+            proptest::option::of(0..8usize),
+            proptest::collection::vec(content(), 0..3),
+            proptest::option::of(0..16usize),
+        ),
+        1..12,
+    )
+    .prop_map(|raw| {
+        raw.into_iter()
+            .enumerate()
+            .map(|(at, (parent, page, content, refers))| Element {
+                parent: parent.filter(|_| at > 0).map(|parent| parent % at),
+                page,
+                content,
+                refers,
+            })
+            .collect()
+    })
+}
+
+/// Returns a tagged document of `pages` pages, the annotations whose pages
+/// `annotations` gives, and `elements`, with each element's `/P` naming
+/// the parent whose `/K` holds it. Pages are objects 10 and on,
+/// annotations 30 and on, elements 50 and on. The parent tree lists the
+/// annotations that an element holds, and is one dictionary, or when
+/// `leaf` is given, object 69 whose kids are leaves of `leaf` pairs at
+/// most, objects 70 and on.
+fn tagged_of(
+    pages: usize,
+    annotations: &[usize],
+    elements: &[Element],
+    leaf: Option<usize>,
+) -> Document {
+    let page = |at: usize| u32::try_from(10 + at % pages).unwrap();
+    let annotation = |at: usize| u32::try_from(30 + at % annotations.len()).unwrap();
+    let element = |at: usize| u32::try_from(50 + at).unwrap();
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![
+                ("Type", name("Catalog")),
+                ("Pages", reference(2)),
+                ("StructTreeRoot", reference(3)),
+            ]),
+        ),
+        (
+            2,
+            dict(vec![
+                ("Type", name("Pages")),
+                (
+                    "Kids",
+                    array((0..pages).map(|at| reference(page(at))).collect()),
+                ),
+                ("Count", Value::Integer(i64::try_from(pages).unwrap())),
+            ]),
+        ),
+    ];
+    let mut kids = vec![Vec::new(); elements.len()];
+    let mut top = Vec::new();
+    let mut on_page = vec![Vec::new(); pages];
+    let mut holder = vec![None; annotations.len()];
+    let mut mcid = 0;
+    for (at, spec) in elements.iter().enumerate() {
+        match spec.parent {
+            Some(parent) => kids[parent].push(reference(element(at))),
+            None => top.push(reference(element(at))),
+        }
+        for item in &spec.content {
+            mcid += 1;
+            let item = match item {
+                Content::Mcid => Value::Integer(mcid),
+                Content::Mcr(target) => {
+                    on_page[*target % pages].push(reference(element(at)));
+                    dict(vec![
+                        ("Type", name("MCR")),
+                        ("Pg", reference(page(*target))),
+                        ("MCID", Value::Integer(mcid)),
+                    ])
+                }
+                Content::Objr(_) if annotations.is_empty() => continue,
+                Content::Objr(target) => {
+                    holder[*target % annotations.len()] = Some(element(at));
+                    dict(vec![
+                        ("Type", name("OBJR")),
+                        ("Obj", reference(annotation(*target))),
+                    ])
+                }
+            };
+            kids[at].push(item);
+        }
+        if let Some(target) = spec.page
+            && spec
+                .content
+                .iter()
+                .any(|item| matches!(item, Content::Mcid))
+        {
+            on_page[target % pages].push(reference(element(at)));
+        }
+    }
+    for at in 0..pages {
+        let listed: Vec<Value> = (0..annotations.len())
+            .filter(|&listed| annotations[listed] % pages == at)
+            .map(|listed| reference(annotation(listed)))
+            .collect();
+        let mut entries = vec![
+            ("Type", name("Page")),
+            ("Parent", reference(2)),
+            ("StructParents", Value::Integer(i64::try_from(at).unwrap())),
+        ];
+        if !listed.is_empty() {
+            entries.push(("Annots", array(listed)));
+        }
+        objects.push((page(at), dict(entries)));
+    }
+    let mut pairs = Vec::new();
+    for (at, elements) in on_page.into_iter().enumerate() {
+        pairs.push((i64::try_from(at).unwrap(), array(elements)));
+    }
+    for (at, holder) in holder.into_iter().enumerate() {
+        if let Some(holder) = holder {
+            pairs.push((i64::try_from(100 + at).unwrap(), reference(holder)));
+        }
+    }
+    let nums = |pairs: &[(i64, Value)]| {
+        array(
+            pairs
+                .iter()
+                .flat_map(|(key, value)| [Value::Integer(*key), value.clone()])
+                .collect(),
+        )
+    };
+    let parent_tree = match leaf {
+        None => dict(vec![("Nums", nums(&pairs))]),
+        Some(leaf) => {
+            let mut kids = Vec::new();
+            for (at, chunk) in pairs.chunks(leaf).enumerate() {
+                let number = 70 + u32::try_from(at).unwrap();
+                let limits = vec![
+                    Value::Integer(chunk[0].0),
+                    Value::Integer(chunk[chunk.len() - 1].0),
+                ];
+                objects.push((
+                    number,
+                    dict(vec![("Limits", array(limits)), ("Nums", nums(chunk))]),
+                ));
+                kids.push(reference(number));
+            }
+            objects.push((69, dict(vec![("Kids", array(kids))])));
+            reference(69)
+        }
+    };
+    for (at, &on) in annotations.iter().enumerate() {
+        objects.push((
+            annotation(at),
+            dict(vec![
+                ("Type", name("Annot")),
+                ("Subtype", name("Square")),
+                ("P", reference(page(on))),
+                (
+                    "StructParent",
+                    Value::Integer(i64::try_from(100 + at).unwrap()),
+                ),
+            ]),
+        ));
+    }
+    objects.push((
+        3,
+        dict(vec![
+            ("Type", name("StructTreeRoot")),
+            ("K", array(top)),
+            ("ParentTree", parent_tree),
+        ]),
+    ));
+    for (at, (spec, kids)) in elements.iter().zip(kids).enumerate() {
+        let parent = spec.parent.map_or(3, element);
+        let mut entries = vec![
+            ("Type", name("StructElem")),
+            ("S", name("P")),
+            ("P", reference(parent)),
+            ("K", array(kids)),
+        ];
+        if let Some(target) = spec.page {
+            entries.push(("Pg", reference(page(target))));
+        }
+        if let Some(target) = spec.refers {
+            entries.push((
+                "Ref",
+                array(vec![reference(element(target % elements.len()))]),
+            ));
+        }
+        objects.push((element(at), dict(entries)));
+    }
+    let Value::Dict(trailer) = dict(vec![("Root", reference(1))]) else {
+        unreachable!()
+    };
+    document_of(&objects, trailer)
+}
+
+/// Plans the rules for removing the pages `removed` of `document` with the
+/// structure rules of `reach`, and returns the reach that planned them,
+/// the values of the objects that the edits leave, and the orphans.
+fn planned_with(
+    document: &Document,
+    removed: &[u32],
+    retained: &[u32],
+    reach: structure::Reach,
+) -> (structure::Reach, Vec<Option<Value>>, Vec<u32>) {
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    navigation::plan(&mut reads, &index, removed, retained, &mut edits).unwrap();
+    let used = structure::plan(&mut reads, &index, removed, retained, &mut edits, reach).unwrap();
+    let orphans = edits.orphans().to_vec();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let after = transaction.snapshot();
+    let mut numbers = BudgetVec::new(&budget);
+    after.base().numbers(&mut numbers).unwrap();
+    for (number, _) in after.slots() {
+        numbers.try_push(number).unwrap();
+    }
+    numbers.sort_unstable();
+    dedup(&mut numbers);
+    let values = numbers
+        .iter()
+        .copied()
+        .map(|number| {
+            after
+                .get(number, &budget)
+                .unwrap()
+                .map(|object| (**object.value()).clone())
+        })
+        .collect();
+    (used, values, orphans)
+}
+
+proptest! {
+    #[test]
+    fn the_affected_walk_plans_what_the_whole_walk_plans(
+        pages in 1..5usize,
+        annotations in proptest::collection::vec(0..8usize, 0..4),
+        elements in elements(),
+        removed in proptest::collection::vec(any::<bool>(), 4),
+        leaf in proptest::option::of(1..4usize),
+    ) {
+        let document = tagged_of(pages, &annotations, &elements, leaf);
+        let page = |at: usize| u32::try_from(10 + at).unwrap();
+        // The first page leaves when no other does.
+        let leaves = |at: usize| removed[at] || (at == 0 && !removed[..pages].contains(&true));
+        let removed_pages: Vec<u32> = (0..pages).filter(|&at| leaves(at)).map(page).collect();
+        let retained: Vec<u32> = (0..pages).filter(|&at| !leaves(at)).map(page).collect();
+        let affected = planned_with(&document, &removed_pages, &retained, structure::Reach::Affected);
+        let whole = planned_with(&document, &removed_pages, &retained, structure::Reach::Whole);
+        prop_assert_eq!(affected.0, structure::Reach::Affected);
+        prop_assert_eq!(&affected.1, &whole.1);
+        prop_assert_eq!(&affected.2, &whole.2);
+    }
+}
+
 #[test]
 fn find_charges_every_owned_key_copy() {
     let long_key = "k".repeat(64 * 1024);
@@ -993,6 +1286,7 @@ fn structure_planning_charges_copies_of_unknown_fields() {
         &[3],
         &[4],
         &mut edits,
+        structure::Reach::Whole,
     )
     .unwrap_err();
     assert_eq!(
@@ -1080,6 +1374,231 @@ fn writing_rules_invalidates_the_cached_reference_paths() {
     );
 }
 
+fn small_structure(element: Value, extra: &[(u32, Value)]) -> Document {
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![
+                ("Type", name("Catalog")),
+                ("Pages", reference(2)),
+                ("StructTreeRoot", reference(3)),
+            ]),
+        ),
+        (
+            2,
+            dict(vec![
+                ("Type", name("Pages")),
+                ("Kids", array(vec![reference(10), reference(11)])),
+            ]),
+        ),
+        (
+            3,
+            dict(vec![("Type", name("StructTreeRoot")), ("K", reference(50))]),
+        ),
+        (
+            10,
+            dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+        ),
+        (
+            11,
+            dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+        ),
+        (50, element),
+    ];
+    objects.extend_from_slice(extra);
+    document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    )
+}
+
+fn assert_structure_plans_match(document: &Document) {
+    let affected = planned_with(document, &[10], &[11], structure::Reach::Affected);
+    let whole = planned_with(document, &[10], &[11], structure::Reach::Whole);
+    assert_eq!(affected.1, whole.1);
+    assert_eq!(affected.2, whole.2);
+}
+
+#[test]
+fn affected_structure_keeps_whole_walk_semantics_for_non_name_types() {
+    let document = small_structure(
+        dict(vec![
+            ("S", Value::Integer(7)),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[],
+    );
+    assert_structure_plans_match(&document);
+}
+
+#[test]
+fn affected_structure_keeps_whole_walk_semantics_for_unknown_types() {
+    let document = small_structure(
+        dict(vec![
+            ("Type", name("Unknown")),
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[],
+    );
+    assert_structure_plans_match(&document);
+}
+
+#[test]
+fn affected_structure_follows_reference_aliases_to_marked_content() {
+    let document = small_structure(
+        dict(vec![
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("K", reference(60)),
+        ]),
+        &[
+            (60, reference(61)),
+            (
+                61,
+                dict(vec![
+                    ("Type", name("MCR")),
+                    ("Pg", reference(10)),
+                    ("MCID", Value::Integer(0)),
+                ]),
+            ),
+        ],
+    );
+    assert_structure_plans_match(&document);
+}
+
+#[test]
+fn affected_structure_does_not_skip_aliases_of_removed_pages() {
+    for key in ["K", "ParentTree", "IDTree"] {
+        let entry = if key == "K" {
+            reference(10)
+        } else {
+            dict(vec![("Kids", array(vec![reference(10)]))])
+        };
+        let document = document_of(
+            &[
+                (
+                    1,
+                    dict(vec![
+                        ("Type", name("Catalog")),
+                        ("Pages", reference(2)),
+                        ("StructTreeRoot", reference(3)),
+                    ]),
+                ),
+                (
+                    2,
+                    dict(vec![
+                        ("Type", name("Pages")),
+                        ("Kids", array(vec![reference(10), reference(11)])),
+                    ]),
+                ),
+                (
+                    3,
+                    dict(vec![("Type", name("StructTreeRoot")), (key, entry)]),
+                ),
+                (
+                    10,
+                    dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+                ),
+                (
+                    11,
+                    dict(vec![("Type", name("Page")), ("Parent", reference(2))]),
+                ),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        for reach in [structure::Reach::Whole, structure::Reach::Affected] {
+            let result = structure::plan(
+                &mut Reads::new(&version, &budget),
+                &index,
+                &[10],
+                &[11],
+                &mut Edits::new(&budget),
+                reach,
+            );
+            assert!(result.is_err(), "{key}: {reach:?} must refuse the alias");
+        }
+    }
+}
+
+#[test]
+fn affected_structure_reaches_ref_arrays_through_reference_aliases() {
+    let document = small_structure(
+        dict(vec![
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[
+            (
+                3,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", array(vec![reference(50), reference(51)])),
+                ]),
+            ),
+            (
+                51,
+                dict(vec![
+                    ("S", name("P")),
+                    ("P", reference(3)),
+                    ("Pg", reference(11)),
+                    ("K", Value::Integer(0)),
+                    ("Ref", reference(65)),
+                ]),
+            ),
+            (64, array(vec![reference(50)])),
+            (65, reference(64)),
+        ],
+    );
+    assert_structure_plans_match(&document);
+}
+
+proptest! {
+    #[test]
+    fn affected_structure_matches_whole_walk_with_malformed_types_and_aliases(
+        elements in elements(),
+        flags in proptest::collection::vec(any::<u8>(), 1..12),
+    ) {
+        let document = tagged_of(4, &[0, 1], &elements, Some(2));
+        let budget = Budget::default();
+        let version = document.current();
+        let mut transaction = document.begin();
+        for at in 0..elements.len() {
+            let number = 50 + u32::try_from(at).unwrap();
+            let object = version.get(number, &budget).unwrap().unwrap();
+            let Value::Dict(mut value) = (**object.value()).clone() else { unreachable!() };
+            let bits = flags[at % flags.len()];
+            if bits & 1 != 0 { value.insert("S".into(), Value::Integer(7)); }
+            if bits & 2 != 0 { value.insert("Type".into(), name("Unknown")); }
+            if bits & 4 != 0 { value.insert("P".into(), reference(3)); }
+            for (key, mask) in [("K", 8), ("Ref", 16)] {
+                if bits & mask != 0 && let Some(item) = value.get(key).cloned() {
+                    let inner = transaction.allocate().unwrap();
+                    transaction.write(inner.number(), &item, &budget).unwrap();
+                    let outer = transaction.allocate().unwrap();
+                    transaction.write(outer.number(), &Value::Reference(inner), &budget).unwrap();
+                    value.insert(key.into(), Value::Reference(outer));
+                }
+            }
+            transaction.write(number, &Value::Dict(value), &budget).unwrap();
+        }
+        transaction.commit(&budget).unwrap();
+        let affected = planned_with(&document, &[10], &[11, 12, 13], structure::Reach::Affected);
+        let whole = planned_with(&document, &[10], &[11, 12, 13], structure::Reach::Whole);
+        prop_assert_eq!(&affected.1, &whole.1);
+        prop_assert_eq!(&affected.2, &whole.2);
+    }
+}
+
 #[test]
 fn collection_does_not_expand_a_large_retained_root_child() {
     let mut objects = vec![
@@ -1121,4 +1640,56 @@ fn collection_preserves_candidates_referenced_by_a_live_boundary() {
         &*unreferenced(&index, &[1, 2], &[], &budget).unwrap(),
         &[2, 3, 4]
     );
+}
+
+#[test]
+fn targeted_structure_reads_skip_unrelated_structure_elements() {
+    let document = small_structure(
+        dict(vec![
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[
+            (
+                3,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", array(vec![reference(50), reference(51)])),
+                ]),
+            ),
+            (
+                51,
+                dict(vec![
+                    ("S", name("P")),
+                    ("P", reference(3)),
+                    ("Pg", reference(11)),
+                    ("K", Value::Integer(0)),
+                ]),
+            ),
+        ],
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    for reach in [structure::Reach::Affected, structure::Reach::Whole] {
+        let mut reads = Reads::new(&version, &budget);
+        let used = structure::plan(
+            &mut reads,
+            &index,
+            &[10],
+            &[11],
+            &mut Edits::new(&budget),
+            reach,
+        )
+        .unwrap();
+        assert_eq!(used, reach);
+        let recorded = reads.finish().unwrap();
+        assert!(recorded.objects().contains(&50));
+        assert_eq!(
+            recorded.objects().contains(&51),
+            reach == structure::Reach::Whole
+        );
+    }
 }

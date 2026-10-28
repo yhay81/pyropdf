@@ -61,7 +61,15 @@ pub fn remove_pages(
     edits: &mut Edits<'_>,
 ) -> Result<()> {
     navigation::plan(reads, index, removed, retained, edits)?;
-    structure::plan(reads, index, removed, retained, edits)
+    structure::plan(
+        reads,
+        index,
+        removed,
+        retained,
+        edits,
+        structure::Reach::Affected,
+    )?;
+    Ok(())
 }
 
 /// The references of one version, both ways.

@@ -150,6 +150,15 @@ impl<'b> Edits<'b> {
         Ok(())
     }
 
+    /// Adds the edits that `other` planned.
+    pub(super) fn append(&mut self, other: Edits<'_>) -> Result<()> {
+        for edit in other.edits.into_vec() {
+            self.edits.try_push(edit)?;
+        }
+        self.orphans.try_extend_from_slice(&other.orphans)?;
+        Ok(())
+    }
+
     /// Returns the objects that the edits remove, ascending: the referrers
     /// of [`Rule::RemoveReferrer`] and the structure elements that removed
     /// pages leave empty.
