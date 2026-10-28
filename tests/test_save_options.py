@@ -556,3 +556,31 @@ def test_dedupe_requires_prune_a_full_save_and_a_bool() -> None:
         doc.to_bytes(incremental=True, dedupe=True)
     with pytest.raises(TypeError, match="dedupe must be a bool"):
         doc.to_bytes(dedupe=1, prune=True)  # ty: ignore[invalid-argument-type]
+
+
+@pytest.mark.parametrize("mode", ["plain", "prune", "renumber", "dedupe", "object_streams", "encryption"])
+def test_full_save_refuses_live_object_zero(mode: str, tmp_path: Path) -> None:
+    # Repaired input from save-fuzz crash 48ddebe9596f7ddd421a47eb48cc7105a4d0f49c.
+    source = b"%PDF-1.7\n0 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+    doc = pyropdf.open(source)
+    path = tmp_path / "existing.pdf"
+    path.write_bytes(b"keep the existing destination")
+    with pytest.raises(pyropdf.MalformedPdfError, match="object number 0"):
+        doc.to_bytes(
+            prune=mode in {"prune", "dedupe"},
+            renumber=mode == "renumber",
+            dedupe=mode == "dedupe",
+            object_streams=mode == "object_streams",
+            encryption=Encryption(user_password="new") if mode == "encryption" else None,
+        )
+    with pytest.raises(pyropdf.MalformedPdfError, match="object number 0"):
+        doc.save(
+            path,
+            prune=mode in {"prune", "dedupe"},
+            renumber=mode == "renumber",
+            dedupe=mode == "dedupe",
+            object_streams=mode == "object_streams",
+            encryption=Encryption(user_password="new") if mode == "encryption" else None,
+        )
+    assert path.read_bytes() == b"keep the existing destination"
+    assert doc.trailer["Root"].xref == 0
