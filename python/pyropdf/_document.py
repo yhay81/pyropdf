@@ -267,6 +267,8 @@ class Document:
         compression_level: int = 6,
         decompress: bool = False,
         keep_id: bool = False,
+        cross_reference: Literal["table", "stream"] | None = None,
+        object_streams: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -306,6 +308,21 @@ class Document:
         bytes. A save without edits writes ``/ID`` as read, and so does any
         save with ``keep_id=True``. Encryption keys derive from the first
         element, which a save keeps.
+
+        ``cross_reference`` writes the cross-reference data as a ``"table"``
+        or as a ``"stream"`` (PDF 1.5); ``None`` keeps the form of the
+        section that the opened file's ``startxref`` names, and writes a
+        table for a hybrid-reference file or a document without a file.
+        ``object_streams=True`` packs every object that ISO 32000-2 section
+        7.5.7 lets an object stream hold into object streams of up to 100
+        objects: those that are not streams, have generation 0, and are not
+        the encryption dictionary. It writes a cross-reference stream, so
+        it excludes ``cross_reference="table"``. Both raise the header's
+        version to 1.5 when it is lower. The streams that a save adds are
+        compressed with Flate at ``compression_level`` unless
+        ``decompress``, and an encrypted save encrypts each object stream
+        as a whole. An incremental save keeps the form of the opened file,
+        so it refuses both.
         """
         self._ensure_open()
         options = _save_options(
@@ -315,6 +332,8 @@ class Document:
             compression_level=compression_level,
             decompress=decompress,
             keep_id=keep_id,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
         )
         arg = _encryption_arg(encryption)
         _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
@@ -330,6 +349,8 @@ class Document:
         compression_level: int = 6,
         decompress: bool = False,
         keep_id: bool = False,
+        cross_reference: Literal["table", "stream"] | None = None,
+        object_streams: bool = False,
     ) -> bytes:
         """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
@@ -345,6 +366,8 @@ class Document:
             compression_level=compression_level,
             decompress=decompress,
             keep_id=keep_id,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
@@ -540,15 +563,28 @@ def _validate_bool(name: str, value: object) -> None:
 
 
 def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
-    *, incremental: bool, prune: bool, compress: bool, compression_level: int, decompress: bool, keep_id: bool
-) -> tuple[bool, int | None, bool, bool]:
-    """Check the save options, and return the core's ``prune``, ``compress`` level, ``decompress``, and ``renew_id``."""
+    *,
+    incremental: bool,
+    prune: bool,
+    compress: bool,
+    compression_level: int,
+    decompress: bool,
+    keep_id: bool,
+    cross_reference: object,
+    object_streams: bool,
+) -> tuple[bool, int | None, bool, bool, bool | None, bool]:
+    """Check the save options, and return them as the core's save methods take them.
+
+    They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
+    ``cross_reference_stream``, and ``object_streams``.
+    """
     flags = {
         "incremental": incremental,
         "prune": prune,
         "compress": compress,
         "decompress": decompress,
         "keep_id": keep_id,
+        "object_streams": object_streams,
     }
     for name, value in flags.items():
         _validate_bool(name, value)
@@ -567,7 +603,20 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     if compress and decompress:
         msg = "decompress=True needs compress=False, which would compress the streams again"
         raise ValueError(msg)
-    return prune, compression_level if compress else None, decompress, not keep_id
+    if cross_reference not in (None, "table", "stream"):
+        msg = f"cross_reference must be 'table', 'stream', or None: {cross_reference!r}"
+        raise ValueError(msg)
+    if incremental and (cross_reference is not None or object_streams):
+        msg = (
+            "cross_reference and object_streams require a full save: "
+            "an incremental save keeps the form of the opened file"
+        )
+        raise ValueError(msg)
+    if object_streams and cross_reference == "table":
+        msg = "object_streams=True writes a cross-reference stream, so it needs cross_reference='stream' or None"
+        raise ValueError(msg)
+    stream = None if cross_reference is None else cross_reference == "stream"
+    return prune, compression_level if compress else None, decompress, not keep_id, stream, object_streams
 
 
 def _resolve_limits(limits: object) -> DocumentLimits:
