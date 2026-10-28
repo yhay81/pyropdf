@@ -10,7 +10,7 @@
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use pyo3::prelude::*;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -2367,6 +2367,51 @@ impl FillIndex {
     }
 }
 
+/// The last derived fill index. It never keeps a document version alive.
+#[derive(Default)]
+pub(crate) struct FillCache {
+    entry: Mutex<Option<(Weak<Version>, Arc<FillIndex>)>>,
+}
+
+#[allow(dead_code)]
+impl FillCache {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn clear(&self) {
+        self.entry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+
+    fn get(&self, version: &Arc<Version>, budget: &Budget) -> PyResult<Arc<FillIndex>> {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        let held = self
+            .entry
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let held = held.and_then(|(version, index)| Some((version.upgrade()?, index)));
+        let index = match held {
+            Some((old, index)) if Arc::ptr_eq(&old, version) => return Ok(index),
+            Some((old, index)) => index.update(&old, version, budget)?,
+            None => FillIndex::build(version, budget)?,
+        };
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                (size_of::<FillIndex>() + 2 * size_of::<usize>()) as u64,
+            )
+            .map_err(|e| limit_error(&e))?;
+        let index = Arc::new(index);
+        *self.entry.lock().unwrap_or_else(PoisonError::into_inner) =
+            Some((Arc::downgrade(version), Arc::clone(&index)));
+        Ok(index)
+    }
+}
+
 #[cfg(test)]
 mod appearance_tests {
     use super::*;
@@ -2828,6 +2873,42 @@ mod appearance_tests {
             index.values.leaves.get(1).unwrap().as_ref().unwrap().len(),
             100_000
         );
+    }
+
+    #[test]
+    fn fill_cache_tracks_versions_without_reusing_stale_values() {
+        let mut base = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        for (number, bytes) in [
+            (1, &b"<< /AcroForm 4 0 R >>"[..]),
+            (4, &b"<< /Fields [5 0 R] >>"[..]),
+            (5, &b"<< /FT /Tx /T (field) /V (old) >>"[..]),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(bytes));
+        }
+        let document = Document::new(Arc::new(base), None);
+        let budget = Budget::default();
+        let before = document.current();
+        let cache = FillCache::new();
+        let first = cache.get(&before, &budget).unwrap();
+        let mut transaction = document.begin();
+        let field = Value::parse(
+            &Bytes::new(&b"<< /FT /Tx /T (field) /V (new) >>"[..]),
+            &budget,
+        )
+        .unwrap();
+        transaction.write(5, &field, &budget).unwrap();
+        let after = transaction.commit(&budget).unwrap();
+        let second = cache.get(&after, &budget).unwrap();
+        assert!(Arc::ptr_eq(&first.topology, &second.topology));
+        assert_eq!(first.values.leaves.get(0).unwrap().as_deref(), Some("old"));
+        assert_eq!(second.values.leaves.get(0).unwrap().as_deref(), Some("new"));
+        let undone = document.undo().unwrap();
+        let undone = cache.get(&undone, &budget).unwrap();
+        assert_eq!(undone.values.leaves.get(0).unwrap().as_deref(), Some("old"));
     }
 
     #[test]
