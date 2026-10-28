@@ -314,7 +314,7 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
         Some(form) if quadding.is_none() => reader.entry(form, "Q")?,
         _ => None,
     };
-    let quadding = quadding.as_deref().or_else(|| form_quadding.as_deref());
+    let quadding = quadding.as_deref().or(form_quadding.as_deref());
     let align = Align::from_quadding(integer(quadding).unwrap_or(0));
     let value = value_text(reader, value.as_deref())?;
     let style = WidgetStyle::read(reader, widget)?;

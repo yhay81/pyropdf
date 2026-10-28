@@ -281,6 +281,6 @@ fn appearance_values_decode_with_budgeted_memory() {
     }
     let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(8));
     let mut output = BudgetVec::new(&budget);
-    let error = text::append_text(&mut output, &vec![0x80; 100]).unwrap_err();
+    let error = text::append_text(&mut output, &[0x80; 100]).unwrap_err();
     assert_eq!(error.code(), LimitCode::MemorySize);
 }
