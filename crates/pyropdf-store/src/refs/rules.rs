@@ -9,8 +9,8 @@
 use crate::budget::{Budget, BudgetVec};
 use crate::memo::Reads;
 use crate::value::{Name, Reference, Value};
-use crate::version::Transaction;
 use crate::version::table::Table;
+use crate::version::{Transaction, Version};
 use crate::{Error, Result};
 
 use super::{Found, References, Referrer, Role, Step, copy_for_edit, find_where};
@@ -190,6 +190,32 @@ impl<'b> Edits<'b> {
     /// deepest and last entries of a container removed first, so that the
     /// positions of the others hold.
     pub fn write(&mut self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
+        let version = transaction.snapshot();
+        self.process(&version, budget, |number, value| {
+            transaction.write(number, &value, budget).map(|_| ())
+        })
+    }
+
+    /// Computes edits without writing to the source version.
+    pub fn values<'a>(
+        &mut self,
+        version: &Version,
+        budget: &'a Budget,
+    ) -> Result<BudgetVec<'a, (u32, Value)>> {
+        let mut out = BudgetVec::new(budget);
+        self.process(version, budget, |number, value| {
+            out.try_push((number, value))?;
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    fn process(
+        &mut self,
+        version: &Version,
+        budget: &Budget,
+        mut emit: impl FnMut(u32, Value) -> Result<()>,
+    ) -> Result<()> {
         budget.poll()?;
         self.edits
             .sort_unstable_by(|a, b| a.number.cmp(&b.number).then_with(|| b.path.cmp(&a.path)));
@@ -197,7 +223,7 @@ impl<'b> Edits<'b> {
         while at < self.edits.len() {
             budget.poll()?;
             let number = self.edits[at].number;
-            let Some(object) = transaction.version().get(number, budget)? else {
+            let Some(object) = version.get(number, budget)? else {
                 while at < self.edits.len() && self.edits[at].number == number {
                     at += 1;
                 }
@@ -221,7 +247,7 @@ impl<'b> Edits<'b> {
                 last = Some(&edit.path);
                 at += 1;
             }
-            transaction.write(number, &value, budget)?;
+            emit(number, value)?;
         }
         self.edits.clear();
         self.held = Table::new();

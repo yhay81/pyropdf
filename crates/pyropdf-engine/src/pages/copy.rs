@@ -52,7 +52,7 @@ fn append(array: &mut Array, value: Value, budget: &Budget) -> Result<()> {
 }
 
 /// A structure/field dictionary cannot also be another document identity.
-fn editable(dict: &Dict) -> Result<()> {
+pub(super) fn editable(dict: &Dict) -> Result<()> {
     if matches!(dict.get("Type"), Some(Value::Name(kind)) if matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog"))
     {
         return Err(Error::malformed(
@@ -64,7 +64,7 @@ fn editable(dict: &Dict) -> Result<()> {
 
 /// Extends a stored array at its actual object, retaining reference aliases.
 /// A structure /K may also be a single child, which becomes the first array item.
-fn extend_entry(
+pub(super) fn extend_entry(
     transaction: &mut Transaction,
     dict: &mut Dict,
     key: &str,

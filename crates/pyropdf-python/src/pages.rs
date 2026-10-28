@@ -16,7 +16,7 @@ use pyropdf_engine::pages::import;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
-use pyropdf_store::refs::{self, Edits};
+use pyropdf_store::refs::{self, Edits, Rule};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -343,7 +343,19 @@ pub fn import_pages(
             }
             prepared.try_push((page, dict)).map_err(limit)?;
         }
-        let mut overrides = links.overrides.into_vec();
+        let mut overrides = links.overrides;
+        let pruned = pruned(
+            source,
+            &version,
+            &source_index,
+            &imported,
+            &overrides,
+            budget,
+        )?;
+        for pair in pruned.into_vec() {
+            overrides.try_push(pair).map_err(limit)?;
+        }
+        let mut overrides = overrides.into_vec();
         budget
             .charge(
                 LimitCode::MemorySize,
@@ -389,6 +401,69 @@ pub fn import_pages(
         }
         result
     })
+}
+
+/// Read source structure after planning the removal of pages left behind.
+fn pruned<'b>(
+    source: &_Document,
+    version: &Arc<Version>,
+    index: &PageIndex,
+    imported: &[u32],
+    links: &[(Reference, Option<Value>)],
+    budget: &'b Budget,
+) -> PyResult<BudgetVec<'b, (Reference, Option<Value>)>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
+    let catalog = resolve(version, version.trailer().get("Root"), budget)?;
+    let tagged =
+        matches!(&catalog, Some(Value::Dict(catalog)) if catalog.get("StructTreeRoot").is_some());
+    let mut removed = BudgetVec::new(budget);
+    let mut out = BudgetVec::new(budget);
+    if !tagged {
+        return Ok(out);
+    }
+    for page in index.pages().iter().filter_map(Page::object) {
+        if imported.binary_search(&page.number()).is_err() {
+            removed.try_push(page.number()).map_err(limit)?;
+        }
+    }
+    if removed.is_empty() {
+        return Ok(out);
+    }
+    let mut removed = removed.into_vec();
+    removed.sort_unstable();
+    removed.dedup();
+    let references = source.references.get(version, budget).map_err(store)?;
+    let mut reads = Reads::new(version, budget);
+    let mut edits = Edits::new(budget);
+    for (reference, value) in links {
+        if value.is_none() {
+            edits
+                .apply(
+                    &mut reads,
+                    &references,
+                    reference.number(),
+                    &[],
+                    Rule::RemoveReferrer,
+                )
+                .map_err(store)?;
+        }
+    }
+    refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
+        .map_err(store)?;
+    for &number in edits.orphans() {
+        if let Some(generation) = version.generation(number) {
+            out.try_push((Reference::new(number, generation), None))
+                .map_err(limit)?;
+        }
+    }
+    for (number, value) in edits.values(version, budget).map_err(store)?.into_vec() {
+        if let Some(generation) = version.generation(number) {
+            out.try_push((Reference::new(number, generation), Some(value)))
+                .map_err(limit)?;
+        }
+    }
+    Ok(out)
 }
 
 /// The media box that a page without one gets: A4, as the renderer draws it.

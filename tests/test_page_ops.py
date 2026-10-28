@@ -332,8 +332,8 @@ def test_imported_links_follow_the_pages_imported_with_them() -> None:
     assert len(source.pages[1].links) == 1
 
 
-def test_imported_pages_leave_the_source_structure_behind() -> None:
-    """Until their elements are grafted (yhay81/pyropdf#189), imported pages carry no structure keys."""
+def test_imported_pages_graft_the_source_structure() -> None:
+    """Imported page and link keys name their grafted structure elements."""
     source = pyropdf.open(
         build_raw_pdf(
             {
@@ -352,12 +352,18 @@ def test_imported_pages_leave_the_source_structure_behind() -> None:
     target.pages.extend(source.pages)
 
     (page,) = target.pages
-    assert "StructParents" not in page.obj
     (link,) = page.links
-    assert "StructParent" not in link.obj
     assert link.obj["P"].xref == page.xref
-    assert "StructTreeRoot" not in target.catalog
-    assert b"StructElem" not in target.to_bytes()
+    root = target.catalog["StructTreeRoot"]
+    (element,) = root["K"]
+    assert element["P"].xref == root.xref
+    assert element["Pg"].xref == page.xref
+    assert element["K"][1]["Obj"].xref == link.xref
+    nums = list(root["ParentTree"]["Nums"])
+    assert nums[0] == page.obj["StructParents"]
+    assert [owner.xref for owner in nums[1]] == [element.xref]
+    assert nums[2] == link.obj["StructParent"]
+    assert nums[3].xref == element.xref
 
 
 @pytest.mark.parametrize("object_number", [3, 5])

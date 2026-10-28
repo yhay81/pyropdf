@@ -160,8 +160,10 @@ class Pages(Sequence[Page]):
         elements of its own. Pages of another document are imported with
         what they reach, once each per call; their links to pages imported
         with them keep leading there, and their other links within that
-        document go. The iterable may hold up to the larger of the source's
-        page count and 4,096 pages.
+        document go. Their structure elements join this document's
+        structure tree, under its single ``Document`` element when it has
+        one. The iterable may hold up to the larger of the source's page
+        count and 4,096 pages.
         """
         if not _is_int(index):
             msg = f"the insertion index must be an integer, not {type(index).__name__}"

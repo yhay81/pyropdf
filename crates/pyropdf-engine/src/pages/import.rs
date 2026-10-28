@@ -8,7 +8,11 @@
 //! imported, to a page-tree node, or to a catalog becomes null, so that
 //! the source's page tree never comes along.
 
+mod graft;
+
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::mem::size_of;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -34,7 +38,9 @@ pub fn import(
     let mut walk = Walk {
         source,
         overrides,
-        numbers: Numbers::new(budget),
+        edited: BudgetVec::new(budget),
+        keys: Keys::Strip,
+        numbers: Charged::new(budget),
         pending: BudgetVec::new(budget),
         budget,
     };
@@ -46,13 +52,17 @@ pub fn import(
             return Err(Error::malformed("an imported page reference is stale"));
         }
         let new = transaction.allocate()?;
-        walk.numbers.insert(*page, new)?;
+        walk.numbers.insert(*page, new, 0)?;
         added.try_push(new)?;
     }
+    let mut graft = graft::Graft::plan(transaction, &mut walk, budget)?;
     for ((_, mut dict), &new) in pages.into_iter().zip(added.iter()) {
         walk.dict(transaction, &mut dict, 1)?;
         dict.insert(Name::from("Parent"), Value::Reference(root));
         transaction.write(new.number(), &Value::Dict(dict), budget)?;
+    }
+    if let Some(graft) = &mut graft {
+        graft.copy(transaction, &mut walk)?;
     }
     while let Some((reference, new)) = walk.pending.pop() {
         budget.poll()?;
@@ -60,16 +70,20 @@ pub fn import(
         walk.value(transaction, &mut value, 1)?;
         transaction.write(new.number(), &value, budget)?;
     }
+    if let Some(graft) = graft {
+        graft.finish(transaction, budget)?;
+    }
     Ok(added.into_vec())
 }
 
-struct Numbers<'b> {
-    map: HashMap<Reference, Reference>,
+/// A fallible map that charges entries and their owned keys before growth.
+struct Charged<'b, K, V> {
+    map: HashMap<K, V>,
     budget: &'b Budget,
     charged: u64,
 }
 
-impl<'b> Numbers<'b> {
+impl<'b, K: Eq + Hash, V> Charged<'b, K, V> {
     fn new(budget: &'b Budget) -> Self {
         Self {
             map: HashMap::new(),
@@ -77,36 +91,45 @@ impl<'b> Numbers<'b> {
             charged: 0,
         }
     }
-
-    fn get(&self, reference: Reference) -> Option<Reference> {
-        self.map.get(&reference).copied()
+    fn get<Q: Eq + Hash + ?Sized>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+    {
+        self.map.get(key)
     }
-
-    fn insert(&mut self, reference: Reference, new: Reference) -> Result<()> {
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+    fn insert(&mut self, key: K, value: V, extra: u64) -> Result<Option<V>> {
         self.budget.poll()?;
-        if !self.map.contains_key(&reference) {
-            let amount = (64 + 2 * size_of::<(Reference, Reference)>()) as u64;
+        if !self.map.contains_key(&key) {
+            let amount = (64 + 2 * size_of::<(K, V)>()) as u64 + extra;
             self.budget.charge(LimitCode::MemorySize, amount)?;
             self.charged += amount;
             self.map
                 .try_reserve(1)
                 .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
         }
-        self.map.insert(reference, new);
-        Ok(())
+        Ok(self.map.insert(key, value))
     }
 }
-
-impl Drop for Numbers<'_> {
+impl<K, V> Drop for Charged<'_, K, V> {
     fn drop(&mut self) {
         self.budget.release(LimitCode::MemorySize, self.charged);
     }
+}
+#[derive(Clone, Copy)]
+enum Keys {
+    Strip,
+    Shift(i64),
 }
 
 struct Walk<'s, 'b> {
     source: &'s Version,
     overrides: &'s [(Reference, Option<Value>)],
-    numbers: Numbers<'b>,
+    edited: BudgetVec<'b, (Reference, Value)>,
+    keys: Keys,
+    numbers: Charged<'b, Reference, Reference>,
     pending: BudgetVec<'b, (Reference, Reference)>,
     budget: &'b Budget,
 }
@@ -117,6 +140,12 @@ impl Walk<'_, '_> {
         self.budget.poll()?;
         if self.source.generation(reference.number()) != Some(reference.generation()) {
             return Ok(None);
+        }
+        if let Ok(at) = self
+            .edited
+            .binary_search_by_key(&reference, |(key, _)| *key)
+        {
+            return copy_for_edit(&self.edited[at].1, self.budget).map(Some);
         }
         if let Ok(at) = self
             .overrides
@@ -140,7 +169,7 @@ impl Walk<'_, '_> {
         if self.source.generation(reference.number()) != Some(reference.generation()) {
             return Ok(Value::Null);
         }
-        if let Some(new) = self.numbers.get(reference) {
+        if let Some(new) = self.numbers.get(&reference).copied() {
             return Ok(Value::Reference(new));
         }
         let Some(value) = self.object(reference)? else {
@@ -157,7 +186,7 @@ impl Walk<'_, '_> {
             return Ok(Value::Null);
         }
         let new = transaction.allocate()?;
-        self.numbers.insert(reference, new)?;
+        self.numbers.insert(reference, new, 0)?;
         self.pending.try_push((reference, new))?;
         Ok(Value::Reference(new))
     }
@@ -168,7 +197,18 @@ impl Walk<'_, '_> {
             return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
         }
         for key in STRUCTURE_KEYS {
-            dict.remove(key);
+            match self.keys {
+                Keys::Strip => {
+                    dict.remove(key);
+                }
+                Keys::Shift(shift) => {
+                    if let Some(Value::Integer(value)) = dict.get_mut(key) {
+                        *value = value
+                            .checked_add(shift)
+                            .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
+                    }
+                }
+            }
         }
         for (_, value) in dict.iter_mut() {
             self.value(transaction, value, depth + 1)?;
@@ -269,7 +309,9 @@ mod tests {
         let walk = Walk {
             source: &version,
             overrides: &[],
-            numbers: Numbers::new(&budget),
+            edited: BudgetVec::new(&budget),
+            keys: Keys::Strip,
+            numbers: Charged::new(&budget),
             pending: BudgetVec::new(&budget),
             budget: &budget,
         };

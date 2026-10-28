@@ -72,6 +72,28 @@ pub fn remove_pages(
     Ok(())
 }
 
+/// Plans in `edits` only the structure rules of [`remove_pages`] for
+/// `removed`, for a copy of the `retained` pages that takes their structure
+/// along: the structure content that lay only on removed pages goes. The
+/// annotations that `edits` already removes leave the structure tree too.
+pub fn prune_structure(
+    reads: &mut Reads<'_>,
+    index: &References,
+    removed: &[u32],
+    retained: &[u32],
+    edits: &mut Edits<'_>,
+) -> Result<()> {
+    structure::plan(
+        reads,
+        index,
+        removed,
+        retained,
+        edits,
+        structure::Reach::Affected,
+    )?;
+    Ok(())
+}
+
 /// The references of one version, both ways.
 #[derive(Clone, Default)]
 pub struct References {
