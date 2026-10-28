@@ -6,12 +6,14 @@
 //! section 5): a superset of what hayro reads, so that a change it misses
 //! cannot change the result.
 
-use pyropdf_store::budget::BudgetVec;
+use std::collections::HashSet;
+
+use pyropdf_store::budget::{BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::Page;
 use pyropdf_store::value::{Dict, Value};
 use pyropdf_store::version::Object;
-use pyropdf_store::{ErrorKind, Result};
+use pyropdf_store::{ErrorKind, LimitExceeded, Result};
 
 /// The attributes that a page inherits from its ancestors.
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
@@ -29,17 +31,14 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 /// objects, and its marks and worklists grow through the budget.
 pub fn read_page(reads: &mut Reads<'_>, page: &Page) -> Result<()> {
     let budget = reads.budget();
-    let words = usize::try_from(reads.version().next_number().div_ceil(64)).unwrap_or(usize::MAX);
-    let mut seen = BudgetVec::new(budget);
-    seen.try_reserve_exact(words)?;
-    seen.try_extend(std::iter::repeat_n(0u64, words))?;
     let mut walk = Walk {
-        seen,
+        seen: HashSet::new(),
+        seen_charge: 0,
         pending: BudgetVec::new(budget),
     };
 
     if let Some(&Value::Reference(root)) = reads.trailer().get("Root")
-        && walk.mark(root.number())
+        && walk.mark(root.number())?
         && let Some(catalog) = read(reads, root.number())?
         && let Value::Dict(catalog) = &**catalog.value()
         && let Some(properties) = catalog.get("OCProperties")
@@ -49,7 +48,7 @@ pub fn read_page(reads: &mut Reads<'_>, page: &Page) -> Result<()> {
 
     let mut next = parent(page.dict());
     while let Some(number) = next.take() {
-        if !walk.mark(number) {
+        if !walk.mark(number)? {
             break;
         }
         let Some(object) = read(reads, number)? else {
@@ -67,7 +66,7 @@ pub fn read_page(reads: &mut Reads<'_>, page: &Page) -> Result<()> {
     }
 
     if let Some(object) = page.object() {
-        walk.mark(object.number());
+        walk.mark(object.number())?;
         read(reads, object.number())?;
     }
     for (key, value) in page.dict().iter() {
@@ -80,35 +79,40 @@ pub fn read_page(reads: &mut Reads<'_>, page: &Page) -> Result<()> {
 
 /// The objects that the walk has marked, and those it has yet to enter.
 struct Walk<'b> {
-    /// One bit per object number below the version's next number.
-    seen: BudgetVec<'b, u64>,
+    /// Only reached numbers, including absent objects: a sparse document
+    /// must not allocate for every number below its highest object.
+    seen: HashSet<u32>,
+    seen_charge: u64,
     pending: BudgetVec<'b, u32>,
 }
 
 impl Walk<'_> {
-    /// Marks object `number`, and returns whether it was unmarked. A number
-    /// at or past the version's next number names no object of the version,
-    /// so it is never marked.
-    fn mark(&mut self, number: u32) -> bool {
-        let at = (number / 64) as usize;
-        let Some(word) = self.seen.get_mut(at) else {
-            return true;
-        };
-        let bit = 1u64 << (number % 64);
-        let unmarked = *word & bit == 0;
-        *word |= bit;
-        unmarked
+    /// Marks `number` once. Charge conservatively for its key, table
+    /// metadata, spare capacity, and growth before reserving fallibly.
+    fn mark(&mut self, number: u32) -> Result<bool> {
+        if self.seen.contains(&number) {
+            return Ok(false);
+        }
+        const ENTRY: u64 = 32;
+        let budget = self.pending.budget();
+        budget.charge(LimitCode::MemorySize, ENTRY)?;
+        if self.seen.try_reserve(1).is_err() {
+            budget.release(LimitCode::MemorySize, ENTRY);
+            return Err(LimitExceeded::new(LimitCode::MemorySize).into());
+        }
+        self.seen_charge += ENTRY;
+        Ok(self.seen.insert(number))
     }
 
     /// Marks the objects that `value` refers to, at any depth, and queues
     /// those not yet marked to be entered.
     fn scan(&mut self, value: &Value) -> Result<()> {
-        let mut stack = BudgetVec::new(self.seen.budget());
+        let mut stack = BudgetVec::new(self.pending.budget());
         stack.try_push(value)?;
         while let Some(value) = stack.pop() {
             match value {
                 &Value::Reference(reference) => {
-                    if self.mark(reference.number()) {
+                    if self.mark(reference.number())? {
                         self.pending.try_push(reference.number())?;
                     }
                 }
@@ -136,6 +140,14 @@ impl Walk<'_> {
             }
         }
         Ok(())
+    }
+}
+
+impl Drop for Walk<'_> {
+    fn drop(&mut self) {
+        self.pending
+            .budget()
+            .release(LimitCode::MemorySize, self.seen_charge);
     }
 }
 

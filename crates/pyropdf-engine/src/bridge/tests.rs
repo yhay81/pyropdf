@@ -595,3 +595,80 @@ fn an_edit_then_a_page_read_parses_and_serializes_only_what_it_wrote() {
         (original.height, original.width)
     );
 }
+
+#[test]
+fn the_cache_separates_plain_reads_and_annotation_drawing() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let document = open(fs::read(path).unwrap());
+    let version = document.current();
+    let budget = Budget::default();
+    let pages = page_index(&version);
+    let cache = Cache::new();
+    let plain = cache.get(&version, &pages, &budget).unwrap();
+    let painted = cache
+        .get_for_render(&version, &pages, &budget, true)
+        .unwrap();
+    assert!(!Arc::ptr_eq(&plain, &painted));
+    assert_ne!(
+        render::page(&plain, 0, 1.0).unwrap().data,
+        render::page(&painted, 0, 1.0).unwrap().data
+    );
+    let plain_again = cache.get(&version, &pages, &budget).unwrap();
+    assert_eq!(
+        render::page(&plain, 0, 1.0).unwrap().data,
+        render::page(&plain_again, 0, 1.0).unwrap().data
+    );
+    assert!(!version.has_changes());
+}
+
+#[test]
+fn synthesis_refuses_before_exceeding_aggregate_points() {
+    use pyropdf_store::budget::LimitCode;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let document = open(fs::read(path).unwrap());
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::AnnotationSynthesisPointCount, Some(3));
+    let error =
+        crate::annotations::synthesized(&version, &page_index(&version), &budget).unwrap_err();
+    assert_eq!(
+        error.limit().unwrap().code(),
+        LimitCode::AnnotationSynthesisPointCount
+    );
+    assert!(budget.used(LimitCode::AnnotationSynthesisPointCount) <= 3);
+    assert!(!version.has_changes());
+}
+
+#[test]
+fn synthesis_refuses_exhausted_virtual_object_numbers() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let document = open(fs::read(path).unwrap());
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction
+        .write(u32::MAX - 1, &Value::Null, &budget)
+        .unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let error =
+        crate::annotations::synthesized(&version, &page_index(&version), &budget).unwrap_err();
+    assert!(error.to_string().contains("no object number remains"));
+}
+
+#[test]
+fn synthesis_counts_generated_appearances_against_the_shared_budget() {
+    use pyropdf_store::budget::LimitCode;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let document = open(fs::read(path).unwrap());
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::AnnotationSynthesisCount, Some(0));
+    let error =
+        crate::annotations::synthesized(&version, &page_index(&version), &budget).unwrap_err();
+    assert_eq!(
+        error.limit().unwrap().code(),
+        LimitCode::AnnotationSynthesisCount
+    );
+    assert!(!version.has_changes());
+}

@@ -16,6 +16,10 @@
 #[cfg(test)]
 mod tests;
 
+mod dependencies;
+
+pub use dependencies::ReadDependencies;
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,8 +27,55 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use crate::budget::{Budget, BudgetVec};
 use crate::value::Dict;
+use crate::version::table::Table as SparseTable;
 use crate::version::{ChangeSet, Object, Version};
 use crate::{Error, Result};
+
+/// A copy-on-write map for derived results keyed by a 32-bit identity.
+///
+/// Updating or removing an entry charges the shared table paths to the
+/// operation budget. Values that own memory must charge it themselves.
+#[derive(Clone, Default)]
+pub struct DerivedMap<V> {
+    entries: SparseTable<V>,
+}
+
+impl<V> DerivedMap<V> {
+    /// Returns an empty map.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            entries: SparseTable::new(),
+        }
+    }
+
+    /// Returns the value of `key`, if present.
+    #[must_use]
+    pub fn get(&self, key: u32) -> Option<&V> {
+        self.entries.get(key)
+    }
+
+    /// Returns entries in key order.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, &V)> {
+        self.entries.iter()
+    }
+
+    /// Replaces a value, or adds a new one.
+    pub fn insert(&mut self, key: u32, value: V, budget: &Budget) -> Result<Option<V>>
+    where
+        V: Clone,
+    {
+        Ok(self.entries.insert(key, value, budget)?)
+    }
+
+    /// Removes a value.
+    pub fn remove(&mut self, key: u32, budget: &Budget) -> Result<Option<V>>
+    where
+        V: Clone,
+    {
+        Ok(self.entries.remove(key, budget)?)
+    }
+}
 
 /// A version read through a recorder: every object number asked for, found
 /// or not, and whether the trailer was read.
