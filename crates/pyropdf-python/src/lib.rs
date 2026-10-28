@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 
 mod annotations;
+mod buffers;
 mod cancel;
 mod changes;
 mod check;
@@ -40,6 +41,8 @@ mod _core {
         _stale_appearances, annotation_add, annotation_edit, annotation_list, annotation_open,
         annotation_popup, annotation_read, annotation_remove, annotation_reply,
     };
+    #[pymodule_export]
+    use super::buffers::{CharColumns, Column};
     #[pymodule_export]
     use super::cancel::CancellationToken;
     #[pymodule_export]
@@ -87,7 +90,7 @@ mod _core {
     use super::security::{security_state, unlock};
     #[pymodule_export]
     use super::text::{
-        document_text, page_layout, page_search, page_selection, page_tables, page_text,
+        document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,
     };
 
     #[cfg(windows)]

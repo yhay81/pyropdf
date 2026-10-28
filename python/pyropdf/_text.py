@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from html import escape
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, overload
 
 from pyropdf._content import _RENDER_MODES, Color, TextRenderMode
 from pyropdf._errors import PyropdfWarning
@@ -14,7 +15,9 @@ from pyropdf._geometry import Point, Quad, Rect
 from pyropdf._limits import _validate_optional_positive_int
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator
+
+    from pyropdf._core import CharColumns
 
     #: The core's layout tuples: a block is ``(bbox, lines)``; a line is
     #: ``(bbox, spans, words, direction, writing mode, quad)``; a span is
@@ -138,6 +141,125 @@ class Char:
     or that pyropdf cannot match to hayro's interpretation."""
 
 
+class Chars(Sequence[Char]):
+    """The chars of a page as columns, from :meth:`Page.chars` and :attr:`Layout.chars`.
+
+    Each row is one :class:`Char` of the layout with chars, in layout order,
+    and the row view builds that record on demand: ``len(chars)``,
+    ``chars[i]``, and iteration give records equal to the spans' ``chars``.
+    A slice with a step of 1 is a view of the same columns.
+
+    :meth:`column` returns each column without a copy as a read-only
+    ``memoryview``, which ``numpy.frombuffer`` reads; its items are in the
+    machine's byte order. The columns are those of :attr:`names`:
+
+    - ``x0``, ``y0``, ``x1``, ``y1`` (float64): ``Char.bbox``;
+    - ``origin_x``, ``origin_y`` (float64): ``Char.origin``;
+    - ``text_offsets`` (int32, one more than the rows) and ``text_data``
+      (bytes): the UTF-8 of every ``Char.text``, which row ``i`` holds from
+      ``text_offsets[i]`` to ``text_offsets[i + 1]`` of ``text_data``, as
+      Arrow's ``utf8`` holds it. A view shares the ``text_data`` of the
+      whole page;
+    - ``block``, ``line``, ``span`` (uint32): the row's place in
+      ``Layout.blocks``, its block's ``lines``, and its line's ``spans``;
+    - ``is_synthetic`` (uint8, 0 or 1): ``Char.is_synthetic``;
+    - ``stream``, ``operation`` (uint32): ``Char.stream`` and
+      ``Char.operation``, both 0 where they are ``None``. No object has
+      the number 0, so ``stream == 0`` marks those rows.
+
+    The table is also an Arrow struct array through the Arrow PyCapsule
+    interface, which pyarrow, polars, and DuckDB import without a copy. Its
+    fields are those of the columns, with one ``text`` field (``utf8``) for
+    ``text_offsets`` and ``text_data``, ``is_synthetic`` as Arrow
+    booleans, and ``stream`` and ``operation`` null where they are ``None``.
+    """
+
+    __slots__ = ("_columns", "_start", "_stop")
+
+    #: The names of the columns, in the order of the Arrow fields.
+    names: ClassVar[tuple[str, ...]] = (
+        "x0",
+        "y0",
+        "x1",
+        "y1",
+        "origin_x",
+        "origin_y",
+        "text_offsets",
+        "text_data",
+        "block",
+        "line",
+        "span",
+        "is_synthetic",
+        "stream",
+        "operation",
+    )
+
+    def __init__(self, columns: CharColumns, start: int = 0, stop: int | None = None) -> None:
+        self._columns = columns
+        self._start = start
+        self._stop = len(columns) if stop is None else stop
+
+    def __len__(self) -> int:
+        return self._stop - self._start
+
+    @overload
+    def __getitem__(self, index: int) -> Char: ...
+    @overload
+    def __getitem__(self, index: slice) -> Chars: ...
+    def __getitem__(self, index: int | slice) -> Char | Chars:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(len(self))
+            if step != 1:
+                msg = f"a slice of Chars takes a step of 1: {index!r}"
+                raise ValueError(msg)
+            return Chars(self._columns, self._start + start, self._start + max(start, stop))
+        row = range(self._start, self._stop)[index]
+        return _row_char(self._columns.rows(row, row + 1)[0])
+
+    def __iter__(self) -> Iterator[Char]:
+        for start in range(self._start, self._stop, _ROWS_PER_READ):
+            stop = min(start + _ROWS_PER_READ, self._stop)
+            yield from map(_row_char, self._columns.rows(start, stop))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Chars):
+            return NotImplemented
+        return len(self) == len(other) and all(a == b for a, b in zip(self, other, strict=True))
+
+    def __hash__(self) -> int:
+        return hash(tuple(self))
+
+    def __repr__(self) -> str:
+        return f"<Chars {len(self)} rows>"
+
+    def column(self, name: str) -> memoryview:
+        """Return the column ``name`` of :attr:`names` as a read-only ``memoryview``, without a copy."""
+        return memoryview(self._columns.column(name, self._start, self._stop))
+
+    def __arrow_c_schema__(self) -> object:
+        """Return the Arrow schema of the rows as a PyCapsule."""
+        return self._columns.arrow_schema()
+
+    def __arrow_c_array__(self, requested_schema: object | None = None) -> tuple[object, object]:
+        """Return the rows as the PyCapsules of an Arrow schema and struct array.
+
+        The array's buffers are the columns; ``requested_schema`` is ignored,
+        as the interface allows.
+        """
+        del requested_schema
+        return self._columns.arrow_array(self._start, self._stop)
+
+
+#: The rows that a :class:`Chars` iteration reads from the core at once.
+_ROWS_PER_READ = 4096
+
+
+def _row_char(row: _CoreChar) -> Char:
+    """Return the :class:`Char` of one row of a :class:`Chars`."""
+    text, bbox, origin, is_synthetic, source = row
+    return _char(text, _rect(bbox), _point(origin), is_synthetic, source)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Span:
     """A run of text in one font, size, paint, and render mode within a :class:`Line`.
@@ -230,6 +352,9 @@ class Layout:
     width: float
     height: float
     blocks: tuple[Block, ...]
+    chars: Chars | None = None
+    """The chars of every span as columns when :meth:`Page.layout` was
+    called with ``chars=True``, and ``None`` otherwise."""
 
     def to_dict(self) -> dict[str, Any]:
         """Return the layout as dictionaries, lists, and tuples for JSON.
@@ -515,8 +640,10 @@ def build_words(blocks: Sequence[_CoreBlock]) -> list[Word]:
     ]
 
 
-def build_layout(width: float, height: float, blocks: Sequence[_CoreBlock]) -> Layout:
-    """Build :meth:`Page.layout` from the core's layout.
+def build_layout(
+    width: float, height: float, blocks: Sequence[_CoreBlock], columns: CharColumns | None = None
+) -> Layout:
+    """Build :meth:`Page.layout` from the core's layout and the columns of its chars, if any.
 
     Spans of one color share one :class:`Color`, which is immutable.
     """
@@ -525,6 +652,7 @@ def build_layout(width: float, height: float, blocks: Sequence[_CoreBlock]) -> L
         width=width,
         height=height,
         blocks=tuple(_build_block(bbox, [_build_line(line, colors) for line in lines]) for bbox, lines in blocks),
+        chars=None if columns is None else Chars(columns),
     )
 
 
@@ -591,4 +719,4 @@ def _build_span(  # noqa: PLR0913, PLR0917 - unpacks one core span tuple.
     )
 
 
-__all__ = ["Block", "Char", "Layout", "Line", "Span", "Unmapped", "Word"]
+__all__ = ["Block", "Char", "Chars", "Layout", "Line", "Span", "Unmapped", "Word"]
