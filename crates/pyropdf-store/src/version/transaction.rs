@@ -33,6 +33,9 @@ pub struct Transaction {
     parent: Arc<Version>,
     draft: Version,
     settlers: Settlers,
+    /// One transient snapshot anchoring a derived result while this
+    /// transaction is open. It is discarded when the transaction ends.
+    derived_anchor: Option<Arc<Version>>,
 }
 
 impl Transaction {
@@ -46,6 +49,7 @@ impl Transaction {
             parent,
             draft,
             settlers,
+            derived_anchor: None,
         }
     }
 
@@ -224,6 +228,16 @@ impl Transaction {
         Arc::new(self.draft.draft())
     }
 
+    /// Retains at most one snapshot for a transaction-local derived result.
+    pub fn retain_derived_version(&mut self, version: Arc<Version>) {
+        self.derived_anchor = Some(version);
+    }
+
+    /// Returns the transient snapshot retained for derived results.
+    pub fn derived_anchor(&self) -> Option<&Arc<Version>> {
+        self.derived_anchor.as_ref()
+    }
+
     /// Returns a point that [`Transaction::rollback`] returns the
     /// transaction to, discarding what it writes after it. Taking one
     /// copies nothing: it shares the draft's chunks and branches.
@@ -258,6 +272,7 @@ impl Transaction {
             parent,
             mut draft,
             settlers: _,
+            derived_anchor: _,
         } = self;
         let difference = difference(&parent, &draft, budget)?;
         if difference.changes.is_empty() && !difference.stale {

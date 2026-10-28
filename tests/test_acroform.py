@@ -1450,3 +1450,64 @@ def test_form_depth_limit_ignores_a_visited_intermediate_cycle() -> None:
     objects[68] = "<< /Kids [68 0 R] >>"
     doc = pyropdf.open(build_raw_pdf(objects))
     assert list(doc.form) == ["name"]
+
+
+def test_fill_can_commit_before_a_later_whole_form_value_limit() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [6 0 R] >>",
+        4: "<< /Fields [5 0 R 6 0 R] /DA (/Helv 10 Tf 0 g) >>",
+        5: "<< /FT /Tx /T (large) /V 9 0 R >>",
+        6: "<< /FT /Tx /T (small) /V () /Subtype /Widget /Rect [0 0 50 20] /AP << /N 10 0 R >> >>",
+        9: "(" + "a" * (1024 * 1024 - 1) + ")",
+        10: "<< /Length 3 >>\nstream\nq Q\nendstream",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects))
+    field = doc.form["small"]
+    obj = field.obj
+    field.value = "ab"
+    assert obj["V"] == b"ab"
+    with pytest.raises(pyropdf.PdfError, match="field-value"):
+        list(doc.form)
+    doc.history.undo()
+    field.value = "c"
+    assert obj["V"] == b"c"
+
+
+def test_fill_rechecks_shared_appearances_after_external_edits_and_rollback() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [5 0 R 6 0 R] >>",
+        4: "<< /Fields [5 0 R 6 0 R] /DA (/Helv 10 Tf 0 g) >>",
+        5: "<< /FT /Tx /T (a) /V (old) /Subtype /Widget /Rect [0 0 50 20] /AP << /N 7 0 R >> >>",
+        6: "<< /FT /Tx /T (b) /V <FEFF4E2D> /Subtype /Widget /Rect [0 20 50 40] /AP << /N 7 0 R >> >>",
+        7: "<< /Length 3 >>\nstream\nq Q\nendstream",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects))
+    field = doc.form["a"]
+    field.value = "first"
+    assert not doc.form.need_appearances
+    doc.objects[7].write(b"", filter=None)
+    field.value = "second"
+    assert doc.form.need_appearances
+    doc.history.undo()
+    doc.history.undo()
+    field.value = "third"
+    assert not doc.form.need_appearances
+
+    def roll_back() -> None:
+        with doc.transaction("rollback"):
+            doc.objects[7].write(b"", filter=None)
+            field.value = "temporary"
+            assert doc.form.need_appearances
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        roll_back()
+    assert not doc.form.need_appearances
+    field.value = "after rollback"
+    assert not doc.form.need_appearances
+    assert not pyropdf.open(doc.to_bytes()).form.need_appearances

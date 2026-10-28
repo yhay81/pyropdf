@@ -2,9 +2,10 @@
 """Measure repeated text fills as the number of form fields grows.
 
 Run: uv run python evidence/form-fill-cost/field_scale.py
-All widgets initially share a valid normal appearance. The selected field
+All widgets initially share a nonempty normal appearance. The selected field
 is warmed once before seven timed edits; timings include appearance settling
-and the update of the form's NeedAppearances flag.
+and the update of the form's NeedAppearances flag. The external-edit column
+times a separate field-value edit; the next column times the fill after it.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import platform
 import statistics
 import time
+from contextlib import nullcontext
 
 import pyropdf
 
@@ -24,7 +26,7 @@ def document(fields: int) -> bytes:
         2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [{references}] >>",
         4: f"<< /Fields [{references}] /DA (/Helv 10 Tf 0 g) /NeedAppearances false >>",
-        5: "<< /Type /XObject /Subtype /Form /BBox [0 0 50 20] /Length 0 >>\nstream\n\nendstream",
+        5: "<< /Type /XObject /Subtype /Form /BBox [0 0 50 20] /Length 3 >>\nstream\nq Q\nendstream",
     }
     for index in range(fields):
         objects[index + 6] = (
@@ -44,20 +46,45 @@ def document(fields: int) -> bytes:
     return bytes(output)
 
 
-def main() -> None:
-    """Print the median time for seven repeated edits at each field count."""
-    print(f"- Python {platform.python_version()} on {platform.system()} {platform.machine()}")  # noqa: T201
-    print("\n| Fields | Median fill |\n| ---: | ---: |")  # noqa: T201
-    for count in (1, 10, 100, 1000):
-        doc = pyropdf.open(document(count))
-        field = doc.form["field0"]
+def measure(fields: int, mode: str) -> tuple[float, float]:
+    """Measure warm fills, and the preceding external edits when requested."""
+    doc = pyropdf.open(document(fields))
+    if mode in {"no-history", "external"}:
+        doc.history.max_size = 0
+    field = doc.form["field0"]
+    other = doc.form["field1" if fields > 1 else "field0"].obj
+    timings = []
+    external = []
+    context = doc.transaction("measure") if mode == "transaction" else nullcontext()
+    with context:
         field.value = "warm"
-        timings = []
         for number in range(7):
+            if mode == "external":
+                start = time.perf_counter()
+                other["V"] = pyropdf.String(f"external {number}".encode())
+                external.append(time.perf_counter() - start)
             start = time.perf_counter()
             field.value = f"value {number}"
             timings.append(time.perf_counter() - start)
-        print(f"| {count:,} | {statistics.median(timings) * 1000:.3f} ms |")  # noqa: T201
+    return statistics.median(timings) * 1000, statistics.median(external) * 1000 if external else 0.0
+
+
+def main() -> None:
+    """Print median times for seven repeated edits at each field count."""
+    print(f"- Python {platform.python_version()} on {platform.system()} {platform.machine()}")  # noqa: T201
+    print(  # noqa: T201
+        "\n| Fields | Ordinary | No history | Transaction | External edit | Fill after edit |\n"
+        "| ---: | ---: | ---: | ---: | ---: | ---: |"
+    )
+    for count in (1, 10, 100, 1000, 4000):
+        ordinary, _ = measure(count, "ordinary")
+        no_history, _ = measure(count, "no-history")
+        transaction, _ = measure(count, "transaction")
+        after_edit, external = measure(count, "external")
+        print(  # noqa: T201
+            f"| {count:,} | {ordinary:.3f} ms | {no_history:.3f} ms | {transaction:.3f} ms | "
+            f"{external:.3f} ms | {after_edit:.3f} ms |"
+        )
 
 
 if __name__ == "__main__":

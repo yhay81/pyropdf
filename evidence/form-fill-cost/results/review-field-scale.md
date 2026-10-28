@@ -1,6 +1,6 @@
 # Repeated fill by number of form fields
 
-Implementation: `de2cbaed6754a8dbd15aa051ec70fc667e7d9099`. The reviewed implementation performs a fresh form walk and checks every widget. All synthetic widgets start with a valid normal appearance; each run warms the first field, then reports the median of seven later fills. Reproduce with `uv run python evidence/form-fill-cost/field_scale.py`.
+Implementation: `de2cbaed6754a8dbd15aa051ec70fc667e7d9099`; fixture: `5385600`. This earlier measurement used a shared stream whose declared length was zero, so the widgets did **not** start with nonempty normal appearances. Its warm-fill timings are historical and do not establish the cost of the intended existing-appearance workload. The corrected fixture and baseline are in `review-valid-appearance-macos-arm64.md`.
 
 - Python 3.15.0 on Darwin arm64
 
