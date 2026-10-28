@@ -2168,3 +2168,91 @@ fn form_impact_ignores_unrelated_or_stale_page_references_in_catalog() {
         assert!(affected.is_empty());
     }
 }
+
+#[test]
+fn pruning_a_tree_keeps_its_limits_and_drops_emptied_nodes() {
+    let leaf = |least: &str, greatest: &str, pairs: Vec<Value>| {
+        dict(vec![
+            ("Limits", array(vec![string(least), string(greatest)])),
+            ("Names", array(pairs)),
+        ])
+    };
+    let objects = vec![
+        (
+            1,
+            dict(vec![("Kids", array(vec![reference(2), reference(4)]))]),
+        ),
+        (
+            2,
+            dict(vec![
+                ("Limits", array(vec![string("a"), string("d")])),
+                ("Kids", array(vec![reference(3), reference(5)])),
+            ]),
+        ),
+        // Every pair leaves this leaf, and some leave the next.
+        (
+            3,
+            leaf(
+                "a",
+                "b",
+                vec![string("a"), reference(9), string("b"), reference(9)],
+            ),
+        ),
+        (
+            4,
+            leaf(
+                "e",
+                "f",
+                vec![string("e"), reference(8), string("f"), reference(8)],
+            ),
+        ),
+        (
+            5,
+            leaf(
+                "c",
+                "d",
+                vec![string("c"), reference(9), string("d"), reference(8)],
+            ),
+        ),
+        (8, Value::Integer(0)),
+        (9, Value::Integer(0)),
+    ];
+    let document = document_of(&objects, Dict::new());
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    for &referrer in index.referrers(9) {
+        for found in find(&mut reads, Referrer::Object(referrer), 9)
+            .unwrap()
+            .iter()
+        {
+            let Some((Step::Index(at), parent)) = found.path.split_last() else {
+                unreachable!();
+            };
+            for at in [at - 1, *at] {
+                let mut path = parent.to_vec();
+                path.push(Step::Index(at));
+                edits
+                    .apply(&mut reads, &index, referrer, &path, Rule::RemoveEntry)
+                    .unwrap();
+            }
+        }
+    }
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    assert_eq!(edits.orphans(), &[3]);
+    let after = transaction.commit(&budget).unwrap();
+    let get = |number| (**after.get(number, &budget).unwrap().unwrap().value()).clone();
+    assert_eq!(get(5), leaf("d", "d", vec![string("d"), reference(8)]));
+    assert_eq!(
+        get(2),
+        dict(vec![
+            ("Limits", array(vec![string("d"), string("d")])),
+            ("Kids", array(vec![reference(5)])),
+        ])
+    );
+    assert_eq!(get(1), objects[0].1);
+    assert_eq!(get(4), objects[3].1);
+}
