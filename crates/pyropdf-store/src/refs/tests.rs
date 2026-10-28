@@ -1903,7 +1903,7 @@ fn stale_annotation_array_generation_does_not_keep_a_removed_widget() {
 }
 
 #[test]
-fn retained_widget_page_reference_is_repaired_when_generation_is_stale() {
+fn unrelated_stale_widget_page_reference_is_left_alone() {
     let document = document_of(
         &[
             (
@@ -1935,8 +1935,6 @@ fn retained_widget_page_reference_is_repaired_when_generation_is_stale() {
     let budget = Budget::default();
     let index = build(&version, &budget).unwrap();
     let mut reads = Reads::new(&version, &budget);
-    // This repair is outside the removed-page impact set. A targeted walk
-    // must preserve it or explicitly change the repair contract.
     let affected = affected_form_objects(&mut reads, &index, &[4], &[5]).unwrap();
     assert!(affected.is_empty());
     let mut edits = Edits::new(&budget);
@@ -1947,7 +1945,11 @@ fn retained_widget_page_reference_is_repaired_when_generation_is_stale() {
     let Value::Dict(widget) = &**widget.value() else {
         panic!("widget is a dictionary")
     };
-    assert_eq!(widget.get("P"), Some(&reference(5)));
+    // A removal repairs `/P` only on what it reaches.
+    assert_eq!(
+        widget.get("P"),
+        Some(&Value::Reference(Reference::new(5, 1)))
+    );
 }
 
 #[test]
@@ -2213,7 +2215,7 @@ fn form_impact_charges_memory_and_refuses_reference_cycles_at_the_bound() {
     let budget = Budget::default();
     let mut reads = Reads::new(&version, &budget);
     let error = affected_form_objects(&mut reads, &index, &[2], &[]).unwrap_err();
-    assert!(error.to_string().contains("64 levels"));
+    assert!(error.to_string().contains("64-level"));
 }
 
 #[test]
@@ -2568,4 +2570,188 @@ fn pruning_a_tree_keeps_its_limits_and_drops_emptied_nodes() {
     );
     assert_eq!(get(1), objects[0].1);
     assert_eq!(get(4), objects[3].1);
+}
+
+/// One widget of a generated form: the pages that list it, the fields
+/// whose `/Kids` hold it, and its `/P`.
+#[derive(Debug, Clone)]
+struct FormWidget {
+    pages: Vec<usize>,
+    fields: Vec<usize>,
+    page: WidgetPage,
+}
+
+#[derive(Debug, Clone)]
+enum WidgetPage {
+    Missing,
+    Page(usize),
+    Stale(usize),
+}
+
+fn form_widgets() -> impl Strategy<Value = Vec<FormWidget>> {
+    let page = prop_oneof![
+        Just(WidgetPage::Missing),
+        (0..4usize).prop_map(WidgetPage::Page),
+        (0..4usize).prop_map(WidgetPage::Stale),
+    ];
+    proptest::collection::vec(
+        (
+            proptest::collection::vec(0..4usize, 0..3),
+            proptest::collection::vec(0..4usize, 1..3),
+            page,
+        )
+            .prop_map(|(pages, fields, page)| FormWidget {
+                pages,
+                fields,
+                page,
+            }),
+        0..8,
+    )
+}
+
+/// Builds pages 10.., top-level fields 20.., and widgets 30.. as `widgets`
+/// describes, under catalog 1 and form 2.
+fn form_of(pages: usize, fields: usize, widgets: &[FormWidget]) -> Document {
+    let page = |at: usize| u32::try_from(10 + at % pages).unwrap();
+    let widget = |at: usize| u32::try_from(30 + at).unwrap();
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+        ),
+        (
+            2,
+            dict(vec![(
+                "Fields",
+                array(
+                    (0..fields)
+                        .map(|at| reference(20 + u32::try_from(at).unwrap()))
+                        .collect(),
+                ),
+            )]),
+        ),
+    ];
+    for at in 0..pages {
+        let listed = widgets
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.pages.iter().any(|&on| on % pages == at))
+            .map(|(number, _)| reference(widget(number)))
+            .collect();
+        objects.push((
+            page(at),
+            dict(vec![("Type", name("Page")), ("Annots", array(listed))]),
+        ));
+    }
+    for at in 0..fields {
+        let kids = widgets
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.fields.iter().any(|&of| of % fields == at))
+            .map(|(number, _)| reference(widget(number)))
+            .collect();
+        objects.push((
+            20 + u32::try_from(at).unwrap(),
+            dict(vec![
+                ("FT", name("Tx")),
+                ("T", string(&format!("f{at}"))),
+                ("Kids", array(kids)),
+            ]),
+        ));
+    }
+    for (at, item) in widgets.iter().enumerate() {
+        let mut entries = vec![("Subtype", name("Widget"))];
+        match item.page {
+            WidgetPage::Missing => {}
+            WidgetPage::Page(on) => entries.push(("P", reference(page(on)))),
+            WidgetPage::Stale(on) => {
+                entries.push(("P", Value::Reference(Reference::new(page(on), 1))));
+            }
+        }
+        objects.push((widget(at), dict(entries)));
+    }
+    document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    )
+}
+
+/// Plans the form rules alone and returns every object after them, or the
+/// error.
+fn form_planned(
+    document: &Document,
+    removed: &[u32],
+    retained: &[u32],
+    bounded: bool,
+) -> Result<Vec<(u32, Option<Value>)>> {
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    forms::plan_with(
+        &mut reads, &index, removed, retained, false, bounded, &mut edits,
+    )?;
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget)?;
+    let after = transaction.snapshot();
+    let mut numbers = BudgetVec::new(&budget);
+    after.base().numbers(&mut numbers).unwrap();
+    for (number, _) in after.slots() {
+        numbers.try_push(number).unwrap();
+    }
+    numbers.sort_unstable();
+    dedup(&mut numbers);
+    Ok(numbers
+        .iter()
+        .map(|&number| {
+            let value = after
+                .get(number, &budget)
+                .unwrap()
+                .map(|object| (**object.value()).clone());
+            (number, value)
+        })
+        .collect())
+}
+
+proptest! {
+    #[test]
+    fn the_bounded_form_walk_plans_what_the_whole_walk_plans(
+        pages in 1..4usize,
+        fields in 1..4usize,
+        widgets in form_widgets(),
+        removed in proptest::collection::vec(any::<bool>(), 4),
+    ) {
+        let document = form_of(pages, fields, &widgets);
+        let page = |at: usize| u32::try_from(10 + at).unwrap();
+        let leaves = |at: usize| removed[at] || (at == 0 && !removed[..pages].contains(&true));
+        let removed: Vec<u32> = (0..pages).filter(|&at| leaves(at)).map(page).collect();
+        let retained: Vec<u32> = (0..pages).filter(|&at| !leaves(at)).map(page).collect();
+        let whole = form_planned(&document, &removed, &retained, false);
+        prop_assume!(whole.is_ok());
+        let whole = whole.unwrap();
+        let bounded = form_planned(&document, &removed, &retained, true).unwrap();
+        let budget = Budget::default();
+        let version = document.current();
+        let index = build(&version, &budget).unwrap();
+        let affected = affected_form_objects(&mut Reads::new(&version, &budget), &index, &removed, &retained)
+            .unwrap();
+        let reached = |number: u32| affected.iter().any(|at| at.number() == number);
+        prop_assert_eq!(whole.len(), bounded.len());
+        for ((number, whole), (_, bounded)) in whole.iter().zip(&bounded) {
+            if whole == bounded {
+                continue;
+            }
+            // The whole walk also repairs the `/P` of widgets that the
+            // removal does not reach; the bounded walk leaves them.
+            let before = version.get(*number, &budget).unwrap().map(|object| (**object.value()).clone());
+            prop_assert!(!reached(*number), "object {} differs", number);
+            prop_assert_eq!(bounded, &before);
+            let (Some(Value::Dict(whole)), Some(Value::Dict(before))) = (whole, &before) else {
+                return Err(TestCaseError::fail(format!("object {number} differs")));
+            };
+            let other = |dict: &Dict| dict.iter().filter(|(key, _)| key.as_bytes() != b"P").map(|(key, value)| (key.clone(), value.clone())).collect::<Vec<_>>();
+            prop_assert_eq!(other(whole), other(before));
+        }
+    }
 }

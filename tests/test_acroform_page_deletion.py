@@ -107,13 +107,14 @@ TWO_PAGE_FIELDS = {
 }
 
 
-def _wide_form(kids: int, *, widgets: bool = False) -> bytes:
-    """Build two pages and one field with `kids` child fields or widgets."""
+def _wide_form(kids: int, *, widgets: bool = False, page: int = 0) -> bytes:
+    """Build two pages and one field with `kids` child fields or widgets; page `page` lists the first."""
+    annots = ["/Annots [6 0 R]", ""]
     objects = {
         1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
         2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 100 100] >>",
-        3: "<< /Type /Page /Parent 2 0 R /Annots [6 0 R] >>",
-        4: "<< /Type /Page /Parent 2 0 R >>",
+        3: f"<< /Type /Page /Parent 2 0 R {annots[page]} >>",
+        4: f"<< /Type /Page /Parent 2 0 R {annots[1 - page]} >>",
         5: "<< /FT /Tx /T (root) /Kids [" + " ".join(f"{6 + index} 0 R" for index in range(kids)) + "] >>",
     }
     for index in range(kids):
@@ -125,17 +126,18 @@ def _wide_form(kids: int, *, widgets: bool = False) -> bytes:
     return build_raw_pdf(objects)
 
 
-def _deep_form(levels: int) -> bytes:
-    """Build two pages and a chain of `levels` nested fields."""
+def _deep_form(levels: int, *, page: int = 0) -> bytes:
+    """Build two pages and a chain of `levels` nested fields whose widget page `page` lists."""
+    annots = [f"/Annots [{4 + levels} 0 R]", ""]
     objects = {
         1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
         2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 100 100] >>",
-        3: f"<< /Type /Page /Parent 2 0 R /Annots [{4 + levels} 0 R] >>",
-        4: "<< /Type /Page /Parent 2 0 R >>",
+        3: f"<< /Type /Page /Parent 2 0 R {annots[page]} >>",
+        4: f"<< /Type /Page /Parent 2 0 R {annots[1 - page]} >>",
     }
     for level in range(levels):
         kids = f"/Kids [{6 + level} 0 R]" if level + 1 < levels else ""
-        widget = "/Type /Annot /Subtype /Widget /Rect [0 0 10 10] /P 3 0 R" if level + 1 == levels else ""
+        widget = f"/Type /Annot /Subtype /Widget /Rect [0 0 10 10] /P {3 + page} 0 R" if level + 1 == levels else ""
         objects[5 + level] = f"<< /FT /Tx /T (l{level}) {kids} {widget} >>"
     return build_raw_pdf(objects)
 
@@ -287,7 +289,11 @@ def test_documents_without_a_form_delete_pages_unchanged() -> None:
 
 @pytest.mark.parametrize(
     ("source", "message"),
-    [(_wide_form(4096), "4096-node"), (_wide_form(4097, widgets=True), "4096-widget"), (_deep_form(65), "64-level")],
+    [
+        (_wide_form(4096, page=1), "4096-node"),
+        (_wide_form(4097, widgets=True, page=1), "4096-widget"),
+        (_deep_form(65, page=1), "64-level"),
+    ],
     ids=["nodes", "widgets", "levels"],
 )
 @pytest.mark.parametrize("edit", ["delete", "select"])
