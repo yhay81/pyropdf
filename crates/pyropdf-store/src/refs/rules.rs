@@ -422,11 +422,18 @@ pub fn unreferenced<'b>(
         if reachable.get(number).is_some() {
             continue;
         }
-        reachable.insert(number, (), budget)?;
-        // A trailer root is live and cannot lead to additional garbage.
-        if index.trailer().binary_search(&number).is_ok() {
+        // Trailer roots and their directly referenced objects are proven
+        // live. Keep them outside this closure: both the discovery walk
+        // and later liveness propagation must avoid their retained subtrees.
+        // Explicit removals still override a root's edge, except for the
+        // trailer roots themselves.
+        let root = |number| index.trailer().binary_search(&number).is_ok();
+        if root(number)
+            || (forced.get(number).is_none() && retained_by_root(index, number, budget)?)
+        {
             continue;
         }
+        reachable.insert(number, (), budget)?;
         pending.try_extend_from_slice(index.targets(number))?;
     }
     // Incoming edges from outside the candidate closure keep an object,
@@ -469,4 +476,15 @@ pub fn unreferenced<'b>(
 /// node, or the catalog as navigation.
 pub(super) fn aliasing() -> Error {
     Error::malformed("navigation tree cannot alias a page or catalog dictionary")
+}
+
+/// Whether a trailer root still refers to this object after the edit.
+fn retained_by_root(index: &References, number: u32, budget: &Budget) -> Result<bool> {
+    for &owner in index.referrers(number) {
+        budget.poll()?;
+        if index.trailer().binary_search(&owner).is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
