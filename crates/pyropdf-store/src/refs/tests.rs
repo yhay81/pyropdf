@@ -490,3 +490,128 @@ fn the_cache_keeps_no_version_alive() {
     let index = cache.get(&other.current(), &budget).unwrap();
     assert_eq!(index.referrers(3), &[2, 4, 5, 7, 9, 12, 13]);
 }
+
+#[test]
+fn find_charges_every_owned_key_copy() {
+    let long_key = "k".repeat(64 * 1024);
+    let document = document_of(
+        &[(1, dict(vec![(&long_key, array(vec![reference(2); 8]))]))],
+        Dict::new(),
+    );
+    let version = document.current();
+    // Warm the parsed-object cache: the operation pays for its own copies.
+    version.get(1, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let error = find(&mut reads, Referrer::Object(1), 2)
+        .map(|found| found.len())
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn warm_cache_and_empty_update_obey_cancellation() {
+    let document = tagged();
+    let version = document.current();
+    let cache = Cache::new();
+    let index = cache.get(&version, &Budget::default()).unwrap();
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let error = cache.get(&version, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    let changes = version
+        .changes(&version, &Budget::default())
+        .unwrap()
+        .unwrap();
+    let error = index
+        .update(&mut Reads::new(&version, &budget), &changes)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn malformed_objects_cannot_produce_a_complete_index() {
+    let mut base = MemoryBase::new(Dict::new());
+    base.insert(
+        Reference::new(1, 0),
+        Bytes::new(b"<< /Next 2 0 R /Broken (".to_vec()),
+    );
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+    let budget = Budget::default();
+    assert!(version.get(1, &budget).is_err());
+    assert!(build(&version, &budget).is_err());
+    assert!(find(&mut Reads::new(&version, &budget), Referrer::Object(1), 2).is_err());
+
+    let cache = Cache::new();
+    let readable = tagged();
+    let good = readable.current();
+    let previous = cache.get(&good, &budget).unwrap();
+    assert!(cache.get(&version, &budget).is_err());
+    assert!(Arc::ptr_eq(&previous, &cache.get(&good, &budget).unwrap()));
+}
+
+#[test]
+fn warm_cache_obeys_an_expired_deadline() {
+    let document = tagged();
+    let version = document.current();
+    let cache = Cache::new();
+    cache.get(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_deadline(std::time::Instant::now());
+    let error = cache.get(&version, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Deadline)
+    );
+}
+
+#[test]
+fn sparse_referrer_numbers_preserve_every_reference_generation() {
+    let document = document_of(
+        &[(
+            u32::MAX,
+            array(vec![
+                Value::Reference(Reference::new(1, 7)),
+                Value::Reference(Reference::new(1, 9)),
+            ]),
+        )],
+        Dict::new(),
+    );
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let index = build(&version, &budget).unwrap();
+    assert_eq!(index.targets(u32::MAX), &[1]);
+    assert_eq!(index.referrers(1), &[u32::MAX]);
+    let mut reads = Reads::new(&version, &budget);
+    let found = find(&mut reads, Referrer::Object(u32::MAX), 1).unwrap();
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].reference, Reference::new(1, 9));
+    assert_eq!(found[1].reference, Reference::new(1, 7));
+}
+
+#[test]
+fn the_trailer_is_a_container_for_the_depth_limit() {
+    let document = document_of(
+        &[],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(0));
+    let error = find(&mut Reads::new(&version, &budget), Referrer::Trailer, 1).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(1));
+    assert_eq!(build(&version, &budget).unwrap().trailer(), &[1]);
+}
