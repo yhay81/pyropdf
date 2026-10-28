@@ -895,3 +895,199 @@ fn an_incremental_save_keeps_the_cross_reference_form_and_refuses_another() {
         ));
     }
 }
+
+/// Asserts that `restored` is `original` with each reference renumbered as
+/// `map` renumbers it, and null where `map` has no number.
+fn assert_renumbered_value(original: &Value, restored: &Value, map: &BTreeMap<u32, u32>) {
+    let mut stack = vec![(original, restored)];
+    while let Some((original, restored)) = stack.pop() {
+        match (original, restored) {
+            (Value::Reference(old), _) => {
+                let expected = map.get(&old.number()).map_or(Value::Null, |&new| to(new));
+                assert_eq!(restored, &expected, "{old:?}");
+            }
+            (Value::Array(original), Value::Array(restored)) => {
+                assert_eq!(original.len(), restored.len());
+                stack.extend(original.iter().zip(restored.iter()));
+            }
+            (Value::Dict(original), Value::Dict(restored)) => {
+                assert_eq!(original.len(), restored.len());
+                for (name, value) in original.iter() {
+                    stack.push((value, restored.get(name.as_bytes()).unwrap()));
+                }
+            }
+            (Value::Stream(original), Value::Stream(restored)) => {
+                assert_eq!(original.data(), restored.data());
+                assert_eq!(original.dict().len(), restored.dict().len());
+                for (name, value) in original.dict().iter() {
+                    let restored = restored.dict().get(name.as_bytes()).unwrap();
+                    // An indirect /Length becomes the length that it names.
+                    if name.as_bytes() != b"Length" {
+                        stack.push((value, restored));
+                    }
+                }
+            }
+            _ => assert_eq!(original, restored),
+        }
+    }
+}
+
+/// Asserts that `reread`, a renumbering save of `version` that writes every
+/// object, numbers them 1, 2, 3, and so on in order, with their values, and
+/// with their streams decoded when `decompress` is true.
+fn assert_renumbered(version: &Version, reread: &FileBase, decompress: bool) {
+    assert!(!reread.index().is_repaired());
+    let budget = Budget::default();
+    let mut numbers = BudgetVec::new(&budget);
+    version.base().numbers(&mut numbers).unwrap();
+    for (number, _) in version.slots() {
+        numbers.try_push(number).unwrap();
+    }
+    let mut numbers = numbers.into_vec();
+    numbers.sort_unstable();
+    numbers.dedup();
+    let old: Vec<u32> = numbers
+        .iter()
+        .copied()
+        .filter(|&number| number != 0 && version.generation(number).is_some())
+        .collect();
+    let map: BTreeMap<u32, u32> = old.iter().copied().zip(1..).collect();
+    // Every number up to the last object's is in use, with generation 0,
+    // and the objects that the save adds follow.
+    let added = reread
+        .index()
+        .entries()
+        .filter(|(number, _)| *number as usize > old.len() && reread.generation(*number).is_some())
+        .count();
+    let in_use = reread
+        .index()
+        .entries()
+        .filter(|(number, _)| *number != 0 && reread.generation(*number).is_some())
+        .count();
+    assert_eq!(in_use, old.len() + added);
+    for (&old, &new) in &map {
+        assert_eq!(reread.generation(new), Some(0), "object {old} as {new}");
+        let reference = Reference::new(old, version.generation(old).unwrap());
+        let original = match version.slot(old) {
+            Some(Slot::Written(value)) => value.bytes().clone(),
+            _ => raw::body(&**version.base(), reference, &budget).unwrap(),
+        };
+        let restored = raw::body(reread, Reference::new(new, 0), &budget).unwrap();
+        let fetch = |reference| version.base().object(reference, &budget);
+        let mut original = Value::parse_with_lengths(&original, &budget, &fetch).unwrap();
+        if decompress
+            && let Some(decoded) = recode::recoded(&original, Streams::Decompress, &budget).unwrap()
+        {
+            original = decoded;
+        }
+        let fetch = |reference| reread.object(reference, &budget);
+        let restored = Value::parse_with_lengths(&restored, &budget, &fetch).unwrap();
+        assert_renumbered_value(&original, &restored, &map);
+    }
+    let original = Value::Dict(version.trailer().clone());
+    let restored = Value::Dict(reread.trailer().clone());
+    for name in ["Root", "Info", "Encrypt"] {
+        if let (Value::Dict(original), Value::Dict(restored)) = (&original, &restored)
+            && let Some(value) = original.get(name)
+        {
+            assert_renumbered_value(value, restored.get(name).unwrap(), &map);
+        }
+    }
+}
+
+#[test]
+fn corpus_files_renumber_to_consecutive_numbers() {
+    let renumber = Options {
+        renumber: true,
+        ..Options::default()
+    };
+    for path in corpus() {
+        eprintln!("{}", path.display());
+        let doc = open(fs::read(&path).unwrap());
+        let version = doc.current();
+        for options in [
+            renumber,
+            Options {
+                object_streams: true,
+                ..renumber
+            },
+            Options {
+                cross_reference: CrossReference::Table,
+                streams: Streams::Decompress,
+                ..renumber
+            },
+        ] {
+            let (_, reread) = reopened(&version, options, None);
+            assert_renumbered(&version, &reread, options.streams == Streams::Decompress);
+        }
+    }
+}
+
+fn catalog_of(reread: &FileBase) -> Dict {
+    let budget = Budget::default();
+    let body = raw::body(reread, Reference::new(1, 0), &budget).unwrap();
+    match Value::parse(&body, &budget).unwrap() {
+        Value::Dict(catalog) => catalog,
+        value => panic!("the catalog is {value:?}"),
+    }
+}
+
+#[test]
+fn a_renumbering_save_nulls_dangling_references_and_reencrypts() {
+    // Object 3 has generation 7, and the catalog names an object that the
+    // version does not have.
+    let doc = memory();
+    let budget = Budget::default();
+    let mut tx = doc.begin();
+    let catalog = dict(&[
+        ("Type", name("Catalog")),
+        ("Pages", to(2)),
+        ("Missing", to(40)),
+        ("Kept", Value::Reference(Reference::new(3, 7))),
+    ]);
+    tx.write(1, &catalog, &budget).unwrap();
+    let version = tx.commit(&budget).unwrap();
+    let renumber = Options {
+        renumber: true,
+        ..Options::default()
+    };
+    let (_, reread) = reopened(&version, renumber, None);
+    assert_renumbered(&version, &reread, false);
+    let catalog = catalog_of(&reread);
+    assert_eq!(catalog.get("Missing"), Some(&Value::Null));
+    assert_eq!(catalog.get("Kept"), Some(&to(3)));
+    // Pruning leaves out object 3 when nothing names it, and the save then
+    // numbers two objects.
+    let (_, reread) = reopened(
+        &memory().current(),
+        Options {
+            prune: true,
+            ..renumber
+        },
+        None,
+    );
+    assert_eq!(reread.trailer().get("Size"), Some(&Value::Integer(3)));
+    assert_eq!(catalog_of(&reread).get("Pages"), Some(&to(2)));
+    // An encrypted file's objects take the keys of their new numbers.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/encrypted/user-r4-rc4-128.pdf");
+    let base =
+        FileBase::open_with_password(fs::read(path).unwrap().into(), Some(b"userpw"), &budget)
+            .unwrap();
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+    for options in [
+        renumber,
+        Options {
+            object_streams: true,
+            ..renumber
+        },
+    ] {
+        let (_, reread) = reopened(&version, options, Some(b"userpw"));
+        assert_renumbered(&version, &reread, false);
+    }
+    assert!(matches!(
+        incremental_with(&version, &mut Vec::new(), &budget, renumber),
+        Err(Error::Refused(Refusal::FullSaveOption))
+    ));
+}
