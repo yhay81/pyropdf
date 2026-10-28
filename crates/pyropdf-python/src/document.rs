@@ -26,7 +26,7 @@ use pyropdf_store::{Error, write};
 
 use crate::annotations::links::NamedDestinations;
 use crate::errors::{DocumentClosedError, MalformedPdfError, save_error, store_error};
-use crate::forms::Form;
+use crate::forms::{FillCache, Form};
 use crate::history::DEFAULT_HISTORY_LIMIT;
 use crate::outline::Outline;
 use crate::source;
@@ -64,6 +64,9 @@ pub struct _Document {
     pub(crate) form: Memo<(), Form>,
     /// The form fields of what an open transaction has written.
     pub(crate) draft_form: Memo<(), Form>,
+    /// The fill state of committed and transaction versions, independently.
+    pub(crate) fill_index: FillCache,
+    pub(crate) draft_fill_index: FillCache,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
     /// The reverse-reference index of the latest version that a structural
@@ -97,6 +100,8 @@ impl _Document {
             draft_outline: Memo::new(1),
             form: Memo::new(1),
             draft_form: Memo::new(1),
+            fill_index: FillCache::new(),
+            draft_fill_index: FillCache::new(),
             bridge: pyropdf_engine::bridge::Cache::new(),
             references: pyropdf_store::refs::Cache::new(),
             history: crate::history::State::default(),
@@ -134,6 +139,8 @@ impl _Document {
         self.draft_outline.clear();
         self.form.clear();
         self.draft_form.clear();
+        self.fill_index.clear();
+        self.draft_fill_index.clear();
         self.history.clear();
     }
 
@@ -227,14 +234,33 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
         py: Python<'_>,
         path: PathBuf,
         incremental: bool,
         encryption: Option<&Bound<'_, PyAny>>,
+        prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
+        renew_id: bool,
+        cross_reference_stream: Option<bool>,
+        object_streams: bool,
+        renumber: bool,
+        dedupe: bool,
     ) -> PyResult<()> {
+        let options = save_options(
+            prune,
+            compress,
+            decompress,
+            renew_id,
+            cross_reference_stream,
+            object_streams,
+            renumber,
+            dedupe,
+        );
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
         py.detach(|| {
@@ -246,6 +272,7 @@ impl _Document {
                     &mut out,
                     incremental,
                     encryption.as_ref(),
+                    options,
                     &budget,
                 )?;
                 let file = out.into_inner().map_err(|e| e.into_error())?;
@@ -257,14 +284,33 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
         py: Python<'py>,
         incremental: bool,
         max_size: Option<u64>,
         encryption: Option<&Bound<'_, PyAny>>,
+        prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
+        renew_id: bool,
+        cross_reference_stream: Option<bool>,
+        object_streams: bool,
+        renumber: bool,
+        dedupe: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
+        let options = save_options(
+            prune,
+            compress,
+            decompress,
+            renew_id,
+            cross_reference_stream,
+            object_streams,
+            renumber,
+            dedupe,
+        );
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
         let out = py.detach(|| {
@@ -274,6 +320,7 @@ impl _Document {
                 &mut out,
                 incremental,
                 encryption.as_ref(),
+                options,
                 &budget,
             )
             .map_err(|error| save_error(&error, "PDF bytes"))?;
@@ -324,6 +371,8 @@ impl _Document {
         self.draft_outline.clear();
         self.form.clear();
         self.draft_form.clear();
+        self.fill_index.clear();
+        self.draft_fill_index.clear();
         self.history.clear();
     }
 }
@@ -386,16 +435,52 @@ fn write_version(
     out: &mut dyn Write,
     incremental: bool,
     encryption: Option<&Encryption>,
+    options: save::Options,
     budget: &Budget,
 ) -> save::Result<()> {
     if incremental {
-        save::incremental(version, out, budget)?;
-    } else if let Some(encryption) = encryption {
-        save::full_encrypted(version, out, budget, encryption)?;
+        save::incremental_with(version, out, budget, options)?;
     } else {
-        save::full(version, out, budget)?;
+        save::full_with(version, out, budget, encryption, options)?;
     }
     Ok(())
+}
+
+/// Returns the options of a save that prunes when `prune`, compresses at the
+/// level `compress` when it is given, decompresses when `decompress`, renews
+/// the file identifier when `renew_id`, writes a cross-reference stream or a
+/// table as `cross_reference_stream` asks or else the base's form, packs
+/// objects into object streams when `object_streams`, renumbers the objects
+/// when `renumber`, and merges identical ones when `dedupe`.
+#[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
+const fn save_options(
+    prune: bool,
+    compress: Option<u8>,
+    decompress: bool,
+    renew_id: bool,
+    cross_reference_stream: Option<bool>,
+    object_streams: bool,
+    renumber: bool,
+    dedupe: bool,
+) -> save::Options {
+    let streams = match (compress, decompress) {
+        (Some(level), _) => save::Streams::Compress(level),
+        (None, true) => save::Streams::Decompress,
+        (None, false) => save::Streams::Keep,
+    };
+    save::Options {
+        prune,
+        streams,
+        renew_id,
+        cross_reference: match cross_reference_stream {
+            None => save::CrossReference::Base,
+            Some(false) => save::CrossReference::Table,
+            Some(true) => save::CrossReference::Stream,
+        },
+        object_streams,
+        renumber,
+        dedupe,
+    }
 }
 
 /// Reads the fields of a Python `DocumentLimits`.
@@ -563,6 +648,19 @@ fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResul
         }
     }
     Ok((count, header, encrypted, repaired, metadata))
+}
+
+/// Returns the version of the document's `%PDF-x.y` header, such as
+/// `"1.4"`, or `None` for a document that was not read from a file or whose
+/// header names no version.
+#[pyfunction]
+#[pyo3(name = "header_version")]
+pub fn document_header_version(document: &_Document) -> PyResult<Option<String>> {
+    let version = document.reading()?;
+    Ok(version
+        .base()
+        .file()
+        .and_then(|index| header_version(&index.bytes()[index.origin()..])))
 }
 
 /// Returns the version of a `%PDF-x.y` header, such as `"1.7"`.

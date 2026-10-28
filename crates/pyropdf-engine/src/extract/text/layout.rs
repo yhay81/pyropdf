@@ -8,7 +8,7 @@
 //! baseline and, on request, its characters. Every string that the layout
 //! holds counts against `text_size` (F6). Its records number at most two
 //! per glyph, which `text_glyph_count` bounds, and the rules of one page at
-//! most [`MAX_RULES`].
+//! most the budget's `text_rule_count` limit.
 
 use hayro::hayro_interpret::DrawMode;
 use hayro::kurbo::{Affine, BezPath, PathSeg};
@@ -151,9 +151,6 @@ pub(super) struct RuleSegment {
     pub(super) horizontal: bool,
 }
 
-/// The most rules that one page collects.
-const MAX_RULES: usize = 4096;
-
 /// Treat transformed path segments this close to an axis as horizontal or
 /// vertical.
 const RULE_AXIS_TOLERANCE: f64 = 0.5;
@@ -167,19 +164,19 @@ const MAX_FILLED_RULE_THICKNESS: f64 = 4.0;
 /// Reject compact filled decorations even when one axis is slightly longer.
 const MIN_FILLED_RULE_ASPECT: f64 = 4.0;
 
-/// Adds the rules that one path paint draws to `rules`, up to [`MAX_RULES`]:
+/// Adds the rules that one path paint draws to `rules`, within the budget:
 /// a narrow filled rectangle, and each axis-aligned line of a stroke.
 pub(super) fn collect_rules(
     path: &BezPath,
     transform: Affine,
     mode: &DrawMode,
     rules: &mut Vec<RuleSegment>,
+    budget: &Budget,
 ) -> Result<(), Error> {
     if matches!(mode, DrawMode::Fill(_) | DrawMode::FillAndStroke(..))
         && let Some(rule) = filled_rule(path, transform)
-        && !push_rule(rules, rule)?
     {
-        return Ok(());
+        push_rule(rules, rule, budget)?;
     }
     if !matches!(mode, DrawMode::Stroke(_) | DrawMode::FillAndStroke(..)) {
         return Ok(());
@@ -215,20 +212,23 @@ pub(super) fn collect_rules(
         } else {
             continue;
         };
-        if !push_rule(rules, rule)? {
-            break;
-        }
+        push_rule(rules, rule, budget)?;
     }
     Ok(())
 }
 
-/// Pushes one rule, and returns whether there was room for it.
-fn push_rule(rules: &mut Vec<RuleSegment>, rule: RuleSegment) -> Result<bool, Error> {
-    if rules.len() >= MAX_RULES {
-        return Ok(false);
-    }
+/// Refuses an extra rule before allocating instead of truncating the page.
+fn push_rule(
+    rules: &mut Vec<RuleSegment>,
+    rule: RuleSegment,
+    budget: &Budget,
+) -> Result<(), Error> {
+    budget.check(
+        LimitCode::TextRuleCount,
+        as_u64(rules.len()).saturating_add(1),
+    )?;
     try_push_text(rules, rule, "rule collection")?;
-    Ok(true)
+    Ok(())
 }
 
 /// The rule of a narrow filled rectangle.

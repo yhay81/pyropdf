@@ -15,6 +15,8 @@ see the text. The differences:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from typing import TYPE_CHECKING
 
 import pytest
@@ -265,8 +267,9 @@ def test_ocr_layer_bounds_distinct_cids_before_mutation() -> None:
     text = "".join(chr(codepoint) for codepoint in range(1, 0x11000) if not 0xD800 <= codepoint <= 0xDFFF)
     text = text[:65_535]
 
-    with pytest.raises(pyropdf.PdfError, match="65,534 per call"):
+    with pytest.raises(pyropdf.LimitError) as caught:
         document.pages[0].apply_ocr(words=ocr_words([(10, 10, 290, 20, text)]), skip_existing=False)
+    assert caught.value.code == "ocr_layer_character_count"
     assert document.to_bytes() == before
 
 
@@ -291,7 +294,8 @@ def test_a_deleted_page_refuses_a_layer() -> None:
         page.apply_ocr(words=ocr_words([(50, 50, 150, 70, "Stale")]), skip_existing=False)
 
 
-def test_the_layer_keeps_existing_content_and_its_graphics_state() -> None:
+@pytest.mark.parametrize("indirect_contents", [False, True])
+def test_the_layer_keeps_existing_content_and_its_graphics_state(*, indirect_contents: bool) -> None:
     """Existing content that scales the page and leaves it scaled does not move the layer."""
     stream = "2 0 0 2 0 0 cm BT /PyroOCR 6 Tf 10 300 Td (Kept) Tj ET"
     document = pyropdf.open(
@@ -300,14 +304,17 @@ def test_the_layer_keeps_existing_content_and_its_graphics_state() -> None:
             2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 612 792]"
             " /Resources << /Font << /PyroOCR 3 0 R >> >> >>",
             3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-            4: "<< /Type /Page /Parent 2 0 R /Contents [5 0 R] >>",
+            4: "<< /Type /Page /Parent 2 0 R /Contents " + ("6 0 R" if indirect_contents else "[5 0 R]") + " >>",
+            6: "[5 0 R]",
             5: f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream",
         })
     )  # fmt: skip
     page = document.pages[0]
+    before_pixels = bytes(page.pixmap())
 
     page.apply_ocr(words=ocr_words([(300, 300, 400, 320, "Layer")]), skip_existing=False)
 
+    assert bytes(page.pixmap()) == before_pixels
     # The inherited font keeps its name, and the layer's font takes a free one.
     fonts = page.obj["Resources"]["Font"]
     assert set(fonts) == {"PyroOCR", "PyroOCR1"}
@@ -317,3 +324,38 @@ def test_the_layer_keeps_existing_content_and_its_graphics_state() -> None:
     assert tuple(hit) == pytest.approx((300, 300, 400, 320), abs=0.1)
     reopened = pyropdf.open(document.to_bytes()).pages[0]
     assert [word.text for word in reopened.words()] == ["Kept", "Layer"]
+
+
+def test_condensed_layer_preserves_a_nonzero_text_matrix() -> None:
+    page = _blank_page_doc().pages[0]
+    text = "A" * 1000
+    page.apply_ocr(words=ocr_words([(50, 50, 50.5, 70, text)]), skip_existing=False)
+    assert page.text().strip() == text
+    span = page.layout().blocks[0].lines[0].spans[0]
+    assert span.bbox.width == pytest.approx(0.5, abs=0.01)
+
+
+def test_concurrent_layers_keep_each_committed_edit() -> None:
+    page = _blank_page_doc().pages[0]
+    barrier = Barrier(4)
+
+    def insert(index: int) -> None:
+        words = list(ocr_words([(10, 10 + index * 30, 290, 30 + index * 30, chr(65 + index) * 20000)]))
+        barrier.wait(timeout=10)
+        page.apply_ocr(words=words, skip_existing=False)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        list(pool.map(insert, range(4)))
+    assert len(page.obj["Resources"]["Font"]) == 4
+
+
+def test_layers_inside_a_transaction_read_its_prior_writes() -> None:
+    document = _blank_page_doc()
+    before = document.to_bytes()
+    page = document.pages[0]
+    with document.transaction("OCR batch"):
+        page.apply_ocr(words=ocr_words([(10, 10, 100, 30, "First")]), skip_existing=False)
+        page.apply_ocr(words=ocr_words([(10, 50, 100, 70, "Second")]), skip_existing=False)
+        assert page.text().splitlines() == ["First", "Second"]
+    document.history.undo()
+    assert document.to_bytes() == before
