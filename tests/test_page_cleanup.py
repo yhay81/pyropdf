@@ -463,16 +463,16 @@ def test_deletion_preserves_a_destination_to_another_generation() -> None:
     assert len(doc.pages[0].obj["Annots"]) == 1
 
 
-def test_select_refuses_duplicates_before_consuming_more_input() -> None:
+def test_select_generator_failure_leaves_repeated_pages_unchanged() -> None:
     doc = pyropdf.open(_linked_pdf())
     before = doc.to_bytes()
 
     def indexes() -> Iterator[int]:
         yield 0
         yield 0
-        msg = "select consumed input after a duplicate"
+        msg = "input failed after a repeated page"
         raise AssertionError(msg)
 
-    with pytest.raises(ValueError, match="at most once"):
+    with pytest.raises(AssertionError, match="input failed"):
         doc.pages.select(indexes())
     assert doc.to_bytes() == before

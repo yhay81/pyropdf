@@ -34,15 +34,16 @@ def _page_entries(pages: Iterable[int], count: int) -> list[int]:
     entries: list[int] = []
     for index in pages:
         if len(entries) >= limit:
-            code = "page_entry_count"
-            msg = (
-                f"pages cannot hold more than {limit} entries "
-                f"(the larger of the page count and {_MIN_PAGE_ENTRY_LIMIT})"
-            )
-            raise LimitError(code, msg)
+            raise _entry_limit_error(limit)
         _resolve(index, count)
         entries.append(index)
     return entries
+
+
+def _entry_limit_error(limit: int) -> LimitError:
+    """Return the error for more than ``limit`` page entries in one call."""
+    msg = f"pages cannot hold more than {limit} entries (the larger of the page count and {_MIN_PAGE_ENTRY_LIMIT})"
+    return LimitError("page_entry_count", msg)
 
 
 def _resolve(index: object, count: int) -> int:
@@ -62,8 +63,9 @@ class Pages(Sequence[Page]):
     """The pages of a document, in order.
 
     Indexing, slicing, and iteration give :class:`Page` handles, which keep
-    naming their pages through later edits. :meth:`new`, ``del``, and
-    :meth:`move` each change the page tree in one transaction.
+    naming their pages through later edits. :meth:`new`, :meth:`insert`,
+    ``del``, :meth:`select`, and :meth:`move` each change the page tree in
+    one transaction.
     """
 
     __slots__ = ("_document",)
@@ -148,24 +150,49 @@ class Pages(Sequence[Page]):
         number, generation = _core.new_page(doc, at, width, height)
         return Page(self._document, number, generation)
 
+    def insert(self, index: int, pages: Page | Iterable[Page]) -> None:
+        """Insert copies of ``pages`` before ``index``, clamped as ``list.insert`` clamps it, in one transaction.
+
+        ``pages`` is one :class:`Page` or an iterable of pages of this
+        document, which may repeat. Each copy is a new page object that
+        shares the content streams and resources of its original, with
+        annotations, widgets, and structure elements of its own. The iterable
+        may hold up to the larger of the page count and 4,096 pages.
+        """
+        if not _is_int(index):
+            msg = f"the insertion index must be an integer, not {type(index).__name__}"
+            raise TypeError(msg)
+        doc = self._document._core()  # noqa: SLF001
+        objects = _core.page_objects(doc)
+        count = len(objects)
+        sources = [objects[at] for at in self._source_pages(pages, count)]
+        if not sources:
+            return
+        at = max(0, index + count) if index < 0 else min(index, count)
+        order = [*objects[:at], *sources, *objects[at:]]
+        copies = [False] * at + [True] * len(sources) + [False] * (count - at)
+        _core.set_pages(doc, order, copies)
+
+    def extend(self, pages: Page | Iterable[Page]) -> None:
+        """Append copies of ``pages``, as :meth:`insert` at the end inserts them."""
+        self.insert(len(self), pages)
+
     def select(self, indexes: Iterable[int], /) -> None:
         """Keep the pages at ``indexes``, in that order, and remove the others, in one transaction.
 
-        Negative indexes count from the end. The navigation that leads to a
-        removed page goes, as for ``del``. Each page may appear once.
+        Negative indexes count from the end. A repeated index adds a copy, as
+        :meth:`insert` copies a page. The navigation that leads to a removed
+        page goes, as for ``del``.
         """
         doc = self._document._core()  # noqa: SLF001
         objects = _core.page_objects(doc)
-        chosen: list[int] = []
+        chosen = [_resolve(index, len(objects)) for index in _page_entries(indexes, len(objects))]
         seen: set[int] = set()
-        for index in indexes:
-            at = _resolve(index, len(objects))
-            if at in seen:
-                msg = "select keeps each page at most once"
-                raise ValueError(msg)
+        copies = []
+        for at in chosen:
+            copies.append(at in seen)
             seen.add(at)
-            chosen.append(at)
-        _core.set_pages(doc, [objects[at] for at in chosen])
+        _core.set_pages(doc, [objects[at] for at in chosen], copies)
 
     def move(self, index: int, to: int) -> None:
         """Move page ``index`` so that it ends at index ``to``, in one transaction."""
@@ -178,6 +205,29 @@ class Pages(Sequence[Page]):
         moved = objects.pop(source)
         objects.insert(target, moved)
         _core.set_pages(doc, objects)
+
+    def _source_pages(self, pages: Page | Iterable[Page], count: int) -> list[int]:
+        """Return the indexes of ``pages``, which must be current pages of this document."""
+        if isinstance(pages, Page):
+            items: Iterable[object] = (pages,)
+        elif isinstance(pages, Iterable) and not isinstance(pages, (str, bytes)):
+            items = pages
+        else:
+            msg = f"pages must be a Page or an iterable of pages: {pages!r}"
+            raise TypeError(msg)
+        limit = max(count, _MIN_PAGE_ENTRY_LIMIT)
+        indexes: list[int] = []
+        for page in items:
+            if not isinstance(page, Page):
+                msg = f"pages must be Page views: {page!r}"
+                raise TypeError(msg)
+            if page.document is not self._document:
+                msg = "pages of another document cannot be inserted yet"
+                raise NotImplementedError(msg)
+            if len(indexes) >= limit:
+                raise _entry_limit_error(limit)
+            indexes.append(page.index)
+        return indexes
 
     def __repr__(self) -> str:
         """Return a representation naming the document."""

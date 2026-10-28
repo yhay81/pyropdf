@@ -6,5 +6,6 @@ pub mod bridge;
 pub mod content;
 pub mod extract;
 pub mod ocr;
+pub mod pages;
 pub mod render;
 pub mod standard;

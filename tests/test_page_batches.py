@@ -1,12 +1,11 @@
 """Page batches beyond the 4,096-entry floor, and the page labels that page edits keep.
 
 The cases of pylopdf's tests/test_page_batches.py at ebb01d3c that delete,
-select, extract, or render pages are ported. That file has no move case;
-moving pages is covered here by the page label cases. Not ported:
+select, copy, extract, or render pages are ported. That file has no move
+case; moving pages is covered here by the page label cases. Not ported:
 
-- selecting a page once per page of the document, which repeats a page
-  (yhay81/pyropdf#175);
-- importing pages with ``extend`` and its entry limit (yhay81/pyropdf#176);
+- importing pages of another document with ``extend``
+  (yhay81/pyropdf#176);
 - the batches of pylopdf's internal core document, which pyropdf has no
   counterpart of: its Python API is the contract, and the entry limit cases
   below bound the same batches. Selection refuses a duplicate immediately
@@ -110,6 +109,14 @@ def test_select_reorders_every_page(large_pdf: bytes) -> None:
     assert doc.pages[LARGE_PAGE_COUNT - 1].text() == "Page 0\n"
 
 
+def test_select_accepts_page_count_duplicates_without_growing(large_pdf: bytes) -> None:
+    doc = pyropdf.open(large_pdf)
+    doc.pages.select([0] * LARGE_PAGE_COUNT)
+
+    assert len(doc.pages) == LARGE_PAGE_COUNT
+    assert doc.text([LARGE_PAGE_COUNT - 1]) == "Page 0\n"
+
+
 def test_large_manual_toc_round_trips_through_page_edits(large_pdf: bytes) -> None:
     doc = pyropdf.open(large_pdf)
     outline: list[tuple[int, str, int]] = []
@@ -146,8 +153,10 @@ def test_delete_pages_accepts_more_than_the_floor(large_pdf: bytes) -> None:
         lambda doc, pages: doc.text(pages),
         lambda doc, pages: doc.markdown(pages),
         lambda doc, pages: doc.render(pages, matrix=SCALE, alpha=True),
+        lambda doc, pages: doc.pages.select(pages),
+        lambda doc, pages: doc.pages.extend(doc.pages[index] for index in pages),
     ],
-    ids=["text", "markdown", "render"],
+    ids=["text", "markdown", "render", "select", "extend"],
 )
 def test_explicit_entries_stop_after_the_page_count(
     large_pdf: bytes,

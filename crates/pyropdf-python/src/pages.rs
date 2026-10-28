@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
+use pyropdf_engine::pages::copy::Copies;
 use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
@@ -154,29 +155,48 @@ pub fn set_page_rotation(
 }
 
 /// Lists `pages`, objects of current pages, as the document's pages in
-/// order, in one transaction. The pages that leave run the rules of the
-/// references to them (DESIGN.md section 8): the navigation that leads to
-/// them goes, and they and the objects that only they referred to are
-/// freed. A refusal leaves the document as it was.
+/// order, in one transaction. An entry that `copies` marks becomes a copy
+/// of the page that it names, with annotations and structure of its own;
+/// every other entry names a page that stays, at most once. The pages that
+/// leave run the rules of the references to them (DESIGN.md section 8):
+/// the navigation that leads to them goes, and they and the objects that
+/// only they referred to are freed. A refusal leaves the document as it
+/// was.
 #[pyfunction]
-pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -> PyResult<()> {
+#[pyo3(signature = (document, pages, copies=Vec::new()))]
+pub fn set_pages(
+    py: Python<'_>,
+    document: &_Document,
+    pages: Vec<(u32, u16)>,
+    copies: Vec<bool>,
+) -> PyResult<()> {
+    if !copies.is_empty() && copies.len() != pages.len() {
+        return Err(PyValueError::new_err("copies must mark every page or none"));
+    }
     document.edit(py, |transaction, budget| {
         let store = |e: pyropdf_store::Error| store_error(&e);
         let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
-        // Read the draft only after acquiring the writer lock.
         let view = transaction.snapshot();
         let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
         let mut order = BudgetVec::new(budget);
         let mut retained = BudgetVec::new(budget);
-        for (number, generation) in pages {
-            order
-                .try_push(Reference::new(number, generation))
-                .map_err(limit)?;
-            retained.try_push(number).map_err(limit)?;
+        let mut sources = BudgetVec::new(budget);
+        for (at, (number, generation)) in pages.into_iter().enumerate() {
+            let page = Reference::new(number, generation);
+            if index.index_of(page).is_none() {
+                return Err(not_a_page(page));
+            }
+            order.try_push(page).map_err(limit)?;
+            sources.try_push(number).map_err(limit)?;
+            if !copies.get(at).copied().unwrap_or(false) {
+                retained.try_push(number).map_err(limit)?;
+            }
         }
         retained.sort_unstable();
         if retained.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(PyValueError::new_err("select keeps each page at most once"));
+            return Err(PyValueError::new_err(
+                "a page stays at most once; copies repeat it",
+            ));
         }
         let mut before = BudgetVec::new(budget);
         let mut removed = BudgetVec::new(budget);
@@ -190,14 +210,23 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
         let mut removed = removed.into_vec();
         removed.sort_unstable();
         removed.dedup();
-        let pages = Pages {
-            before: &before,
-            order: &order,
-            removed: &removed,
-            retained: &retained,
-        };
         let savepoint = transaction.savepoint();
-        let result = remove_pages(document, transaction, &index, &pages, budget);
+        let result =
+            copy_pages(transaction, &index, &mut order, &copies, budget).and_then(|added| {
+                for page in &added {
+                    retained.try_push(page.number()).map_err(limit)?;
+                }
+                retained.sort_unstable();
+                let pages = Pages {
+                    before: &before,
+                    order: &order,
+                    sources: &sources,
+                    removed: &removed,
+                    retained: &retained,
+                    added: &added,
+                };
+                remove_pages(document, transaction, &index, &pages, budget)
+            });
         if result.is_err() {
             transaction.rollback(savepoint);
         }
@@ -205,13 +234,79 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
     })
 }
 
+fn not_a_page(page: Reference) -> PyErr {
+    PyValueError::new_err(format!(
+        "object {} {} is not a page of the document",
+        page.number(),
+        page.generation()
+    ))
+}
+
+/// Writes a copy of each page of `order` that `copies` marks and puts it
+/// in its place, and returns the copies.
+fn copy_pages(
+    transaction: &mut Transaction,
+    index: &PageIndex,
+    order: &mut [Reference],
+    copies: &[bool],
+    budget: &Budget,
+) -> PyResult<Vec<Reference>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let mut added = BudgetVec::new(budget);
+    if !copies.contains(&true) {
+        return Ok(added.into_vec());
+    }
+    let (root, _) = root(transaction.version(), budget)?;
+    let mut copier = Copies::new(transaction, budget).map_err(store)?;
+    for (entry, _) in order.iter_mut().zip(copies).filter(|(_, copy)| **copy) {
+        let source = *entry;
+        let at = index.index_of(source).ok_or_else(|| not_a_page(source))?;
+        let page = &index.pages()[at];
+        // The edits of the transaction so far, with what the page inherits.
+        let mut dict = match resolve(
+            transaction.version(),
+            Some(&Value::Reference(source)),
+            budget,
+        )? {
+            Some(Value::Dict(dict)) => dict,
+            _ => {
+                return Err(MalformedPdfError::new_err(
+                    "the page to copy is no longer a dictionary",
+                ));
+            }
+        };
+        dict.insert(Name::from("Parent"), Value::Reference(root));
+        for key in INHERITABLE {
+            match page.inherited(key) {
+                Some(value) => {
+                    dict.insert(
+                        Name::from(key),
+                        refs::copy_for_edit(value, budget).map_err(store)?,
+                    );
+                }
+                None => {
+                    dict.remove(key);
+                }
+            }
+        }
+        let copy = copier.copy(transaction, source, dict).map_err(store)?;
+        added.try_push(copy).map_err(|e| store(e.into()))?;
+        *entry = copy;
+    }
+    copier.finish(transaction).map_err(store)?;
+    Ok(added.into_vec())
+}
+
 /// The pages of [`set_pages`]: in their order before, in the new order,
-/// and the numbers of those that leave and of those that stay, ascending.
+/// the pages that the new order copies its entries from, the numbers of
+/// those that leave and of those that stay, ascending, and the copies.
 struct Pages<'p> {
     before: &'p [u32],
     order: &'p [Reference],
+    sources: &'p [u32],
     removed: &'p [u32],
     retained: &'p [u32],
+    added: &'p [Reference],
 }
 
 /// Runs the rules for the removed pages, writes the page tree with the new
@@ -228,16 +323,14 @@ fn remove_pages(
     let Pages {
         before: old,
         order,
+        sources,
         removed,
         retained,
+        added,
     } = *pages;
     let before = transaction.snapshot();
     let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
-    let mut numbers = BudgetVec::new(budget);
-    for page in order {
-        numbers.try_push(page.number()).map_err(limit)?;
-    }
-    let labels = refs::relabel(&mut Reads::new(&before, budget), old, &numbers).map_err(store)?;
+    let labels = refs::relabel(&mut Reads::new(&before, budget), old, sources).map_err(store)?;
     if removed.is_empty()
         && labels
             .as_ref()
@@ -247,7 +340,7 @@ fn remove_pages(
             labels.write(transaction, budget).map_err(store)?;
         }
         let view = transaction.snapshot();
-        return rewrite_with(transaction, &view, index, order, None, budget);
+        return rewrite_with(transaction, &view, index, order, added, budget);
     }
     let parent = Arc::clone(transaction.parent());
     let references = document.references.get(&parent, budget).map_err(store)?;
@@ -275,7 +368,7 @@ fn remove_pages(
         labels.write(transaction, budget).map_err(store)?;
     }
     let view = transaction.snapshot();
-    rewrite_with(transaction, &view, index, order, None, budget)?;
+    rewrite_with(transaction, &view, index, order, added, budget)?;
     let after = transaction.snapshot();
     let references = match before.changes(&after, budget).map_err(store)? {
         Some(changes) => references
@@ -339,7 +432,7 @@ pub fn new_page(
             .map_err(store)?;
         order.insert(at.min(order.len()), reference);
         let view = transaction.snapshot();
-        rewrite_with(transaction, &view, &index, &order, Some(reference), budget)?;
+        rewrite_with(transaction, &view, &index, &order, &[reference], budget)?;
         Ok((reference.number(), reference.generation()))
     })
 }
@@ -354,14 +447,14 @@ fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
 }
 
 /// Writes the root node with `order` as its kids, and each page that the
-/// flattening changes. `added` is a page that the transaction wrote, which
+/// flattening changes. `added` are pages that the transaction wrote, which
 /// the index does not list yet.
 fn rewrite_with(
     transaction: &mut Transaction,
     version: &Version,
     index: &PageIndex,
     order: &[Reference],
-    added: Option<Reference>,
+    added: &[Reference],
     budget: &Budget,
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
@@ -371,7 +464,7 @@ fn rewrite_with(
         .map(|key| resolve(version, root_dict.get(key), budget))
         .collect::<PyResult<_>>()?;
     for &reference in order {
-        if Some(reference) == added {
+        if added.contains(&reference) {
             continue;
         }
         let at = index.index_of(reference).ok_or_else(|| {
