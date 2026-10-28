@@ -249,3 +249,54 @@ def test_a_calculation_and_its_order_undo_as_one_step() -> None:
     doc.history.undo()
     assert dict(total.scripts) == {}
     assert "CO" not in doc.catalog["AcroForm"]
+
+
+def test_a_long_script_is_refused_before_it_is_encoded() -> None:
+    doc = _form()
+    total = doc.form["total"]
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        total.scripts[ScriptTrigger.FORMAT] = "x" * (1024 * 1024 + 1)
+
+    assert caught.value.code == "script_size"
+    assert dict(total.scripts) == {}
+
+
+def test_script_writes_in_a_transaction_roll_back_together() -> None:
+    doc = _form()
+    total = doc.form["total"]
+    before = doc.to_bytes()
+
+    def write_and_fail() -> None:
+        with doc.transaction("scripts"):
+            total.scripts[ScriptTrigger.CALCULATE] = "event.value = 1;"
+            assert list(doc.catalog["AcroForm"]["CO"]) == [total.obj]
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        write_and_fail()
+    assert dict(total.scripts) == {}
+    assert doc.to_bytes() == before
+
+
+def test_a_removed_script_is_checked_in_its_transaction() -> None:
+    doc = _form()
+    total = doc.form["total"]
+    scripts = total.scripts
+    scripts[ScriptTrigger.FORMAT] = "AFNumber_Format(2);"
+    # Another handle removes the script after this mapping was made.
+    del doc.form["total"].scripts[ScriptTrigger.FORMAT]
+
+    with pytest.raises(KeyError):
+        del scripts[ScriptTrigger.FORMAT]
+
+
+def test_a_script_write_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_form().to_bytes(), limits=pyropdf.DocumentLimits(cancellation=token))
+    total = doc.form["total"]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        total.scripts[ScriptTrigger.FORMAT] = "AFNumber_Format(2);"
+    assert caught.value.code == "cancelled"

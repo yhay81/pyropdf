@@ -78,13 +78,42 @@ pub fn text_ops(
     align: Align,
     style: Style<'_>,
 ) -> Result<(), LayoutError> {
-    let mut header = String::from("q\nBT\n/");
-    push_name(&mut header, style.resource);
-    header.push_str(&format!(
-        " {} Tf\n{}\n",
-        fmt(style.size),
-        style.color.fill_operator()
-    ));
+    out.budget().poll()?;
+    let channels = match style.color {
+        DeviceColor::Gray(gray) => [gray, gray, gray],
+        DeviceColor::Rgb(red, green, blue) => [red, green, blue],
+    };
+    if !height.is_finite()
+        || !rect.iter().all(|value| value.is_finite())
+        || rect[2] < rect[0]
+        || rect[3] < rect[1]
+        || ![
+            rect[2] - rect[0],
+            rect[3] - rect[1],
+            height - rect[3],
+            style.size,
+            layout.ascent,
+            layout.leading,
+        ]
+        .iter()
+        .all(|value| value.is_finite())
+        || style.size < 0.0
+        || !channels
+            .iter()
+            .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
+    {
+        return Err(LayoutError::InvalidGeometry);
+    }
+    let clip = format!(
+        "q\n{} {} {} {} re\nW\nn\nBT\n/",
+        fmt(rect[0]),
+        fmt(height - rect[3]),
+        fmt(rect[2] - rect[0]),
+        fmt(rect[3] - rect[1])
+    );
+    out.try_extend_from_slice(clip.as_bytes())?;
+    push_name(out, style.resource)?;
+    let header = format!(" {} Tf\n{}\n", fmt(style.size), style.color.fill_operator());
     out.try_extend_from_slice(header.as_bytes())?;
     let box_width = rect[2] - rect[0];
     for (number, line) in layout.lines.iter().enumerate() {
@@ -108,6 +137,18 @@ pub fn text_ops(
         } else {
             0.0
         };
+        if ![
+            line.width,
+            baseline,
+            word_space,
+            rect[0] + x_offset.max(0.0),
+            height - baseline,
+        ]
+        .iter()
+        .all(|value| value.is_finite())
+        {
+            return Err(LayoutError::InvalidGeometry);
+        }
         let positioning = format!(
             "{} Tw\n1 0 0 1 {} {} Tm\n",
             fmt(word_space),
@@ -146,16 +187,26 @@ fn push_string(out: &mut BudgetVec<'_, u8>, text: &str) -> Result<(), LayoutErro
 /// Appends a name's bytes with whitespace and the delimiters other than
 /// `#` as `#xx`, so that the name is one token; a `#` stays, since `/DA`
 /// strings give the name as it is written.
-fn push_name(out: &mut String, name: &str) {
+fn push_name(out: &mut BudgetVec<'_, u8>, name: &str) -> Result<(), LayoutError> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for byte in name.bytes() {
         match byte {
             b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%' => {
-                out.push_str(&format!("#{byte:02X}"));
+                out.try_extend_from_slice(&[
+                    b'#',
+                    HEX[usize::from(byte >> 4)],
+                    HEX[usize::from(byte & 15)],
+                ])?;
             }
-            0x21..=0x7e => out.push(char::from(byte)),
-            _ => out.push_str(&format!("#{byte:02X}")),
+            0x21..=0x7e => out.try_push(byte)?,
+            _ => out.try_extend_from_slice(&[
+                b'#',
+                HEX[usize::from(byte >> 4)],
+                HEX[usize::from(byte & 15)],
+            ])?,
         }
     }
+    Ok(())
 }
 
 /// Formats a number for content with at most four decimals.

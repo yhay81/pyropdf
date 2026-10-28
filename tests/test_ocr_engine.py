@@ -530,3 +530,24 @@ def test_ocr_error_hierarchy() -> None:
     assert issubclass(pyropdf.OcrError, pyropdf.PdfError)
     assert pyropdf.OcrError.__module__ == "pyropdf"
     assert pyropdf.OcrEngine.__module__ == pyropdf.OcrWord.__module__ == "pyropdf"
+
+
+def test_page_ocr_observes_cancellation_after_rendering(
+    ocr_engine: pyropdf.OcrEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = pyropdf.CancellationToken()
+    document = pyropdf.open(
+        _text_page((200, 100), ("Hello", 20, 60, 30)).document.to_bytes(),
+        limits=pyropdf.DocumentLimits(cancellation=token),
+    )
+    render = pyropdf.Page.pixmap
+
+    def cancel_after_render(page: pyropdf.Page, **kwargs: Any) -> pyropdf.Pixmap:  # noqa: ANN401
+        pixmap = render(page, **kwargs)
+        token.cancel()
+        return pixmap
+
+    monkeypatch.setattr(pyropdf.Page, "pixmap", cancel_after_render)
+    with pytest.raises(pyropdf.LimitError) as caught:
+        document.pages[0].ocr(engine=ocr_engine, dpi=72, tile_size=256, overlap=32)
+    assert caught.value.code == "cancelled"

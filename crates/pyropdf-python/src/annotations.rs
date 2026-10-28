@@ -18,24 +18,18 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::{
-    LINE_ENDINGS, MAX_ANNOTATION_POINTS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points,
-    is_text_markup, valid_dashes, zigzag_points,
+    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points, is_text_markup, valid_dashes,
+    zigzag_points,
 };
-use pyropdf_store::budget::Budget;
-use pyropdf_store::pages::{Page, PageIndex};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::settle::Structure;
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::{_Document, text_string};
-use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
-use crate::pages::{display_box, editing_index, index, number, rect, resolve, rotation};
-
-/// The most entries of a page's `/Annots` that a read or an edit accepts.
-pub(crate) const MAX_PAGE_ANNOTATIONS: usize = 4_096;
-/// The most bytes of annotation text that one read encodes or returns, and
-/// that one edit writes.
-const MAX_ANNOTATION_TEXT_BYTES: usize = 1024 * 1024;
+use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
+use crate::pages::{display_box, index as page_index, number, rect, rotation};
 
 /// The text entries of a [`Record`], in its order.
 const TEXT_KEYS: [&str; 8] = [
@@ -137,12 +131,110 @@ type Record = (
     (Option<(u32, u16)>, Option<Rect>, bool),
 );
 
+/// A borrowed part of an object whose clone allocates owned values.
+pub(crate) enum CopyPart<'a> {
+    Value(&'a Value),
+    Array(&'a Array),
+    Dict(&'a Dict),
+}
+
+/// Charges owned buffers before a clone, including unknown nested fields.
+/// The explicit work stack is budgeted; shared source spans and stream bytes
+/// need no copy. Array and dictionary capacity includes room for an edit.
+pub(crate) fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
+    let mut pending = BudgetVec::new(budget);
+    pending.try_push(part).map_err(|e| limit_error(&e))?;
+    while let Some(part) = pending.pop() {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        let bytes = match part {
+            CopyPart::Value(value) => match value {
+                Value::Name(name) => name.as_bytes().len(),
+                Value::String(text) => text.as_bytes().len(),
+                Value::Array(array) => {
+                    pending
+                        .try_push(CopyPart::Array(array))
+                        .map_err(|e| limit_error(&e))?;
+                    0
+                }
+                Value::Dict(dict) => {
+                    pending
+                        .try_push(CopyPart::Dict(dict))
+                        .map_err(|e| limit_error(&e))?;
+                    0
+                }
+                Value::Stream(stream) => {
+                    pending
+                        .try_push(CopyPart::Dict(stream.dict()))
+                        .map_err(|e| limit_error(&e))?;
+                    0
+                }
+                _ => 0,
+            },
+            CopyPart::Array(array) => {
+                for value in array {
+                    pending
+                        .try_push(CopyPart::Value(value))
+                        .map_err(|e| limit_error(&e))?;
+                }
+                array.len().saturating_mul(2 * size_of::<Value>())
+            }
+            CopyPart::Dict(dict) => {
+                let mut bytes = dict.len().saturating_mul(2 * size_of::<(Name, Value)>());
+                for (key, value) in dict.iter() {
+                    bytes = bytes.saturating_add(key.as_bytes().len());
+                    pending
+                        .try_push(CopyPart::Value(value))
+                        .map_err(|e| limit_error(&e))?;
+                }
+                bytes
+            }
+        };
+        budget
+            .charge(LimitCode::MemorySize, bytes as u64)
+            .map_err(|e| limit_error(&e))?;
+    }
+    Ok(())
+}
+
+/// Resolves at most MAX_CHAIN references, charging the owned result before
+/// copying it. Reading repeated references still charges each returned copy.
+fn resolve(version: &Version, value: Option<&Value>, budget: &Budget) -> PyResult<Option<Value>> {
+    let mut current = match value {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Reference(reference)) => *reference,
+        Some(value) => {
+            charge_copy(CopyPart::Value(value), budget)?;
+            return Ok(Some(value.clone()));
+        }
+    };
+    for _ in 0..MAX_CHAIN {
+        let Some(object) = version
+            .get(current.number(), budget)
+            .map_err(|e| store_error(&e))?
+            .filter(|object| object.generation() == current.generation())
+        else {
+            return Ok(None);
+        };
+        match &**object.value() {
+            Value::Null => return Ok(None),
+            Value::Reference(next) => current = *next,
+            value => {
+                charge_copy(CopyPart::Value(value), budget)?;
+                return Ok(Some(value.clone()));
+            }
+        }
+    }
+    Err(MalformedPdfError::new_err(
+        "a reference chain is longer than 16 references",
+    ))
+}
+
 /// The annotations of one page in the version that reads see.
-pub(crate) struct Annots {
+pub(crate) struct Annots<'b> {
     version: Arc<Version>,
     index: Arc<PageIndex>,
     at: usize,
-    budget: Budget,
+    budget: &'b Budget,
     crop: [f64; 4],
     pub(crate) rotation: i64,
     /// The array object that the page's `/Annots` names, if it names one.
@@ -150,46 +242,29 @@ pub(crate) struct Annots {
     pub(crate) items: Array,
 }
 
-impl Annots {
+impl<'b> Annots<'b> {
     /// Reads the annotations of page object `(number, generation)`, or
     /// returns `None` when it is not a page of the document.
     pub(crate) fn read(
-        document: &_Document,
-        number: u32,
-        generation: u16,
-    ) -> PyResult<Option<Self>> {
-        Self::of(index(document)?, number, generation)
-    }
-
-    /// Reads the annotations of a page for an edit, in the version that
-    /// [`editing_index`] reads, so that the appearances that earlier edits
-    /// of the open transaction left stale stay stale.
-    pub(crate) fn edit(
-        document: &_Document,
-        number: u32,
-        generation: u16,
-    ) -> PyResult<Option<Self>> {
-        Self::of(editing_index(document)?, number, generation)
-    }
-
-    fn of(
-        (version, index, budget): (Arc<Version>, Arc<PageIndex>, Budget),
+        version: Arc<Version>,
+        index: Arc<PageIndex>,
+        budget: &'b Budget,
         number: u32,
         generation: u16,
     ) -> PyResult<Option<Self>> {
         let Some(at) = index.index_of(Reference::new(number, generation)) else {
             return Ok(None);
         };
-        Self::at(&version, &index, at, budget).map(Some)
+        Self::at(version, index, budget, at).map(Some)
     }
 
     /// Reads the annotations of the page at `at` of `index`, a page index
     /// of `version`.
     pub(crate) fn at(
-        version: &Arc<Version>,
-        index: &Arc<PageIndex>,
+        version: Arc<Version>,
+        index: Arc<PageIndex>,
+        budget: &'b Budget,
         at: usize,
-        budget: Budget,
     ) -> PyResult<Self> {
         let page = &index.pages()[at];
         let crop = display_box(page);
@@ -199,18 +274,16 @@ impl Annots {
             Some(Value::Reference(reference)) => Some(*reference),
             _ => None,
         };
-        let items = match resolve(version, annots, &budget)? {
+        let items = match resolve(&version, annots, budget)? {
             Some(Value::Array(items)) => items,
             _ => Array::new(),
         };
-        if items.len() > MAX_PAGE_ANNOTATIONS {
-            return Err(PdfError::new_err(format!(
-                "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
-            )));
-        }
+        budget
+            .check(LimitCode::AnnotationCount, items.len() as u64)
+            .map_err(|e| limit_error(&e))?;
         Ok(Self {
-            version: Arc::clone(version),
-            index: Arc::clone(index),
+            version,
+            index,
             at,
             budget,
             crop,
@@ -224,11 +297,17 @@ impl Annots {
         &self.index.pages()[self.at]
     }
 
+    /// Returns the version that the annotations were read from, its page
+    /// index, and the position of their page in it.
+    pub(crate) fn pages(&self) -> (&Arc<Version>, &Arc<PageIndex>, usize) {
+        (&self.version, &self.index, self.at)
+    }
+
     /// Returns a reader of the version that the annotations were read in.
     pub(crate) fn reader(&self) -> Reader<'_> {
         Reader {
             version: &self.version,
-            budget: &self.budget,
+            budget: self.budget,
         }
     }
 
@@ -237,10 +316,13 @@ impl Annots {
     pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
         let id = match item {
             Value::Reference(reference) => (reference.number(), reference.generation()),
-            Value::Dict(dict) => return Ok(Some(((0, 0), dict.clone()))),
+            Value::Dict(dict) => {
+                charge_copy(CopyPart::Dict(dict), self.budget)?;
+                return Ok(Some(((0, 0), dict.clone())));
+            }
             _ => return Ok(None),
         };
-        Ok(match resolve(&self.version, Some(item), &self.budget)? {
+        Ok(match resolve(&self.version, Some(item), self.budget)? {
             Some(Value::Dict(dict)) => Some((id, dict)),
             _ => None,
         })
@@ -321,18 +403,18 @@ impl Annots {
             return Ok(None);
         };
         let subtype = subtype
-            .map(|name| charge_text(&name, budget, "subtype text"))
+            .map(|name| charge_text(&name, budget, self.budget))
             .transpose()?;
         let mut texts: [Option<String>; 8] = Default::default();
         for (slot, key) in texts.iter_mut().zip(TEXT_KEYS) {
             *slot = if key == "Name" || key == "IT" {
                 self.name(dict, key)?
-                    .map(|name| charge_text(&name, budget, "icon name"))
+                    .map(|name| charge_text(&name, budget, self.budget))
                     .transpose()?
             } else {
                 match self.resolved(dict.get(key))? {
                     Some(Value::String(text)) => {
-                        Some(charge_decoded(text.as_bytes(), budget, key)?)
+                        Some(charge_decoded(text.as_bytes(), budget, self.budget)?)
                     }
                     _ => None,
                 }
@@ -381,12 +463,20 @@ impl Annots {
     }
 
     pub(crate) fn resolved(&self, value: Option<&Value>) -> PyResult<Option<Value>> {
-        resolve(&self.version, value, &self.budget)
+        resolve(&self.version, value, self.budget)
     }
 
     pub(crate) fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
         Ok(match self.resolved(dict.get(key))? {
-            Some(Value::Name(name)) => Some(name.as_bytes().to_vec()),
+            Some(Value::Name(name)) => {
+                self.budget
+                    .check(LimitCode::AnnotationTextSize, name.as_bytes().len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                self.budget
+                    .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                Some(name.as_bytes().to_vec())
+            }
             _ => None,
         })
     }
@@ -422,6 +512,11 @@ impl Annots {
         let Some(Value::Array(items)) = self.resolved(value)? else {
             return Ok(None);
         };
+        if max == MAX_BORDER_DASHES {
+            self.budget
+                .check(LimitCode::AnnotationDashCount, items.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+        }
         if items.len() > max {
             return Ok(None);
         }
@@ -504,34 +599,9 @@ impl Annots {
     /// changes nothing. Returns the annotation's object.
     pub(crate) fn write(
         &self,
-        py: Python<'_>,
-        document: &_Document,
+        transaction: &mut Transaction,
         position: usize,
         look: bool,
-        dict: Dict,
-        change: impl FnOnce(
-            &mut Transaction,
-            Reference,
-            &mut Dict,
-            &mut Array,
-            &Budget,
-        ) -> PyResult<bool>,
-    ) -> PyResult<(u32, u16)> {
-        document.edit(py, |transaction, budget| {
-            let savepoint = transaction.savepoint();
-            let result = self.write_in(transaction, (position, look), dict, change, budget);
-            if result.is_err() {
-                transaction.rollback(savepoint);
-            }
-            result
-        })
-    }
-
-    /// Implements [`Annots::write`] in its transaction.
-    fn write_in(
-        &self,
-        transaction: &mut Transaction,
-        (position, look): (usize, bool),
         mut dict: Dict,
         change: impl FnOnce(
             &mut Transaction,
@@ -540,14 +610,16 @@ impl Annots {
             &mut Array,
             &Budget,
         ) -> PyResult<bool>,
-        budget: &Budget,
     ) -> PyResult<(u32, u16)> {
+        let budget = self.budget;
+        charge_copy(CopyPart::Array(&self.items), budget)?;
         let mut items = self.items.clone();
         let mut listed = false;
         // A handle finds a direct dictionary by its position alone.
         if matches!(self.items.get(position), Some(Value::Dict(_))) {
             for item in items.iter_mut() {
                 if let Value::Dict(entry) = item {
+                    charge_copy(CopyPart::Dict(entry), budget)?;
                     let reference = transaction.allocate().map_err(|e| store_error(&e))?;
                     transaction
                         .write(reference.number(), &Value::Dict(entry.clone()), budget)
@@ -598,6 +670,7 @@ impl Annots {
         let Some(object) = page.object() else {
             return Err(PdfError::new_err("the page is not an indirect object"));
         };
+        charge_copy(CopyPart::Dict(page.dict()), budget)?;
         let mut dict = page.dict().clone();
         dict.insert(Name::from("Annots"), Value::Array(items));
         transaction
@@ -632,42 +705,40 @@ fn to_pdf(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
 }
 
 /// Adds `amount` to one total of a read's text budget.
-fn charge(total: &mut usize, amount: usize, label: &str) -> PyResult<()> {
+fn charge(total: &mut usize, amount: usize, budget: &Budget) -> PyResult<()> {
     *total = total.saturating_add(amount);
-    if *total > MAX_ANNOTATION_TEXT_BYTES {
-        return Err(PdfError::new_err(format!(
-            "annotation {label} exceeds the {MAX_ANNOTATION_TEXT_BYTES}-byte safety limit"
-        )));
-    }
-    Ok(())
+    budget
+        .check(LimitCode::AnnotationTextSize, *total as u64)
+        .map_err(|e| limit_error(&e))
 }
 
-/// Returns a name as text, after charging its bytes.
+/// Returns a name as text, charging before allocating its decoded copy.
 fn charge_text(
     bytes: &[u8],
     (encoded, returned): &mut (usize, usize),
-    label: &str,
+    budget: &Budget,
 ) -> PyResult<String> {
-    charge(encoded, bytes.len(), &format!("encoded {label}"))?;
+    charge(encoded, bytes.len(), budget)?;
+    budget
+        .charge(LimitCode::MemorySize, bytes.len().saturating_mul(3) as u64)
+        .map_err(|e| limit_error(&e))?;
     let text = String::from_utf8_lossy(bytes).into_owned();
-    charge(returned, text.len(), &format!("returned {label}"))?;
+    charge(returned, text.len(), budget)?;
     Ok(text)
 }
 
-/// Decodes a text string, after charging its bytes.
+/// Decodes a text string within the operation's text and memory budgets.
 fn charge_decoded(
     bytes: &[u8],
     (encoded, returned): &mut (usize, usize),
-    key: &str,
+    budget: &Budget,
 ) -> PyResult<String> {
-    let label = if key == "Contents" {
-        "Contents text"
-    } else {
-        "annotation text"
-    };
-    charge(encoded, bytes.len(), &format!("encoded {label}"))?;
+    charge(encoded, bytes.len(), budget)?;
+    budget
+        .charge(LimitCode::MemorySize, bytes.len().saturating_mul(3) as u64)
+        .map_err(|e| limit_error(&e))?;
     let text = text_string(bytes);
-    charge(returned, text.len(), &format!("returned {label}"))?;
+    charge(returned, text.len(), budget)?;
     Ok(text)
 }
 
@@ -710,21 +781,23 @@ pub fn annotation_list(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<Record>>> {
-    let Some(annots) = Annots::read(document, number, generation)? else {
+    let (version, index_of_pages, budget) = page_index(document)?;
+    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
         return Ok(None);
     };
     py.detach(|| {
-        let mut records = Vec::new();
+        let mut records = BudgetVec::new(annots.budget);
         let mut budget = (0, 0);
         for (index, item) in annots.items.iter().enumerate() {
+            annots.budget.poll().map_err(|e| limit_error(&e))?;
             let Some((id, dict)) = annots.entry(item)? else {
                 continue;
             };
             if let Some(record) = annots.record(index, id, &dict, &mut budget)? {
-                records.push(record);
+                records.try_push(record).map_err(|e| limit_error(&e))?;
             }
         }
-        Ok(Some(records))
+        Ok(Some(records.into_vec()))
     })
 }
 
@@ -738,7 +811,8 @@ pub fn annotation_read(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<Record>> {
-    let Some(annots) = Annots::read(document, number, generation)? else {
+    let (version, index_of_pages, budget) = page_index(document)?;
+    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
         return Ok(None);
     };
     let (position, dict) = annots.find(index, id)?;
@@ -814,14 +888,14 @@ impl Edit {
             .iter()
             .map(|(text, _)| text.as_deref().map_or(0, str::len))
             .fold(subtype.len(), usize::saturating_add);
-        if size > MAX_ANNOTATION_TEXT_BYTES {
-            return Err(LimitError::new_err((
-                "annotation_input_size",
-                format!(
-                    "annotation subtype and texts input exceed the {MAX_ANNOTATION_TEXT_BYTES}-byte UTF-8 safety limit"
-                ),
-            )));
-        }
+        annots
+            .budget
+            .charge(LimitCode::AnnotationInputSize, size as u64)
+            .map_err(|e| limit_error(&e))?;
+        annots
+            .budget
+            .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
+            .map_err(|e| limit_error(&e))?;
         for (text, key) in texts {
             if let Some(text) = text {
                 dict.insert(Name::from(key), encode_text(text));
@@ -892,7 +966,7 @@ impl Edit {
         }
         if let Some(border) = &self.border {
             dict.remove("Border");
-            dict.insert(Name::from("BS"), border_style(border)?);
+            dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
         }
         if let Some(intensity) = self.clouds {
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
@@ -957,7 +1031,13 @@ impl Edit {
 
 /// Returns the `/BS` dictionary of a border: its width, `/S` style, and
 /// dash lengths, which a dashed border needs and no other takes.
-pub(crate) fn border_style((width, style, dashes): &(f64, String, Vec<f64>)) -> PyResult<Value> {
+pub(crate) fn border_style(
+    (width, style, dashes): &(f64, String, Vec<f64>),
+    budget: &Budget,
+) -> PyResult<Value> {
+    budget
+        .check(LimitCode::AnnotationDashCount, dashes.len() as u64)
+        .map_err(|e| limit_error(&e))?;
     if !(width.is_finite() && *width >= 0.0) {
         return Err(PdfError::new_err(
             "an annotation border width is finite and not negative",
@@ -1026,6 +1106,18 @@ fn point_entry(
     subtype: &str,
     lists: &[Vec<(f64, f64)>],
 ) -> PyResult<(&'static str, Value)> {
+    annots
+        .budget
+        .check(LimitCode::AnnotationPointCount, lists.len() as u64)
+        .map_err(|e| limit_error(&e))?;
+    let mut count = 0usize;
+    for points in lists {
+        count = count.saturating_add(points.len());
+        annots
+            .budget
+            .check(LimitCode::AnnotationPointCount, count as u64)
+            .map_err(|e| limit_error(&e))?;
+    }
     let fits = match subtype {
         "Line" => lists.len() == 1 && lists[0].len() == 2,
         "Polygon" | "PolyLine" => lists.len() == 1 && lists[0].len() >= 2,
@@ -1046,28 +1138,27 @@ fn point_entry(
             }
         )));
     }
-    if lists.iter().map(Vec::len).fold(0, usize::saturating_add) > MAX_ANNOTATION_POINTS {
-        return Err(LimitError::new_err((
-            "annotation_point_count",
-            format!("an annotation holds at most {MAX_ANNOTATION_POINTS} points"),
-        )));
-    }
-    let mut arrays = Vec::with_capacity(lists.len());
+    let mut arrays = BudgetVec::new(annots.budget);
     for points in lists {
-        let mut array = Vec::with_capacity(points.len() * 2);
+        let mut array = BudgetVec::new(annots.budget);
         for &(x, y) in points {
             if !(x.is_finite() && y.is_finite()) {
                 return Err(PdfError::new_err("annotation points are finite"));
             }
             let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
-            array.extend([number(x), number(y)]);
+            annots.budget.poll().map_err(|e| limit_error(&e))?;
+            array
+                .try_extend_from_slice(&[number(x), number(y)])
+                .map_err(|e| limit_error(&e))?;
         }
-        arrays.push(Value::Array(Array::from(array)));
+        arrays
+            .try_push(Value::Array(Array::from(array.into_vec())))
+            .map_err(|e| limit_error(&e))?;
     }
     Ok(match subtype {
-        "Line" => ("L", arrays.swap_remove(0)),
-        "Ink" => ("InkList", Value::Array(Array::from(arrays))),
-        _ => ("Vertices", arrays.swap_remove(0)),
+        "Line" => ("L", arrays.pop().expect("validated one list")),
+        "Ink" => ("InkList", Value::Array(Array::from(arrays.into_vec()))),
+        _ => ("Vertices", arrays.pop().expect("validated one list")),
     })
 }
 
@@ -1090,7 +1181,8 @@ pub fn annotation_geometry(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<Geometry>> {
-    let Some(annots) = Annots::read(document, number, generation)? else {
+    let (version, index_of_pages, budget) = page_index(document)?;
+    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
         return Ok(None);
     };
     let (_, dict) = annots.find(index, id)?;
@@ -1100,32 +1192,19 @@ pub fn annotation_geometry(
     }
     let reader = Reader {
         version: &annots.version,
-        budget: &annots.budget,
+        budget: annots.budget,
     };
-    if reader
-        .point_count(&dict, &subtype)
-        .map_err(|e| store_error(&e))?
-        > MAX_ANNOTATION_POINTS
-    {
-        return Err(LimitError::new_err((
-            "annotation_point_count",
-            format!("an annotation's geometry holds more than {MAX_ANNOTATION_POINTS} points"),
-        )));
-    }
-    let points = reader
+    let mut points = reader
         .point_lists(&dict, &subtype)
-        .map_err(|e| store_error(&e))?
-        .map(|lists| {
-            lists
-                .into_iter()
-                .map(|points| {
-                    points
-                        .into_iter()
-                        .map(|(x, y)| to_display(annots.crop, annots.rotation, x, y))
-                        .collect()
-                })
-                .collect()
-        });
+        .map_err(|e| store_error(&e))?;
+    if let Some(lists) = &mut points {
+        for list in lists {
+            for point in list {
+                budget.poll().map_err(|e| limit_error(&e))?;
+                *point = to_display(annots.crop, annots.rotation, point.0, point.1);
+            }
+        }
+    }
     let endings = if matches!(&*subtype, b"Line" | b"PolyLine") {
         let [start, end] = reader.line_endings(&dict).map_err(|e| store_error(&e))?;
         Some((LINE_ENDINGS[start], LINE_ENDINGS[end]))
@@ -1135,20 +1214,29 @@ pub fn annotation_geometry(
     Ok(Some((points, endings)))
 }
 
-/// Reads the annotation that a handle names for an edit, or returns `None`
-/// for a page that is gone.
-fn edited(
+/// Reads the draft only after acquiring its writer lock. A refused edit
+/// restores its own writes even when the caller catches it in a transaction.
+pub(crate) fn editing<T>(
+    py: Python<'_>,
     document: &_Document,
     number: u32,
     generation: u16,
-    index: u32,
-    id: (u32, u16),
-) -> PyResult<Option<(Annots, usize, Dict)>> {
-    let Some(annots) = Annots::edit(document, number, generation)? else {
-        return Ok(None);
-    };
-    let (position, dict) = annots.find(index, id)?;
-    Ok(Some((annots, position, dict)))
+    write: impl FnOnce(&Annots<'_>, &mut Transaction, &Budget) -> PyResult<T>,
+) -> PyResult<Option<T>> {
+    document.edit(py, |transaction, budget| {
+        let version = transaction.snapshot();
+        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
+            .map_err(|error| store_error(&error))?;
+        let Some(annots) = Annots::read(version, index, budget, number, generation)? else {
+            return Ok(None);
+        };
+        let savepoint = transaction.savepoint();
+        let result = write(&annots, transaction, budget);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result.map(Some)
+    })
 }
 
 /// Applies `edit` to the annotation that a handle names, marks its
@@ -1164,17 +1252,18 @@ pub fn annotation_edit(
     id: (u32, u16),
     edit: Edit,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some((annots, position, mut dict)) = edited(document, number, generation, index, id)?
-    else {
-        return Ok(None);
-    };
-    let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
-    edit.apply(&annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
-    annots
-        .write(py, document, position, true, dict, |_, _, _, _, _| {
-            Ok(false)
-        })
-        .map(Some)
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, _budget| {
+            let (position, mut dict) = annots.find(index, id)?;
+            let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
+            edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
+            annots.write(transaction, position, true, dict, |_, _, _, _, _| Ok(false))
+        },
+    )
 }
 
 /// Moves the popup of the annotation that a handle names to a display
@@ -1191,79 +1280,88 @@ pub fn annotation_popup(
     id: (u32, u16),
     area: Option<Rect>,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some((annots, position, dict)) = edited(document, number, generation, index, id)? else {
-        return Ok(None);
-    };
-    if let Some((x0, y0, x1, y1)) = area
-        && !([x0, y0, x1, y1].iter().all(|value| value.is_finite()) && x0 < x1 && y0 < y1)
-    {
-        return Err(PdfError::new_err(
-            "a popup rectangle is finite and not empty",
-        ));
-    }
-    let existing = match dict.get("Popup") {
-        Some(Value::Reference(popup)) => match annots.resolved(Some(&Value::Reference(*popup)))? {
-            Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
-            _ => None,
-        },
-        _ => None,
-    };
-    if area.is_some() && existing.is_none() && annots.items.len() >= MAX_PAGE_ANNOTATIONS {
-        return Err(PdfError::new_err(format!(
-            "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
-        )));
-    }
-    let area = area.map(|area| annots.to_pdf(area));
-    let page = annots.page().object();
-    let written = annots.write(
+    editing(
         py,
         document,
-        position,
-        false,
-        dict,
-        |transaction, reference, dict, items, budget| match (area, existing) {
-            (Some(area), Some((popup, mut popup_dict))) => {
-                popup_dict.insert(Name::from("Rect"), area);
-                transaction
-                    .write(popup.number(), &Value::Dict(popup_dict), budget)
-                    .map_err(|e| store_error(&e))?;
-                Ok(false)
+        number,
+        generation,
+        |annots, transaction, _budget| {
+            let (position, dict) = annots.find(index, id)?;
+            if let Some((x0, y0, x1, y1)) = area
+                && !([x0, y0, x1, y1].iter().all(|value| value.is_finite()) && x0 < x1 && y0 < y1)
+            {
+                return Err(PdfError::new_err(
+                    "a popup rectangle is finite and not empty",
+                ));
             }
-            (Some(area), None) => {
-                let popup = transaction.allocate().map_err(|e| store_error(&e))?;
-                let mut popup_dict = Dict::new();
-                popup_dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
-                popup_dict.insert(Name::from("Subtype"), Value::Name(Name::from("Popup")));
-                popup_dict.insert(Name::from("Rect"), area);
-                popup_dict.insert(Name::from("Parent"), Value::Reference(reference));
-                if let Some(page) = page {
-                    popup_dict.insert(Name::from("P"), Value::Reference(page));
+            let existing = match dict.get("Popup") {
+                Some(Value::Reference(popup)) => {
+                    match annots.resolved(Some(&Value::Reference(*popup)))? {
+                        Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
+                        _ => None,
+                    }
                 }
-                popup_dict.insert(Name::from("Open"), Value::Boolean(false));
-                transaction
-                    .write(popup.number(), &Value::Dict(popup_dict), budget)
-                    .map_err(|e| store_error(&e))?;
-                dict.insert(Name::from("Popup"), Value::Reference(popup));
-                items.push(Value::Reference(popup));
-                Ok(true)
+                _ => None,
+            };
+            if area.is_some() && existing.is_none() {
+                annots
+                    .budget
+                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                    .map_err(|e| limit_error(&e))?;
             }
-            (None, existing) => {
-                dict.remove("Popup");
-                let Some((popup, _)) = existing else {
-                    return Ok(false);
-                };
-                let kept = items
+            let area = area.map(|area| annots.to_pdf(area));
+            let page = annots.page().object();
+            let written = annots.write(
+                transaction,
+                position,
+                false,
+                dict,
+                |transaction, reference, dict, items, budget| match (area, existing) {
+                    (Some(area), Some((popup, mut popup_dict))) => {
+                        popup_dict.insert(Name::from("Rect"), area);
+                        transaction
+                            .write(popup.number(), &Value::Dict(popup_dict), budget)
+                            .map_err(|e| store_error(&e))?;
+                        Ok(false)
+                    }
+                    (Some(area), None) => {
+                        let popup = transaction.allocate().map_err(|e| store_error(&e))?;
+                        let mut popup_dict = Dict::new();
+                        popup_dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+                        popup_dict.insert(Name::from("Subtype"), Value::Name(Name::from("Popup")));
+                        popup_dict.insert(Name::from("Rect"), area);
+                        popup_dict.insert(Name::from("Parent"), Value::Reference(reference));
+                        if let Some(page) = page {
+                            popup_dict.insert(Name::from("P"), Value::Reference(page));
+                        }
+                        popup_dict.insert(Name::from("Open"), Value::Boolean(false));
+                        transaction
+                            .write(popup.number(), &Value::Dict(popup_dict), budget)
+                            .map_err(|e| store_error(&e))?;
+                        dict.insert(Name::from("Popup"), Value::Reference(popup));
+                        items.push(Value::Reference(popup));
+                        Ok(true)
+                    }
+                    (None, existing) => {
+                        dict.remove("Popup");
+                        let Some((popup, _)) = existing else {
+                            return Ok(false);
+                        };
+                        charge_copy(CopyPart::Array(items), budget)?;
+                        let kept = items
                     .iter()
                     .filter(|item| !matches!(item, Value::Reference(listed) if *listed == popup))
                     .cloned()
                     .collect::<Vec<_>>();
-                let changed = kept.len() != items.len();
-                *items = Array::from(kept);
-                Ok(changed)
-            }
+                        let changed = kept.len() != items.len();
+                        *items = Array::from(kept);
+                        Ok(changed)
+                    }
+                },
+            )?;
+            Ok(written)
         },
-    )?;
-    Ok(Some(written))
+    )
 }
 
 /// Opens or closes the popup of the annotation that a handle names, and a
@@ -1279,42 +1377,49 @@ pub fn annotation_open(
     id: (u32, u16),
     open: bool,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some((annots, position, dict)) = edited(document, number, generation, index, id)? else {
-        return Ok(None);
-    };
-    let popup = match dict.get("Popup") {
-        Some(Value::Reference(popup)) => match annots.resolved(Some(&Value::Reference(*popup)))? {
-            Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
-            _ => None,
-        },
-        _ => None,
-    };
-    let is_note = annots.name(&dict, "Subtype")?.as_deref() == Some(b"Text");
-    if popup.is_none() && !is_note {
-        return Err(PdfError::new_err(
-            "the annotation has no popup to open; set popup_rect first",
-        ));
-    }
-    let written = annots.write(
+    editing(
         py,
         document,
-        position,
-        false,
-        dict,
-        |transaction, _, dict, _, budget| {
-            if let Some((popup, mut popup_dict)) = popup {
-                popup_dict.insert(Name::from("Open"), Value::Boolean(open));
-                transaction
-                    .write(popup.number(), &Value::Dict(popup_dict), budget)
-                    .map_err(|e| store_error(&e))?;
+        number,
+        generation,
+        |annots, transaction, _budget| {
+            let (position, dict) = annots.find(index, id)?;
+            let popup = match dict.get("Popup") {
+                Some(Value::Reference(popup)) => {
+                    match annots.resolved(Some(&Value::Reference(*popup)))? {
+                        Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let is_note = annots.name(&dict, "Subtype")?.as_deref() == Some(b"Text");
+            if popup.is_none() && !is_note {
+                return Err(PdfError::new_err(
+                    "the annotation has no popup to open; set popup_rect first",
+                ));
             }
-            if is_note {
-                dict.insert(Name::from("Open"), Value::Boolean(open));
-            }
-            Ok(false)
+            let written = annots.write(
+                transaction,
+                position,
+                false,
+                dict,
+                |transaction, _, dict, _, budget| {
+                    if let Some((popup, mut popup_dict)) = popup {
+                        popup_dict.insert(Name::from("Open"), Value::Boolean(open));
+                        transaction
+                            .write(popup.number(), &Value::Dict(popup_dict), budget)
+                            .map_err(|e| store_error(&e))?;
+                    }
+                    if is_note {
+                        dict.insert(Name::from("Open"), Value::Boolean(open));
+                    }
+                    Ok(false)
+                },
+            )?;
+            Ok(written)
         },
-    )?;
-    Ok(Some(written))
+    )
 }
 
 /// Makes the annotation that a handle names a reply to `target`, another
@@ -1331,38 +1436,45 @@ pub fn annotation_reply(
     id: (u32, u16),
     target: Option<(u32, u16)>,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some((annots, position, dict)) = edited(document, number, generation, index, id)? else {
-        return Ok(None);
-    };
-    let target = match target {
-        Some(target) => {
-            let target = Reference::new(target.0, target.1);
-            let listed = annots
-                .items
-                .iter()
-                .any(|item| matches!(item, Value::Reference(listed) if *listed == target));
-            if !listed || (target.number(), target.generation()) == id {
-                return Err(PdfError::new_err(
-                    "an annotation replies to another annotation of its page",
-                ));
-            }
-            Some(target)
-        }
-        None => None,
-    };
-    let written = annots.write(py, document, position, false, dict, |_, _, dict, _, _| {
-        match target {
-            Some(target) => {
-                dict.insert(Name::from("IRT"), Value::Reference(target));
-            }
-            None => {
-                dict.remove("IRT");
-                dict.remove("RT");
-            }
-        }
-        Ok(false)
-    })?;
-    Ok(Some(written))
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, _budget| {
+            let (position, dict) = annots.find(index, id)?;
+            let target = match target {
+                Some(target) => {
+                    let target = Reference::new(target.0, target.1);
+                    let listed = annots
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, Value::Reference(listed) if *listed == target));
+                    if !listed || (target.number(), target.generation()) == id {
+                        return Err(PdfError::new_err(
+                            "an annotation replies to another annotation of its page",
+                        ));
+                    }
+                    Some(target)
+                }
+                None => None,
+            };
+            let written =
+                annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
+                    match target {
+                        Some(target) => {
+                            dict.insert(Name::from("IRT"), Value::Reference(target));
+                        }
+                        None => {
+                            dict.remove("IRT");
+                            dict.remove("RT");
+                        }
+                    }
+                    Ok(false)
+                })?;
+            Ok(written)
+        },
+    )
 }
 
 /// Takes the annotations that `handles` name, each `(index, object)`, and
@@ -1378,50 +1490,55 @@ pub fn annotation_remove(
     generation: u16,
     handles: Vec<(u32, (u32, u16))>,
 ) -> PyResult<bool> {
-    let Some(annots) = Annots::edit(document, number, generation)? else {
-        return Ok(false);
-    };
-    if handles.len() > MAX_PAGE_ANNOTATIONS {
-        return Err(PdfError::new_err(format!(
-            "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
-        )));
-    }
-    let mut positions = Vec::with_capacity(handles.len().saturating_mul(2));
-    for (index, id) in handles {
-        let (position, dict) = annots.find(index, id)?;
-        positions.push(position);
-        if let Some(Value::Reference(popup)) = dict.get("Popup") {
-            positions.extend(
-                annots
-                    .items
-                    .iter()
-                    .position(|item| matches!(item, Value::Reference(listed) if listed == popup)),
-            );
-        }
-    }
-    if positions.is_empty() {
-        return Ok(true);
-    }
-    // Remove from the end, so that each removal keeps the earlier positions.
-    positions.sort_unstable_by(|a, b| b.cmp(a));
-    positions.dedup();
-    let mut items = annots.items.clone();
-    document.edit(py, |transaction, budget| {
-        for item in items.iter_mut() {
-            if let Value::Dict(entry) = item {
-                let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-                transaction
-                    .write(reference.number(), &Value::Dict(entry.clone()), budget)
-                    .map_err(|e| store_error(&e))?;
-                *item = Value::Reference(reference);
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, budget| {
+            budget
+                .check(LimitCode::AnnotationCount, handles.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let mut positions = BudgetVec::new(budget);
+            for (index, id) in handles {
+                let (position, dict) = annots.find(index, id)?;
+                budget.poll().map_err(|e| limit_error(&e))?;
+                positions.try_push(position).map_err(|e| limit_error(&e))?;
+                if let Some(Value::Reference(popup)) = dict.get("Popup")
+                    && let Some(position) = annots.items.iter().position(
+                        |item| matches!(item, Value::Reference(listed) if listed == popup),
+                    )
+                {
+                    positions.try_push(position).map_err(|e| limit_error(&e))?;
+                }
             }
-        }
-        for position in positions {
-            items.remove(position);
-        }
-        annots.write_items(transaction, items, budget)
-    })?;
-    Ok(true)
+            if positions.is_empty() {
+                return Ok(());
+            }
+            // Remove from the end, so that each removal keeps the earlier positions.
+            let mut positions = positions.into_vec();
+            positions.sort_unstable_by(|a, b| b.cmp(a));
+            positions.dedup();
+            charge_copy(CopyPart::Array(&annots.items), budget)?;
+            let mut items = annots.items.clone();
+
+            for item in items.iter_mut() {
+                if let Value::Dict(entry) = item {
+                    charge_copy(CopyPart::Dict(entry), budget)?;
+                    let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+                    transaction
+                        .write(reference.number(), &Value::Dict(entry.clone()), budget)
+                        .map_err(|e| store_error(&e))?;
+                    *item = Value::Reference(reference);
+                }
+            }
+            for position in positions {
+                items.remove(position);
+            }
+            annots.write_items(transaction, items, budget)
+        },
+    )
+    .map(|page| page.is_some())
 }
 
 /// Returns the numbers of the annotations whose appearance the version that
@@ -1432,7 +1549,6 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
     let version = document.reading()?;
     Ok(version
         .stale()
-        .iter()
         .filter(|mark| mark.structure == Structure::Appearance)
         .map(|mark| mark.number)
         .collect())
@@ -1507,14 +1623,14 @@ impl Spec {
         .iter()
         .map(|text| text.len())
         .fold(0, usize::saturating_add);
-        if size > MAX_ANNOTATION_TEXT_BYTES {
-            return Err(LimitError::new_err((
-                "annotation_input_size",
-                format!(
-                    "annotation subtype, contents, and dates input exceed the {MAX_ANNOTATION_TEXT_BYTES}-byte UTF-8 safety limit"
-                ),
-            )));
-        }
+        annots
+            .budget
+            .charge(LimitCode::AnnotationInputSize, size as u64)
+            .map_err(|e| limit_error(&e))?;
+        annots
+            .budget
+            .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
+            .map_err(|e| limit_error(&e))?;
         let markup = is_text_markup(subtype.as_bytes());
         if self.rects.is_some() != markup {
             return Err(PdfError::new_err(format!(
@@ -1530,33 +1646,53 @@ impl Spec {
         dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
         dict.insert(Name::from("Subtype"), Value::Name(Name::from(subtype)));
         if let Some(rects) = &self.rects {
-            if rects.is_empty() || rects.len() > MAX_QUADS {
+            if rects.is_empty() {
                 return Err(PdfError::new_err(format!(
                     "text markup covers 1 to {MAX_QUADS} rectangles"
                 )));
             }
-            let mut quads = Vec::with_capacity(rects.len());
+            annots
+                .budget
+                .check(LimitCode::AnnotationQuadCount, rects.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let mut quads = BudgetVec::new(annots.budget);
+            quads
+                .try_reserve_exact(rects.len())
+                .map_err(|e| limit_error(&e))?;
             for &(x0, y0, x1, y1) in rects {
                 if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
                     return Err(PdfError::new_err("text markup rectangles are finite"));
                 }
                 // Display corners TL, TR, BL, BR, as /QuadPoints lists them.
-                quads.push(
-                    [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
-                        .map(|(x, y)| to_pdf(annots.crop, annots.rotation, x, y)),
-                );
+                quads
+                    .try_push(
+                        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+                            .map(|(x, y)| to_pdf(annots.crop, annots.rotation, x, y)),
+                    )
+                    .map_err(|e| limit_error(&e))?;
             }
-            if subtype == "Squiggly" && zigzag_points(&quads) > MAX_ANNOTATION_POINTS {
-                return Err(LimitError::new_err((
-                    "annotation_point_count",
-                    format!("a squiggly line of more than {MAX_ANNOTATION_POINTS} points"),
-                )));
+            if subtype == "Squiggly" {
+                annots
+                    .budget
+                    .check(
+                        LimitCode::AnnotationPointCount,
+                        zigzag_points(&quads) as u64,
+                    )
+                    .map_err(|e| limit_error(&e))?;
             }
-            let points = quads
-                .iter()
-                .flatten()
-                .flat_map(|&(x, y)| [number(x), number(y)]);
-            dict.insert(Name::from("QuadPoints"), Value::Array(points.collect()));
+            let mut points = BudgetVec::new(annots.budget);
+            points
+                .try_extend(
+                    quads
+                        .iter()
+                        .flatten()
+                        .flat_map(|&(x, y)| [number(x), number(y)]),
+                )
+                .map_err(|e| limit_error(&e))?;
+            dict.insert(
+                Name::from("QuadPoints"),
+                Value::Array(Array::from(points.into_vec())),
+            );
             let bounds = quads.iter().flatten().fold(
                 (
                     f64::INFINITY,
@@ -1639,7 +1775,7 @@ impl Spec {
             dict.insert(Name::from("IC"), rgb(color, "interior color")?);
         }
         if let Some(border) = &self.border {
-            dict.insert(Name::from("BS"), border_style(border)?);
+            dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
         }
         if let Some(intensity) = self.clouds {
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
@@ -1706,35 +1842,38 @@ pub fn annotation_add(
     generation: u16,
     spec: Spec,
 ) -> PyResult<Option<(u32, u16)>> {
-    let Some(annots) = Annots::edit(document, number, generation)? else {
-        return Ok(None);
-    };
-    if annots.items.len() >= MAX_PAGE_ANNOTATIONS {
-        return Err(PdfError::new_err(format!(
-            "page annotations exceed the {MAX_PAGE_ANNOTATIONS}-entry safety limit"
-        )));
-    }
-    if !matches!(
-        annots.resolved(annots.page().dict().get("Annots"))?,
-        None | Some(Value::Array(_))
-    ) {
-        return Err(PdfError::new_err("the page's /Annots is not an array"));
-    }
-    let mut dict = spec.dictionary(&annots)?;
-    if let Some(page) = annots.page().object() {
-        dict.insert(Name::from("P"), Value::Reference(page));
-    }
-    document.edit(py, |transaction, budget| {
-        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-        transaction
-            .write(reference.number(), &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))?;
-        let mut items = annots.items.clone();
-        items.push(Value::Reference(reference));
-        annots.write_items(transaction, items, budget)?;
-        transaction
-            .mark(Structure::Appearance, reference.number(), budget)
-            .map_err(|e| store_error(&e))?;
-        Ok(Some((reference.number(), reference.generation())))
-    })
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, budget| {
+            budget
+                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                .map_err(|e| limit_error(&e))?;
+            if !matches!(
+                annots.resolved(annots.page().dict().get("Annots"))?,
+                None | Some(Value::Array(_))
+            ) {
+                return Err(PdfError::new_err("the page's /Annots is not an array"));
+            }
+            let mut dict = spec.dictionary(annots)?;
+            if let Some(page) = annots.page().object() {
+                dict.insert(Name::from("P"), Value::Reference(page));
+            }
+
+            let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+            transaction
+                .write(reference.number(), &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))?;
+            charge_copy(CopyPart::Array(&annots.items), budget)?;
+            let mut items = annots.items.clone();
+            items.push(Value::Reference(reference));
+            annots.write_items(transaction, items, budget)?;
+            transaction
+                .mark(Structure::Appearance, reference.number(), budget)
+                .map_err(|e| store_error(&e))?;
+            Ok((reference.number(), reference.generation()))
+        },
+    )
 }

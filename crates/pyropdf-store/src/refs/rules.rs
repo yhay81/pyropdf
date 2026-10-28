@@ -8,12 +8,12 @@
 
 use crate::budget::{Budget, BudgetVec};
 use crate::memo::Reads;
-use crate::value::{Reference, Value};
+use crate::value::{Name, Reference, Value};
 use crate::version::table::Table;
 use crate::version::{Transaction, Version};
 use crate::{Error, Result};
 
-use super::{Found, References, Referrer, Role, Step, find_where};
+use super::{Found, References, Referrer, Role, Step, copy_for_edit, find_where};
 
 /// What a rule does with a reference to an object that leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,7 +51,7 @@ pub struct Edits<'b> {
     /// number that they name, so that each is read once: the position in
     /// `found` of each object's.
     held: Table<usize>,
-    found: BudgetVec<'b, BudgetVec<'b, Found>>,
+    found: BudgetVec<'b, BudgetVec<'b, (usize, Found)>>,
 }
 
 impl<'b> Edits<'b> {
@@ -77,14 +77,16 @@ impl<'b> Edits<'b> {
         holder: u32,
         number: u32,
     ) -> Result<BudgetVec<'b, Found>> {
+        self.budget.poll()?;
         let at = if let Some(&at) = self.held.get(holder) {
             at
         } else {
             let mut found = BudgetVec::new(self.budget);
             for each in find_where(reads, Referrer::Object(holder), |_| true)?.into_vec() {
-                found.try_push(each)?;
+                found.try_push((found.len(), each))?;
             }
-            found.sort_by_key(|found| found.reference.number());
+            found.sort_unstable_by_key(|(ordinal, found)| (found.reference.number(), *ordinal));
+            self.budget.poll()?;
             self.found.try_push(found)?;
             self.held
                 .insert(holder, self.found.len() - 1, self.budget)?;
@@ -92,12 +94,19 @@ impl<'b> Edits<'b> {
         };
         let mut out = BudgetVec::new(self.budget);
         if let Some(found) = self.found.get(at) {
-            let start = found.partition_point(|found| found.reference.number() < number);
-            for found in found[start..]
+            let start = found.partition_point(|(_, found)| found.reference.number() < number);
+            for (_, found) in found[start..]
                 .iter()
-                .take_while(|found| found.reference.number() == number)
+                .take_while(|(_, found)| found.reference.number() == number)
             {
-                out.try_push(found.clone())?;
+                self.budget.poll()?;
+                out.try_push(Found {
+                    path: copy_path(&found.path, self.budget)?
+                        .into_vec()
+                        .into_boxed_slice(),
+                    reference: found.reference,
+                    role: found.role,
+                })?;
             }
         }
         Ok(out)
@@ -118,9 +127,12 @@ impl<'b> Edits<'b> {
             Rule::Unresolve => self.push(referrer, &path[..path.len().min(1)], None),
             Rule::Retarget(to) => self.push(referrer, path, Some(to)),
             Rule::RemoveReferrer => {
+                let generation = reads.generation(referrer)?;
                 for &holder in index.referrers(referrer) {
                     for found in self.find(reads, holder, referrer)?.iter() {
-                        if is_annotation_entry(reads, holder, found)? {
+                        if generation == Some(found.reference.generation())
+                            && is_annotation_entry(reads, index, holder, found)?
+                        {
                             self.push(holder, &found.path, None)?;
                         }
                     }
@@ -165,8 +177,7 @@ impl<'b> Edits<'b> {
         if path.is_empty() {
             return Ok(());
         }
-        let mut owned = BudgetVec::new(self.budget);
-        owned.try_extend_from_slice(path)?;
+        let owned = copy_path(path, self.budget)?;
         self.edits.try_push(Edit {
             number,
             path: owned.into_vec().into_boxed_slice(),
@@ -179,24 +190,35 @@ impl<'b> Edits<'b> {
     /// deepest and last entries of a container removed first, so that the
     /// positions of the others hold.
     pub fn write(&mut self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
-        for (number, value) in self.values(transaction.version(), budget)?.into_vec() {
-            transaction.write(number, &value, budget)?;
-        }
-        Ok(())
+        let version = transaction.snapshot();
+        self.process(&version, budget, |number, value| {
+            transaction.write(number, &value, budget).map(|_| ())
+        })
     }
 
-    /// Returns, by number ascending, the values that the edits give the
-    /// objects of `version` that they change, as [`Edits::write`] would
-    /// write them, so that a reader of `version` can see the edits without
-    /// a transaction.
+    /// Computes edits without writing to the source version.
     pub fn values<'a>(
         &mut self,
         version: &Version,
         budget: &'a Budget,
     ) -> Result<BudgetVec<'a, (u32, Value)>> {
+        let mut out = BudgetVec::new(budget);
+        self.process(version, budget, |number, value| {
+            out.try_push((number, value))?;
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    fn process(
+        &mut self,
+        version: &Version,
+        budget: &Budget,
+        mut emit: impl FnMut(u32, Value) -> Result<()>,
+    ) -> Result<()> {
+        budget.poll()?;
         self.edits
             .sort_unstable_by(|a, b| a.number.cmp(&b.number).then_with(|| b.path.cmp(&a.path)));
-        let mut out = BudgetVec::new(budget);
         let mut at = 0;
         while at < self.edits.len() {
             budget.poll()?;
@@ -207,9 +229,10 @@ impl<'b> Edits<'b> {
                 }
                 continue;
             };
-            let mut value = (**object.value()).clone();
+            let mut value = copy_for_edit(object.value(), budget)?;
             let mut last: Option<&[Step]> = None;
             while at < self.edits.len() && self.edits[at].number == number {
+                budget.poll()?;
                 let edit = &self.edits[at];
                 let removals = removals(&self.edits[at..]);
                 if removals > 1 {
@@ -224,29 +247,73 @@ impl<'b> Edits<'b> {
                 last = Some(&edit.path);
                 at += 1;
             }
-            out.try_push((number, value))?;
+            emit(number, value)?;
         }
         self.edits.clear();
-        Ok(out)
+        self.held = Table::new();
+        self.found.clear();
+        budget.poll()?;
+        Ok(())
     }
+}
+
+/// Copies the steps and every owned key through fallible budgeted buffers.
+pub(super) fn copy_path<'b>(path: &[Step], budget: &'b Budget) -> Result<BudgetVec<'b, Step>> {
+    let mut owned = BudgetVec::new(budget);
+    for step in path {
+        let step = match step {
+            Step::Index(index) => Step::Index(*index),
+            Step::Key(key) => {
+                let mut bytes = BudgetVec::new(budget);
+                bytes.try_extend_from_slice(key.as_bytes())?;
+                Step::Key(Name::new(bytes.into_vec().into_boxed_slice()))
+            }
+        };
+        owned.try_push(step)?;
+    }
+    Ok(owned)
 }
 
 /// Returns whether `found`, a reference that `holder` holds, is an entry of
 /// a page's annotations: of its `/Annots`, or of an array object that a
 /// page names as them.
-fn is_annotation_entry(reads: &mut Reads<'_>, holder: u32, found: &Found) -> Result<bool> {
+fn is_annotation_entry(
+    reads: &mut Reads<'_>,
+    index: &References,
+    holder: u32,
+    found: &Found,
+) -> Result<bool> {
     if found.role == Some(Role::PageAnnotation) {
         return Ok(true);
     }
     if !matches!(*found.path, [Step::Index(_)]) {
         return Ok(false);
     }
-    Ok(match reads.get(holder) {
-        Ok(Some(object)) => matches!(**object.value(), Value::Array(_)),
-        Ok(None) => false,
-        Err(error) if error.limit().is_some() => return Err(error),
-        Err(_) => false,
-    })
+    annotation_array(reads, index, holder)
+}
+
+/// An array is annotations only when a page actually names it as /Annots.
+pub(super) fn annotation_array(
+    reads: &mut Reads<'_>,
+    index: &References,
+    number: u32,
+) -> Result<bool> {
+    for &owner in index.referrers(number) {
+        reads.budget().poll()?;
+        let Some(object) = reads.get(owner)? else {
+            continue;
+        };
+        let Value::Dict(dict) = &**object.value() else {
+            continue;
+        };
+        if matches!(dict.get("Type"), Some(Value::Name(name)) if name.as_bytes() == b"Page")
+            && matches!(dict.get("Annots"), Some(Value::Reference(reference))
+                if reference.number() == number && reads.generation(number)? == Some(reference.generation()))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Returns how many of the first `edits`, sorted as [`Edits::write`] sorts
@@ -365,99 +432,94 @@ pub fn unreferenced<'b>(
     candidates: &[u32],
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, u32>> {
-    let mut freed: Table<()> = Table::new();
+    budget.poll()?;
+    let mut forced: Table<()> = Table::new();
+    let mut reachable: Table<()> = Table::new();
+    let mut kept: Table<()> = Table::new();
     let mut out = BudgetVec::new(budget);
     let mut pending = BudgetVec::new(budget);
     for &seed in seeds {
-        if freed.get(seed).is_none() {
-            freed.insert(seed, (), budget)?;
-            out.try_push(seed)?;
-            pending.try_extend_from_slice(index.targets(seed))?;
+        if index.trailer().binary_search(&seed).is_err() {
+            forced.insert(seed, (), budget)?;
         }
+        pending.try_push(seed)?;
     }
-    // The objects that may go: each leaves once something outside the freed
-    // objects and those that may go refers to it, and those that it refers
-    // to are checked again.
-    let mut group: Table<Member> = Table::new();
-    let mut check = BudgetVec::new(budget);
+    pending.try_extend_from_slice(candidates)?;
+    // One level of referrers may leave with an orphaned structure element
+    // or annotation (for example, its otherwise unreferenced parent).
     for &candidate in candidates {
-        if freed.get(candidate).is_none() && group.get(candidate).is_none() {
-            group.insert(candidate, Member::Candidate, budget)?;
-            check.try_push(candidate)?;
-        }
+        pending.try_extend_from_slice(index.referrers(candidate))?;
     }
-    while let Some(number) = check.pop() {
+    // First collect the possible garbage, including strongly connected
+    // components. Reference counting alone cannot collect an orphan cycle.
+    while let Some(number) = pending.pop() {
         budget.poll()?;
-        let member = match group.get(number) {
-            Some(&Member::Stays) | None => continue,
-            Some(&member) => member,
-        };
-        let mut held = index.trailer().binary_search(&number).is_ok();
-        for &referrer in index.referrers(number) {
-            if freed.get(referrer).is_some() {
-                continue;
-            }
-            match group.get(referrer) {
-                Some(Member::Candidate | Member::Referrer) => {}
-                Some(Member::Stays) => held = true,
-                None if member == Member::Candidate => {
-                    group.insert(referrer, Member::Referrer, budget)?;
-                    check.try_push(referrer)?;
-                }
-                None => held = true,
-            }
+        if reachable.get(number).is_some() {
+            continue;
         }
-        if held {
-            group.insert(number, Member::Stays, budget)?;
-            for &target in index.targets(number) {
-                if matches!(
-                    group.get(target),
-                    Some(Member::Candidate | Member::Referrer)
-                ) {
-                    check.try_push(target)?;
-                }
-            }
+        // Trailer roots and their directly referenced objects are proven
+        // live. Keep them outside this closure: both the discovery walk
+        // and later liveness propagation must avoid their retained subtrees.
+        // Explicit removals still override a root's edge, except for the
+        // trailer roots themselves.
+        let root = |number| index.trailer().binary_search(&number).is_ok();
+        if root(number)
+            || (forced.get(number).is_none() && retained_by_root(index, number, budget)?)
+        {
+            continue;
         }
+        reachable.insert(number, (), budget)?;
+        pending.try_extend_from_slice(index.targets(number))?;
     }
-    for (number, member) in group.iter() {
-        if *member != Member::Stays {
-            freed.insert(number, (), budget)?;
-            out.try_push(number)?;
-            pending.try_extend_from_slice(index.targets(number))?;
+    // Incoming edges from outside the candidate closure keep an object,
+    // and everything it reaches, alive. Explicitly removed seeds leave.
+    for (number, ()) in reachable.iter() {
+        budget.poll()?;
+        if forced.get(number).is_none()
+            && (index.trailer().binary_search(&number).is_ok()
+                || index
+                    .referrers(number)
+                    .iter()
+                    .any(|referrer| reachable.get(*referrer).is_none()))
+        {
+            pending.try_push(number)?;
         }
     }
     while let Some(number) = pending.pop() {
         budget.poll()?;
-        if freed.get(number).is_some()
-            || index.trailer().binary_search(&number).is_ok()
-            || !index
-                .referrers(number)
-                .iter()
-                .all(|referrer| freed.get(*referrer).is_some())
+        if forced.get(number).is_some()
+            || kept.get(number).is_some()
+            || reachable.get(number).is_none()
         {
             continue;
         }
-        freed.insert(number, (), budget)?;
-        out.try_push(number)?;
+        kept.insert(number, (), budget)?;
         pending.try_extend_from_slice(index.targets(number))?;
     }
+    for (number, ()) in reachable.iter() {
+        budget.poll()?;
+        if kept.get(number).is_none() && index.trailer().binary_search(&number).is_err() {
+            out.try_push(number)?;
+        }
+    }
     out.sort_unstable();
+    budget.poll()?;
     Ok(out)
-}
-
-/// What an object is to the objects that [`unreferenced`] may free.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Member {
-    /// A candidate that may go.
-    Candidate,
-    /// An object that refers to a candidate, and may go with it.
-    Referrer,
-    /// An object that something outside refers to, which stays.
-    Stays,
 }
 
 /// Returns the refusal of an edit that would treat a page, a page tree
 /// node, or the catalog as navigation.
 pub(super) fn aliasing() -> Error {
     Error::malformed("navigation tree cannot alias a page or catalog dictionary")
+}
+
+/// Whether a trailer root still refers to this object after the edit.
+fn retained_by_root(index: &References, number: u32, budget: &Budget) -> Result<bool> {
+    for &owner in index.referrers(number) {
+        budget.poll()?;
+        if index.trailer().binary_search(&owner).is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

@@ -225,3 +225,50 @@ def test_a_widget_edit_is_one_step_and_a_refused_one_changes_nothing() -> None:
     customer.border_color = Color(0, 0, 1)
     doc.history.undo()
     assert (customer.background_color, customer.border_color) == (Color(1, 1, 0), None)
+
+
+def test_rotating_a_widget_draws_it_again() -> None:
+    doc = _form()
+    customer = doc.pages[0].widgets[0]
+    assert customer.rotation == 0
+
+    customer.rotation = -90
+
+    assert customer.rotation == 270
+    assert customer.obj["MK"]["R"] == 270
+    assert doc.form["customer"].widgets[0].rotation == 270
+    with pytest.raises(ValueError, match="multiple of 90"):
+        customer.rotation = 45
+    with pytest.raises(pyropdf.PdfError, match="multiple of 90"):
+        _edit(customer, {"rotation": 30})
+    _edit(customer, {"clear": ["rotation"]})
+    assert customer.rotation == 0
+
+
+def test_widget_edits_in_a_transaction_roll_back_together() -> None:
+    doc = _form()
+    customer = doc.pages[0].widgets[0]
+    before = doc.to_bytes()
+
+    def edit_and_fail() -> None:
+        with doc.transaction("styling"):
+            customer.background_color = Color(1, 1, 0)
+            customer.rect = (60, 72, 260, 92)
+            assert customer.background_color == Color(1, 1, 0)
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        edit_and_fail()
+    assert (customer.background_color, customer.rect) == (None, Rect(50, 72, 250, 92))
+    assert doc.to_bytes() == before
+
+
+def test_a_widget_edit_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.open(_build_form_pdf(), limits=pyropdf.DocumentLimits(cancellation=token))
+    customer = doc.pages[0].widgets[0]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        customer.border_color = Color(1, 0, 0)
+    assert caught.value.code == "cancelled"

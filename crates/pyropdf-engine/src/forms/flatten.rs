@@ -52,8 +52,13 @@ pub struct Plan {
 }
 
 /// Returns what flattening `selection` does with the `/Annots` entries
-/// `items` of a page, or `None` when it takes none of them off.
+/// `items` of a page, or `None` when it takes none of them off. The plan's
+/// lists, at most one entry of each per item, are charged up front.
 pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<Option<Plan>> {
+    let entry = 2 * size_of::<Value>() + size_of::<Reference>();
+    reader
+        .budget
+        .charge(LimitCode::MemorySize, (items.len() * entry) as u64)?;
     let mut plan = Plan {
         keep: Vec::new(),
         drawn: Vec::new(),
@@ -113,9 +118,11 @@ pub struct Missing {
 
 impl Missing {
     /// Returns the appearances of the objects that
-    /// [`synthesized`](crate::annotations::synthesized) returns.
-    #[must_use]
-    pub fn new(objects: Vec<(Reference, Value)>) -> Self {
+    /// [`synthesized`](crate::annotations::synthesized) returns, charging
+    /// the maps that hold them to `budget`.
+    pub fn new(objects: Vec<(Reference, Value)>, budget: &Budget) -> Result<Self> {
+        let entry = size_of::<(Reference, (Dict, Stream))>() + size_of::<(Reference, Reference)>();
+        budget.charge(LimitCode::MemorySize, (objects.len() * entry) as u64)?;
         let mut streams = HashMap::new();
         let mut dicts = Vec::new();
         for (reference, value) in objects {
@@ -140,10 +147,10 @@ impl Missing {
                 forms.insert(reference, (dict, form));
             }
         }
-        Self {
+        Ok(Self {
             forms,
             written: HashMap::new(),
-        }
+        })
     }
 
     /// Returns the form of annotation `annotation`, writing it the first
@@ -444,7 +451,7 @@ fn numbers<const N: usize>(
     };
     Ok(reader
         .numbers_of(value, N)?
-        .and_then(|numbers| <[f64; N]>::try_from(numbers).ok()))
+        .and_then(|numbers| <[f64; N]>::try_from(numbers.into_vec()).ok()))
 }
 
 /// Returns the matrix that maps the appearance form of `annotation`, whose

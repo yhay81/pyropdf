@@ -424,6 +424,18 @@ def test_field_value_rejects_excessive_text_atomically() -> None:
     assert doc.to_bytes() == before
 
 
+def test_fill_rejects_oversized_default_appearance_atomically() -> None:
+    appearance = "/Helv 12 Tf " * 400
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra=f"/DA ({appearance})"))
+    field = doc.form["customer"]
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        field.value = "changed"
+    assert caught.value.code == "form_default_appearance_size"
+    assert field.value == "initial"
+    assert doc.to_bytes() == before
+
+
 def test_filling_is_undone_as_one_edit() -> None:
     doc = pyropdf.open(_build_form_pdf())
     before = doc.to_bytes()
@@ -803,6 +815,60 @@ def test_form_button_state_update_refuses_over_limit_output_atomically() -> None
     with pytest.raises(pyropdf.PdfError, match="update exceeds the 8192-entry safety limit"):
         doc.form["button"].value = "S0"
     assert doc.to_bytes() == before
+
+
+def _text_and_button_pdf(states: str) -> bytes:
+    """Build a text field and a check box whose selected state has no appearance."""
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [6 0 R 8 0 R] >>",
+            4: "<< /Fields [5 0 R 8 0 R] /DA (/Helv 0 Tf 0 g) >>",
+            5: "<< /FT /Btn /T (button) /V /Off /Kids [6 0 R] >>",
+            6: (
+                "<< /Parent 5 0 R /Type /Annot /Subtype /Widget /Rect [10 10 30 30]"
+                f" /AS /Off /AP << /N << {states} >> >> >>"
+            ),
+            7: _form_stream(""),
+            8: "<< /FT /Tx /T (name) /Type /Annot /Subtype /Widget /Rect [10 50 90 70] >>",
+        }
+    )
+
+
+def test_filling_refuses_an_over_limit_other_button_atomically() -> None:
+    """A text fill refuses, rather than skips, another button whose states exceed a limit."""
+    states = " ".join(f"/S{index} 7 0 R" for index in range(8193))
+    doc = pyropdf.open(_text_and_button_pdf(states))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="8192-entry safety limit"):
+        doc.form["name"].value = "x"
+    assert doc.to_bytes() == before
+
+    states = " ".join(f"/S{index} 7 0 R" for index in range(8192))
+    doc = pyropdf.open(_text_and_button_pdf(states))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match="update exceeds the 8192-entry safety limit"):
+        doc.form["name"].value = "x"
+    assert doc.to_bytes() == before
+
+
+def test_filling_draws_the_states_of_another_button_within_limits() -> None:
+    doc = pyropdf.open(_text_and_button_pdf("/Yes 7 0 R"))
+    doc.form["name"].value = "x"
+    assert _values(doc) == {"button": "Off", "name": "x"}
+    assert b"/NeedAppearances false" in doc.to_bytes()
+
+
+def test_button_fill_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    states = " ".join(f"/S{index} 7 0 R" for index in range(64))
+    doc = pyropdf.open(_build_button_state_pdf(states), limits=pyropdf.DocumentLimits(cancellation=token))
+    box = doc.form["button"]
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        box.value = True
+    assert caught.value.code == "cancelled"
 
 
 def test_form_button_supports_indirect_kids_array() -> None:
@@ -1448,3 +1514,185 @@ def test_reading_every_field_costs_one_walk() -> None:
     doc.form["customer"].obj["V"] = pyropdf.String(b"edited")
     assert [field.value for field in fields][2] == "edited"
     assert _core.form_walk_counts(core)[1] == computations + 2
+
+
+def test_form_refuses_an_overlong_reference_chain_without_truncating_fields() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        4: "<< /FT /Tx /T 5 0 R >>",
+    }
+    objects.update({number: f"{number + 1} 0 R" for number in range(5, 39)})
+    objects[39] = "(name)"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    with pytest.raises(pyropdf.MalformedPdfError):
+        list(doc.form)
+
+
+def test_cached_form_lookup_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    data = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+            4: "<< /FT /Tx /T (name) >>",
+        }
+    )
+    doc = pyropdf.open(data, limits=pyropdf.DocumentLimits(cancellation=token))
+    assert doc.form["name"].name == "name"
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        _ = doc.form["name"]
+    assert caught.value.code == "cancelled"
+
+
+def test_read_only_transaction_reuses_the_existing_form_walk() -> None:
+    from pyropdf import _core  # noqa: PLC0415 - the memo counters are internal.
+
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R] >>",
+                4: "<< /FT /Tx /T (name) /Type /Annot /Subtype /Widget /Rect [1 1 5 5] >>",
+            }
+        )
+    )
+    assert list(doc.form) == ["name"]
+    core = doc._core()  # noqa: SLF001
+    computations = _core.form_walk_counts(core)[1]
+    with doc.transaction("Read without modifying"):
+        assert list(doc.form) == ["name"]
+        assert len(doc.pages[0].widgets) == 1
+        assert _core.form_walk_counts(core)[1] == computations
+
+
+def test_choice_options_inherit_through_a_parent_alias() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+                5: "<< /FT /Ch /T (choice) /Parent 6 0 R >>",
+                6: "7 0 R",
+                7: "<< /Opt [(first)] >>",
+            }
+        )
+    )
+    assert [(choice.value, choice.label) for choice in doc.form["choice"].choices] == [("first", "first")]
+
+
+@pytest.mark.parametrize("last_exists", [False, True])
+def test_choice_parent_limit_only_counts_existing_nodes(*, last_exists: bool) -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        5: "<< /FT /Ch /T (choice) /Parent 6 0 R >>",
+    }
+    objects.update({number: f"<< /Parent {number + 1} 0 R >>" for number in range(6, 69)})
+    if last_exists:
+        objects[69] = "<< /Opt [(too deep)] >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    if last_exists:
+        with pytest.raises(pyropdf.PdfError, match="64-level safety limit"):
+            _ = doc.form["choice"].choices
+    else:
+        assert doc.form["choice"].choices == ()
+
+
+def test_form_depth_limit_ignores_a_visited_intermediate_cycle() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        5: "<< /FT /Tx /T (name) /Kids [6 0 R] >>",
+    }
+    objects.update({number: f"<< /Kids [{number + 1} 0 R] >>" for number in range(6, 68)})
+    objects[68] = "<< /Kids [68 0 R] >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    assert list(doc.form) == ["name"]
+
+
+def test_fill_can_commit_before_a_later_whole_form_value_limit() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [6 0 R] >>",
+        4: "<< /Fields [5 0 R 6 0 R] /DA (/Helv 10 Tf 0 g) >>",
+        5: "<< /FT /Tx /T (large) /V 9 0 R >>",
+        6: "<< /FT /Tx /T (small) /V () /Subtype /Widget /Rect [0 0 50 20] /AP << /N 10 0 R >> >>",
+        9: "(" + "a" * (1024 * 1024 - 1) + ")",
+        10: "<< /Length 3 >>\nstream\nq Q\nendstream",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects))
+    field = doc.form["small"]
+    obj = field.obj
+    field.value = "ab"
+    assert obj["V"] == b"ab"
+    with pytest.raises(pyropdf.PdfError, match="field-value"):
+        list(doc.form)
+    doc.history.undo()
+    field.value = "c"
+    assert obj["V"] == b"c"
+
+
+def test_fill_rechecks_shared_appearances_after_external_edits_and_rollback() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [5 0 R 6 0 R] >>",
+        4: "<< /Fields [5 0 R 6 0 R] /DA (/Helv 10 Tf 0 g) >>",
+        5: "<< /FT /Tx /T (a) /V (old) /Subtype /Widget /Rect [0 0 50 20] /AP << /N 7 0 R >> >>",
+        6: "<< /FT /Tx /T (b) /V <FEFF4E2D> /Subtype /Widget /Rect [0 20 50 40] /AP << /N 7 0 R >> >>",
+        7: "<< /Length 3 >>\nstream\nq Q\nendstream",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects))
+    field = doc.form["a"]
+    field.value = "first"
+    assert not doc.form.need_appearances
+    doc.objects[7].write(b"", filter=None)
+    field.value = "second"
+    assert doc.form.need_appearances
+    doc.history.undo()
+    doc.history.undo()
+    field.value = "third"
+    assert not doc.form.need_appearances
+
+    def roll_back() -> None:
+        with doc.transaction("rollback"):
+            doc.objects[7].write(b"", filter=None)
+            field.value = "temporary"
+            assert doc.form.need_appearances
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with pytest.raises(RuntimeError):
+        roll_back()
+    assert not doc.form.need_appearances
+    field.value = "after rollback"
+    assert not doc.form.need_appearances
+    assert not pyropdf.open(doc.to_bytes()).form.need_appearances
+
+
+def test_cached_fill_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [5 0 R] >>",
+        4: "<< /Fields [5 0 R] /DA (/Helv 10 Tf 0 g) >>",
+        5: "<< /FT /Tx /T (field) /V (old) /Subtype /Widget /Rect [0 0 50 20] /AP << /N 6 0 R >> >>",
+        6: "<< /Length 3 >>\nstream\nq Q\nendstream",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects), limits=pyropdf.DocumentLimits(cancellation=token))
+    field = doc.form["field"]
+    field.value = "warm"
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        field.value = "cancelled"
+    assert caught.value.code == "cancelled"

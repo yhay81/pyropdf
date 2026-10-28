@@ -145,6 +145,9 @@ _MAX_CALCULATION_ORDER = 8192
 
 
 def _script_size(source: str) -> int:
+    """Return the UTF-8 size of ``source``, or its length when that alone exceeds the limit, without encoding it."""
+    if len(source) > _MAX_SCRIPT_SIZE:
+        return len(source)
     return len(source.encode("utf-8", "surrogatepass"))
 
 
@@ -245,26 +248,29 @@ class Scripts(MutableMapping[ScriptTrigger, str]):
         if not isinstance(source, str):
             msg = f"a script is a str: {type(source).__name__}"
             raise TypeError(msg)
-        if len(source) * 4 > _MAX_SCRIPT_SIZE and _script_size(source) > _MAX_SCRIPT_SIZE:
+        if _script_size(source) > _MAX_SCRIPT_SIZE:
             _refuse_script("a script's UTF-8 bytes")
         self._write(resolved, source)
 
     def __delitem__(self, trigger: ScriptTrigger) -> None:
         """Remove the script of ``trigger``; a trigger without one raises :class:`KeyError`."""
-        resolved = self._trigger(trigger)
-        if resolved not in self._items():
-            raise KeyError(trigger)
-        self._write(resolved, None)
+        self._write(self._trigger(trigger), None, required=True)
 
-    def _write(self, trigger: ScriptTrigger, source: str | None) -> None:
-        """Set or remove one script after admitting the mapping that it leaves."""
-        holder = self._holder()
-        items = _scripts(holder, self._triggers)
-        items.pop(trigger, None)
-        if source is not None and _script_size(source) + sum(map(_script_size, items.values())) > _MAX_SCRIPT_SIZE:
-            _refuse_script("scripts")
+    def _write(self, trigger: ScriptTrigger, source: str | None, *, required: bool = False) -> None:
+        """Set or remove one script after admitting the mapping that it leaves.
+
+        The holder and its scripts are read inside the transaction, so that
+        a concurrent edit cannot leave the check stale; ``required`` raises
+        :class:`KeyError` for a trigger without a script.
+        """
         action = None if source is None else {"S": Name("JavaScript"), "JS": source}
         with self._document.transaction():
+            holder = self._holder()
+            items = _scripts(holder, self._triggers)
+            if items.pop(trigger, None) is None and required:
+                raise KeyError(trigger)
+            if source is not None and _script_size(source) + sum(map(_script_size, items.values())) > _MAX_SCRIPT_SIZE:
+                _refuse_script("scripts")
             if trigger is ScriptTrigger.ACTIVATE:
                 _assign(holder, "A", action)
             else:
@@ -309,8 +315,9 @@ def _calculate(document: Document, field: Dictionary, *, listed: bool) -> None:
         msg = "AcroForm is not a dictionary"
         raise PdfError(msg)
     current = form.get("CO")
-    current = list(current) if isinstance(current, Array) else []
-    if len(current) > _MAX_CALCULATION_ORDER:
+    if not isinstance(current, Array):
+        current = []
+    elif len(current) > _MAX_CALCULATION_ORDER:
         msg = "AcroForm calculation order exceeds the field-tree edge limit"
         raise PdfError(msg)
     order = []
