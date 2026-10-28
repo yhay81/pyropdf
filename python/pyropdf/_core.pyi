@@ -50,6 +50,7 @@ class _Document:
         cross_reference_stream: bool | None = None,
         object_streams: bool = False,
         renumber: bool = False,
+        dedupe: bool = False,
         /,
     ) -> None: ...
     def to_bytes(
@@ -64,6 +65,7 @@ class _Document:
         cross_reference_stream: bool | None = None,
         object_streams: bool = False,
         renumber: bool = False,
+        dedupe: bool = False,
         /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from corpus import ASSETS, NAMES
-from test_attachments import build_pdf
+from test_attachments import build_pdf, build_raw_pdf
 from test_consistency import QPDF, qpdf_findings
 
 import pyropdf
@@ -464,3 +464,95 @@ def test_renumber_requires_a_full_save_and_a_bool() -> None:
         doc.to_bytes(incremental=True, renumber=True)
     with pytest.raises(TypeError, match="renumber must be a bool"):
         doc.to_bytes(renumber=1)  # ty: ignore[invalid-argument-type]
+
+
+def _identical_resources() -> bytes:
+    """Return two pages, each with an annotation, a layer, and a font, all identical."""
+    font = "<< /Type /Font /Subtype /TrueType /BaseFont /Same /FontDescriptor {} 0 R >>"
+    descriptor = "<< /Type /FontDescriptor /FontName /Same /Flags 32 /FontFile2 {} 0 R >>"
+    page = "<< /Type /Page /Parent 2 0 R /Annots [{}] /Resources << /Font << /F1 {} 0 R >> >> >>"
+    objects: dict[int, str | bytes] = {
+        1: "<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [7 0 R 8 0 R] /D << /ON [7 0 R 8 0 R] >> >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] >>",
+        3: page.format("5 0 R", 9),
+        4: page.format("6 0 R", 10),
+        5: "<< /Type /Annot /Subtype /Square /Rect [10 10 50 50] >>",
+        6: "<< /Type /Annot /Subtype /Square /Rect [10 10 50 50] >>",
+        7: "<< /Type /OCG /Name (Layer) >>",
+        8: "<< /Type /OCG /Name (Layer) >>",
+        9: font.format(11),
+        10: font.format(12),
+        11: descriptor.format(13),
+        12: descriptor.format(14),
+        13: "<< /Length 12 >>\nstream\nFONTPROGRAM!\nendstream",
+        14: "<< /Length 12 >>\nstream\nFONTPROGRAM!\nendstream",
+    }
+    return build_raw_pdf(objects)
+
+
+def test_dedupe_merges_identical_fonts_but_never_pages_annotations_or_layers() -> None:
+    doc = pyropdf.open(_identical_resources())
+    saved = doc.to_bytes(prune=True, dedupe=True, decompress=True)
+    # The font, its descriptor, and its font program merge as one chain.
+    assert saved.count(b"FONTPROGRAM!") == 1
+    assert saved.count(b"/BaseFont /Same") == saved.count(b"/Type /FontDescriptor") == 1
+    assert len(re.findall(rb"/Type\s*/Page\b(?!s)", saved)) == 2
+    assert len(re.findall(rb"/Subtype\s*/Square", saved)) == 2
+    assert len(re.findall(rb"/Type\s*/OCG", saved)) == 2
+    reopened = pyropdf.open(saved)
+    assert not reopened.is_repaired
+    assert len(reopened.pages) == 2
+    fonts = [page.obj["Resources"]["Font"]["F1"] for page in reopened.pages]
+    assert fonts[0].xref == fonts[1].xref == 9
+    assert [len(page.obj["Annots"]) for page in reopened.pages] == [1, 1]
+    # The merged numbers are free; renumbering closes them up.
+    assert sorted(reopened.objects) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13]
+    compact = pyropdf.open(doc.to_bytes(prune=True, dedupe=True, renumber=True))
+    assert sorted(compact.objects) == list(range(1, 12))
+    assert len(compact.pages) == 2
+    # The document in memory keeps its objects.
+    assert len(doc.objects) == 14
+
+
+def test_dedupe_keeps_objects_in_cycles_of_references() -> None:
+    objects: dict[int, str | bytes] = {
+        1: "<< /Type /Catalog /Pages 2 0 R /Ring [4 0 R 6 0 R] >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 200] >>",
+        3: "<< /Type /Page /Parent 2 0 R >>",
+        4: "<< /Other 5 0 R /Tag (RING) >>",
+        5: "<< /Other 4 0 R /Tag (RING) >>",
+        6: "<< /Other 7 0 R /Tag (RING) >>",
+        7: "<< /Other 6 0 R /Tag (RING) >>",
+        8: "<< /Shared (EQUAL) >>",
+        9: "<< /Shared (EQUAL) >>",
+    }
+    raw = build_raw_pdf(objects).replace(b"/Ring [4 0 R 6 0 R]", b"/Ring [4 0 R 6 0 R 8 0 R 9 0 R]", 1)
+    saved = pyropdf.open(raw).to_bytes(prune=True, dedupe=True, renumber=True)
+    assert saved.count(b"(RING)") == 4
+    assert saved.count(b"(EQUAL)") == 1
+    assert len(pyropdf.open(saved).pages) == 1
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_a_deduplicated_corpus_save_keeps_its_content_and_is_no_larger(name: str, tmp_path: Path) -> None:
+    source = pyropdf.open(ASSETS / name)
+    pruned = source.to_bytes(prune=True)
+    data = source.to_bytes(prune=True, dedupe=True)
+    assert len(data) <= len(pruned)
+    saved = pyropdf.open(data)
+    assert not saved.is_repaired
+    assert _content(saved) == _content(source)
+    path = tmp_path / "deduplicated.pdf"
+    path.write_bytes(data)
+    _require_qpdf()
+    assert qpdf_findings(path) - qpdf_findings(ASSETS / name) == set()
+
+
+def test_dedupe_requires_prune_a_full_save_and_a_bool() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    with pytest.raises(ValueError, match="dedupe=True needs prune=True"):
+        doc.to_bytes(dedupe=True)
+    with pytest.raises(ValueError, match="full save"):
+        doc.to_bytes(incremental=True, dedupe=True)
+    with pytest.raises(TypeError, match="dedupe must be a bool"):
+        doc.to_bytes(dedupe=1, prune=True)  # ty: ignore[invalid-argument-type]
