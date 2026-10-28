@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use rten::{Model, RunOptions, ThreadPool};
 use rten_tensor::Layout as _;
 use rten_tensor::NdTensor;
@@ -26,7 +26,6 @@ pub use self::layer::{Layer, LayerWord, MAX_LAYER_TEXT_BYTES, MAX_LAYER_WORDS, l
 const DETECTOR_THRESHOLD: f32 = 0.3;
 const DETECTOR_BOX_THRESHOLD: f32 = 0.5;
 const DETECTOR_UNCLIP_RATIO: f32 = 1.6;
-const MAX_DETECTIONS: usize = 4096;
 const RECOGNITION_HEIGHT: usize = 48;
 const MAX_RECOGNITION_WIDTH: usize = 4096;
 const COLUMN_GUTTER: f32 = 1.5;
@@ -65,6 +64,12 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+impl From<LimitExceeded> for Error {
+    fn from(refusal: LimitExceeded) -> Self {
+        Self::Limit(refusal)
+    }
+}
 
 impl From<String> for Error {
     fn from(message: String) -> Self {
@@ -125,7 +130,7 @@ impl Options {
     }
 }
 
-fn filled_vec<T: Clone>(length: usize, value: T, label: &str) -> Result<Vec<T>, String> {
+fn filled_vec<T: Clone>(length: usize, value: T, label: &str) -> Result<Vec<T>, Error> {
     let mut data = Vec::new();
     data.try_reserve_exact(length)
         .map_err(|error| format!("failed to allocate {label}: {error}"))?;
@@ -133,7 +138,7 @@ fn filled_vec<T: Clone>(length: usize, value: T, label: &str) -> Result<Vec<T>, 
     Ok(data)
 }
 
-fn try_push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), String> {
+fn try_push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
     if values.len() == values.capacity() {
         values
             .try_reserve(1)
@@ -143,7 +148,7 @@ fn try_push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), String>
     Ok(())
 }
 
-fn try_push_str(value: &mut String, text: &str, label: &str) -> Result<(), String> {
+fn try_push_str(value: &mut String, text: &str, label: &str) -> Result<(), Error> {
     value
         .try_reserve(text.len())
         .map_err(|error| format!("failed to grow {label}: {error}"))?;
@@ -156,7 +161,7 @@ fn rotate_rgba(
     width: usize,
     height: usize,
     rotation: usize,
-) -> Result<(Vec<u8>, usize, usize), String> {
+) -> Result<(Vec<u8>, usize, usize), Error> {
     let (rotated_width, rotated_height) = if rotation == 90 || rotation == 270 {
         (height, width)
     } else {
@@ -243,7 +248,7 @@ impl Candidate {
 
 /// Returns straight-alpha RGBA8 samples for samples in `layout`, in one
 /// fallible copy.
-fn expand_to_rgba(layout: Layout, data: &[u8]) -> Result<Vec<u8>, String> {
+fn expand_to_rgba(layout: Layout, data: &[u8]) -> Result<Vec<u8>, Error> {
     let channels = layout.channels();
     let pixels = data.len() / channels;
     let mut rgba = Vec::new();
@@ -401,8 +406,10 @@ impl Engine {
         pixels: &[u8],
         layout: Layout,
         options: &Options,
+        budget: &Budget,
     ) -> Result<Vec<OcrTuple>, Error> {
         options.validate()?;
+        budget.poll()?;
         let Layout { width, height, .. } = layout;
         let expected_len = width
             .checked_mul(height)
@@ -414,6 +421,14 @@ impl Engine {
                 pixels.len()
             )));
         }
+        if width == 0 || height == 0 {
+            return Ok(Vec::new());
+        }
+        let rgba_size = width
+            .checked_mul(height)
+            .and_then(|size| size.checked_mul(4))
+            .ok_or_else(|| LimitExceeded::new(LimitCode::OcrRasterSize))?;
+        budget.check(LimitCode::OcrRasterSize, rgba_size as u64)?;
         // Recognition reads RGBA; any other raster is expanded once.
         let pixels = if layout.channels() == 4 {
             Cow::Borrowed(pixels)
@@ -427,14 +442,15 @@ impl Engine {
             rotation,
         } = *options;
         if rotation == 0 {
-            return Ok(self.recognize_rgba(
+            return self.recognize_rgba(
                 &pixels,
                 width,
                 height,
                 tile_size,
                 overlap,
                 min_confidence,
-            )?);
+                budget,
+            );
         }
         let (rotated, rotated_width, rotated_height) =
             rotate_rgba(&pixels, width, height, rotation)?;
@@ -445,6 +461,7 @@ impl Engine {
             tile_size,
             overlap,
             min_confidence,
+            budget,
         )?;
         restore_result_coordinates(&mut results, width, height, rotation);
         Ok(results)
@@ -454,6 +471,7 @@ impl Engine {
         RunOptions::default().with_thread_pool(Some(Arc::clone(&self.thread_pool)))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn recognize_rgba(
         &self,
         pixels: &[u8],
@@ -462,7 +480,8 @@ impl Engine {
         tile_size: usize,
         overlap: usize,
         min_confidence: f32,
-    ) -> Result<Vec<OcrTuple>, String> {
+        budget: &Budget,
+    ) -> Result<Vec<OcrTuple>, Error> {
         let expected_len = width
             .checked_mul(height)
             .and_then(|value| value.checked_mul(4))
@@ -471,10 +490,13 @@ impl Engine {
             return Err(format!(
                 "OCR pixmap has {} bytes, expected {expected_len}",
                 pixels.len()
-            ));
+            )
+            .into());
         }
 
-        let mut candidates = self.detect_tiled(pixels, width, height, tile_size, overlap)?;
+        let mut candidates =
+            self.detect_tiled(pixels, width, height, tile_size, overlap, budget)?;
+        budget.poll()?;
         merge_candidates(&mut candidates)?;
         sort_candidates(&mut candidates)?;
 
@@ -483,7 +505,9 @@ impl Engine {
             .try_reserve_exact(candidates.len())
             .map_err(|error| format!("failed to allocate OCR results: {error}"))?;
         for candidate in candidates {
-            let (text, confidence) = self.recognize_candidate(pixels, width, height, candidate)?;
+            budget.poll()?;
+            let (text, confidence) =
+                self.recognize_candidate(pixels, width, height, candidate, budget)?;
             if !text.trim().is_empty() && confidence >= min_confidence {
                 try_push(
                     &mut results,
@@ -509,13 +533,15 @@ impl Engine {
         height: usize,
         tile_size: usize,
         overlap: usize,
-    ) -> Result<Vec<Candidate>, String> {
+        budget: &Budget,
+    ) -> Result<Vec<Candidate>, Error> {
         let x_starts = tile_starts(width, tile_size, overlap)?;
         let y_starts = tile_starts(height, tile_size, overlap)?;
         let mut candidates = Vec::new();
 
         for &tile_y in &y_starts {
             for &tile_x in &x_starts {
+                budget.poll()?;
                 let tile_width = tile_size.min(width - tile_x);
                 let tile_height = tile_size.min(height - tile_y);
                 let model_width = tile_width.next_multiple_of(32);
@@ -538,31 +564,34 @@ impl Engine {
                     .map_err(|_| {
                         "OCR detector output must be a four-dimensional f32 tensor".to_owned()
                     })?;
+                budget.poll()?;
                 let shape = probability.shape();
                 if shape[0] != 1 || shape[1] != 1 {
                     return Err(format!(
                         "OCR detector output must have shape [1, 1, height, width], got {shape:?}"
-                    ));
+                    )
+                    .into());
                 }
                 let probability_height = shape[2];
                 let probability_width = shape[3];
                 if probability_height == 0 || probability_width == 0 {
-                    return Err("OCR detector returned an empty probability map".to_owned());
+                    return Err("OCR detector returned an empty probability map"
+                        .to_owned()
+                        .into());
                 }
 
                 let scale_x = model_width as f32 / probability_width as f32;
                 let scale_y = model_height as f32 / probability_height as f32;
-                let remaining = MAX_DETECTIONS.saturating_sub(candidates.len());
-                if remaining == 0 {
-                    return Err(format!(
-                        "OCR detector exceeded the {MAX_DETECTIONS}-region safety limit"
+                if probability_width > model_width || probability_height > model_height {
+                    return Err(Error::Failed(
+                        "OCR detector probability map exceeds its input dimensions".to_owned(),
                     ));
                 }
                 let mut tile_candidates = connected_candidates(
                     &probability,
                     probability_width,
                     probability_height,
-                    remaining,
+                    budget,
                 )?;
                 for candidate in &mut tile_candidates {
                     candidate.x0 = (candidate.x0 * scale_x).min(tile_width as f32);
@@ -580,11 +609,6 @@ impl Engine {
                 {
                     try_push(&mut candidates, candidate, "OCR detector candidates")?;
                 }
-                if candidates.len() > MAX_DETECTIONS {
-                    return Err(format!(
-                        "OCR detector exceeded the {MAX_DETECTIONS}-region safety limit"
-                    ));
-                }
             }
         }
         Ok(candidates)
@@ -596,7 +620,8 @@ impl Engine {
         image_width: usize,
         image_height: usize,
         candidate: Candidate,
-    ) -> Result<(String, f32), String> {
+        budget: &Budget,
+    ) -> Result<(String, f32), Error> {
         let x0 = candidate.x0.floor().max(0.0) as usize;
         let y0 = candidate.y0.floor().max(0.0) as usize;
         let x1 = candidate.x1.ceil().min(image_width as f32) as usize;
@@ -630,18 +655,21 @@ impl Engine {
             .map_err(|_| {
                 "OCR recognizer output must be a three-dimensional f32 tensor".to_owned()
             })?;
+        budget.poll()?;
         let shape = output.shape();
         if shape[0] != 1 {
             return Err(format!(
                 "OCR recognizer output must have shape [1, sequence, classes], got {shape:?}"
-            ));
+            )
+            .into());
         }
         let expected_classes = self.characters.len() + 2;
         if shape[2] != expected_classes {
             return Err(format!(
                 "OCR recognizer produced {} classes but its dictionary requires {expected_classes}",
                 shape[2]
-            ));
+            )
+            .into());
         }
 
         let mut previous = usize::MAX;
@@ -649,6 +677,7 @@ impl Engine {
         let mut confidence_sum = 0.0;
         let mut confidence_count = 0usize;
         for step in 0..shape[1] {
+            budget.poll()?;
             let mut best_index = 0usize;
             let mut best_value = f32::NEG_INFINITY;
             for class_index in 0..shape[2] {
@@ -660,8 +689,10 @@ impl Engine {
             }
             if best_index != 0 && best_index != previous {
                 if best_index == self.characters.len() + 1 {
+                    budget.charge(LimitCode::OcrTextSize, 1)?;
                     try_push_str(&mut text, " ", "OCR recognized text")?;
                 } else if let Some(token) = self.characters.get(best_index - 1) {
+                    budget.charge(LimitCode::OcrTextSize, token.len() as u64)?;
                     try_push_str(&mut text, token, "OCR recognized text")?;
                 }
                 confidence_sum += best_value.clamp(0.0, 1.0);
@@ -678,7 +709,7 @@ impl Engine {
     }
 }
 
-fn tile_starts(length: usize, tile_size: usize, overlap: usize) -> Result<Vec<usize>, String> {
+fn tile_starts(length: usize, tile_size: usize, overlap: usize) -> Result<Vec<usize>, Error> {
     let mut starts = Vec::new();
     try_push(&mut starts, 0, "OCR tile starts")?;
     if length <= tile_size {
@@ -707,7 +738,7 @@ fn detector_input(
     tile_height: usize,
     model_width: usize,
     model_height: usize,
-) -> Result<NdTensor<f32, 4>, String> {
+) -> Result<NdTensor<f32, 4>, Error> {
     let plane = model_height
         .checked_mul(model_width)
         .ok_or_else(|| "OCR detector input dimensions overflowed".to_owned())?;
@@ -733,19 +764,25 @@ fn connected_candidates(
     probability: &NdTensor<f32, 4>,
     width: usize,
     height: usize,
-    limit: usize,
-) -> Result<Vec<Candidate>, String> {
+    budget: &Budget,
+) -> Result<Vec<Candidate>, Error> {
     let map_len = width
         .checked_mul(height)
         .ok_or_else(|| "OCR detector probability map dimensions overflowed".to_owned())?;
-    let mut mask = filled_vec(map_len, false, "OCR detector threshold mask")?;
+    let mut mask = BudgetVec::new(budget);
+    mask.try_reserve_exact(map_len)?;
+    mask.try_extend(std::iter::repeat_n(false, map_len))?;
     for y in 0..height {
+        budget.poll()?;
         for x in 0..width {
             mask[y * width + x] = probability[[0, 0, y, x]] > DETECTOR_THRESHOLD;
         }
     }
-    let mut dilated = filled_vec(map_len, false, "OCR detector dilation mask")?;
+    let mut dilated = BudgetVec::new(budget);
+    dilated.try_reserve_exact(map_len)?;
+    dilated.try_extend(std::iter::repeat_n(false, map_len))?;
     for y in 0..height {
+        budget.poll()?;
         for x in 0..width {
             let x0 = x.saturating_sub(1);
             let y0 = y.saturating_sub(1);
@@ -756,25 +793,25 @@ fn connected_candidates(
         }
     }
 
-    let mut seen = filled_vec(map_len, false, "OCR detector visited mask")?;
-    let mut stack = Vec::new();
+    let mut seen = BudgetVec::new(budget);
+    seen.try_reserve_exact(map_len)?;
+    seen.try_extend(std::iter::repeat_n(false, map_len))?;
+    let mut stack = BudgetVec::new(budget);
     let mut candidates = Vec::new();
     for start_y in 0..height {
+        budget.poll()?;
         for start_x in 0..width {
             let start = start_y * width + start_x;
             if !dilated[start] || seen[start] {
                 continue;
             }
             seen[start] = true;
-            try_push(
-                &mut stack,
-                (start_x, start_y),
-                "OCR connected-component stack",
-            )?;
+            stack.try_push((start_x, start_y))?;
             let (mut x0, mut y0, mut x1, mut y1) = (start_x, start_y, start_x, start_y);
             let mut probability_sum = 0.0;
             let mut probability_count = 0usize;
             while let Some((x, y)) = stack.pop() {
+                budget.poll()?;
                 x0 = x0.min(x);
                 y0 = y0.min(y);
                 x1 = x1.max(x);
@@ -784,15 +821,11 @@ fn connected_candidates(
                     probability_sum += value;
                     probability_count += 1;
                 }
-                let mut visit = |next_x: usize, next_y: usize| -> Result<(), String> {
+                let mut visit = |next_x: usize, next_y: usize| -> Result<(), Error> {
                     let index = next_y * width + next_x;
                     if dilated[index] && !seen[index] {
                         seen[index] = true;
-                        try_push(
-                            &mut stack,
-                            (next_x, next_y),
-                            "OCR connected-component stack",
-                        )?;
+                        stack.try_push((next_x, next_y))?;
                     }
                     Ok(())
                 };
@@ -821,11 +854,7 @@ fn connected_candidates(
             let perimeter = 2.0 * (component_width + component_height);
             let padding =
                 (component_width * component_height * DETECTOR_UNCLIP_RATIO / perimeter).max(1.0);
-            if candidates.len() >= limit {
-                return Err(format!(
-                    "OCR detector exceeded the {MAX_DETECTIONS}-region safety limit"
-                ));
-            }
+            budget.charge(LimitCode::OcrDetectionCount, 1)?;
             try_push(
                 &mut candidates,
                 Candidate {
@@ -842,7 +871,7 @@ fn connected_candidates(
     Ok(candidates)
 }
 
-fn merge_candidates(candidates: &mut Vec<Candidate>) -> Result<(), String> {
+fn merge_candidates(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
     fn root(parents: &mut [usize], mut index: usize) -> usize {
         let mut result = index;
         while parents[result] != result {
@@ -899,7 +928,7 @@ fn merge_candidates(candidates: &mut Vec<Candidate>) -> Result<(), String> {
     Ok(())
 }
 
-fn sort_top_to_bottom(candidates: &mut Vec<Candidate>) -> Result<(), String> {
+fn sort_top_to_bottom(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
     candidates.sort_unstable_by(|left, right| {
         ((left.y0 + left.y1) * 0.5)
             .total_cmp(&((right.y0 + right.y1) * 0.5))
@@ -949,7 +978,7 @@ fn sort_top_to_bottom(candidates: &mut Vec<Candidate>) -> Result<(), String> {
     Ok(())
 }
 
-fn typical_candidate_height(candidates: &[Candidate]) -> Result<f32, String> {
+fn typical_candidate_height(candidates: &[Candidate]) -> Result<f32, Error> {
     let mut heights = Vec::new();
     for candidate in candidates {
         let height = candidate.height();
@@ -964,7 +993,7 @@ fn typical_candidate_height(candidates: &[Candidate]) -> Result<f32, String> {
     Ok(heights[heights.len() / 2])
 }
 
-fn candidate_column_boundary(candidates: &[Candidate]) -> Result<Option<f32>, String> {
+fn candidate_column_boundary(candidates: &[Candidate]) -> Result<Option<f32>, Error> {
     if candidates.len() < MIN_COLUMN_LINES * 2 {
         return Ok(None);
     }
@@ -1073,7 +1102,7 @@ fn valid_candidate_column_split(candidates: &[Candidate], boundary: f32) -> bool
 fn order_candidate_columns(
     candidates: Vec<Candidate>,
     depth: usize,
-) -> Result<Vec<Candidate>, String> {
+) -> Result<Vec<Candidate>, Error> {
     if depth >= MAX_COLUMN_DEPTH {
         return Ok(candidates);
     }
@@ -1136,7 +1165,7 @@ fn order_candidate_columns(
     Ok(top)
 }
 
-fn sort_candidates(candidates: &mut Vec<Candidate>) -> Result<(), String> {
+fn sort_candidates(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
     sort_top_to_bottom(candidates)?;
     *candidates = order_candidate_columns(std::mem::take(candidates), 0)?;
     Ok(())
@@ -1152,7 +1181,7 @@ fn recognition_input(
     crop_width: usize,
     crop_height: usize,
     output_width: usize,
-) -> Result<NdTensor<f32, 4>, String> {
+) -> Result<NdTensor<f32, 4>, Error> {
     let plane = RECOGNITION_HEIGHT
         .checked_mul(output_width)
         .ok_or_else(|| "OCR recognizer input dimensions overflowed".to_owned())?;
@@ -1193,4 +1222,50 @@ fn recognition_input(
         [1, 3, RECOGNITION_HEIGHT, output_width],
         data,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn code(error: Error) -> LimitCode {
+        match error {
+            Error::Limit(refusal) => refusal.code(),
+            other => panic!("expected budget refusal, got {other}"),
+        }
+    }
+
+    #[test]
+    fn detection_limit_is_cumulative_and_allows_empty_tiles_at_the_boundary() {
+        let budget = Budget::default().with_limit(LimitCode::OcrDetectionCount, Some(1));
+        let text = NdTensor::from_data([1, 1, 8, 8], vec![1.0; 64]);
+        let blank = NdTensor::from_data([1, 1, 8, 8], vec![0.0; 64]);
+        assert_eq!(connected_candidates(&text, 8, 8, &budget).unwrap().len(), 1);
+        assert!(
+            connected_candidates(&blank, 8, 8, &budget)
+                .unwrap()
+                .is_empty()
+        );
+        let error = connected_candidates(&text, 8, 8, &budget).unwrap_err();
+        assert_eq!(code(error), LimitCode::OcrDetectionCount);
+        assert_eq!(budget.used(LimitCode::MemorySize), 0);
+    }
+
+    #[test]
+    fn detection_refuses_scratch_memory_before_allocating_it() {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(1));
+        let map = NdTensor::from_data([1, 1, 8, 8], vec![0.0; 64]);
+        let error = connected_candidates(&map, 8, 8, &budget).unwrap_err();
+        assert_eq!(code(error), LimitCode::MemorySize);
+        assert_eq!(budget.used(LimitCode::MemorySize), 0);
+    }
+
+    #[test]
+    fn detection_observes_an_expired_deadline() {
+        let budget = Budget::default().with_timeout(Duration::ZERO);
+        let map = NdTensor::from_data([1, 1, 8, 8], vec![0.0; 64]);
+        let error = connected_candidates(&map, 8, 8, &budget).unwrap_err();
+        assert_eq!(code(error), LimitCode::Deadline);
+    }
 }

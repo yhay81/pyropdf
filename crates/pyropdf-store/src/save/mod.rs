@@ -6,7 +6,12 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod merge;
+mod pack;
+mod prune;
 mod raw;
+mod recode;
+mod renumber;
 
 #[cfg(test)]
 mod tests;
@@ -14,14 +19,18 @@ mod tests;
 use std::fmt;
 use std::io::{self, Write};
 
+use md5::{Digest, Md5};
+
 use crate::budget::{Budget, BudgetVec, LimitCode};
-use crate::index::{Index, Location};
+use crate::index::{Index, Location, SectionKind};
 use crate::security::{self, Encryption, Handler};
-use crate::value::{Dict, PdfString, Reference, Value};
+use crate::value::{Array, Bytes, Dict, PdfString, Reference, Stream, Value};
 use crate::version::{Slot, Version};
-use crate::{Error as StoreError, LimitExceeded, write};
+use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
+use renumber::Renumbering;
 
 pub use base::FileBase;
+pub use recode::Streams;
 
 /// A save either reports a typed store error, preserves the sink's I/O
 /// error, or refuses a mode unsupported by this base.
@@ -44,10 +53,24 @@ pub enum Refusal {
     RepairedBase,
     /// Encryption is implemented separately in issue #28.
     Encryption,
+    /// Pruning, decompressing, another cross-reference form, object
+    /// streams, and renumbering rewrite the original file, whose objects,
+    /// numbers, and cross-reference form an incremental save keeps.
+    FullSaveOption,
 }
 
 /// The result of saving to an output writer.
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl Error {
+    /// Adds `context` to a store error, as [`StoreError::context`] does.
+    fn context(self, context: impl fmt::Display) -> Self {
+        match self {
+            Self::Store(error) => Self::Store(error.context(context)),
+            error => error,
+        }
+    }
+}
 
 impl From<StoreError> for Error {
     fn from(error: StoreError) -> Self {
@@ -76,6 +99,9 @@ impl fmt::Display for Error {
                 Refusal::NoOriginalFile => "incremental save requires an original PDF file",
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
+                Refusal::FullSaveOption => {
+                    "prune, decompress, a new cross-reference form, object streams, and renumbering require a full save"
+                }
             }),
         }
     }
@@ -98,17 +124,21 @@ struct Row {
     /// `None` is a free entry; in-use offsets are set while writing objects.
     offset: Option<u64>,
     next_free: u32,
+    /// The object stream that holds the object, and the object's index in
+    /// it, for an object that the save packs into one.
+    member: Option<(u32, u32)>,
 }
 
-/// Writes all live objects to `target`, with a classic cross-reference
-/// table and a new trailer. Object-stream members become ordinary objects;
+/// Writes all live objects to `target`, with cross-reference data in the
+/// form of the base's ([`CrossReference::Base`]) and a new trailer.
+/// Object-stream members become ordinary objects;
 /// their exact decoded member bytes are preserved. Existing object-stream
 /// and xref-stream objects also retain their bytes.
 ///
 /// Returns the number of bytes written. On an error, discard partial
 /// output. The caller owns flushing, closing, and atomic file replacement.
 pub fn full(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
-    full_with(version, target, budget, None)
+    full_with(version, target, budget, None, Options::default())
 }
 
 /// Writes all live objects to `target` as [`full`] does, encrypting every
@@ -120,16 +150,110 @@ pub fn full_encrypted(
     budget: &Budget,
     encryption: &Encryption,
 ) -> Result<u64> {
-    full_with(version, target, budget, Some(encryption))
+    full_with(
+        version,
+        target,
+        budget,
+        Some(encryption),
+        Options::default(),
+    )
 }
 
-fn full_with(
+/// What a full save changes beyond writing every live object (DESIGN.md
+/// section 4.4). Every option is off by default.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Writes only the objects that the trailer reaches, and the numbers of
+    /// the others as free entries.
+    pub prune: bool,
+    /// How the save writes the data of streams.
+    pub streams: Streams,
+    /// Renews the file identifier (ISO 32000-2 section 14.4) with the MD5
+    /// digest of what the save writes before it, so that the same version
+    /// saves to the same bytes. A save of a version with changes keeps the
+    /// first element of the trailer's `/ID` and writes the digest as the
+    /// second, and a save of a trailer without `/ID` writes it as both.
+    /// Otherwise, and without this option, `/ID` stays as the trailer has
+    /// it.
+    pub renew_id: bool,
+    /// The form of the cross-reference data.
+    pub cross_reference: CrossReference,
+    /// Packs into object streams of up to 100 members the objects that ISO
+    /// 32000-2 section 7.5.7 lets them hold: every object that is not a
+    /// stream, has generation 0, and is not the `/Encrypt` dictionary. The
+    /// save then writes a cross-reference stream, whatever
+    /// `cross_reference` asks. Object streams are compressed with Flate at
+    /// the level of [`Streams::Compress`], or 6, and with
+    /// [`Streams::Decompress`] not at all.
+    pub object_streams: bool,
+    /// Numbers the objects that the save writes 1, 2, 3, and so on in the
+    /// order of their numbers, with generation 0, and the objects that it
+    /// adds after them. Each reference follows its object, and a reference
+    /// to an object that the save does not write becomes null, as ISO
+    /// 32000-2 section 7.3.10 reads it. The cross-reference data then lists
+    /// no free number but 0.
+    pub renumber: bool,
+    /// Merges each set of identical objects into the one with the smallest
+    /// number, and points every reference to it. Pages, annotations, form
+    /// fields, structure elements, outline items, optional-content groups,
+    /// the objects that the trailer names, and objects in cycles of
+    /// references never merge. The merged objects' numbers become free
+    /// entries, unless the save renumbers.
+    pub dedupe: bool,
+}
+
+/// The form of the cross-reference data that a save writes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossReference {
+    /// The form of the section that the `startxref` of the base's file
+    /// names: a stream for a cross-reference stream, and a table for a
+    /// table, a hybrid-reference section, and a version without a file.
+    #[default]
+    Base,
+    /// A table and its trailer (ISO 32000-2 sections 7.5.4 and 7.5.5).
+    Table,
+    /// A cross-reference stream (section 7.5.8). A full save raises the
+    /// header's version to 1.5 when it is lower.
+    Stream,
+}
+
+impl CrossReference {
+    /// Returns whether a save of `version` writes a cross-reference stream.
+    fn stream(self, version: &Version) -> bool {
+        match self {
+            Self::Table => false,
+            Self::Stream => true,
+            Self::Base => version
+                .base()
+                .file()
+                .and_then(|file| file.revisions().last())
+                .and_then(|revision| revision.sections().first())
+                .is_some_and(|section| section.kind() == SectionKind::Stream),
+        }
+    }
+}
+
+/// The level of the Flate data of the streams that a save adds: a
+/// cross-reference stream and object streams.
+const fn level(streams: Streams) -> Option<u8> {
+    match streams {
+        Streams::Keep => Some(6),
+        Streams::Compress(level) => Some(level),
+        Streams::Decompress => None,
+    }
+}
+
+/// Writes the objects of `version` to `target` as [`full`] does, encrypted
+/// with `encryption` as [`full_encrypted`] does when it is given, and
+/// changed as `options` asks.
+pub fn full_with(
     version: &Version,
     target: &mut dyn Write,
     budget: &Budget,
     encryption: Option<&Encryption>,
+    options: Options,
 ) -> Result<u64> {
-    let mode = Mode::of(version, encryption, budget)?;
+    let mut mode = Mode::of(version, encryption, budget)?;
     budget.poll()?;
     let mut numbers = BudgetVec::new(budget);
     version.base().numbers(&mut numbers)?;
@@ -154,13 +278,58 @@ fn full_with(
         rows.try_push(row(version, number))?;
     }
     drop(numbers);
-    let mut out = Output::new(target, budget, 0);
+    if options.prune {
+        let encrypt = !matches!(mode, Mode::New { .. });
+        prune::free_unreachable(version, &mut rows, encrypt, budget)?;
+    }
+    let plan = if options.dedupe {
+        merge::plan(version, &rows, budget)?
+    } else {
+        merge::Plan {
+            merged: BudgetVec::new(budget),
+            referrers: BudgetVec::new(budget),
+        }
+    };
+    for &(number, _) in plan.merged.iter() {
+        budget.poll()?;
+        if let Ok(at) = rows.binary_search_by_key(&number, |row| row.number) {
+            rows[at].offset = None;
+            // A free entry names the generation that the number takes next.
+            rows[at].generation = rows[at].generation.saturating_add(1);
+        }
+    }
+    let renumbering = if options.renumber || options.dedupe {
+        let renumbering = Renumbering::new(&rows, plan, options.renumber, budget)?;
+        if options.renumber
+            && let Mode::New { number, .. } = &mut mode
+        {
+            // The new /Encrypt dictionary follows the renumbered objects.
+            let mut after = renumbering.len() + 1;
+            *number = pack::take(&mut after)?;
+        }
+        Some(renumbering)
+    } else {
+        None
+    };
+    let renumbering = renumbering.as_ref();
+    let stream = options.object_streams || options.cross_reference.stream(version);
+    let mut out = Output::new(target, budget, 0, options.renew_id);
     let header = version
         .base()
         .file()
         .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
-        .filter(|bytes| bytes.starts_with(b"%PDF-"));
-    out.bytes(header.unwrap_or(b"%PDF-1.7"))?;
+        .filter(|bytes| bytes.starts_with(b"%PDF-"))
+        .unwrap_or(b"%PDF-1.7");
+    // Cross-reference streams and object streams are of PDF 1.5.
+    if stream
+        && header
+            .get(5..)
+            .is_some_and(|number| number < b"1.5".as_slice())
+    {
+        out.bytes(b"%PDF-1.5")?;
+    } else {
+        out.bytes(header)?;
+    }
     out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
     // A copied linearization dictionary must not remain the first object:
     // its old offsets describe the base, not this full save. Write the
@@ -169,14 +338,43 @@ fn full_with(
         Some(Value::Reference(root)) => Some(root.number()),
         _ => None,
     };
+    // The objects that the save adds take the numbers after the version's,
+    // or the renumbered objects', and the new /Encrypt's.
+    let size = match renumbering {
+        Some(renumbering) if options.renumber => renumbering.len() + 1,
+        _ => version.next_number(),
+    };
+    let next = size + u64::from(matches!(mode, Mode::New { .. }));
+    let level = level(options.streams);
+    let mut packer = options
+        .object_streams
+        .then(|| pack::Packer::new(budget, level, next));
+    let encrypt = match version.trailer().get("Encrypt") {
+        Some(Value::Reference(encrypt)) => Some(encrypt.number()),
+        _ => None,
+    };
+    let mut place = |row: &mut Row, out: &mut Output<'_>| {
+        let rewriting = renumbering.filter(|renumbering| renumbering.rewrites(row.number));
+        if let Some(packer) = &mut packer
+            && packer.pack(version, row, encrypt, rewriting, out, &mode)?
+        {
+            return Ok(());
+        }
+        write_object(version, row, rewriting, out, &mode, options.streams)
+    };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
-        write_object(version, &mut rows[at], &mut out, &mode)?;
+        place(&mut rows[at], &mut out)?;
     }
     for row in &mut rows {
         if Some(row.number) != root {
-            write_object(version, row, &mut out, &mode)?;
+            place(row, &mut out)?;
         }
+    }
+    if let Some(renumbering) = renumbering
+        && options.renumber
+    {
+        rows = renumbering.rows(&rows, budget)?;
     }
     if let Mode::New { dict, number, .. } = &mode {
         // The new /Encrypt dictionary, which is never encrypted, takes the
@@ -186,6 +384,7 @@ fn full_with(
             generation: 0,
             offset: Some(out.offset()?),
             next_free: 0,
+            member: None,
         };
         let mut bytes = BudgetVec::new(budget);
         write::value(&mut bytes, &Value::Dict(dict.clone()))?;
@@ -195,18 +394,62 @@ fn full_with(
         row.next_free = 0;
         rows.try_push(row)?;
     }
-    finish(version, &mut rows, None, &mut out, &mode)?;
+    let mut next = next;
+    if let Some(mut packer) = packer {
+        packer.flush(&mut out, &mode)?;
+        let (after, streams) = packer.finish();
+        next = after;
+        rows.try_extend(streams.into_vec())?;
+    }
+    let ending = Ending {
+        previous: None,
+        size,
+        renew_id: options.renew_id,
+        stream: if stream {
+            Some((pack::take(&mut next)?, level))
+        } else {
+            None
+        },
+        // The trailer names no merged object, as such objects never merge.
+        renumbering: renumbering.filter(|_| options.renumber),
+    };
+    finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
 }
 
 /// Writes the original file byte for byte, followed only by the latest
-/// slots written since the base and a cross-reference section with /Prev.
+/// slots written since the base and a cross-reference section with /Prev,
+/// a table or a stream as the base's last section is.
 /// No-edit saves (including undo to the initial version) reproduce the
 /// original bytes exactly and do not parse any objects.
 ///
 /// Refuses repaired and non-file bases and encryption before writing.
 /// Returns bytes written; partial output after an error must be discarded.
 pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -> Result<u64> {
+    incremental_with(version, target, budget, Options::default())
+}
+
+/// Writes the update as [`incremental`] does, compressing the streams that
+/// it writes as [`Streams::Compress`] asks and renewing `/ID` as
+/// [`Options::renew_id`] asks. The objects of the original file, their
+/// numbers, and the form of its cross-reference data stay as they are, so
+/// `prune`, [`Streams::Decompress`], another [`CrossReference`],
+/// `object_streams`, and `renumber` are refused before writing.
+pub fn incremental_with(
+    version: &Version,
+    target: &mut dyn Write,
+    budget: &Budget,
+    options: Options,
+) -> Result<u64> {
+    if options.prune
+        || options.streams == Streams::Decompress
+        || options.cross_reference != CrossReference::Base
+        || options.object_streams
+        || options.renumber
+        || options.dedupe
+    {
+        return Err(Error::Refused(Refusal::FullSaveOption));
+    }
     let file = version
         .base()
         .file()
@@ -221,7 +464,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
         .and_then(|r| r.sections().first())
         .and_then(|s| s.offset().checked_sub(file.origin()))
         .ok_or_else(|| StoreError::malformed("the original file has no cross-reference offset"))?;
-    let mut out = Output::new(target, budget, file.origin() as u64);
+    let mut out = Output::new(target, budget, file.origin() as u64, options.renew_id);
     out.bytes(file.bytes())?;
     if !version.has_changes() {
         return Ok(out.position);
@@ -235,7 +478,7 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
         budget.poll()?;
         if number != 0 {
             let mut row = row(version, number);
-            write_object(version, &mut row, &mut out, &mode)?;
+            write_object(version, &mut row, None, &mut out, &mode, options.streams)?;
             rows.try_push(row)?;
         }
     }
@@ -245,7 +488,20 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
     {
         rows.try_push(row(version, last))?;
     }
-    finish(version, &mut rows, Some(previous as u64), &mut out, &mode)?;
+    // The update keeps the form of the base's cross-reference data.
+    let mut next = version.next_number();
+    let ending = Ending {
+        previous: Some(previous as u64),
+        size: version.next_number(),
+        renew_id: options.renew_id,
+        stream: if CrossReference::Base.stream(version) {
+            Some((pack::take(&mut next)?, level(options.streams)))
+        } else {
+            None
+        },
+        renumbering: None,
+    };
+    finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
 }
 
@@ -327,6 +583,7 @@ fn row(version: &Version, number: u32) -> Row {
             generation: u16::MAX,
             offset: None,
             next_free: 0,
+            member: None,
         };
     }
     let generation = version.generation(number);
@@ -339,18 +596,40 @@ fn row(version: &Version, number: u32) -> Row {
         generation: generation.unwrap_or(free),
         offset: generation.map(|_| 0),
         next_free: 0,
+        member: None,
     }
 }
 
 fn write_object(
     version: &Version,
     row: &mut Row,
+    renumbering: Option<&Renumbering<'_>>,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
+    streams: Streams,
 ) -> Result<()> {
     out.budget.poll()?;
     if row.offset.is_none() {
         return Ok(());
+    }
+    if let Some(renumbering) = renumbering {
+        let target = renumbering.number(row.number)?;
+        let reference = Reference::new(row.number, row.generation);
+        let plain = renumbering.bytes(version, reference, streams, out.budget)?;
+        // The keys of an encrypted object derive from its new reference.
+        let bytes = match (mode, mode.handler()) {
+            (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
+            (_, Some(handler)) => security::encrypt_bytes(handler, target, &plain, out.budget)?,
+            (_, None) => plain,
+        };
+        row.offset = Some(out.offset()?);
+        out.display(format_args!(
+            "{} {} obj\n",
+            target.number(),
+            target.generation()
+        ))?;
+        out.bytes(&bytes)?;
+        return out.bytes(b"\nendobj\n");
     }
     let reference = Reference::new(row.number, row.generation);
     let budget = out.budget;
@@ -378,18 +657,73 @@ fn write_object(
             security::encrypt_bytes(handler, reference, &plain, budget).map_err(context)?
         }
     };
+    let bytes = match recode(version, reference, streams, mode, budget).map_err(|error| {
+        error.context(format!("saving object {} {}", row.number, row.generation))
+    })? {
+        // A compressed stream replaces the data only where it is shorter.
+        Some(recoded) if streams == Streams::Decompress || recoded.len() < bytes.len() => recoded,
+        _ => bytes,
+    };
     row.offset = Some(out.offset()?);
     out.display(format_args!("{} {} obj\n", row.number, row.generation))?;
     out.bytes(&bytes)?;
     out.bytes(b"\nendobj\n")
 }
 
+/// Returns the bytes of the object `reference` with its stream recoded as
+/// `streams` asks, encrypted as `mode` encrypts, or `None` when it stays as
+/// it is. An object that does not parse stays as it is.
+fn recode(
+    version: &Version,
+    reference: Reference,
+    streams: Streams,
+    mode: &Mode<'_>,
+    budget: &Budget,
+) -> Result<Option<Bytes>> {
+    if streams == Streams::Keep {
+        return Ok(None);
+    }
+    let object = match version.get(reference.number(), budget) {
+        Ok(Some(object)) => object,
+        Ok(None) => return Ok(None),
+        Err(error) if matches!(error.kind(), ErrorKind::Malformed(_)) => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let Some(value) = recode::recoded(object.value(), streams, budget)? else {
+        return Ok(None);
+    };
+    let mut plain = BudgetVec::new(budget);
+    write::value(&mut plain, &value)?;
+    let plain = Bytes::new(plain.into_vec());
+    Ok(Some(match mode.handler() {
+        Some(handler) => security::encrypt_bytes(handler, reference, &plain, budget)?,
+        None => plain,
+    }))
+}
+
+/// How [`finish`] ends a save.
+struct Ending<'a> {
+    /// The offset of the base's last cross-reference section, for an
+    /// incremental save.
+    previous: Option<u64>,
+    /// The `/Size` of a save that writes no cross-reference stream and no
+    /// new encryption.
+    size: u64,
+    renew_id: bool,
+    /// The object number of the cross-reference stream and the Flate level
+    /// of its data, for a save that writes one instead of a table.
+    stream: Option<(u32, Option<u8>)>,
+    /// The renumbering of a save that renumbers, which the trailer's
+    /// references follow.
+    renumbering: Option<&'a Renumbering<'a>>,
+}
+
 fn finish(
     version: &Version,
     rows: &mut [Row],
-    previous: Option<u64>,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
+    ending: Ending<'_>,
 ) -> Result<()> {
     let mut next_free = 0;
     for row in rows.iter_mut().rev() {
@@ -402,6 +736,58 @@ fn finish(
         }
     }
     let xref = out.offset()?;
+    let mut size = match mode {
+        Mode::New { number, .. } => u64::from(*number) + 1,
+        _ => ending.size,
+    };
+    if let Some((number, _)) = ending.stream {
+        // The cross-reference stream takes the last number.
+        size = u64::from(number) + 1;
+        out.display(format_args!("{number} 0 obj\n<< /Type /XRef"))?;
+    } else {
+        table(rows, out)?;
+        out.bytes(b"trailer\n<<")?;
+    }
+    if let Mode::New { id, number, .. } = mode {
+        trailer(
+            version.trailer(),
+            out,
+            &[b"Encrypt", b"ID"],
+            ending.renumbering,
+        )?;
+        out.display(format_args!(" /Encrypt {number} 0 R"))?;
+        // The keys derive from the first element.
+        let first = Value::String(PdfString::hexadecimal(id.as_slice()));
+        let second = out.digest().unwrap_or_else(|| first.clone());
+        identifier(out, first, second)?;
+    } else if let Some(first) = renews(version, ending.renew_id) {
+        trailer(version.trailer(), out, &[b"ID"], ending.renumbering)?;
+        let digest = out.digest().expect("a renewing save keeps a digest");
+        identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
+    } else {
+        trailer(version.trailer(), out, &[], ending.renumbering)?;
+    }
+    out.display(format_args!(" /Size {size}"))?;
+    if let Some(previous) = ending.previous {
+        out.display(format_args!(" /Prev {previous}"))?;
+    }
+    if let Some((number, level)) = ending.stream {
+        let own = Row {
+            number,
+            generation: 0,
+            offset: Some(xref),
+            next_free: 0,
+            member: None,
+        };
+        stream(rows, &own, level, out)?;
+        out.display(format_args!("startxref\n{xref}\n%%EOF\n"))
+    } else {
+        out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+    }
+}
+
+/// Writes the rows as a classic cross-reference table.
+fn table(rows: &[Row], out: &mut Output<'_>) -> Result<()> {
     out.bytes(b"xref\n")?;
     let mut start = 0;
     while start < rows.len() {
@@ -429,34 +815,104 @@ fn finish(
         }
         start = end;
     }
-    out.bytes(b"trailer\n<<")?;
-    let mut size = version.next_number();
-    if let Mode::New { id, number, .. } = mode {
-        trailer(version.trailer(), out, &[b"Encrypt", b"ID"])?;
-        out.display(format_args!(" /Encrypt {number} 0 R /ID ["))?;
-        for _ in 0..2 {
-            let mut bytes = BudgetVec::new(out.budget);
-            write::value(
-                &mut bytes,
-                &Value::String(PdfString::hexadecimal(id.as_slice())),
-            )?;
-            out.bytes(&bytes)?;
+    Ok(())
+}
+
+/// Returns the fields of the cross-reference stream entry of `row` (ISO
+/// 32000-2 Table 18): its type, then the two fields that the type defines.
+fn fields(row: &Row) -> (u8, u64, u64) {
+    match (row.offset, row.member) {
+        (_, Some((stream, index))) => (2, u64::from(stream), u64::from(index)),
+        (Some(offset), None) => (1, offset, u64::from(row.generation)),
+        (None, _) => (0, u64::from(row.next_free), u64::from(row.generation)),
+    }
+}
+
+/// Writes the entries of a cross-reference stream that describe its data,
+/// which lists the rows and then the stream itself, `own`, and then the
+/// data and the end of the stream's object.
+fn stream(rows: &[Row], own: &Row, level: Option<u8>, out: &mut Output<'_>) -> Result<()> {
+    let budget = out.budget;
+    let all = || rows.iter().chain(std::iter::once(own));
+    // The fewest bytes that hold each field, and at least one.
+    let width = |max: u64| (u64::BITS - max.leading_zeros()).div_ceil(8).max(1) as usize;
+    let (second, third) = all().fold((0, 0), |(second, third), row| {
+        let (_, two, three) = fields(row);
+        (two.max(second), three.max(third))
+    });
+    let (second, third) = (width(second), width(third));
+    let mut data = BudgetVec::new(budget);
+    for row in all() {
+        budget.poll()?;
+        let (kind, two, three) = fields(row);
+        data.try_push(kind)?;
+        data.try_extend_from_slice(&two.to_be_bytes()[8 - second..])?;
+        data.try_extend_from_slice(&three.to_be_bytes()[8 - third..])?;
+    }
+    let data = Stream::new(Dict::new(), Bytes::new(data.into_vec()));
+    let compressed = match level {
+        Some(level) => recode::compressed(&data, level, budget)?,
+        None => None,
+    };
+    out.display(format_args!(" /W [1 {second} {third}] /Index ["))?;
+    let mut run: Option<(u32, u32)> = None;
+    for row in all() {
+        budget.poll()?;
+        match &mut run {
+            Some((start, count)) if start.checked_add(*count) == Some(row.number) => *count += 1,
+            _ => {
+                if let Some((start, count)) = run {
+                    out.display(format_args!(" {start} {count}"))?;
+                }
+                run = Some((row.number, 1));
+            }
         }
-        out.bytes(b"]")?;
-        size = u64::from(*number) + 1;
-    } else {
-        trailer(version.trailer(), out, &[])?;
     }
-    out.display(format_args!(" /Size {size}"))?;
-    if let Some(previous) = previous {
-        out.display(format_args!(" /Prev {previous}"))?;
+    if let Some((start, count)) = run {
+        out.display(format_args!(" {start} {count}"))?;
     }
-    out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+    let data = compressed.as_ref().unwrap_or(&data).data();
+    out.display(format_args!(" ] /Length {}", data.len()))?;
+    if compressed.is_some() {
+        out.bytes(b" /Filter /FlateDecode")?;
+    }
+    out.bytes(b" >>\nstream\n")?;
+    out.bytes(data)?;
+    out.bytes(b"\nendstream\nendobj\n")
 }
 
 /// Write each original trailer entry separately, avoiding a clone of its
 /// input-derived dictionary. Layout-only entries are rebuilt for this save.
-fn trailer(dict: &Dict, out: &mut Output<'_>, replaced: &[&[u8]]) -> Result<()> {
+/// Returns whether a save that `renew_id` asks for writes a new `/ID` for
+/// `version`, and then the first element that it keeps, if any: the
+/// trailer's for a version with changes, none for a trailer without one.
+fn renews(version: &Version, renew_id: bool) -> Option<Option<Value>> {
+    if !renew_id {
+        return None;
+    }
+    match version.trailer().get("ID") {
+        Some(Value::Array(id)) => match id.get(0) {
+            Some(first @ Value::String(_)) => version.has_changes().then(|| Some(first.clone())),
+            _ => Some(None),
+        },
+        _ => Some(None),
+    }
+}
+
+/// Writes the trailer entry `/ID [first second]`.
+fn identifier(out: &mut Output<'_>, first: Value, second: Value) -> Result<()> {
+    let mut bytes = BudgetVec::new(out.budget);
+    write::value(&mut bytes, &Value::Array(Array::from(vec![first, second])))?;
+    out.bytes(b" /ID ")?;
+    out.bytes(&bytes)
+}
+
+fn trailer(
+    dict: &Dict,
+    out: &mut Output<'_>,
+    replaced: &[&[u8]],
+    renumbering: Option<&Renumbering<'_>>,
+) -> Result<()> {
     for (name, value) in dict.iter() {
         if replaced.contains(&name.as_bytes()) {
             continue;
@@ -483,7 +939,10 @@ fn trailer(dict: &Dict, out: &mut Output<'_>, replaced: &[&[u8]]) -> Result<()> 
             .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)?;
         write::value(&mut bytes, &Value::Name(name.clone()))?;
         bytes.try_push(b' ')?;
-        write::value(&mut bytes, value)?;
+        match renumbering {
+            Some(renumbering) => write::value(&mut bytes, &renumbering.copy(value, out.budget)?)?,
+            None => write::value(&mut bytes, value)?,
+        }
         out.bytes(b" ")?;
         out.bytes(&bytes)?;
     }
@@ -497,16 +956,26 @@ struct Output<'a> {
     budget: &'a Budget,
     position: u64,
     origin: u64,
+    /// The digest of the bytes written, for a save that renews `/ID`.
+    digest: Option<Md5>,
 }
 
 impl<'a> Output<'a> {
-    fn new(target: &'a mut dyn Write, budget: &'a Budget, origin: u64) -> Self {
+    fn new(target: &'a mut dyn Write, budget: &'a Budget, origin: u64, digest: bool) -> Self {
         Self {
             target,
             budget,
             position: 0,
             origin,
+            digest: digest.then(Md5::new),
         }
+    }
+
+    /// Returns the digest of the bytes written so far as a string, for a
+    /// save that renews `/ID`.
+    fn digest(&self) -> Option<Value> {
+        let digest = self.digest.clone()?.finalize();
+        Some(Value::String(PdfString::hexadecimal(digest.as_slice())))
     }
 
     fn offset(&self) -> Result<u64> {
@@ -521,6 +990,9 @@ impl<'a> Output<'a> {
             self.budget
                 .charge(LimitCode::PdfOutputSize, chunk.len() as u64)?;
             self.target.write_all(chunk)?;
+            if let Some(digest) = &mut self.digest {
+                digest.update(chunk);
+            }
             self.position = self
                 .position
                 .checked_add(chunk.len() as u64)

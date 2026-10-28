@@ -4,6 +4,7 @@
 use pyo3::prelude::*;
 
 mod annotations;
+mod buffers;
 mod cancel;
 mod changes;
 mod check;
@@ -42,6 +43,8 @@ mod _core {
         annotation_open, annotation_popup, annotation_read, annotation_remove, annotation_reply,
     };
     #[pymodule_export]
+    use super::buffers::{CharColumns, Column};
+    #[pymodule_export]
     use super::cancel::CancellationToken;
     #[pymodule_export]
     use super::changes::changes;
@@ -50,7 +53,9 @@ mod _core {
     #[pymodule_export]
     use super::content::{page_operations, parse_operations};
     #[pymodule_export]
-    use super::document::{_Document, page_result_counts, probe, web_limits};
+    use super::document::{
+        _Document, document_header_version, page_result_counts, probe, web_limits,
+    };
     #[pymodule_export]
     use super::errors::{
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,
@@ -91,7 +96,7 @@ mod _core {
     use super::security::{security_state, unlock};
     #[pymodule_export]
     use super::text::{
-        document_text, page_layout, page_search, page_selection, page_tables, page_text,
+        document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,
     };
 
     #[cfg(windows)]
