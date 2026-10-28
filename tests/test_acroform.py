@@ -1511,3 +1511,22 @@ def test_fill_rechecks_shared_appearances_after_external_edits_and_rollback() ->
     field.value = "after rollback"
     assert not doc.form.need_appearances
     assert not pyropdf.open(doc.to_bytes()).form.need_appearances
+
+
+def test_cached_fill_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 4 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [5 0 R] >>",
+        4: "<< /Fields [5 0 R] /DA (/Helv 10 Tf 0 g) >>",
+        5: "<< /FT /Tx /T (field) /V (old) /Subtype /Widget /Rect [0 0 50 20] /AP << /N 6 0 R >> >>",
+        6: "<< /Length 3 >>\nstream\nq Q\nendstream",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects), limits=pyropdf.DocumentLimits(cancellation=token))
+    field = doc.form["field"]
+    field.value = "warm"
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        field.value = "cancelled"
+    assert caught.value.code == "cancelled"
