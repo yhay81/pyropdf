@@ -1,7 +1,7 @@
 """Differential parity with frozen pylopdf (DESIGN.md §12 and §13).
 
 ``evidence/phase1-parity`` holds the harness and its report. The report test
-runs everywhere. The subset test redumps two corpus documents with both
+runs everywhere. The subset test redumps three corpus documents with both
 engines, and runs only when ``PYROPDF_PARITY_PYLOPDF`` names the Python of an
 environment with frozen pylopdf, such as the ``target/parity/pylopdf-env``
 that ``run.py`` builds.
@@ -9,6 +9,7 @@ that ``run.py`` builds.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -26,7 +27,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 HARNESS = Path(__file__).resolve().parents[1] / "evidence" / "phase1-parity"
-SUBSET = ("pdf20-simple.pdf", "pdfium-type3.pdf")
+SUBSET = ("pdf20-simple.pdf", "pdfium-type3.pdf", "pdfium-links-highlights-annots.pdf")
 
 
 def _compare() -> ModuleType:
@@ -44,7 +45,11 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
 
     assert sorted(results) == sorted(name.removesuffix(".pdf") for name in NAMES)
     compare = _compare()
+    metadata = json.loads((HARNESS / "metadata.json").read_text())
+    assert metadata["pylopdf_commit"] == "ebb01d3c4c742046e8ce7fd72957cd15a2933321"
+    assert set(metadata["corpus_sha256"]) == set(NAMES)
     for name in NAMES:
+        assert metadata["corpus_sha256"][name] == hashlib.sha256((ASSETS / name).read_bytes()).hexdigest()
         result = results[Path(name).stem]
         with pyropdf.open(ASSETS / name) as document:
             assert len(result["pages"]) == len(document.pages)
@@ -60,6 +65,7 @@ def test_a_subset_redumps_with_only_the_documented_differences(tmp_path: Path) -
     for engine, python in (("pylopdf", os.environ["PYROPDF_PARITY_PYLOPDF"]), ("pyropdf", sys.executable)):
         subprocess.run([python, HARNESS / "dump.py", engine, tmp_path / engine, *files], check=True)  # noqa: S603
     compare = _compare()
+    # Fixing a documented difference to equality is an improvement.
     expected = json.loads((HARNESS / "results.json").read_text())
 
     for name in SUBSET:
@@ -67,11 +73,14 @@ def test_a_subset_redumps_with_only_the_documented_differences(tmp_path: Path) -
         first, second = (
             json.loads((tmp_path / engine / f"{stem}.json").read_text()) for engine in ("pylopdf", "pyropdf")
         )
+        assert len(first["pages"]) == len(expected[stem]["pages"])
+        kind, _ = compare._compare("markdown", first["markdown"], second["markdown"], (Path(), Path()))  # noqa: SLF001
+        assert kind in {"equal", expected[stem]["markdown"][0]}
         for index, (a, b) in enumerate(zip(first["pages"], second["pages"], strict=True)):
             rasters = (tmp_path / "pylopdf" / f"{stem}-{index}.rgb", tmp_path / "pyropdf" / f"{stem}-{index}.rgb")
             for output in compare.OUTPUTS:
                 kind, _ = compare._compare(output, a[output], b[output], rasters)  # noqa: SLF001
-                assert kind == expected[stem]["pages"][index][output][0], (stem, index, output)
+                assert kind in {"equal", expected[stem]["pages"][index][output][0]}, (stem, index, output)
 
 
 @pytest.mark.parametrize(("value", "expected"), [(255, "pixels"), (1, "close"), (0, "equal")])

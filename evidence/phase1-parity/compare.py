@@ -168,6 +168,7 @@ def _report(results: dict[str, Any], causes: list[dict[str, Any]]) -> str:
         "| --- | --- | " + " | ".join("---" for _ in OUTPUTS) + " | --- |",
     ]
     unexplained: list[str] = []
+    close_rasters: list[str] = []
     for document, result in results.items():
         cells = []
         for output in OUTPUTS:
@@ -177,6 +178,12 @@ def _report(results: dict[str, Any], causes: list[dict[str, Any]]) -> str:
                 kind, detail = page[output]
                 if kind in ("equal", "close"):
                     same += 1
+                    if kind == "close":
+                        cause = _cause(causes, document, output, kind, index)
+                        note = f"- {document} page {index + 1}: {cause or 'unexplained'} {json.dumps(detail)}"
+                        close_rasters.append(note)
+                        if cause is None:
+                            unexplained.append(note)
                     continue
                 cause = _cause(causes, document, output, kind, index)
                 if cause is None:
@@ -194,6 +201,8 @@ def _report(results: dict[str, Any], causes: list[dict[str, Any]]) -> str:
             if whole == "unexplained":
                 unexplained.append(f"- {document}, document markdown: {kind} {json.dumps(detail, ensure_ascii=False)}")
         lines.append(f"| {document} | {len(result['pages'])} | " + " | ".join(cells) + f" | {whole} |")
+    lines += ["", "## Rendering within tolerance", ""]
+    lines += close_rasters or ["None."]
     lines += ["", "## Unexplained differences", ""]
     lines += unexplained or ["None."]
     return "\n".join(lines) + "\n"

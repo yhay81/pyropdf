@@ -69,6 +69,7 @@ def main() -> None:
     _run(python, HERE / "dump.py", "pylopdf", TARGET / "pylopdf", *CORPUS)
     _run("uv", "run", "--no-sync", "python", HERE / "dump.py", "pyropdf", TARGET / "pyropdf", *CORPUS)
     _run("uv", "run", "--no-sync", "python", HERE / "compare.py", TARGET / "pylopdf", TARGET / "pyropdf")
+    _run("uv", "run", "--no-sync", "python", HERE / "diagnose_annotations.py", python)
     metadata = {
         "generated_at": datetime.now(UTC).isoformat(),
         "pylopdf_commit": FREEZE,
