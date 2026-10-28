@@ -451,13 +451,15 @@ fn pruned<'b>(
     }
     refs::prune_structure(&mut reads, &references, &removed, imported, &mut edits)
         .map_err(store)?;
+    // Computing the values removes the tree nodes that they empty.
+    let values = edits.values(version, budget).map_err(store)?;
     for &number in edits.orphans() {
         if let Some(generation) = version.generation(number) {
             out.try_push((Reference::new(number, generation), None))
                 .map_err(limit)?;
         }
     }
-    for (number, value) in edits.values(version, budget).map_err(store)?.into_vec() {
+    for (number, value) in values.into_vec() {
         if let Some(generation) = version.generation(number) {
             out.try_push((Reference::new(number, generation), Some(value)))
                 .map_err(limit)?;

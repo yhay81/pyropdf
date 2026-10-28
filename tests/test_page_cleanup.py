@@ -203,7 +203,9 @@ def test_a_name_tree_past_the_limit_away_from_the_removed_page_stays(operation: 
     doc = pyropdf.open(_linked_pdf(excessive_names=True))
     _remove(doc, operation, 1, [0, 2])
     assert len(doc.pages) == 2
-    assert len(doc.catalog["Names"]["Dests"]["Kids"][1]["Names"]) == 2 * 65_537
+    # The leaf that named only the removed page left the tree.
+    assert len(doc.catalog["Names"]["Dests"]["Kids"]) == 1
+    assert len(doc.catalog["Names"]["Dests"]["Kids"][0]["Names"]) == 2 * 65_537
     with pytest.raises(pyropdf.LimitError, match="over the limit of 65536") as caught:
         list(doc.pages[0].links)
     assert caught.value.code == "named_destination_count"

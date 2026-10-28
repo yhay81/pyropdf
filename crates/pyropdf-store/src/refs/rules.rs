@@ -8,7 +8,7 @@
 
 use crate::budget::{Budget, BudgetVec};
 use crate::memo::Reads;
-use crate::value::{Name, Reference, Value};
+use crate::value::{Dict, Name, Reference, Value};
 use crate::version::table::Table;
 use crate::version::{Transaction, Version};
 use crate::{Error, Result};
@@ -52,6 +52,10 @@ pub struct Edits<'b> {
     /// `found` of each object's.
     held: Table<usize>,
     found: BudgetVec<'b, BudgetVec<'b, (usize, Found)>>,
+    /// The edges, child then parent, from each name or number tree node
+    /// whose pairs the edits remove up to its tree's root.
+    parents: BudgetVec<'b, (u32, u32)>,
+    climbed: Table<()>,
 }
 
 impl<'b> Edits<'b> {
@@ -64,6 +68,8 @@ impl<'b> Edits<'b> {
             orphans: BudgetVec::new(budget),
             held: Table::new(),
             found: BudgetVec::new(budget),
+            parents: BudgetVec::new(budget),
+            climbed: Table::new(),
         }
     }
 
@@ -123,7 +129,12 @@ impl<'b> Edits<'b> {
         rule: Rule,
     ) -> Result<()> {
         match rule {
-            Rule::RemoveEntry => self.push(referrer, path, None),
+            Rule::RemoveEntry => {
+                if is_pair(path) {
+                    self.climb(reads, index, referrer)?;
+                }
+                self.push(referrer, path, None)
+            }
             Rule::Unresolve => self.push(referrer, &path[..path.len().min(1)], None),
             Rule::Retarget(to) => self.push(referrer, path, Some(to)),
             Rule::RemoveReferrer => {
@@ -143,6 +154,53 @@ impl<'b> Edits<'b> {
         }
     }
 
+    /// Records the edges from tree node `number` up to its tree's root: each
+    /// node whose `/Kids` holds it, while the node has `/Limits`. Refuses a
+    /// tree deeper than [`MAX_TREE_DEPTH`] levels.
+    fn climb(&mut self, reads: &mut Reads<'_>, index: &References, number: u32) -> Result<()> {
+        let mut pending = BudgetVec::new(self.budget);
+        pending.try_push((number, 0))?;
+        while let Some((child, depth)) = pending.pop() {
+            self.budget.poll()?;
+            if self.climbed.get(child).is_some() {
+                continue;
+            }
+            self.climbed.insert(child, (), self.budget)?;
+            if depth >= MAX_TREE_DEPTH {
+                return Err(crate::LimitExceeded::over(
+                    crate::budget::LimitCode::ObjectDepth,
+                    MAX_TREE_DEPTH,
+                    depth + 1,
+                )
+                .into());
+            }
+            let generation = reads.generation(child)?;
+            for &parent in index.referrers(child) {
+                self.budget.poll()?;
+                let Some(object) = reads.get(parent)? else {
+                    continue;
+                };
+                let Value::Dict(dict) = &**object.value() else {
+                    continue;
+                };
+                let Some(Value::Array(kids)) = dict.get("Kids") else {
+                    continue;
+                };
+                if !kids.iter().any(|kid| {
+                    matches!(kid, Value::Reference(kid)
+                        if kid.number() == child && Some(kid.generation()) == generation)
+                }) {
+                    continue;
+                }
+                self.parents.try_push((child, parent))?;
+                if dict.get("Limits").is_some() {
+                    pending.try_push((parent, depth + 1))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Records that the edits remove `number`, which is freed once nothing
     /// but other removed objects refers to it.
     pub(super) fn orphan(&mut self, number: u32) -> Result<()> {
@@ -156,6 +214,7 @@ impl<'b> Edits<'b> {
             self.edits.try_push(edit)?;
         }
         self.orphans.try_extend_from_slice(&other.orphans)?;
+        self.parents.try_extend_from_slice(&other.parents)?;
         Ok(())
     }
 
@@ -223,6 +282,9 @@ impl<'b> Edits<'b> {
                 .then_with(|| b.path.cmp(&a.path))
                 .then_with(|| b.to.is_some().cmp(&a.to.is_some()))
         });
+        let mut out: BudgetVec<'_, (u32, Value)> = BudgetVec::new(budget);
+        let mut positions: Table<usize> = Table::new();
+        let mut settle = BudgetVec::new(budget);
         let mut at = 0;
         while at < self.edits.len() {
             budget.poll()?;
@@ -235,6 +297,7 @@ impl<'b> Edits<'b> {
             };
             let mut value = copy_for_edit(object.value(), budget)?;
             let mut last: Option<&[Step]> = None;
+            let first = at;
             while at < self.edits.len() && self.edits[at].number == number {
                 budget.poll()?;
                 let edit = &self.edits[at];
@@ -253,14 +316,197 @@ impl<'b> Edits<'b> {
                 last = Some(&edit.path);
                 at += 1;
             }
+            let mut nodes = BudgetVec::new(budget);
+            for edit in &self.edits[first..at] {
+                if edit.to.is_none() && is_pair(&edit.path) {
+                    let node = &edit.path[..edit.path.len() - 2];
+                    if !nodes.contains(&node) {
+                        nodes.try_push(node)?;
+                    }
+                }
+            }
+            for node in nodes.iter() {
+                budget.poll()?;
+                if let Some(Value::Dict(dict)) = at_mut(&mut value, node)
+                    && let Some(state) = narrow(dict)
+                    && node.is_empty()
+                {
+                    settle.try_push((number, state == Settled::Empty))?;
+                }
+            }
+            positions.insert(number, out.len(), budget)?;
+            out.try_push((number, value))?;
+        }
+        self.settle(version, budget, &mut out, &mut positions, settle)?;
+        for (number, value) in out.into_vec() {
             emit(number, value)?;
         }
         self.edits.clear();
+        self.parents = BudgetVec::new(self.budget);
+        self.climbed = Table::new();
         self.held = Table::new();
         self.found.clear();
         budget.poll()?;
         Ok(())
     }
+}
+
+/// Carries the narrowed and emptied tree nodes of `settle`, with whether
+/// each was emptied, up their trees: an emptied node leaves its parent's
+/// `/Kids` and is removed, and a parent's `/Limits` follow its kids'.
+impl Edits<'_> {
+    fn settle(
+        &mut self,
+        version: &Version,
+        budget: &Budget,
+        out: &mut BudgetVec<'_, (u32, Value)>,
+        positions: &mut Table<usize>,
+        mut settle: BudgetVec<'_, (u32, bool)>,
+    ) -> Result<()> {
+        // Each step either empties a node, once, or changes a parent's
+        // limits; a cycle of trees could change them forever.
+        let mut steps = self.parents.len().saturating_mul(2) + settle.len();
+        while let Some((child, emptied)) = settle.pop() {
+            budget.poll()?;
+            if emptied {
+                self.orphans.try_push(child)?;
+            }
+            for at in 0..self.parents.len() {
+                let (kid, parent) = self.parents[at];
+                if kid != child || steps == 0 {
+                    continue;
+                }
+                steps -= 1;
+                let position = match positions.get(parent) {
+                    Some(&position) => position,
+                    None => {
+                        let Some(object) = version.get(parent, budget)? else {
+                            continue;
+                        };
+                        positions.insert(parent, out.len(), budget)?;
+                        out.try_push((parent, copy_for_edit(object.value(), budget)?))?;
+                        out.len() - 1
+                    }
+                };
+                let mut value = std::mem::replace(&mut out[position].1, Value::Null);
+                let state = if let Value::Dict(dict) = &mut value {
+                    if emptied && let Some(Value::Array(kids)) = dict.get_mut("Kids") {
+                        kids.retain(
+                            |kid| !matches!(kid, Value::Reference(kid) if kid.number() == child),
+                        );
+                    }
+                    self.gather(version, budget, out, positions, dict)?
+                } else {
+                    None
+                };
+                out[position].1 = value;
+                if let Some(state) = state {
+                    settle.try_push((parent, state == Settled::Empty))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets the `/Limits` of intermediate node `dict` from its kids':
+    /// returns how they changed, or `None` when they hold or a kid has
+    /// none.
+    fn gather(
+        &self,
+        version: &Version,
+        budget: &Budget,
+        out: &BudgetVec<'_, (u32, Value)>,
+        positions: &Table<usize>,
+        dict: &mut Dict,
+    ) -> Result<Option<Settled>> {
+        if dict.get("Limits").is_none() {
+            return Ok(None);
+        }
+        let Some(Value::Array(kids)) = dict.get("Kids") else {
+            return Ok(None);
+        };
+        let mut ends = [None, None];
+        for (end, kid) in [kids.as_slice().first(), kids.as_slice().last()]
+            .into_iter()
+            .enumerate()
+        {
+            let Some(Value::Reference(kid)) = kid else {
+                break;
+            };
+            let held;
+            let value = if let Some(&position) = positions.get(kid.number()) {
+                &out[position].1
+            } else if let Some(object) = version.get(kid.number(), budget)? {
+                held = object;
+                &**held.value()
+            } else {
+                return Ok(None);
+            };
+            let Value::Dict(kid) = value else {
+                return Ok(None);
+            };
+            let Some(Value::Array(limits)) = kid.get("Limits") else {
+                return Ok(None);
+            };
+            let Some(limit) = limits.get(end) else {
+                return Ok(None);
+            };
+            ends[end] = Some(copy_for_edit(limit, budget)?);
+        }
+        Ok(match ends {
+            [Some(least), Some(greatest)] => set_limits(dict, least, greatest),
+            [None, None] if kids.is_empty() => Some(Settled::Empty),
+            _ => None,
+        })
+    }
+}
+
+/// How a tree node's `/Limits` changed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Settled {
+    Narrowed,
+    Empty,
+}
+
+/// The deepest name or number tree whose pruning reaches up to its root.
+const MAX_TREE_DEPTH: u64 = 32;
+
+/// Returns whether `path` leads to an item of a tree node's `/Names` or
+/// `/Nums`.
+fn is_pair(path: &[Step]) -> bool {
+    matches!(path, [.., Step::Key(key), Step::Index(_)] if matches!(key.as_bytes(), b"Names" | b"Nums"))
+}
+
+/// Sets the `/Limits` of leaf `dict` from the keys that its pairs still
+/// hold: returns how they changed, or `None` when it has no limits or
+/// they hold.
+fn narrow(dict: &mut Dict) -> Option<Settled> {
+    dict.get("Limits")?;
+    let pairs = ["Names", "Nums"]
+        .into_iter()
+        .find_map(|key| match dict.get(key) {
+            Some(Value::Array(pairs)) => Some(pairs),
+            _ => None,
+        })?;
+    if pairs.len() < 2 {
+        return pairs.is_empty().then_some(Settled::Empty);
+    }
+    let least = pairs.as_slice()[0].clone();
+    let greatest = pairs.as_slice()[(pairs.len() - 2) & !1].clone();
+    set_limits(dict, least, greatest)
+}
+
+fn set_limits(dict: &mut Dict, least: Value, greatest: Value) -> Option<Settled> {
+    let limits = Value::Array(vec![least, greatest].into());
+    if dict.get("Limits") == Some(&limits) {
+        return None;
+    }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "replaces one entry with two values that the node already held"
+    )]
+    dict.insert(Name::from("Limits"), limits);
+    Some(Settled::Narrowed)
 }
 
 /// Copies the steps and every owned key through fallible budgeted buffers.

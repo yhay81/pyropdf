@@ -76,8 +76,8 @@ def catalog_entry(doc: pyropdf.Document) -> set[int]:
 def flattened(doc: pyropdf.Document) -> set[int]:
     """Return the page-tree objects that writing the page list rewrites."""
     # Writing the page list flattens the page tree: it writes the root and
-    # every page that is not already the root's kid, which keeps what it
-    # inherits as the reference that held it (#272).
+    # every page that is not already the root's kid (#272 narrows what those
+    # pages keep).
     root = doc.catalog["Pages"]
     return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
 
@@ -86,6 +86,78 @@ def new_page(doc: pyropdf.Document) -> set[int]:
     touched = flattened(doc)
     doc.pages.new((200, 300))
     return touched
+
+
+def _targets(value: object) -> set[int]:
+    """Return the object numbers that ``value``, as :func:`plain` returns it, refers to."""
+    found: set[int] = set()
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, tuple) and item[:1] == ("ref",):
+            found.add(item[1])
+        elif isinstance(item, tuple) and item[:1] == ("stream",):
+            pending.append(item[1])
+    return found
+
+
+def _pruned(before: object, after: object, depth: int = 0) -> bool:
+    """Return whether ``after``, as :func:`plain` returns it, is ``before`` with entries removed.
+
+    Tree limits may change with the pairs and kids they bound.
+    """
+    assert depth < _MAX_DEPTH
+    if before == after:
+        return True
+    if isinstance(before, dict) and isinstance(after, dict):
+        return after.keys() <= before.keys() and all(
+            key == "Limits" or _pruned(before[key], value, depth + 1) for key, value in after.items()
+        )
+    if isinstance(before, list) and isinstance(after, list):
+        items = iter(before)
+        return all(any(_pruned(item, kept, depth + 1) for item in items) for kept in after)
+    if isinstance(before, tuple) and isinstance(after, tuple) and before[:1] == after[:1] == ("stream",):
+        return before[2] == after[2] and _pruned(before[1], after[1], depth + 1)
+    return False
+
+
+def _labels(doc: pyropdf.Document) -> set[int]:
+    """Return the page-label tree's objects, which a page's removal renumbers."""
+    numbers: set[int] = set()
+    pending = [doc.catalog.get("PageLabels")]
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, Dictionary):
+            continue
+        if node.xref is not None:
+            numbers.add(node.xref)
+        kids = node.get("Kids")
+        if isinstance(kids, Array):
+            pending.extend(kids)
+    return numbers
+
+
+def delete_page(doc: pyropdf.Document) -> set[int]:
+    if len(doc.pages) == 1:
+        doc.pages.new((200, 300))
+    page = number(doc.pages[0].obj)
+    touched = flattened(doc) | {page} | _labels(doc)
+    before = snapshot(doc)
+    del doc.pages[0]
+    after = snapshot(doc)
+    # The delete frees what only the deleted page reached, and its rules
+    # remove the navigation to the page and the structure content on it.
+    gone = before.keys() - after.keys()
+    pruned = {xref for xref, value in before.items() if xref in after and _pruned(value, after[xref])}
+    changed = {xref for xref in pruned if before[xref] != after[xref]}
+    # What the rules leave unreferenced, a save leaves out.
+    held = set().union(*map(_targets, before.values()))
+    kept = set().union(*map(_targets, after.values()))
+    return touched | gone | changed | (held - kept)
 
 
 def replace_object(doc: pyropdf.Document) -> set[int]:
@@ -207,6 +279,7 @@ EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "add_object": add_object,
     "catalog_entry": catalog_entry,
     "new_page": new_page,
+    "delete_page": delete_page,
     "replace_object": replace_object,
     "rewrite_stream": rewrite_stream,
     "move_page": move_page,
