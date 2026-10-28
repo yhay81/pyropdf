@@ -976,3 +976,105 @@ def test_reading_every_field_costs_one_walk() -> None:
     doc.form["customer"].obj["V"] = pyropdf.String(b"edited")
     assert [field.value for field in fields][2] == "edited"
     assert _core.form_walk_counts(core)[1] == computations + 2
+
+
+def test_form_refuses_an_overlong_reference_chain_without_truncating_fields() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        4: "<< /FT /Tx /T 5 0 R >>",
+    }
+    objects.update({number: f"{number + 1} 0 R" for number in range(5, 39)})
+    objects[39] = "(name)"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    with pytest.raises(pyropdf.MalformedPdfError):
+        list(doc.form)
+
+
+def test_cached_form_lookup_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    data = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+            4: "<< /FT /Tx /T (name) >>",
+        }
+    )
+    doc = pyropdf.open(data, limits=pyropdf.DocumentLimits(cancellation=token))
+    assert doc.form["name"].name == "name"
+    token.cancel()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        _ = doc.form["name"]
+    assert caught.value.code == "cancelled"
+
+
+def test_read_only_transaction_reuses_the_existing_form_walk() -> None:
+    from pyropdf import _core  # noqa: PLC0415 - the memo counters are internal.
+
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R] >>",
+                4: "<< /FT /Tx /T (name) /Type /Annot /Subtype /Widget /Rect [1 1 5 5] >>",
+            }
+        )
+    )
+    assert list(doc.form) == ["name"]
+    core = doc._core()  # noqa: SLF001
+    computations = _core.form_walk_counts(core)[1]
+    with doc.transaction("Read without modifying"):
+        assert list(doc.form) == ["name"]
+        assert len(doc.pages[0].widgets) == 1
+        assert _core.form_walk_counts(core)[1] == computations
+
+
+def test_choice_options_inherit_through_a_parent_alias() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+                5: "<< /FT /Ch /T (choice) /Parent 6 0 R >>",
+                6: "7 0 R",
+                7: "<< /Opt [(first)] >>",
+            }
+        )
+    )
+    assert [(choice.value, choice.label) for choice in doc.form["choice"].choices] == [("first", "first")]
+
+
+@pytest.mark.parametrize("last_exists", [False, True])
+def test_choice_parent_limit_only_counts_existing_nodes(*, last_exists: bool) -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        5: "<< /FT /Ch /T (choice) /Parent 6 0 R >>",
+    }
+    objects.update({number: f"<< /Parent {number + 1} 0 R >>" for number in range(6, 69)})
+    if last_exists:
+        objects[69] = "<< /Opt [(too deep)] >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    if last_exists:
+        with pytest.raises(pyropdf.PdfError, match="64-level safety limit"):
+            _ = doc.form["choice"].choices
+    else:
+        assert doc.form["choice"].choices == ()
+
+
+def test_form_depth_limit_ignores_a_visited_intermediate_cycle() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        5: "<< /FT /Tx /T (name) /Kids [6 0 R] >>",
+    }
+    objects.update({number: f"<< /Kids [{number + 1} 0 R] >>" for number in range(6, 68)})
+    objects[68] = "<< /Kids [68 0 R] >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    assert list(doc.form) == ["name"]
