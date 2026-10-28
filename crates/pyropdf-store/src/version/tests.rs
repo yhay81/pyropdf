@@ -1515,3 +1515,15 @@ fn a_stream_keeps_the_data_and_the_reference_of_its_indirect_length() {
     assert!(lexeme.windows(10).any(|window| window == b"/Length 5 "));
     assert_eq!(value_of(&version, 5), Some(Value::Integer(36)));
 }
+
+#[test]
+fn derived_anchor_lives_only_as_long_as_its_transaction() {
+    let document = Document::new(Arc::new(MemoryBase::default()), Some(0));
+    let mut transaction = document.begin();
+    let snapshot = transaction.snapshot();
+    let weak = Arc::downgrade(&snapshot);
+    transaction.retain_derived_version(snapshot);
+    assert!(weak.upgrade().is_some());
+    drop(transaction);
+    assert!(weak.upgrade().is_none());
+}

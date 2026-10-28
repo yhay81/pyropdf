@@ -197,6 +197,67 @@ impl<V> Table<V> {
         Ok(Arc::make_mut(chunk).0[slot(number)].replace(value))
     }
 
+    /// Removes a value, pruning empty chunks and branches. A clone keeps its
+    /// old value, and a refused allocation leaves this table unchanged.
+    pub(crate) fn remove(
+        &mut self,
+        number: u32,
+        budget: &Budget,
+    ) -> Result<Option<V>, LimitExceeded>
+    where
+        V: Clone,
+    {
+        budget.poll()?;
+        if self.get(number).is_none() {
+            return Ok(None);
+        }
+        let (branches, chunks) = self.allocations(number);
+        budget.charge(
+            LimitCode::MemorySize,
+            branches * Self::BRANCH_BYTES + chunks * Self::CHUNK_BYTES,
+        )?;
+        let Some(root) = &mut self.root else {
+            return Ok(None);
+        };
+        let (removed, empty) = Self::remove_from(root, self.height, number);
+        if empty {
+            self.root = None;
+            self.height = 0;
+        }
+        Ok(removed)
+    }
+
+    /// The table's fixed height bounds this recursion to `MAX_HEIGHT`.
+    fn remove_from(branch: &mut Arc<Branch<V>>, level: u32, number: u32) -> (Option<V>, bool)
+    where
+        V: Clone,
+    {
+        let index = child(number, level);
+        match Arc::make_mut(branch) {
+            Branch::Branches(children) => {
+                let Some(child) = &mut children[index] else {
+                    return (None, false);
+                };
+                let (removed, empty) = Self::remove_from(child, level - 1, number);
+                if empty {
+                    children[index] = None;
+                }
+                (removed, children.iter().all(Option::is_none))
+            }
+            Branch::Chunks(chunks) => {
+                let Some(chunk) = &mut chunks[index] else {
+                    return (None, false);
+                };
+                let entries = &mut Arc::make_mut(chunk).0;
+                let removed = entries[slot(number)].take();
+                if entries.iter().all(Option::is_none) {
+                    chunks[index] = None;
+                }
+                (removed, chunks.iter().all(Option::is_none))
+            }
+        }
+    }
+
     /// Returns a branch at `level` without children.
     fn empty_branch(level: u32) -> Branch<V> {
         if level == 1 {
@@ -586,6 +647,26 @@ mod tests {
 
     proptest! {
         #[test]
+        fn removals_preserve_clones_and_match_a_map(
+            operations in proptest::collection::vec((number(), any::<u64>(), any::<bool>()), 0..300),
+        ) {
+            let budget = Budget::default();
+            let mut table = Table::<u64>::new();
+            let mut model = BTreeMap::new();
+            for (number, value, remove) in operations {
+                let previous = table.clone();
+                let old_model = model.clone();
+                if remove {
+                    prop_assert_eq!(table.remove(number, &budget).unwrap(), model.remove(&number));
+                } else {
+                    prop_assert_eq!(table.insert(number, value, &budget).unwrap(), model.insert(number, value));
+                }
+                check(&table, &model)?;
+                check(&previous, &old_model)?;
+            }
+        }
+
+        #[test]
         fn every_clone_keeps_what_it_held(
             writes in proptest::collection::vec((number(), any::<u64>()), 1..300),
             keep in proptest::collection::btree_set(0..300_usize, 0..12),
@@ -667,6 +748,22 @@ mod tests {
             let (_, unshared) = differing(&parent, &table);
             prop_assert_eq!(budget.used(LimitCode::MemorySize) - charged, unshared.second);
         }
+    }
+
+    #[test]
+    fn refused_removal_leaves_the_table_and_its_clone_unchanged() {
+        let budget = Budget::default();
+        let mut table = Table::<u64>::new();
+        table.insert(123, 7, &budget).unwrap();
+        let saved = table.clone();
+        let limited = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+        assert!(table.remove(123, &limited).is_err());
+        assert_eq!(table.get(123), Some(&7));
+        assert_eq!(saved.get(123), Some(&7));
+        assert_eq!(table.remove(123, &budget).unwrap(), Some(7));
+        assert!(table.root.is_none());
+        assert_eq!(table.height(), 0);
+        assert_eq!(saved.get(123), Some(&7));
     }
 
     #[test]
