@@ -266,6 +266,7 @@ class Document:
         compress: bool = False,
         compression_level: int = 6,
         decompress: bool = False,
+        keep_id: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -296,6 +297,15 @@ class Document:
         ``compress``. An incremental save compresses only the streams that
         it writes and refuses ``decompress``. An encrypted save compresses
         before it encrypts. The document in memory keeps its streams.
+
+        A save of an edited document keeps the first element of the
+        trailer's ``/ID`` and renews the second, and a full save, or an
+        incremental save of edits, gives a document without ``/ID`` a new
+        one (ISO 32000-2 section 14.4). The new element is the MD5 digest
+        of the bytes before it, so the same document saves to the same
+        bytes. A save without edits writes ``/ID`` as read, and so does any
+        save with ``keep_id=True``. Encryption keys derive from the first
+        element, which a save keeps.
         """
         self._ensure_open()
         options = _save_options(
@@ -304,6 +314,7 @@ class Document:
             compress=compress,
             compression_level=compression_level,
             decompress=decompress,
+            keep_id=keep_id,
         )
         arg = _encryption_arg(encryption)
         _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
@@ -318,6 +329,7 @@ class Document:
         compress: bool = False,
         compression_level: int = 6,
         decompress: bool = False,
+        keep_id: bool = False,
     ) -> bytes:
         """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
@@ -332,6 +344,7 @@ class Document:
             compress=compress,
             compression_level=compression_level,
             decompress=decompress,
+            keep_id=keep_id,
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
@@ -526,11 +539,17 @@ def _validate_bool(name: str, value: object) -> None:
         raise TypeError(msg)
 
 
-def _save_options(
-    *, incremental: bool, prune: bool, compress: bool, compression_level: int, decompress: bool
-) -> tuple[bool, int | None, bool]:
-    """Check the save options, and return the core's ``prune``, ``compress`` level, and ``decompress``."""
-    flags = {"incremental": incremental, "prune": prune, "compress": compress, "decompress": decompress}
+def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
+    *, incremental: bool, prune: bool, compress: bool, compression_level: int, decompress: bool, keep_id: bool
+) -> tuple[bool, int | None, bool, bool]:
+    """Check the save options, and return the core's ``prune``, ``compress`` level, ``decompress``, and ``renew_id``."""
+    flags = {
+        "incremental": incremental,
+        "prune": prune,
+        "compress": compress,
+        "decompress": decompress,
+        "keep_id": keep_id,
+    }
     for name, value in flags.items():
         _validate_bool(name, value)
     if isinstance(compression_level, bool) or not isinstance(compression_level, int):
@@ -548,7 +567,7 @@ def _save_options(
     if compress and decompress:
         msg = "decompress=True needs compress=False, which would compress the streams again"
         raise ValueError(msg)
-    return prune, compression_level if compress else None, decompress
+    return prune, compression_level if compress else None, decompress, not keep_id
 
 
 def _resolve_limits(limits: object) -> DocumentLimits:

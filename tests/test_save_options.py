@@ -212,3 +212,68 @@ def test_compression_options_are_checked() -> None:
     with pytest.raises(LimitError) as caught:
         doc.to_bytes(decompress=True, max_size=100)
     assert caught.value.code == "pdf_output_size"
+
+
+def _id(data: bytes) -> list[bytes]:
+    return [bytes(element) for element in pyropdf.open(data).trailer["ID"]]
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_a_save_of_edits_renews_the_second_identifier(incremental: bool) -> None:  # noqa: FBT001
+    read = [b"\xaa" * 16, b"\xbb" * 16]
+    trailer = f"/Root 1 0 R /ID [<{read[0].hex()}><{read[1].hex()}>] >>".encode()
+    doc = pyropdf.open(build_pdf(["Hello"]).replace(b"/Root 1 0 R >>", trailer))
+    assert _id(doc.to_bytes(incremental=incremental)) == read
+    doc.catalog["Edited"] = True
+
+    data = doc.to_bytes(incremental=incremental)
+    renewed = _id(data)
+    assert renewed[0] == read[0]
+    assert len(renewed[1]) == 16
+    assert renewed[1] != read[1]
+    # The new element is a digest, so the same edits save to the same bytes.
+    assert doc.to_bytes(incremental=incremental) == data
+    assert _id(doc.to_bytes(incremental=incremental, keep_id=True)) == read
+
+
+def test_a_document_without_an_identifier_gets_one() -> None:
+    data = build_pdf(["Hello"])
+    doc = pyropdf.open(data)
+    assert "ID" not in doc.trailer
+    first, second = _id(doc.to_bytes())
+    assert len(first) == 16
+    assert first == second
+    assert "ID" not in pyropdf.open(doc.to_bytes(keep_id=True)).trailer
+    # An incremental save without edits reproduces the file.
+    assert doc.to_bytes(incremental=True) == data
+    doc.catalog["Edited"] = True
+    first, second = _id(doc.to_bytes(incremental=True))
+    assert len(first) == 16
+    assert first == second
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_a_save_without_edits_writes_the_identifier_as_read(name: str) -> None:
+    data = (ASSETS / name).read_bytes()
+    doc = pyropdf.open(data)
+    assert doc.to_bytes(incremental=True) == data
+    if "ID" in doc.trailer:
+        assert _id(doc.to_bytes()) == [bytes(element) for element in doc.trailer["ID"]]
+
+
+def test_an_encrypted_save_keeps_the_identifier_that_its_keys_derive_from() -> None:
+    doc = pyropdf.open(ENCRYPTED / "user-r4-rc4-128.pdf", password="userpw")
+    first = bytes(doc.trailer["ID"][0])
+    doc.catalog["Edited"] = True
+    for data in (doc.to_bytes(incremental=True), doc.to_bytes(encryption=Encryption.KEEP)):
+        reopened = pyropdf.open(data, password="userpw")
+        assert bytes(reopened.trailer["ID"][0]) == first
+        assert bytes(reopened.trailer["ID"][1]) != first
+        assert reopened.catalog["Edited"] is True
+        assert len(reopened.pages) == len(doc.pages)
+
+
+def test_keep_id_must_be_a_bool() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    with pytest.raises(TypeError, match="keep_id must be a bool"):
+        doc.to_bytes(keep_id=1)  # ty: ignore[invalid-argument-type]
