@@ -253,8 +253,16 @@ pub fn full_with(
     encryption: Option<&Encryption>,
     options: Options,
 ) -> Result<u64> {
-    let mut mode = Mode::of(version, encryption, budget)?;
     budget.poll()?;
+    // Repair can recover an illegal live object zero. The mandatory free
+    // row would discard it, even when renumbering or pruning is requested.
+    if version.generation(0).is_some() {
+        return Err(StoreError::malformed(
+            "cannot save live object number 0: it is reserved for the free-list head",
+        )
+        .into());
+    }
+    let mut mode = Mode::of(version, encryption, budget)?;
     let mut numbers = BudgetVec::new(budget);
     version.base().numbers(&mut numbers)?;
     for (number, _) in version.slots() {

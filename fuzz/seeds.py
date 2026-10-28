@@ -43,6 +43,9 @@ def main() -> None:
     files = [(ASSETS / "real_world" / name).read_bytes() for name in NAMES]
     files += [path.read_bytes() for path in sorted((ASSETS / "encrypted").glob("*.pdf"))]
     files += [damaged(name, kind) for name in NAMES for kind in DAMAGE]
+    # Save-fuzz crash 48ddebe9596f7ddd421a47eb48cc7105a4d0f49c, minimized:
+    # repair finds a live object zero that a save's free-list head cannot retain.
+    files.append(b"%PDF-1.7\n0 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n")
     for data in files:
         for target in TARGETS:
             write(target, data)
