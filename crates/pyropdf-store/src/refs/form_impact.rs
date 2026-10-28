@@ -11,7 +11,7 @@ use crate::version::table::Table;
 use crate::{Error, Result};
 
 use super::References;
-use super::navigation::{catalog, dict_of, is_aliasing, is_in};
+use super::navigation::{dict_of, is_aliasing, is_in};
 
 /// The longest chain of indirect values that page annotations may use.
 const MAX_CHAIN: usize = crate::pages::MAX_CHAIN;
@@ -39,9 +39,25 @@ pub fn affected_form_objects<'b>(
 ) -> Result<BudgetVec<'b, Reference>> {
     let budget = reads.budget();
     budget.poll()?;
-    let root = catalog(reads)?;
     let mut queue = BudgetVec::new(budget);
     let mut result = BudgetVec::new(budget);
+    if removed.is_empty() {
+        return Ok(result);
+    }
+    let root_reference = match reads.trailer().get("Root") {
+        Some(Value::Reference(reference)) => Some(*reference),
+        _ => None,
+    };
+    let resolved_root = match root_reference {
+        Some(reference) => {
+            resolve_reference(reads, reference)?.map(|(reference, _)| reference.number())
+        }
+        None => None,
+    };
+    let root = [
+        root_reference.map(|reference| reference.number()),
+        resolved_root,
+    ];
     let mut seen = Table::new();
     for &page in removed {
         budget.poll()?;
@@ -125,7 +141,7 @@ fn seed_page_referrers(
     reads: &mut Reads<'_>,
     index: &References,
     page: Reference,
-    root: Option<u32>,
+    root: [Option<u32>; 2],
     removed: &[u32],
     retained: &[u32],
     queue: &mut BudgetVec<'_, (Reference, usize)>,
@@ -171,12 +187,15 @@ fn seed_page_referrers(
 
 fn protected(
     number: u32,
-    root: Option<u32>,
+    root: [Option<u32>; 2],
     removed: &[u32],
     retained: &[u32],
     dict: &crate::value::Dict,
 ) -> bool {
-    root == Some(number) || is_in(removed, number) || is_in(retained, number) || is_aliasing(dict)
+    root.contains(&Some(number))
+        || is_in(removed, number)
+        || is_in(retained, number)
+        || is_aliasing(dict)
 }
 
 enum Resolved<'a> {

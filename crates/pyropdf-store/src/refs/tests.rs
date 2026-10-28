@@ -2043,3 +2043,27 @@ fn form_impact_refuses_catalog_aliases_and_cyclic_annotation_arrays() {
         assert!(affected_form_objects(&mut reads, &index, &[3], &[]).is_err());
     }
 }
+
+#[test]
+fn form_impact_refuses_catalog_reached_through_a_reference_alias() {
+    let document = document_of(
+        &[
+            (1, reference(2)),
+            (2, dict(vec![("AcroForm", reference(4))])),
+            (
+                3,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(2)])),
+                ]),
+            ),
+            (4, dict(vec![("Fields", array(vec![]))])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    assert!(affected_form_objects(&mut reads, &index, &[3], &[]).is_err());
+}
