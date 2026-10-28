@@ -17,10 +17,11 @@
 //!
 //! A reference counts whatever its generation, so a referrer that names a
 //! number with another generation, which reads as null, is still listed;
-//! [`find`] returns the generation that each reference names. An object
-//! that the store cannot read refers to nothing. The index records edges
+//! [`find`] returns the generation that each reference names. A store read
+//! error refuses the operation rather than hiding edges. The index records edges
 //! and never follows them, so reference chains and cycles cost nothing.
 
+mod copy;
 mod navigation;
 mod roles;
 mod rules;
@@ -36,8 +37,9 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::memo::Reads;
 use crate::value::{Dict, Name, Reference, Value};
 use crate::version::table::Table;
-use crate::version::{ChangeSet, Object, Version};
+use crate::version::{ChangeSet, Version};
 
+pub use copy::copy_for_edit;
 pub use roles::Role;
 pub use rules::{Edits, Rule, unreferenced};
 
@@ -78,6 +80,7 @@ impl References {
     /// object that it holds and from its trailer.
     pub fn build(reads: &mut Reads<'_>) -> Result<Self> {
         let budget = reads.budget();
+        budget.poll()?;
         let version = reads.version();
         let mut numbers = BudgetVec::new(budget);
         version.base().numbers(&mut numbers)?;
@@ -87,6 +90,7 @@ impl References {
         }
         numbers.sort_unstable();
         dedup(&mut numbers);
+        budget.poll()?;
         let mut index = Self::default();
         let mut edges: BudgetVec<'_, (u32, u32)> = BudgetVec::new(budget);
         let mut targets = BudgetVec::new(budget);
@@ -128,6 +132,7 @@ impl References {
     /// the objects that `changes` names, and the trailer if it changed.
     pub fn update(&self, reads: &mut Reads<'_>, changes: &ChangeSet) -> Result<Self> {
         let budget = reads.budget();
+        budget.poll()?;
         let mut index = self.clone();
         let mut targets = BudgetVec::new(budget);
         for &referrer in changes.objects() {
@@ -269,22 +274,11 @@ fn list(numbers: &[u32], budget: &Budget) -> Result<Arc<[u32]>, LimitExceeded> {
     Ok(Arc::from(numbers))
 }
 
-/// Returns the object that `reads` reads for `number`, or `None` for one
-/// that the store cannot read; refuses with a limit of the budget.
-fn object(reads: &mut Reads<'_>, number: u32) -> Result<Option<Object>> {
-    match reads.get(number) {
-        Ok(object) => Ok(object),
-        Err(error) if error.limit().is_some() => Err(error),
-        Err(_) => Ok(None),
-    }
-}
-
 /// Sets `out` to the numbers that the value of object `number` refers to,
-/// ascending and distinct: none for an absent object, or one that the
-/// store cannot read.
+/// ascending and distinct: none for an absent object. Store errors propagate.
 fn object_targets(reads: &mut Reads<'_>, number: u32, out: &mut BudgetVec<'_, u32>) -> Result<()> {
     out.clear();
-    if let Some(object) = object(reads, number)? {
+    if let Some(object) = reads.get(number)? {
         walk(Start::Value(object.value()), out)?;
     }
     Ok(())
@@ -323,10 +317,14 @@ fn visit<'v>(
     budget: &Budget,
     mut each: impl FnMut(&[At<'v>], Reference) -> Result<()>,
 ) -> Result<()> {
+    budget.poll()?;
     let mut stack: BudgetVec<'_, (usize, At<'v>, &'v Value)> = BudgetVec::new(budget);
     match start {
         Start::Value(value) => stack.try_push((0, At::Start, value))?,
-        Start::Entries(dict) => push_entries(&mut stack, 0, dict)?,
+        Start::Entries(dict) => {
+            check_depth(budget, 0)?;
+            push_entries(&mut stack, 0, dict)?;
+        }
     }
     let mut path: BudgetVec<'_, At<'v>> = BudgetVec::new(budget);
     while let Some((depth, at, value)) = stack.pop() {
@@ -344,6 +342,7 @@ fn visit<'v>(
             Value::Array(items) => {
                 check_depth(budget, depth)?;
                 for (index, item) in items.iter().enumerate() {
+                    budget.poll()?;
                     if holds_references(item) {
                         stack.try_push((depth, At::Index(index), item))?;
                     }
@@ -375,6 +374,7 @@ fn push_entries<'v>(
     dict: &'v Dict,
 ) -> Result<(), LimitExceeded> {
     for (key, item) in dict.iter() {
+        stack.budget().poll()?;
         if holds_references(item) {
             stack.try_push((depth, At::Key(key), item))?;
         }
@@ -400,6 +400,7 @@ fn walk(start: Start<'_>, out: &mut BudgetVec<'_, u32>) -> Result<()> {
     })?;
     out.sort_unstable();
     dedup(out);
+    budget.poll()?;
     Ok(())
 }
 
@@ -445,10 +446,11 @@ pub fn find<'b>(
     number: u32,
 ) -> Result<BudgetVec<'b, Found>> {
     let budget = reads.budget();
+    budget.poll()?;
     let mut found = BudgetVec::new(budget);
     let held = match referrer {
         Referrer::Trailer => None,
-        Referrer::Object(referrer) => match object(reads, referrer)? {
+        Referrer::Object(referrer) => match reads.get(referrer)? {
             Some(held) => Some(held),
             None => return Ok(found),
         },
@@ -463,7 +465,11 @@ pub fn find<'b>(
         for step in at {
             path.try_push(match step {
                 At::Start => continue,
-                At::Key(key) => Step::Key((*key).clone()),
+                At::Key(key) => {
+                    let mut bytes = BudgetVec::new(budget);
+                    bytes.try_extend_from_slice(key.as_bytes())?;
+                    Step::Key(Name::new(bytes.into_vec().into_boxed_slice()))
+                }
                 At::Index(index) => Step::Index(*index),
             })?;
         }
@@ -498,6 +504,7 @@ impl Cache {
     /// with the change set from its version, or a new one when the held
     /// version is gone or belongs to another document.
     pub fn get(&self, version: &Arc<Version>, budget: &Budget) -> Result<Arc<References>> {
+        budget.poll()?;
         let held = self.lock().clone();
         let held = held.and_then(|(held, index)| Some((held.upgrade()?, index)));
         let mut reads = Reads::new(version, budget);

@@ -133,10 +133,15 @@ class Pages(Sequence[Page]):
         """
         doc = self._document._core()  # noqa: SLF001
         objects = _core.page_objects(doc)
-        chosen = [_resolve(index, len(objects)) for index in indexes]
-        if len(set(chosen)) != len(chosen):
-            msg = "select keeps each page at most once"
-            raise ValueError(msg)
+        chosen: list[int] = []
+        seen: set[int] = set()
+        for index in indexes:
+            at = _resolve(index, len(objects))
+            if at in seen:
+                msg = "select keeps each page at most once"
+                raise ValueError(msg)
+            seen.add(at)
+            chosen.append(at)
         _core.set_pages(doc, [objects[at] for at in chosen])
 
     def move(self, index: int, to: int) -> None:
