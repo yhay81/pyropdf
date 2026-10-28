@@ -17,6 +17,11 @@ hayro-svg = "0.8.0"
 skrifa = "0.46.2"
 # The bidirectional classes of the reading order of text.
 unicode-bidi = "0.3.18"
+# The Standard 14 fonts' Adobe metrics, and the break opportunities and
+# graphemes of the text that they lay out, as pylopdf draws form text.
+pdf-base14-metrics = "0.0.2"
+unicode-linebreak = "0.1.5"
+unicode-segmentation = "1.13.3"
 # PP-OCR inference in pure Rust, with pylopdf's pins (DESIGN.md section 14).
 rten = { version = "0.27.0", default-features = false, features = ["rten_format"] }
 rten-tensor = "0.27.0"
