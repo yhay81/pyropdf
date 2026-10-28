@@ -6,6 +6,7 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod merge;
 mod pack;
 mod prune;
 mod raw;
@@ -192,6 +193,13 @@ pub struct Options {
     /// 32000-2 section 7.3.10 reads it. The cross-reference data then lists
     /// no free number but 0.
     pub renumber: bool,
+    /// Merges each set of identical objects into the one with the smallest
+    /// number, and points every reference to it. Pages, annotations, form
+    /// fields, structure elements, outline items, optional-content groups,
+    /// the objects that the trailer names, and objects in cycles of
+    /// references never merge. The merged objects' numbers become free
+    /// entries, unless the save renumbers.
+    pub dedupe: bool,
 }
 
 /// The form of the cross-reference data that a save writes.
@@ -274,9 +282,27 @@ pub fn full_with(
         let encrypt = !matches!(mode, Mode::New { .. });
         prune::free_unreachable(version, &mut rows, encrypt, budget)?;
     }
-    let renumbering = if options.renumber {
-        let renumbering = Renumbering::new(&rows, budget)?;
-        if let Mode::New { number, .. } = &mut mode {
+    let plan = if options.dedupe {
+        merge::plan(version, &rows, budget)?
+    } else {
+        merge::Plan {
+            merged: BudgetVec::new(budget),
+            referrers: BudgetVec::new(budget),
+        }
+    };
+    for &(number, _) in plan.merged.iter() {
+        budget.poll()?;
+        if let Ok(at) = rows.binary_search_by_key(&number, |row| row.number) {
+            rows[at].offset = None;
+            // A free entry names the generation that the number takes next.
+            rows[at].generation = rows[at].generation.saturating_add(1);
+        }
+    }
+    let renumbering = if options.renumber || options.dedupe {
+        let renumbering = Renumbering::new(&rows, plan, options.renumber, budget)?;
+        if options.renumber
+            && let Mode::New { number, .. } = &mut mode
+        {
             // The new /Encrypt dictionary follows the renumbered objects.
             let mut after = renumbering.len() + 1;
             *number = pack::take(&mut after)?;
@@ -314,7 +340,10 @@ pub fn full_with(
     };
     // The objects that the save adds take the numbers after the version's,
     // or the renumbered objects', and the new /Encrypt's.
-    let size = renumbering.map_or_else(|| version.next_number(), |r| r.len() + 1);
+    let size = match renumbering {
+        Some(renumbering) if options.renumber => renumbering.len() + 1,
+        _ => version.next_number(),
+    };
     let next = size + u64::from(matches!(mode, Mode::New { .. }));
     let level = level(options.streams);
     let mut packer = options
@@ -325,12 +354,13 @@ pub fn full_with(
         _ => None,
     };
     let mut place = |row: &mut Row, out: &mut Output<'_>| {
+        let rewriting = renumbering.filter(|renumbering| renumbering.rewrites(row.number));
         if let Some(packer) = &mut packer
-            && packer.pack(version, row, encrypt, renumbering, out, &mode)?
+            && packer.pack(version, row, encrypt, rewriting, out, &mode)?
         {
             return Ok(());
         }
-        write_object(version, row, renumbering, out, &mode, options.streams)
+        write_object(version, row, rewriting, out, &mode, options.streams)
     };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
@@ -341,7 +371,9 @@ pub fn full_with(
             place(row, &mut out)?;
         }
     }
-    if let Some(renumbering) = renumbering {
+    if let Some(renumbering) = renumbering
+        && options.renumber
+    {
         rows = renumbering.rows(&rows, budget)?;
     }
     if let Mode::New { dict, number, .. } = &mode {
@@ -378,7 +410,8 @@ pub fn full_with(
         } else {
             None
         },
-        renumbering,
+        // The trailer names no merged object, as such objects never merge.
+        renumbering: renumbering.filter(|_| options.renumber),
     };
     finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
@@ -413,6 +446,7 @@ pub fn incremental_with(
         || options.cross_reference != CrossReference::Base
         || options.object_streams
         || options.renumber
+        || options.dedupe
     {
         return Err(Error::Refused(Refusal::FullSaveOption));
     }
@@ -579,19 +613,21 @@ fn write_object(
         return Ok(());
     }
     if let Some(renumbering) = renumbering {
-        let number = renumbering.number(row.number)?;
+        let target = renumbering.number(row.number)?;
         let reference = Reference::new(row.number, row.generation);
         let plain = renumbering.bytes(version, reference, streams, out.budget)?;
-        // The keys of an encrypted object derive from its new number.
+        // The keys of an encrypted object derive from its new reference.
         let bytes = match (mode, mode.handler()) {
             (Mode::Keep { encrypt, .. }, _) if Some(row.number) == *encrypt => plain,
-            (_, Some(handler)) => {
-                security::encrypt_bytes(handler, Reference::new(number, 0), &plain, out.budget)?
-            }
+            (_, Some(handler)) => security::encrypt_bytes(handler, target, &plain, out.budget)?,
             (_, None) => plain,
         };
         row.offset = Some(out.offset()?);
-        out.display(format_args!("{number} 0 obj\n"))?;
+        out.display(format_args!(
+            "{} {} obj\n",
+            target.number(),
+            target.generation()
+        ))?;
         out.bytes(&bytes)?;
         return out.bytes(b"\nendobj\n");
     }
