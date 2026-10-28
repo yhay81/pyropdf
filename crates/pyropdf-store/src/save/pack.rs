@@ -52,8 +52,8 @@ impl<'a> Packer<'a> {
     /// returns false for an object that an object stream may not hold: a
     /// stream, an object with a generation other than 0, the `/Encrypt`
     /// dictionary `encrypt`, and an object that does not parse. A
-    /// `renumbering` save packs each member with its new number and
-    /// generation 0.
+    /// `renumbering` save packs each member under its new reference, whose
+    /// generation decides.
     pub(super) fn pack(
         &mut self,
         version: &Version,
@@ -64,10 +64,15 @@ impl<'a> Packer<'a> {
         mode: &Mode<'_>,
     ) -> Result<bool> {
         let budget = self.budget;
-        if row.offset.is_none()
-            || (row.generation != 0 && renumbering.is_none())
-            || Some(row.number) == encrypt
-        {
+        if row.offset.is_none() || Some(row.number) == encrypt {
+            return Ok(false);
+        }
+        let reference = Reference::new(row.number, row.generation);
+        let member = match renumbering {
+            Some(renumbering) => renumbering.number(row.number)?,
+            None => reference,
+        };
+        if member.generation() != 0 {
             return Ok(false);
         }
         match version.get(row.number, budget) {
@@ -77,22 +82,16 @@ impl<'a> Packer<'a> {
             Err(error) => return Err(error.into()),
         }
         // A member is never encrypted on its own: its object stream is.
-        let reference = Reference::new(row.number, row.generation);
-        let (member, bytes) = match renumbering {
-            Some(renumbering) => (
-                renumbering.number(row.number)?,
-                renumbering.bytes(version, reference, Streams::Keep, budget)?,
-            ),
-            None => (
-                row.number,
-                match version.slot(row.number) {
-                    Some(Slot::Written(object)) => object.bytes().clone(),
-                    _ => raw::body(&**version.base(), reference, budget).map_err(|error| {
-                        error.context(format!("saving object {} {}", row.number, row.generation))
-                    })?,
-                },
-            ),
+        let bytes = match (renumbering, version.slot(row.number)) {
+            (Some(renumbering), _) => {
+                renumbering.bytes(version, reference, Streams::Keep, budget)?
+            }
+            (None, Some(Slot::Written(object))) => object.bytes().clone(),
+            (None, _) => raw::body(&**version.base(), reference, budget).map_err(|error| {
+                error.context(format!("saving object {} {}", row.number, row.generation))
+            })?,
         };
+        let member = member.number();
         let number = match self.number {
             Some(number) => number,
             None => {

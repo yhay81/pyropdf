@@ -1091,3 +1091,211 @@ fn a_renumbering_save_nulls_dangling_references_and_reencrypts() {
         Err(Error::Refused(Refusal::FullSaveOption))
     ));
 }
+
+/// Returns the value of the object `number` of `version`, or none for one
+/// that it does not have.
+fn value_of(version: &Version, number: u32) -> Option<Value> {
+    let budget = Budget::default();
+    let reference = Reference::new(number, version.generation(number)?);
+    let bytes = match version.slot(number) {
+        Some(Slot::Written(value)) => value.bytes().clone(),
+        _ => raw::body(&**version.base(), reference, &budget).unwrap(),
+    };
+    let fetch = |reference| version.base().object(reference, &budget);
+    Some(Value::parse_with_lengths(&bytes, &budget, &fetch).unwrap())
+}
+
+/// Asserts that what the trailer of `reread`, a save of `version`, reaches
+/// is what the trailer of `version` reaches: each pair of objects that the
+/// walk meets has equal values, with references paired again, so that
+/// merged objects may become one. A reference to an object that `version`
+/// does not have may stay or become null.
+fn assert_equivalent(version: &Version, reread: &FileBase) {
+    assert!(!reread.index().is_repaired());
+    let budget = Budget::default();
+    let restored_of = |reference: Reference| {
+        reread.generation(reference.number())?;
+        let bytes = raw::body(reread, reference, &budget).unwrap();
+        let fetch = |reference| reread.object(reference, &budget);
+        Some(Value::parse_with_lengths(&bytes, &budget, &fetch).unwrap())
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    let mut objects = Vec::new();
+    let mut values = Vec::new();
+    for name in ["Root", "Info"] {
+        if let Some(original) = version.trailer().get(name) {
+            values.push((
+                original.clone(),
+                reread.trailer().get(name).unwrap().clone(),
+            ));
+        }
+    }
+    loop {
+        let Some((original, restored)) = values.pop() else {
+            let Some((old, new)) = objects.pop() else {
+                break;
+            };
+            match value_of(version, old) {
+                Some(original) => values.push((original, restored_of(new).unwrap())),
+                None => assert!(restored_of(new).is_none(), "object {old} as {new:?}"),
+            }
+            continue;
+        };
+        match (original, restored) {
+            (Value::Reference(old), Value::Reference(new)) => {
+                if seen.insert((old.number(), new.number())) {
+                    objects.push((old.number(), new));
+                }
+            }
+            (Value::Reference(old), restored) => {
+                assert_eq!(version.generation(old.number()), None, "{old:?}");
+                assert_eq!(restored, Value::Null);
+            }
+            (Value::Array(original), Value::Array(restored)) => {
+                assert_eq!(original.len(), restored.len());
+                values.extend(original.iter().cloned().zip(restored.iter().cloned()));
+            }
+            (Value::Dict(original), Value::Dict(restored)) => {
+                assert_eq!(original.len(), restored.len());
+                for (name, value) in original.iter() {
+                    values.push((
+                        value.clone(),
+                        restored.get(name.as_bytes()).unwrap().clone(),
+                    ));
+                }
+            }
+            (Value::Stream(original), Value::Stream(restored)) => {
+                assert_eq!(original.data(), restored.data());
+                assert_eq!(original.dict().len(), restored.dict().len());
+                for (name, value) in original.dict().iter() {
+                    // An indirect /Length becomes the length that it names.
+                    if name.as_bytes() != b"Length" {
+                        let restored = restored.dict().get(name.as_bytes()).unwrap();
+                        values.push((value.clone(), restored.clone()));
+                    }
+                }
+            }
+            (original, restored) => assert_eq!(original, restored),
+        }
+    }
+}
+
+/// Returns the number of in-use objects of `reread`.
+fn in_use(reread: &FileBase) -> usize {
+    reread
+        .index()
+        .entries()
+        .filter(|(number, _)| *number != 0 && reread.generation(*number).is_some())
+        .count()
+}
+
+#[test]
+fn corpus_files_deduplicate_to_equivalent_objects() {
+    let pruned = Options {
+        prune: true,
+        ..Options::default()
+    };
+    let dedupe = Options {
+        dedupe: true,
+        ..pruned
+    };
+    let mut merged = 0;
+    for path in corpus() {
+        let version = open(fs::read(&path).unwrap()).current();
+        for options in [
+            dedupe,
+            Options {
+                renumber: true,
+                ..dedupe
+            },
+            Options {
+                object_streams: true,
+                ..dedupe
+            },
+        ] {
+            let (bytes, reread) = reopened(&version, options, None);
+            assert_equivalent(&version, &reread);
+            // Merging writes no more than the same save without it.
+            let (kept, unmerged) = reopened(
+                &version,
+                Options {
+                    dedupe: false,
+                    ..options
+                },
+                None,
+            );
+            assert!(bytes.len() <= kept.len(), "{}", path.display());
+            merged += in_use(&unmerged) - in_use(&reread);
+        }
+    }
+    assert!(merged > 0);
+}
+
+#[test]
+fn a_deduplicating_save_keeps_cycles_identities_and_its_version() {
+    let doc = memory();
+    let budget = Budget::default();
+    let mut tx = doc.begin();
+    let tag = Value::String(PdfString::literal(&b"same"[..]));
+    let catalog = dict(&[
+        ("Type", name("Catalog")),
+        ("Pages", to(2)),
+        (
+            "Items",
+            Value::Array(vec![to(4), to(5), to(6), to(7), to(8), to(9), to(10), to(11)].into()),
+        ),
+    ]);
+    tx.write(1, &catalog, &budget).unwrap();
+    // 4 and 5 are equal and merge, with 6 and 7, which name them.
+    tx.write(4, &dict(&[("Tag", tag.clone())]), &budget)
+        .unwrap();
+    tx.write(5, &dict(&[("Tag", tag.clone())]), &budget)
+        .unwrap();
+    tx.write(6, &dict(&[("Child", to(4))]), &budget).unwrap();
+    tx.write(7, &dict(&[("Child", to(5))]), &budget).unwrap();
+    // 8 and 9 form a cycle, and 10 and 11 are annotations.
+    tx.write(8, &dict(&[("Other", to(9)), ("Tag", tag.clone())]), &budget)
+        .unwrap();
+    tx.write(9, &dict(&[("Other", to(8)), ("Tag", tag.clone())]), &budget)
+        .unwrap();
+    let annotation = dict(&[
+        ("Type", name("Annot")),
+        ("Subtype", name("Square")),
+        ("Rect", Value::Array(vec![Value::Integer(0); 4].into())),
+    ]);
+    tx.write(10, &annotation, &budget).unwrap();
+    tx.write(11, &annotation, &budget).unwrap();
+    let version = tx.commit(&budget).unwrap();
+    let dedupe = Options {
+        prune: true,
+        dedupe: true,
+        ..Options::default()
+    };
+    let (_, reread) = reopened(&version, dedupe, None);
+    assert_equivalent(&version, &reread);
+    let items = |reread: &FileBase| match catalog_of(reread).get("Items") {
+        Some(Value::Array(items)) => items.iter().cloned().collect::<Vec<_>>(),
+        items => panic!("the items are {items:?}"),
+    };
+    assert_eq!(items(&reread), [4, 4, 6, 6, 8, 9, 10, 11].map(to).to_vec());
+    for number in [5, 7] {
+        assert_eq!(reread.generation(number), None, "object {number}");
+    }
+    // Renumbering closes the numbers that merging frees.
+    let (_, reread) = reopened(
+        &version,
+        Options {
+            renumber: true,
+            ..dedupe
+        },
+        None,
+    );
+    assert_eq!(items(&reread), [3, 3, 4, 4, 5, 6, 7, 8].map(to).to_vec());
+    assert_eq!(in_use(&reread), 8);
+    // The version keeps every object, and an incremental save refuses.
+    assert_eq!(version.generation(5), Some(0));
+    assert!(matches!(
+        incremental_with(&version, &mut Vec::new(), &budget, dedupe),
+        Err(Error::Refused(Refusal::FullSaveOption))
+    ));
+}
