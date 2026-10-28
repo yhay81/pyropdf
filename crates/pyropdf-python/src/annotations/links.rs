@@ -431,7 +431,9 @@ impl<'a> Links<'a> {
     fn target(&mut self, link: &Dict) -> PyResult<Target> {
         let lead = lead(self, link)?;
         let annots = self.annots;
-        settle(&lead, &annots.index, &mut |name| self.lookup(name))
+        settle(&lead, &annots.index, annots.budget, &mut |name| {
+            self.lookup(name)
+        })
     }
 
     fn lookup(&mut self, name: &[u8]) -> PyResult<Destination> {
@@ -452,6 +454,10 @@ impl<'a> Links<'a> {
 }
 
 impl LeadReader for Links<'_> {
+    fn budget(&self) -> &Budget {
+        self.annots.budget
+    }
+
     fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>> {
         self.annots.resolved(value)
     }
@@ -477,6 +483,17 @@ pub(crate) enum Lead {
 /// What reading a [`Lead`] needs: the values that references name, and
 /// text that a budget charges.
 pub(crate) trait LeadReader {
+    /// The shared operation budget for owned target buffers.
+    fn budget(&self) -> &Budget;
+
+    /// Copies a named destination only after charging its owned bytes.
+    fn name(&self, bytes: &[u8]) -> PyResult<Box<[u8]>> {
+        self.budget()
+            .charge(LimitCode::MemorySize, bytes.len() as u64)
+            .map_err(|e| limit_error(&e))?;
+        Ok(Box::from(bytes))
+    }
+
     /// Returns `value`, or what it refers to; `None` for a null.
     fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>>;
 
@@ -568,8 +585,8 @@ fn file(reader: &mut impl LeadReader, value: Option<&Value>) -> PyResult<Option<
 /// Returns a destination of this document, or the name of one.
 fn destination_lead(reader: &mut impl LeadReader, value: &Value) -> PyResult<Lead> {
     Ok(match reader.resolved(Some(value))? {
-        Some(Value::Name(name)) => Lead::Name(Box::from(name.as_bytes())),
-        Some(Value::String(name)) => Lead::Name(Box::from(name.as_bytes())),
+        Some(Value::Name(name)) => Lead::Name(reader.name(name.as_bytes())?),
+        Some(Value::String(name)) => Lead::Name(reader.name(name.as_bytes())?),
         value => Lead::Destination(Destination::read(value, &mut |value| {
             reader.resolved(value)
         })?),
@@ -582,10 +599,21 @@ fn destination_lead(reader: &mut impl LeadReader, value: &Value) -> PyResult<Lea
 pub(crate) fn settle(
     lead: &Lead,
     index: &PageIndex,
+    budget: &Budget,
     lookup: &mut dyn FnMut(&[u8]) -> PyResult<Destination>,
 ) -> PyResult<Target> {
     let destination = match lead {
-        Lead::Target(target) => return Ok(target.clone()),
+        Lead::Target(target) => {
+            let bytes = target
+                .0
+                .len()
+                .saturating_add(target.4.as_deref().map_or(0, str::len))
+                .saturating_add(target.5.as_deref().map_or(0, str::len));
+            budget
+                .charge(LimitCode::MemorySize, bytes as u64)
+                .map_err(|e| limit_error(&e))?;
+            return Ok(target.clone());
+        }
         Lead::Destination(destination) => *destination,
         Lead::Name(name) => lookup(name)?,
     };

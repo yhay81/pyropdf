@@ -257,7 +257,14 @@ def outline_walk_counts(document: _Document, /) -> tuple[int, int]: ...
 def outline_write(document: _Document, specs: list[tuple[int, str, _Target, _Rgb | None, int, bool]], /) -> None: ...
 def outline_set_title(document: _Document, id: _Id, title: str, /) -> None: ...  # noqa: A002
 def outline_set_target(document: _Document, id: _Id, target: _Target, /) -> None: ...  # noqa: A002
-def outline_set_style(document: _Document, id: _Id, color: _Rgb | None, flags: int, /) -> None: ...  # noqa: A002
+def outline_set_style(
+    document: _Document,
+    id: _Id,  # noqa: A002
+    color: _Rgb | None,
+    flags: int | None = None,
+    flag: tuple[int, bool] | None = None,
+    /,
+) -> None: ...
 def outline_set_open(document: _Document, id: _Id, open: bool, /) -> None: ...  # noqa: A002
 def new_page(document: _Document, at: int, width: float, height: float, /) -> tuple[int, int]: ...
 
