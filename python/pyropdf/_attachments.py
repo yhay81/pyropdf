@@ -182,6 +182,17 @@ def _file(filespec: object) -> Stream | None:
     return None
 
 
+def _objects(filespec: object) -> list[int]:
+    """Return the objects of a file specification and of the embedded files that its ``/EF`` holds."""
+    if not isinstance(filespec, Dictionary):
+        return []
+    numbers = [] if filespec.xref is None else [filespec.xref]
+    files = filespec.get("EF")
+    if isinstance(files, Dictionary):
+        numbers.extend(stream.xref for key in files if isinstance(stream := files[key], Stream) and stream.xref)
+    return numbers
+
+
 class Attachment:
     """A handle on one embedded file of a document, as ``doc.attachments[name]`` returns it.
 
@@ -464,10 +475,14 @@ class Attachments(Mapping[str, Attachment]):
             raise KeyError(name)
         entries = _writable(self._document)
         removed = [entry.filespec for entry in entries if entry.name == name]
+        candidates = sorted({number for filespec in removed for number in _objects(filespec)})
         with self._document.transaction("attachment delete"):
             _rewrite(self._document, [entry for entry in entries if entry.name != name])
             for filespec in removed:
                 _dissociate(self._document, filespec)
+            # The file specification and its embedded files go unless
+            # something else, such as an annotation's /FS, refers to them.
+            _core.object_free_unreferenced(self._document._core(), candidates)  # noqa: SLF001
 
     def add(
         self,
