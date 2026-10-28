@@ -119,6 +119,14 @@ pub enum LimitCode {
     /// An attachment's name, file name, or description is longer in UTF-8 than
     /// 1 MiB.
     EmbeddedFileInputSize,
+    /// A page's Annots array, including popups, links, and widgets, or an
+    /// annotation removal batch has more than 4,096 entries.
+    AnnotationCount,
+    /// An annotation read returns more than 1 MiB of text, or its encoded text
+    /// exceeds 1 MiB, counted across the page for a listing.
+    AnnotationTextSize,
+    /// An annotation border has more than 32 dash lengths.
+    AnnotationDashCount,
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
@@ -137,7 +145,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 49] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -179,6 +187,9 @@ impl LimitCode {
         Self::PasswordInputSize,
         Self::EmbeddedFileSize,
         Self::EmbeddedFileInputSize,
+        Self::AnnotationCount,
+        Self::AnnotationTextSize,
+        Self::AnnotationDashCount,
         Self::AnnotationInputSize,
         Self::PageEntryCount,
         Self::MemorySize,
@@ -231,6 +242,9 @@ impl LimitCode {
             Self::PasswordInputSize => "password_input_size",
             Self::EmbeddedFileSize => "embedded_file_size",
             Self::EmbeddedFileInputSize => "embedded_file_input_size",
+            Self::AnnotationCount => "annotation_count",
+            Self::AnnotationTextSize => "annotation_text_size",
+            Self::AnnotationDashCount => "annotation_dash_count",
             Self::AnnotationInputSize => "annotation_input_size",
             Self::PageEntryCount => "page_entry_count",
             Self::MemorySize => "memory_size",
@@ -285,6 +299,9 @@ impl LimitCode {
             Self::PasswordInputSize => "the password is too long",
             Self::EmbeddedFileSize => "the attachment is too large",
             Self::EmbeddedFileInputSize => "the attachment's text is too long",
+            Self::AnnotationCount => "the page has too many annotations",
+            Self::AnnotationTextSize => "the annotation text is too long",
+            Self::AnnotationDashCount => "the annotation border has too many dash lengths",
             Self::AnnotationInputSize => "the annotation text is too long",
             Self::PageEntryCount => "the list of pages is too long",
             Self::MemorySize => "the operation needs too much memory",
@@ -339,6 +356,9 @@ impl LimitCode {
             Self::PasswordInputSize => Some("bytes"),
             Self::EmbeddedFileSize => Some("bytes"),
             Self::EmbeddedFileInputSize => Some("bytes"),
+            Self::AnnotationCount => Some("entries"),
+            Self::AnnotationTextSize => Some("bytes"),
+            Self::AnnotationDashCount => Some("lengths"),
             Self::AnnotationInputSize => Some("bytes"),
             Self::PageEntryCount => Some("entries"),
             Self::MemorySize => Some("bytes"),
@@ -393,6 +413,9 @@ impl LimitCode {
             Self::PasswordInputSize => Some(127),
             Self::EmbeddedFileSize => Some(67_108_864),
             Self::EmbeddedFileInputSize => Some(1_048_576),
+            Self::AnnotationCount => Some(4_096),
+            Self::AnnotationTextSize => Some(1_048_576),
+            Self::AnnotationDashCount => Some(32),
             Self::AnnotationInputSize => Some(1_048_576),
             Self::PageEntryCount => None,
             Self::MemorySize => None,

@@ -272,6 +272,24 @@ unit = "bytes"
 default = 1_048_576
 reached = "An attachment's name, file name, or description is longer in UTF-8 than 1 MiB."
 
+[codes.annotation_count]
+message = "the page has too many annotations"
+unit = "entries"
+default = 4_096
+reached = "A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than 4,096 entries."
+
+[codes.annotation_text_size]
+message = "the annotation text is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the page for a listing."
+
+[codes.annotation_dash_count]
+message = "the annotation border has too many dash lengths"
+unit = "lengths"
+default = 32
+reached = "An annotation border has more than 32 dash lengths."
+
 [codes.annotation_input_size]
 message = "the annotation text is too long"
 unit = "bytes"

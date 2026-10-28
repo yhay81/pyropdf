@@ -44,6 +44,9 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
 | `embedded_file_size` | 64 MiB | An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`. |
 | `embedded_file_input_size` | 1 MiB | An attachment's name, file name, or description is longer in UTF-8 than 1 MiB. |
+| `annotation_count` | 4,096 entries | A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than 4,096 entries. |
+| `annotation_text_size` | 1 MiB | An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the page for a listing. |
+| `annotation_dash_count` | 32 lengths | An annotation border has more than 32 dash lengths. |
 | `annotation_input_size` | 1 MiB | The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |

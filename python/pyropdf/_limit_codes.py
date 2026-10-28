@@ -51,6 +51,9 @@ LimitCode: TypeAlias = Literal[
     "password_input_size",
     "embedded_file_size",
     "embedded_file_input_size",
+    "annotation_count",
+    "annotation_text_size",
+    "annotation_dash_count",
     "annotation_input_size",
     "page_entry_count",
     "memory_size",
@@ -143,6 +146,15 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "call's `max_size`."
         ),
         "embedded_file_input_size": "An attachment's name, file name, or description is longer in UTF-8 than 1 MiB.",
+        "annotation_count": (
+            "A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than "
+            "4,096 entries."
+        ),
+        "annotation_text_size": (
+            "An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the "
+            "page for a listing."
+        ),
+        "annotation_dash_count": "An annotation border has more than 32 dash lengths.",
         "annotation_input_size": (
             "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are "
             "longer than 1 MiB in UTF-8 together."
