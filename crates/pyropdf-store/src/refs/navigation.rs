@@ -16,7 +16,7 @@ use crate::value::{Dict, Value};
 use crate::version::table::Table;
 
 use super::rules::{aliasing, annotation_array, copy_path};
-use super::{Edits, References, Referrer, Role, Rule, Step, find};
+use super::{Edits, References, Role, Rule, Step};
 
 /// Bounds recursive indirection through destinations and actions, including
 /// malformed cycles. Direct dictionary paths are consumed iteratively.
@@ -60,7 +60,7 @@ pub(super) fn plan(
             if is_in(removed, referrer) {
                 continue;
             }
-            for found in find(reads, Referrer::Object(referrer), page)?.iter() {
+            for found in edits.find(reads, referrer, page)?.iter() {
                 if generation != Some(found.reference.generation()) {
                     continue;
                 }
@@ -149,7 +149,7 @@ impl Planner<'_, '_> {
                 if is_in(self.removed, holder) {
                     continue;
                 }
-                for found in find(reads, Referrer::Object(holder), referrer)?.iter() {
+                for found in edits.find(reads, holder, referrer)?.iter() {
                     if found.reference.generation() != object.generation() {
                         continue;
                     }

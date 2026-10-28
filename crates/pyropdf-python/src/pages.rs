@@ -178,9 +178,11 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
         if retained.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(PyValueError::new_err("select keeps each page at most once"));
         }
+        let mut before = BudgetVec::new(budget);
         let mut removed = BudgetVec::new(budget);
         for (at, page) in index.pages().iter().enumerate() {
             let number = indirect(page, at)?.number();
+            before.try_push(number).map_err(limit)?;
             if retained.binary_search(&number).is_err() {
                 removed.try_push(number).map_err(limit)?;
             }
@@ -188,16 +190,14 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
         let mut removed = removed.into_vec();
         removed.sort_unstable();
         removed.dedup();
+        let pages = Pages {
+            before: &before,
+            order: &order,
+            removed: &removed,
+            retained: &retained,
+        };
         let savepoint = transaction.savepoint();
-        let result = remove_pages(
-            document,
-            transaction,
-            &index,
-            &order,
-            &removed,
-            &retained,
-            budget,
-        );
+        let result = remove_pages(document, transaction, &index, &pages, budget);
         if result.is_err() {
             transaction.rollback(savepoint);
         }
@@ -205,24 +205,51 @@ pub fn set_pages(py: Python<'_>, document: &_Document, pages: Vec<(u32, u16)>) -
     })
 }
 
-/// Runs the rules for `removed`, writes the page tree with `order` as its
-/// pages, and frees what the removed pages leave unreferenced.
+/// The pages of [`set_pages`]: in their order before, in the new order,
+/// and the numbers of those that leave and of those that stay, ascending.
+struct Pages<'p> {
+    before: &'p [u32],
+    order: &'p [Reference],
+    removed: &'p [u32],
+    retained: &'p [u32],
+}
+
+/// Runs the rules for the removed pages, writes the page tree with the new
+/// order and the page labels that follow the pages, and frees what the
+/// removed pages and the labels before leave unreferenced.
 fn remove_pages(
     document: &_Document,
     transaction: &mut Transaction,
     index: &PageIndex,
-    order: &[Reference],
-    removed: &[u32],
-    retained: &[u32],
+    pages: &Pages<'_>,
     budget: &Budget,
 ) -> PyResult<()> {
     let store = |e: pyropdf_store::Error| store_error(&e);
-    if removed.is_empty() {
+    let Pages {
+        before: old,
+        order,
+        removed,
+        retained,
+    } = *pages;
+    let before = transaction.snapshot();
+    let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
+    let mut numbers = BudgetVec::new(budget);
+    for page in order {
+        numbers.try_push(page.number()).map_err(limit)?;
+    }
+    let labels = refs::relabel(&mut Reads::new(&before, budget), old, &numbers).map_err(store)?;
+    if removed.is_empty()
+        && labels
+            .as_ref()
+            .is_none_or(|labels| labels.nodes().is_empty())
+    {
+        if let Some(labels) = &labels {
+            labels.write(transaction, budget).map_err(store)?;
+        }
         let view = transaction.snapshot();
         return rewrite_with(transaction, &view, index, order, None, budget);
     }
     let parent = Arc::clone(transaction.parent());
-    let before = transaction.snapshot();
     let references = document.references.get(&parent, budget).map_err(store)?;
     let references = match parent.changes(&before, budget).map_err(store)? {
         Some(changes) if !changes.is_empty() => Arc::new(
@@ -233,15 +260,20 @@ fn remove_pages(
         _ => references,
     };
     let mut edits = Edits::new(budget);
-    refs::remove_pages(
-        &mut Reads::new(&before, budget),
-        &references,
-        removed,
-        retained,
-        &mut edits,
-    )
-    .map_err(store)?;
+    if !removed.is_empty() {
+        refs::remove_pages(
+            &mut Reads::new(&before, budget),
+            &references,
+            removed,
+            retained,
+            &mut edits,
+        )
+        .map_err(store)?;
+    }
     edits.write(transaction, budget).map_err(store)?;
+    if let Some(labels) = &labels {
+        labels.write(transaction, budget).map_err(store)?;
+    }
     let view = transaction.snapshot();
     rewrite_with(transaction, &view, index, order, None, budget)?;
     let after = transaction.snapshot();
@@ -251,7 +283,16 @@ fn remove_pages(
             .map_err(store)?,
         None => return Ok(()),
     };
-    let freed = refs::unreferenced(&references, removed, edits.orphans(), budget).map_err(store)?;
+    let mut candidates = BudgetVec::new(budget);
+    candidates
+        .try_extend_from_slice(edits.orphans())
+        .map_err(limit)?;
+    if let Some(labels) = &labels {
+        candidates
+            .try_extend_from_slice(labels.nodes())
+            .map_err(limit)?;
+    }
+    let freed = refs::unreferenced(&references, removed, &candidates, budget).map_err(store)?;
     for &number in freed.iter() {
         transaction.free(number, budget).map_err(store)?;
     }

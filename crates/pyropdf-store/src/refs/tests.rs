@@ -577,6 +577,29 @@ fn removing_entries_keeps_the_positions_of_the_others() {
         **value.value(),
         array(vec![Value::Integer(0), reference(2)])
     );
+
+    // Removals from one array around an edit inside one of its items.
+    let objects = vec![
+        (
+            1,
+            array(vec![
+                reference(3),
+                reference(3),
+                dict(vec![("A", reference(3)), ("B", reference(2))]),
+                reference(3),
+                reference(3),
+            ]),
+        ),
+        (2, Value::Integer(0)),
+        (3, Value::Integer(0)),
+    ];
+    let document = document_of(&objects, Dict::new());
+    apply_everywhere(&document, 3, None, Rule::RemoveEntry).unwrap();
+    let value = document.current().get(1, &budget).unwrap().unwrap();
+    assert_eq!(
+        **value.value(),
+        array(vec![dict(vec![("B", reference(2))])])
+    );
 }
 
 #[test]
@@ -978,4 +1001,81 @@ fn structure_planning_charges_copies_of_unknown_fields() {
     );
     assert!(edits.is_empty());
     assert!(Arc::ptr_eq(&version, &document.current()));
+}
+
+#[test]
+fn label_rewriting_charges_owned_prefixes_before_copying() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    ("PageLabels", reference(10)),
+                ]),
+            ),
+            (
+                10,
+                dict(vec![(
+                    "Nums",
+                    array(vec![
+                        Value::Integer(0),
+                        dict(vec![("P", string(&"x".repeat(1024 * 1024)))]),
+                    ]),
+                )]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let result = relabel(&mut Reads::new(&version, &budget), &[3, 4], &[4]);
+    assert!(
+        matches!(result, Err(ref error) if error.limit().map(LimitExceeded::code) == Some(LimitCode::MemorySize))
+    );
+}
+
+#[test]
+fn cached_rule_searches_refuse_cancellation_even_without_matches() {
+    let document = document_of(&[(1, Value::Null)], Dict::new());
+    let version = document.current();
+    let token = crate::budget::CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    assert!(edits.find(&mut reads, 1, 2).unwrap().is_empty());
+    token.cancel();
+    let error = edits.find(&mut reads, 1, 2).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn writing_rules_invalidates_the_cached_reference_paths() {
+    let document = document_of(&[(1, array(vec![reference(2), reference(3)]))], Dict::new());
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    assert_eq!(
+        &*edits.find(&mut reads, 1, 3).unwrap()[0].path,
+        &[Step::Index(1)]
+    );
+    edits
+        .apply(&mut reads, &index, 1, &[Step::Index(0)], Rule::RemoveEntry)
+        .unwrap();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let changed = transaction.snapshot();
+    assert_eq!(
+        &*edits
+            .find(&mut Reads::new(&changed, &budget), 1, 3)
+            .unwrap()[0]
+            .path,
+        &[Step::Index(0)]
+    );
 }

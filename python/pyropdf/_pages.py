@@ -7,6 +7,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, overload
 
 from pyropdf import _core
+from pyropdf._errors import LimitError
 from pyropdf._page import Page
 
 if TYPE_CHECKING:
@@ -15,11 +16,33 @@ if TYPE_CHECKING:
 #: The largest finite PDF real that readers keep (a 32-bit float).
 _FLOAT32_MAX = float.fromhex("0x1.fffffep+127")
 _A4 = (595.0, 842.0)
+_MIN_PAGE_ENTRY_LIMIT = 4096
 
 
 def _is_int(value: object) -> bool:
     """Return whether ``value`` is an integer other than a bool."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _page_entries(pages: Iterable[int], count: int) -> list[int]:
+    """Check page entries against ``count`` pages, reading at most one entry past their limit.
+
+    The limit is the larger of ``count`` and 4,096, so that repeating pages
+    never costs more than one pass over a large document.
+    """
+    limit = max(count, _MIN_PAGE_ENTRY_LIMIT)
+    entries: list[int] = []
+    for index in pages:
+        if len(entries) >= limit:
+            code = "page_entry_count"
+            msg = (
+                f"pages cannot hold more than {limit} entries "
+                f"(the larger of the page count and {_MIN_PAGE_ENTRY_LIMIT})"
+            )
+            raise LimitError(code, msg)
+        _resolve(index, count)
+        entries.append(index)
+    return entries
 
 
 def _resolve(index: object, count: int) -> int:

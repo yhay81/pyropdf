@@ -22,6 +22,7 @@
 //! and never follows them, so reference chains and cycles cost nothing.
 
 mod copy;
+mod labels;
 mod navigation;
 mod roles;
 mod rules;
@@ -40,6 +41,7 @@ use crate::version::table::Table;
 use crate::version::{ChangeSet, Version};
 
 pub use copy::copy_for_edit;
+pub use labels::{Labels, relabel};
 pub use roles::Role;
 pub use rules::{Edits, Rule, unreferenced};
 
@@ -445,6 +447,16 @@ pub fn find<'b>(
     referrer: Referrer,
     number: u32,
 ) -> Result<BudgetVec<'b, Found>> {
+    find_where(reads, referrer, |found| found == number)
+}
+
+/// Returns every reference that `referrer` holds to an object whose number
+/// `wanted` accepts, as [`find`] does for one object.
+pub(super) fn find_where<'b>(
+    reads: &mut Reads<'b>,
+    referrer: Referrer,
+    wanted: impl Fn(u32) -> bool,
+) -> Result<BudgetVec<'b, Found>> {
     let budget = reads.budget();
     budget.poll()?;
     let mut found = BudgetVec::new(budget);
@@ -458,7 +470,7 @@ pub fn find<'b>(
     let top = held.as_ref().map(|held| &**held.value());
     let start = top.map_or_else(|| Start::Entries(reads.trailer()), Start::Value);
     visit(start, budget, |at, reference| {
-        if reference.number() != number {
+        if !wanted(reference.number()) {
             return Ok(());
         }
         let mut path = BudgetVec::new(budget);

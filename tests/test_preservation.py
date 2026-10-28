@@ -100,10 +100,32 @@ def rewrite_stream(doc: pyropdf.Document) -> set[int]:
     return set()
 
 
+def page_labels(doc: pyropdf.Document) -> set[int]:
+    """Return the objects of the page label tree, which moving a page rewrites."""
+    # A structural edit writes the tree as one leaf whose ranges keep each
+    # page's label (#180), or the catalog when the tree is a direct value.
+    tree = doc.catalog.get("PageLabels")
+    if not isinstance(tree, Dictionary):
+        return set()
+    found = {number(doc.catalog)} if tree.xref is None else set()
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        if node.xref is not None:
+            found.add(node.xref)
+        kids = node.get("Kids")
+        if isinstance(kids, Array):
+            pending.extend(kid for kid in kids if isinstance(kid, Dictionary))
+        nums = node.get("Nums")
+        if isinstance(nums, Array):
+            found.update(label.xref for label in nums if isinstance(label, Dictionary) and label.xref is not None)
+    return found
+
+
 def move_page(doc: pyropdf.Document) -> set[int]:
     if len(doc.pages) == 1:
         doc.pages.new((200, 300))
-    touched = flattened(doc)
+    touched = flattened(doc) | page_labels(doc)
     doc.pages.move(0, -1)
     return touched
 

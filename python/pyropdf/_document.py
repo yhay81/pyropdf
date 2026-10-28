@@ -19,13 +19,13 @@ from pyropdf._check import structural_check as _structural_check
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
-from pyropdf._errors import DocumentClosedError, LimitError, PdfError
+from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._page import _clip_box
-from pyropdf._pages import Pages, _resolve
+from pyropdf._pages import Pages, _page_entries
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
@@ -44,7 +44,6 @@ _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
 _DEFAULT_RENDER_WORKERS = 4
 _MAX_RENDER_WORKERS = 64
-_MIN_PAGE_ENTRY_LIMIT = 4096
 _TEMPORARY_FILE_ATTEMPTS = 100
 
 #: The Info dictionary keys that :class:`Probe` reports, by their names in pyropdf.
@@ -560,27 +559,6 @@ class Document:
         """Return a representation containing the open or closed state."""
         state = "closed " if self._closed else ""
         return f"<{state}pyropdf.Document>"
-
-
-def _page_entries(pages: Iterable[int], count: int) -> list[int]:
-    """Check page entries against ``count`` pages, reading at most one entry past their limit.
-
-    The limit is the larger of ``count`` and 4,096, so that repeating pages
-    never costs more than one pass over a large document.
-    """
-    limit = max(count, _MIN_PAGE_ENTRY_LIMIT)
-    entries: list[int] = []
-    for index in pages:
-        if len(entries) >= limit:
-            code = "page_entry_count"
-            msg = (
-                f"pages cannot hold more than {limit} entries "
-                f"(the larger of the page count and {_MIN_PAGE_ENTRY_LIMIT})"
-            )
-            raise LimitError(code, msg)
-        _resolve(index, count)
-        entries.append(index)
-    return entries
 
 
 #: zlib's highest compression level, which ``compression_level`` takes.

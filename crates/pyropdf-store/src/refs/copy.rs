@@ -13,6 +13,21 @@ use crate::{LimitExceeded, Result};
 pub fn copy_for_edit(value: &Value, budget: &Budget) -> Result<Value> {
     let mut pending = BudgetVec::new(budget);
     pending.try_push((value, 1u64))?;
+    preflight(pending)?;
+    Ok(value.clone())
+}
+
+/// Copies a dictionary after charging its owned contents and edit headroom.
+pub(super) fn copy_dict_for_edit(dict: &Dict, budget: &Budget) -> Result<Dict> {
+    budget.check(LimitCode::ObjectDepth, 1)?;
+    let mut pending = BudgetVec::new(budget);
+    dictionary(dict, 1, &mut pending)?;
+    preflight(pending)?;
+    Ok(dict.clone())
+}
+
+fn preflight(mut pending: BudgetVec<'_, (&Value, u64)>) -> Result<()> {
+    let budget = pending.budget();
     while let Some((value, depth)) = pending.pop() {
         budget.poll()?;
         let container = matches!(value, Value::Array(_) | Value::Dict(_) | Value::Stream(_));
@@ -46,7 +61,7 @@ pub fn copy_for_edit(value: &Value, budget: &Budget) -> Result<Value> {
             _ => {}
         }
     }
-    Ok(value.clone())
+    Ok(())
 }
 
 fn dictionary<'v>(
