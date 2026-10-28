@@ -1,6 +1,6 @@
 //! The icons of notes, drawn in a 20-unit square, as pylopdf draws them.
 
-use super::{Canvas, KAPPA, Paint};
+use super::{Canvas, Paint, ellipse};
 
 const BLACK: (f64, f64, f64) = (0.0, 0.0, 0.0);
 
@@ -97,40 +97,4 @@ pub(super) fn draw(canvas: &mut Canvas, paint: &Paint, icon: &[u8], size: (f64, 
             );
         }
     }
-}
-
-/// Returns the coordinates of the ellipse inscribed in a rectangle, as a
-/// move and four Béziers.
-fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 26] {
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-    let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
-    let (kx, ky) = (rx * KAPPA, ry * KAPPA);
-    [
-        x1,
-        cy,
-        x1,
-        cy + ky,
-        cx + kx,
-        y1,
-        cx,
-        y1,
-        cx - kx,
-        y1,
-        x0,
-        cy + ky,
-        x0,
-        cy,
-        x0,
-        cy - ky,
-        cx - kx,
-        y0,
-        cx,
-        y0,
-        cx + kx,
-        y0,
-        x1,
-        cy - ky,
-        x1,
-        cy,
-    ]
 }
