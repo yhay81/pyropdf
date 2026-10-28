@@ -16,6 +16,10 @@
 #[cfg(test)]
 mod tests;
 
+mod dependencies;
+
+pub use dependencies::ReadDependencies;
+
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
