@@ -358,3 +358,15 @@ message = "the annotation appearance is too large"
 unit = "bytes"
 default = 16_777_216
 reached = "One generated annotation appearance contains more than 16 MiB of content."
+
+[codes.annotation_synthesis_count]
+message = "the render needs too many annotation appearances"
+unit = "appearances"
+default = 4_096
+reached = "One render synthesizes more than 4,096 missing annotation appearances across the document."
+
+[codes.annotation_synthesis_point_count]
+message = "the render needs too many annotation path points"
+unit = "points"
+default = 262_144
+reached = "Missing annotation appearances generated for one render contain more than 262,144 path points together."

@@ -9,6 +9,10 @@
 //! markup, lines, polygons, and ink follows their geometry, so settling
 //! fits it again too.
 //!
+//! A render draws an annotation that a file stores without an appearance
+//! as if the settler had drawn it: [`synthesized`] lists the objects that
+//! the bridge hands hayro for them, and the version never holds them.
+//!
 //! A drawing is made on a canvas over the annotation's `/Rect` whose `y`
 //! axis points down, as pylopdf's appearance engine draws it, and the
 //! content flips it into the form's space. Ported from pylopdf's
@@ -16,6 +20,7 @@
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321, without its canvas.
 
 mod icons;
+mod missing;
 mod shapes;
 
 use std::fmt::Write as _;
@@ -61,6 +66,7 @@ const BLEND_MODES: [&str; 16] = [
 /// The most dash lengths that a border pattern holds.
 pub const MAX_BORDER_DASHES: usize = 32;
 
+pub use missing::{MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized};
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
 
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`
@@ -654,6 +660,8 @@ pub struct Appearance {
     fitted: bool,
     alpha: f64,
     blend: Option<&'static str>,
+    /// The path points that the content draws.
+    points: usize,
 }
 
 impl Appearance {
@@ -782,6 +790,19 @@ pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>>
 /// for a kind that [`draws`] refuses, or for a dictionary without a usable
 /// rectangle, geometry, or opacity.
 pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
+    appearance_with(reader, dict, false)
+}
+
+/// Charges aggregate path points only for render-time synthesis.
+fn appearance_for_render(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
+    appearance_with(reader, dict, true)
+}
+
+fn appearance_with(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    aggregate: bool,
+) -> Result<Option<Appearance>> {
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
     };
@@ -829,6 +850,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         None => None,
     };
     let mut canvas = Canvas::new(size.1, reader.budget);
+    canvas.aggregate = aggregate;
     if alpha < 1.0 || blend.is_some() {
         canvas.out.push_str("/G0 gs\n");
     }
@@ -905,6 +927,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         fitted: fitted.is_some(),
         alpha,
         blend,
+        points: canvas.points,
     }))
 }
 
@@ -979,6 +1002,9 @@ fn markup_line<'b>(
 struct Canvas<'b> {
     out: Output<'b>,
     height: f64,
+    /// The path points drawn so far.
+    points: usize,
+    aggregate: bool,
 }
 
 impl<'b> Canvas<'b> {
@@ -989,11 +1015,28 @@ impl<'b> Canvas<'b> {
                 refusal: None,
             },
             height,
+            points: 0,
+            aggregate: false,
         }
     }
 
     /// Appends a path: `m` and `l` take one point, `c` three, `h` none.
     fn path(&mut self, operators: &str, coordinates: &[f64]) {
+        if self.out.refusal.is_some() {
+            return;
+        }
+        let count = coordinates.len() / 2;
+        if self.aggregate
+            && let Err(error) = self
+                .out
+                .bytes
+                .budget()
+                .charge(LimitCode::AnnotationSynthesisPointCount, count as u64)
+        {
+            self.out.refusal = Some(error.into());
+            return;
+        }
+        self.points = self.points.saturating_add(count);
         let mut points = coordinates.as_chunks::<2>().0.iter();
         for operator in operators.chars() {
             let count = match operator {

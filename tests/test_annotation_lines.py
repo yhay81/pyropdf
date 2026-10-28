@@ -2,8 +2,7 @@
 
 pylopdf's tests/test_annotation_lines.py at ebb01d3c. Intended
 differences: the core's checks are called as ``_core.annotation_add`` with
-the page's object; the render-time appearances of lines that a file stores
-without one are #169's.
+the page's object.
 """
 
 from __future__ import annotations
@@ -224,6 +223,23 @@ def _without_appearance(entries: str) -> pyropdf.Document:
 
 
 @pytest.mark.parametrize(
+    ("entries", "point"),
+    [
+        ("/Subtype /Line /Rect [0 0 200 100] /L [10 50 190 50] /C [0 0 1] /BS << /W 4 >>", (100, 50)),
+        ("/Subtype /PolyLine /Rect [0 0 200 100] /Vertices [10 10 100 10 100 90] /C [0 0 1] /BS << /W 2 >>", (100, 50)),
+        ("/Subtype /Polygon /Rect [0 0 200 100] /Vertices [10 10 190 10 100 90] /IC [0 0 1]", (100, 70)),
+        ("/Subtype /Ink /Rect [0 0 200 100] /InkList [[10 50 190 50]] /C [0 0 1] /Border [0 0 4]", (100, 50)),
+    ],
+)
+def test_rendering_draws_missing_line_appearances(entries: str, point: tuple[int, int]) -> None:
+    doc = _without_appearance(entries)
+    before = doc.to_bytes()
+
+    assert _pixel(doc.pages[0].pixmap(dpi=72), *point) == (0, 0, 255)
+    assert doc.to_bytes() == before
+
+
+@pytest.mark.parametrize(
     "entries",
     [
         "/Subtype /Line /Rect [0 0 200 100] /L [10 50 190] /C [0 0 1]",
@@ -259,8 +275,10 @@ def test_reading_too_many_points_raises() -> None:
     with pytest.raises(pyropdf.LimitError) as raised:
         _ = doc.pages[0].annotations[0].vertices
     assert raised.value.code == "annotation_point_count"
-    # Rendering leaves it undrawn.
-    assert bytes(doc.pages[0].pixmap(dpi=72)) == b"\xff" * (200 * 100 * 3)
+    # Rendering refuses the excessive geometry instead of hiding it.
+    with pytest.raises(pyropdf.LimitError) as rendered:
+        doc.pages[0].pixmap(dpi=72)
+    assert rendered.value.code == "annotation_point_count"
 
 
 def test_points_and_endings_are_set_through_handles() -> None:

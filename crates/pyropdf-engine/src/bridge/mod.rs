@@ -17,6 +17,11 @@
 //! them, and hayro opens the bytes with the password that unlocked the
 //! base (yhay81/pyropdf#13).
 //!
+//! [`Bridged::with_appearances`], which [`Cache`] builds, also hands hayro
+//! the appearances that a render draws for annotations stored without one
+//! ([`crate::annotations::synthesized`]), which the version never holds
+//! (yhay81/pyropdf#169).
+//!
 //! The bridge checks that hayro's page list is the store's page index, so
 //! that a page number names the same page in both.
 
@@ -33,7 +38,7 @@ use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::index::Location;
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::security::{self, Handler};
-use pyropdf_store::value::{Dict, Name, Reference, Value};
+use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Slot, Version};
 use pyropdf_store::write;
 
@@ -132,6 +137,22 @@ impl Bridged {
     /// and an edited one with its written objects encrypted; hayro opens
     /// both with the password that unlocked the base.
     pub fn new(version: &Version, pages: &PageIndex, budget: &Budget) -> Result<Self> {
+        Self::build(version, pages, budget, false)
+    }
+
+    /// Builds hayro's reading of `version` as [`Bridged::new`] does, with
+    /// the appearances that a render draws for annotations stored without
+    /// one standing in for their objects.
+    pub fn with_appearances(version: &Version, pages: &PageIndex, budget: &Budget) -> Result<Self> {
+        Self::build(version, pages, budget, true)
+    }
+
+    fn build(
+        version: &Version,
+        pages: &PageIndex,
+        budget: &Budget,
+        appearances: bool,
+    ) -> Result<Self> {
         let started = Instant::now();
         let handler = handler(version)?;
         let password = match handler {
@@ -140,9 +161,16 @@ impl Bridged {
             }
             None => "",
         };
+        let extra = if appearances {
+            crate::annotations::synthesized(version, pages, budget)?
+        } else {
+            Vec::new()
+        };
         let (bytes, update) = match (handler, version.base().file()) {
-            (Some(_), Some(file)) if !version.has_changes() => (copy(file.bytes(), budget)?, 0),
-            _ => update(version, handler, budget)?,
+            (Some(_), Some(file)) if !version.has_changes() && extra.is_empty() => {
+                (copy(file.bytes(), budget)?, 0)
+            }
+            _ => update(version, &extra, handler, budget)?,
         };
         let store = started.elapsed();
         let started = Instant::now();
@@ -183,12 +211,14 @@ impl Bridged {
     }
 }
 
+type CacheEntry = (Weak<Version>, bool, Arc<Bridged>);
+
 /// The bridge of one version at a time: the latest version asked for. It
 /// remembers the version by a weak reference, so it keeps no version alive
 /// (DESIGN.md section 10).
 #[derive(Default)]
 pub struct Cache {
-    entry: Mutex<Option<(Weak<Version>, Arc<Bridged>)>>,
+    entry: Mutex<Option<CacheEntry>>,
 }
 
 impl Cache {
@@ -198,26 +228,39 @@ impl Cache {
         Self::default()
     }
 
-    /// Returns the bridge of `version`, building it when the cache holds
-    /// another version's.
+    /// Returns the plain bridge for extraction and operations that do not
+    /// draw annotations.
     pub fn get(
         &self,
         version: &Arc<Version>,
         pages: &PageIndex,
         budget: &Budget,
     ) -> Result<Arc<Bridged>> {
-        if let Some((held, bridged)) = &*self.lock()
+        self.get_for_render(version, pages, budget, false)
+    }
+
+    /// Caches one version and annotation mode. Changing either replaces
+    /// the entry, so plain reads cannot reuse synthetic annotation objects.
+    pub fn get_for_render(
+        &self,
+        version: &Arc<Version>,
+        pages: &PageIndex,
+        budget: &Budget,
+        annotations: bool,
+    ) -> Result<Arc<Bridged>> {
+        if let Some((held, mode, bridged)) = &*self.lock()
             && held.as_ptr() == Arc::as_ptr(version)
             && held.strong_count() > 0
+            && *mode == annotations
         {
             return Ok(Arc::clone(bridged));
         }
-        let bridged = Arc::new(Bridged::new(version, pages, budget)?);
-        *self.lock() = Some((Arc::downgrade(version), Arc::clone(&bridged)));
+        let bridged = Arc::new(Bridged::build(version, pages, budget, annotations)?);
+        *self.lock() = Some((Arc::downgrade(version), annotations, Arc::clone(&bridged)));
         Ok(bridged)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<(Weak<Version>, Arc<Bridged>)>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<CacheEntry>> {
         self.entry.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -277,9 +320,11 @@ const WIDTHS: [usize; 3] = [1, 8, 4];
 
 /// Returns the original bytes, or a header for a document without a file,
 /// followed by the written objects and the complete cross-reference
-/// stream; and the length of what follows the original bytes.
+/// stream; and the length of what follows the original bytes. The objects
+/// of `extra`, sorted by number, stand in for the version's.
 fn update(
     version: &Version,
+    extra: &[(Reference, Value)],
     handler: Option<&Handler>,
     budget: &Budget,
 ) -> Result<(Vec<u8>, usize)> {
@@ -291,7 +336,11 @@ fn update(
     }
     let original = out.len();
     out.try_extend_from_slice(b"\n")?;
-    let size = u32::try_from(version.next_number()).unwrap_or(u32::MAX);
+    let next = extra
+        .last()
+        .map_or(0, |(reference, _)| u64::from(reference.number()) + 1)
+        .max(version.next_number());
+    let size = u32::try_from(next).unwrap_or(u32::MAX);
     // Rows cover the numbers that the base lists or a transaction wrote, in
     // runs that /Index names: a document whose highest number is far above
     // its object count does not get a row for every number in between.
@@ -300,6 +349,9 @@ fn update(
     for (number, _) in version.slots() {
         budget.poll()?;
         numbers.try_push(number)?;
+    }
+    for (reference, _) in extra {
+        numbers.try_push(reference.number())?;
     }
     numbers.try_push(0)?;
     numbers.sort_unstable();
@@ -325,24 +377,26 @@ fn update(
             rows.try_push(row(0, 0, 65535))?;
             continue;
         }
-        let entry = match version.slot(number) {
-            Some(Slot::Written(written)) => {
-                let offset = out.len() as u64;
-                header(&mut out, number, written.generation())?;
-                match handler {
-                    Some(handler) => {
-                        let reference = Reference::new(number, written.generation());
-                        let bytes =
-                            security::encrypt_bytes(handler, reference, written.bytes(), budget)?;
-                        out.try_extend_from_slice(&bytes)?;
-                    }
-                    None => out.try_extend_from_slice(written.bytes())?,
-                }
-                out.try_extend_from_slice(b"\nendobj\n")?;
-                row(1, offset, u32::from(written.generation()))
+        let stand_in = extra
+            .binary_search_by_key(&number, |(reference, _)| reference.number())
+            .ok()
+            .map(|at| &extra[at]);
+        let entry = match (stand_in, version.slot(number)) {
+            (Some((reference, value)), _) => {
+                let mut bytes = BudgetVec::new(budget);
+                write::value(&mut bytes, value)?;
+                let bytes = Bytes::new(bytes.into_vec());
+                object(&mut out, *reference, &bytes, handler, budget)?
             }
-            Some(Slot::Free(_)) => row(0, 0, 0),
-            None => base_row(version, number, &mut out, budget)?,
+            (None, Some(Slot::Written(written))) => object(
+                &mut out,
+                Reference::new(number, written.generation()),
+                written.bytes(),
+                handler,
+                budget,
+            )?,
+            (None, Some(Slot::Free(_))) => row(0, 0, 0),
+            (None, None) => base_row(version, number, &mut out, budget)?,
         };
         rows.try_push(entry)?;
     }
@@ -409,6 +463,28 @@ fn update(
     out.try_extend_from_slice(b"\n%%EOF\n")?;
     let update = out.len() - original;
     Ok((out.into_vec(), update))
+}
+
+/// Appends the object `reference` whose serialized value is `bytes`,
+/// encrypted with `handler`, and returns its row.
+fn object(
+    out: &mut BudgetVec<'_, u8>,
+    reference: Reference,
+    bytes: &Bytes,
+    handler: Option<&Handler>,
+    budget: &Budget,
+) -> Result<[u8; 13]> {
+    let offset = out.len() as u64;
+    header(out, reference.number(), reference.generation())?;
+    match handler {
+        Some(handler) => {
+            let bytes = security::encrypt_bytes(handler, reference, bytes, budget)?;
+            out.try_extend_from_slice(&bytes)?;
+        }
+        None => out.try_extend_from_slice(bytes)?,
+    }
+    out.try_extend_from_slice(b"\nendobj\n")?;
+    Ok(row(1, offset, u32::from(reference.generation())))
 }
 
 /// Returns the row of object `number` of the base: its place in the file,
