@@ -3,6 +3,7 @@
 
 use pyo3::prelude::*;
 
+mod annotations;
 mod buffers;
 mod cancel;
 mod changes;
@@ -31,6 +32,11 @@ mod windows_permissions;
 /// section 4.6; tests/test_threads.py).
 #[pymodule(gil_used = false)]
 mod _core {
+    #[pymodule_export]
+    use super::annotations::{
+        _stale_appearances, annotation_edit, annotation_list, annotation_open, annotation_popup,
+        annotation_read, annotation_remove, annotation_reply,
+    };
     #[pymodule_export]
     use super::buffers::{CharColumns, Column};
     #[pymodule_export]

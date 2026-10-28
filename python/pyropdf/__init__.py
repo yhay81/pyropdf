@@ -2,6 +2,18 @@
 
 # The typed views of section 8, a module of their own: one class per object type.
 from pyropdf import typed
+from pyropdf._annotations import (
+    Annotation,
+    AnnotationFlags,
+    Annotations,
+    AnnotationType,
+    AttachmentIcon,
+    Border,
+    BorderStyle,
+    LineEnding,
+    NoteIcon,
+    StampIcon,
+)
 from pyropdf._attachments import Attachment, Attachments
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._check import StructuralDefect, StructuralReport
@@ -98,11 +110,18 @@ for _public in (
 
 __all__ = [
     "Access",
+    "Annotation",
+    "AnnotationFlags",
+    "AnnotationType",
+    "Annotations",
     "Array",
     "Attachment",
+    "AttachmentIcon",
     "Attachments",
     "BlendMode",
     "Block",
+    "Border",
+    "BorderStyle",
     "CancellationToken",
     "ChangeReport",
     "Char",
@@ -134,6 +153,7 @@ __all__ = [
     "LimitError",
     "Line",
     "LineCap",
+    "LineEnding",
     "LineJoin",
     "LineTo",
     "MalformedPdfError",
@@ -141,6 +161,7 @@ __all__ = [
     "Matrix",
     "MoveTo",
     "Name",
+    "NoteIcon",
     "Objects",
     "OcrEngine",
     "OcrError",
@@ -173,6 +194,7 @@ __all__ = [
     "Span",
     "StaleObjectError",
     "StalePageError",
+    "StampIcon",
     "Stream",
     "String",
     "Stroke",
