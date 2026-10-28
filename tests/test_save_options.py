@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 from corpus import ASSETS, NAMES
 from test_attachments import build_pdf
+from test_consistency import QPDF, qpdf_findings
 
 import pyropdf
 from pyropdf import Encryption, LimitError, Name, PdfError, Stream
@@ -73,7 +76,12 @@ def test_a_pruned_corpus_save_keeps_every_reachable_object(name: str) -> None:
 
     assert source.catalog.xref in kept
     assert len(pruned.pages) == len(source.pages)
+    # A file read with a cross-reference stream is saved with a new one.
+    added = kept.keys() - values.keys()
+    assert all(kept[number].startswith(b"<< /Type /XRef") for number in added)
     for number, body in kept.items():
+        if number in added:
+            continue
         assert body == values[number], number
         # What a kept object refers to is kept, unless the source lacks it too.
         head = body.split(b"stream\n", 1)[0]
@@ -277,3 +285,117 @@ def test_keep_id_must_be_a_bool() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     with pytest.raises(TypeError, match="keep_id must be a bool"):
         doc.to_bytes(keep_id=1)  # ty: ignore[invalid-argument-type]
+
+
+STARTXREF = re.compile(rb"startxref\s+(\d+)\s+%%EOF\s*$")
+
+
+def _form(data: bytes) -> str:
+    """Return the form of the cross-reference section that ``data``'s ``startxref`` names."""
+    match = STARTXREF.search(data)
+    assert match is not None
+    return "table" if data[int(match[1]) :].startswith(b"xref") else "stream"
+
+
+def _require_qpdf() -> str:
+    if QPDF is None:
+        if os.environ.get("PYROPDF_REQUIRE_QPDF") == "1":
+            pytest.fail("PYROPDF_REQUIRE_QPDF=1, but qpdf is not on PATH")
+        pytest.skip("qpdf is not on PATH")
+    return QPDF
+
+
+def _new_qpdf_warnings(saved: Path, source: Path, password: str) -> set[str]:
+    """Return the warnings of ``qpdf --check`` on the encrypted ``saved`` that ``source`` lacks."""
+    qpdf = _require_qpdf()
+    warnings = []
+    for path in (saved, source):
+        command = [qpdf, "--check", f"--password={password}", str(path)]
+        result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603 - a fixed command on test data.
+        # qpdf exits 2 on errors and 3 on warnings.
+        assert result.returncode in {0, 3}, result.stdout + result.stderr
+        lines = (result.stdout + result.stderr).splitlines()
+        warnings.append({line.rsplit(": ", 1)[-1] for line in lines if "WARNING" in line})
+    return warnings[0] - warnings[1]
+
+
+@pytest.mark.parametrize("form", ["stream", "object_streams"])
+@pytest.mark.parametrize("name", NAMES)
+def test_a_corpus_save_with_a_cross_reference_stream_keeps_every_object(name: str, form: str, tmp_path: Path) -> None:
+    source = pyropdf.open(ASSETS / name)
+    values = {number: body for number, _, body in source._core()._objects()}  # noqa: SLF001
+    data = source.to_bytes(cross_reference="stream") if form == "stream" else source.to_bytes(object_streams=True)
+    assert _form(data) == "stream"
+    assert data[5:8] >= b"1.5"
+    saved = pyropdf.open(data)
+    assert not saved.is_repaired
+    kept = {number: body for number, _, body in saved._core()._objects()}  # noqa: SLF001
+    for number, body in values.items():
+        assert kept[number] == body, number
+    path = tmp_path / "saved.pdf"
+    path.write_bytes(data)
+    _require_qpdf()
+    assert qpdf_findings(path) - qpdf_findings(ASSETS / name) == set()
+
+
+def test_a_save_keeps_the_cross_reference_form_of_the_opened_file() -> None:
+    table = build_pdf(["Hello"]).replace(b"%PDF-1.7", b"%PDF-1.4", 1)
+    doc = pyropdf.open(table)
+    assert _form(doc.to_bytes()) == "table"
+    stream = doc.to_bytes(cross_reference="stream")
+    assert stream.startswith(b"%PDF-1.5\n")
+    reopened = pyropdf.open(stream)
+    assert _form(reopened.to_bytes()) == "stream"
+    assert _form(reopened.to_bytes(cross_reference="table")) == "table"
+    reopened.catalog["Edited"] = True
+    update = reopened.to_bytes(incremental=True)
+    assert update.startswith(stream)
+    assert _form(update) == "stream"
+    assert pyropdf.open(update).catalog["Edited"] is True
+
+
+def test_an_encrypted_save_encrypts_object_streams_and_not_their_members(tmp_path: Path) -> None:
+    source = tmp_path / "source.pdf"
+    source.write_bytes(build_pdf(["Hello"]))
+    doc = pyropdf.open(source)
+    doc.catalog["Marker"] = "object-stream-member"
+    # Uncompressed object streams would show their members if unencrypted.
+    data = doc.to_bytes(encryption=Encryption(user_password="pw"), object_streams=True, decompress=True)
+    assert b"object-stream-member" in doc.to_bytes(object_streams=True, decompress=True)
+    assert b"object-stream-member" not in data
+    assert b"/ObjStm" in data
+    reopened = pyropdf.open(data, password="pw")
+    assert bytes(reopened.catalog["Marker"]) == b"object-stream-member"
+    assert len(reopened.pages) == 1
+    path = tmp_path / "encrypted.pdf"
+    path.write_bytes(data)
+    assert _new_qpdf_warnings(path, source, "pw") == set()
+
+
+@pytest.mark.parametrize("name", ["user-r4-rc4-128.pdf", "user-aes-256-object-streams.pdf"])
+def test_a_save_that_keeps_the_encryption_packs_objects_into_object_streams(name: str, tmp_path: Path) -> None:
+    doc = pyropdf.open(ENCRYPTED / name, password="userpw")
+    values = {number: body for number, _, body in doc._core()._objects()}  # noqa: SLF001
+    data = doc.to_bytes(encryption=Encryption.KEEP, object_streams=True)
+    assert _form(data) == "stream"
+    reopened = pyropdf.open(data, password="userpw")
+    kept = {number: body for number, _, body in reopened._core()._objects()}  # noqa: SLF001
+    for number, body in values.items():
+        assert kept[number] == body, number
+    assert reopened.pages[0].text() == doc.pages[0].text()
+    path = tmp_path / "kept.pdf"
+    path.write_bytes(data)
+    assert _new_qpdf_warnings(path, ENCRYPTED / name, "userpw") == set()
+
+
+def test_cross_reference_options_are_checked() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    with pytest.raises(ValueError, match="cross_reference must be"):
+        doc.to_bytes(cross_reference="xref")  # ty: ignore[invalid-argument-type]
+    for options in ({"cross_reference": "stream"}, {"cross_reference": "table"}, {"object_streams": True}):
+        with pytest.raises(ValueError, match="full save"):
+            doc.to_bytes(incremental=True, **options)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(ValueError, match="needs cross_reference='stream' or None"):
+        doc.to_bytes(object_streams=True, cross_reference="table")
+    with pytest.raises(TypeError, match="object_streams must be a bool"):
+        doc.to_bytes(object_streams=1)  # ty: ignore[invalid-argument-type]

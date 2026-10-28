@@ -10,6 +10,7 @@ use proptest::prelude::*;
 
 use super::*;
 use crate::budget::CancellationToken;
+use crate::index::SectionKind;
 use crate::value::{Bytes, Name, Stream};
 use crate::version::{Base, Document, MemoryBase};
 
@@ -42,6 +43,11 @@ fn saved(version: &Version, incremental_mode: bool) -> Vec<u8> {
 
 fn assert_objects(version: &Version, bytes: Vec<u8>) {
     let reread = FileBase::open(bytes.into(), &Budget::default()).unwrap();
+    assert_reread(version, &reread);
+}
+
+/// Asserts that `reread`, a save of `version`, has every object of it.
+fn assert_reread(version: &Version, reread: &FileBase) {
     assert!(
         !reread.index().is_repaired(),
         "{:?}",
@@ -68,7 +74,7 @@ fn assert_objects(version: &Version, bytes: Vec<u8>) {
                 Some(Slot::Written(value)) => value.bytes().clone(),
                 _ => raw::body(&**version.base(), reference, &budget).unwrap(),
             };
-            let restored = raw::body(&reread, reference, &budget).unwrap();
+            let restored = raw::body(reread, reference, &budget).unwrap();
             assert_eq!(original, restored, "object {number}: exact value bytes");
             assert_eq!(
                 Value::parse(&original, &budget).unwrap(),
@@ -671,10 +677,11 @@ fn a_compressed_save_round_trips_the_corpus_values_except_stream_encoding() {
         };
         full_with(&version, &mut bytes, &Budget::default(), None, options).unwrap();
         assert!(bytes.len() <= plain.len(), "{}", path.display());
+        // A file read with a cross-reference stream gains one in both.
         let reopened = open(bytes).current();
         assert_eq!(
             reopened.next_number(),
-            version.next_number(),
+            open(plain).current().next_number(),
             "{}",
             path.display()
         );
@@ -740,4 +747,151 @@ fn full_with_plain(
     options: Options,
 ) -> Result<u64> {
     full_with(version, target, budget, None, options)
+}
+
+/// Saves `version` in full with `options` and returns the bytes and the
+/// reopened file, unlocked with `password`.
+fn reopened(version: &Version, options: Options, password: Option<&[u8]>) -> (Vec<u8>, FileBase) {
+    let mut bytes = Vec::new();
+    full_with_plain(version, &mut bytes, &Budget::default(), options).unwrap();
+    let reread =
+        FileBase::open_with_password(bytes.clone().into(), password, &Budget::default()).unwrap();
+    (bytes, reread)
+}
+
+/// Asserts that the object streams of `reread`, a save of `version`, hold
+/// only what ISO 32000-2 section 7.5.7 lets them hold, and returns the
+/// number of their members.
+fn assert_members(version: &Version, reread: &FileBase) -> usize {
+    let encrypt = match version.trailer().get("Encrypt") {
+        Some(Value::Reference(encrypt)) => Some(encrypt.number()),
+        _ => None,
+    };
+    let mut members = 0;
+    for (number, entry) in reread.index().entries() {
+        if let Location::Member { .. } = entry.location() {
+            members += 1;
+            assert_eq!(version.generation(number), Some(0), "object {number}");
+            assert_ne!(Some(number), encrypt);
+            let value = version.get(number, &Budget::default()).unwrap().unwrap();
+            assert!(
+                !matches!(**value.value(), Value::Stream(_)),
+                "object {number}"
+            );
+        }
+    }
+    members
+}
+
+#[test]
+fn corpus_files_round_trip_through_cross_reference_streams_and_object_streams() {
+    let stream = Options {
+        cross_reference: CrossReference::Stream,
+        ..Options::default()
+    };
+    let packed = Options {
+        object_streams: true,
+        ..Options::default()
+    };
+    let table = Options {
+        cross_reference: CrossReference::Table,
+        ..Options::default()
+    };
+    for path in corpus() {
+        eprintln!("{}", path.display());
+        let doc = open(fs::read(&path).unwrap());
+        let version = doc.current();
+        for options in [stream, packed, table] {
+            let (bytes, reread) = reopened(&version, options, None);
+            let section = &reread.index().revisions()[0].sections()[0];
+            assert_eq!(
+                section.kind() == SectionKind::Stream,
+                options != table,
+                "{options:?}"
+            );
+            if options != table {
+                assert!(bytes[5..8] >= b"1.5"[..]);
+            }
+            let members = assert_members(&version, &reread);
+            assert_eq!(members > 0, options == packed, "{options:?}");
+            assert_reread(&version, &reread);
+        }
+    }
+}
+
+#[test]
+fn object_streams_hold_no_stream_later_generation_or_encryption_dictionary() {
+    let doc = open(saved(&memory().current(), false));
+    let mut tx = doc.begin();
+    let number = tx.allocate().unwrap().number();
+    let data = stream(&[], b"0 0 m 1 1 l S");
+    tx.write(number, &Value::Stream(Box::new(data)), &Budget::default())
+        .unwrap();
+    let version = tx.commit(&Budget::default()).unwrap();
+    let packed = Options {
+        object_streams: true,
+        ..Options::default()
+    };
+    let (_, reread) = reopened(&version, packed, None);
+    // The catalog and the page tree; object 3 has generation 7.
+    assert_eq!(assert_members(&version, &reread), 2);
+    assert_eq!(version.generation(3), Some(7));
+    assert_reread(&version, &reread);
+    // An unedited save of an encrypted file keeps its /Encrypt dictionary
+    // and its encrypted streams out of object streams.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/encrypted/user-r4-rc4-128.pdf");
+    let base = FileBase::open_with_password(
+        fs::read(path).unwrap().into(),
+        Some(b"userpw"),
+        &Budget::default(),
+    )
+    .unwrap();
+    let doc = Document::new(Arc::new(base), None);
+    let version = doc.current();
+    assert!(version.trailer().get("Encrypt").is_some());
+    let (_, reread) = reopened(&version, packed, Some(b"userpw"));
+    assert!(assert_members(&version, &reread) > 0);
+    assert_reread(&version, &reread);
+}
+
+#[test]
+fn an_incremental_save_keeps_the_cross_reference_form_and_refuses_another() {
+    let stream = Options {
+        cross_reference: CrossReference::Stream,
+        ..Options::default()
+    };
+    let (bytes, _) = reopened(&memory().current(), stream, None);
+    let doc = open(bytes.clone());
+    let version = edited(&doc, 5);
+    let mut update = Vec::new();
+    incremental(&version, &mut update, &Budget::default()).unwrap();
+    assert!(update.starts_with(&bytes));
+    let reread = FileBase::open(update.into(), &Budget::default()).unwrap();
+    let revisions = reread.index().revisions();
+    assert_eq!(revisions.len(), 2);
+    assert!(
+        revisions
+            .iter()
+            .all(|revision| revision.sections()[0].kind() == SectionKind::Stream)
+    );
+    assert_reread(&version, &reread);
+    // A default full save keeps the form too.
+    let (_, reread) = reopened(&version, Options::default(), None);
+    assert_eq!(
+        reread.index().revisions()[0].sections()[0].kind(),
+        SectionKind::Stream
+    );
+    for options in [
+        stream,
+        Options {
+            object_streams: true,
+            ..Options::default()
+        },
+    ] {
+        assert!(matches!(
+            incremental_with(&version, &mut Vec::new(), &Budget::default(), options),
+            Err(Error::Refused(Refusal::FullSaveOption))
+        ));
+    }
 }
