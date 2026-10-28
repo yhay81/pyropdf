@@ -281,13 +281,22 @@ class Document:
             self._access = access
         return access
 
-    def save(
+    def save(  # noqa: PLR0913 - the save options are all keyword-only
         self,
         path: str | os.PathLike[str],
         /,
         *,
         incremental: bool = False,
         encryption: Encryption | None = None,
+        prune: bool = False,
+        compress: bool = False,
+        compression_level: int = 6,
+        decompress: bool = False,
+        keep_id: bool = False,
+        cross_reference: Literal["table", "stream"] | None = None,
+        object_streams: bool = False,
+        renumber: bool = False,
+        dedupe: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -304,29 +313,115 @@ class Document:
         :attr:`Encryption.KEEP` keeps it in a full save too, copying its
         untouched encrypted bytes, and an :class:`Encryption` encrypts a full
         save anew.
+
+        ``prune=True`` writes only the objects that the trailer reaches, so
+        what an edit unlinked leaves the file; the document in memory keeps
+        them. An incremental save keeps the objects of the opened file, so
+        it refuses ``prune``.
+
+        ``compress=True`` compresses with Flate, at zlib's
+        ``compression_level`` from 0 through 9, each stream that has no
+        filter, where that makes it shorter; XMP metadata stays unfiltered.
+        ``decompress=True`` removes the filters that hayro-syntax decodes,
+        keeping image filters such as ``DCTDecode``, and excludes
+        ``compress``. An incremental save compresses only the streams that
+        it writes and refuses ``decompress``. An encrypted save compresses
+        before it encrypts. The document in memory keeps its streams.
+
+        A save of an edited document keeps the first element of the
+        trailer's ``/ID`` and renews the second, and a full save, or an
+        incremental save of edits, gives a document without ``/ID`` a new
+        one (ISO 32000-2 section 14.4). The new element is the MD5 digest
+        of the bytes before it, so the same document saves to the same
+        bytes. A save without edits writes ``/ID`` as read, and so does any
+        save with ``keep_id=True``. Encryption keys derive from the first
+        element, which a save keeps.
+
+        ``cross_reference`` writes the cross-reference data as a ``"table"``
+        or as a ``"stream"`` (PDF 1.5); ``None`` keeps the form of the
+        section that the opened file's ``startxref`` names, and writes a
+        table for a hybrid-reference file or a document without a file.
+        ``object_streams=True`` packs every object that ISO 32000-2 section
+        7.5.7 lets an object stream hold into object streams of up to 100
+        objects: those that are not streams, have generation 0, and are not
+        the encryption dictionary. It writes a cross-reference stream, so
+        it excludes ``cross_reference="table"``. Both raise the header's
+        version to 1.5 when it is lower. The streams that a save adds are
+        compressed with Flate at ``compression_level`` unless
+        ``decompress``, and an encrypted save encrypts each object stream
+        as a whole. An incremental save keeps the form of the opened file,
+        so it refuses both.
+
+        ``renumber=True`` numbers the objects that a full save writes 1, 2,
+        3, and so on in the order of their numbers, with generation 0, and
+        the objects that it adds after them; each reference follows its
+        object, and a reference to an object that the save does not write
+        becomes null. An encrypted save encrypts each object with the key
+        of its new number. The document in memory keeps its numbers, and an
+        incremental save, which keeps the opened file's, refuses it.
+
+        ``dedupe=True`` merges each set of identical objects into the one
+        with the smallest number and points every reference to it; streams
+        merge when their dictionaries and data are identical. Pages,
+        annotations, form fields, structure elements, outline items,
+        optional-content groups, the objects that the trailer names, and
+        objects in cycles of references never merge. It needs
+        ``prune=True``, and so a full save. The document in memory keeps its
+        objects.
         """
         self._ensure_open()
-        _validate_bool("incremental", incremental)
+        options = _save_options(
+            incremental=incremental,
+            prune=prune,
+            compress=compress,
+            compression_level=compression_level,
+            decompress=decompress,
+            keep_id=keep_id,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+            renumber=renumber,
+            dedupe=dedupe,
+        )
         arg = _encryption_arg(encryption)
-        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg))
+        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
 
-    def to_bytes(
+    def to_bytes(  # noqa: PLR0913 - the save options are all keyword-only
         self,
         *,
         incremental: bool = False,
         encryption: Encryption | None = None,
         max_size: int | None = _DEFAULT_MAX_PDF_OUTPUT_SIZE,
+        prune: bool = False,
+        compress: bool = False,
+        compression_level: int = 6,
+        decompress: bool = False,
+        keep_id: bool = False,
+        cross_reference: Literal["table", "stream"] | None = None,
+        object_streams: bool = False,
+        renumber: bool = False,
+        dedupe: bool = False,
     ) -> bytes:
-        """Return the document as PDF bytes, as :meth:`save` writes them, with its ``encryption``.
+        """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
         ``max_size`` bounds the output, 512 MiB by default, and refuses the
         write that would pass it with :class:`LimitError` code
         ``pdf_output_size``; ``None`` leaves it unbounded for trusted input.
         """
         self._ensure_open()
-        _validate_bool("incremental", incremental)
+        options = _save_options(
+            incremental=incremental,
+            prune=prune,
+            compress=compress,
+            compression_level=compression_level,
+            decompress=decompress,
+            keep_id=keep_id,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+            renumber=renumber,
+            dedupe=dedupe,
+        )
         _validate_optional_positive_int("max_size", max_size)
-        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption))
+        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,
@@ -486,11 +581,110 @@ class Document:
         return f"<{state}pyropdf.Document>"
 
 
+#: zlib's highest compression level, which ``compression_level`` takes.
+_MAX_COMPRESSION_LEVEL = 9
+
+
 def _validate_bool(name: str, value: object) -> None:
     """Refuse a value that is not a bool."""
     if not isinstance(value, bool):
         msg = f"{name} must be a bool: {value!r}"
         raise TypeError(msg)
+
+
+def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
+    *,
+    incremental: bool,
+    prune: bool,
+    compress: bool,
+    compression_level: int,
+    decompress: bool,
+    keep_id: bool,
+    cross_reference: object,
+    object_streams: bool,
+    renumber: bool,
+    dedupe: bool,
+) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool]:
+    """Check the save options, and return them as the core's save methods take them.
+
+    They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
+    ``cross_reference_stream``, ``object_streams``, ``renumber``, and
+    ``dedupe``.
+    """
+    flags = {
+        "incremental": incremental,
+        "prune": prune,
+        "compress": compress,
+        "decompress": decompress,
+        "keep_id": keep_id,
+        "object_streams": object_streams,
+        "renumber": renumber,
+        "dedupe": dedupe,
+    }
+    for name, value in flags.items():
+        _validate_bool(name, value)
+    if isinstance(compression_level, bool) or not isinstance(compression_level, int):
+        msg = f"compression_level must be an integer from 0 through 9: {compression_level!r}"
+        raise TypeError(msg)
+    if not 0 <= compression_level <= _MAX_COMPRESSION_LEVEL:
+        msg = f"compression_level must be from 0 through 9: {compression_level}"
+        raise ValueError(msg)
+    if incremental:
+        _refuse_full_save_options(
+            prune=prune,
+            decompress=decompress,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+            renumber=renumber,
+            dedupe=dedupe,
+        )
+    if compress and decompress:
+        msg = "decompress=True needs compress=False, which would compress the streams again"
+        raise ValueError(msg)
+    if cross_reference not in (None, "table", "stream"):
+        msg = f"cross_reference must be 'table', 'stream', or None: {cross_reference!r}"
+        raise ValueError(msg)
+    if dedupe and not prune:
+        msg = "dedupe=True needs prune=True, which leaves the merged objects out"
+        raise ValueError(msg)
+    if object_streams and cross_reference == "table":
+        msg = "object_streams=True writes a cross-reference stream, so it needs cross_reference='stream' or None"
+        raise ValueError(msg)
+    stream = None if cross_reference is None else cross_reference == "stream"
+    return (
+        prune,
+        compression_level if compress else None,
+        decompress,
+        not keep_id,
+        stream,
+        object_streams,
+        renumber,
+        dedupe,
+    )
+
+
+def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keyword-only
+    *,
+    prune: bool,
+    decompress: bool,
+    cross_reference: object,
+    object_streams: bool,
+    renumber: bool,
+    dedupe: bool,
+) -> None:
+    """Raise :class:`ValueError` for an option that an incremental save refuses, as only a full save takes it."""
+    kept = {
+        "prune": (prune, "the objects"),
+        "decompress": (decompress, "the streams"),
+        "cross_reference and object_streams": (cross_reference is not None or object_streams, "the form"),
+        "renumber": (renumber, "the numbers"),
+        "dedupe": (dedupe, "the objects"),
+    }
+    for name, (given, what) in kept.items():
+        if given:
+            verb = "require" if " and " in name else "requires"
+            msg = f"{name} {verb} a full save: an incremental save keeps {what} of the opened file"
+            raise ValueError(msg)
 
 
 def _resolve_limits(limits: object) -> DocumentLimits:

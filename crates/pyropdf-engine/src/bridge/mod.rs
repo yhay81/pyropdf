@@ -211,12 +211,14 @@ impl Bridged {
     }
 }
 
+type CacheEntry = (Weak<Version>, bool, Arc<Bridged>);
+
 /// The bridge of one version at a time: the latest version asked for. It
 /// remembers the version by a weak reference, so it keeps no version alive
 /// (DESIGN.md section 10).
 #[derive(Default)]
 pub struct Cache {
-    entry: Mutex<Option<(Weak<Version>, Arc<Bridged>)>>,
+    entry: Mutex<Option<CacheEntry>>,
 }
 
 impl Cache {
@@ -226,26 +228,39 @@ impl Cache {
         Self::default()
     }
 
-    /// Returns the bridge of `version` with the appearances that a render
-    /// draws, building it when the cache holds another version's.
+    /// Returns the plain bridge for extraction and operations that do not
+    /// draw annotations.
     pub fn get(
         &self,
         version: &Arc<Version>,
         pages: &PageIndex,
         budget: &Budget,
     ) -> Result<Arc<Bridged>> {
-        if let Some((held, bridged)) = &*self.lock()
+        self.get_for_render(version, pages, budget, false)
+    }
+
+    /// Caches one version and annotation mode. Changing either replaces
+    /// the entry, so plain reads cannot reuse synthetic annotation objects.
+    pub fn get_for_render(
+        &self,
+        version: &Arc<Version>,
+        pages: &PageIndex,
+        budget: &Budget,
+        annotations: bool,
+    ) -> Result<Arc<Bridged>> {
+        if let Some((held, mode, bridged)) = &*self.lock()
             && held.as_ptr() == Arc::as_ptr(version)
             && held.strong_count() > 0
+            && *mode == annotations
         {
             return Ok(Arc::clone(bridged));
         }
-        let bridged = Arc::new(Bridged::with_appearances(version, pages, budget)?);
-        *self.lock() = Some((Arc::downgrade(version), Arc::clone(&bridged)));
+        let bridged = Arc::new(Bridged::build(version, pages, budget, annotations)?);
+        *self.lock() = Some((Arc::downgrade(version), annotations, Arc::clone(&bridged)));
         Ok(bridged)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<(Weak<Version>, Arc<Bridged>)>> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<CacheEntry>> {
         self.entry.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }

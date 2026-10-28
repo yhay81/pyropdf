@@ -134,11 +134,65 @@ unit = "matches"
 default = 4_096
 reached = "`Page.search` finds more matches than the call's `max_hits`."
 
-[codes.markdown_output_size]
-message = "the Markdown is too large"
+[codes.text_rule_count]
+message = "the page has too many vector rules to read"
+unit = "rules"
+default = 4_096
+reached = "Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers."
+
+[codes.table_cell_count]
+message = "the candidate table has too many cells"
+unit = "cells"
+default = 4_096
+reached = "A candidate table needs more than 4,096 row-column slots."
+
+[codes.table_span_candidate_count]
+message = "the table needs too many cell span candidates"
+unit = "candidates"
+default = 65_536
+reached = "Reconstructing merged cells in one table examines more than 65,536 candidate spans."
+
+[codes.table_column_count]
+message = "the text table has too many columns"
+unit = "columns"
+default = 32
+reached = "Text table detection encounters a row with more than 32 separated columns."
+
+[codes.ocr_layer_word_count]
+message = "the OCR layer has too many words"
+unit = "words"
+default = 4_096
+reached = "An invisible OCR layer has more than 4,096 words."
+
+[codes.ocr_layer_text_size]
+message = "the OCR layer text is too long"
 unit = "bytes"
-default = 67_108_864
-reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
+default = 1_048_576
+reached = "An invisible OCR layer has more than 1 MiB of UTF-8 text."
+
+[codes.ocr_layer_character_count]
+message = "the OCR layer has too many distinct characters"
+unit = "characters"
+default = 65_534
+reached = "An invisible OCR layer needs more than 65,534 distinct character IDs."
+
+[codes.ocr_raster_size]
+message = "the OCR raster is too large"
+unit = "bytes"
+default = 536_870_912
+reached = "The raster expanded to RGBA for OCR exceeds 512 MiB."
+
+[codes.ocr_detection_count]
+message = "the OCR detector found too many text regions"
+unit = "regions"
+default = 4_096
+reached = "OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps."
+
+[codes.ocr_text_size]
+message = "the recognized OCR text is too long"
+unit = "bytes"
+default = 33_554_432
+reached = "OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering."
 
 [codes.ocr_model_size]
 message = "the OCR model set is too large"
@@ -167,6 +221,12 @@ default = 32
 reached = "A value written to the document nests arrays and dictionaries deeper than its limit."
 
 # Output.
+
+[codes.markdown_output_size]
+message = "the Markdown is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
 
 [codes.pdf_output_size]
 message = "the PDF output is too large"
@@ -212,6 +272,24 @@ unit = "bytes"
 default = 1_048_576
 reached = "An attachment's name, file name, or description is longer in UTF-8 than 1 MiB."
 
+[codes.annotation_count]
+message = "the page has too many annotations"
+unit = "entries"
+default = 4_096
+reached = "A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than 4,096 entries."
+
+[codes.annotation_text_size]
+message = "the annotation text is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the page for a listing."
+
+[codes.annotation_dash_count]
+message = "the annotation border has too many dash lengths"
+unit = "lengths"
+default = 32
+reached = "An annotation border has more than 32 dash lengths."
+
 [codes.annotation_input_size]
 message = "the annotation text is too long"
 unit = "bytes"
@@ -222,7 +300,19 @@ reached = "The texts that one edit of an annotation writes, such as its contents
 message = "the named destinations are too many"
 unit = "entries"
 default = 65_536
-reached = "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes, or more than 131,072 tree edges."
+reached = "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes."
+
+[codes.named_destination_edge_count]
+message = "the named-destination tree has too many edges"
+unit = "edges"
+default = 131_072
+reached = "The named-destination tree has more than 131,072 child edges."
+
+[codes.named_destination_depth]
+message = "the named-destination tree is too deep"
+unit = "levels"
+default = 32
+reached = "The named-destination tree has more than 32 levels."
 
 [codes.named_destination_text_size]
 message = "the names of the named destinations are too long"
@@ -252,7 +342,7 @@ reached = "The titles and target texts that setting `doc.outline` or editing an 
 message = "the structure tree is too deep"
 unit = "levels"
 default = 256
-reached = "A structural edit of pages walks a structure tree that nests elements deeper than 256 levels, or whose parent tree or ID tree nests nodes deeper than 32 levels."
+reached = "A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references."
 
 [codes.page_entry_count]
 message = "the list of pages is too long"
@@ -274,3 +364,33 @@ reached = "The operation runs past its deadline, which `DocumentLimits.max_durat
 [codes.cancelled]
 message = "the operation was cancelled"
 reached = "A cancellation token of the operation is cancelled."
+
+[codes.annotation_quad_count]
+message = "the annotation has too many quadrilaterals"
+unit = "quadrilaterals"
+default = 4_096
+reached = "A text-markup annotation has more than 4,096 quadrilaterals."
+
+[codes.annotation_point_count]
+message = "the annotation has too many points"
+unit = "points"
+default = 65_536
+reached = "An annotation's geometry, including generated squiggly points, has more than 65,536 points."
+
+[codes.annotation_appearance_size]
+message = "the annotation appearance is too large"
+unit = "bytes"
+default = 16_777_216
+reached = "One generated annotation appearance contains more than 16 MiB of content."
+
+[codes.annotation_synthesis_count]
+message = "the render needs too many annotation appearances"
+unit = "appearances"
+default = 4_096
+reached = "One render synthesizes more than 4,096 missing annotation appearances across the document."
+
+[codes.annotation_synthesis_point_count]
+message = "the render needs too many annotation path points"
+unit = "points"
+default = 262_144
+reached = "Missing annotation appearances generated for one render contain more than 262,144 path points together."

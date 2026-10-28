@@ -135,7 +135,7 @@ pub(crate) fn prepare(
 fn saved(py: Python<'_>, document: &_Document, decrypt: bool) -> PyResult<Arc<Version>> {
     let version = document.reading()?;
     let decrypt = decrypt && version.trailer().get("Encrypt").is_some();
-    if !decrypt && version.stale().is_empty() {
+    if !decrypt && !version.has_stale() {
         return Ok(version);
     }
     document.scratch(py, |transaction, budget: &Budget| {

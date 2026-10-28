@@ -38,10 +38,52 @@ class _Document:
         data: bytes | bytearray | memoryview, limits: object, password: bytes | None = None, /
     ) -> _Document: ...
     def is_repaired(self) -> bool: ...
-    def save_path(self, path: str, incremental: bool, encryption: object = None, /) -> None: ...
-    def to_bytes(self, incremental: bool, max_size: int | None, encryption: object = None, /) -> bytes: ...
+    def save_path(
+        self,
+        path: str,
+        incremental: bool,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        renew_id: bool = False,
+        cross_reference_stream: bool | None = None,
+        object_streams: bool = False,
+        renumber: bool = False,
+        dedupe: bool = False,
+        /,
+    ) -> None: ...
+    def to_bytes(
+        self,
+        incremental: bool,
+        max_size: int | None,
+        encryption: object = None,
+        prune: bool = False,
+        compress: int | None = None,
+        decompress: bool = False,
+        renew_id: bool = False,
+        cross_reference_stream: bool | None = None,
+        object_streams: bool = False,
+        renumber: bool = False,
+        dedupe: bool = False,
+        /,
+    ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...
     def close(self) -> None: ...
+
+@final
+class CharColumns:
+    def __len__(self) -> int: ...
+    def rows(
+        self, start: int, stop: int, /
+    ) -> list[tuple[str, tuple[float, float, float, float], tuple[float, float], bool, tuple[int, int] | None]]: ...
+    def column(self, name: str, start: int, stop: int, /) -> Column: ...
+    def arrow_schema(self) -> object: ...
+    def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
+
+@final
+class Column:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
 
 @final
 class Pixmap:
@@ -90,6 +132,7 @@ class _OcrEngine:
         overlap: int = 192,
         min_confidence: float = 0.5,
         rotation: int = 0,
+        document: _Document | None = None,
     ) -> list[tuple[float, float, float, float, str, float]]: ...
 
 def render_page(
@@ -129,6 +172,7 @@ def probe(
     password: bytes | None = None,
     /,
 ) -> tuple[int, str, bool, bool, dict[str, str]]: ...
+def header_version(document: _Document, /) -> str | None: ...
 def page_count(document: _Document, /) -> int: ...
 def page_object(document: _Document, at: int, /) -> tuple[int, int]: ...
 def page_index(document: _Document, number: int, generation: int, /) -> int | None: ...
@@ -213,7 +257,14 @@ def outline_walk_counts(document: _Document, /) -> tuple[int, int]: ...
 def outline_write(document: _Document, specs: list[tuple[int, str, _Target, _Rgb | None, int, bool]], /) -> None: ...
 def outline_set_title(document: _Document, id: _Id, title: str, /) -> None: ...  # noqa: A002
 def outline_set_target(document: _Document, id: _Id, target: _Target, /) -> None: ...  # noqa: A002
-def outline_set_style(document: _Document, id: _Id, color: _Rgb | None, flags: int, /) -> None: ...  # noqa: A002
+def outline_set_style(
+    document: _Document,
+    id: _Id,  # noqa: A002
+    color: _Rgb | None,
+    flags: int | None = None,
+    flag: tuple[int, bool] | None = None,
+    /,
+) -> None: ...
 def outline_set_open(document: _Document, id: _Id, open: bool, /) -> None: ...  # noqa: A002
 def import_pages(document: _Document, source: _Document, pages: list[tuple[int, int]], at: int, /) -> None: ...
 def new_page(document: _Document, at: int, width: float, height: float, /) -> tuple[int, int]: ...
@@ -281,7 +332,16 @@ def page_layout(
     max_glyphs: int | None,
     max_size: int | None,
     /,
-) -> tuple[float, float, list[Any], int]: ...
+) -> tuple[float, float, list[Any], int, CharColumns | None]: ...
+def page_chars(
+    document: _Document,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[CharColumns, int]: ...
 def page_search(
     document: _Document,
     number: int,
