@@ -982,7 +982,7 @@ pub fn widget_list(
     generation: u16,
 ) -> PyResult<Option<Vec<WidgetRecord>>> {
     py.detach(|| {
-        let (version, page_index, budget) = index(document)?;
+        let (version, page_index, budget) = crate::pages::index(document)?;
         let Some(annots) = Annots::read(version, page_index, &budget, number, generation)? else {
             return Ok(None);
         };
@@ -1013,7 +1013,7 @@ pub fn widget_read(
     id: Id,
 ) -> PyResult<Option<WidgetRecord>> {
     py.detach(|| {
-        let (version, page_index, budget) = index(document)?;
+        let (version, page_index, budget) = crate::pages::index(document)?;
         let Some(annots) = Annots::read(version, page_index, &budget, number, generation)? else {
             return Ok(None);
         };

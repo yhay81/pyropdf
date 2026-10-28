@@ -630,7 +630,7 @@ impl<'b> Annots<'b> {
     fn write_items(
         &self,
         transaction: &mut Transaction,
-        pub(crate) items: Array,
+        items: Array,
         budget: &Budget,
     ) -> PyResult<()> {
         if let Some(array) = self.array
