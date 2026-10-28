@@ -1,9 +1,10 @@
-"""page.annotations: Annotation handles that read, edit, and delete existing annotations.
+"""page.annotations: Annotation handles that add, read, edit, and delete annotations.
 
 The cases of pylopdf's tests/test_annotations.py and
 tests/test_annotation_notes.py at ebb01d3c that read, edit, or delete
-annotations, ported to annotations that a raw PDF holds; adding annotations
-comes with their appearances (#161). Intended differences from pylopdf:
+annotations, ported to annotations that a raw PDF holds, and the cases of
+the former that add highlights; tests/test_annotation_notes.py adds notes.
+Intended differences from pylopdf:
 
 - Removing an annotation leaves its objects in the document, since a save
   writes every live object; the page's ``/Annots`` no longer names them.
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -29,11 +30,15 @@ from pyropdf import (
     Border,
     BorderStyle,
     Color,
+    Highlight,
     NoteIcon,
     Rect,
     StampIcon,
     _core,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:
@@ -50,6 +55,18 @@ def build_raw_pdf(objects: dict[int, str]) -> bytes:
         out += f"{offsets[number]:010} 00000 n \n".encode() if number in offsets else b"0000000000 00000 f \n"
     out += f"trailer\n<< /Size {size} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     return bytes(out)
+
+
+#: A page that shows "Highlight me" in Helvetica.
+_TEXT_PAGE = {
+    1: "<< /Type /Catalog /Pages 2 0 R >>",
+    2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    3: (
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        "/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>"
+    ),
+    4: "<< /Length 43 >>\nstream\nBT /F1 24 Tf 72 720 Td (Highlight me) Tj ET\nendstream",
+}
 
 
 def _page_of(annots: str, objects: dict[int, str] | None = None) -> pyropdf.Page:
@@ -336,30 +353,129 @@ def test_the_core_refuses_bad_edits() -> None:
     assert page.annotations[0].color == Color(1, 0, 0)
 
 
-def test_every_edit_marks_the_appearance_stale() -> None:
-    note = "<< /Type /Annot /Subtype /Text /Rect [{0} 10 {1} 30] >>"
+def test_every_edit_draws_the_appearance_again() -> None:
+    note = "<< /Type /Annot /Subtype /Text /Rect [{0} 10 {1} 30] /C [1 0 0] >>"
     page = _page_of(
-        "[<< /Type /Annot /Subtype /Square /Rect [10 10 50 50] >> 4 0 R 5 0 R]",
+        "[<< /Type /Annot /Subtype /Text /Rect [10 10 30 30] >> 4 0 R 5 0 R]",
         {4: note.format(60, 80), 5: note.format(90, 110)},
     )
-    core = page.document._core()  # noqa: SLF001
     _, first, second = page.annotations
-    assert _core._stale_appearances(core) == []  # noqa: SLF001
+    assert "AP" not in first.obj
 
     first.color = Color(0, 1, 0)
-    assert _core._stale_appearances(core) == [4]  # noqa: SLF001
+    drawn = first.obj["AP"]["N"]
+    assert b"0 1 0 rg" in drawn.read()
     direct = page.annotations[0]
     direct.rect = Rect(0, 0, 10, 10)
-    assert _core._stale_appearances(core) == [4, direct.xref]  # noqa: SLF001
+    assert "AP" in direct.obj
+    assert first.obj["AP"]["N"].xref == drawn.xref
 
     # Popups, the open state, and replies do not change how an annotation looks.
     page.document.history.undo()
     page.document.history.undo()
-    assert _core._stale_appearances(core) == []  # noqa: SLF001
+    assert "AP" not in first.obj
     first.popup_rect = (40, 10, 160, 80)
     first.is_open = True
     second.in_reply_to = first
-    assert _core._stale_appearances(core) == []  # noqa: SLF001
+    assert "AP" not in first.obj
+    assert "AP" not in second.obj
+
+
+def test_edits_in_one_transaction_draw_the_appearance_once() -> None:
+    page = _notes()
+    (note,) = page.annotations
+    objects = page.document.objects
+    count = len(objects)
+
+    with page.document.transaction("restyle"):
+        note.color = Color(0, 0, 1)
+        note.opacity = 0.5
+        note.contents = "drawn once"
+    # The settler writes one form, which names the last edit's color.
+    assert len(objects) == count + 1
+    drawn = note.obj["AP"]["N"]
+    assert b"0 0 1 rg" in drawn.read()
+    # A read in the transaction draws what the edits before it changed.
+    with page.document.transaction("read"):
+        note.color = Color(1, 0, 0)
+        assert b"1 0 0 rg" in note.obj["AP"]["N"].read()
+        note.color = Color(0, 1, 0)
+    assert len(objects) == count + 3
+    assert b"0 1 0 rg" in note.obj["AP"]["N"].read()
+
+
+def test_adding_a_highlight_returns_its_handle() -> None:
+    doc = pyropdf.open(build_raw_pdf(_TEXT_PAGE))
+    page = doc.pages[0]
+    hit = page.search("Highlight")[0]
+
+    annotation = page.annotations.add(Highlight(hit, contents="note"))
+
+    assert annotation.type is AnnotationType.HIGHLIGHT
+    assert (annotation.contents, annotation.color, annotation.flags) == ("note", Color(1, 1, 0), AnnotationFlags.PRINT)
+    assert annotation.opacity == pytest.approx(0.4)
+    assert annotation.xref > 0
+    assert annotation in page.annotations
+    assert annotation.rect == pytest.approx(hit, abs=1e-3)
+    from_quad = page.annotations.add(Highlight(hit.quad, color=Color(0, 1, 0), opacity=1))
+    assert from_quad.rect == pytest.approx(annotation.rect, abs=1e-3)
+    assert (from_quad.color, from_quad.opacity) == (Color(0, 1, 0), 1.0)
+    several = page.annotations.add(Highlight([hit.quad, Rect(10, 10, 20, 20)]))
+    assert len(several.obj["QuadPoints"]) == 16
+    reopened = pyropdf.open(doc.to_bytes()).pages[0]
+    assert [annotation.contents for annotation in reopened.annotations] == ["note", None, None]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "error", "match"),
+    [
+        (((),), ValueError, "at least one rectangle"),
+        (((10, 10, 5, 20),), ValueError, "x0 < x1"),
+        (("rect",), TypeError, "rects must be a rectangle"),
+        (((10, 10, 20, 20), {"color": (1, 0, 0)}), TypeError, "color must be a Color"),
+        (((10, 10, 20, 20), {"color": Color(1, 0, 0, 0.5)}), ValueError, "no transparency"),
+        (((10, 10, 20, 20), {"opacity": 0}), ValueError, "greater than 0"),
+        (((10, 10, 20, 20), {"opacity": True}), TypeError, "opacity must be a number"),
+        (((10, 10, 20, 20), {"contents": 5}), TypeError, "contents must be a str"),
+        (([(10, 10, 20, 20)] * 4097,), ValueError, "4096 rectangles"),
+    ],
+)
+def test_highlight_specifications_validate_their_fields(
+    arguments: tuple[object, ...], error: type[Exception], match: str
+) -> None:
+    rects, *rest = arguments
+    keywords = cast("dict[str, object]", rest[0] if rest else {})
+
+    with pytest.raises(error, match=match):
+        Highlight(rects, **keywords)  # ty: ignore[invalid-argument-type]
+
+
+def test_highlight_bounds_contents_before_reading_rectangles() -> None:
+    def unreadable() -> Iterator[tuple[int, int, int, int]]:
+        msg = "oversized contents must fail before rectangle iteration"
+        raise AssertionError(msg)
+        yield (10, 10, 20, 20)
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        Highlight(cast("Sequence[Sequence[float]]", unreadable()), contents="x" * (1024 * 1024 + 1))
+    assert caught.value.code == "annotation_input_size"
+
+    def excessive() -> Iterator[tuple[int, int, int, int]]:
+        yield from [(10, 10, 20, 20)] * 4097
+        msg = "the bounded reader consumed beyond item 4,097"
+        raise AssertionError(msg)
+
+    with pytest.raises(ValueError, match="4096 rectangles"):
+        Highlight(cast("Sequence[Sequence[float]]", excessive()))
+
+
+def test_add_takes_specifications_only() -> None:
+    page = _notes()
+
+    with pytest.raises(TypeError, match="takes an annotation specification"):
+        page.annotations.add((10, 10, 20, 20))  # ty: ignore[invalid-argument-type]
+    assert not hasattr(page, "annots")
+    assert not hasattr(page, "add_highlight_annot")
 
 
 def test_popups_are_added_moved_opened_and_removed() -> None:
@@ -556,3 +672,56 @@ def test_a_waiting_removal_keeps_a_popup_added_by_the_first_writer() -> None:
     assert len(page.annotations) == 1
     assert _subtypes(page) == ["Text", "Popup"]
     assert remaining.popup_rect == Rect(40, 10, 160, 80)
+
+
+def test_a_waiting_add_preserves_the_first_writers_annotation() -> None:
+    page = _notes()
+    started = Event()
+
+    def add() -> None:
+        started.set()
+        page.annotations.add(Highlight((10, 10, 20, 20), contents="second"))
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("Add first"):
+            future = pool.submit(add)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            page.annotations.add(Highlight((30, 10, 40, 20), contents="first"))
+        future.result(timeout=10)
+    assert [annotation.contents for annotation in page.annotations] == [None, "first", "second"]
+
+
+def test_an_excessive_existing_squiggly_rolls_back_a_restyle() -> None:
+    page = _page_of(
+        "[4 0 R]",
+        {
+            4: "<< /Type /Annot /Subtype /Squiggly /Rect [0 0 150000 10] "
+            "/C [1 0 0] /QuadPoints [0 10 150000 10 0 0 150000 0] >>"
+        },
+    )
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.annotations[0].color = Color(0, 1, 0)
+    assert raised.value.code == "annotation_point_count"
+    assert page.document.to_bytes() == before
+
+
+def test_highlight_appearance_preserves_subpixel_coordinates() -> None:
+    page = pyropdf.Document().pages.new((100, 100))
+    annotation = page.annotations.add(Highlight((0, 0, 0.000001, 1)))
+    assert b"0.000001 1 l" in annotation.obj["AP"]["N"].read()
+
+
+def test_highlight_text_rejects_excessive_character_count_without_encoding() -> None:
+    class Unencoded(str):
+        __slots__ = ()
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            msg = "An oversized annotation specification must not allocate an encoded copy"
+            raise AssertionError(msg)
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        Highlight((0, 0, 1, 1), contents=Unencoded("a" * (1024 * 1024 + 1)))
+    assert caught.value.code == "annotation_input_size"

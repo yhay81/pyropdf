@@ -17,6 +17,7 @@ pub mod links;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyropdf_engine::annotations::{MAX_QUADS, is_text_markup, zigzag_points};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::settle::Structure;
@@ -1361,4 +1362,245 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
         .filter(|mark| mark.structure == Structure::Appearance)
         .map(|mark| mark.number)
         .collect())
+}
+
+/// The annotation that `page.annotations.add` adds, as a specification's
+/// `_payload` gives it: its subtype; the display rectangles of text markup,
+/// or else its display rectangle; its color as RGB from 0 to 1, opacity,
+/// contents, and creation date; and a note's icon and open state.
+#[derive(FromPyObject)]
+#[pyo3(from_item_all)]
+pub struct Spec {
+    subtype: String,
+    #[pyo3(default)]
+    rects: Option<Vec<Rect>>,
+    #[pyo3(default)]
+    rect: Option<Rect>,
+    #[pyo3(default)]
+    color: Option<(f64, f64, f64)>,
+    #[pyo3(default)]
+    opacity: Option<f64>,
+    #[pyo3(default)]
+    contents: Option<String>,
+    #[pyo3(default)]
+    created: Option<String>,
+    #[pyo3(default)]
+    icon: Option<String>,
+    #[pyo3(default)]
+    open: Option<bool>,
+}
+
+/// The subtypes that `page.annotations.add` adds.
+const ADDED_SUBTYPES: [&str; 5] = ["Highlight", "Underline", "StrikeOut", "Squiggly", "Text"];
+
+impl Spec {
+    /// Returns the dictionary of the annotation, without its page.
+    fn dictionary(&self, annots: &Annots) -> PyResult<Dict> {
+        let subtype = self.subtype.as_str();
+        let created = self.created.as_deref().unwrap_or_default();
+        let size = [
+            subtype,
+            self.contents.as_deref().unwrap_or_default(),
+            created,
+            created,
+        ]
+        .iter()
+        .map(|text| text.len())
+        .fold(0, usize::saturating_add);
+        annots
+            .budget
+            .charge(LimitCode::AnnotationInputSize, size as u64)
+            .map_err(|e| limit_error(&e))?;
+        annots
+            .budget
+            .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
+            .map_err(|e| limit_error(&e))?;
+        let markup = is_text_markup(subtype.as_bytes());
+        if self.rects.is_some() != markup {
+            return Err(PdfError::new_err(format!(
+                "rectangles place text markup, not a {subtype} annotation"
+            )));
+        }
+        if !ADDED_SUBTYPES.contains(&subtype) {
+            return Err(PdfError::new_err(format!(
+                "pyropdf does not add {subtype} annotations"
+            )));
+        }
+        let mut dict = Dict::new();
+        dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+        dict.insert(Name::from("Subtype"), Value::Name(Name::from(subtype)));
+        if let Some(rects) = &self.rects {
+            if rects.is_empty() {
+                return Err(PdfError::new_err(format!(
+                    "text markup covers 1 to {MAX_QUADS} rectangles"
+                )));
+            }
+            annots
+                .budget
+                .check(LimitCode::AnnotationQuadCount, rects.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let mut quads = BudgetVec::new(annots.budget);
+            quads
+                .try_reserve_exact(rects.len())
+                .map_err(|e| limit_error(&e))?;
+            for &(x0, y0, x1, y1) in rects {
+                if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
+                    return Err(PdfError::new_err("text markup rectangles are finite"));
+                }
+                // Display corners TL, TR, BL, BR, as /QuadPoints lists them.
+                quads
+                    .try_push(
+                        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+                            .map(|(x, y)| to_pdf(annots.crop, annots.rotation, x, y)),
+                    )
+                    .map_err(|e| limit_error(&e))?;
+            }
+            if subtype == "Squiggly" {
+                annots
+                    .budget
+                    .check(
+                        LimitCode::AnnotationPointCount,
+                        zigzag_points(&quads) as u64,
+                    )
+                    .map_err(|e| limit_error(&e))?;
+            }
+            let mut points = BudgetVec::new(annots.budget);
+            points
+                .try_extend(
+                    quads
+                        .iter()
+                        .flatten()
+                        .flat_map(|&(x, y)| [number(x), number(y)]),
+                )
+                .map_err(|e| limit_error(&e))?;
+            dict.insert(
+                Name::from("QuadPoints"),
+                Value::Array(Array::from(points.into_vec())),
+            );
+            let bounds = quads.iter().flatten().fold(
+                (
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ),
+                |(x0, y0, x1, y1), &(x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+            );
+            let (x0, y0, x1, y1) = bounds;
+            dict.insert(
+                Name::from("Rect"),
+                Value::Array(Array::from(vec![
+                    number(x0),
+                    number(y0),
+                    number(x1),
+                    number(y1),
+                ])),
+            );
+        } else {
+            let Some(area) = self.rect else {
+                return Err(PdfError::new_err(format!(
+                    "a {subtype} annotation takes a rectangle"
+                )));
+            };
+            let (x0, y0, x1, y1) = area;
+            if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
+                return Err(PdfError::new_err("an annotation rectangle is finite"));
+            }
+            dict.insert(Name::from("Rect"), annots.to_pdf(area));
+        }
+        // Printable.
+        dict.insert(Name::from("F"), Value::Integer(4));
+        if let Some(color) = self.color {
+            dict.insert(Name::from("C"), rgb(color, "color")?);
+        }
+        if let Some(opacity) = self.opacity {
+            if !(opacity.is_finite() && opacity > 0.0 && opacity <= 1.0) {
+                return Err(PdfError::new_err(
+                    "an annotation opacity is greater than 0 and at most 1",
+                ));
+            }
+            if opacity < 1.0 {
+                dict.insert(Name::from("CA"), Value::from(opacity));
+            }
+        }
+        if let Some(contents) = &self.contents {
+            dict.insert(Name::from("Contents"), encode_text(contents));
+        }
+        if self.open.is_some() && subtype != "Text" || self.icon.is_some() && subtype != "Text" {
+            return Err(PdfError::new_err(format!(
+                "an icon and an open state belong to a note, not a {subtype} annotation"
+            )));
+        }
+        if subtype == "Text" {
+            let icon = self.icon.as_deref().unwrap_or("Note");
+            if !NOTE_ICONS.contains(&icon) {
+                return Err(PdfError::new_err(format!("unknown note icon {icon:?}")));
+            }
+            dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
+            dict.insert(
+                Name::from("Open"),
+                Value::Boolean(self.open.unwrap_or(false)),
+            );
+            // A note's icon neither zooms nor turns with the page (ISO
+            // 32000-2 section 12.5.6.4); viewers that honor the flags keep
+            // it upright.
+            dict.insert(Name::from("F"), Value::Integer(4 | 8 | 16));
+        }
+        if let Some(created) = &self.created {
+            if !created.starts_with("D:") || !created.is_ascii() || created.len() > 64 {
+                return Err(PdfError::new_err("an annotation date is a PDF date string"));
+            }
+            let date = Value::String(PdfString::literal(created.as_bytes().to_vec()));
+            dict.insert(Name::from("CreationDate"), date.clone());
+            dict.insert(Name::from("M"), date);
+        }
+        Ok(dict)
+    }
+}
+
+/// Adds the annotation that `spec` describes to page object `(number,
+/// generation)`, marks its appearance stale so that settling draws it, and
+/// returns its object; or `None` for a page that is gone.
+#[pyfunction]
+pub fn annotation_add(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    spec: Spec,
+) -> PyResult<Option<(u32, u16)>> {
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, budget| {
+            budget
+                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                .map_err(|e| limit_error(&e))?;
+            if !matches!(
+                annots.resolved(annots.page().dict().get("Annots"))?,
+                None | Some(Value::Array(_))
+            ) {
+                return Err(PdfError::new_err("the page's /Annots is not an array"));
+            }
+            let mut dict = spec.dictionary(annots)?;
+            if let Some(page) = annots.page().object() {
+                dict.insert(Name::from("P"), Value::Reference(page));
+            }
+
+            let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+            transaction
+                .write(reference.number(), &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))?;
+            charge_copy(CopyPart::Array(&annots.items), budget)?;
+            let mut items = annots.items.clone();
+            items.push(Value::Reference(reference));
+            annots.write_items(transaction, items, budget)?;
+            transaction
+                .mark(Structure::Appearance, reference.number(), budget)
+                .map_err(|e| store_error(&e))?;
+            Ok((reference.number(), reference.generation()))
+        },
+    )
 }

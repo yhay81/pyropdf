@@ -63,6 +63,9 @@ LimitCode: TypeAlias = Literal[
     "memory_size",
     "deadline",
     "cancelled",
+    "annotation_quad_count",
+    "annotation_point_count",
+    "annotation_appearance_size",
 ]
 
 #: Each code and when an operation reaches it, in the order of the registry.
@@ -181,5 +184,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "deadline": "The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets.",
         "cancelled": "A cancellation token of the operation is cancelled.",
+        "annotation_quad_count": "A text-markup annotation has more than 4,096 quadrilaterals.",
+        "annotation_point_count": (
+            "An annotation's geometry, including generated squiggly points, has more than 65,536 points."
+        ),
+        "annotation_appearance_size": "One generated annotation appearance contains more than 16 MiB of content.",
     }
 )
