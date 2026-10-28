@@ -1641,3 +1641,55 @@ fn collection_preserves_candidates_referenced_by_a_live_boundary() {
         &[2, 3, 4]
     );
 }
+
+#[test]
+fn targeted_structure_reads_skip_unrelated_structure_elements() {
+    let document = small_structure(
+        dict(vec![
+            ("S", name("P")),
+            ("P", reference(3)),
+            ("Pg", reference(10)),
+            ("K", Value::Integer(0)),
+        ]),
+        &[
+            (
+                3,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", array(vec![reference(50), reference(51)])),
+                ]),
+            ),
+            (
+                51,
+                dict(vec![
+                    ("S", name("P")),
+                    ("P", reference(3)),
+                    ("Pg", reference(11)),
+                    ("K", Value::Integer(0)),
+                ]),
+            ),
+        ],
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    for reach in [structure::Reach::Affected, structure::Reach::Whole] {
+        let mut reads = Reads::new(&version, &budget);
+        let used = structure::plan(
+            &mut reads,
+            &index,
+            &[10],
+            &[11],
+            &mut Edits::new(&budget),
+            reach,
+        )
+        .unwrap();
+        assert_eq!(used, reach);
+        let recorded = reads.finish().unwrap();
+        assert!(recorded.objects().contains(&50));
+        assert_eq!(
+            recorded.objects().contains(&51),
+            reach == structure::Reach::Whole
+        );
+    }
+}
