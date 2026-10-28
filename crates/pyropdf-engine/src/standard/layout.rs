@@ -24,6 +24,10 @@ pub const MAX_LINES: usize = 4_096;
 /// Why a layout refused its text.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LayoutError {
+    /// The default appearance exceeds its parsing bound.
+    AppearanceTooLong,
+    /// A size or coordinate cannot produce valid PDF numbers.
+    InvalidGeometry,
     /// The text needs more than [`MAX_LINES`] lines.
     Lines,
     /// The box is narrower than one grapheme of the text.
@@ -45,6 +49,8 @@ impl From<LimitExceeded> for LayoutError {
 impl fmt::Display for LayoutError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::AppearanceTooLong => "default appearance exceeds the parsing limit",
+            Self::InvalidGeometry => "text geometry must contain finite, nonnegative sizes",
             Self::Lines => "text layout exceeds the configured logical-line limit",
             Self::Narrow => "textbox is too narrow to fit one text grapheme",
             Self::NotWinAnsi => "Standard 14 text contains a character outside WinAnsi",
@@ -190,13 +196,30 @@ pub fn layout<'t>(
     budget: &Budget,
     mut measure: impl FnMut(&str) -> f64,
 ) -> Result<TextBox<'t>, LayoutError> {
+    budget.poll()?;
     let (width, height) = box_size;
+    if ![
+        width,
+        height,
+        font_size,
+        placement.ascent,
+        placement.descent,
+        placement.line_height,
+    ]
+    .iter()
+    .all(|value| value.is_finite() && *value >= 0.0)
+    {
+        return Err(LayoutError::InvalidGeometry);
+    }
     let mut lines = BudgetVec::new(budget);
     for paragraph in text.split('\n') {
         wrap(paragraph, width, justify, &mut lines, &mut measure)?;
     }
 
     let required = placement.required_height(lines.len(), font_size);
+    if !required.is_finite() || !placement.leading(font_size).is_finite() {
+        return Err(LayoutError::InvalidGeometry);
+    }
     let mut spare_height = height - required;
     if spare_height.abs() <= FIT_TOLERANCE {
         spare_height = 0.0;
@@ -444,6 +467,7 @@ fn emergency_break(
 /// Returns `text` with each CR and LF a space, as a single-line field shows
 /// it. A copy is charged to `budget`.
 pub fn single_line<'t>(text: &'t str, budget: &Budget) -> Result<Cow<'t, str>, LimitExceeded> {
+    budget.poll()?;
     if !text.contains(['\r', '\n']) {
         return Ok(Cow::Borrowed(text));
     }

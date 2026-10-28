@@ -13,8 +13,9 @@ use crate::value::{Array, Dict, Reference, Value};
 use crate::version::table::Table;
 use crate::{Error, Result};
 
+use super::copy::copy_dict_for_edit;
 use super::navigation::{catalog, dict_of, is_aliasing, is_in, readable};
-use super::{Edits, References, Rule, Step};
+use super::{Edits, References, Rule, Step, copy_for_edit};
 
 /// The most field tree nodes that the walk visits.
 const MAX_NODES: usize = 4_096;
@@ -45,11 +46,17 @@ pub(super) fn plan(
     retained: &[u32],
     edits: &mut Edits<'_>,
 ) -> Result<()> {
-    let Some(form) = form(reads)? else {
+    reads.budget().poll()?;
+    let Some(form) = form(reads, removed, retained)? else {
         return Ok(());
     };
     let fields = form.array(reads, "Fields")?;
-    let top_level = top_level(reads, fields.as_ref().map(|(_, items)| items))?;
+    let top_level = top_level(
+        reads,
+        fields.as_ref().map(|(_, items)| items),
+        removed,
+        retained,
+    )?;
     if top_level.is_empty() {
         return Ok(());
     }
@@ -57,6 +64,7 @@ pub(super) fn plan(
     tree.walk(reads, &top_level)?;
     let mut planned = Table::new();
     for at in 0..tree.walked.len() {
+        reads.budget().poll()?;
         let number = tree.walked[at];
         tree.prune(reads, index, edits, number, &mut planned)?;
     }
@@ -65,6 +73,9 @@ pub(super) fn plan(
         && !location.planned(&planned)
     {
         for (at, entry) in items.iter().enumerate() {
+            if at % 1024 == 0 {
+                budget.poll()?;
+            }
             if let Value::Reference(reference) = entry
                 && tree.coverage.get(reference.number()).is_some()
                 && !tree.keeps(reads, entry)?
@@ -76,6 +87,7 @@ pub(super) fn plan(
     }
     let mut kept_top_level = BudgetVec::new(budget);
     for &reference in top_level.iter() {
+        budget.poll()?;
         if tree.keeps(reads, &Value::Reference(reference))? {
             kept_top_level.try_push(reference.number())?;
         }
@@ -85,6 +97,9 @@ pub(super) fn plan(
         && !location.planned(&planned)
     {
         for (at, entry) in items.iter().enumerate() {
+            if at % 1024 == 0 {
+                budget.poll()?;
+            }
             if let Value::Reference(reference) = entry
                 && tree.coverage.get(reference.number()).is_some()
                 && kept.binary_search(&reference.number()).is_err()
@@ -95,6 +110,7 @@ pub(super) fn plan(
         }
     }
     for &number in kept.iter() {
+        budget.poll()?;
         tree.point_widgets(reads, index, edits, number)?;
     }
     Ok(())
@@ -111,7 +127,10 @@ impl Form {
     /// form, or as an array object that the form refers to.
     fn array(&self, reads: &mut Reads<'_>, key: &'static str) -> Result<Option<(Location, Array)>> {
         Ok(match self.dict.get(key) {
-            Some(Value::Array(items)) => Some((self.location.with(key), items.clone())),
+            Some(value @ Value::Array(_)) => match copy_for_edit(value, reads.budget())? {
+                Value::Array(items) => Some((self.location.with(key), items)),
+                _ => unreachable!("a copied array remains an array"),
+            },
             Some(Value::Reference(reference)) => array_object(reads, *reference)?
                 .map(|items| (Location::object(reference.number()), items)),
             _ => None,
@@ -121,7 +140,7 @@ impl Form {
 
 /// Returns the catalog's `/AcroForm` dictionary, unless it is absent or a
 /// page, a page tree node, or the catalog.
-fn form(reads: &mut Reads<'_>) -> Result<Option<Form>> {
+fn form(reads: &mut Reads<'_>, removed: &[u32], retained: &[u32]) -> Result<Option<Form>> {
     let Some(catalog) = catalog(reads)? else {
         return Ok(None);
     };
@@ -137,12 +156,15 @@ fn form(reads: &mut Reads<'_>) -> Result<Option<Form>> {
                 number: catalog,
                 keys: [Some("AcroForm"), None],
             },
-            dict: form.clone(),
+            dict: copy_dict_for_edit(form, reads.budget())?,
         },
         Some(&Value::Reference(reference)) => {
             let Some(form) = dict_object(reads, reference)? else {
                 return Ok(None);
             };
+            if protected(reads, reference.number(), removed, retained)? || is_aliasing(&form) {
+                return Err(form_alias());
+            }
             Form {
                 location: Location::object(reference.number()),
                 dict: form,
@@ -150,7 +172,10 @@ fn form(reads: &mut Reads<'_>) -> Result<Option<Form>> {
         }
         _ => return Ok(None),
     };
-    Ok((!is_aliasing(&form.dict)).then_some(form))
+    if is_aliasing(&form.dict) {
+        return Err(form_alias());
+    }
+    Ok(Some(form))
 }
 
 /// Returns the distinct field dictionaries of `fields`, in order. Some
@@ -159,17 +184,23 @@ fn form(reads: &mut Reads<'_>) -> Result<Option<Form>> {
 fn top_level<'b>(
     reads: &mut Reads<'b>,
     fields: Option<&Array>,
+    removed: &[u32],
+    retained: &[u32],
 ) -> Result<BudgetVec<'b, Reference>> {
     let budget = reads.budget();
     let mut out = BudgetVec::new(budget);
     let mut seen = Table::new();
     for entry in fields.map(Array::iter).into_iter().flatten() {
+        budget.poll()?;
         let &Value::Reference(reference) = entry else {
             continue;
         };
         let Some(dict) = dict_object(reads, reference)? else {
             continue;
         };
+        if protected(reads, reference.number(), removed, retained)? || is_aliasing(&dict) {
+            return Err(form_alias());
+        }
         if is_field(&dict) && seen.insert(reference.number(), (), budget)?.is_none() {
             out.try_push(reference)?;
         }
@@ -248,7 +279,7 @@ impl Location {
 fn dict_object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Dict>> {
     Ok(match readable(reads, reference.number())? {
         Some(object) if object.generation() == reference.generation() => match &**object.value() {
-            Value::Dict(dict) => Some(dict.clone()),
+            Value::Dict(dict) => Some(copy_dict_for_edit(dict, reads.budget())?),
             _ => None,
         },
         _ => None,
@@ -259,7 +290,10 @@ fn dict_object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Dic
 fn array_object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Array>> {
     Ok(match readable(reads, reference.number())? {
         Some(object) if object.generation() == reference.generation() => match &**object.value() {
-            Value::Array(items) => Some(items.clone()),
+            value @ Value::Array(_) => match copy_for_edit(value, reads.budget())? {
+                Value::Array(items) => Some(items),
+                _ => unreachable!("a copied array remains an array"),
+            },
             _ => None,
         },
         _ => None,
@@ -279,7 +313,10 @@ fn array_entry(
     key: &'static str,
 ) -> Result<Option<(Location, Array)>> {
     Ok(match dict.get(key) {
-        Some(Value::Array(items)) => Some((Location::object(number).with(key), items.clone())),
+        Some(value @ Value::Array(_)) => match copy_for_edit(value, reads.budget())? {
+            Value::Array(items) => Some((Location::object(number).with(key), items)),
+            _ => unreachable!("a copied array remains an array"),
+        },
         Some(&Value::Reference(reference)) => array_object(reads, reference)?
             .map(|items| (Location::object(reference.number()), items)),
         _ => None,
@@ -291,7 +328,8 @@ fn array_entry(
 fn node(reads: &mut Reads<'_>, number: u32) -> Result<Option<Dict>> {
     Ok(match readable(reads, number)? {
         Some(object) => match &**object.value() {
-            Value::Dict(dict) if !is_aliasing(dict) => Some(dict.clone()),
+            Value::Dict(dict) if is_aliasing(dict) => return Err(form_alias()),
+            Value::Dict(dict) => Some(copy_dict_for_edit(dict, reads.budget())?),
             _ => None,
         },
         None => None,
@@ -317,7 +355,7 @@ enum Kid {
 
 /// Classifies a `/Kids` entry as pylopdf's `classify_field_kid` does: a
 /// `/T` that is null or names nothing is an omitted partial name.
-fn classify(reads: &mut Reads<'_>, kid: &Value) -> Result<Kid> {
+fn classify(reads: &mut Reads<'_>, kid: &Value, removed: &[u32], retained: &[u32]) -> Result<Kid> {
     let &Value::Reference(reference) = kid else {
         return Ok(Kid::Ignored);
     };
@@ -328,23 +366,39 @@ fn classify(reads: &mut Reads<'_>, kid: &Value) -> Result<Kid> {
         return Ok(Kid::Ignored);
     }
     let child = match &**object.value() {
-        Value::Dict(child) => child.clone(),
+        Value::Dict(child) => child,
         Value::Null => return Ok(Kid::Ignored),
         _ => return Ok(Kid::Unusable),
     };
     let number = reference.number();
+    if protected(reads, number, removed, retained)? || is_aliasing(child) {
+        return Err(form_alias());
+    }
     if let Some(name) = child.get("T")
         && !is_null(reads, name)?
     {
         return Ok(Kid::Field(number));
     }
-    Ok(match kids(reads, number, &child)? {
+    Ok(match kids(reads, number, child)? {
         Some((_, kids)) if !kids.is_empty() => Kid::Intermediate {
             number,
-            widget: looks_like_widget(&child),
+            widget: looks_like_widget(child),
         },
         _ => Kid::Widget(number),
     })
+}
+
+fn protected(
+    reads: &mut Reads<'_>,
+    number: u32,
+    removed: &[u32],
+    retained: &[u32],
+) -> Result<bool> {
+    Ok(catalog(reads)? == Some(number) || is_in(removed, number) || is_in(retained, number))
+}
+
+fn form_alias() -> Error {
+    Error::malformed("a form field or form dictionary aliases a page or catalog")
 }
 
 /// Returns whether `value` is null, or a reference to a null or to no
@@ -444,8 +498,8 @@ impl<'a, 'b> Tree<'a, 'b> {
                         continue;
                     };
                     let button = match dict.get("FT") {
-                        Some(kind) => match resolved_name(reads, kind)? {
-                            Some(name) => &*name == b"Btn",
+                        Some(kind) => match resolved_button(reads, kind)? {
+                            Some(button) => button,
                             None => inherited,
                         },
                         None => inherited,
@@ -457,7 +511,8 @@ impl<'a, 'b> Tree<'a, 'b> {
                     edges = edges.saturating_add(kids.len());
                     check_edges(edges)?;
                     for kid in kids.iter().rev() {
-                        let kid = classify(reads, kid)?;
+                        budget.poll()?;
+                        let kid = classify(reads, kid, self.removed, self.retained)?;
                         if matches!(
                             kid,
                             Kid::Widget(_) | Kid::Unusable | Kid::Intermediate { widget: true, .. }
@@ -472,6 +527,9 @@ impl<'a, 'b> Tree<'a, 'b> {
                         let (Kid::Field(kid) | Kid::Intermediate { number: kid, .. }) = kid else {
                             continue;
                         };
+                        if visited.get(kid).is_some() {
+                            continue;
+                        }
                         if depth >= MAX_DEPTH {
                             return Err(Error::malformed(format!(
                                 "AcroForm field tree exceeds the {MAX_DEPTH}-level safety limit"
@@ -492,7 +550,8 @@ impl<'a, 'b> Tree<'a, 'b> {
                     };
                     if let Some((_, kids)) = kids(reads, number, &dict)? {
                         for kid in kids.iter() {
-                            match classify(reads, kid)? {
+                            budget.poll()?;
+                            match classify(reads, kid, self.removed, self.retained)? {
                                 Kid::Widget(kid) => {
                                     covered.widgets = true;
                                     covered.kept |= self.placement(reads, kid)?.kept;
@@ -519,7 +578,7 @@ impl<'a, 'b> Tree<'a, 'b> {
     /// a widget that stays, a field with such a widget or with no widget at
     /// all, and every entry that is no widget or field.
     fn keeps(&mut self, reads: &mut Reads<'_>, kid: &Value) -> Result<bool> {
-        Ok(match classify(reads, kid)? {
+        Ok(match classify(reads, kid, self.removed, self.retained)? {
             Kid::Widget(number) => self.placement(reads, number)?.kept,
             Kid::Field(number) | Kid::Intermediate { number, .. } => self
                 .coverage
@@ -551,6 +610,9 @@ impl<'a, 'b> Tree<'a, 'b> {
         };
         let mut gone = BudgetVec::new(budget);
         for (at, kid) in kids.iter().enumerate() {
+            if at % 1024 == 0 {
+                budget.poll()?;
+            }
             if !self.keeps(reads, kid)? {
                 gone.try_push(at)?;
             }
@@ -602,8 +664,9 @@ impl<'a, 'b> Tree<'a, 'b> {
                 continue;
             };
             for entry in kids.iter() {
+                budget.poll()?;
                 if let Kid::Field(kid) | Kid::Intermediate { number: kid, .. } =
-                    classify(reads, entry)?
+                    classify(reads, entry, self.removed, self.retained)?
                     && self.keeps(reads, entry)?
                 {
                     stack.try_push(kid)?;
@@ -632,7 +695,8 @@ impl<'a, 'b> Tree<'a, 'b> {
         }
         if let Some((_, kids)) = kids(reads, number, &dict)? {
             for kid in kids.iter() {
-                if let Kid::Widget(kid) = classify(reads, kid)? {
+                reads.budget().poll()?;
+                if let Kid::Widget(kid) = classify(reads, kid, self.removed, self.retained)? {
                     self.point(reads, index, edits, kid)?;
                 }
             }
@@ -654,7 +718,10 @@ impl<'a, 'b> Tree<'a, 'b> {
             return Ok(());
         };
         let stale = match dict.get("P") {
-            Some(Value::Reference(to)) => !is_in(self.retained, to.number()),
+            Some(Value::Reference(to)) => {
+                !is_in(self.retained, to.number())
+                    || reads.generation(to.number())? != Some(to.generation())
+            }
             Some(_) => true,
             None => false,
         };
@@ -684,6 +751,7 @@ impl<'a, 'b> Tree<'a, 'b> {
         let mut page = None;
         let mut listed = false;
         for &holder in self.index.referrers(number) {
+            reads.budget().poll()?;
             if self.is_page(holder) {
                 if lists(reads, holder, number)? {
                     listed = true;
@@ -694,6 +762,7 @@ impl<'a, 'b> Tree<'a, 'b> {
                 continue;
             }
             for &owner in self.index.referrers(holder) {
+                reads.budget().poll()?;
                 if self.is_page(owner)
                     && annotations_object(reads, owner, holder)?
                     && holds(reads, holder, number)?
@@ -705,11 +774,18 @@ impl<'a, 'b> Tree<'a, 'b> {
                 }
             }
         }
-        let kept = page.is_some()
-            || (!listed
-                && !node(reads, number)?.is_some_and(|dict| {
-                    matches!(dict.get("P"), Some(Value::Reference(to)) if is_in(self.removed, to.number()))
-                }));
+        let removed_page = if page.is_none() && !listed {
+            match node(reads, number)?.as_ref().and_then(|dict| dict.get("P")) {
+                Some(Value::Reference(to)) => {
+                    is_in(self.removed, to.number())
+                        && reads.generation(to.number())? == Some(to.generation())
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        let kept = page.is_some() || (!listed && !removed_page);
         let placement = Placement { page, kept };
         self.placements.insert(number, placement, reads.budget())?;
         Ok(placement)
@@ -739,13 +815,13 @@ fn check_edges(edges: usize) -> Result<()> {
 }
 
 /// Returns the name that `value`, or the object it refers to, is.
-fn resolved_name(reads: &mut Reads<'_>, value: &Value) -> Result<Option<Box<[u8]>>> {
+fn resolved_button(reads: &mut Reads<'_>, value: &Value) -> Result<Option<bool>> {
     Ok(match value {
-        Value::Name(name) => Some(name.as_bytes().into()),
+        Value::Name(name) => Some(name.as_bytes() == b"Btn"),
         Value::Reference(reference) => match readable(reads, reference.number())? {
             Some(object) if object.generation() == reference.generation() => {
                 match &**object.value() {
-                    Value::Name(name) => Some(name.as_bytes().into()),
+                    Value::Name(name) => Some(name.as_bytes() == b"Btn"),
                     _ => None,
                 }
             }
@@ -761,7 +837,7 @@ fn lists(reads: &mut Reads<'_>, page: u32, number: u32) -> Result<bool> {
         return Ok(false);
     };
     Ok(match dict.get("Annots") {
-        Some(Value::Array(items)) => references(items, number),
+        Some(Value::Array(items)) => references(reads, items, number)?,
         _ => false,
     })
 }
@@ -771,26 +847,45 @@ fn annotations_object(reads: &mut Reads<'_>, page: u32, array: u32) -> Result<bo
     let Some(dict) = node_or_page(reads, page)? else {
         return Ok(false);
     };
-    Ok(matches!(dict.get("Annots"), Some(Value::Reference(to)) if to.number() == array))
+    Ok(match dict.get("Annots") {
+        Some(Value::Reference(to)) if to.number() == array => {
+            reads.generation(array)? == Some(to.generation())
+        }
+        _ => false,
+    })
 }
 
 /// Returns whether array object `array` holds a reference to `number`.
 fn holds(reads: &mut Reads<'_>, array: u32, number: u32) -> Result<bool> {
     Ok(match readable(reads, array)? {
         Some(object) => match &**object.value() {
-            Value::Array(items) => references(items, number),
+            Value::Array(items) => references(reads, items, number)?,
             _ => false,
         },
         None => false,
     })
 }
 
-fn references(items: &Array, number: u32) -> bool {
-    items
-        .iter()
-        .any(|item| matches!(item, Value::Reference(to) if to.number() == number))
+fn references(reads: &mut Reads<'_>, items: &Array, number: u32) -> Result<bool> {
+    let Some(generation) = reads.generation(number)? else {
+        return Ok(false);
+    };
+    for (index, item) in items.iter().enumerate() {
+        if index % 1024 == 0 {
+            reads.budget().poll()?;
+        }
+        if matches!(item, Value::Reference(to) if *to == Reference::new(number, generation)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn node_or_page(reads: &mut Reads<'_>, number: u32) -> Result<Option<Dict>> {
-    Ok(readable(reads, number)?.and_then(|object| dict_of(&object).cloned()))
+    match readable(reads, number)? {
+        Some(object) => dict_of(&object)
+            .map(|dict| copy_dict_for_edit(dict, reads.budget()))
+            .transpose(),
+        None => Ok(None),
+    }
 }

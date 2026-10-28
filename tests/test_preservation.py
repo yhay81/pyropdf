@@ -76,8 +76,8 @@ def catalog_entry(doc: pyropdf.Document) -> set[int]:
 def flattened(doc: pyropdf.Document) -> set[int]:
     """Return the page-tree objects that writing the page list rewrites."""
     # Writing the page list flattens the page tree: it writes the root and
-    # every page that is not already the root's kid (#272 narrows what those
-    # pages keep).
+    # every page that is not already the root's kid, which keeps what it
+    # inherits as the reference that held it (#272).
     root = doc.catalog["Pages"]
     return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
 
@@ -136,6 +136,33 @@ def assign_operations(doc: pyropdf.Document) -> set[int]:
     return {number(page.obj)}
 
 
+def add_attachment(doc: pyropdf.Document) -> set[int]:
+    # Adding a name writes the catalog, for its /Version where the file is
+    # older than PDF 1.4, its name dictionary, and its EmbeddedFiles root.
+    touched = {number(doc.catalog)}
+    names = doc.catalog.get("Names")
+    if names is not None:
+        if names.xref is not None:
+            touched.add(names.xref)
+        files = names.get("EmbeddedFiles")
+        if files is not None and files.xref is not None:
+            touched.add(files.xref)
+    doc.attachments.add("pyropdf-preserved", b"data", filename="preserved.txt")
+    return touched
+
+
+def write_attachment(doc: pyropdf.Document) -> set[int]:
+    touched = add_attachment(doc)
+    doc.attachments["pyropdf-preserved"].write(b"other data")
+    return touched
+
+
+def delete_attachment(doc: pyropdf.Document) -> set[int]:
+    touched = add_attachment(doc)
+    del doc.attachments["pyropdf-preserved"]
+    return touched
+
+
 def delete_entry(doc: pyropdf.Document) -> set[int]:
     doc.catalog["Preserved"] = Name("Gone")
     del doc.catalog["Preserved"]
@@ -184,6 +211,9 @@ EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "rewrite_stream": rewrite_stream,
     "move_page": move_page,
     "assign_operations": assign_operations,
+    "add_attachment": add_attachment,
+    "write_attachment": write_attachment,
+    "delete_attachment": delete_attachment,
     "delete_entry": delete_entry,
     "array_insert_delete": array_insert_delete,
     "typed_set": typed_set,
@@ -218,6 +248,24 @@ def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *,
     if state is not None:
         index = next(at for at, page in enumerate(reopened.pages) if number(page.obj) == untouched)
         assert page_state(reopened, index) == state
+
+
+@pytest.mark.parametrize("edit", ["add_attachment", "write_attachment", "delete_attachment"])
+@pytest.mark.parametrize("indirect_names", [False, True])
+def test_attachment_edits_record_an_indirect_tree_root(edit: str, *, indirect_names: bool) -> None:
+    doc = pyropdf.open(synthetic())
+    doc.attachments.add("existing", b"kept")
+    entries = list(doc.catalog["Names"]["EmbeddedFiles"]["Names"])
+    root = doc.objects[doc.objects.add({"Names": entries})]
+    names = {"EmbeddedFiles": root}
+    doc.catalog["Names"] = doc.objects[doc.objects.add(names)] if indirect_names else names
+    before = snapshot(doc)
+
+    touched = EDITS[edit](doc)
+
+    assert number(root) in touched
+    after = snapshot(pyropdf.open(doc.to_bytes()))
+    assert all(after.get(xref) == value for xref, value in before.items() if xref not in touched)
 
 
 #: Reals that a float cannot hold exactly, as the synthetic document writes them.

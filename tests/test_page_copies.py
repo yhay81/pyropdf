@@ -10,6 +10,8 @@ differences:
 
 from __future__ import annotations
 
+import pytest
+
 import pyropdf
 from pyropdf import Color, Destination, Note, Square
 
@@ -206,3 +208,244 @@ def test_a_copy_undoes_in_one_step() -> None:
     doc.history.undo()
     assert len(doc.pages) == 1
     assert doc.to_bytes() == before
+
+
+def _minimal_tagged(extra: dict[int, str] | None = None) -> dict[int, str]:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /StructParents 0 >>",
+        6: "<< /Type /StructTreeRoot /K 7 0 R /ParentTree 8 0 R >>",
+        7: "<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 >>",
+        8: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>",
+    }
+    objects.update(extra or {})
+    return objects
+
+
+def test_copy_preserves_parent_tree_pairs_behind_an_alias() -> None:
+    doc = pyropdf.open(build_raw_pdf(_minimal_tagged({8: "9 0 R", 9: "<< /Nums [0 [7 0 R]] >>"})))
+    doc.pages.extend(doc.pages[0])
+    tree = _parent_tree(doc.catalog["StructTreeRoot"])
+    assert 0 in tree
+    assert tree[0][0].xref == 7
+    assert doc.pages[1].obj["StructParents"] in tree
+
+
+def test_copy_keeps_content_ids_in_an_indirect_k_array() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(_minimal_tagged({7: "<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 9 0 R >>", 9: "[0]"}))
+    )
+    doc.pages.extend(doc.pages[0])
+    tree = _parent_tree(doc.catalog["StructTreeRoot"])
+    copied = tree[doc.pages[1].obj["StructParents"]][0]
+    assert list(copied["K"]) == [0]
+
+
+def test_copy_updates_existing_parent_tree_limits() -> None:
+    doc = pyropdf.open(build_raw_pdf(_minimal_tagged()))
+    doc.pages.extend(doc.pages[0])
+    root = doc.catalog["StructTreeRoot"]
+    assert list(root["ParentTree"]["Limits"]) == [0, doc.pages[1].obj["StructParents"]]
+
+
+@pytest.mark.parametrize("kind", ["Page", "Pages", "Catalog"])
+def test_copy_refuses_parent_tree_aliases_of_other_identities(kind: str) -> None:
+    doc = pyropdf.open(build_raw_pdf(_minimal_tagged({8: f"<< /Type /{kind} /Nums [0 [7 0 R]] >>"})))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.MalformedPdfError):
+        doc.pages.extend(doc.pages[0])
+    assert doc.to_bytes() == before
+
+
+def test_copy_refuses_excessive_structure_ancestry_without_partial_writes() -> None:
+    objects = _minimal_tagged(
+        {6: "<< /Type /StructTreeRoot /K 10 0 R /ParentTree 8 0 R >>", 8: "<< /Nums [0 [266 0 R]] >>"}
+    )
+    for number in range(10, 267):
+        parent = 6 if number == 10 else number - 1
+        kid = "0" if number == 266 else f"{number + 1} 0 R"
+        objects[number] = f"<< /Type /StructElem /S /P /P {parent} 0 R /Pg 3 0 R /K {kid} >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    before = doc.to_bytes()
+    with doc.transaction("Catch a failed copy"):
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.pages.extend(doc.pages[0])
+        assert caught.value.code == "structure_tree_count"
+    assert doc.to_bytes() == before
+
+
+def test_copied_widgets_keep_only_widget_triggers_from_indirect_actions() -> None:
+    doc = pyropdf.open(_form())
+    actions = doc.objects.add(
+        {"K": {"S": pyropdf.Name("JavaScript"), "JS": "field"}, "E": {"S": pyropdf.Name("JavaScript"), "JS": "widget"}}
+    )
+    doc.objects[4]["AA"] = doc.objects[actions]
+    doc.pages.extend(doc.pages[0])
+    copied = _widgets(doc.pages[1])[0]
+    assert set(copied["AA"]) == {"E"}
+    assert set(copied["Parent"]["AA"]) == {"K"}
+
+
+def test_copy_does_not_retarget_annotation_references_of_another_generation() -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R 5 0 R] >>",
+        4: "<< /Type /Annot /Subtype /Text /Rect [1 1 5 5] /Popup 5 1 R >>",
+        5: "<< /Type /Annot /Subtype /Popup /Rect [1 1 5 5] /Parent 4 0 R >>",
+    }
+    doc = pyropdf.open(build_raw_pdf(objects))
+    doc.pages.extend(doc.pages[0])
+    copied = doc.pages[1].obj["Annots"][0].xref
+    reopened = pyropdf.open(doc.to_bytes())
+    raw = next(body for number, _, body in reopened._core()._objects() if number == copied)  # noqa: SLF001
+    assert b"/Popup 5 1 R" in raw
+
+
+@pytest.mark.parametrize("entry", ["Kids", "Fields"])
+def test_copy_preserves_field_members_behind_an_array_alias(entry: str) -> None:
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R] >>",
+        4: "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /Rect [1 1 5 5] >>",
+        5: "<< /FT /Tx /T (field) /Kids 6 0 R >>",
+        6: "7 0 R",
+        7: "[4 0 R]",
+    }
+    if entry == "Fields":
+        objects[1] = "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields 6 0 R >> >>"
+        objects[4] = "<< /Type /Annot /Subtype /Widget /FT /Tx /T (field) /Rect [1 1 5 5] >>"
+        del objects[5]
+    doc = pyropdf.open(build_raw_pdf(objects))
+    doc.pages.extend(doc.pages[0])
+    field = doc.catalog["AcroForm"]["Fields"][0]
+    assert field["T"] == b"field"
+    assert len(field["Kids"]) == 2
+    assert field["Kids"][0].xref == 4
+
+
+def test_copy_keeps_a_single_indirect_structure_child() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            _minimal_tagged(
+                {
+                    6: "<< /Type /StructTreeRoot /K 10 0 R /ParentTree 8 0 R >>",
+                    7: "<< /Type /StructElem /S /P /P 10 0 R /Pg 3 0 R /K 0 >>",
+                    10: "<< /Type /StructElem /S /Sect /P 6 0 R /K 7 0 R >>",
+                }
+            )
+        )
+    )
+    doc.pages.extend(doc.pages[0])
+    section = _kids(doc.catalog["StructTreeRoot"])[1]
+    assert len(_kids(section)) == 1
+    assert _kids(section)[0]["Pg"].xref == doc.pages[1].xref
+
+
+def test_copy_follows_structure_owner_aliases() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(_minimal_tagged({7: "10 0 R", 10: "<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 >>"}))
+    )
+    doc.pages.extend(doc.pages[0])
+    copy = doc.pages[1]
+    owner = _parent_tree(doc.catalog["StructTreeRoot"])[copy.obj["StructParents"]][0]
+    assert owner.xref != 10
+    assert owner["Pg"].xref == copy.xref
+    assert list(owner["K"]) == [0]
+
+
+@pytest.mark.parametrize("alias", [False, True])
+def test_copy_gives_direct_and_aliased_annotations_their_own_objects(*, alias: bool) -> None:
+    annotation = "<< /Type /Annot /Subtype /Text /Rect [1 1 5 5] /Contents (original) >>"
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [{'4 0 R' if alias else annotation}] >>",
+    }
+    if alias:
+        objects.update({4: "5 0 R", 5: annotation})
+    doc = pyropdf.open(build_raw_pdf(objects))
+    doc.pages.extend(doc.pages[0])
+    copied = doc.pages[1].obj["Annots"][0]
+    assert copied.xref is not None
+    if alias:
+        assert copied.xref not in (4, 5)
+    copied["Contents"] = "edited"
+    assert doc.pages[0].obj["Annots"][0]["Contents"] == b"original"
+
+
+def test_copy_refuses_a_direct_merged_widget_atomically() -> None:
+    widget = "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Ada) /Rect [1 1 5 5] >>"
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: f"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [{widget}] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [{widget}] >>",
+            }
+        )
+    )
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.MalformedPdfError):
+        doc.pages.extend(doc.pages[0])
+    assert doc.to_bytes() == before
+
+
+def test_copy_replaces_an_aliased_merged_field_instead_of_adding_a_duplicate() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [4 0 R] >>",
+                4: "5 0 R",
+                5: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Ada) /Rect [1 1 5 5] >>",
+            }
+        )
+    )
+    doc.pages.extend(doc.pages[0])
+    fields = doc.catalog["AcroForm"]["Fields"]
+    assert len(fields) == 1
+    assert fields[0]["T"] == b"name"
+    assert len(fields[0]["Kids"]) == 2
+
+
+@pytest.mark.parametrize("key", ["Kids", "Nums"])
+def test_copy_extends_parent_tree_arrays_through_aliases(key: str) -> None:
+    extra = {
+        8: f"<< /{key} 9 0 R /Limits [0 0] >>",
+        9: "10 0 R",
+        10: "[11 0 R]" if key == "Kids" else "[0 [7 0 R]]",
+        11: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>",
+    }
+    doc = pyropdf.open(build_raw_pdf(_minimal_tagged(extra)))
+    doc.pages.extend(doc.pages[0])
+    tree = doc.catalog["StructTreeRoot"]["ParentTree"]
+    assert list(tree["Limits"]) == [0, 1]
+    if key == "Kids":
+        assert len(tree["Kids"]) == 2
+        assert next(iter(tree["Kids"][0]["Nums"])) == 0
+        assert next(iter(tree["Kids"][1]["Nums"])) == 1
+    else:
+        assert list(tree["Nums"])[::2] == [0, 1]
+
+
+def test_copy_joins_a_direct_child_widget_to_its_existing_field() -> None:
+    widget = "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /Rect [1 1 5 5] >>"
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R] >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [{widget}] >>",
+                5: f"<< /FT /Tx /T (name) /V (Ada) /Kids [{widget}] >>",
+            }
+        )
+    )
+    doc.pages.extend(doc.pages[0])
+    copied = doc.pages[1].obj["Annots"][0]
+    assert copied.xref is not None
+    assert copied["Parent"].xref == 5
+    assert len(doc.objects[5]["Kids"]) == 2

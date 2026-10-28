@@ -1,3 +1,8 @@
-# The causes of the differences that compare.py finds; README.md explains each.
+# The causes of measured differences; README.md explains each.
 
-cause = []
+[[cause]]
+id = "missing-highlight-appearance"
+outputs = ["render"]
+kinds = ["close"]
+documents = ["pdfium-links-highlights-annots"]
+pages = [0]

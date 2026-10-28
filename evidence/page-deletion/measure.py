@@ -92,6 +92,34 @@ def document(count: int, *, tagged: str = "no", links: int = 0) -> bytes:
     return build(objects)
 
 
+def unrelated_structure(count: int) -> bytes:
+    """Keep three pages and one removed element fixed while unrelated tags grow."""
+    groups = range(0, count, FANOUT)
+    first_element = 30 + len(groups)
+    elements = " ".join(f"{first_element + i} 0 R" for i in range(count))
+    sections = " ".join(f"{30 + i} 0 R" for i in range(len(groups)))
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 3 0 R >>",
+        2: "<< /Type /Pages /Kids [10 0 R 11 0 R 12 0 R] /Count 3 >>",
+        3: "<< /Type /StructTreeRoot /K [20 0 R 21 0 R] /ParentTree 4 0 R >>",
+        4: "<< /Kids [5 0 R 6 0 R] >>",
+        5: f"<< /Limits [0 0] /Nums [0 [{elements}]] >>",
+        6: "<< /Limits [1 1] /Nums [1 [20 0 R]] >>",
+        10: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 0 >>",
+        11: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /StructParents 1 >>",
+        12: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+        20: "<< /Type /StructElem /S /P /P 3 0 R /Pg 11 0 R /K 0 >>",
+        21: f"<< /Type /StructElem /S /Sect /P 3 0 R /Pg 10 0 R /K [{sections}] >>",
+    }
+    for group, start in enumerate(groups):
+        items = range(start, min(start + FANOUT, count))
+        kids = " ".join(f"{first_element + i} 0 R" for i in items)
+        objects[30 + group] = f"<< /Type /StructElem /S /Sect /P 21 0 R /Pg 10 0 R /K [{kids}] >>"
+        for i in items:
+            objects[first_element + i] = f"<< /Type /StructElem /S /P /P {30 + group} 0 R /Pg 10 0 R /K {i} >>"
+    return build(objects)
+
+
 def median(times: list[float]) -> float:
     """Return the median of ``times``."""
     return sorted(times)[len(times) // 2]
@@ -153,6 +181,15 @@ def main() -> None:
     for links in LINKS:
         first, repeated = measure(document(LINKED_PAGES, links=links), delete_middle)
         print(f"| {links:,} | {ms(first)} | {ms(repeated)} |")  # noqa: T201
+
+    print()  # noqa: T201
+    print("## Against unrelated structure, three pages and one removed element")  # noqa: T201
+    print()  # noqa: T201
+    print("| Unrelated elements | Delete, first | Delete, repeated |")  # noqa: T201
+    print("| ---: | ---: | ---: |")  # noqa: T201
+    for count in (0, 1_000, 16_000, 64_000):
+        first, repeated = measure(unrelated_structure(count), delete_middle)
+        print(f"| {count:,} | {ms(first)} | {ms(repeated)} |")  # noqa: T201
 
 
 if __name__ == "__main__":

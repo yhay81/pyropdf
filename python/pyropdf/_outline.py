@@ -15,7 +15,7 @@ from pyropdf._objects import Dictionary
 from pyropdf._targets import Destination, Target, _target_from_core, _target_to_core
 
 if TYPE_CHECKING:
-    from pyropdf._core import _Document, _OutlineItem
+    from pyropdf._core import _Document, _OutlineItem, _Target
     from pyropdf._document import Document
 
 #: The outline limits that every read and write shares: items and levels.
@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 #: texts before it changes anything.
 _MAX_OUTLINE_ITEMS = 65_536
 _MAX_OUTLINE_LEVELS = 64
+_MAX_OUTLINE_TEXT = 16 * 1024 * 1024
 
 #: `/F` flags of an outline item (ISO 32000-2 Table 151).
 _ITALIC = 1
@@ -31,6 +32,20 @@ _BOLD = 2
 #: A page count that admits every page index while a record is validated
 #: on its own; writing checks the document's real page count.
 _UNBOUNDED_PAGES = 1 << 62
+
+
+def _input_size(size: int) -> None:
+    """Reject oversized character input before the binding creates UTF-8 copies."""
+    if size > _MAX_OUTLINE_TEXT:
+        code = "toc_input_size"
+        msg = f"outline input exceeds the {_MAX_OUTLINE_TEXT}-byte safety limit"
+        raise LimitError(code, msg)
+
+
+def _target(target: object, page_count: int) -> _Target:
+    result = _target_to_core(target, page_count)
+    _input_size(sum(len(text) for text in result[4:] if text is not None))
+    return result
 
 
 def _color(value: object) -> Color | None:
@@ -83,7 +98,8 @@ class OutlineEntry:
         if not isinstance(self.title, str):
             msg = f"title must be a str: {self.title!r}"
             raise TypeError(msg)
-        _target_to_core(self.destination, _UNBOUNDED_PAGES)
+        _input_size(len(self.title))
+        _target(self.destination, _UNBOUNDED_PAGES)
         _color(self.color)
         _bool(self.bold, "bold")
         _bool(self.italic, "italic")
@@ -148,6 +164,7 @@ class OutlineItem:
         if not isinstance(title, str):
             msg = f"title must be a str: {title!r}"
             raise TypeError(msg)
+        _input_size(len(title))
         _core.outline_set_title(self._core(), self._id, title)
 
     @property
@@ -163,7 +180,7 @@ class OutlineItem:
     @destination.setter
     def destination(self, target: Target | None) -> None:
         core = self._core()
-        _core.outline_set_target(core, self._id, _target_to_core(target, _core.page_count(core)))
+        _core.outline_set_target(core, self._id, _target(target, _core.page_count(core)))
 
     @property
     def page(self) -> int | None:
@@ -179,7 +196,7 @@ class OutlineItem:
 
     @color.setter
     def color(self, color: Color | None) -> None:
-        self._set_style(_color(color), self._read()[4])
+        _core.outline_set_style(self._core(), self._id, _rgb(_color(color)))
 
     @property
     def bold(self) -> bool:
@@ -220,12 +237,7 @@ class OutlineItem:
         return tuple(OutlineItem(self._document, xref, generation) for xref, generation in ids)
 
     def _set_flag(self, flag: int, value: bool) -> None:  # noqa: FBT001 - one flag of the setters above.
-        _, _, _, color, flags, _, _ = self._read()
-        flags = (flags | flag) if value else (flags & ~flag)
-        self._set_style(None if color is None else Color(*color), flags)
-
-    def _set_style(self, color: Color | None, flags: int) -> None:
-        _core.outline_set_style(self._core(), self._id, _rgb(color), flags & 0xFFFFFFFF)
+        _core.outline_set_style(self._core(), self._id, None, None, (flag, value))
 
     def to_entry(self) -> OutlineEntry:
         """Return the item, without its children, as an :class:`OutlineEntry`."""
@@ -350,6 +362,7 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
     page_count = _core.page_count(core)
     specs = []
     previous_level = 0
+    characters = 0
     for index, entry in enumerate(items):
         if not isinstance(entry, OutlineEntry):
             msg = f"outline item {index} must be an OutlineEntry: {type(entry).__name__}"
@@ -357,7 +370,9 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         if entry.level > previous_level + 1:
             msg = f"outline item {index} has level {entry.level}; levels start at 1 and grow by at most one"
             raise ValueError(msg)
-        target = _target_to_core(entry.destination, page_count)
+        target = _target(entry.destination, page_count)
+        characters += len(entry.title) + sum(len(text) for text in target[4:] if text is not None)
+        _input_size(characters)
         flags = (_BOLD if entry.bold else 0) | (_ITALIC if entry.italic else 0)
         specs.append((entry.level, entry.title, target, _rgb(entry.color), flags, entry.is_open))
         previous_level = entry.level
