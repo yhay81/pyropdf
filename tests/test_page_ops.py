@@ -1,21 +1,31 @@
-"""Copying a page within a document with ``insert`` and ``extend``.
+"""Copying and importing pages with ``insert`` and ``extend``.
 
-The copy cases of pylopdf's tests/test_page_ops.py at ebb01d3c, ported.
-Intended differences:
+The copy and import cases of pylopdf's tests/test_page_ops.py at ebb01d3c,
+ported. Intended differences:
 
 - the inherited geometry is read through ``page.rect``, ``rotation``, and
-  the copy's own dictionary, since pyropdf has no ``page.boxes``;
-- a copy repairs a page whose ``/Parent`` names a cycle instead of
-  refusing, as ``new`` does in tests/test_pages.py, since the walk of
-  ``/Kids``, not ``/Parent``, decides the pages.
+  the page's own dictionary, since pyropdf has no ``page.boxes``;
+- a copy or an import repairs a page whose ``/Parent`` names a cycle
+  instead of refusing, as ``new`` does in tests/test_pages.py, since the
+  walk of ``/Kids``, not ``/Parent``, decides the pages;
+- the unreachable source data is an embedded file of the source's catalog,
+  since pyropdf has no ``attachments`` yet.
 
-Its import cases wait on yhay81/pyropdf#176; its ``new`` and ``del``
-cases are in tests/test_pages.py.
+Its ``new`` and ``del`` cases are in tests/test_pages.py.
 """
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from typing import TYPE_CHECKING
+
+import pytest
+
 import pyropdf
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:
@@ -115,3 +125,296 @@ def test_a_copy_repairs_a_page_whose_parent_is_a_cycle() -> None:
     reopened = pyropdf.open(doc.to_bytes())
     assert [page.rect for page in reopened.pages] == [pyropdf.Rect(0, 0, 100, 100), *[pyropdf.Rect(0, 0, 100, 110)] * 2]
     assert reopened.pages[2].obj["Parent"].xref == 2
+
+
+def test_insert_pdf_negative_range_follows_pymupdf() -> None:
+    doc = pyropdf.Document()
+    doc.pages.extend(pyropdf.open(build_pdf(["Page one", "Page two", "Page three"])).pages)
+    assert len(doc.pages) == 3
+    assert "Page one" in doc.pages[0].text()
+    # A descending slice reverses.
+    clamped = pyropdf.Document()
+    clamped.pages.extend(pyropdf.open(build_pdf(["Page one", "Page two", "Page three"])).pages[1:100][::-1])
+    assert [clamped.pages[index].text().strip() for index in range(2)] == ["Page three", "Page two"]
+
+
+def test_insert_pdf_start_at() -> None:
+    doc = pyropdf.open(build_pdf(["Page one", "Page two", "Page three"]))
+    src = pyropdf.open(build_pdf(["Hello PDF"]))
+    doc.pages.insert(1, src.pages)
+    assert len(doc.pages) == 4
+    assert "Page one" in doc.pages[0].text()
+    assert "Hello PDF" in doc.pages[1].text()
+    assert "Page two" in doc.pages[2].text()
+    # Preserve page order after save and reload.
+    reloaded = pyropdf.open(doc.to_bytes())
+    assert "Hello PDF" in reloaded.pages[1].text()
+    assert len(src.pages) == 1
+
+
+def test_insert_pdf_empty_source_noop() -> None:
+    doc = pyropdf.open(build_pdf(["Page one", "Page two", "Page three"]))
+    before = doc.to_bytes()
+    doc.pages.extend(pyropdf.Document().pages)
+    assert len(doc.pages) == 3
+    assert doc.to_bytes() == before
+
+
+def test_insert_pdf_does_not_keep_unreachable_source_data() -> None:
+    """Do not copy what the pages do not reach, such as the source's embedded files."""
+    hidden = "SECRET-UNREFERENCED-ATTACHMENT-7c3f"
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names [(secret.txt) 4 0 R] >> >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+                4: "<< /Type /Filespec /F (secret.txt) /EF << /F 5 0 R >> >>",
+                5: f"<< /Type /EmbeddedFile /Length {len(hidden)} >>\nstream\n{hidden}\nendstream",
+            }
+        )
+    )
+
+    target = pyropdf.Document()
+    target.pages.extend(source.pages)
+
+    assert len(target.pages) == 1
+    assert hidden.encode() not in target.to_bytes()
+    assert "Names" not in target.catalog
+
+
+def test_insert_pdf_native_argument_refusal_keeps_existing_pages() -> None:
+    doc = pyropdf.open(build_pdf(["Page one", "Page two", "Page three"]))
+    source = pyropdf.open(build_pdf(["Hello PDF"]))
+    page = doc.pages[0]
+    before = doc.to_bytes()
+
+    with pytest.raises(TypeError):
+        doc.pages.insert(0.5, source.pages)  # ty: ignore[invalid-argument-type]
+
+    assert doc.to_bytes() == before
+    assert "Page one" in page.text()
+
+
+def _build_cropped_parent_pdf() -> bytes:
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R >>",
+            2: ("<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] /CropBox [0 0 80 100] /Rotate 90 >>"),
+            3: "<< /Type /Page /Parent 2 0 R >>",
+        }
+    )
+
+
+@pytest.mark.parametrize("source_attributes", ["", "/CropBox [5 7 305 407] /Rotate 180"])
+def test_insert_pdf_preserves_geometry_under_cropped_rotated_parent(source_attributes: str) -> None:
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] >>",
+                3: f"<< /Type /Page /Parent 2 0 R {source_attributes} >>",
+            }
+        )
+    )
+    expected = (source.pages[0].rect, source.pages[0].rotation)
+    expected_png = source.pages[0].pixmap(alpha=True).to_bytes()
+    source_bytes = source.to_bytes()
+    target = pyropdf.open(_build_cropped_parent_pdf())
+    original_png = target.pages[0].pixmap(alpha=True).to_bytes()
+
+    target.pages.extend(source.pages)
+
+    assert (target.pages[1].rect, target.pages[1].rotation) == expected
+    assert target.pages[1].pixmap(alpha=True).to_bytes() == expected_png
+    assert target.pages[0].pixmap(alpha=True).to_bytes() == original_png
+    assert source.to_bytes() == source_bytes
+    reopened = pyropdf.open(target.to_bytes())
+    assert (reopened.pages[1].rect, reopened.pages[1].rotation) == expected
+    assert reopened.pages[1].pixmap(alpha=True).to_bytes() == expected_png
+
+
+@pytest.mark.parametrize("null_value", ["null", "5 0 R", "99 0 R"], ids=["null", "indirect-null", "missing-object"])
+@pytest.mark.parametrize("inherited_values", [False, True])
+def test_insert_pdf_treats_null_page_and_parent_attributes_as_absent(
+    *, null_value: str, inherited_values: bool
+) -> None:
+    """A null attribute is omitted, so the page inherits from its source ancestors.
+
+    ISO 32000-2 section 7.3.10 reads a reference to a missing object as null.
+    """
+    attributes = " ".join(f"/{key} {null_value}" for key in ("MediaBox", "CropBox", "Rotate", "Resources"))
+    inherited = "/CropBox [0 0 300 400] /Rotate 180 /Resources << /Font << /F1 6 0 R >> >>" if inherited_values else ""
+    content = "BT /F1 20 Tf 40 80 Td (NULL-INHERITANCE) Tj ET" if inherited_values else ""
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: f"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 792] {inherited} >>",
+                3: f"<< /Type /Pages /Parent 2 0 R /Kids [4 0 R] /Count 1 {attributes} >>",
+                4: f"<< /Type /Page /Parent 3 0 R /Contents 7 0 R {attributes} >>",
+                5: "null",
+                6: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+                7: f"<< /Length {len(content)} >>\nstream\n{content}\nendstream",
+            }
+        )
+    )
+    expected_rect = pyropdf.Rect(0, 0, 300, 400) if inherited_values else pyropdf.Rect(0, 0, 612, 792)
+    expected_rotation = 180 if inherited_values else 0
+    assert (source.pages[0].rect, source.pages[0].rotation) == (expected_rect, expected_rotation)
+    expected_png = source.pages[0].pixmap(alpha=True).to_bytes()
+    source_bytes = source.to_bytes()
+    target = pyropdf.open(_build_cropped_parent_pdf())
+
+    target.pages.extend(source.pages)
+
+    for current in (target, pyropdf.open(target.to_bytes())):
+        assert (current.pages[1].rect, current.pages[1].rotation) == (expected_rect, expected_rotation)
+        assert current.pages[1].pixmap(alpha=True).to_bytes() == expected_png
+        if inherited_values:
+            assert current.pages[1].text().split() == ["NULL-INHERITANCE"]
+    assert source.to_bytes() == source_bytes
+
+
+def test_an_import_repairs_a_page_whose_parent_is_a_cycle() -> None:
+    target = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+                4: "<< /Type /Page /Parent 5 0 R /MediaBox [0 0 100 110] >>",
+                5: "<< /Type /Pages /Parent 5 0 R >>",
+            }
+        )
+    )
+    source = pyropdf.open(build_pdf(["IMPORTED"]))
+
+    target.pages.extend(source.pages)
+
+    reopened = pyropdf.open(target.to_bytes())
+    assert len(reopened.pages) == 3
+    assert reopened.pages[2].text().split() == ["IMPORTED"]
+
+
+def _linked(count: int) -> bytes:
+    """Return ``count`` pages, page ``i`` linking to page ``i + 1``, and the last to a named destination of page 0."""
+    kids = " ".join(f"{3 + 2 * i} 0 R" for i in range(count))
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /Dests << /home [3 0 R /Fit] >> >>",
+        2: f"<< /Type /Pages /Kids [{kids}] /Count {count} /MediaBox [0 0 200 200] >>",
+    }
+    for i in range(count):
+        target = f"/Dest [{5 + 2 * i} 0 R /XYZ 10 20 null]" if i < count - 1 else "/A << /S /GoTo /D /home >>"
+        objects[3 + 2 * i] = f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {100 + i} 200] /Annots [{4 + 2 * i} 0 R] >>"
+        objects[4 + 2 * i] = f"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] {target} >>"
+    return build_raw_pdf(objects)
+
+
+def test_imported_links_follow_the_pages_imported_with_them() -> None:
+    source = pyropdf.open(_linked(3))
+    target = pyropdf.open(build_pdf(["Page one"]))
+
+    target.pages.extend([source.pages[2], source.pages[1], source.pages[0]])
+
+    widths = [page.rect.x1 for page in target.pages[1:]]
+    assert widths == [102, 101, 100]
+    last, middle, first = target.pages[1:]
+    assert last.links[0].target == pyropdf.Destination(3)
+    assert middle.links[0].target == pyropdf.Destination(1, (10, 180))
+    assert first.links[0].target == pyropdf.Destination(2, (10, 180))
+    assert last.links[0].obj["A"]["D"][0].xref == first.xref
+
+    partial = pyropdf.Document()
+    partial.pages.extend(source.pages[1])
+    assert len(partial.pages[0].links) == 0
+    assert b"/Link" not in partial.to_bytes()
+    assert len(source.pages[1].links) == 1
+
+
+def test_imported_pages_leave_the_source_structure_behind() -> None:
+    """Until their elements are grafted (yhay81/pyropdf#189), imported pages carry no structure keys."""
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /StructParents 0 /Annots [4 0 R] >>",
+                4: "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /StructParent 1 /P 3 0 R "
+                "/A << /S /URI /URI (https://example.test/) >> >>",
+                5: "<< /Type /StructTreeRoot /K 6 0 R /ParentTree << /Nums [0 [6 0 R] 1 6 0 R] >> >>",
+                6: "<< /Type /StructElem /S /Link /P 5 0 R /Pg 3 0 R /K [0 << /Type /OBJR /Obj 4 0 R >>] >>",
+            }
+        )
+    )
+    target = pyropdf.Document()
+
+    target.pages.extend(source.pages)
+
+    (page,) = target.pages
+    assert "StructParents" not in page.obj
+    (link,) = page.links
+    assert "StructParent" not in link.obj
+    assert link.obj["P"].xref == page.xref
+    assert "StructTreeRoot" not in target.catalog
+    assert b"StructElem" not in target.to_bytes()
+
+
+@pytest.mark.parametrize("object_number", [3, 5])
+def test_import_does_not_retarget_a_reference_of_another_generation(object_number: int) -> None:
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: (
+                    f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+                    f"/Custom [{object_number} 0 R {object_number} 1 R] >>"
+                ),
+                5: "<< /Message (valid generation) >>",
+            }
+        )
+    )
+    target = pyropdf.Document()
+    target.pages.extend(source.pages[0])
+    assert target.pages[0].obj["Custom"][0] is not None
+    assert target.pages[0].obj["Custom"][1] is None
+
+
+def test_import_keeps_yielded_page_identities_when_the_source_is_reordered() -> None:
+    source = pyropdf.open(build_pdf(["SOURCE-A", "SOURCE-B", "SOURCE-C"]))
+    target = pyropdf.Document()
+
+    def pages() -> Iterator[pyropdf.Page]:
+        yield source.pages[0]
+        source.pages.move(0, 2)
+        yield source.pages[0]
+
+    target.pages.extend(pages())
+    assert [page.text().strip() for page in target.pages] == ["SOURCE-A", "SOURCE-B"]
+
+
+@pytest.mark.parametrize("change", ["order", "inheritance"])
+def test_waiting_import_preserves_the_first_writers_changes(change: str) -> None:
+    source = pyropdf.open(build_pdf(["IMPORTED"]))
+    target = pyropdf.open(build_pdf(["TARGET-A", "TARGET-B"]))
+    started = Event()
+
+    def insert() -> None:
+        started.set()
+        target.pages.insert(1, source.pages[0])
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with target.transaction("Change the receiving document before import"):
+            future = pool.submit(insert)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            if change == "order":
+                target.pages.move(0, 1)
+            else:
+                target.catalog["Pages"]["Rotate"] = 90
+        future.result(timeout=10)
+    expected = ["TARGET-B", "IMPORTED", "TARGET-A"] if change == "order" else ["TARGET-A", "IMPORTED", "TARGET-B"]
+    assert [page.text().strip() for page in target.pages] == expected
+    assert target.pages[1].rotation == 0

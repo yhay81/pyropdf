@@ -153,24 +153,31 @@ class Pages(Sequence[Page]):
     def insert(self, index: int, pages: Page | Iterable[Page]) -> None:
         """Insert copies of ``pages`` before ``index``, clamped as ``list.insert`` clamps it, in one transaction.
 
-        ``pages`` is one :class:`Page` or an iterable of pages of this
-        document, which may repeat. Each copy is a new page object that
-        shares the content streams and resources of its original, with
-        annotations, widgets, and structure elements of its own. The iterable
-        may hold up to the larger of the page count and 4,096 pages.
+        ``pages`` is one :class:`Page` or an iterable of pages of one open
+        document, this one or another. Pages of this document may repeat;
+        each copy is a new page object that shares the content streams and
+        resources of its original, with annotations, widgets, and structure
+        elements of its own. Pages of another document are imported with
+        what they reach, once each per call; their links to pages imported
+        with them keep leading there, and their other links within that
+        document go. The iterable may hold up to the larger of the source's
+        page count and 4,096 pages.
         """
         if not _is_int(index):
             msg = f"the insertion index must be an integer, not {type(index).__name__}"
             raise TypeError(msg)
         doc = self._document._core()  # noqa: SLF001
+        source, chosen = _source_pages(pages)
         objects = _core.page_objects(doc)
         count = len(objects)
-        sources = [objects[at] for at in self._source_pages(pages, count)]
-        if not sources:
+        if source is None:
             return
         at = max(0, index + count) if index < 0 else min(index, count)
-        order = [*objects[:at], *sources, *objects[at:]]
-        copies = [False] * at + [True] * len(sources) + [False] * (count - at)
+        if source is not self._document:
+            _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
+            return
+        order = [*objects[:at], *chosen, *objects[at:]]
+        copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
         _core.set_pages(doc, order, copies)
 
     def extend(self, pages: Page | Iterable[Page]) -> None:
@@ -206,32 +213,38 @@ class Pages(Sequence[Page]):
         objects.insert(target, moved)
         _core.set_pages(doc, objects)
 
-    def _source_pages(self, pages: Page | Iterable[Page], count: int) -> list[int]:
-        """Return the indexes of ``pages``, which must be current pages of this document."""
-        if isinstance(pages, Page):
-            items: Iterable[object] = (pages,)
-        elif isinstance(pages, Iterable) and not isinstance(pages, (str, bytes)):
-            items = pages
-        else:
-            msg = f"pages must be a Page or an iterable of pages: {pages!r}"
-            raise TypeError(msg)
-        limit = max(count, _MIN_PAGE_ENTRY_LIMIT)
-        indexes: list[int] = []
-        for page in items:
-            if not isinstance(page, Page):
-                msg = f"pages must be Page views: {page!r}"
-                raise TypeError(msg)
-            if page.document is not self._document:
-                msg = "pages of another document cannot be inserted yet"
-                raise NotImplementedError(msg)
-            if len(indexes) >= limit:
-                raise _entry_limit_error(limit)
-            indexes.append(page.index)
-        return indexes
-
     def __repr__(self) -> str:
         """Return a representation naming the document."""
         return f"<Pages of {self._document!r}>"
+
+
+def _source_pages(pages: Page | Iterable[Page]) -> tuple[Document | None, list[tuple[int, int]]]:
+    """Return the source document and each page's stable object identity."""
+    if isinstance(pages, Page):
+        items: Iterable[object] = (pages,)
+    elif isinstance(pages, Iterable) and not isinstance(pages, (str, bytes)):
+        items = pages
+    else:
+        msg = f"pages must be a Page or an iterable of pages: {pages!r}"
+        raise TypeError(msg)
+    source: Document | None = None
+    limit = 0
+    indexes: list[tuple[int, int]] = []
+    for page in items:
+        if not isinstance(page, Page):
+            msg = f"pages must be Page views: {page!r}"
+            raise TypeError(msg)
+        if source is None:
+            source = page.document
+            limit = max(len(source.pages), _MIN_PAGE_ENTRY_LIMIT)
+        elif page.document is not source:
+            msg = "the pages of one call must come from one document"
+            raise ValueError(msg)
+        if len(indexes) >= limit:
+            raise _entry_limit_error(limit)
+        _ = page.index  # Refuse a stale page before accepting its identity.
+        indexes.append((page.xref, page._generation))  # noqa: SLF001
+    return source, indexes
 
 
 def _validate_size(size: object) -> tuple[float, float]:

@@ -1,11 +1,9 @@
 """Page batches beyond the 4,096-entry floor, and the page labels that page edits keep.
 
 The cases of pylopdf's tests/test_page_batches.py at ebb01d3c that delete,
-select, copy, extract, or render pages are ported. That file has no move
-case; moving pages is covered here by the page label cases. Not ported:
+select, copy, import, extract, or render pages are ported. That file has no
+move case; moving pages is covered here by the page label cases. Not ported:
 
-- importing pages of another document with ``extend``
-  (yhay81/pyropdf#176);
 - the batches of pylopdf's internal core document, which pyropdf has no
   counterpart of: its Python API is the contract, and the entry limit cases
   below bound the same batches. Selection refuses a duplicate immediately
@@ -137,6 +135,19 @@ def test_large_manual_toc_round_trips_through_page_edits(large_pdf: bytes) -> No
     # Items that led to a deleted page stay without a destination.
     retained = [(level, title, None if page < half else page - half) for level, title, page in outline]
     assert tuples(doc) == retained
+
+
+def test_insert_pdf_imports_a_complete_large_document(large_pdf: bytes) -> None:
+    source = pyropdf.open(large_pdf)
+    appended = pyropdf.Document()
+    appended.pages.extend(source.pages)
+    assert len(appended.pages) == LARGE_PAGE_COUNT
+    assert appended.text([0, LARGE_PAGE_COUNT - 1]) == f"Page 0\nPage {LARGE_PAGE_COUNT - 1}\n"
+
+    reversed_doc = pyropdf.Document()
+    reversed_doc.pages.extend(source.pages[::-1])
+    assert len(reversed_doc.pages) == LARGE_PAGE_COUNT
+    assert reversed_doc.pages[0].text() == f"Page {LARGE_PAGE_COUNT - 1}\n"
 
 
 def test_delete_pages_accepts_more_than_the_floor(large_pdf: bytes) -> None:
