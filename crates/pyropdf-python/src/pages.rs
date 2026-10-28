@@ -252,9 +252,9 @@ fn copy_pages(
     budget: &Budget,
 ) -> PyResult<Vec<Reference>> {
     let store = |e: pyropdf_store::Error| store_error(&e);
-    let mut added = Vec::new();
+    let mut added = BudgetVec::new(budget);
     if !copies.contains(&true) {
-        return Ok(added);
+        return Ok(added.into_vec());
     }
     let (root, _) = root(transaction.version(), budget)?;
     let mut copier = Copies::new(transaction, budget).map_err(store)?;
@@ -269,13 +269,20 @@ fn copy_pages(
             budget,
         )? {
             Some(Value::Dict(dict)) => dict,
-            _ => page.dict().clone(),
+            _ => {
+                return Err(MalformedPdfError::new_err(
+                    "the page to copy is no longer a dictionary",
+                ));
+            }
         };
         dict.insert(Name::from("Parent"), Value::Reference(root));
         for key in INHERITABLE {
             match page.inherited(key) {
                 Some(value) => {
-                    dict.insert(Name::from(key), value.clone());
+                    dict.insert(
+                        Name::from(key),
+                        refs::copy_for_edit(value, budget).map_err(store)?,
+                    );
                 }
                 None => {
                     dict.remove(key);
@@ -283,11 +290,11 @@ fn copy_pages(
             }
         }
         let copy = copier.copy(transaction, source, dict).map_err(store)?;
-        added.push(copy);
+        added.try_push(copy).map_err(|e| store(e.into()))?;
         *entry = copy;
     }
     copier.finish(transaction).map_err(store)?;
-    Ok(added)
+    Ok(added.into_vec())
 }
 
 /// The pages of [`set_pages`]: in their order before, in the new order,
