@@ -1695,6 +1695,311 @@ fn targeted_structure_reads_skip_unrelated_structure_elements() {
 }
 
 #[test]
+fn retarget_wins_when_adjacent_array_entries_are_removed() {
+    let document = document_of(
+        &[(1, array(vec![reference(2), reference(3), reference(4)]))],
+        Dict::new(),
+    );
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    edits
+        .apply(&mut reads, &index, 1, &[Step::Index(2)], Rule::RemoveEntry)
+        .unwrap();
+    edits
+        .apply(
+            &mut reads,
+            &index,
+            1,
+            &[Step::Index(2)],
+            Rule::Retarget(Reference::new(5, 0)),
+        )
+        .unwrap();
+    edits
+        .apply(&mut reads, &index, 1, &[Step::Index(1)], Rule::RemoveEntry)
+        .unwrap();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let actual = transaction.version().get(1, &budget).unwrap().unwrap();
+    assert_eq!(&**actual.value(), &array(vec![reference(2), reference(5)]));
+}
+
+#[test]
+fn form_pruning_charges_cached_field_dictionary_copies() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(3)]))])),
+            (
+                3,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Subtype", name("Widget")),
+                    ("P", reference(4)),
+                    ("Unused", string(&"x".repeat(1_000_000))),
+                ]),
+            ),
+            (
+                4,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(3)])),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    let error = forms::plan(&mut reads, &index, &[4], &[], &mut edits).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn stale_widget_generation_on_retained_page_does_not_keep_field() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(3)]))])),
+            (
+                3,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Subtype", name("Widget")),
+                    ("P", reference(4)),
+                ]),
+            ),
+            (
+                4,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(3)])),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Page")),
+                    (
+                        "Annots",
+                        array(vec![Value::Reference(Reference::new(3, 1))]),
+                    ),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    forms::plan(&mut reads, &index, &[4], &[5], &mut edits).unwrap();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let form = transaction.version().get(2, &budget).unwrap().unwrap();
+    let Value::Dict(form) = &**form.value() else {
+        panic!("form is a dictionary")
+    };
+    assert_eq!(form.get("Fields"), Some(&array(vec![])));
+}
+
+#[test]
+fn form_depth_limit_does_not_reject_a_cycle_to_a_visited_field() {
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+        ),
+        (2, dict(vec![("Fields", array(vec![reference(3)]))])),
+    ];
+    for number in 3..=66 {
+        let next = if number == 66 { 3 } else { number + 1 };
+        objects.push((
+            number,
+            dict(vec![
+                ("T", string("field")),
+                ("Kids", array(vec![reference(next)])),
+            ]),
+        ));
+    }
+    let document = document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    forms::plan(&mut reads, &index, &[], &[], &mut edits).unwrap();
+}
+
+#[test]
+fn stale_annotation_array_generation_does_not_keep_a_removed_widget() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(3)]))])),
+            (
+                3,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Subtype", name("Widget")),
+                    ("P", reference(4)),
+                ]),
+            ),
+            (
+                4,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(3)])),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", Value::Reference(Reference::new(6, 1))),
+                ]),
+            ),
+            (6, array(vec![reference(3)])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    forms::plan(&mut reads, &index, &[4], &[5], &mut edits).unwrap();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let form = transaction.version().get(2, &budget).unwrap().unwrap();
+    let Value::Dict(form) = &**form.value() else {
+        panic!("form is a dictionary")
+    };
+    assert_eq!(form.get("Fields"), Some(&array(vec![])));
+}
+
+#[test]
+fn retained_widget_page_reference_is_repaired_when_generation_is_stale() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(3)]))])),
+            (
+                3,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Subtype", name("Widget")),
+                    ("P", Value::Reference(Reference::new(5, 1))),
+                ]),
+            ),
+            (4, dict(vec![("Type", name("Page"))])),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(3)])),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    // This repair is outside the removed-page impact set. A targeted walk
+    // must preserve it or explicitly change the repair contract.
+    let affected = affected_form_objects(&mut reads, &index, &[4], &[5]).unwrap();
+    assert!(affected.is_empty());
+    let mut edits = Edits::new(&budget);
+    forms::plan(&mut reads, &index, &[4], &[5], &mut edits).unwrap();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let widget = transaction.version().get(3, &budget).unwrap().unwrap();
+    let Value::Dict(widget) = &**widget.value() else {
+        panic!("widget is a dictionary")
+    };
+    assert_eq!(widget.get("P"), Some(&reference(5)));
+}
+
+#[test]
+fn form_pruning_polls_even_without_an_interactive_form() {
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let document = document_of(&[], Dict::new());
+    let version = document.current();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    let error = forms::plan(&mut reads, &References::default(), &[], &[], &mut edits).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn form_pruning_refuses_a_field_that_aliases_the_catalog() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("AcroForm", reference(2)),
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Subtype", name("Widget")),
+                    ("P", reference(4)),
+                ]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(1)]))])),
+            (
+                4,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(1)])),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    assert!(forms::plan(&mut reads, &index, &[4], &[], &mut edits).is_err());
+}
+
+#[test]
 fn form_impact_finds_ancestors_without_reading_unrelated_fields() {
     let mut objects = vec![
         (

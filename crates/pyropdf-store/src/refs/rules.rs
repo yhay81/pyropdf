@@ -276,8 +276,12 @@ impl<'b> Edits<'b> {
         mut emit: impl FnMut(u32, Value) -> Result<()>,
     ) -> Result<()> {
         budget.poll()?;
-        self.edits
-            .sort_unstable_by(|a, b| a.number.cmp(&b.number).then_with(|| b.path.cmp(&a.path)));
+        self.edits.sort_unstable_by(|a, b| {
+            a.number
+                .cmp(&b.number)
+                .then_with(|| b.path.cmp(&a.path))
+                .then_with(|| b.to.is_some().cmp(&a.to.is_some()))
+        });
         let mut out: BudgetVec<'_, (u32, Value)> = BudgetVec::new(budget);
         let mut positions: Table<usize> = Table::new();
         let mut settle = BudgetVec::new(budget);
@@ -297,6 +301,10 @@ impl<'b> Edits<'b> {
             while at < self.edits.len() && self.edits[at].number == number {
                 budget.poll()?;
                 let edit = &self.edits[at];
+                if last == Some(&*edit.path) {
+                    at += 1;
+                    continue;
+                }
                 let removals = removals(&self.edits[at..]);
                 if removals > 1 {
                     remove_items(&mut value, &self.edits[at..at + removals]);
@@ -304,9 +312,7 @@ impl<'b> Edits<'b> {
                     at += removals;
                     continue;
                 }
-                if last != Some(&*edit.path) {
-                    change(&mut value, &edit.path, edit.to);
-                }
+                change(&mut value, &edit.path, edit.to);
                 last = Some(&edit.path);
                 at += 1;
             }
