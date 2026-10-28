@@ -255,13 +255,17 @@ class Document:
             self._access = access
         return access
 
-    def save(
+    def save(  # noqa: PLR0913 - the save options are all keyword-only
         self,
         path: str | os.PathLike[str],
         /,
         *,
         incremental: bool = False,
         encryption: Encryption | None = None,
+        prune: bool = False,
+        compress: bool = False,
+        compression_level: int = 6,
+        decompress: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -278,29 +282,59 @@ class Document:
         :attr:`Encryption.KEEP` keeps it in a full save too, copying its
         untouched encrypted bytes, and an :class:`Encryption` encrypts a full
         save anew.
+
+        ``prune=True`` writes only the objects that the trailer reaches, so
+        what an edit unlinked leaves the file; the document in memory keeps
+        them. An incremental save keeps the objects of the opened file, so
+        it refuses ``prune``.
+
+        ``compress=True`` compresses with Flate, at zlib's
+        ``compression_level`` from 0 through 9, each stream that has no
+        filter, where that makes it shorter; XMP metadata stays unfiltered.
+        ``decompress=True`` removes the filters that hayro-syntax decodes,
+        keeping image filters such as ``DCTDecode``, and excludes
+        ``compress``. An incremental save compresses only the streams that
+        it writes and refuses ``decompress``. An encrypted save compresses
+        before it encrypts. The document in memory keeps its streams.
         """
         self._ensure_open()
-        _validate_bool("incremental", incremental)
+        options = _save_options(
+            incremental=incremental,
+            prune=prune,
+            compress=compress,
+            compression_level=compression_level,
+            decompress=decompress,
+        )
         arg = _encryption_arg(encryption)
-        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg))
+        _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
 
-    def to_bytes(
+    def to_bytes(  # noqa: PLR0913 - the save options are all keyword-only
         self,
         *,
         incremental: bool = False,
         encryption: Encryption | None = None,
         max_size: int | None = _DEFAULT_MAX_PDF_OUTPUT_SIZE,
+        prune: bool = False,
+        compress: bool = False,
+        compression_level: int = 6,
+        decompress: bool = False,
     ) -> bytes:
-        """Return the document as PDF bytes, as :meth:`save` writes them, with its ``encryption``.
+        """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
         ``max_size`` bounds the output, 512 MiB by default, and refuses the
         write that would pass it with :class:`LimitError` code
         ``pdf_output_size``; ``None`` leaves it unbounded for trusted input.
         """
         self._ensure_open()
-        _validate_bool("incremental", incremental)
+        options = _save_options(
+            incremental=incremental,
+            prune=prune,
+            compress=compress,
+            compression_level=compression_level,
+            decompress=decompress,
+        )
         _validate_optional_positive_int("max_size", max_size)
-        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption))
+        return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,
@@ -481,11 +515,40 @@ def _page_entries(pages: Iterable[int], count: int) -> list[int]:
     return entries
 
 
+#: zlib's highest compression level, which ``compression_level`` takes.
+_MAX_COMPRESSION_LEVEL = 9
+
+
 def _validate_bool(name: str, value: object) -> None:
     """Refuse a value that is not a bool."""
     if not isinstance(value, bool):
         msg = f"{name} must be a bool: {value!r}"
         raise TypeError(msg)
+
+
+def _save_options(
+    *, incremental: bool, prune: bool, compress: bool, compression_level: int, decompress: bool
+) -> tuple[bool, int | None, bool]:
+    """Check the save options, and return the core's ``prune``, ``compress`` level, and ``decompress``."""
+    flags = {"incremental": incremental, "prune": prune, "compress": compress, "decompress": decompress}
+    for name, value in flags.items():
+        _validate_bool(name, value)
+    if isinstance(compression_level, bool) or not isinstance(compression_level, int):
+        msg = f"compression_level must be an integer from 0 through 9: {compression_level!r}"
+        raise TypeError(msg)
+    if not 0 <= compression_level <= _MAX_COMPRESSION_LEVEL:
+        msg = f"compression_level must be from 0 through 9: {compression_level}"
+        raise ValueError(msg)
+    if incremental and prune:
+        msg = "prune requires a full save: an incremental save keeps the objects of the opened file"
+        raise ValueError(msg)
+    if incremental and decompress:
+        msg = "decompress requires a full save: an incremental save keeps the streams of the opened file"
+        raise ValueError(msg)
+    if compress and decompress:
+        msg = "decompress=True needs compress=False, which would compress the streams again"
+        raise ValueError(msg)
+    return prune, compression_level if compress else None, decompress
 
 
 def _resolve_limits(limits: object) -> DocumentLimits:

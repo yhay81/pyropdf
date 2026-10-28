@@ -182,13 +182,17 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
         py: Python<'_>,
         path: PathBuf,
         incremental: bool,
         encryption: Option<&Bound<'_, PyAny>>,
+        prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
     ) -> PyResult<()> {
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
@@ -201,6 +205,7 @@ impl _Document {
                     &mut out,
                     incremental,
                     encryption.as_ref(),
+                    save_options(prune, compress, decompress),
                     &budget,
                 )?;
                 let file = out.into_inner().map_err(|e| e.into_error())?;
@@ -212,13 +217,17 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
         py: Python<'py>,
         incremental: bool,
         max_size: Option<u64>,
         encryption: Option<&Bound<'_, PyAny>>,
+        prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
@@ -229,6 +238,7 @@ impl _Document {
                 &mut out,
                 incremental,
                 encryption.as_ref(),
+                save_options(prune, compress, decompress),
                 &budget,
             )
             .map_err(|error| save_error(&error, "PDF bytes"))?;
@@ -335,16 +345,30 @@ fn write_version(
     out: &mut dyn Write,
     incremental: bool,
     encryption: Option<&Encryption>,
+    options: save::Options,
     budget: &Budget,
 ) -> save::Result<()> {
     if incremental {
-        save::incremental(version, out, budget)?;
-    } else if let Some(encryption) = encryption {
-        save::full_encrypted(version, out, budget, encryption)?;
+        let compress = match options.streams {
+            save::Streams::Compress(level) => Some(level),
+            _ => None,
+        };
+        save::incremental_with(version, out, budget, compress)?;
     } else {
-        save::full(version, out, budget)?;
+        save::full_with(version, out, budget, encryption, options)?;
     }
     Ok(())
+}
+
+/// Returns the options of a save that prunes when `prune`, compresses at the
+/// level `compress` when it is given, and decompresses when `decompress`.
+const fn save_options(prune: bool, compress: Option<u8>, decompress: bool) -> save::Options {
+    let streams = match (compress, decompress) {
+        (Some(level), _) => save::Streams::Compress(level),
+        (None, true) => save::Streams::Decompress,
+        (None, false) => save::Streams::Keep,
+    };
+    save::Options { prune, streams }
 }
 
 /// Reads the fields of a Python `DocumentLimits`.
@@ -512,6 +536,19 @@ fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResul
         }
     }
     Ok((count, header, encrypted, repaired, metadata))
+}
+
+/// Returns the version of the document's `%PDF-x.y` header, such as
+/// `"1.4"`, or `None` for a document that was not read from a file or whose
+/// header names no version.
+#[pyfunction]
+#[pyo3(name = "header_version")]
+pub fn document_header_version(document: &_Document) -> PyResult<Option<String>> {
+    let version = document.reading()?;
+    Ok(version
+        .base()
+        .file()
+        .and_then(|index| header_version(&index.bytes()[index.origin()..])))
 }
 
 /// Returns the version of a `%PDF-x.y` header, such as `"1.7"`.

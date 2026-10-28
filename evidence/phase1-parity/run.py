@@ -14,11 +14,14 @@ and runs ``compare.py`` on the two.
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import subprocess
 import sys
 import tarfile
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 #: The freeze commit of pylopdf (#95).
@@ -37,7 +40,13 @@ def _install_pylopdf(checkout: Path) -> Path:
     """Build pylopdf at the freeze commit into its own environment; return its Python."""
     env = TARGET / "pylopdf-env"
     python = env / "bin" / "python"
-    if python.exists() and subprocess.run([python, "-c", "import pylopdf"], check=False).returncode == 0:  # noqa: S603
+    stamp = env / ".source-commit"
+    if (
+        python.exists()
+        and stamp.exists()
+        and stamp.read_text().strip() == FREEZE
+        and subprocess.run([python, "-c", "import pylopdf"], check=False).returncode == 0  # noqa: S603
+    ):
         return python
     source = Path(tempfile.mkdtemp(prefix="pylopdf-"))
     archive = subprocess.run(  # noqa: S603
@@ -47,8 +56,9 @@ def _install_pylopdf(checkout: Path) -> Path:
     ).stdout
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(source, filter="data")
-    _run("uv", "venv", "--python", f"{sys.version_info.major}.{sys.version_info.minor}", env)
+    _run("uv", "venv", "--clear", "--python", f"{sys.version_info.major}.{sys.version_info.minor}", env)
     _run("uv", "pip", "install", "--python", python, source)
+    stamp.write_text(FREEZE + "\n")
     return python
 
 
@@ -59,6 +69,15 @@ def main() -> None:
     _run(python, HERE / "dump.py", "pylopdf", TARGET / "pylopdf", *CORPUS)
     _run("uv", "run", "--no-sync", "python", HERE / "dump.py", "pyropdf", TARGET / "pyropdf", *CORPUS)
     _run("uv", "run", "--no-sync", "python", HERE / "compare.py", TARGET / "pylopdf", TARGET / "pyropdf")
+    metadata = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "pylopdf_commit": FREEZE,
+        "pyropdf_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),  # noqa: S607
+        "python": sys.version,
+        "oracle_python": subprocess.check_output([python, "-c", "import sys; print(sys.version)"], text=True).strip(),  # noqa: S603
+        "corpus_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in CORPUS},
+    }
+    (HERE / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
 
 if __name__ == "__main__":

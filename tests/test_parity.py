@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 import pytest
 from corpus import ASSETS, NAMES
 
+import pyropdf
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -41,8 +43,14 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
     report = (HARNESS / "report.md").read_text()
 
     assert sorted(results) == sorted(name.removesuffix(".pdf") for name in NAMES)
-    for result in results.values():
-        assert all(set(page) == set(_compare().OUTPUTS) for page in result["pages"])
+    compare = _compare()
+    for name in NAMES:
+        result = results[Path(name).stem]
+        with pyropdf.open(ASSETS / name) as document:
+            assert len(result["pages"]) == len(document.pages)
+        assert all(set(page) == set(compare.OUTPUTS) for page in result["pages"])
+        assert "markdown" in result
+    assert compare._report(results, compare._causes()) == report  # noqa: SLF001
     assert report.split("## Unexplained differences\n\n", 1)[1] == "None.\n"
 
 
@@ -64,3 +72,29 @@ def test_a_subset_redumps_with_only_the_documented_differences(tmp_path: Path) -
             for output in compare.OUTPUTS:
                 kind, _ = compare._compare(output, a[output], b[output], rasters)  # noqa: SLF001
                 assert kind == expected[stem]["pages"][index][output][0], (stem, index, output)
+
+
+@pytest.mark.parametrize(("value", "expected"), [(255, "pixels"), (1, "close"), (0, "equal")])
+def test_render_comparison_reads_pixels_with_identical_metadata(tmp_path: Path, value: int, expected: str) -> None:
+    first, second = tmp_path / "first.rgb", tmp_path / "second.rgb"
+    first.write_bytes(bytes([0, 0, 0]))
+    second.write_bytes(bytes([value, value, value]))
+    metadata = {"width": 1, "height": 1, "stride": 3}
+    kind, _ = _compare()._compare("render", metadata, metadata, (first, second))  # noqa: SLF001
+    assert kind == expected
+
+
+def test_matching_failures_are_reported_as_errors() -> None:
+    failure = {"error": "RuntimeError: no output"}
+    kind, detail = _compare()._compare("text", failure, failure, (Path(), Path()))  # noqa: SLF001
+    assert kind == "error"
+    assert detail == {"pylopdf": failure["error"], "pyropdf": failure["error"]}
+
+
+def test_render_comparison_refuses_truncated_equal_rasters(tmp_path: Path) -> None:
+    first, second = tmp_path / "first.rgb", tmp_path / "second.rgb"
+    first.write_bytes(b"xx")
+    second.write_bytes(b"xx")
+    metadata = {"width": 1, "height": 1, "stride": 3}
+    with pytest.raises(ValueError, match="raster byte count"):
+        _compare()._compare("render", metadata, metadata, (first, second))  # noqa: SLF001

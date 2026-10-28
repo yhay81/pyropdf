@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 
 import pytest
+from corpus import ASSETS
 from test_content import build_raw_pdf
 
 import pyropdf
@@ -46,3 +47,27 @@ def test_rotated_font_spans_preserve_word_gaps(
         expected = "i l" if gap else "il"
         assert document.pages[0].text() == expected + "\n"
         assert document.markdown() == expected
+
+
+@pytest.mark.parametrize("rotation", [-45, -30, 30, 45, 135])
+@pytest.mark.parametrize("gap", [0.0, 0.2])
+def test_rotated_embedded_font_spans_use_their_actual_line_height(rotation: int, gap: float) -> None:
+    document = pyropdf.open(ASSETS / "nics-background-checks-2015-11.pdf")
+    resources = document.pages[0].obj["Resources"]
+    page = document.pages.new()
+    page.obj["Resources"] = resources
+    radians = math.radians(rotation)
+    cosine, sine = math.cos(radians), math.sin(radians)
+    stream = (
+        f"BT /TT2 20 Tf {cosine:.8f} {sine:.8f} {-sine:.8f} {cosine:.8f} 200 300 Tm "
+        f"[(1) {-1000 * gap}] TJ 1 0 0 rg (2) Tj ET"
+    )
+    number = document.objects.add_stream(stream.encode())
+    page.obj["Contents"] = document.objects[number]
+
+    spans = page.layout().blocks[0].lines[0].spans
+    assert len(spans) == 2
+    assert all(span.ascender - span.descender > 1 for span in spans)
+    expected = "1 2" if gap else "12"
+    assert page.text() == expected + "\n"
+    assert page.markdown(table_strategy=None) == expected

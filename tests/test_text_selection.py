@@ -75,9 +75,15 @@ def test_selection_reads_the_current_version_within_the_text_budgets() -> None:
     page.obj["Contents"].write(b"BT /F1 12 Tf 72 700 Td (After) Tj ET")
 
     assert page.selection((0, 0), (612, 792)) == "After"
+    fresh = pyropdf.open(document.to_bytes()).pages[0]
+    assert page.selection((0, 0), (612, 792)) == fresh.selection((0, 0), (612, 792))
     with pytest.raises(pyropdf.LimitError) as caught:
         page.selection((0, 0), (612, 792), max_size=3)
     assert caught.value.code == "text_size"
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.selection((0, 0), (612, 792), max_glyphs=3)
+    assert caught.value.code == "text_glyph_count"
+    assert page.selection((0, 0), (612, 792)) == "After"
     del document.pages[0]
     with pytest.raises(pyropdf.StalePageError):
         page.selection((0, 0), (612, 792))

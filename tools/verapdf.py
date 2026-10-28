@@ -9,7 +9,8 @@ Each fixture of tests/assets/pdfa and tests/assets/pdfua is validated under
 its claimed flavour, as is each edit of the preservation harness's EDITS
 applied to it and saved in full and incrementally. With ``--arlington``,
 each of those files is also checked against the Arlington PDF Model of the
-PDF version in its header. A file that veraPDF rejects must be listed in
+PDF version in its header, with the extensions that its PDF/A part adds to
+that version. A file that veraPDF rejects must be listed in
 ``REJECTED`` with the issue that tracks it; the script exits with status 1
 on a rejection that is not listed, and on a listed one that passes.
 """
@@ -38,7 +39,26 @@ FIXTURES: dict[Path, str] = {
 }
 
 #: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
-REJECTED: dict[str, str] = {}
+REJECTED: dict[str, str] = {
+    # PDF/A-1 forbids embedded files, and PDF/A-2 and PDF/A-4 allow only
+    # embedded PDF/A files; doc.changes() reports these claims broken.
+    **{
+        f"{part} pdfa-{part}-{edit}_attachment-{mode}.pdf": "#301"
+        for part in ("1b", "2b", "2u", "4")
+        for edit in ("add", "write")
+        for mode in ("full", "incremental")
+    },
+    # A deleted attachment leaves its file specification and embedded file
+    # behind, and veraPDF checks every object.
+    **{
+        f"{part} pdfa-{part}-delete_attachment-{mode}.pdf": "#304"
+        for part in ("1b", "2b", "2u", "3b", "4")
+        for mode in ("full", "incremental")
+    },
+}
+
+#: The Arlington extensions that a PDF/A part adds to the PDF version it is based on, by flavour.
+EXTENSIONS = {"3b": "ISO_19005_3"}
 
 
 def saves(directory: Path) -> dict[Path, str]:
@@ -56,9 +76,10 @@ def saves(directory: Path) -> dict[Path, str]:
     return out
 
 
-def arlington(path: Path) -> str:
-    """Return the Arlington flavour of the PDF version in the header of ``path``."""
-    return "arlington" + path.read_bytes()[5:8].decode("ascii")
+def arlington(path: Path, flavour: str) -> str:
+    """Return the Arlington flavour of the PDF version in the header of ``path``, with ``flavour``'s extensions."""
+    version = "arlington" + path.read_bytes()[5:8].decode("ascii")
+    return f"{version}+{EXTENSIONS[flavour]}" if flavour in EXTENSIONS else version
 
 
 def by_flavour(files: dict[Path, str]) -> dict[str, list[Path]]:
@@ -70,10 +91,15 @@ def by_flavour(files: dict[Path, str]) -> dict[str, list[Path]]:
 
 
 def cli(jar: Path, flavour: str) -> list[str]:
-    """Return the veraPDF command line that validates under ``flavour`` and reports in text."""
+    """Return the veraPDF command line that validates under ``flavour`` and reports in text.
+
+    An Arlington flavour names its model extensions after a ``+``.
+    """
     # The wrapper, unlike VeraPdfCli itself, installs the validation foundry.
     wrapper = "org.verapdf.apps.GreenfieldCliWrapper"
-    return ["java", "-cp", str(jar), wrapper, "--flavour", flavour, "--format", "text"]
+    flavour, _, extensions = flavour.partition("+")
+    command = ["java", "-cp", str(jar), wrapper, "--flavour", flavour, "--format", "text"]
+    return [*command, "--extensions", extensions] if extensions else command
 
 
 def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
@@ -83,7 +109,8 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
     verdicts: dict[str, bool] = {}
     for line in result.stdout.splitlines():
         verdict, _, rest = line.partition(" ")
-        if verdict in {"PASS", "FAIL"}:
+        # The Arlington profiles report a deviation from the model as DEVIATION.
+        if verdict in {"PASS", "FAIL", "DEVIATION"}:
             verdicts[Path(rest.split(" ")[0]).name] = verdict == "PASS"
     missing = [path.name for path in paths if path.name not in verdicts]
     if missing:
@@ -127,7 +154,9 @@ def main() -> int:
         files = saves(Path(directory))
         failures = run(args.jar.resolve(), files)
         if args.arlington:
-            failures += run(args.arlington.resolve(), {path: arlington(path) for path in files})
+            failures += run(
+                args.arlington.resolve(), {path: arlington(path, flavour) for path, flavour in files.items()}
+            )
     return 1 if failures else 0
 
 

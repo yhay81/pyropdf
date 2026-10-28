@@ -491,7 +491,8 @@ impl ContentSink for TextCollector<'_> {
     fn path(&mut self, path: &BezPath, transform: Affine, mode: &DrawMode) {
         if self.options.styles
             && self.error.is_none()
-            && let Err(error) = layout::collect_rules(path, transform, mode, &mut self.rules)
+            && let Err(error) =
+                layout::collect_rules(path, transform, mode, &mut self.rules, self.budget)
         {
             self.error = Some(error);
         }
