@@ -491,6 +491,154 @@ fn the_cache_keeps_no_version_alive() {
     assert_eq!(index.referrers(3), &[2, 4, 5, 7, 9, 12, 13]);
 }
 
+/// Applies `rule` to every reference to object `number` in `document` that
+/// `only` holds, or that any object holds, and returns the index of the
+/// version that the edits make, with the objects that they free freed.
+fn apply_everywhere(
+    document: &Document,
+    number: u32,
+    only: Option<u32>,
+    rule: Rule,
+) -> Result<References> {
+    let budget = Budget::default();
+    let version = document.current();
+    let index = build(&version, &budget)?;
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    for &referrer in index.referrers(number) {
+        if only.is_some_and(|only| only != referrer) {
+            continue;
+        }
+        for found in find(&mut reads, Referrer::Object(referrer), number)?.iter() {
+            edits.apply(&mut reads, &index, referrer, &found.path, rule)?;
+        }
+    }
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget)?;
+    let after = transaction.snapshot();
+    let changes = version.changes(&after, &budget)?.unwrap();
+    let updated = index.update(&mut Reads::new(&after, &budget), &changes)?;
+    for &freed in unreferenced(&updated, &[], edits.orphans(), &budget)?.iter() {
+        transaction.free(freed, &budget)?;
+    }
+    let committed = transaction.commit(&budget)?;
+    build(&committed, &budget)
+}
+
+#[test]
+fn each_rule_leaves_no_reference_to_the_object_that_leaves() {
+    // The rules for references to the page, object 3, of the tagged document.
+    for rule in [
+        Rule::RemoveEntry,
+        Rule::Unresolve,
+        Rule::Retarget(Reference::new(1, 0)),
+    ] {
+        let index = apply_everywhere(&tagged(), 3, None, rule).unwrap();
+        assert_eq!(index.referrers(3), &[] as &[u32], "{rule:?}");
+    }
+    // Removing the link, object 4, that leads to the page drops it from the
+    // page's annotations, and frees it once the structure element no longer
+    // refers to it.
+    let document = tagged();
+    let index = apply_everywhere(&document, 3, Some(4), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(4), &[9]);
+    assert_eq!(index.targets(3), &[2, 5, 13]);
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(9, &Value::Null, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    let index = apply_everywhere(&document, 3, Some(4), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(4), &[] as &[u32]);
+    assert!(!index.referrers(3).contains(&4));
+    assert!(document.current().get(4, &budget).unwrap().is_none());
+}
+
+#[test]
+fn removing_entries_keeps_the_positions_of_the_others() {
+    let objects = vec![
+        (
+            1,
+            array(vec![
+                reference(3),
+                Value::Integer(0),
+                reference(3),
+                reference(2),
+                reference(3),
+            ]),
+        ),
+        (2, Value::Integer(0)),
+        (3, Value::Integer(0)),
+    ];
+    let document = document_of(&objects, Dict::new());
+    apply_everywhere(&document, 3, None, Rule::RemoveEntry).unwrap();
+    let budget = Budget::default();
+    let value = document.current().get(1, &budget).unwrap().unwrap();
+    assert_eq!(
+        **value.value(),
+        array(vec![Value::Integer(0), reference(2)])
+    );
+}
+
+#[test]
+fn removing_pages_refuses_navigation_that_aliases_a_page_before_any_edit() {
+    let document = tagged();
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    let mut catalog = match &**document.current().get(1, &budget).unwrap().unwrap().value() {
+        Value::Dict(dict) => dict.clone(),
+        _ => unreachable!(),
+    };
+    catalog.insert(Name::from("Outlines"), reference(3));
+    transaction
+        .write(1, &Value::Dict(catalog), &budget)
+        .unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let index = build(&version, &budget).unwrap();
+    let mut edits = Edits::new(&budget);
+    let error = remove_pages(
+        &mut Reads::new(&version, &budget),
+        &index,
+        &[3],
+        &[],
+        &mut edits,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("cannot alias a page"));
+    assert!(edits.is_empty());
+}
+
+#[test]
+fn unreferenced_frees_what_only_freed_objects_refer_to() {
+    let objects = vec![
+        (1, dict(vec![("Kids", array(vec![reference(2)]))])),
+        // A page, its content, and a font that another page shares.
+        (
+            2,
+            dict(vec![
+                ("Contents", reference(3)),
+                ("Font", reference(4)),
+                ("Annots", array(vec![reference(6)])),
+            ]),
+        ),
+        (3, Value::Integer(0)),
+        (4, Value::Integer(0)),
+        (5, dict(vec![("Font", reference(4))])),
+        // An annotation that refers back to the page.
+        (6, dict(vec![("P", reference(2))])),
+    ];
+    let trailer = [
+        (Name::from("Root"), reference(1)),
+        (Name::from("Other"), reference(5)),
+    ]
+    .into_iter()
+    .collect();
+    let document = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let index = build(&document.current(), &budget).unwrap();
+    let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
+    assert_eq!(&*freed, &[2, 3, 6]);
+}
+
 #[test]
 fn find_charges_every_owned_key_copy() {
     let long_key = "k".repeat(64 * 1024);
@@ -614,4 +762,145 @@ fn the_trailer_is_a_container_for_the_depth_limit() {
     );
     let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(1));
     assert_eq!(build(&version, &budget).unwrap().trailer(), &[1]);
+}
+
+#[test]
+fn removing_a_link_preserves_references_from_other_arrays() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("Custom", reference(6))]),
+            ),
+            (2, dict(vec![("Type", name("Page"))])),
+            (
+                3,
+                dict(vec![("Type", name("Page")), ("Annots", reference(4))]),
+            ),
+            (4, array(vec![reference(5)])),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Annot")),
+                    ("Subtype", name("Link")),
+                    ("Dest", array(vec![reference(2), name("Fit")])),
+                ]),
+            ),
+            (6, array(vec![reference(5)])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let index = apply_everywhere(&document, 2, Some(5), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(5), &[6]);
+    assert_eq!(index.targets(4), &[] as &[u32]);
+}
+
+#[test]
+fn orphan_cycles_are_freed_but_shared_cycles_stay() {
+    for shared in [false, true] {
+        let document = document_of(
+            &[
+                (1, if shared { reference(3) } else { Value::Null }),
+                (2, reference(3)),
+                (3, reference(4)),
+                (4, reference(3)),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
+        assert_eq!(&*freed, if shared { &[2][..] } else { &[2, 3, 4][..] });
+    }
+}
+
+#[test]
+fn planned_paths_and_edit_copies_pay_for_owned_bytes() {
+    let path = [Step::Key(Name::from("k".repeat(64 * 1024).as_str()))];
+    let document = document_of(&[], Dict::new());
+    let version = document.current();
+    let index = References::default();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    edits
+        .apply(&mut reads, &index, 1, &path, Rule::RemoveEntry)
+        .unwrap();
+    let error = edits
+        .apply(&mut reads, &index, 2, &path, Rule::RemoveEntry)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+
+    let value = string(&"x".repeat(1024));
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(512));
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn edit_copies_preserve_lexemes_and_bound_recursive_cloning() {
+    let source = Bytes::new(b"<< /Odd#20Key [1.000  2 0 R] /Text <0061> >>".to_vec());
+    let budget = Budget::default();
+    let value = Value::parse(&source, &budget).unwrap();
+    assert_eq!(bytes_of(&copy_for_edit(&value, &budget).unwrap()), source);
+    let mut value = Value::Null;
+    for _ in 0..65 {
+        value = array(vec![value]);
+    }
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+}
+
+proptest! {
+    #[test]
+    fn orphan_collection_matches_reachability(
+        graph in proptest::collection::vec(proptest::collection::vec(1..=8u32, 0..5), 8),
+        seeds in proptest::collection::vec(1..=8u32, 0..5),
+        candidates in proptest::collection::vec(1..=8u32, 0..5),
+    ) {
+        let objects: Vec<_> = graph.iter().enumerate().map(|(at, links)| {
+            ((at + 1) as u32, array(links.iter().copied().map(reference).collect()))
+        }).collect();
+        let document = document_of(&objects, [(Name::from("Root"), reference(1))].into_iter().collect());
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let actual = unreferenced(&index, &seeds, &candidates, &budget).unwrap();
+        // Independent fixed-size reachability oracle: first find the
+        // affected closure, then mark every surviving root's descendants.
+        let mut closure = [false; 9];
+        let mut forced = [false; 9];
+        for &number in seeds.iter().chain(&candidates) { closure[number as usize] = true; }
+        for &number in &seeds { forced[number as usize] = number != 1; }
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if closure[at + 1] {
+                    for &next in links { closure[next as usize] = true; }
+                }
+            }
+        }
+        let mut live = closure.map(|affected| !affected);
+        live[1] = true;
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if live[at + 1] && !forced[at + 1] {
+                    for &next in links {
+                        if !forced[next as usize] { live[next as usize] = true; }
+                    }
+                }
+            }
+        }
+        let expected: Vec<_> = (1..=8u32).filter(|&number| {
+            closure[number as usize] && !live[number as usize] && number != 1
+        }).collect();
+        prop_assert_eq!(&*actual, &*expected);
+    }
 }

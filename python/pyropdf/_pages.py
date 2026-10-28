@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, overload
 
 from pyropdf import _core
@@ -124,6 +124,25 @@ class Pages(Sequence[Page]):
             at = max(0, index + count) if index < 0 else min(index, count)
         number, generation = _core.new_page(doc, at, width, height)
         return Page(self._document, number, generation)
+
+    def select(self, indexes: Iterable[int], /) -> None:
+        """Keep the pages at ``indexes``, in that order, and remove the others, in one transaction.
+
+        Negative indexes count from the end. The navigation that leads to a
+        removed page goes, as for ``del``. Each page may appear once.
+        """
+        doc = self._document._core()  # noqa: SLF001
+        objects = _core.page_objects(doc)
+        chosen: list[int] = []
+        seen: set[int] = set()
+        for index in indexes:
+            at = _resolve(index, len(objects))
+            if at in seen:
+                msg = "select keeps each page at most once"
+                raise ValueError(msg)
+            seen.add(at)
+            chosen.append(at)
+        _core.set_pages(doc, [objects[at] for at in chosen])
 
     def move(self, index: int, to: int) -> None:
         """Move page ``index`` so that it ends at index ``to``, in one transaction."""

@@ -54,6 +54,9 @@ pub struct _Document {
     pub(crate) draft_destinations: Memo<(), NamedDestinations>,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
+    /// The reverse-reference index of the latest version that a structural
+    /// edit read.
+    pub(crate) references: pyropdf_store::refs::Cache,
     /// The open transaction and the names of the history's steps.
     pub(crate) history: crate::history::State,
 }
@@ -79,6 +82,7 @@ impl _Document {
             destinations: Memo::new(1),
             draft_destinations: Memo::new(1),
             bridge: pyropdf_engine::bridge::Cache::new(),
+            references: pyropdf_store::refs::Cache::new(),
             history: crate::history::State::default(),
         }
     }

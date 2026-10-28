@@ -269,7 +269,7 @@ def test_named_destinations_follow_a_transaction() -> None:
 
 
 def test_cached_link_reads_follow_deleted_pages() -> None:
-    """Links to a deleted page lead nowhere, and the deleted page's view is stale."""
+    """Links to a deleted page leave the pages that stay, and the deleted page's view is stale."""
     doc = pyropdf.open(_manual(256))
     first, last = doc.pages[0], doc.pages[2]
     assert [_page_of(link) for link in last.links] == [0, 1, 2]
@@ -278,7 +278,7 @@ def test_cached_link_reads_follow_deleted_pages() -> None:
 
     with pytest.raises(pyropdf.StalePageError):
         list(first.links)
-    assert [_page_of(link) for link in last.links] == [None, 0, 1]
+    assert [_page_of(link) for link in last.links] == [0, 1]
 
 
 def _limited_tree(shape: Shape, *, over: bool) -> tuple[str, dict[int, str]]:
