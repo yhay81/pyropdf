@@ -46,6 +46,7 @@ class _Document:
         prune: bool = False,
         compress: int | None = None,
         decompress: bool = False,
+        renew_id: bool = False,
         /,
     ) -> None: ...
     def to_bytes(
@@ -56,6 +57,7 @@ class _Document:
         prune: bool = False,
         compress: int | None = None,
         decompress: bool = False,
+        renew_id: bool = False,
         /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...
