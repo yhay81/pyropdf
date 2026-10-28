@@ -55,6 +55,10 @@ LimitCode: TypeAlias = Literal[
     "annotation_text_size",
     "annotation_dash_count",
     "annotation_input_size",
+    "form_field_input_size",
+    "form_default_appearance_size",
+    "form_field_parent_depth",
+    "text_line_count",
     "named_destination_count",
     "named_destination_edge_count",
     "named_destination_depth",
@@ -172,6 +176,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are "
             "longer than 1 MiB in UTF-8 together."
         ),
+        "form_field_input_size": "The value that setting `Field.value` writes is longer than 1 MiB in UTF-8.",
+        "form_default_appearance_size": "A form widget's inherited default appearance is longer than 4,096 bytes.",
+        "form_field_parent_depth": "A form widget's field parent chain contains more than 64 existing fields.",
+        "text_line_count": "The text that a form field's appearance draws lays out in more than 4,096 lines.",
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
             "than 65,536 entries or tree nodes."

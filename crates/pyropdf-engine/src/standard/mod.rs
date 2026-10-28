@@ -32,11 +32,11 @@ use pyropdf_store::budget::Budget;
 /// The distance between the baselines of a form field's lines, in em.
 const FORM_LINE_HEIGHT: f64 = 1.2;
 /// The largest size at which a field without a size fits its text.
-const MAX_FIT_SIZE: f64 = 12.0;
+pub(crate) const MAX_FIT_SIZE: f64 = 12.0;
 /// The smallest size at which a field without a size fits its text.
-const MIN_FIT_SIZE: f64 = 0.01;
+pub(crate) const MIN_FIT_SIZE: f64 = 0.01;
 /// The factor by which each attempt to fit shrinks the size.
-const FIT_STEP: f64 = 0.85;
+pub(crate) const FIT_STEP: f64 = 0.85;
 
 /// Lays out WinAnsi text in a box with Adobe's widths for `font`, its lines
 /// placed by `placement`; see [`layout`].

@@ -5,6 +5,7 @@ pub mod annotations;
 pub mod bridge;
 pub mod content;
 pub mod extract;
+pub mod forms;
 pub mod ocr;
 pub mod pages;
 pub mod render;

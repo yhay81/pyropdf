@@ -1,7 +1,7 @@
 //! The interactive form (ISO 32000-2 section 12.7): the terminal fields
-//! that `doc.form` maps by name, the widgets of pages and of fields, and
-//! the repair of radio buttons written as fields of their own (DESIGN.md
-//! section 10).
+//! that `doc.form` maps by name, the widgets of pages and of fields, the
+//! values that setting a field writes, and the repair of radio buttons
+//! written as fields of their own (DESIGN.md section 10).
 //!
 //! The walk of the field tree is memoized with the objects that it read
 //! (section 5), so reading every field of a form costs one walk of each
@@ -12,17 +12,24 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
+use pyo3::exceptions::PyNotImplementedError;
 use pyo3::prelude::*;
+use pyropdf_engine::annotations::Reader;
+use pyropdf_engine::forms::{self as widgets, WidgetError};
+use pyropdf_engine::standard::winansi_byte;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::{DerivedMap, ReadDependencies, ReadSet, Reads};
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::annotations::{Annots, Rect};
 use crate::document::{_Document, Failed, text_string};
-use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
+use crate::errors::{
+    LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
+};
 use crate::pages::index;
 
 /// The most terminal fields that a walk returns.
@@ -49,6 +56,9 @@ const MAX_PARENTS: usize = 64;
 /// The bytes of the appearance states that one read of a page's widgets
 /// returns.
 const MAX_STATE_BYTES: usize = 1024 * 1024;
+/// The UTF-8 bytes of the value that setting a field writes
+/// (`form_field_input_size`).
+const MAX_INPUT_BYTES: usize = 1024 * 1024;
 /// The `/Ff` bit of radio buttons.
 const RADIO: i64 = 1 << 15;
 /// The keys of a radio button that a repaired group gives to its new
@@ -72,12 +82,10 @@ struct Field {
     /// none.
     widgets: Vec<Id>,
     /// Its node in a fill walk's ancestry, absent in an ordinary read.
-    #[allow(dead_code, reason = "used by form filling in issue #193")]
     trace: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct TraceNode {
     id: Id,
     parent: Option<usize>,
@@ -94,7 +102,6 @@ pub(crate) struct Form {
     /// it, by widget.
     owners: Vec<(Id, usize)>,
     /// Nodes visited by a fill walk, in parent-before-child order.
-    #[allow(dead_code, reason = "used by form filling in issue #193")]
     trace: Vec<TraceNode>,
 }
 
@@ -1695,6 +1702,270 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
     Ok(u32::try_from(groups.len()).unwrap_or(u32::MAX))
 }
 
+/// Returns `text` as a text string: ASCII without control characters as it
+/// is, and else UTF-16BE, in which the line breaks and other controls that
+/// PDFDocEncoding leaves unmapped read back.
+fn encode_value(text: &str, budget: &Budget) -> PyResult<Value> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    let mut bytes = BudgetVec::new(budget);
+    if text.is_ascii() && !text.chars().any(char::is_control) {
+        bytes
+            .try_extend_from_slice(text.as_bytes())
+            .map_err(|e| limit_error(&e))?;
+    } else {
+        bytes
+            .try_extend_from_slice(&[0xFE, 0xFF])
+            .map_err(|e| limit_error(&e))?;
+        for (index, unit) in text.encode_utf16().enumerate() {
+            if index % 1024 == 0 {
+                budget.poll().map_err(|e| limit_error(&e))?;
+            }
+            bytes
+                .try_extend_from_slice(&unit.to_be_bytes())
+                .map_err(|e| limit_error(&e))?;
+        }
+    }
+    Ok(Value::String(PdfString::literal(bytes.into_vec())))
+}
+
+fn widget_error(error: WidgetError) -> PyErr {
+    match error {
+        WidgetError::Malformed(message) => PdfError::new_err(message.into_owned()),
+        WidgetError::Lines => LimitError::new_err(("text_line_count", error.to_string())),
+        WidgetError::Store(error) => store_error(&error),
+    }
+}
+
+/// Returns widget `id` of `version` when it looks like a widget.
+fn widget_of(
+    version: &Version,
+    (number, generation): Id,
+    budget: &Budget,
+) -> PyResult<Option<Arc<Value>>> {
+    let object = version
+        .get(number, budget)
+        .map_err(|e| store_error(&e))?
+        .filter(|object| object.generation() == generation);
+    Ok(object
+        .map(|object| Arc::clone(object.value()))
+        .filter(|value| matches!(&**value, Value::Dict(dict) if looks_like_widget(dict))))
+}
+
+/// Returns whether a field of `kind` shows its value in text.
+fn shows_text(kind: &str) -> bool {
+    matches!(kind, "text" | "combobox" | "listbox")
+}
+
+fn is_winansi(text: &str, budget: &Budget) -> PyResult<bool> {
+    for (index, character) in text.chars().enumerate() {
+        if index % 1024 == 0 {
+            budget.poll().map_err(|e| limit_error(&e))?;
+        }
+        if winansi_byte(character).is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Sets the value of field `id`, a text or choice field, to `value`, and
+/// draws its widgets through the appearance settler, with those of the
+/// other text and choice fields that have no appearance yet; then sets the
+/// form's `/NeedAppearances` when a widget is left without one. Refuses
+/// what pylopdf refuses, leaving the document as it was.
+#[pyfunction]
+pub fn form_field_fill(py: Python<'_>, document: &_Document, id: Id, value: &str) -> PyResult<()> {
+    if value.len() > MAX_INPUT_BYTES {
+        return Err(LimitError::new_err((
+            "form_field_input_size",
+            format!("form field value exceeds the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
+        )));
+    }
+    let draft = document.in_transaction();
+    let cache = if draft {
+        &document.draft_fill_index
+    } else {
+        &document.fill_index
+    };
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = fill(transaction, id, value, budget, cache, draft);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
+
+fn fill(
+    transaction: &mut Transaction,
+    id: Id,
+    value: &str,
+    budget: &Budget,
+    cache: &FillCache,
+    draft: bool,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let before = if draft {
+        transaction.snapshot()
+    } else {
+        Arc::clone(transaction.parent())
+    };
+    let index = cache.get(&before, budget)?;
+    let mut reads = Reads::new(&before, budget);
+    let form = &index.topology.form;
+    let field = form.field(id).ok_or_else(|| stale(id))?;
+    match field.kind {
+        kind if shows_text(kind) => {}
+        "pushbutton" => {
+            return Err(PdfError::new_err(
+                "pushbutton fields do not have fillable values",
+            ));
+        }
+        "checkbox" | "radio" => {
+            return Err(PyNotImplementedError::new_err(
+                "setting the value of a check box or radio button is not supported yet",
+            ));
+        }
+        "signature" => {
+            return Err(PdfError::new_err(
+                "filling signature fields is not supported (see the pyHanko integration for digital signatures)",
+            ));
+        }
+        _ => return Err(PdfError::new_err("unsupported field type")),
+    }
+    let Some(original) = object(&mut reads, id)? else {
+        return Err(stale(id));
+    };
+    let Value::Dict(mut dict) = copy_for_edit(&original, budget).map_err(store)? else {
+        return Err(stale(id));
+    };
+    dict.insert(Name::from("V"), encode_value(value, budget)?);
+    transaction
+        .write(id.0, &Value::Dict(dict), budget)
+        .map_err(store)?;
+    let after_write = transaction.snapshot();
+    let changes = before
+        .changes(&after_write, budget)
+        .map_err(store)?
+        .ok_or_else(|| PdfError::new_err("form versions have different origins"))?;
+    let mut appearances = index.appearances.clone();
+    appearances.refresh(&after_write, changes.objects(), changes.trailer(), budget)?;
+    // The widgets of the field are drawn or refused with the reason; those
+    // of other fields that have no appearance are drawn where they can be.
+    let mut marks = BudgetVec::new(budget);
+    {
+        let version = transaction.version();
+        let reader = Reader { version, budget };
+        for &widget in &field.widgets {
+            if let Some(dict) = widget_of(version, widget, budget)?
+                && let Value::Dict(dict) = &*dict
+            {
+                widgets::appearance(&reader, dict).map_err(widget_error)?;
+                marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
+            }
+        }
+        for (_, missing) in appearances.missing.iter() {
+            let Some(other) = form.field(missing.field) else {
+                return Err(PdfError::new_err("appearance index names a missing field"));
+            };
+            if other.name == field.name || !shows_text(other.kind) {
+                continue;
+            }
+            let Ok(at) = form.objects.binary_search_by_key(&other.id, |&(id, _)| id) else {
+                return Err(PdfError::new_err("appearance index names a missing field"));
+            };
+            let key = u32::try_from(form.objects[at].1).map_err(|_| edges_error())?;
+            let Some(value) = index.values.leaves.get(key) else {
+                return Err(PdfError::new_err("value index names a missing field"));
+            };
+            if let Some(value) = value
+                && !is_winansi(value, budget)?
+            {
+                continue;
+            }
+            let widget = missing.widget;
+            if let Some(dict) = widget_of(version, widget, budget)?
+                && let Value::Dict(dict) = &*dict
+                && !widgets::has_normal_stream(&reader, dict).map_err(store)?
+            {
+                marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
+            }
+        }
+    }
+    for number in marks.into_vec() {
+        transaction
+            .mark(Structure::Appearance, number, budget)
+            .map_err(store)?;
+    }
+    transaction
+        .settle(Scope::One(Structure::Appearance), budget)
+        .map_err(store)?;
+    let after_settle = transaction.snapshot();
+    let changes = after_write
+        .changes(&after_settle, budget)
+        .map_err(store)?
+        .ok_or_else(|| PdfError::new_err("form versions have different origins"))?;
+    appearances.refresh(&after_settle, changes.objects(), changes.trailer(), budget)?;
+    let complete = appearances.missing.iter().next().is_none();
+    set_need_appearances(transaction, !complete, budget)?;
+    transaction.retain_derived_version(Arc::clone(&before));
+    Ok(())
+}
+
+/// Sets the form's `/NeedAppearances` to `value` where the form dictionary
+/// is written: as an object of its own, or in the catalog's.
+fn set_need_appearances(
+    transaction: &mut Transaction,
+    value: bool,
+    budget: &Budget,
+) -> PyResult<()> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let version = transaction.snapshot();
+    let mut reads = Reads::new(&version, budget);
+    let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
+        return Ok(());
+    };
+    let Some(catalog_value) = object(&mut reads, id(root))? else {
+        return Ok(());
+    };
+    let Value::Dict(catalog) = &*catalog_value else {
+        return Ok(());
+    };
+    let (number, value) = match catalog.get("AcroForm") {
+        Some(Value::Reference(reference)) => match object(&mut reads, id(*reference))?.as_deref() {
+            Some(form @ Value::Dict(dict)) => {
+                if dict.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+                    return Ok(());
+                }
+                let Value::Dict(mut form) = copy_for_edit(form, budget).map_err(store)? else {
+                    unreachable!("a copied dictionary remains a dictionary");
+                };
+                form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+                (reference.number(), Value::Dict(form))
+            }
+            _ => return Ok(()),
+        },
+        Some(Value::Dict(form)) => {
+            if form.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+                return Ok(());
+            }
+            let Value::Dict(mut catalog) = copy_for_edit(&catalog_value, budget).map_err(store)?
+            else {
+                unreachable!("a copied dictionary remains a dictionary");
+            };
+            let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
+                unreachable!("the copied catalog retains its form dictionary");
+            };
+            form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+            (root.number(), Value::Dict(catalog))
+        }
+        _ => return Ok(()),
+    };
+    transaction.write(number, &value, budget).map_err(store)?;
+    Ok(())
+}
+
 /// Returns how many form walks the document's memos reused and how many
 /// they computed, for tests.
 #[pyfunction]
@@ -1709,7 +1980,6 @@ pub fn form_walk_counts(document: &_Document) -> (u64, u64) {
 /// Whether a widget shows a normal text appearance or a selected button
 /// appearance. The resolver records every indirect object it examines.
 #[derive(Clone, Copy)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 enum AppearanceKind {
     Normal,
     State,
@@ -1717,7 +1987,6 @@ enum AppearanceKind {
 
 /// A resolved value either borrows its container or shares an indirect
 /// object. Looking at an appearance never copies its stream data.
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 enum AppearanceValue<'a> {
     Direct(&'a Value),
     Indirect(Arc<Value>),
@@ -1734,7 +2003,6 @@ impl std::ops::Deref for AppearanceValue<'_> {
     }
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn appearance_value<'a>(
     reads: &mut Reads<'_>,
     value: Option<&'a Value>,
@@ -1763,7 +2031,6 @@ fn appearance_value<'a>(
 
 /// Returns `None` for a missing or non-widget object, or whether the
 /// widget has a nonempty appearance for its field's kind.
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn widget_appearance(
     reads: &mut Reads<'_>,
     widget: Id,
@@ -1809,7 +2076,6 @@ fn widget_appearance(
 
 /// One field's use of a widget; a shared widget can have several entries.
 #[derive(Clone, Copy)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct IndexedWidget {
     field: Id,
     widget: Id,
@@ -1820,7 +2086,6 @@ struct IndexedWidget {
 /// The enclosing form index is responsible for discovering widget membership
 /// and comparing versions before asking this index to refresh.
 #[derive(Clone)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct AppearanceIndex {
     widgets: DerivedMap<IndexedWidget>,
     missing: DerivedMap<IndexedWidget>,
@@ -1837,7 +2102,6 @@ impl Default for AppearanceIndex {
     }
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl AppearanceIndex {
     fn record(
         &mut self,
@@ -1911,7 +2175,6 @@ struct FormTopology {
     protected: [Option<u32>; 2],
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl FormTopology {
     fn build(version: &Version, budget: &Budget) -> PyResult<Self> {
         let mut reads = Reads::new(version, budget);
@@ -2061,7 +2324,6 @@ fn same_structure_bytes(left: &[u8], right: &[u8], budget: &Budget) -> PyResult<
 
 /// Per-node contributions to the original walk's value limits.
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct ValueMetric {
     encoded: usize,
     decoded: usize,
@@ -2069,7 +2331,6 @@ struct ValueMetric {
 }
 
 #[derive(Clone, Default)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct ValueIndex {
     nodes: DerivedMap<ValueMetric>,
     node_reads: ReadDependencies,
@@ -2081,7 +2342,6 @@ struct ValueIndex {
     returned: usize,
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl ValueIndex {
     fn build(topology: &FormTopology, version: &Version, budget: &Budget) -> PyResult<Self> {
         let mut index = Self::default();
@@ -2220,7 +2480,6 @@ impl ValueIndex {
     }
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn value_metric(
     version: &Version,
     identity: Id,
@@ -2243,7 +2502,6 @@ fn value_metric(
     ))
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 fn traced_value(
     version: &Version,
     trace: &[TraceNode],
@@ -2292,14 +2550,12 @@ fn traced_value(
 
 /// Form membership, values and widget appearances, with their recorded reads.
 #[derive(Clone)]
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 struct FillIndex {
     topology: Arc<FormTopology>,
     appearances: AppearanceIndex,
     values: ValueIndex,
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl FillIndex {
     fn build(version: &Version, budget: &Budget) -> PyResult<Self> {
         let topology = FormTopology::build(version, budget)?;
@@ -2398,7 +2654,6 @@ pub(crate) struct FillCache {
     entry: Mutex<Option<FillEntry>>,
 }
 
-#[allow(dead_code, reason = "used by form filling in issue #193")]
 impl FillCache {
     pub(crate) fn new() -> Self {
         Self::default()

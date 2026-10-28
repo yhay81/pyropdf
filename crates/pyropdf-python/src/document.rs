@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use pyropdf_engine::annotations::AppearanceSettler;
 use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
+pub(crate) use pyropdf_engine::forms::text_string;
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
 use pyropdf_store::memo::Memo;
 use pyropdf_store::pages::{Page, PageIndex, PageTree};
@@ -672,49 +673,6 @@ pub(crate) fn header_version(bytes: &[u8]) -> Option<String> {
     let version = std::str::from_utf8(&rest[..end]).ok()?;
     let (major, minor) = version.split_once('.')?;
     (!major.is_empty() && !minor.is_empty() && !minor.contains('.')).then(|| version.to_owned())
-}
-
-/// Decodes a text string: UTF-16BE or UTF-8 after their byte order marks,
-/// and PDFDocEncoding otherwise (ISO 32000-2 section 7.9.2.2).
-pub(crate) fn text_string(bytes: &[u8]) -> String {
-    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let units = rest
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|&pair| u16::from_be_bytes(pair));
-        return char::decode_utf16(units)
-            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect();
-    }
-    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        return String::from_utf8_lossy(rest).into_owned();
-    }
-    bytes.iter().map(|&b| pdf_doc_char(b)).collect()
-}
-
-/// The characters of PDFDocEncoding from 0x80 to 0xA0 (ISO 32000-2 table
-/// D.2); 0x9F is undefined.
-const PDF_DOC_HIGH: [char; 33] = [
-    '\u{2022}', '\u{2020}', '\u{2021}', '\u{2026}', '\u{2014}', '\u{2013}', '\u{0192}', '\u{2044}',
-    '\u{2039}', '\u{203A}', '\u{2212}', '\u{2030}', '\u{201E}', '\u{201C}', '\u{201D}', '\u{2018}',
-    '\u{2019}', '\u{201A}', '\u{2122}', '\u{FB01}', '\u{FB02}', '\u{0141}', '\u{0152}', '\u{0160}',
-    '\u{0178}', '\u{017D}', '\u{0131}', '\u{0142}', '\u{0153}', '\u{0161}', '\u{017E}', '\u{FFFD}',
-    '\u{20AC}',
-];
-
-/// The characters of PDFDocEncoding from 0x18 to 0x1F.
-const PDF_DOC_ACCENTS: [char; 8] = [
-    '\u{02D8}', '\u{02C7}', '\u{02C6}', '\u{02D9}', '\u{02DD}', '\u{02DB}', '\u{02DA}', '\u{02DC}',
-];
-
-fn pdf_doc_char(byte: u8) -> char {
-    match byte {
-        0x18..=0x1F => PDF_DOC_ACCENTS[usize::from(byte - 0x18)],
-        0x7F => char::REPLACEMENT_CHARACTER,
-        0x80..=0xA0 => PDF_DOC_HIGH[usize::from(byte - 0x80)],
-        _ => char::from(byte),
-    }
 }
 
 /// The page results that a document memoizes at most, each as large as the

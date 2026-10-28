@@ -130,6 +130,17 @@ pub enum LimitCode {
     /// The texts that one edit of an annotation writes, such as its contents,
     /// author, subject, and name, are longer than 1 MiB in UTF-8 together.
     AnnotationInputSize,
+    /// The value that setting `Field.value` writes is longer than 1 MiB in
+    /// UTF-8.
+    FormFieldInputSize,
+    /// A form widget's inherited default appearance is longer than 4,096 bytes.
+    FormDefaultAppearanceSize,
+    /// A form widget's field parent chain contains more than 64 existing
+    /// fields.
+    FormFieldParentDepth,
+    /// The text that a form field's appearance draws lays out in more than
+    /// 4,096 lines.
+    TextLineCount,
     /// The document's named destinations, its `/Names /Dests` tree and its
     /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
     NamedDestinationCount,
@@ -184,7 +195,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 62] = [
+    pub const ALL: [Self; 66] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -230,6 +241,10 @@ impl LimitCode {
         Self::AnnotationTextSize,
         Self::AnnotationDashCount,
         Self::AnnotationInputSize,
+        Self::FormFieldInputSize,
+        Self::FormDefaultAppearanceSize,
+        Self::FormFieldParentDepth,
+        Self::TextLineCount,
         Self::NamedDestinationCount,
         Self::NamedDestinationEdgeCount,
         Self::NamedDestinationDepth,
@@ -298,6 +313,10 @@ impl LimitCode {
             Self::AnnotationTextSize => "annotation_text_size",
             Self::AnnotationDashCount => "annotation_dash_count",
             Self::AnnotationInputSize => "annotation_input_size",
+            Self::FormFieldInputSize => "form_field_input_size",
+            Self::FormDefaultAppearanceSize => "form_default_appearance_size",
+            Self::FormFieldParentDepth => "form_field_parent_depth",
+            Self::TextLineCount => "text_line_count",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
             Self::NamedDestinationDepth => "named_destination_depth",
@@ -368,6 +387,10 @@ impl LimitCode {
             Self::AnnotationTextSize => "the annotation text is too long",
             Self::AnnotationDashCount => "the annotation border has too many dash lengths",
             Self::AnnotationInputSize => "the annotation text is too long",
+            Self::FormFieldInputSize => "the form field value is too long",
+            Self::FormDefaultAppearanceSize => "the form default appearance is too long",
+            Self::FormFieldParentDepth => "the form field parent chain is too deep",
+            Self::TextLineCount => "the text has too many lines",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
             Self::NamedDestinationDepth => "the named-destination tree is too deep",
@@ -440,6 +463,10 @@ impl LimitCode {
             Self::AnnotationTextSize => Some("bytes"),
             Self::AnnotationDashCount => Some("lengths"),
             Self::AnnotationInputSize => Some("bytes"),
+            Self::FormFieldInputSize => Some("bytes"),
+            Self::FormDefaultAppearanceSize => Some("bytes"),
+            Self::FormFieldParentDepth => Some("levels"),
+            Self::TextLineCount => Some("lines"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationEdgeCount => Some("edges"),
             Self::NamedDestinationDepth => Some("levels"),
@@ -510,6 +537,10 @@ impl LimitCode {
             Self::AnnotationTextSize => Some(1_048_576),
             Self::AnnotationDashCount => Some(32),
             Self::AnnotationInputSize => Some(1_048_576),
+            Self::FormFieldInputSize => Some(1_048_576),
+            Self::FormDefaultAppearanceSize => Some(4_096),
+            Self::FormFieldParentDepth => Some(64),
+            Self::TextLineCount => Some(4_096),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationEdgeCount => Some(131_072),
             Self::NamedDestinationDepth => Some(32),

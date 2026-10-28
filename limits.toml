@@ -296,6 +296,30 @@ unit = "bytes"
 default = 1_048_576
 reached = "The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together."
 
+[codes.form_field_input_size]
+message = "the form field value is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "The value that setting `Field.value` writes is longer than 1 MiB in UTF-8."
+
+[codes.form_default_appearance_size]
+message = "the form default appearance is too long"
+unit = "bytes"
+default = 4_096
+reached = "A form widget's inherited default appearance is longer than 4,096 bytes."
+
+[codes.form_field_parent_depth]
+message = "the form field parent chain is too deep"
+unit = "levels"
+default = 64
+reached = "A form widget's field parent chain contains more than 64 existing fields."
+
+[codes.text_line_count]
+message = "the text has too many lines"
+unit = "lines"
+default = 4_096
+reached = "The text that a form field's appearance draws lays out in more than 4,096 lines."
+
 [codes.named_destination_count]
 message = "the named destinations are too many"
 unit = "entries"
