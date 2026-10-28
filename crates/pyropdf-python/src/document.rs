@@ -182,7 +182,8 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None, prune=false))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
         py: Python<'_>,
@@ -190,7 +191,11 @@ impl _Document {
         incremental: bool,
         encryption: Option<&Bound<'_, PyAny>>,
         prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
+        renew_id: bool,
     ) -> PyResult<()> {
+        let options = save_options(prune, compress, decompress, renew_id);
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
         py.detach(|| {
@@ -202,7 +207,7 @@ impl _Document {
                     &mut out,
                     incremental,
                     encryption.as_ref(),
-                    save::Options { prune },
+                    options,
                     &budget,
                 )?;
                 let file = out.into_inner().map_err(|e| e.into_error())?;
@@ -214,7 +219,8 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false))]
+    #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
         py: Python<'py>,
@@ -222,7 +228,11 @@ impl _Document {
         max_size: Option<u64>,
         encryption: Option<&Bound<'_, PyAny>>,
         prune: bool,
+        compress: Option<u8>,
+        decompress: bool,
+        renew_id: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
+        let options = save_options(prune, compress, decompress, renew_id);
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
         let out = py.detach(|| {
@@ -232,7 +242,7 @@ impl _Document {
                 &mut out,
                 incremental,
                 encryption.as_ref(),
-                save::Options { prune },
+                options,
                 &budget,
             )
             .map_err(|error| save_error(&error, "PDF bytes"))?;
@@ -343,11 +353,32 @@ fn write_version(
     budget: &Budget,
 ) -> save::Result<()> {
     if incremental {
-        save::incremental(version, out, budget)?;
+        save::incremental_with(version, out, budget, options)?;
     } else {
         save::full_with(version, out, budget, encryption, options)?;
     }
     Ok(())
+}
+
+/// Returns the options of a save that prunes when `prune`, compresses at the
+/// level `compress` when it is given, decompresses when `decompress`, and
+/// renews the file identifier when `renew_id`.
+const fn save_options(
+    prune: bool,
+    compress: Option<u8>,
+    decompress: bool,
+    renew_id: bool,
+) -> save::Options {
+    let streams = match (compress, decompress) {
+        (Some(level), _) => save::Streams::Compress(level),
+        (None, true) => save::Streams::Decompress,
+        (None, false) => save::Streams::Keep,
+    };
+    save::Options {
+        prune,
+        streams,
+        renew_id,
+    }
 }
 
 /// Reads the fields of a Python `DocumentLimits`.
