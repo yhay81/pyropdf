@@ -35,26 +35,42 @@ uv run python evidence/page-deletion/measure.py
 
 ## Reviewed structure-planning comparison
 
-`results/review-structure-before-macos-arm64.md` and
-`results/review-structure-after-macos-arm64.md` use the same script, including
-nested structure and parent-tree groups of 64. Both record the implementation
-and script object identifiers. The before run used the already-built reviewed
-#185 extension before rebuilding #186. Reproduce either run by using the same
-script with `uv run python` in the corresponding implementation checkout.
+The result files record exact implementation and script identifiers:
 
-At 64,000 pages, repeated deletion changes as follows:
+- `results/review-structure-before-macos-arm64.md`: reviewed #185, whole structure walk.
+- `../reference-collection/results/after-macos-arm64.md`: #324 collector
+  boundaries with the same whole walk (relative to `evidence/page-deletion/`).
+- `results/review-structure-final-macos-arm64.md`: targeted structure planning plus
+  #324. Its original workload tables are unchanged; the script additionally
+  measures unrelated structure at a fixed page count.
+- `results/review-structure-after-macos-arm64.md` preserves the intermediate targeted
+  run before #324, including the collector cost that motivated that follow-up.
 
-| Workload | Reviewed #185 | Targeted structure planning |
-| --- | ---: | ---: |
-| Untagged | 58.14 ms | 57.82 ms |
-| Flat tagged | 171.87 ms | 128.99 ms |
-| Nested tagged | 134.44 ms | 78.79 ms |
+Reproduce a run by using its script with `uv run python` in the corresponding
+implementation checkout. The earlier before run used the already-built
+reviewed #185 extension before rebuilding #186.
 
-This improves targeted planning while retaining malformed-input behavior.
-It does not yet establish #184's full performance acceptance: collection still
-follows live page-tree and structure-root edges into retained subtrees.
-#324 addresses that remaining traversal separately. The page list itself,
-reference updates, and scans for page keys/annotations also remain linear.
+At 64,000 pages, median repeated deletion after undo is:
+
+| Workload | Reviewed #185 | Collector boundaries only | Final targeted planning |
+| --- | ---: | ---: | ---: |
+| Untagged | 58.14 ms | 50.10 ms | 51.58 ms |
+| Flat tagged | 171.87 ms | 154.05 ms | 117.21 ms |
+| Nested tagged | 134.44 ms | 125.29 ms | 61.53 ms |
+
+The nested result is now close to the untagged page-list cost. The remaining
+page-key and annotation scans scale with page count. Flat trees still require
+rewriting their large root child array and parent-tree leaf. These timings do
+not claim that rewriting the complete page list is independent of its size.
+
+The additional workload separates unrelated structure size from page count:
+three pages, one removed element, and 0 to 64,000 unrelated elements below a
+retained subtree with a separate parent-tree leaf. Repeated deletion remains
+0.02 to 0.06 ms; the first deletion grows to 88.57 ms because it builds the
+complete reference index. A Rust read-set regression independently confirms
+that targeted planning does not read an unrelated structure element, while
+the full traversal does. The collector's 10,000-object budget regression proves
+that liveness propagation also avoids the retained subtree.
 
 `results/review-macos-arm64.md` preserves the earlier reviewed #185 workload:
 3.12 ms without links and 15.19 ms with 10,000 links on 4,000 pages; 54.27 ms
