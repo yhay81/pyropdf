@@ -49,18 +49,35 @@ pub fn textbox_layout<'t>(
     justify: bool,
     budget: &Budget,
 ) -> Result<TextBox<'t>, LayoutError> {
-    if !is_winansi(text) {
-        return Err(LayoutError::NotWinAnsi);
+    budget.poll()?;
+    for (index, character) in text.chars().enumerate() {
+        if index % 1024 == 0 {
+            budget.poll()?;
+        }
+        if winansi_byte(character).is_none() {
+            return Err(LayoutError::NotWinAnsi);
+        }
     }
-    layout(
+    let mut refusal = None;
+    let result = layout(
         text,
         box_size,
         font_size,
         placement,
         justify,
         budget,
-        |line| text_width(line, font, font_size).unwrap_or(f64::INFINITY),
-    )
+        |line| match font::text_width_budgeted(line, font, font_size, budget) {
+            Ok(width) => width.unwrap_or(f64::INFINITY),
+            Err(error) => {
+                refusal = Some(error);
+                f64::INFINITY
+            }
+        },
+    );
+    match refusal {
+        Some(error) => Err(error.into()),
+        None => result,
+    }
 }
 
 /// Lays out WinAnsi text for a form appearance: lines `line_height` em
@@ -99,12 +116,22 @@ pub fn fit<'t>(
     multiline: bool,
     budget: &Budget,
 ) -> Result<(TextBox<'t>, f64), LayoutError> {
+    budget.poll()?;
+    if ![box_size.0, box_size.1, font_size]
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0)
+    {
+        return Err(LayoutError::InvalidGeometry);
+    }
     if font_size > 0.0 {
         let unbounded = (box_size.0, f64::MAX / 4.0);
         let layout = form_layout(text, unbounded, font, font_size, FORM_LINE_HEIGHT, budget)?;
         return Ok((layout, font_size));
     }
     let mut size = box_size.1.min(MAX_FIT_SIZE);
+    if size < MIN_FIT_SIZE {
+        return Err(LayoutError::Unfit);
+    }
     loop {
         let layout = form_layout(text, box_size, font, size, FORM_LINE_HEIGHT, budget)?;
         if layout.fits() && (multiline || layout.lines.len() <= 1) {

@@ -169,17 +169,16 @@ class Pages(Sequence[Page]):
             msg = f"the insertion index must be an integer, not {type(index).__name__}"
             raise TypeError(msg)
         doc = self._document._core()  # noqa: SLF001
+        source, chosen = _source_pages(pages)
         objects = _core.page_objects(doc)
         count = len(objects)
-        source, chosen = _source_pages(pages)
         if source is None:
             return
         at = max(0, index + count) if index < 0 else min(index, count)
         if source is not self._document:
-            source_objects = _core.page_objects(source._core())  # noqa: SLF001
-            _core.import_pages(doc, source._core(), [source_objects[page] for page in chosen], at)  # noqa: SLF001
+            _core.import_pages(doc, source._core(), chosen, at)  # noqa: SLF001
             return
-        order = [*objects[:at], *[objects[page] for page in chosen], *objects[at:]]
+        order = [*objects[:at], *chosen, *objects[at:]]
         copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
         _core.set_pages(doc, order, copies)
 
@@ -221,8 +220,8 @@ class Pages(Sequence[Page]):
         return f"<Pages of {self._document!r}>"
 
 
-def _source_pages(pages: Page | Iterable[Page]) -> tuple[Document | None, list[int]]:
-    """Return the document that ``pages`` belong to and their indexes there."""
+def _source_pages(pages: Page | Iterable[Page]) -> tuple[Document | None, list[tuple[int, int]]]:
+    """Return the source document and each page's stable object identity."""
     if isinstance(pages, Page):
         items: Iterable[object] = (pages,)
     elif isinstance(pages, Iterable) and not isinstance(pages, (str, bytes)):
@@ -232,7 +231,7 @@ def _source_pages(pages: Page | Iterable[Page]) -> tuple[Document | None, list[i
         raise TypeError(msg)
     source: Document | None = None
     limit = 0
-    indexes: list[int] = []
+    indexes: list[tuple[int, int]] = []
     for page in items:
         if not isinstance(page, Page):
             msg = f"pages must be Page views: {page!r}"
@@ -245,7 +244,8 @@ def _source_pages(pages: Page | Iterable[Page]) -> tuple[Document | None, list[i
             raise ValueError(msg)
         if len(indexes) >= limit:
             raise _entry_limit_error(limit)
-        indexes.append(page.index)
+        _ = page.index  # Refuse a stale page before accepting its identity.
+        indexes.append((page.xref, page._generation))  # noqa: SLF001
     return source, indexes
 
 

@@ -12,24 +12,28 @@
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::LimitExceeded;
+use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::refs;
-use pyropdf_store::value::{Array, Dict, Name, Value};
+use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use crate::annotations::encode_text;
 use crate::annotations::links::{
     Destination, Lead, LeadReader, NamedDestinations, Target, lead, named, read, settle,
     target_entry,
 };
+use crate::annotations::{CopyPart, charge_copy, encode_text};
 use crate::document::{_Document, Failed, text_string};
-use crate::errors::{LimitError, PdfError, StaleObjectError, store_error};
-use crate::pages::{editing_index, index, number};
+use crate::errors::{
+    LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
+};
+use crate::pages::{index, number};
 
 /// The most items of the outline, and of one write.
 const MAX_ITEMS: usize = 65_536;
@@ -39,6 +43,80 @@ const MAX_EDGES: usize = 131_072;
 const MAX_DEPTH: usize = 64;
 /// The bytes of the titles and target texts of the outline.
 const MAX_TEXT_BYTES: usize = 16 * 1024 * 1024;
+
+/// Charges before an input-sized vector grows, including temporary old storage.
+fn reserve<T>(items: &mut Vec<T>, additional: usize, budget: &Budget) -> PyResult<()> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    let needed = items.len().saturating_add(additional);
+    if needed > items.capacity() {
+        let capacity = needed
+            .checked_next_power_of_two()
+            .ok_or_else(|| limit_error(&LimitExceeded::new(LimitCode::MemorySize)))?;
+        memory(budget, capacity.saturating_mul(size_of::<T>()))?;
+        items
+            .try_reserve_exact(capacity - items.len())
+            .map_err(|_| limit_error(&LimitExceeded::new(LimitCode::MemorySize)))?;
+    }
+    Ok(())
+}
+
+fn push<T>(items: &mut Vec<T>, value: T, budget: &Budget) -> PyResult<()> {
+    reserve(items, 1, budget)?;
+    items.push(value);
+    Ok(())
+}
+
+fn filled<T: Clone>(count: usize, value: T, budget: &Budget) -> PyResult<Vec<T>> {
+    let mut items = Vec::new();
+    reserve(&mut items, count, budget)?;
+    items.resize(count, value);
+    Ok(items)
+}
+
+fn visit<T: Eq + Hash>(seen: &mut HashSet<T>, key: T, budget: &Budget) -> PyResult<bool> {
+    budget.poll().map_err(|e| limit_error(&e))?;
+    if seen.contains(&key) {
+        return Ok(false);
+    }
+    memory(budget, 64 + 2 * size_of::<T>())?;
+    seen.try_reserve(1)
+        .map_err(|_| limit_error(&LimitExceeded::new(LimitCode::MemorySize)))?;
+    Ok(seen.insert(key))
+}
+
+fn memory(budget: &Budget, bytes: usize) -> PyResult<()> {
+    budget
+        .charge(LimitCode::MemorySize, bytes as u64)
+        .map_err(|e| limit_error(&e))
+}
+
+fn copy(value: Option<&Value>, budget: &Budget) -> PyResult<Option<Value>> {
+    value
+        .map(|value| refs::copy_for_edit(value, budget).map_err(|e| store_error(&e)))
+        .transpose()
+}
+
+fn copy_dict(dict: &Dict, budget: &Budget) -> PyResult<Dict> {
+    charge_copy(CopyPart::Dict(dict), budget)?;
+    memory(budget, 8 * size_of::<(Name, Value)>())?;
+    Ok(dict.clone())
+}
+
+/// A caught refusal inside an explicit transaction must not retain partial writes.
+fn editing<T>(
+    py: Python<'_>,
+    document: &_Document,
+    change: impl FnOnce(&mut Transaction, &Budget) -> PyResult<T>,
+) -> PyResult<T> {
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = change(transaction, budget);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
 
 /// An item's color: red, green, and blue from 0 to 1.
 type Color = (f64, f64, f64);
@@ -114,12 +192,17 @@ struct Walker<'r, 'b> {
 }
 
 impl LeadReader for Walker<'_, '_> {
+    fn budget(&self) -> &Budget {
+        self.reads.budget()
+    }
+
     fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>> {
         read(self.reads, value)
     }
 
     fn text(&mut self, bytes: &[u8], _: &str, decode: bool) -> PyResult<String> {
         self.text.charge(bytes.len(), false)?;
+        memory(self.reads.budget(), bytes.len().saturating_mul(3))?;
         let text = if decode {
             text_string(bytes)
         } else {
@@ -186,23 +269,32 @@ impl Walker<'_, '_> {
 struct Places<'a> {
     document: &'a _Document,
     index: Arc<PageIndex>,
+    version: Arc<Version>,
+    budget: &'a Budget,
     named: Option<Arc<NamedDestinations>>,
 }
 
 impl<'a> Places<'a> {
-    const fn new(document: &'a _Document, index: Arc<PageIndex>) -> Self {
+    const fn new(
+        document: &'a _Document,
+        version: Arc<Version>,
+        index: Arc<PageIndex>,
+        budget: &'a Budget,
+    ) -> Self {
         Self {
             document,
             index,
+            version,
+            budget,
             named: None,
         }
     }
 
     fn target(&mut self, lead: &Lead) -> PyResult<Target> {
         let index = Arc::clone(&self.index);
-        settle(lead, &index, &mut |name| {
+        settle(lead, &index, self.budget, &mut |name| {
             if self.named.is_none() {
-                self.named = Some(named(self.document)?);
+                self.named = Some(named(self.document, &self.version, self.budget)?);
             }
             Ok(self
                 .named
@@ -223,9 +315,52 @@ fn stale((number, generation): (u32, u16)) -> PyErr {
     ))
 }
 
+fn outline_dict(dict: &Dict) -> PyResult<()> {
+    if matches!(dict.get("Type"), Some(Value::Name(kind)) if
+        matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog"))
+    {
+        return Err(MalformedPdfError::new_err(
+            "an outline dictionary aliases a page, page tree, or catalog",
+        ));
+    }
+    Ok(())
+}
+
+/// Resolves an outline node and retains its actual object identity through aliases.
+fn node(reads: &mut Reads<'_>, value: &Value) -> PyResult<Option<(Dict, Option<Reference>)>> {
+    let mut reference = match value {
+        Value::Dict(dict) => {
+            outline_dict(dict)?;
+            return Ok(Some((copy_dict(dict, reads.budget())?, None)));
+        }
+        Value::Reference(reference) => *reference,
+        _ => return Ok(None),
+    };
+    for _ in 0..MAX_CHAIN {
+        let Some(object) = reads
+            .get(reference.number())
+            .map_err(|e| store_error(&e))?
+            .filter(|object| object.generation() == reference.generation())
+        else {
+            return Ok(None);
+        };
+        match &**object.value() {
+            Value::Reference(next) => reference = *next,
+            Value::Dict(dict) => {
+                outline_dict(dict)?;
+                return Ok(Some((copy_dict(dict, reads.budget())?, Some(reference))));
+            }
+            _ => return Ok(None),
+        }
+    }
+    Err(PdfError::new_err(format!(
+        "a reference cycle or a chain of more than {MAX_CHAIN} references"
+    )))
+}
+
 /// Returns the catalog and its object.
 fn catalog(reads: &mut Reads<'_>) -> PyResult<Option<(Dict, Option<u32>)>> {
-    let root = reads.trailer().get("Root").cloned();
+    let root = copy(reads.trailer().get("Root"), reads.budget())?;
     let object = last(reads, root.as_ref())?;
     Ok(match read(reads, root.as_ref())? {
         Some(Value::Dict(catalog)) => Some((catalog, object)),
@@ -242,7 +377,10 @@ fn root(reads: &mut Reads<'_>) -> PyResult<Option<(Dict, Option<u32>)>> {
     let value = catalog.get("Outlines");
     match read(reads, value)? {
         None => Ok(None),
-        Some(Value::Dict(root)) => Ok(Some((root, last(reads, value)?))),
+        Some(Value::Dict(root)) => {
+            outline_dict(&root)?;
+            Ok(Some((root, last(reads, value)?)))
+        }
         Some(_) => Err(PdfError::new_err("catalog Outlines is not a dictionary")),
     }
 }
@@ -250,9 +388,10 @@ fn root(reads: &mut Reads<'_>) -> PyResult<Option<(Dict, Option<u32>)>> {
 /// Returns the object at the end of the references from `value`, or
 /// `None` for a direct value.
 fn last(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<u32>> {
-    let Some(Value::Reference(mut current)) = value.cloned() else {
+    let Some(Value::Reference(current)) = value else {
         return Ok(None);
     };
+    let mut current = *current;
     for _ in 0..MAX_CHAIN {
         let next = match reads.get(current.number()).map_err(|e| store_error(&e))? {
             Some(object) if object.generation() == current.generation() => {
@@ -265,14 +404,19 @@ fn last(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<u32>> {
         };
         current = next;
     }
-    Ok(Some(current.number()))
+    Err(PdfError::new_err(format!(
+        "a reference cycle or a chain of more than {MAX_CHAIN} references"
+    )))
 }
 
 /// Returns the dictionary of item object `id`, or `None` when it is gone.
 fn item(reads: &mut Reads<'_>, (number, generation): (u32, u16)) -> PyResult<Option<Dict>> {
     Ok(match reads.get(number).map_err(|e| store_error(&e))? {
         Some(object) if object.generation() == generation => match &**object.value() {
-            Value::Dict(item) => Some(item.clone()),
+            Value::Dict(item) => {
+                outline_dict(item)?;
+                Some(copy_dict(item, reads.budget())?)
+            }
             _ => None,
         },
         _ => None,
@@ -285,22 +429,31 @@ fn item(reads: &mut Reads<'_>, (number, generation): (u32, u16)) -> PyResult<Opt
 fn children(reads: &mut Reads<'_>, parent: &Dict) -> PyResult<Vec<(u32, u16)>> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    let mut next = parent.get("First").cloned();
-    while let Some(Value::Reference(reference)) = next {
-        let id = (reference.number(), reference.generation());
-        if !seen.insert(id) {
-            break;
-        }
-        let Some(child) = item(reads, id)? else {
+    let mut next = copy(parent.get("First"), reads.budget())?;
+    let mut count = 0;
+    while let Some(value) = next {
+        let Some((child, reference)) = node(reads, &value)? else {
             break;
         };
-        if out.len() >= MAX_ITEMS {
+        if let Some(reference) = reference
+            && !visit(&mut seen, reference, reads.budget())?
+        {
+            break;
+        }
+        count += 1;
+        if count > MAX_ITEMS {
             return Err(count_error(format!(
                 "outline children exceed the {MAX_ITEMS}-entry safety limit"
             )));
         }
-        out.push(id);
-        next = child.get("Next").cloned();
+        if let Some(reference) = reference {
+            push(
+                &mut out,
+                (reference.number(), reference.generation()),
+                reads.budget(),
+            )?;
+        }
+        next = copy(child.get("Next"), reads.budget())?;
     }
     Ok(out)
 }
@@ -308,34 +461,37 @@ fn children(reads: &mut Reads<'_>, parent: &Dict) -> PyResult<Vec<(u32, u16)>> {
 /// Returns whether an item has children: whether its `/First` names an
 /// item.
 fn has_children(reads: &mut Reads<'_>, item_dict: &Dict) -> PyResult<bool> {
-    Ok(match item_dict.get("First") {
-        Some(Value::Reference(first)) => {
-            item(reads, (first.number(), first.generation()))?.is_some()
-        }
-        _ => false,
-    })
+    match item_dict.get("First") {
+        Some(value) => Ok(node(reads, value)?.is_some()),
+        None => Ok(false),
+    }
 }
 
 /// Returns an item's level: one more than the `/Parent` steps to the root
 /// `root`, at most [`MAX_DEPTH`].
 fn level(reads: &mut Reads<'_>, item_dict: &Dict, root: Option<u32>) -> PyResult<u32> {
     let mut level = 1;
-    let mut parent = item_dict.get("Parent").cloned();
-    for _ in 0..MAX_DEPTH {
-        let Some(Value::Reference(reference)) = parent else {
+    let mut parent = copy(item_dict.get("Parent"), reads.budget())?;
+    let mut seen = HashSet::new();
+    while let Some(value) = parent {
+        let Some((next, reference)) = node(reads, &value)? else {
             break;
         };
-        if Some(reference.number()) == root {
-            break;
+        if let Some(reference) = reference {
+            if Some(reference.number()) == root {
+                break;
+            }
+            if !visit(&mut seen, reference, reads.budget())? {
+                return Err(PdfError::new_err("an outline parent cycle"));
+            }
         }
-        let Some(next) = item(reads, (reference.number(), reference.generation()))? else {
-            break;
-        };
-        let Some(above) = next.get("Parent") else {
-            break;
-        };
         level += 1;
-        parent = Some(above.clone());
+        if level as usize > MAX_DEPTH {
+            return Err(PdfError::new_err(format!(
+                "outline parent chain exceeds the {MAX_DEPTH}-level safety limit"
+            )));
+        }
+        parent = copy(next.get("Parent"), reads.budget())?;
     }
     Ok(level)
 }
@@ -348,7 +504,7 @@ fn walk(reads: &mut Reads<'_>, edit: Option<((u32, u16), &Dict)>) -> PyResult<Ou
     let Some((root, _)) = root(reads)? else {
         return Ok(Outline { items });
     };
-    let Some(first) = root.get("First").cloned() else {
+    let Some(first) = copy(root.get("First"), reads.budget())? else {
         return Ok(Outline { items });
     };
     let mut walker = Walker {
@@ -358,26 +514,33 @@ fn walk(reads: &mut Reads<'_>, edit: Option<((u32, u16), &Dict)>) -> PyResult<Ou
             ..Text::default()
         },
     };
-    let mut stack = vec![(first, 1_usize)];
+    let mut stack = Vec::new();
+    push(&mut stack, (first, 1_usize), walker.reads.budget())?;
     let mut visited = HashSet::new();
     let (mut nodes, mut edges) = (0_usize, 1_usize);
     while let Some((value, depth)) = stack.pop() {
-        let id = match &value {
-            Value::Reference(reference) => {
-                if !visited.insert(*reference) {
-                    continue;
-                }
-                (reference.number(), reference.generation())
+        let Some((mut node, reference)) = node(walker.reads, &value)? else {
+            continue;
+        };
+        let id = if let Some(reference) = reference {
+            if !visit(&mut visited, reference, walker.reads.budget())? {
+                continue;
             }
-            _ => (0, 0),
+            (reference.number(), reference.generation())
+        } else {
+            (0, 0)
         };
-        let node = match edit {
-            Some((edited, dict)) if id.0 != 0 && edited == id => dict.clone(),
-            _ => match walker.resolved(Some(&value))? {
-                Some(Value::Dict(node)) => node,
-                _ => continue,
-            },
-        };
+        if let Some((edited, dict)) = edit
+            && id.0 != 0
+            && edited == id
+        {
+            node = copy_dict(dict, walker.reads.budget())?;
+        }
+        if depth > MAX_DEPTH {
+            return Err(PdfError::new_err(format!(
+                "outline tree exceeds the {MAX_DEPTH}-level safety limit"
+            )));
+        }
         nodes += 1;
         if nodes > MAX_ITEMS {
             return Err(count_error(format!(
@@ -386,24 +549,23 @@ fn walk(reads: &mut Reads<'_>, edit: Option<((u32, u16), &Dict)>) -> PyResult<Ou
         }
         let title = walker.title(&node)?;
         let lead = walker.lead(&node)?;
-        items.push(Item {
-            id,
-            level: u32::try_from(depth).unwrap_or(u32::MAX),
-            title,
-            lead,
-            color: walker.color(&node)?,
-            flags: walker.integer(&node, "F")?,
-            count: walker.integer(&node, "Count")?,
-        });
+        push(
+            &mut items,
+            Item {
+                id,
+                level: u32::try_from(depth).unwrap_or(u32::MAX),
+                title,
+                lead,
+                color: walker.color(&node)?,
+                flags: walker.integer(&node, "F")?,
+                count: walker.integer(&node, "Count")?,
+            },
+            walker.reads.budget(),
+        )?;
         for (key, child_depth) in [("Next", depth), ("First", depth + 1)] {
             let Some(next) = node.get(key) else {
                 continue;
             };
-            if child_depth > MAX_DEPTH {
-                return Err(PdfError::new_err(format!(
-                    "outline tree exceeds the {MAX_DEPTH}-level safety limit"
-                )));
-            }
             edges += 1;
             if edges > MAX_EDGES {
                 return Err(count_error(format!(
@@ -411,7 +573,9 @@ fn walk(reads: &mut Reads<'_>, edit: Option<((u32, u16), &Dict)>) -> PyResult<Ou
                 )));
             }
             // `/First` goes on top, so a child comes before its next sibling.
-            stack.push((next.clone(), child_depth));
+            let next =
+                refs::copy_for_edit(next, walker.reads.budget()).map_err(|e| store_error(&e))?;
+            push(&mut stack, (next, child_depth), walker.reads.budget())?;
         }
     }
     Ok(Outline { items })
@@ -424,22 +588,24 @@ fn view(document: &_Document) -> PyResult<(Arc<Version>, Budget)> {
 
 /// Returns the outline's items of the version that reads see, memoized,
 /// and that version's page index.
-fn memoized(document: &_Document) -> PyResult<(Arc<Outline>, Arc<PageIndex>)> {
-    let (_, index, _) = index(document)?;
+type OutlineView = (Arc<Outline>, Arc<Version>, Arc<PageIndex>, Budget);
+fn memoized(document: &_Document) -> PyResult<OutlineView> {
     let (version, parent) = document.reading_parent()?;
     let budget = document.budget();
-    let (memo, version) = match &parent {
-        // An open transaction that has written nothing reads its parent.
-        Some(parent) => (&document.outline, parent),
-        None if document.in_transaction() => (&document.draft_outline, &version),
-        None => (&document.outline, &version),
+    let (memo, pages, version) = match parent {
+        Some(parent) => (&document.outline, &document.pages, parent),
+        None if document.in_transaction() => {
+            (&document.draft_outline, &document.draft_pages, version)
+        }
+        None => (&document.outline, &document.pages, version),
     };
+    let index = PageIndex::memoized(pages, &version, &budget).map_err(|e| store_error(&e))?;
     let outline = memo
-        .get_or_compute(&(), version, &budget, |reads| {
+        .get_or_compute(&(), &version, &budget, |reads| {
             walk(reads, None).map_err(Failed)
         })
         .map_err(|Failed(error)| error)?;
-    Ok((outline, index))
+    Ok((outline, version, index, budget))
 }
 
 /// Returns the top-level items of the outline, or the children of item
@@ -480,20 +646,21 @@ pub fn outline_item(document: &_Document, id: (u32, u16)) -> PyResult<ItemRecord
     let children = has_children(&mut reads, &dict)?;
     let root = root(&mut reads)?.and_then(|(_, object)| object);
     let level = level(&mut reads, &dict, root)?;
-    let target = Places::new(document, index).target(&lead)?;
+    let target = Places::new(document, Arc::clone(&version), index, &budget).target(&lead)?;
     Ok((level, title, target, color, flags, count, children))
 }
 
 /// Returns every item of the outline in document order.
 #[pyfunction]
 pub fn outline_entries(document: &_Document) -> PyResult<Vec<EntryRecord>> {
-    let (outline, index) = memoized(document)?;
-    let mut places = Places::new(document, index);
-    outline
-        .items
-        .iter()
-        .map(|item| {
-            Ok((
+    let (outline, version, index, budget) = memoized(document)?;
+    let mut places = Places::new(document, version, index, &budget);
+    let mut entries = Vec::new();
+    for item in &outline.items {
+        memory(&budget, item.title.len())?;
+        push(
+            &mut entries,
+            (
                 item.id,
                 item.level,
                 item.title.clone(),
@@ -501,9 +668,11 @@ pub fn outline_entries(document: &_Document) -> PyResult<Vec<EntryRecord>> {
                 item.color,
                 item.flags,
                 item.count,
-            ))
-        })
-        .collect()
+            ),
+            &budget,
+        )?;
+    }
+    Ok(entries)
 }
 
 /// Returns how many outline walks the document's memos reused and how many
@@ -593,9 +762,23 @@ pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> 
             "cannot write more than {MAX_ITEMS} outline items"
         )));
     }
-    let (_, index, _) = editing_index(document)?;
+    editing(py, document, |transaction, budget| {
+        write_outline(document, transaction, budget, specs)
+    })
+}
+
+fn write_outline(
+    document: &_Document,
+    transaction: &mut Transaction,
+    budget: &Budget,
+    specs: Vec<Spec>,
+) -> PyResult<()> {
+    let before = transaction.snapshot();
+    let index =
+        PageIndex::memoized(&document.draft_pages, &before, budget).map_err(|e| store_error(&e))?;
+    memory(budget, specs.len().saturating_mul(size_of::<Spec>()))?;
     let mut input = Input::default();
-    let mut prepared = Vec::with_capacity(specs.len());
+    let mut prepared = Vec::new();
     let mut previous = 0;
     for (level, title, target, color, flags, open) in &specs {
         let level = *level as usize;
@@ -611,27 +794,35 @@ pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> 
         }
         input.charge(title, "title")?;
         input.target(target)?;
-        prepared.push(Prepared {
-            level,
-            title: encode_text(title),
-            entry: target_entry(&index, target)?,
-            color: color.map(color_value).transpose()?,
-            flags: *flags,
-            open: *open,
-        });
+        memory(budget, title.len().saturating_mul(4).saturating_add(4096))?;
+        for text in [&target.4, &target.5].into_iter().flatten() {
+            memory(budget, text.len().saturating_mul(4))?;
+        }
+        push(
+            &mut prepared,
+            Prepared {
+                level,
+                title: encode_text(title),
+                entry: target_entry(&index, target)?,
+                color: color.map(color_value).transpose()?,
+                flags: *flags,
+                open: *open,
+            },
+            budget,
+        )?;
         previous = level;
     }
     drop(specs);
     let count = prepared.len();
     // The parent, the first and last child, and the siblings of each item,
     // by position.
-    let mut parent = vec![None; count];
-    let mut first = vec![None; count];
-    let mut last_child = vec![None; count];
-    let mut next = vec![None; count];
-    let mut previous_sibling = vec![None; count];
+    let mut parent = filled(count, None, budget)?;
+    let mut first = filled(count, None, budget)?;
+    let mut last_child = filled(count, None, budget)?;
+    let mut next = filled(count, None, budget)?;
+    let mut previous_sibling = filled(count, None, budget)?;
     let mut top: (Option<usize>, Option<usize>) = (None, None);
-    let mut chain: Vec<usize> = Vec::with_capacity(MAX_DEPTH);
+    let mut chain: Vec<usize> = Vec::new();
     for (at, item) in prepared.iter().enumerate() {
         chain.truncate(item.level - 1);
         let before = match chain.last() {
@@ -649,81 +840,80 @@ pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> 
             next[before] = Some(at);
             previous_sibling[at] = Some(before);
         }
-        chain.push(at);
+        push(&mut chain, at, budget)?;
     }
     // An item comes before its descendants, so a reverse pass finishes
     // each item's count before its parent adds it.
-    let mut visible = vec![0_i64; count];
+    let mut visible = filled(count, 0_i64, budget)?;
     let mut root_visible = 0_i64;
     for at in (0..count).rev() {
+        budget.poll().map_err(|e| limit_error(&e))?;
         let shown = 1 + if prepared[at].open { visible[at] } else { 0 };
         match parent[at] {
             Some(owner) => visible[owner] += shown,
             None => root_visible += shown,
         }
     }
-    document.edit(py, |transaction, budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let before = transaction.snapshot();
-        let mut reads = Reads::new(&before, budget);
-        let Some((mut catalog_dict, Some(catalog_object))) = catalog(&mut reads)? else {
-            return Err(PdfError::new_err("the catalog is not an object"));
-        };
-        let old = objects(&mut reads, &catalog_dict)?;
-        catalog_dict.remove("Outlines");
-        if count > 0 {
-            let root = transaction.allocate().map_err(store)?;
-            let mut ids = Vec::with_capacity(count);
-            for _ in 0..count {
-                ids.push(transaction.allocate().map_err(store)?);
+
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let mut reads = Reads::new(&before, budget);
+    let Some((mut catalog_dict, Some(catalog_object))) = catalog(&mut reads)? else {
+        return Err(PdfError::new_err("the catalog is not an object"));
+    };
+    let old = objects(&mut reads, &catalog_dict)?;
+    catalog_dict.remove("Outlines");
+    if count > 0 {
+        let root = transaction.allocate().map_err(store)?;
+        let mut ids = Vec::new();
+        for _ in 0..count {
+            push(&mut ids, transaction.allocate().map_err(store)?, budget)?;
+        }
+        for (at, item) in prepared.into_iter().enumerate() {
+            let mut dict = Dict::new();
+            dict.insert(Name::from("Title"), item.title);
+            let owner = parent[at].map_or(root, |owner| ids[owner]);
+            dict.insert(Name::from("Parent"), Value::Reference(owner));
+            if let Some(before) = previous_sibling[at] {
+                dict.insert(Name::from("Prev"), Value::Reference(ids[before]));
             }
-            for (at, item) in prepared.into_iter().enumerate() {
-                let mut dict = Dict::new();
-                dict.insert(Name::from("Title"), item.title);
-                let owner = parent[at].map_or(root, |owner| ids[owner]);
-                dict.insert(Name::from("Parent"), Value::Reference(owner));
-                if let Some(before) = previous_sibling[at] {
-                    dict.insert(Name::from("Prev"), Value::Reference(ids[before]));
-                }
-                if let Some(after) = next[at] {
-                    dict.insert(Name::from("Next"), Value::Reference(ids[after]));
-                }
-                if let (Some(child), Some(final_child)) = (first[at], last_child[at]) {
-                    dict.insert(Name::from("First"), Value::Reference(ids[child]));
-                    dict.insert(Name::from("Last"), Value::Reference(ids[final_child]));
-                    let shown = if item.open { visible[at] } else { -visible[at] };
-                    dict.insert(Name::from("Count"), Value::Integer(shown));
-                }
-                if let Some((key, value)) = item.entry {
-                    dict.insert(Name::from(key), value);
-                }
-                if let Some(color) = item.color {
-                    dict.insert(Name::from("C"), color);
-                }
-                if item.flags != 0 {
-                    dict.insert(Name::from("F"), Value::Integer(i64::from(item.flags)));
-                }
-                transaction
-                    .write(ids[at].number(), &Value::Dict(dict), budget)
-                    .map_err(store)?;
+            if let Some(after) = next[at] {
+                dict.insert(Name::from("Next"), Value::Reference(ids[after]));
             }
-            if let (Some(child), Some(final_child)) = top {
-                let mut dict = Dict::new();
-                dict.insert(Name::from("Type"), Value::Name(Name::from("Outlines")));
+            if let (Some(child), Some(final_child)) = (first[at], last_child[at]) {
                 dict.insert(Name::from("First"), Value::Reference(ids[child]));
                 dict.insert(Name::from("Last"), Value::Reference(ids[final_child]));
-                dict.insert(Name::from("Count"), Value::Integer(root_visible));
-                transaction
-                    .write(root.number(), &Value::Dict(dict), budget)
-                    .map_err(store)?;
+                let shown = if item.open { visible[at] } else { -visible[at] };
+                dict.insert(Name::from("Count"), Value::Integer(shown));
             }
-            catalog_dict.insert(Name::from("Outlines"), Value::Reference(root));
+            if let Some((key, value)) = item.entry {
+                dict.insert(Name::from(key), value);
+            }
+            if let Some(color) = item.color {
+                dict.insert(Name::from("C"), color);
+            }
+            if item.flags != 0 {
+                dict.insert(Name::from("F"), Value::Integer(i64::from(item.flags)));
+            }
+            transaction
+                .write(ids[at].number(), &Value::Dict(dict), budget)
+                .map_err(store)?;
         }
-        transaction
-            .write(catalog_object, &Value::Dict(catalog_dict), budget)
-            .map_err(store)?;
-        free(document, transaction, &old, budget)
-    })
+        if let (Some(child), Some(final_child)) = top {
+            let mut dict = Dict::new();
+            dict.insert(Name::from("Type"), Value::Name(Name::from("Outlines")));
+            dict.insert(Name::from("First"), Value::Reference(ids[child]));
+            dict.insert(Name::from("Last"), Value::Reference(ids[final_child]));
+            dict.insert(Name::from("Count"), Value::Integer(root_visible));
+            transaction
+                .write(root.number(), &Value::Dict(dict), budget)
+                .map_err(store)?;
+        }
+        catalog_dict.insert(Name::from("Outlines"), Value::Reference(root));
+    }
+    transaction
+        .write(catalog_object, &Value::Dict(catalog_dict), budget)
+        .map_err(store)?;
+    free(document, transaction, &old, budget)
 }
 
 /// Returns the objects of the outline of `catalog`: the objects to its
@@ -731,38 +921,62 @@ pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> 
 /// [`MAX_ITEMS`] of them.
 fn objects(reads: &mut Reads<'_>, catalog: &Dict) -> PyResult<Vec<u32>> {
     let mut out = Vec::new();
-    let mut current = catalog.get("Outlines").cloned();
-    for _ in 0..MAX_CHAIN {
-        let Some(Value::Reference(reference)) = current else {
-            break;
-        };
-        out.push(reference.number());
-        current = reads
-            .get(reference.number())
-            .map_err(|e| store_error(&e))?
-            .map(|object| (**object.value()).clone());
+    let mut stack = Vec::new();
+    if let Some(root) = copy(catalog.get("Outlines"), reads.budget())? {
+        push(&mut stack, (root, 0_usize, 0_usize), reads.budget())?;
     }
-    let Some(Value::Dict(root)) = read(reads, catalog.get("Outlines"))? else {
-        return Ok(out);
-    };
-    let mut stack: Vec<Value> = root.get("First").cloned().into_iter().collect();
     let mut visited = HashSet::new();
-    while let Some(value) = stack.pop() {
-        let Value::Reference(reference) = value else {
-            continue;
+    let (mut nodes, mut edges) = (0, 0);
+    while let Some((value, depth, chain)) = stack.pop() {
+        let dict = match value {
+            Value::Reference(reference) => {
+                if !visit(&mut visited, reference, reads.budget())? {
+                    continue;
+                }
+                if chain >= MAX_CHAIN {
+                    return Err(PdfError::new_err(format!(
+                        "an outline reference chain exceeds {MAX_CHAIN}"
+                    )));
+                }
+                let Some(object) = reads
+                    .get(reference.number())
+                    .map_err(|e| store_error(&e))?
+                    .filter(|object| object.generation() == reference.generation())
+                else {
+                    continue;
+                };
+                push(&mut out, reference.number(), reads.budget())?;
+                if let Some(value) = copy(Some(object.value()), reads.budget())? {
+                    push(&mut stack, (value, depth, chain + 1), reads.budget())?;
+                }
+                continue;
+            }
+            Value::Dict(dict) => dict,
+            _ => continue,
         };
-        if visited.len() >= MAX_ITEMS || !visited.insert(reference) {
-            continue;
+        outline_dict(&dict)?;
+        nodes += usize::from(depth > 0);
+        if nodes > MAX_ITEMS {
+            return Err(count_error(format!(
+                "outline tree exceeds the {MAX_ITEMS}-node safety limit"
+            )));
         }
-        let Some(node) = item(reads, (reference.number(), reference.generation()))? else {
-            continue;
-        };
-        out.push(reference.number());
-        stack.extend(
-            ["Next", "First"]
-                .iter()
-                .filter_map(|key| node.get(key).cloned()),
-        );
+        if depth > MAX_DEPTH {
+            return Err(PdfError::new_err(format!(
+                "outline tree exceeds the {MAX_DEPTH}-level safety limit"
+            )));
+        }
+        for (key, depth) in [("Next", depth), ("First", depth + 1)] {
+            if let Some(value) = copy(dict.get(key), reads.budget())? {
+                edges += 1;
+                if edges > MAX_EDGES {
+                    return Err(count_error(format!(
+                        "outline tree exceeds the {MAX_EDGES}-edge safety limit"
+                    )));
+                }
+                push(&mut stack, (value, depth, 0), reads.budget())?;
+            }
+        }
     }
     Ok(out)
 }
@@ -804,13 +1018,13 @@ fn edit_item(
     document: &_Document,
     id: (u32, u16),
     text: bool,
-    change: impl FnOnce(&mut Dict),
+    change: impl FnOnce(&mut Dict, &Arc<Version>, &Budget) -> PyResult<()>,
 ) -> PyResult<()> {
-    document.edit(py, |transaction, budget| {
+    editing(py, document, |transaction, budget| {
         let before = transaction.snapshot();
         let mut reads = Reads::new(&before, budget);
         let mut dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
-        change(&mut dict);
+        change(&mut dict, &before, budget)?;
         if text {
             walk(&mut reads, Some((id, &dict)))?;
         }
@@ -830,9 +1044,10 @@ pub fn outline_set_title(
     title: &str,
 ) -> PyResult<()> {
     Input::default().charge(title, "title")?;
-    let title = encode_text(title);
-    edit_item(py, document, id, true, |dict| {
-        dict.insert(Name::from("Title"), title);
+    edit_item(py, document, id, true, |dict, _, budget| {
+        memory(budget, title.len().saturating_mul(3))?;
+        dict.insert(Name::from("Title"), encode_text(title));
+        Ok(())
     })
 }
 
@@ -845,37 +1060,64 @@ pub fn outline_set_target(
     target: Target,
 ) -> PyResult<()> {
     Input::default().target(&target)?;
-    let (_, index, _) = editing_index(document)?;
-    let entry = target_entry(&index, &target)?;
-    edit_item(py, document, id, true, |dict| {
+    edit_item(py, document, id, true, |dict, version, budget| {
+        let index = PageIndex::memoized(&document.draft_pages, version, budget)
+            .map_err(|e| store_error(&e))?;
+        for text in [&target.4, &target.5].into_iter().flatten() {
+            memory(budget, text.len().saturating_mul(3))?;
+        }
+        memory(budget, 4096)?;
+        let entry = target_entry(&index, &target)?;
         dict.remove("Dest");
         dict.remove("A");
         if let Some((key, value)) = entry {
             dict.insert(Name::from(key), value);
         }
+        Ok(())
     })
 }
 
 /// Sets the color and the `/F` flags of item `id`.
 #[pyfunction]
+#[pyo3(signature = (document, id, color, flags=None, flag=None))]
 pub fn outline_set_style(
     py: Python<'_>,
     document: &_Document,
     id: (u32, u16),
     color: Option<Color>,
-    flags: u32,
+    flags: Option<u32>,
+    flag: Option<(u32, bool)>,
 ) -> PyResult<()> {
-    let color = color.map(color_value).transpose()?;
-    edit_item(py, document, id, false, |dict| {
-        match color {
-            Some(color) => dict.insert(Name::from("C"), color),
-            None => dict.remove("C"),
-        };
-        if flags == 0 {
-            dict.remove("F");
-        } else {
-            dict.insert(Name::from("F"), Value::Integer(i64::from(flags)));
+    edit_item(py, document, id, false, |dict, version, budget| {
+        if flag.is_none() {
+            memory(budget, 3 * size_of::<Value>())?;
+            match color.map(color_value).transpose()? {
+                Some(color) => dict.insert(Name::from("C"), color),
+                None => dict.remove("C"),
+            };
         }
+        let flags = if let Some((mask, set)) = flag {
+            let mut reads = Reads::new(version, budget);
+            let current = match read(&mut reads, dict.get("F"))? {
+                Some(Value::Integer(flags)) => flags,
+                _ => 0,
+            };
+            Some(if set {
+                current | i64::from(mask)
+            } else {
+                current & !i64::from(mask)
+            })
+        } else {
+            flags.map(i64::from)
+        };
+        if let Some(flags) = flags {
+            if flags == 0 {
+                dict.remove("F");
+            } else {
+                dict.insert(Name::from("F"), Value::Integer(flags));
+            }
+        }
+        Ok(())
     })
 }
 
@@ -888,7 +1130,7 @@ pub fn outline_set_open(
     id: (u32, u16),
     open: bool,
 ) -> PyResult<()> {
-    document.edit(py, |transaction, budget| {
+    editing(py, document, |transaction, budget| {
         let store = |e: pyropdf_store::Error| store_error(&e);
         let before = transaction.snapshot();
         let mut reads = Reads::new(&before, budget);
@@ -901,31 +1143,56 @@ pub fn outline_set_open(
         let Some((root, root_object)) = root(&mut reads)? else {
             return Ok(());
         };
-        let counts = counts(&mut reads, &root, (id, open))?;
-        for (target, count) in counts {
-            match target.map(|id| id.0).or(root_object) {
-                Some(number) => {
-                    let id = target.unwrap_or((number, generation(&mut reads, number)?));
-                    let mut dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
-                    if dict.get("Count") != Some(&Value::Integer(count)) {
-                        dict.insert(Name::from("Count"), Value::Integer(count));
-                        transaction
-                            .write(number, &Value::Dict(dict), budget)
-                            .map_err(store)?;
-                    }
+        let location = match root_object {
+            Some(number) => Location {
+                id: (number, generation(&mut reads, number)?),
+                path: Vec::new(),
+            },
+            None => {
+                let Some((_, Some(number))) = catalog(&mut reads)? else {
+                    return Err(PdfError::new_err("the catalog is not an object"));
+                };
+                let mut path = Vec::new();
+                push(&mut path, "Outlines", budget)?;
+                Location {
+                    id: (number, generation(&mut reads, number)?),
+                    path,
                 }
-                None => {
-                    // A direct root lives in the catalog.
-                    let Some((mut catalog, Some(object))) = catalog(&mut reads)? else {
-                        return Err(PdfError::new_err("the catalog is not an object"));
-                    };
-                    let mut root = root.clone();
-                    root.insert(Name::from("Count"), Value::Integer(count));
-                    catalog.insert(Name::from("Outlines"), Value::Dict(root));
-                    transaction
-                        .write(object, &Value::Dict(catalog), budget)
-                        .map_err(store)?;
-                }
+            }
+        };
+        let counts = counts(&mut reads, &root, location, (id, open))?;
+        for (location, count) in counts {
+            // Read previous writes from this operation, so several direct nodes
+            // in one holder cannot overwrite each other's updated counts.
+            let Some(object) = transaction
+                .version()
+                .get(location.id.0, budget)
+                .map_err(store)?
+                .filter(|object| object.generation() == location.id.1)
+            else {
+                return Err(stale(location.id));
+            };
+            let mut value = refs::copy_for_edit(object.value(), budget).map_err(store)?;
+            let mut current = &mut value;
+            for key in &location.path {
+                budget.poll().map_err(|e| limit_error(&e))?;
+                let Value::Dict(dict) = current else {
+                    return Err(PdfError::new_err(
+                        "an outline count path is not a dictionary",
+                    ));
+                };
+                current = dict
+                    .get_mut(key)
+                    .ok_or_else(|| PdfError::new_err("an outline count path is missing"))?;
+            }
+            let Value::Dict(dict) = current else {
+                return Err(PdfError::new_err("an outline item is not a dictionary"));
+            };
+            if dict.get("Count") != Some(&Value::Integer(count)) {
+                dict.insert(Name::from("Count"), Value::Integer(count));
+                transaction
+                    .write(location.id.0, &value, budget)
+                    .map_err(store)?;
             }
         }
         Ok(())
@@ -940,69 +1207,101 @@ fn generation(reads: &mut Reads<'_>, number: u32) -> PyResult<u16> {
         .map_or(0, |object| object.generation()))
 }
 
-/// The `/Count` of an item, or of the root as `None`.
-type Count = (Option<(u32, u16)>, i64);
+/// A direct node's path in its containing indirect object. Path keys are
+/// fixed outline edges, and copying the input-sized path charges the budget.
+struct Location {
+    id: (u32, u16),
+    path: Vec<&'static str>,
+}
 
-/// Returns the `/Count` of every item with children, and of the root as
-/// `None`, reading each item's open state from the sign of its count but
-/// for `change`, whose state it gives.
-fn counts(reads: &mut Reads<'_>, root: &Dict, change: ((u32, u16), bool)) -> PyResult<Vec<Count>> {
-    // Items in document order with the position of their parent, as the
-    // walk visits them, under the same limits.
-    let mut order: Vec<((u32, u16), Option<usize>, bool)> = Vec::new();
-    let mut stack: Vec<((u32, u16), Option<usize>, usize)> = Vec::new();
+impl Location {
+    fn child(&self, key: &'static str, budget: &Budget) -> PyResult<Self> {
+        let mut path = Vec::new();
+        reserve(&mut path, self.path.len() + 1, budget)?;
+        path.extend_from_slice(&self.path);
+        path.push(key);
+        Ok(Self { id: self.id, path })
+    }
+}
+
+type Count = (Location, i64);
+type PendingCount = (Value, Location, Option<usize>, usize);
+
+/// Counts direct and indirect nodes alike, while only an indirect identity
+/// can select the changed item. Every count retains its exact write location.
+fn counts(
+    reads: &mut Reads<'_>,
+    root: &Dict,
+    root_location: Location,
+    change: ((u32, u16), bool),
+) -> PyResult<Vec<Count>> {
+    let budget = reads.budget();
+    let mut order: Vec<(Location, Option<usize>, bool)> = Vec::new();
+    let mut stack: Vec<PendingCount> = Vec::new();
     let mut visited = HashSet::new();
-    let mut edges = 0;
-    let mut push = |reads: &mut Reads<'_>,
-                    stack: &mut Vec<((u32, u16), Option<usize>, usize)>,
-                    owner: &Dict,
-                    parent: Option<usize>,
-                    depth: usize|
-     -> PyResult<()> {
-        let children = children(reads, owner)?;
-        edges += children.len();
-        if edges > MAX_EDGES {
-            return Err(count_error(format!(
-                "outline tree exceeds the {MAX_EDGES}-edge safety limit"
-            )));
-        }
-        if !children.is_empty() && depth > MAX_DEPTH {
-            return Err(PdfError::new_err(format!(
-                "outline tree exceeds the {MAX_DEPTH}-level safety limit"
-            )));
-        }
-        stack.extend(children.into_iter().rev().map(|id| (id, parent, depth)));
-        Ok(())
-    };
-    push(reads, &mut stack, root, None, 1)?;
-    while let Some((id, parent, depth)) = stack.pop() {
-        if !visited.insert(id) {
+    if root_location.path.is_empty() {
+        visit(&mut visited, root_location.id, budget)?;
+    }
+    if let Some(first) = copy(root.get("First"), budget)? {
+        let location = root_location.child("First", budget)?;
+        push(&mut stack, (first, location, None, 1), budget)?;
+    }
+    let mut edges = stack.len();
+    while let Some((value, mut location, parent, depth)) = stack.pop() {
+        let Some((dict, reference)) = node(reads, &value)? else {
             continue;
+        };
+        if let Some(reference) = reference {
+            let id = (reference.number(), reference.generation());
+            if !visit(&mut visited, id, budget)? {
+                continue;
+            }
+            location = Location {
+                id,
+                path: Vec::new(),
+            };
         }
         if order.len() >= MAX_ITEMS {
             return Err(count_error(format!(
                 "outline tree exceeds the {MAX_ITEMS}-node safety limit"
             )));
         }
-        let Some(dict) = item(reads, id)? else {
-            continue;
-        };
-        let open = if id == change.0 {
+        if depth > MAX_DEPTH {
+            return Err(PdfError::new_err(format!(
+                "outline tree exceeds the {MAX_DEPTH}-level safety limit"
+            )));
+        }
+        let open = if location.path.is_empty() && location.id == change.0 {
             change.1
         } else {
             matches!(read(reads, dict.get("Count"))?, Some(Value::Integer(count)) if count > 0)
         };
-        order.push((id, parent, open));
-        let position = order.len() - 1;
-        push(reads, &mut stack, &dict, Some(position), depth + 1)?;
+        let position = order.len();
+        for (key, owner, depth) in [
+            ("Next", parent, depth),
+            ("First", Some(position), depth + 1),
+        ] {
+            if let Some(value) = copy(dict.get(key), budget)? {
+                edges += 1;
+                if edges > MAX_EDGES {
+                    return Err(count_error(format!(
+                        "outline tree exceeds the {MAX_EDGES}-edge safety limit"
+                    )));
+                }
+                let child = location.child(key, budget)?;
+                push(&mut stack, (value, child, owner, depth), budget)?;
+            }
+        }
+        push(&mut order, (location, parent, open), budget)?;
     }
-    let mut visible = vec![0_i64; order.len()];
-    let mut has_children = vec![false; order.len()];
+    let mut visible = filled(order.len(), 0_i64, budget)?;
+    let mut has_children = filled(order.len(), false, budget)?;
     let mut root_visible = 0_i64;
     for at in (0..order.len()).rev() {
-        let (_, parent, open) = order[at];
-        let shown = 1 + if open { visible[at] } else { 0 };
-        match parent {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        let (_, parent, open) = &order[at];
+        let shown = 1 + if *open { visible[at] } else { 0 };
+        match *parent {
             Some(owner) => {
                 visible[owner] += shown;
                 has_children[owner] = true;
@@ -1010,12 +1309,16 @@ fn counts(reads: &mut Reads<'_>, root: &Dict, change: ((u32, u16), bool)) -> PyR
             None => root_visible += shown,
         }
     }
-    let mut counts = Vec::with_capacity(order.len() + 1);
-    for (at, &(id, _, open)) in order.iter().enumerate() {
+    let mut counts = Vec::new();
+    for (at, (location, _, open)) in order.into_iter().enumerate() {
         if has_children[at] {
-            counts.push((Some(id), if open { visible[at] } else { -visible[at] }));
+            push(
+                &mut counts,
+                (location, if open { visible[at] } else { -visible[at] }),
+                budget,
+            )?;
         }
     }
-    counts.push((None, root_visible));
+    push(&mut counts, (root_location, root_visible), budget)?;
     Ok(counts)
 }

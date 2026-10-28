@@ -16,9 +16,12 @@
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
-use pyropdf_store::{LimitExceeded, Result};
+use pyropdf_store::{Error, LimitExceeded, Result};
+
+use crate::pages::copy::{editable, extend_entry};
 
 use super::{Charged, Keys, Walk};
 
@@ -32,12 +35,16 @@ const MAX_TREE_DEPTH: usize = 32;
 /// Reads objects by reference: the source through the walk, the receiving
 /// document through its version.
 trait Objects {
+    fn budget(&self) -> &Budget;
     fn get(&self, reference: Reference) -> Result<Option<Value>>;
 }
 
 impl Objects for Walk<'_, '_> {
+    fn budget(&self) -> &Budget {
+        self.budget
+    }
     fn get(&self, reference: Reference) -> Result<Option<Value>> {
-        self.object(reference.number())
+        self.object(reference)
     }
 }
 
@@ -47,12 +54,15 @@ struct Target<'v> {
 }
 
 impl Objects for Target<'_> {
+    fn budget(&self) -> &Budget {
+        self.budget
+    }
     fn get(&self, reference: Reference) -> Result<Option<Value>> {
-        Ok(self
-            .version
+        self.version
             .get(reference.number(), self.budget)?
             .filter(|object| object.generation() == reference.generation())
-            .map(|object| (**object.value()).clone()))
+            .map(|object| copy_for_edit(object.value(), self.budget))
+            .transpose()
     }
 }
 
@@ -65,6 +75,7 @@ struct Receiving {
     tree: Option<Reference>,
     tree_dict: Dict,
     next_key: i64,
+    first_key: Option<i64>,
     roles: Option<Dict>,
     classes: Option<Dict>,
     /// The single `Document` element under the root.
@@ -108,15 +119,23 @@ impl<'b> Graft<'b> {
         let Some(Value::Dict(catalog)) = follow(walk, catalog)? else {
             return Ok(None);
         };
-        let source_root_object = match catalog.get("StructTreeRoot") {
-            Some(&Value::Reference(root)) => Some(root),
+        let original_root = match catalog.get("StructTreeRoot") {
+            Some(Value::Reference(root)) => Some(*root),
             _ => None,
         };
-        let Some(Value::Dict(source_root)) = follow(walk, catalog.get("StructTreeRoot"))? else {
-            return Ok(None);
+        let (source_root, source_root_object) = match located(walk, catalog.get("StructTreeRoot"))?
+        {
+            Some((Value::Dict(root), object)) => (root, object),
+            None | Some((Value::Null, _)) => return Ok(None),
+            _ => {
+                return Err(Error::malformed(
+                    "the source structure root is not a dictionary",
+                ));
+            }
         };
+        editable(&source_root)?;
         let source_roles = dict_of(walk, source_root.get("RoleMap"))?;
-        let Some(receiving) = Receiving::read(transaction.version(), budget)? else {
+        let Some(mut receiving) = Receiving::read(transaction.version(), budget)? else {
             return Ok(None);
         };
 
@@ -126,13 +145,24 @@ impl<'b> Graft<'b> {
         let root_kids = kids_of(walk, source_root.get("K"))?;
         let mut skipped = BudgetVec::new(budget);
         skipped.try_extend_from_slice(source_root_object.as_slice())?;
-        let mut kids = root_kids.clone();
+        if let Some(root) = original_root
+            && !skipped.contains(&root)
+        {
+            skipped.try_push(root)?;
+        }
+        let mut kids = kids_of(walk, source_root.get("K"))?;
         if receiving.document.is_some()
             && let [Value::Reference(lone)] = root_kids.as_slice()
-            && let Some(Value::Dict(element)) = walk.object(lone.number())?
+            && let Some((Value::Dict(element), Some(actual))) =
+                located(walk, Some(&Value::Reference(*lone)))?
             && is_document(walk, source_roles.as_ref(), &element)?
         {
-            skipped.try_push(*lone)?;
+            if !skipped.contains(lone) {
+                skipped.try_push(*lone)?;
+            }
+            if !skipped.contains(&actual) {
+                skipped.try_push(actual)?;
+            }
             kids = kids_of(walk, element.get("K"))?;
         }
         if kids.is_empty() {
@@ -147,7 +177,7 @@ impl<'b> Graft<'b> {
             .as_ref()
             .map_or(root, |&(element, _)| element);
         for skipped in skipped.iter() {
-            walk.numbers.insert(skipped.number(), top, 0)?;
+            walk.numbers.insert(*skipped, top, 0)?;
         }
 
         // Parent-tree keys move past the receiving tree's.
@@ -161,10 +191,20 @@ impl<'b> Graft<'b> {
             })?;
         }
         let smallest = pairs.iter().map(|&(key, _)| key).min().unwrap_or(0);
-        let shift = receiving.next_key.saturating_sub(smallest);
+        let shift = receiving
+            .next_key
+            .checked_sub(smallest)
+            .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
         for (key, _) in pairs.iter_mut() {
-            *key = key.saturating_add(shift);
+            *key = key
+                .checked_add(shift)
+                .filter(|key| *key >= 0)
+                .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
         }
+        budget.charge(
+            LimitCode::MemorySize,
+            pairs.len().saturating_mul(size_of::<(i64, Value)>()) as u64,
+        )?;
         pairs.sort_by_key(|&(key, _)| key);
         let next_key = pairs
             .last()
@@ -178,24 +218,30 @@ impl<'b> Graft<'b> {
         walk.keys = Keys::Shift(shift);
 
         // Classes that the receiving tree defines otherwise take a suffix.
-        let mut classes = receiving.classes.clone().unwrap_or_default();
+        let mut classes = receiving.classes.take().unwrap_or_default();
         let mut classes_changed = false;
         let mut renames: Charged<'b, Name, Name> = Charged::new(budget);
         if let Some(source_classes) = dict_of(walk, source_root.get("ClassMap"))? {
             let mut taken = Charged::new(budget);
             for name in classes.keys() {
-                taken.insert(name.as_bytes().to_vec(), (), name.as_bytes().len() as u64)?;
+                taken.insert(copy_bytes(name.as_bytes(), budget)?, (), 0)?;
             }
             for (name, value) in source_classes.iter() {
                 if classes.get(name.as_bytes()) == Some(value) {
                     continue;
                 }
-                let new = unused(name.as_bytes(), &taken, b'_');
-                taken.insert(new.clone(), (), new.len() as u64)?;
-                let copied = walk.value(transaction, value, 1)?;
-                classes.insert(Name::new(new.clone()), copied);
+                let new = unused(name.as_bytes(), &taken, b'_', budget)?;
+                taken.insert(copy_bytes(&new, budget)?, (), 0)?;
+                let mut copied = pyropdf_store::refs::copy_for_edit(value, budget)?;
+                walk.value(transaction, &mut copied, 1)?;
+                budget.charge(
+                    LimitCode::MemorySize,
+                    (2 * size_of::<(Name, Value)>()) as u64,
+                )?;
+                classes.insert(Name::new(copy_bytes(&new, budget)?), copied);
                 classes_changed = true;
                 if new != name.as_bytes() {
+                    budget.charge(LimitCode::MemorySize, name.as_bytes().len() as u64)?;
                     renames.insert(name.clone(), Name::new(new), 0)?;
                 }
             }
@@ -203,7 +249,7 @@ impl<'b> Graft<'b> {
 
         // Elements: roles, classes, and IDs that the receiving tree holds
         // otherwise.
-        let mut roles = receiving.roles.clone().unwrap_or_default();
+        let mut roles = receiving.roles.take().unwrap_or_default();
         let mut roles_changed = false;
         let mut ids = BudgetVec::new(budget);
         let mut taken_ids = Charged::new(budget);
@@ -214,16 +260,15 @@ impl<'b> Graft<'b> {
         if let Some(tree) = receiving.root_dict.get("IDTree") {
             tree_pairs(&target, tree, "Names", budget, |name, value| {
                 if let Value::String(name) = name {
-                    let bytes = name.as_bytes().to_vec();
-                    let size = bytes.len() as u64;
-                    taken_ids.insert(bytes, (), size)?;
+                    let bytes = copy_bytes(name.as_bytes(), budget)?;
+                    taken_ids.insert(bytes, (), 0)?;
                     ids.try_push((name, value))?;
                 }
                 Ok(())
             })?;
         }
         let mut ids_changed = false;
-        let mut visited: Charged<'b, u32, ()> = Charged::new(budget);
+        let mut visited: Charged<'b, Reference, ()> = Charged::new(budget);
         let mut stack = BudgetVec::new(budget);
         for kid in kids.iter().rev() {
             if let &Value::Reference(kid) = kid {
@@ -232,8 +277,15 @@ impl<'b> Graft<'b> {
         }
         while let Some(reference) = stack.pop() {
             budget.poll()?;
-            if skipped.contains(&reference) || visited.insert(reference.number(), (), 0)?.is_some()
-            {
+            if skipped.contains(&reference) {
+                continue;
+            }
+            let Some((Value::Dict(mut element), Some(reference))) =
+                located(walk, Some(&Value::Reference(reference)))?
+            else {
+                continue;
+            };
+            if skipped.contains(&reference) || visited.insert(reference, (), 0)?.is_some() {
                 continue;
             }
             if visited.len() > MAX_NODES {
@@ -244,9 +296,7 @@ impl<'b> Graft<'b> {
                 )
                 .into());
             }
-            let Some(Value::Dict(mut element)) = walk.object(reference.number())? else {
-                continue;
-            };
+            editable(&element)?;
             if !is_element(&element) {
                 continue;
             }
@@ -268,7 +318,12 @@ impl<'b> Graft<'b> {
                         changed = true;
                     }
                     (Some(ours), None) => {
-                        roles.insert(role.clone(), ours.clone());
+                        budget.charge(LimitCode::MemorySize, role.as_bytes().len() as u64)?;
+                        budget.charge(
+                            LimitCode::MemorySize,
+                            (2 * size_of::<(Name, Value)>()) as u64,
+                        )?;
+                        roles.insert(role.clone(), copy_for_edit(ours, budget)?);
                         roles_changed = true;
                     }
                     _ => {}
@@ -277,24 +332,31 @@ impl<'b> Graft<'b> {
             if renames.len() > 0
                 && let Some(classes) = element.get_mut("C")
             {
-                let mut rename = |class: &mut Value| {
+                let mut rename = |class: &mut Value| -> Result<()> {
+                    budget.poll()?;
                     if let Value::Name(name) = class
                         && let Some(new) = renames.get(name)
                     {
+                        budget.charge(LimitCode::MemorySize, new.as_bytes().len() as u64)?;
                         *name = new.clone();
                         changed = true;
                     }
+                    Ok(())
                 };
                 match classes {
-                    Value::Array(items) => items.iter_mut().for_each(&mut rename),
-                    other => rename(other),
+                    Value::Array(items) => {
+                        for item in items.iter_mut() {
+                            rename(item)?;
+                        }
+                    }
+                    other => rename(other)?,
                 }
             }
             if let Some(Value::String(identifier)) = element.get("ID") {
-                let new = unused(identifier.as_bytes(), &taken_ids, b'+');
-                let size = new.len() as u64;
-                let string = PdfString::new(new.clone(), identifier.form());
-                taken_ids.insert(new, (), size)?;
+                let new = unused(identifier.as_bytes(), &taken_ids, b'+', budget)?;
+                let string = PdfString::new(copy_bytes(&new, budget)?, identifier.form());
+                taken_ids.insert(new, (), 0)?;
+                budget.charge(LimitCode::MemorySize, string.as_bytes().len() as u64)?;
                 element.insert(Name::from("ID"), Value::String(string.clone()));
                 changed = true;
                 if let Value::Reference(copied) = walk.reference(transaction, reference)? {
@@ -303,11 +365,16 @@ impl<'b> Graft<'b> {
                 }
             }
             if changed {
-                walk.edited
-                    .try_push((reference.number(), Value::Dict(element)))?;
+                walk.edited.try_push((reference, Value::Dict(element)))?;
             }
         }
-        walk.edited.sort_by_key(|&(number, _)| number);
+        budget.charge(
+            LimitCode::MemorySize,
+            walk.edited
+                .len()
+                .saturating_mul(size_of::<(Reference, Value)>()) as u64,
+        )?;
+        walk.edited.sort_by_key(|(reference, _)| *reference);
         let namespaces = match follow(walk, source_root.get("Namespaces"))? {
             Some(Value::Array(items)) => Some(items),
             _ => None,
@@ -334,7 +401,7 @@ impl<'b> Graft<'b> {
         walk: &mut Walk<'_, '_>,
     ) -> Result<()> {
         for kid in self.kids.iter_mut() {
-            *kid = walk.value(transaction, kid, 1)?;
+            walk.value(transaction, kid, 1)?;
             if let Value::Dict(element) = kid
                 && is_element(element)
             {
@@ -342,11 +409,11 @@ impl<'b> Graft<'b> {
             }
         }
         for (_, value) in self.pairs.iter_mut() {
-            *value = walk.value(transaction, value, 1)?;
+            walk.value(transaction, value, 1)?;
         }
         if let Some(namespaces) = &mut self.namespaces {
             for item in namespaces.iter_mut() {
-                *item = walk.value(transaction, item, 1)?;
+                walk.value(transaction, item, 1)?;
             }
         }
         Ok(())
@@ -361,13 +428,11 @@ impl<'b> Graft<'b> {
             tree,
             mut tree_dict,
             document,
+            first_key,
             ..
         } = self.receiving;
-        let target = Target {
-            version: transaction.version(),
-            budget,
-        };
-        // The receiving parent tree takes the shifted pairs after its own.
+        let first_new = self.pairs.first().map(|(key, _)| *key);
+        let last_new = self.pairs.last().map(|(key, _)| *key);
         let mut flat = BudgetVec::new(budget);
         flat.try_reserve_exact(2 * self.pairs.len())?;
         for (key, value) in self.pairs.into_vec() {
@@ -376,9 +441,7 @@ impl<'b> Graft<'b> {
         }
         let mut leaf = None;
         if !flat.is_empty() {
-            if tree_dict.get("Nums").is_none()
-                && matches!(tree_dict.get("Kids"), Some(Value::Array(_)))
-            {
+            if tree_dict.get("Nums").is_none() && tree_dict.get("Kids").is_some() {
                 let limits = Array::from(vec![flat[0].clone(), flat[flat.len() - 2].clone()]);
                 let mut node = Dict::new();
                 node.insert(
@@ -388,55 +451,99 @@ impl<'b> Graft<'b> {
                 node.insert(Name::from("Limits"), Value::Array(limits));
                 leaf = Some(node);
             } else {
-                let mut nums = match follow(&target, tree_dict.get("Nums"))? {
-                    Some(Value::Array(nums)) => nums,
-                    _ => Array::new(),
-                };
-                for value in flat.into_vec() {
-                    nums.push(value);
-                }
-                tree_dict.insert(Name::from("Nums"), Value::Array(nums));
+                extend_entry(
+                    transaction,
+                    &mut tree_dict,
+                    "Nums",
+                    flat.into_vec().into_iter(),
+                    false,
+                    budget,
+                )?;
+            }
+            if tree_dict.get("Limits").is_some()
+                && let (Some(first), Some(last)) =
+                    (first_key.into_iter().chain(first_new).min(), last_new)
+            {
+                tree_dict.insert(
+                    Name::from("Limits"),
+                    Value::Array(Array::from(vec![
+                        Value::Integer(first),
+                        Value::Integer(last),
+                    ])),
+                );
             }
         }
-        let mut known = match self.namespaces {
-            Some(_) => match follow(&target, root_dict.get("Namespaces"))? {
-                Some(Value::Array(items)) => items,
-                _ => Array::new(),
-            },
-            None => Array::new(),
-        };
         if let Some(namespaces) = &self.namespaces {
+            let known = match follow(
+                &Target {
+                    version: transaction.version(),
+                    budget,
+                },
+                root_dict.get("Namespaces"),
+            )? {
+                Some(Value::Array(items)) => items,
+                None | Some(Value::Null) => Array::new(),
+                _ => return Err(Error::malformed("the namespaces entry is not an array")),
+            };
+            let mut added = BudgetVec::new(budget);
             for item in namespaces.iter() {
-                if !known.iter().any(|known| known == item) {
-                    known.push(item.clone());
+                budget.poll()?;
+                if !known.iter().any(|other| other == item)
+                    && !added.iter().any(|other| other == item)
+                {
+                    added.try_push(copy_for_edit(item, budget)?)?;
                 }
             }
+            if !added.is_empty() {
+                extend_entry(
+                    transaction,
+                    &mut root_dict,
+                    "Namespaces",
+                    added.into_vec().into_iter(),
+                    false,
+                    budget,
+                )?;
+            }
         }
-        // The top-level elements follow the receiving ones.
+        let mut appended = BudgetVec::new(budget);
+        for kid in self.kids.iter() {
+            appended.try_push(copy_for_edit(kid, budget)?)?;
+        }
         let document = match document {
             Some((element, mut dict)) => {
-                let mut kids = kids_of(&target, dict.get("K"))?;
-                for kid in self.kids.iter() {
-                    kids.push(kid.clone());
-                }
-                dict.insert(Name::from("K"), Value::Array(kids));
+                extend_entry(
+                    transaction,
+                    &mut dict,
+                    "K",
+                    appended.into_vec().into_iter(),
+                    true,
+                    budget,
+                )?;
                 Some((element, dict))
             }
             None => {
-                let mut kids = kids_of(&target, root_dict.get("K"))?;
-                for kid in self.kids.iter() {
-                    kids.push(kid.clone());
-                }
-                root_dict.insert(Name::from("K"), Value::Array(kids));
+                extend_entry(
+                    transaction,
+                    &mut root_dict,
+                    "K",
+                    appended.into_vec().into_iter(),
+                    true,
+                    budget,
+                )?;
                 None
             }
         };
         if let Some(leaf) = leaf {
             let object = transaction.allocate()?;
             transaction.write(object.number(), &Value::Dict(leaf), budget)?;
-            if let Some(Value::Array(kids)) = tree_dict.get_mut("Kids") {
-                kids.push(Value::Reference(object));
-            }
+            extend_entry(
+                transaction,
+                &mut tree_dict,
+                "Kids",
+                std::iter::once(Value::Reference(object)),
+                false,
+                budget,
+            )?;
         }
         if let Some((element, dict)) = document {
             transaction.write(element.number(), &Value::Dict(dict), budget)?;
@@ -460,6 +567,10 @@ impl<'b> Graft<'b> {
             root_dict.insert(Name::from("ClassMap"), Value::Dict(classes));
         }
         if let Some(mut ids) = self.ids {
+            budget.charge(
+                LimitCode::MemorySize,
+                ids.len().saturating_mul(size_of::<(PdfString, Value)>()) as u64,
+            )?;
             ids.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
             let mut names = BudgetVec::new(budget);
             names.try_reserve_exact(2 * ids.len())?;
@@ -473,9 +584,6 @@ impl<'b> Graft<'b> {
                 Value::Array(Array::from(names.into_vec())),
             );
             root_dict.insert(Name::from("IDTree"), Value::Dict(node));
-        }
-        if self.namespaces.is_some() {
-            root_dict.insert(Name::from("Namespaces"), Value::Array(known));
         }
         transaction.write(self.root.number(), &Value::Dict(root_dict), budget)?;
         if old_root.is_none() {
@@ -491,66 +599,76 @@ impl Receiving {
     /// `None` when the document has no catalog object.
     fn read(version: &Version, budget: &Budget) -> Result<Option<Self>> {
         let target = Target { version, budget };
-        let Some(&Value::Reference(catalog)) = version.trailer().get("Root") else {
-            return Ok(None);
+        let Some((Value::Dict(catalog_dict), Some(catalog))) =
+            located(&target, version.trailer().get("Root"))?
+        else {
+            return Err(Error::malformed(
+                "the receiving catalog is not an indirect dictionary",
+            ));
         };
-        let Some(Value::Dict(catalog_dict)) = target.get(catalog)? else {
-            return Ok(None);
-        };
-        let (root, root_dict) = match catalog_dict.get("StructTreeRoot") {
-            Some(&Value::Reference(root)) => match target.get(root)? {
-                Some(Value::Dict(dict)) => (Some(root), dict),
-                _ => (None, new_root()),
-            },
-            Some(Value::Dict(dict)) => (None, dict.clone()),
-            _ => (None, new_root()),
+        let (root, root_dict) = match located(&target, catalog_dict.get("StructTreeRoot"))? {
+            Some((Value::Dict(dict), object)) => {
+                editable(&dict)?;
+                (object, dict)
+            }
+            None | Some((Value::Null, _)) => (None, new_root()),
+            _ => {
+                return Err(Error::malformed(
+                    "the receiving structure root is not a dictionary",
+                ));
+            }
         };
         let roles = dict_of(&target, root_dict.get("RoleMap"))?;
         let classes = dict_of(&target, root_dict.get("ClassMap"))?;
-        let (tree, tree_dict) = match root_dict.get("ParentTree") {
-            Some(&Value::Reference(tree)) => match target.get(tree)? {
-                Some(Value::Dict(dict)) => (Some(tree), dict),
-                _ => (None, Dict::new()),
-            },
-            Some(Value::Dict(dict)) => (None, dict.clone()),
-            _ => (None, Dict::new()),
+        let (tree, tree_dict) = match located(&target, root_dict.get("ParentTree"))? {
+            Some((Value::Dict(dict), object)) => {
+                editable(&dict)?;
+                (object, dict)
+            }
+            None | Some((Value::Null, _)) => (None, Dict::new()),
+            _ => {
+                return Err(Error::malformed(
+                    "the receiving parent tree is not a dictionary",
+                ));
+            }
         };
         let mut largest = None;
-        tree_pairs(
-            &target,
-            &Value::Dict(tree_dict.clone()),
-            "Nums",
-            budget,
-            |key, _| {
+        let mut first_key = None;
+        if let Some(tree) = root_dict.get("ParentTree") {
+            tree_pairs(&target, tree, "Nums", budget, |key, _| {
                 if let Value::Integer(key) = key {
                     largest = largest.max(Some(key));
+                    first_key = first_key.min(Some(key)).or(Some(key));
                 }
                 Ok(())
-            },
-        )?;
+            })?;
+        }
         let next_key = match follow(&target, root_dict.get("ParentTreeNextKey"))? {
             Some(Value::Integer(next)) => next,
             _ => 0,
         }
         .max(largest.map_or(0, |largest: i64| largest.saturating_add(1)));
-        let lone = match root_dict.get("K") {
-            Some(Value::Array(items)) if items.len() == 1 => items.get(0).cloned(),
-            Some(&Value::Reference(kids)) => match target.get(kids)? {
-                Some(Value::Array(items)) if items.len() == 1 => items.get(0).cloned(),
-                Some(Value::Dict(_)) => Some(Value::Reference(kids)),
-                _ => None,
-            },
-            _ => None,
-        };
-        let document = match lone {
-            Some(Value::Reference(element)) => match target.get(element)? {
-                Some(Value::Dict(dict)) if is_document(&target, roles.as_ref(), &dict)? => {
-                    Some((element, dict))
+        let root_kids = kids_of(&target, root_dict.get("K"))?;
+        let document = match root_kids.as_slice() {
+            [Value::Reference(element)] => {
+                match located(&target, Some(&Value::Reference(*element)))? {
+                    Some((Value::Dict(dict), Some(element)))
+                        if is_document(&target, roles.as_ref(), &dict)? =>
+                    {
+                        editable(&dict)?;
+                        Some((element, dict))
+                    }
+                    _ => None,
                 }
-                _ => None,
-            },
+            }
             _ => None,
         };
+        let document_object = document.as_ref().map(|(object, _)| *object);
+        if root.is_some() && (root == tree || root == document_object)
+            || tree.is_some() && tree == document_object
+        {
+            return Err(Error::malformed("a structure object has conflicting roles"));
+        }
         Ok(Some(Self {
             catalog: (catalog, catalog_dict),
             root,
@@ -558,6 +676,7 @@ impl Receiving {
             tree,
             tree_dict,
             next_key,
+            first_key,
             roles,
             classes,
             document,
@@ -574,17 +693,33 @@ fn new_root() -> Dict {
     root
 }
 
-/// Returns `value`, following references, or `None` at the end of a
-/// broken or overlong chain.
-fn follow(objects: &impl Objects, value: Option<&Value>) -> Result<Option<Value>> {
-    let mut current = value.cloned();
+/// Resolve aliases while retaining the identity of the final owning object.
+fn located(
+    objects: &impl Objects,
+    value: Option<&Value>,
+) -> Result<Option<(Value, Option<Reference>)>> {
+    let mut current = match value {
+        None => return Ok(None),
+        Some(Value::Reference(reference)) => *reference,
+        Some(value) => {
+            return copy_for_edit(value, objects.budget()).map(|value| Some((value, None)));
+        }
+    };
     for _ in 0..MAX_CHAIN {
-        match current {
-            Some(Value::Reference(reference)) => current = objects.get(reference)?,
-            other => return Ok(other),
+        objects.budget().poll()?;
+        match objects.get(current)? {
+            Some(Value::Reference(next)) => current = next,
+            Some(value) => return Ok(Some((value, Some(current)))),
+            None => return Ok(None),
         }
     }
-    Ok(None)
+    Err(Error::malformed(
+        "a structure reference cycle or overlong chain",
+    ))
+}
+
+fn follow(objects: &impl Objects, value: Option<&Value>) -> Result<Option<Value>> {
+    Ok(located(objects, value)?.map(|(value, _)| value))
 }
 
 fn dict_of(objects: &impl Objects, value: Option<&Value>) -> Result<Option<Dict>> {
@@ -594,18 +729,14 @@ fn dict_of(objects: &impl Objects, value: Option<&Value>) -> Result<Option<Dict>
     })
 }
 
-/// Returns the kids of `/K`: an array's items, through a reference to an
-/// array, or the one kid that it is.
 fn kids_of(objects: &impl Objects, value: Option<&Value>) -> Result<Array> {
     Ok(match value {
-        Some(Value::Array(kids)) => kids.clone(),
-        Some(&Value::Reference(kids)) => match objects.get(kids)? {
-            Some(Value::Array(kids)) => kids,
-            Some(Value::Null) | None => Array::new(),
-            Some(_) => Array::from(vec![Value::Reference(kids)]),
+        None | Some(Value::Null) => Array::new(),
+        Some(value) => match located(objects, Some(value))? {
+            Some((Value::Array(kids), _)) => kids,
+            Some((Value::Null, _)) | None => Array::new(),
+            Some(_) => Array::from(vec![copy_for_edit(value, objects.budget())?]),
         },
-        Some(Value::Null) | None => Array::new(),
-        Some(kid) => Array::from(vec![kid.clone()]),
     })
 }
 
@@ -624,31 +755,60 @@ fn is_document(objects: &impl Objects, roles: Option<&Dict>, element: &Dict) -> 
 
 /// Returns the standard type that `role` resolves to through `roles`.
 fn resolved_role(objects: &impl Objects, roles: Option<&Dict>, role: &Name) -> Result<Name> {
-    let mut role = role.clone();
-    for _ in 0..MAX_ROLE_CHAIN {
-        match follow(objects, roles.and_then(|roles| roles.get(role.as_bytes())))? {
-            Some(Value::Name(mapped)) if mapped != role => role = mapped,
-            _ => break,
+    let budget = objects.budget();
+    let mut current = Name::new(copy_bytes(role.as_bytes(), budget)?);
+    let mut visited = BudgetVec::new(budget);
+    for depth in 0..=MAX_ROLE_CHAIN {
+        budget.poll()?;
+        if visited.contains(&current) {
+            return Err(Error::malformed("a structure role map contains a cycle"));
+        }
+        budget.charge(LimitCode::MemorySize, current.as_bytes().len() as u64)?;
+        visited.try_push(current.clone())?;
+        match follow(
+            objects,
+            roles.and_then(|roles| roles.get(current.as_bytes())),
+        )? {
+            Some(Value::Name(mapped)) => {
+                if depth == MAX_ROLE_CHAIN {
+                    return Err(LimitExceeded::new(LimitCode::StructureTreeCount).into());
+                }
+                current = mapped;
+            }
+            _ => return Ok(current),
         }
     }
-    Ok(role)
+    unreachable!("the bounded role loop always returns")
 }
 
-/// Returns a name that `taken` does not hold: `name`, else `name` with
-/// `separator` and the smallest number that makes it so.
-fn unused(name: &[u8], taken: &Charged<'_, Vec<u8>, ()>, separator: u8) -> Vec<u8> {
+fn copy_bytes(bytes: &[u8], budget: &Budget) -> Result<Vec<u8>> {
+    let mut out = BudgetVec::new(budget);
+    out.try_extend_from_slice(bytes)?;
+    Ok(out.into_vec())
+}
+
+fn unused(
+    name: &[u8],
+    taken: &Charged<'_, Vec<u8>, ()>,
+    separator: u8,
+    budget: &Budget,
+) -> Result<Vec<u8>> {
     if taken.get(name).is_none() {
-        return name.to_vec();
+        return copy_bytes(name, budget);
     }
     let mut number = 1_u64;
     loop {
-        let mut candidate = name.to_vec();
-        candidate.push(separator);
-        candidate.extend_from_slice(number.to_string().as_bytes());
-        if taken.get(candidate.as_slice()).is_none() {
-            return candidate;
+        budget.poll()?;
+        let mut candidate = BudgetVec::new(budget);
+        candidate.try_extend_from_slice(name)?;
+        candidate.try_push(separator)?;
+        candidate.try_extend_from_slice(number.to_string().as_bytes())?;
+        if taken.get(candidate.as_ref()).is_none() {
+            return Ok(candidate.into_vec());
         }
-        number += 1;
+        number = number
+            .checked_add(1)
+            .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
     }
 }
 
@@ -661,37 +821,85 @@ fn tree_pairs(
     budget: &Budget,
     mut each: impl FnMut(Value, Value) -> Result<()>,
 ) -> Result<()> {
-    let mut visited: Charged<'_, u32, ()> = Charged::new(budget);
+    let mut visited: Charged<'_, Reference, ()> = Charged::new(budget);
     let mut pending = BudgetVec::new(budget);
-    pending.try_push((tree.clone(), 0_usize))?;
+    pending.try_push((copy_for_edit(tree, budget)?, 0_usize))?;
     let mut nodes = 0_usize;
+    let mut pairs = 0_usize;
     while let Some((node, depth)) = pending.pop() {
         budget.poll()?;
+        let (node, object) = match located(objects, Some(&node))? {
+            None | Some((Value::Null, _)) => continue,
+            Some((Value::Dict(node), object)) => (node, object),
+            _ => {
+                return Err(Error::malformed(
+                    "a structure lookup tree node is not a dictionary",
+                ));
+            }
+        };
+        if let Some(reference) = object
+            && visited.insert(reference, (), 0)?.is_some()
+        {
+            continue;
+        }
+        editable(&node)?;
         nodes += 1;
         if nodes > MAX_NODES || depth > MAX_TREE_DEPTH {
             return Err(LimitExceeded::new(LimitCode::StructureTreeCount).into());
         }
-        if let Value::Reference(reference) = node
-            && visited.insert(reference.number(), (), 0)?.is_some()
-        {
-            continue;
-        }
-        let Some(Value::Dict(node)) = follow(objects, Some(&node))? else {
-            continue;
-        };
         if let Some(Value::Array(items)) = follow(objects, node.get(key))? {
             let mut items = items.iter();
             while let (Some(name), Some(value)) = (items.next(), items.next()) {
+                budget.poll()?;
+                pairs += 1;
+                if pairs > MAX_NODES {
+                    return Err(LimitExceeded::new(LimitCode::StructureTreeCount).into());
+                }
                 if let Some(name) = follow(objects, Some(name))? {
-                    each(name, value.clone())?;
+                    each(name, copy_for_edit(value, budget)?)?;
                 }
             }
         }
         if let Some(Value::Array(kids)) = follow(objects, node.get("Kids"))? {
             for kid in kids.iter() {
-                pending.try_push((kid.clone(), depth + 1))?;
+                pending.try_push((copy_for_edit(kid, budget)?, depth + 1))?;
             }
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use pyropdf_store::value::Bytes;
+    use pyropdf_store::version::{Document, MemoryBase};
+
+    #[test]
+    fn reading_a_cached_target_value_charges_owned_buffers() {
+        let mut base = MemoryBase::new(Dict::new());
+        let reference = Reference::new(5, 0);
+        base.insert(
+            reference,
+            Bytes::new(format!("<< /Unknown ({}) >>", "x".repeat(1024 * 1024)).into_bytes()),
+        );
+        let document = Document::new(Arc::new(base), None);
+        let version = document.current();
+        version.get(5, &Budget::default()).unwrap();
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(32 * 1024));
+        let target = Target {
+            version: &version,
+            budget: &budget,
+        };
+        let error = match target.get(reference) {
+            Ok(_) => panic!("reading a cached target value ignored the memory budget"),
+            Err(error) => error,
+        };
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::MemorySize)
+        );
+    }
 }

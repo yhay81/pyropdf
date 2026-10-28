@@ -16,9 +16,16 @@ Its ``new`` and ``del`` cases are in tests/test_pages.py.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
+from typing import TYPE_CHECKING
+
 import pytest
 
 import pyropdf
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:
@@ -325,8 +332,8 @@ def test_imported_links_follow_the_pages_imported_with_them() -> None:
     assert len(source.pages[1].links) == 1
 
 
-def test_imported_pages_bring_their_structure_keys_with_their_elements() -> None:
-    """The keys of an imported page and its link name the elements grafted with them."""
+def test_imported_pages_graft_the_source_structure() -> None:
+    """Imported page and link keys name their grafted structure elements."""
     source = pyropdf.open(
         build_raw_pdf(
             {
@@ -357,3 +364,63 @@ def test_imported_pages_bring_their_structure_keys_with_their_elements() -> None
     assert [owner.xref for owner in nums[1]] == [element.xref]
     assert nums[2] == link.obj["StructParent"]
     assert nums[3].xref == element.xref
+
+
+@pytest.mark.parametrize("object_number", [3, 5])
+def test_import_does_not_retarget_a_reference_of_another_generation(object_number: int) -> None:
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: (
+                    f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+                    f"/Custom [{object_number} 0 R {object_number} 1 R] >>"
+                ),
+                5: "<< /Message (valid generation) >>",
+            }
+        )
+    )
+    target = pyropdf.Document()
+    target.pages.extend(source.pages[0])
+    assert target.pages[0].obj["Custom"][0] is not None
+    assert target.pages[0].obj["Custom"][1] is None
+
+
+def test_import_keeps_yielded_page_identities_when_the_source_is_reordered() -> None:
+    source = pyropdf.open(build_pdf(["SOURCE-A", "SOURCE-B", "SOURCE-C"]))
+    target = pyropdf.Document()
+
+    def pages() -> Iterator[pyropdf.Page]:
+        yield source.pages[0]
+        source.pages.move(0, 2)
+        yield source.pages[0]
+
+    target.pages.extend(pages())
+    assert [page.text().strip() for page in target.pages] == ["SOURCE-A", "SOURCE-B"]
+
+
+@pytest.mark.parametrize("change", ["order", "inheritance"])
+def test_waiting_import_preserves_the_first_writers_changes(change: str) -> None:
+    source = pyropdf.open(build_pdf(["IMPORTED"]))
+    target = pyropdf.open(build_pdf(["TARGET-A", "TARGET-B"]))
+    started = Event()
+
+    def insert() -> None:
+        started.set()
+        target.pages.insert(1, source.pages[0])
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with target.transaction("Change the receiving document before import"):
+            future = pool.submit(insert)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            if change == "order":
+                target.pages.move(0, 1)
+            else:
+                target.catalog["Pages"]["Rotate"] = 90
+        future.result(timeout=10)
+    expected = ["TARGET-B", "IMPORTED", "TARGET-A"] if change == "order" else ["TARGET-A", "IMPORTED", "TARGET-B"]
+    assert [page.text().strip() for page in target.pages] == expected
+    assert target.pages[1].rotation == 0

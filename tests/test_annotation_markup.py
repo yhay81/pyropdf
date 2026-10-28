@@ -108,7 +108,7 @@ def test_the_core_repeats_the_text_markup_checks() -> None:
 
     for spec, message in [
         ({"subtype": "Underline", "rects": []}, "1 to 4096 rectangles"),
-        ({"subtype": "Underline", "rects": [(0.0, 0.0, 1.0, 1.0)] * 4097}, "1 to 4096 rectangles"),
+        ({"subtype": "Underline", "rects": [(0.0, 0.0, 1.0, 1.0)] * 4097}, "too many quadrilaterals"),
         ({"subtype": "Underline", "rects": [(0.0, 0.0, float("nan"), 1.0)]}, "finite"),
         ({"subtype": "Square", "rect": (0.0, 0.0, 1.0, 1.0), "rects": [(0.0, 0.0, 1.0, 1.0)]}, "not a Square"),
         ({"subtype": "Underline", "rect": (0.0, 0.0, 1.0, 1.0)}, "not a Underline"),
