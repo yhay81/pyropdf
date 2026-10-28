@@ -218,4 +218,58 @@ mod tests {
         assert!(index.affected(&[7, 9], true, &budget).unwrap().is_empty());
         assert!(index.objects.iter().next().is_none());
     }
+
+    #[test]
+    fn removing_one_shared_dependency_does_not_copy_its_other_readers() {
+        let budget = Budget::default();
+        let mut index = ReadDependencies::new();
+        for key in 0..4_000 {
+            index
+                .replace(key, Some(reads(&[99, key + 10_000], false)), &budget)
+                .unwrap();
+        }
+        let limited = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+        index
+            .replace(7, Some(reads(&[10_007], false)), &limited)
+            .unwrap();
+        let found = index.affected(&[99], false, &budget).unwrap();
+        assert_eq!(found.len(), 3_999);
+        assert!(!found.contains(&7));
+    }
+
+    #[test]
+    fn partial_update_refusal_and_cancellation_keep_the_index_unchanged() {
+        let budget = Budget::default();
+        let mut index = ReadDependencies::new();
+        let objects: Vec<u32> = (0..100).map(|number| number * 1024).collect();
+        index
+            .replace(8, Some(reads(&objects, true)), &budget)
+            .unwrap();
+        let limited = Budget::default().with_limit(LimitCode::MemorySize, Some(8 * 1024));
+        assert!(
+            index
+                .replace(8, Some(reads(&[200_000], false)), &limited)
+                .is_err()
+        );
+        assert!(limited.used(LimitCode::MemorySize) > 0);
+        assert_eq!(
+            index.affected(&objects, true, &budget).unwrap().into_vec(),
+            vec![8]
+        );
+        assert!(
+            index
+                .affected(&[200_000], false, &budget)
+                .unwrap()
+                .is_empty()
+        );
+
+        let token = crate::budget::CancellationToken::new();
+        token.cancel();
+        let cancelled = Budget::default().with_cancellation(token);
+        assert!(index.replace(8, None, &cancelled).is_err());
+        assert_eq!(
+            index.affected(&objects, true, &budget).unwrap().into_vec(),
+            vec![8]
+        );
+    }
 }
