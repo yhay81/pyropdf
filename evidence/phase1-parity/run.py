@@ -74,7 +74,12 @@ def main() -> None:
         "generated_at": datetime.now(UTC).isoformat(),
         "pylopdf_commit": FREEZE,
         "pyropdf_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),  # noqa: S607
-        "python": sys.version,
+        "runner_python": sys.version,
+        "pyropdf_python": subprocess.check_output(
+            ["uv", "run", "--no-sync", "python", "-c", "import sys; print(sys.version)"],  # noqa: S607
+            cwd=ROOT,
+            text=True,
+        ).strip(),
         "oracle_python": subprocess.check_output([python, "-c", "import sys; print(sys.version)"], text=True).strip(),  # noqa: S603
         "corpus_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in CORPUS},
     }
