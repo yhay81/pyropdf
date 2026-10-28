@@ -763,3 +763,144 @@ fn the_trailer_is_a_container_for_the_depth_limit() {
     let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(1));
     assert_eq!(build(&version, &budget).unwrap().trailer(), &[1]);
 }
+
+#[test]
+fn removing_a_link_preserves_references_from_other_arrays() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("Custom", reference(6))]),
+            ),
+            (2, dict(vec![("Type", name("Page"))])),
+            (
+                3,
+                dict(vec![("Type", name("Page")), ("Annots", reference(4))]),
+            ),
+            (4, array(vec![reference(5)])),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Annot")),
+                    ("Subtype", name("Link")),
+                    ("Dest", array(vec![reference(2), name("Fit")])),
+                ]),
+            ),
+            (6, array(vec![reference(5)])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let index = apply_everywhere(&document, 2, Some(5), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(5), &[6]);
+    assert_eq!(index.targets(4), &[] as &[u32]);
+}
+
+#[test]
+fn orphan_cycles_are_freed_but_shared_cycles_stay() {
+    for shared in [false, true] {
+        let document = document_of(
+            &[
+                (1, if shared { reference(3) } else { Value::Null }),
+                (2, reference(3)),
+                (3, reference(4)),
+                (4, reference(3)),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
+        assert_eq!(&*freed, if shared { &[2][..] } else { &[2, 3, 4][..] });
+    }
+}
+
+#[test]
+fn planned_paths_and_edit_copies_pay_for_owned_bytes() {
+    let path = [Step::Key(Name::from("k".repeat(64 * 1024).as_str()))];
+    let document = document_of(&[], Dict::new());
+    let version = document.current();
+    let index = References::default();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    edits
+        .apply(&mut reads, &index, 1, &path, Rule::RemoveEntry)
+        .unwrap();
+    let error = edits
+        .apply(&mut reads, &index, 2, &path, Rule::RemoveEntry)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+
+    let value = string(&"x".repeat(1024));
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(512));
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn edit_copies_preserve_lexemes_and_bound_recursive_cloning() {
+    let source = Bytes::new(b"<< /Odd#20Key [1.000  2 0 R] /Text <0061> >>".to_vec());
+    let budget = Budget::default();
+    let value = Value::parse(&source, &budget).unwrap();
+    assert_eq!(bytes_of(&copy_for_edit(&value, &budget).unwrap()), source);
+    let mut value = Value::Null;
+    for _ in 0..65 {
+        value = array(vec![value]);
+    }
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+}
+
+proptest! {
+    #[test]
+    fn orphan_collection_matches_reachability(
+        graph in proptest::collection::vec(proptest::collection::vec(1..=8u32, 0..5), 8),
+        seeds in proptest::collection::vec(1..=8u32, 0..5),
+        candidates in proptest::collection::vec(1..=8u32, 0..5),
+    ) {
+        let objects: Vec<_> = graph.iter().enumerate().map(|(at, links)| {
+            ((at + 1) as u32, array(links.iter().copied().map(reference).collect()))
+        }).collect();
+        let document = document_of(&objects, [(Name::from("Root"), reference(1))].into_iter().collect());
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let actual = unreferenced(&index, &seeds, &candidates, &budget).unwrap();
+        // Independent fixed-size reachability oracle: first find the
+        // affected closure, then mark every surviving root's descendants.
+        let mut closure = [false; 9];
+        let mut forced = [false; 9];
+        for &number in seeds.iter().chain(&candidates) { closure[number as usize] = true; }
+        for &number in &seeds { forced[number as usize] = number != 1; }
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if closure[at + 1] {
+                    for &next in links { closure[next as usize] = true; }
+                }
+            }
+        }
+        let mut live = closure.map(|affected| !affected);
+        live[1] = true;
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if live[at + 1] && !forced[at + 1] {
+                    for &next in links {
+                        if !forced[next as usize] { live[next as usize] = true; }
+                    }
+                }
+            }
+        }
+        let expected: Vec<_> = (1..=8u32).filter(|&number| {
+            closure[number as usize] && !live[number as usize] && number != 1
+        }).collect();
+        prop_assert_eq!(&*actual, &*expected);
+    }
+}

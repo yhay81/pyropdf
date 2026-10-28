@@ -21,6 +21,7 @@
 //! error refuses the operation rather than hiding edges. The index records edges
 //! and never follows them, so reference chains and cycles cost nothing.
 
+mod copy;
 mod navigation;
 mod roles;
 mod rules;
@@ -37,6 +38,7 @@ use crate::value::{Dict, Name, Reference, Value};
 use crate::version::table::Table;
 use crate::version::{ChangeSet, Version};
 
+pub use copy::copy_for_edit;
 pub use navigation::remove_pages;
 pub use roles::Role;
 pub use rules::{Edits, Rule, unreferenced};
