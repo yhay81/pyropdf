@@ -29,7 +29,7 @@
 mod base;
 mod document;
 mod stale;
-mod table;
+pub(crate) mod table;
 mod transaction;
 
 #[cfg(test)]

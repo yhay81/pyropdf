@@ -16,6 +16,7 @@ mod error;
 pub mod index;
 pub mod memo;
 pub mod pages;
+pub mod refs;
 pub mod save;
 pub mod security;
 pub mod settle;
