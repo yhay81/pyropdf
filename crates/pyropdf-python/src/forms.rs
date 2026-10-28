@@ -3424,6 +3424,92 @@ mod appearance_tests {
     }
 
     #[test]
+    fn indexed_forms_match_fresh_walks_for_varied_edits() {
+        let mut base = MemoryBase::new(
+            [(Name::from("Root"), Value::Reference(Reference::new(1, 0)))]
+                .into_iter()
+                .collect(),
+        );
+        for (number, bytes) in [
+            (1, &b"<< /AcroForm 4 0 R >>"[..]),
+            (4, &b"<< /Fields [5 0 R 6 0 R] >>"[..]),
+            (
+                5,
+                &b"<< /FT /Tx /T (a) /Ff 0 /V (old) /Kids [] /Subtype /Widget /Rect [0 0 1 1] /AP 10 0 R >>"[..],
+            ),
+            (6, &b"<< /FT /Tx /T (b) /V (other) >>"[..]),
+            (8, &b"<< /Subtype /Widget >>"[..]),
+            (9, &b"(indirect)"[..]),
+            (10, &b"<< /N 11 0 R >>"[..]),
+            (11, &b"<< /Length 3 >>\nstream\nq Q\nendstream"[..]),
+        ] {
+            base.insert(Reference::new(number, 0), Bytes::new(bytes));
+        }
+        let document = Document::new(Arc::new(base), None);
+        let budget = Budget::default();
+        let before = document.current();
+        let index = FillIndex::build(&before, &budget).unwrap();
+        let mut transaction = document.begin();
+        let mut seed = 0x52a3_49d1_u64;
+        let mut reused = 0;
+        for _ in 0..2048 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let name = if seed & 1 == 0 { "a" } else { "renamed" };
+            let kind = if seed & 2 == 0 { "Tx" } else { "Btn" };
+            let flags = if seed & 4 == 0 { 0 } else { 32_768 };
+            let kids = if seed & 8 == 0 { "[]" } else { "[8 0 R]" };
+            let subtype = if seed & 16 == 0 { "/Widget" } else { "/Link" };
+            let rectangle = if seed & 32 == 0 {
+                "/Rect [0 0 1 1]"
+            } else {
+                ""
+            };
+            let values = ["null", "(x)", "9 0 R", "[(a) (b)]", "123", "<FEFF4E2D>"];
+            let value = values[((seed >> 8) as usize) % values.len()];
+            let bytes = format!("<< /FT /{kind} /T ({name}) /Ff {flags} /V {value} /Kids {kids} /Subtype {subtype} {rectangle} /AP 10 0 R >>").into_bytes();
+            let field = Value::parse(&Bytes::new(bytes), &budget).unwrap();
+            let savepoint = transaction.savepoint();
+            transaction.write(5, &field, &budget).unwrap();
+            let after = transaction.snapshot();
+            let updated = index.update(&before, &after, &budget).unwrap();
+            reused += usize::from(Arc::ptr_eq(&index.topology, &updated.topology));
+            let fresh = walk(&mut Reads::new(&after, &budget)).unwrap();
+            assert_eq!(updated.topology.form.fields.len(), fresh.fields.len());
+            for (at, (indexed, actual)) in updated
+                .topology
+                .form
+                .fields
+                .iter()
+                .zip(&fresh.fields)
+                .enumerate()
+            {
+                assert_eq!(
+                    (
+                        &indexed.name,
+                        indexed.id,
+                        indexed.kind,
+                        indexed.flags,
+                        &indexed.widgets
+                    ),
+                    (
+                        &actual.name,
+                        actual.id,
+                        actual.kind,
+                        actual.flags,
+                        &actual.widgets
+                    )
+                );
+                assert_eq!(
+                    updated.values.leaves.get(at as u32).unwrap().as_deref(),
+                    actual.value.as_deref()
+                );
+            }
+            transaction.rollback(savepoint);
+        }
+        assert!(reused > 0 && reused < 2048);
+    }
+
+    #[test]
     #[ignore = "measurement run by evidence/form-fill-cost/measure_index.py"]
     fn measure_fill_index_updates() {
         use std::hint::black_box;

@@ -42,3 +42,5 @@ two later runs, which agreed within 0.1 ms.
 ## Form-size scaling
 
 `field_scale.py` varies the number of fields while keeping one page and a nonempty normal appearance for every widget. It reports the median of seven warm fills with ordinary history, no history, and an open transaction. It also measures an external field edit and the next fill separately. `results/review-valid-appearance-macos-arm64.md` records the corrected pre-index baseline; `results/indexed-fill-macos-arm64.md` records the indexed result. The earlier `review-field-scale.md` used an empty stream and is retained only as historical context. The initial index still walks the form; a structural change may require it to be built again.
+
+`results/differential-macos-arm64.md` compares 144 generated forms and 1,008 observations against the reviewed pre-index fill implementation, including external edits, undo, redo and transaction rollback.
