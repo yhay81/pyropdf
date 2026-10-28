@@ -28,6 +28,7 @@
 
 mod base;
 mod document;
+mod stale;
 mod table;
 mod transaction;
 
@@ -40,7 +41,8 @@ use std::sync::{Arc, OnceLock};
 use base::{Origin, VALUE_BYTES};
 use table::Table;
 
-use crate::settle::{Mark, Stale, Structure};
+use crate::settle::{Mark, Structure};
+pub(crate) use stale::Stale;
 
 pub use base::{Base, MemoryBase};
 pub use document::{Document, HistoryStatus};
@@ -135,9 +137,7 @@ impl Version {
 
     /// The version record and its change set, excluding shared objects.
     fn record_size(&self) -> u64 {
-        Self::OVERHEAD
-            + self.written.objects.len() as u64 * size_of::<u32>() as u64
-            + self.stale.marks().len() as u64 * Stale::MARK_SIZE
+        Self::OVERHEAD + self.written.objects.len() as u64 * size_of::<u32>() as u64
     }
 
     /// Returns the first version of a document from `origin`: its base,
@@ -240,9 +240,14 @@ impl Version {
     }
 
     /// Returns the structures that the version leaves stale, sorted.
-    #[must_use]
-    pub fn stale(&self) -> &[Mark] {
+    pub fn stale(&self) -> impl Iterator<Item = Mark> + '_ {
         self.stale.marks()
+    }
+
+    /// Returns whether this version leaves any dependent structure stale.
+    #[must_use]
+    pub fn has_stale(&self) -> bool {
+        self.stale.any(crate::settle::Scope::Save)
     }
 
     /// Returns the trailer: the one that a transaction wrote last, or the
@@ -425,6 +430,7 @@ impl ChangeSet {
 /// What two versions of one document hold differently.
 struct Difference {
     changes: ChangeSet,
+    stale: bool,
     /// The bytes of the chunks, the branches, and the written objects that
     /// only the first version holds.
     first: u64,
@@ -468,12 +474,18 @@ fn difference(
         first_bytes = first_bytes.saturating_add(first.trailer.as_ref().map_or(0, |t| t.size()));
         second_bytes = second_bytes.saturating_add(second.trailer.as_ref().map_or(0, |t| t.size()));
     }
+    let (stale, stale_bytes) = first.stale.diff(&second.stale, budget)?;
     Ok(Difference {
+        stale,
         changes: ChangeSet {
             objects: objects.into_vec().into_boxed_slice(),
             trailer,
         },
-        first: first_bytes.saturating_add(unshared.first),
-        second: second_bytes.saturating_add(unshared.second),
+        first: first_bytes
+            .saturating_add(unshared.first)
+            .saturating_add(stale_bytes.first),
+        second: second_bytes
+            .saturating_add(unshared.second)
+            .saturating_add(stale_bytes.second),
     })
 }
