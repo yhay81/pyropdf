@@ -270,6 +270,7 @@ class Document:
         cross_reference: Literal["table", "stream"] | None = None,
         object_streams: bool = False,
         renumber: bool = False,
+        dedupe: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -332,6 +333,15 @@ class Document:
         becomes null. An encrypted save encrypts each object with the key
         of its new number. The document in memory keeps its numbers, and an
         incremental save, which keeps the opened file's, refuses it.
+
+        ``dedupe=True`` merges each set of identical objects into the one
+        with the smallest number and points every reference to it; streams
+        merge when their dictionaries and data are identical. Pages,
+        annotations, form fields, structure elements, outline items,
+        optional-content groups, the objects that the trailer names, and
+        objects in cycles of references never merge. It needs
+        ``prune=True``, and so a full save. The document in memory keeps its
+        objects.
         """
         self._ensure_open()
         options = _save_options(
@@ -344,6 +354,7 @@ class Document:
             cross_reference=cross_reference,
             object_streams=object_streams,
             renumber=renumber,
+            dedupe=dedupe,
         )
         arg = _encryption_arg(encryption)
         _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
@@ -362,6 +373,7 @@ class Document:
         cross_reference: Literal["table", "stream"] | None = None,
         object_streams: bool = False,
         renumber: bool = False,
+        dedupe: bool = False,
     ) -> bytes:
         """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
@@ -380,6 +392,7 @@ class Document:
             cross_reference=cross_reference,
             object_streams=object_streams,
             renumber=renumber,
+            dedupe=dedupe,
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
@@ -585,11 +598,13 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     cross_reference: object,
     object_streams: bool,
     renumber: bool,
-) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool]:
+    dedupe: bool,
+) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool]:
     """Check the save options, and return them as the core's save methods take them.
 
     They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
-    ``cross_reference_stream``, ``object_streams``, and ``renumber``.
+    ``cross_reference_stream``, ``object_streams``, ``renumber``, and
+    ``dedupe``.
     """
     flags = {
         "incremental": incremental,
@@ -599,6 +614,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         "keep_id": keep_id,
         "object_streams": object_streams,
         "renumber": renumber,
+        "dedupe": dedupe,
     }
     for name, value in flags.items():
         _validate_bool(name, value)
@@ -615,12 +631,16 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
             cross_reference=cross_reference,
             object_streams=object_streams,
             renumber=renumber,
+            dedupe=dedupe,
         )
     if compress and decompress:
         msg = "decompress=True needs compress=False, which would compress the streams again"
         raise ValueError(msg)
     if cross_reference not in (None, "table", "stream"):
         msg = f"cross_reference must be 'table', 'stream', or None: {cross_reference!r}"
+        raise ValueError(msg)
+    if dedupe and not prune:
+        msg = "dedupe=True needs prune=True, which leaves the merged objects out"
         raise ValueError(msg)
     if object_streams and cross_reference == "table":
         msg = "object_streams=True writes a cross-reference stream, so it needs cross_reference='stream' or None"
@@ -634,16 +654,18 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         stream,
         object_streams,
         renumber,
+        dedupe,
     )
 
 
-def _refuse_full_save_options(
+def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keyword-only
     *,
     prune: bool,
     decompress: bool,
     cross_reference: object,
     object_streams: bool,
     renumber: bool,
+    dedupe: bool,
 ) -> None:
     """Raise :class:`ValueError` for an option that an incremental save refuses, as only a full save takes it."""
     kept = {
@@ -651,6 +673,7 @@ def _refuse_full_save_options(
         "decompress": (decompress, "the streams"),
         "cross_reference and object_streams": (cross_reference is not None or object_streams, "the form"),
         "renumber": (renumber, "the numbers"),
+        "dedupe": (dedupe, "the objects"),
     }
     for name, (given, what) in kept.items():
         if given:
