@@ -15,7 +15,9 @@ Intended differences from pyropdf:
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -223,14 +225,15 @@ def test_named_destination_tree_rejects_excessive_depth() -> None:
     objects[38] = "<< /Names [(target) [3 0 R /Fit]] >>"
 
     doc = pyropdf.open(_build_named_dest_tree_fixture(objects))
-    with pytest.raises(pyropdf.PdfError, match="32-level safety limit"):
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(doc.pages[0].links)
+    assert caught.value.code == "named_destination_depth"
 
 
 def test_named_destination_tree_rejects_excessive_entries() -> None:
     pairs = " ".join(f"(key{index}) [3 0 R /Fit]" for index in range(MAX_NAMED_DEST_ENTRIES + 1))
     doc = pyropdf.open(_build_named_dest_tree_fixture({6: f"<< /Names [{pairs}] >>"}))
-    with pytest.raises(pyropdf.LimitError, match="65536-entry safety limit") as caught:
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(doc.pages[0].links)
     assert caught.value.code == "named_destination_count"
 
@@ -238,7 +241,7 @@ def test_named_destination_tree_rejects_excessive_entries() -> None:
 def test_named_destination_tree_rejects_excessive_nodes() -> None:
     kids = "<< >> " * MAX_NAMED_DEST_NODES
     doc = pyropdf.open(_build_named_dest_tree_fixture({6: f"<< /Kids [{kids}] >>"}))
-    with pytest.raises(pyropdf.LimitError, match="65536-node safety limit") as caught:
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(doc.pages[0].links)
     assert caught.value.code == "named_destination_count"
 
@@ -253,16 +256,16 @@ def test_named_destination_tree_rejects_excessive_edges() -> None:
             }
         )
     )
-    with pytest.raises(pyropdf.LimitError, match="131072-edge safety limit") as caught:
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(doc.pages[0].links)
-    assert caught.value.code == "named_destination_count"
+    assert caught.value.code == "named_destination_edge_count"
 
 
 def test_named_destination_tree_rejects_excessive_key_bytes() -> None:
     key = "x" * 1024
     pairs = f"({key}) [3 0 R /Fit] " * (MAX_NAMED_DEST_TEXT_BYTES // len(key) + 1)
     doc = pyropdf.open(_build_named_dest_tree_fixture({6: f"<< /Names [{pairs}] >>"}))
-    with pytest.raises(pyropdf.LimitError, match="16777216-byte safety limit") as caught:
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(doc.pages[0].links)
     assert caught.value.code == "named_destination_text_size"
 
@@ -666,8 +669,9 @@ def test_links_empty_on_fresh_page() -> None:
 def test_link_reads_reject_excessive_array_without_partial_output() -> None:
     page = _one_page(f"[{'5 0 R ' * 4097}]", {5: URI_LINK}).pages[0]
 
-    with pytest.raises(pyropdf.PdfError, match="4096-entry safety limit"):
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(page.links)
+    assert caught.value.code == "annotation_count"
 
 
 def test_link_reads_reject_excessive_uri_text() -> None:
@@ -678,16 +682,18 @@ def test_link_reads_reject_excessive_uri_text() -> None:
 
     # Annotation reads leave links to page.links, which reads the action.
     assert len(page.annotations) == 0
-    with pytest.raises(pyropdf.PdfError, match=r"URI text.*1048576-byte safety limit"):
+    with pytest.raises(pyropdf.LimitError) as caught:
         list(page.links)
+    assert caught.value.code == "annotation_text_size"
 
 
 def test_link_add_refuses_over_limit_page_atomically() -> None:
     doc = _one_page(f"[{'5 0 R ' * 4096}]", {5: "<< /Type /Annot /Subtype /Text /Rect [1 1 10 10] >>"})
     before = doc.to_bytes()
 
-    with pytest.raises(pyropdf.PdfError, match="4096-entry safety limit"):
+    with pytest.raises(pyropdf.LimitError) as caught:
         doc.pages[0].links.add((10, 10, 20, 20), "https://example.com")
+    assert caught.value.code == "annotation_count"
 
     assert doc.to_bytes() == before
 
@@ -711,3 +717,58 @@ def test_link_add_at_the_text_boundary_remains_readable() -> None:
 
     assert doc.pages[0].links[0].target == uri
     assert doc.pages[0].links[0].target == uri
+
+
+def test_waiting_link_additions_keep_both_writers() -> None:
+    page = pyropdf.Document().pages.new()
+    started = Event()
+
+    def add() -> None:
+        started.set()
+        page.links.add((20, 20, 30, 30), "https://second.example")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("First link"):
+            future = pool.submit(add)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            page.links.add((1, 1, 10, 10), "https://first.example")
+        future.result(timeout=10)
+    assert [link.target for link in page.links] == ["https://first.example", "https://second.example"]
+
+
+def test_waiting_link_edits_keep_the_first_writers_rectangle() -> None:
+    page = pyropdf.Document().pages.new()
+    page.links.add((1, 1, 10, 10), "https://first.example")
+    link = page.links[0]
+    started = Event()
+
+    def edit() -> None:
+        started.set()
+        link.target = "https://second.example"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with page.document.transaction("Move link"):
+            future = pool.submit(edit)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            link.rect = (20, 20, 30, 30)
+        future.result(timeout=10)
+    assert tuple(link.rect) == (20, 20, 30, 30)
+    assert link.target == "https://second.example"
+
+
+def test_oversized_link_text_is_refused_before_encoding() -> None:
+    class Unencoded(str):
+        __slots__ = ()
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            msg = "An oversized link must not allocate an encoded copy"
+            raise AssertionError(msg)
+
+    page = pyropdf.Document().pages.new()
+    with pytest.raises(pyropdf.LimitError) as caught:
+        page.links.add((1, 1, 10, 10), Unencoded("x" * (MIB + 1)))
+    assert caught.value.code == "annotation_input_size"

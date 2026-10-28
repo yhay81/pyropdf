@@ -275,3 +275,21 @@ fn a_page_reads_what_it_reaches_but_not_the_other_pages() {
     assert!(read.trailer());
     assert_eq!(read.objects(), [1, 2, 3, 4, 5, 6, 8, 9, 11, 12, 13]);
 }
+
+#[test]
+fn a_page_read_set_fits_a_small_budget_with_sparse_object_numbers() {
+    let budget = Budget::default();
+    let index = Index::open(Bytes::new(pdf_with("")), &budget).unwrap();
+    let document = Document::new(Arc::new(FileBase::new(index, &budget).unwrap()), None);
+    let mut transaction = document.begin();
+    transaction
+        .write(u32::MAX - 1, &pyropdf_store::value::Value::Null, &budget)
+        .unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+
+    let small = Budget::default().with_limit(LimitCode::MemorySize, Some(65_536));
+    let mut reads = Reads::new(&version, &small);
+    read_page(&mut reads, pages.get(0).unwrap()).unwrap();
+    assert_eq!(reads.finish().unwrap().objects(), [1, 2, 3, 4, 5]);
+}

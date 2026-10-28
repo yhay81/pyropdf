@@ -28,21 +28,7 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 const A4: (f64, f64) = (595.0, 842.0);
 
 pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    index_of(document, document.reading_parent()?)
-}
-
-/// Returns the page index of the version that an edit of annotations reads,
-/// as [`_Document::editing_parent`] gives it.
-pub(crate) fn editing_index(
-    document: &_Document,
-) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    index_of(document, document.editing_parent()?)
-}
-
-fn index_of(
-    document: &_Document,
-    (version, parent): (Arc<Version>, Option<Arc<Version>>),
-) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
+    let (version, parent) = document.reading_parent()?;
     let budget = document.budget();
     let index = match &parent {
         // An open transaction that has written nothing reads its parent.
