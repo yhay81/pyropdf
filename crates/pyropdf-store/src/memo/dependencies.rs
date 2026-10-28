@@ -113,31 +113,31 @@ impl ReadDependencies {
         trailer_changed: bool,
         budget: &'b Budget,
     ) -> Result<BudgetVec<'b, u32>> {
-        let mut keys = BudgetVec::new(budget);
+        let mut found = Table::new();
         for &number in changed {
             budget.poll()?;
             if let Some(dependents) = self.objects.get(number) {
                 for (key, ()) in dependents.iter() {
                     budget.poll()?;
-                    keys.try_push(key)?;
+                    if found.get(key).is_none() {
+                        found.insert(key, (), budget)?;
+                    }
                 }
             }
         }
         if trailer_changed {
             for (key, ()) in self.trailer.iter() {
                 budget.poll()?;
-                keys.try_push(key)?;
+                if found.get(key).is_none() {
+                    found.insert(key, (), budget)?;
+                }
             }
         }
-        keys.sort_unstable();
-        let mut kept = 0;
-        for at in 0..keys.len() {
-            if kept == 0 || keys[kept - 1] != keys[at] {
-                keys[kept] = keys[at];
-                kept += 1;
-            }
+        let mut keys = BudgetVec::new(budget);
+        for (key, ()) in found.iter() {
+            budget.poll()?;
+            keys.try_push(key)?;
         }
-        keys.truncate(kept);
         budget.poll()?;
         Ok(keys)
     }
@@ -235,6 +235,12 @@ mod tests {
         let found = index.affected(&[99], false, &budget).unwrap();
         assert_eq!(found.len(), 3_999);
         assert!(!found.contains(&7));
+        let limited = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+        let changed = vec![99; 100];
+        assert_eq!(
+            index.affected(&changed, false, &limited).unwrap().len(),
+            3_999
+        );
     }
 
     #[test]
