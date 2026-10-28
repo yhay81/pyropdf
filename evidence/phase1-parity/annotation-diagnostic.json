@@ -1,0 +1,26 @@
+{
+  "document": "pdfium-links-highlights-annots.pdf",
+  "page": 1,
+  "highlight_pdf_rect": [
+    293.0,
+    530.0,
+    349.0,
+    542.0
+  ],
+  "highlight_has_appearance": false,
+  "differing_pixel_bounds_inclusive": [
+    293,
+    250,
+    348,
+    261
+  ],
+  "default_sha256": [
+    "3bd3c2caf876ee0664ed99518f3146410da7561fabb90889aae2b3d1c9652755",
+    "387018d6967b3bf12612c84ac5f35e9d6756eaa895116b0eaadc271dbe67383f"
+  ],
+  "annotations_disabled_sha256": [
+    "387018d6967b3bf12612c84ac5f35e9d6756eaa895116b0eaadc271dbe67383f",
+    "387018d6967b3bf12612c84ac5f35e9d6756eaa895116b0eaadc271dbe67383f"
+  ],
+  "annotations_disabled_equal": true
+}

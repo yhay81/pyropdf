@@ -26,12 +26,12 @@ mod shapes;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use pyropdf_store::Result;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::{Error, Result};
 
 /// The most points that one annotation's geometry holds, a squiggly line's
 /// zigzag included.
@@ -145,9 +145,9 @@ impl Settler for AppearanceSettler {
             if form.is_none() && rect.is_none() {
                 continue;
             }
+            charge_copy(CopyPart::Dict(dict), budget)?;
             let mut dict = dict.clone();
             if let Some(form) = form {
-                budget.charge(LimitCode::MemorySize, form.data().len() as u64)?;
                 let reference = transaction.allocate()?;
                 transaction.write(reference.number(), &Value::from(form), budget)?;
                 let mut appearances = Dict::new();
@@ -171,12 +171,29 @@ pub struct Reader<'a> {
     pub budget: &'a Budget,
 }
 
-impl Reader<'_> {
-    /// Follows `value` through at most [`MAX_CHAIN`] references; a missing
-    /// object, or a longer chain, reads as null.
-    fn resolve(&self, value: &Value) -> Result<Arc<Value>> {
+/// Resolving a direct value borrows it; only indirect objects need an Arc.
+enum Resolved<'a> {
+    Borrowed(&'a Value),
+    Shared(Arc<Value>),
+}
+
+impl std::ops::Deref for Resolved<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Shared(value) => value,
+        }
+    }
+}
+
+impl<'b> Reader<'b> {
+    /// Follows at most MAX_CHAIN references. Missing objects read as null;
+    /// exceeding the traversal bound is an error, not missing geometry.
+    fn resolve<'v>(&self, value: &'v Value) -> Result<Resolved<'v>> {
         let &Value::Reference(mut reference) = value else {
-            return Ok(Arc::new(value.clone()));
+            return Ok(Resolved::Borrowed(value));
         };
         for _ in 0..MAX_CHAIN {
             let Some(object) = self
@@ -184,17 +201,19 @@ impl Reader<'_> {
                 .get(reference.number(), self.budget)?
                 .filter(|object| object.generation() == reference.generation())
             else {
-                break;
+                return Ok(Resolved::Borrowed(&Value::Null));
             };
             match &**object.value() {
                 Value::Reference(next) => reference = *next,
-                _ => return Ok(Arc::clone(object.value())),
+                _ => return Ok(Resolved::Shared(Arc::clone(object.value()))),
             }
         }
-        Ok(Arc::new(Value::Null))
+        Err(Error::malformed(
+            "an annotation appearance reference chain is too long",
+        ))
     }
 
-    fn entry(&self, dict: &Dict, key: &str) -> Result<Option<Arc<Value>>> {
+    fn entry<'v>(&self, dict: &'v Dict, key: &str) -> Result<Option<Resolved<'v>>> {
         dict.get(key)
             .map(|value| self.resolve(value))
             .transpose()
@@ -216,14 +235,18 @@ impl Reader<'_> {
 
     fn name(&self, dict: &Dict, key: &str) -> Result<Option<Box<[u8]>>> {
         Ok(match self.entry(dict, key)?.as_deref() {
-            Some(Value::Name(name)) => Some(name.as_bytes().into()),
+            Some(Value::Name(name)) => {
+                let mut bytes = BudgetVec::new(self.budget);
+                bytes.try_extend_from_slice(name.as_bytes())?;
+                Some(bytes.into_vec().into_boxed_slice())
+            }
             _ => None,
         })
     }
 
     /// Reads up to `max` numbers of the array `value`, or `None` for
     /// anything else.
-    fn numbers_of(&self, value: &Value, max: usize) -> Result<Option<Vec<f64>>> {
+    fn numbers_of(&self, value: &Value, max: usize) -> Result<Option<BudgetVec<'b, f64>>> {
         let resolved = self.resolve(value)?;
         let Value::Array(items) = &*resolved else {
             return Ok(None);
@@ -231,17 +254,18 @@ impl Reader<'_> {
         if items.len() > max {
             return Ok(None);
         }
-        let mut numbers = Vec::with_capacity(items.len());
+        let mut numbers = BudgetVec::new(self.budget);
+        numbers.try_reserve_exact(items.len())?;
         for item in items.iter() {
             match self.number(item)? {
-                Some(number) => numbers.push(number),
+                Some(number) => numbers.try_push(number)?,
                 None => return Ok(None),
             }
         }
         Ok(Some(numbers))
     }
 
-    fn numbers(&self, dict: &Dict, key: &str, max: usize) -> Result<Option<Vec<f64>>> {
+    fn numbers(&self, dict: &Dict, key: &str, max: usize) -> Result<Option<BudgetVec<'b, f64>>> {
         match dict.get(key) {
             Some(value) => self.numbers_of(value, max),
             None => Ok(None),
@@ -261,10 +285,12 @@ impl Reader<'_> {
     /// Reads a `/C` or `/IC` array as RGB: gray, RGB, or CMYK converted
     /// naively, as MuPDF does; `None` for an empty or unusable array.
     fn color(&self, dict: &Dict, key: &str) -> Result<Option<(f64, f64, f64)>> {
-        let Some(values) = self.numbers(dict, key, 4)? else {
+        let Some(mut values) = self.numbers(dict, key, 4)? else {
             return Ok(None);
         };
-        let values: Vec<f64> = values.into_iter().map(|v| v.clamp(0.0, 1.0)).collect();
+        for value in values.as_mut_slice() {
+            *value = value.clamp(0.0, 1.0);
+        }
         Ok(match values[..] {
             [gray] => Some((gray, gray, gray)),
             [red, green, blue] => Some((red, green, blue)),
@@ -301,25 +327,32 @@ impl Reader<'_> {
             .copied())
     }
 
-    /// Reads the quadrilaterals of text markup, each `[TL, TR, BL, BR]` in
-    /// user space, or `None` for malformed geometry or more than
-    /// [`MAX_QUADS`] of them or, for a squiggly line, more than
-    /// [`MAX_ANNOTATION_POINTS`] zigzag points.
-    fn quads(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<Vec<Quad>>> {
-        let Some(values) = self.numbers(dict, "QuadPoints", 8 * MAX_QUADS)? else {
+    /// Reads text-markup quadrilaterals, rejecting excessive geometry.
+    fn quads(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<BudgetVec<'b, Quad>>> {
+        let Some(value) = self.entry(dict, "QuadPoints")? else {
+            return Ok(None);
+        };
+        if let Value::Array(items) = &*value {
+            self.budget.check(
+                LimitCode::AnnotationQuadCount,
+                items.len().div_ceil(8) as u64,
+            )?;
+        }
+        let Some(values) = self.numbers_of(&value, 8 * MAX_QUADS)? else {
             return Ok(None);
         };
         if values.is_empty() || !values.len().is_multiple_of(8) {
             return Ok(None);
         }
-        let quads: Vec<Quad> = values
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|q| [(q[0], q[1]), (q[2], q[3]), (q[4], q[5]), (q[6], q[7])])
-            .collect();
-        if subtype == b"Squiggly" && zigzag_points(&quads) > MAX_ANNOTATION_POINTS {
-            return Ok(None);
+        let mut quads = BudgetVec::new(self.budget);
+        for q in values.as_chunks::<8>().0 {
+            quads.try_push([(q[0], q[1]), (q[2], q[3]), (q[4], q[5]), (q[6], q[7])])?;
+        }
+        if subtype == b"Squiggly" {
+            self.budget.check(
+                LimitCode::AnnotationPointCount,
+                zigzag_points(&quads) as u64,
+            )?;
         }
         Ok(Some(quads))
     }
@@ -338,8 +371,9 @@ impl Reader<'_> {
             .unwrap_or(1.0);
             let dashed = self.name(style, "S")?.as_deref() == Some(b"D".as_slice());
             let dashes = if dashed {
-                self.numbers(style, "D", MAX_BORDER_DASHES)?
+                self.dashes(style.get("D"))?
                     .filter(|dashes| valid_dashes(dashes))
+                    .map(BudgetVec::into_vec)
                     .unwrap_or_else(|| vec![3.0])
             } else {
                 Vec::new()
@@ -347,6 +381,16 @@ impl Reader<'_> {
             return Ok(Some(Border { width, dashes }));
         }
         self.legacy_border(dict)
+    }
+
+    fn dashes(&self, value: Option<&Value>) -> Result<Option<BudgetVec<'b, f64>>> {
+        let Some(value) = value else { return Ok(None) };
+        let resolved = self.resolve(value)?;
+        if let Value::Array(items) = &*resolved {
+            self.budget
+                .check(LimitCode::AnnotationDashCount, items.len() as u64)?;
+        }
+        self.numbers_of(&resolved, MAX_BORDER_DASHES)
     }
 
     /// Reads the `[h v width dashes]` array of `/Border`.
@@ -365,8 +409,8 @@ impl Reader<'_> {
             return Ok(None);
         };
         let dashes = match items.get(3) {
-            Some(pattern) => match self.numbers_of(pattern, MAX_BORDER_DASHES)? {
-                Some(dashes) if valid_dashes(&dashes) => dashes,
+            Some(pattern) => match self.dashes(Some(pattern))? {
+                Some(dashes) if valid_dashes(&dashes) => dashes.into_vec(),
                 _ => return Ok(None),
             },
             None => Vec::new(),
@@ -436,7 +480,7 @@ impl Reader<'_> {
     /// (`/L`), polygon or polyline (`/Vertices`), or ink annotation
     /// (`/InkList`), resolved, or `None` for another subtype or a missing
     /// array.
-    fn point_array(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<Arc<Value>>> {
+    fn point_array<'v>(&self, dict: &'v Dict, subtype: &[u8]) -> Result<Option<Resolved<'v>>> {
         let key = match subtype {
             b"Line" => "L",
             b"Polygon" | b"PolyLine" => "Vertices",
@@ -459,62 +503,69 @@ impl Reader<'_> {
             return Ok(0);
         };
         if subtype != b"Ink" {
-            return Ok(items.len() / 2);
+            return Ok(items.len().div_ceil(2));
         }
-        let mut numbers = items.len();
+        // Empty or malformed strokes still count as visited containers.
+        self.budget
+            .check(LimitCode::AnnotationPointCount, items.len() as u64)?;
+        let mut points = 0usize;
         for stroke in items.iter() {
+            self.budget.poll()?;
             if let Value::Array(stroke) = &*self.resolve(stroke)? {
-                numbers = numbers.saturating_add(stroke.len());
+                points = points.saturating_add(stroke.len().div_ceil(2));
+                self.budget
+                    .check(LimitCode::AnnotationPointCount, points as u64)?;
             }
         }
-        Ok(numbers / 2)
+        Ok(points)
     }
 
-    /// Reads the point lists of a line, polygon, polyline, or ink
-    /// annotation in user space, or `None` when the geometry is missing,
-    /// malformed, or holds more than [`MAX_ANNOTATION_POINTS`] points.
+    /// Reads complete point lists. Malformed geometry is absent; excessive
+    /// geometry refuses before allocation rather than appearing absent.
     pub fn point_lists(&self, dict: &Dict, subtype: &[u8]) -> Result<Option<PointLists>> {
+        self.budget.check(
+            LimitCode::AnnotationPointCount,
+            self.point_count(dict, subtype)? as u64,
+        )?;
         let Some(array) = self.point_array(dict, subtype)? else {
             return Ok(None);
         };
         let Value::Array(items) = &*array else {
             return Ok(None);
         };
-        let mut left = MAX_ANNOTATION_POINTS;
-        let mut pairs = |value: &Value| -> Result<Option<Vec<(f64, f64)>>> {
-            let Some(numbers) = self.numbers_of(value, 2 * left)? else {
+        let pairs = |value: &Value| -> Result<Option<Vec<(f64, f64)>>> {
+            let Some(numbers) = self.numbers_of(value, 2 * MAX_ANNOTATION_POINTS)? else {
                 return Ok(None);
             };
             if !numbers.len().is_multiple_of(2) {
                 return Ok(None);
             }
-            left -= numbers.len() / 2;
-            Ok(Some(
-                numbers
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|&[x, y]| (x, y))
-                    .collect(),
-            ))
+            let mut points = BudgetVec::new(self.budget);
+            for &[x, y] in numbers.as_chunks::<2>().0 {
+                self.budget.poll()?;
+                points.try_push((x, y))?;
+            }
+            Ok(Some(points.into_vec()))
         };
+        let mut strokes = BudgetVec::new(self.budget);
         if subtype != b"Ink" {
             if subtype == b"Line" && items.len() != 4 {
                 return Ok(None);
             }
-            return Ok(pairs(&array)?.map(|points| vec![points]));
-        }
-        if items.len() > MAX_ANNOTATION_POINTS {
-            return Ok(None);
-        }
-        let mut strokes = Vec::with_capacity(items.len());
-        for stroke in items.iter() {
-            match pairs(stroke)? {
-                Some(points) => strokes.push(points),
-                None => return Ok(None),
+            let Some(points) = pairs(&array)? else {
+                return Ok(None);
+            };
+            strokes.try_push(points)?;
+        } else {
+            for stroke in items.iter() {
+                self.budget.poll()?;
+                let Some(points) = pairs(stroke)? else {
+                    return Ok(None);
+                };
+                strokes.try_push(points)?;
             }
         }
-        Ok(Some(strokes))
+        Ok(Some(strokes.into_vec()))
     }
 }
 
@@ -529,7 +580,7 @@ pub fn zigzag_points(quads: &[Quad]) -> usize {
             if length.is_finite() {
                 squiggly_segments(length).saturating_add(1)
             } else {
-                0
+                usize::MAX
             }
         })
         .fold(0, usize::saturating_add)
@@ -601,7 +652,7 @@ impl Paint {
 /// the annotation's rectangle in user space, and the graphics state that
 /// paints it.
 pub struct Appearance {
-    content: Vec<u8>,
+    content: Bytes,
     size: (f64, f64),
     rect: [f64; 4],
     /// Whether the rectangle follows the geometry, as that of text markup,
@@ -644,7 +695,7 @@ impl Appearance {
             resources.insert(Name::from("ExtGState"), Value::Dict(states));
         }
         dict.insert(Name::from("Resources"), Value::Dict(resources));
-        Stream::new(dict, Bytes::new(self.content.clone()))
+        Stream::new(dict, self.content.clone())
     }
 }
 
@@ -661,7 +712,9 @@ enum Geometry {
 /// missing or malformed.
 fn geometry(reader: &Reader<'_>, dict: &Dict, subtype: &[u8]) -> Result<Option<Geometry>> {
     Ok(if is_text_markup(subtype) {
-        reader.quads(dict, subtype)?.map(Geometry::Quads)
+        reader
+            .quads(dict, subtype)?
+            .map(|quads| Geometry::Quads(quads.into_vec()))
     } else if has_points(subtype) {
         reader.point_lists(dict, subtype)?.map(Geometry::Points)
     } else {
@@ -711,7 +764,13 @@ fn fit(
     if reader.line_endings(dict)? != [0, 0] {
         pad += 2.0 * ending_size(width);
     }
-    Ok(Some([x0 - pad, y0 - pad, x1 + pad, y1 + pad]))
+    let rect = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+    if !rect.iter().all(|value| value.is_finite()) {
+        return Err(Error::malformed(
+            "an annotation fitted rectangle is nonfinite",
+        ));
+    }
+    Ok(Some(rect))
 }
 
 /// Returns the rectangle that the geometry of the annotation `dict` gives
@@ -754,6 +813,13 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         return Ok(None);
     }
     let size = (x1 - x0, y1 - y0);
+    if !(size.0.is_finite() && size.1.is_finite()) {
+        return Err(Error::malformed(
+            "an annotation appearance has nonfinite dimensions",
+        ));
+    }
+    // The fixed-size form dictionary, resources, graphics state, and AP link.
+    reader.budget.charge(LimitCode::MemorySize, 4096)?;
     let Some(alpha) = reader.opacity(dict)? else {
         return Ok(None);
     };
@@ -770,7 +836,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         None if &*subtype == b"Highlight" && dict.get("BM").is_none() => Some("Multiply"),
         None => None,
     };
-    let mut canvas = Canvas::new(size.1);
+    let mut canvas = Canvas::new(size.1, reader.budget);
     if alpha < 1.0 || blend.is_some() {
         canvas.out.push_str("/G0 gs\n");
     }
@@ -795,14 +861,14 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
                 size,
                 insets,
                 intensity,
-            );
+            )?;
         }
         (b"Highlight", Geometry::Quads(quads)) => {
             if let Some(color) = paint.stroke {
                 for quad in quads {
                     // QuadPoints list the corners TL, TR, BL, BR.
                     let corners = [quad[0], quad[1], quad[3], quad[2]].map(to_canvas);
-                    let coordinates: Vec<f64> = corners.iter().flat_map(|&(x, y)| [x, y]).collect();
+                    let coordinates = corners.map(|(x, y)| [x, y]).as_flattened().to_owned();
                     canvas.path("mlllh", &coordinates);
                     canvas.fill(color);
                 }
@@ -812,11 +878,13 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
             // Text-markup lines are one point wide, whatever the border.
             if let Some(color) = paint.stroke {
                 for quad in quads {
-                    let Some(line) = markup_line(&subtype, *quad) else {
+                    let Some(line) = markup_line(&subtype, *quad, reader.budget)? else {
                         continue;
                     };
-                    let (operators, coordinates) = shapes::polyline(&line, to_canvas);
-                    canvas.path(&operators, &coordinates);
+                    for (index, &point) in line.iter().enumerate() {
+                        let (x, y) = to_canvas(point);
+                        canvas.path(if index == 0 { "m" } else { "l" }, &[x, y]);
+                    }
                     canvas.stroke(color, 1.0, 0, 0, &[]);
                 }
             }
@@ -832,14 +900,14 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
                 intensity,
                 endings,
                 to_canvas,
-            ) {
+            )? {
                 return Ok(None);
             }
         }
         (_, Geometry::Rect) => return Ok(None),
     }
     Ok(Some(Appearance {
-        content: canvas.out.into_bytes(),
+        content: Bytes::new(canvas.out.finish()?),
         size,
         rect,
         fitted: fitted.is_some(),
@@ -850,22 +918,32 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
 }
 
 fn midpoint(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {
-    ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0)
+    (a.0 / 2.0 + b.0 / 2.0, a.1 / 2.0 + b.1 / 2.0)
 }
 
 /// Returns the points of an underline, strikeout, or squiggly line under a
 /// quadrilateral `[TL, TR, BL, BR]`, or `None` for one without length or
 /// height.
-fn markup_line(subtype: &[u8], quad: Quad) -> Option<Vec<(f64, f64)>> {
+fn markup_line<'b>(
+    subtype: &[u8],
+    quad: Quad,
+    budget: &'b Budget,
+) -> Result<Option<BudgetVec<'b, (f64, f64)>>> {
     let [upper_left, upper_right, lower_left, lower_right] = quad;
     let top = midpoint(upper_left, upper_right);
     let bottom = midpoint(lower_left, lower_right);
     let (dx, dy) = (top.0 - bottom.0, top.1 - bottom.1);
     let cross = dx.hypot(dy);
     let length = (lower_right.0 - lower_left.0).hypot(lower_right.1 - lower_left.1);
-    if !(cross.is_finite() && cross > f64::EPSILON && length.is_finite() && length > f64::EPSILON) {
-        return None;
+    if !(cross.is_finite() && length.is_finite()) {
+        return Err(Error::malformed(
+            "an annotation line has nonfinite dimensions",
+        ));
     }
+    if cross <= f64::EPSILON || length <= f64::EPSILON {
+        return Ok(None);
+    }
+    let mut points = BudgetVec::new(budget);
     // The normal points from the baseline into the quadrilateral.
     let normal = (dx / cross, dy / cross);
     let lifted =
@@ -873,18 +951,20 @@ fn markup_line(subtype: &[u8], quad: Quad) -> Option<Vec<(f64, f64)>> {
     match subtype {
         b"Underline" => {
             let inset = cross.min(1.0);
-            Some(vec![lifted(lower_left, inset), lifted(lower_right, inset)])
+            points
+                .try_extend_from_slice(&[lifted(lower_left, inset), lifted(lower_right, inset)])?;
         }
-        b"StrikeOut" => Some(vec![
+        b"StrikeOut" => points.try_extend_from_slice(&[
             midpoint(upper_left, lower_left),
             midpoint(upper_right, lower_right),
-        ]),
+        ])?,
         _ => {
             let segments = squiggly_segments(length);
             let inset = cross.min(0.5);
             let amplitude = (cross - inset).clamp(0.0, 2.0);
-            let mut points = Vec::new();
-            points.try_reserve_exact(segments + 1).ok()?;
+            let count = segments.saturating_add(1);
+            budget.check(LimitCode::AnnotationPointCount, count as u64)?;
+            points.try_reserve_exact(count)?;
             for index in 0..=segments {
                 #[expect(
                     clippy::cast_precision_loss,
@@ -896,26 +976,29 @@ fn markup_line(subtype: &[u8], quad: Quad) -> Option<Vec<(f64, f64)>> {
                     lower_left.1 + (lower_right.1 - lower_left.1) * t,
                 );
                 let offset = inset + if index % 2 == 0 { amplitude } else { 0.0 };
-                points.push(lifted(base, offset));
+                points.try_push(lifted(base, offset))?;
             }
-            Some(points)
         }
     }
+    Ok(Some(points))
 }
 
 /// Content over a canvas whose `y` axis points down from the top of a
 /// form `height` tall.
-struct Canvas {
-    out: String,
+struct Canvas<'b> {
+    out: Output<'b>,
     height: f64,
     /// The path points drawn so far.
     points: usize,
 }
 
-impl Canvas {
-    const fn new(height: f64) -> Self {
+impl<'b> Canvas<'b> {
+    const fn new(height: f64, budget: &'b Budget) -> Self {
         Self {
-            out: String::new(),
+            out: Output {
+                bytes: BudgetVec::new(budget),
+                refusal: None,
+            },
             height,
             points: 0,
         }
@@ -932,7 +1015,14 @@ impl Canvas {
                 _ => 0,
             };
             for &[x, y] in points.by_ref().take(count) {
-                let _ = write!(self.out, "{} {} ", fmt(x), fmt(self.height - y));
+                let y = self.height - y;
+                if !(x.is_finite() && y.is_finite()) {
+                    self.out
+                        .refusal
+                        .get_or_insert_with(|| Error::malformed("an annotation path is nonfinite"));
+                    return;
+                }
+                let _ = write!(self.out, "{} {} ", fmt(x), fmt(y));
             }
             self.out.push(operator);
             self.out.push('\n');
@@ -1001,20 +1091,21 @@ impl Canvas {
         dashes: &[f64],
     ) {
         self.color(color, "RG");
-        let dashes: Vec<String> = dashes.iter().map(|dash| fmt(*dash)).collect();
-        let _ = writeln!(
-            self.out,
-            "{} w {cap} J {join} j [{}] 0 d",
-            fmt(width),
-            dashes.join(" ")
-        );
+        let _ = write!(self.out, "{} w {cap} J {join} j [", fmt(width));
+        for (index, dash) in dashes.iter().enumerate() {
+            if index > 0 {
+                self.out.push(' ');
+            }
+            let _ = write!(self.out, "{}", fmt(*dash));
+        }
+        self.out.push_str("] 0 d\n");
     }
 }
 
 /// Returns the coordinates of the ellipse inscribed in a rectangle, as a
 /// move and four Béziers.
 fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 26] {
-    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (cx, cy) = (x0 / 2.0 + x1 / 2.0, y0 / 2.0 + y1 / 2.0);
     let (rx, ry) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
     let (kx, ky) = (rx * KAPPA, ry * KAPPA);
     [
@@ -1047,15 +1138,110 @@ fn ellipse(x0: f64, y0: f64, x1: f64, y1: f64) -> [f64; 26] {
     ]
 }
 
-/// Formats a number for content with at most four decimals.
-fn fmt(v: f64) -> String {
-    let s = format!("{v:.4}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s.is_empty() || s == "-" || s == "-0" {
+/// Content output is charged before growth; retain the first refusal while
+/// the fixed icon routines finish, then propagate it instead of partial bytes.
+struct Output<'b> {
+    bytes: BudgetVec<'b, u8>,
+    refusal: Option<Error>,
+}
+
+impl std::fmt::Write for Output<'_> {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        if self.refusal.is_some() {
+            return Err(std::fmt::Error);
+        }
+        let result = self
+            .bytes
+            .budget()
+            .check(
+                LimitCode::AnnotationAppearanceSize,
+                self.bytes.len().saturating_add(text.len()) as u64,
+            )
+            .and_then(|()| self.bytes.try_extend_from_slice(text.as_bytes()));
+        if let Err(error) = result {
+            self.refusal = Some(error.into());
+            return Err(std::fmt::Error);
+        }
+        Ok(())
+    }
+}
+
+impl Output<'_> {
+    fn push_str(&mut self, text: &str) {
+        let _ = self.write_str(text);
+    }
+    fn push(&mut self, ch: char) {
+        let _ = self.write_char(ch);
+    }
+    fn finish(self) -> Result<Vec<u8>> {
+        match self.refusal {
+            Some(error) => Err(error),
+            None => Ok(self.bytes.into_vec()),
+        }
+    }
+}
+
+/// Rust's display format preserves small coordinates without PDF-invalid
+/// exponent notation. Normalize negative zero as well.
+fn fmt(value: f64) -> String {
+    if value == 0.0 {
         "0".to_owned()
     } else {
-        s.to_owned()
+        value.to_string()
     }
+}
+
+/// A borrowed part of an object whose clone allocates owned values.
+enum CopyPart<'a> {
+    Value(&'a Value),
+    Array(&'a Array),
+    Dict(&'a Dict),
+}
+
+/// Charges owned buffers before a clone, including unknown nested fields.
+/// The explicit work stack is budgeted; shared source spans and stream bytes
+/// need no copy. Array and dictionary capacity includes room for an edit.
+fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> Result<()> {
+    let mut pending = BudgetVec::new(budget);
+    pending.try_push(part)?;
+    while let Some(part) = pending.pop() {
+        budget.poll()?;
+        let bytes = match part {
+            CopyPart::Value(value) => match value {
+                Value::Name(name) => name.as_bytes().len(),
+                Value::String(text) => text.as_bytes().len(),
+                Value::Array(array) => {
+                    pending.try_push(CopyPart::Array(array))?;
+                    0
+                }
+                Value::Dict(dict) => {
+                    pending.try_push(CopyPart::Dict(dict))?;
+                    0
+                }
+                Value::Stream(stream) => {
+                    pending.try_push(CopyPart::Dict(stream.dict()))?;
+                    0
+                }
+                _ => 0,
+            },
+            CopyPart::Array(array) => {
+                for value in array {
+                    pending.try_push(CopyPart::Value(value))?;
+                }
+                array.len().saturating_mul(2 * size_of::<Value>())
+            }
+            CopyPart::Dict(dict) => {
+                let mut bytes = dict.len().saturating_mul(2 * size_of::<(Name, Value)>());
+                for (key, value) in dict.iter() {
+                    bytes = bytes.saturating_add(key.as_bytes().len());
+                    pending.try_push(CopyPart::Value(value))?;
+                }
+                bytes
+            }
+        };
+        budget.charge(LimitCode::MemorySize, bytes as u64)?;
+    }
+    Ok(())
 }
 
 /// Returns a number as an integer when it is one, else a real.

@@ -379,8 +379,9 @@ def test_annotation_add_refuses_over_limit_page_atomically() -> None:
         {4: "<< >>", 5: "<< /Type /Annot /Subtype /Text /Rect [1 1 10 10] >>"},
     )
     before = doc.to_bytes()
-    with pytest.raises(pyropdf.PdfError, match="4096-entry safety limit"):
+    with pytest.raises(pyropdf.LimitError) as raised:
         doc.pages[0].annotations.add(pyropdf.Highlight((10, 10, 20, 20)))
+    assert raised.value.code == "annotation_count"
     assert doc.to_bytes() == before
 
 
