@@ -70,6 +70,20 @@ class _Document:
     def close(self) -> None: ...
 
 @final
+class CharColumns:
+    def __len__(self) -> int: ...
+    def rows(
+        self, start: int, stop: int, /
+    ) -> list[tuple[str, tuple[float, float, float, float], tuple[float, float], bool, tuple[int, int] | None]]: ...
+    def column(self, name: str, start: int, stop: int, /) -> Column: ...
+    def arrow_schema(self) -> object: ...
+    def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
+
+@final
+class Column:
+    def __buffer__(self, flags: int, /) -> memoryview: ...
+
+@final
 class Pixmap:
     @property
     def width(self) -> int: ...
@@ -229,7 +243,16 @@ def page_layout(
     max_glyphs: int | None,
     max_size: int | None,
     /,
-) -> tuple[float, float, list[Any], int]: ...
+) -> tuple[float, float, list[Any], int, CharColumns | None]: ...
+def page_chars(
+    document: _Document,
+    number: int,
+    generation: int,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[CharColumns, int]: ...
 def page_search(
     document: _Document,
     number: int,
