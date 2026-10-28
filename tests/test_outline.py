@@ -11,13 +11,15 @@ at ebb01d3c. Not ported:
 - ``test_page_cleanup_shares_the_toc_node_limit``: page edits follow the
   references to the removed pages (DESIGN.md section 5), and do not walk the
   outline.
-- The renumbering case of ``test_handles_go_stale_when_the_outline_is_replaced``:
-  pyropdf does not renumber objects.
+- The in-memory renumbering case: pyropdf renumbers only the saved output.
+  A separate test checks that saving preserves current outline handles.
 """
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -698,3 +700,185 @@ def test_write_limits_are_atomic(three_page_pdf: bytes) -> None:
     with pytest.raises(pyropdf.PdfError, match="from 0 to 1"):
         _core.outline_write(core, [(1, "bad", target, (2.0, 0.0, 0.0), 0, False)])
     assert doc.outline.entries() == original
+
+
+@pytest.mark.parametrize("operation", ["replace", "target"])
+def test_waiting_outline_target_uses_the_latest_page_order(three_page_pdf: bytes, operation: str) -> None:
+    doc = pyropdf.open(three_page_pdf)
+    doc.outline = [OutlineEntry(1, "before", Destination(0))]
+    item = doc.outline[0]
+    started = Event()
+
+    def write() -> None:
+        started.set()
+        if operation == "replace":
+            doc.outline = [OutlineEntry(1, "after", Destination(0))]
+        else:
+            item.destination = Destination(0)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with doc.transaction("Reorder pages before the waiting outline edit"):
+            future = pool.submit(write)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            doc.pages.move(0, 2)
+        future.result(timeout=10)
+    assert doc.outline[0].destination == Destination(0)
+
+
+@pytest.mark.parametrize("operation", ["bold", "color"])
+def test_waiting_outline_style_preserves_the_first_writers_changes(three_page_pdf: bytes, operation: str) -> None:
+    doc = pyropdf.open(three_page_pdf)
+    doc.outline = [OutlineEntry(1, "item")]
+    item = doc.outline[0]
+    started = Event()
+
+    def write() -> None:
+        started.set()
+        if operation == "bold":
+            item.bold = True
+        else:
+            item.color = Color(1, 0, 0)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with doc.transaction("Set italic before the waiting style edit"):
+            future = pool.submit(write)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            item.italic = True
+        future.result(timeout=10)
+    assert item.italic
+    assert item.bold if operation == "bold" else item.color == Color(1, 0, 0)
+
+
+@pytest.mark.parametrize("tail", ["null", "5 0 R", "999 0 R"])
+def test_outline_depth_limit_ignores_absent_or_visited_children(tail: str) -> None:
+    objects = {4: "<< /First 5 0 R >>"}
+    for number in range(5, 69):
+        child = f"{number + 1} 0 R" if number < 68 else tail
+        objects[number] = f"<< /Title (item) /First {child} >>"
+    doc = pyropdf.open(_build_outline_fixture(objects))
+    assert len(doc.outline.entries()) == 64
+    doc.outline[0].is_open = True
+    assert len(doc.outline.entries()) == 64
+
+
+@pytest.mark.parametrize("kind", ["direct", "alias"])
+def test_replacing_a_direct_outline_frees_indirect_descendants(kind: str) -> None:
+    first = "<< /Title (direct) /Next 5 0 R >>" if kind == "direct" else "6 0 R"
+    objects = {
+        1: f"<< /Type /Catalog /Pages 2 0 R /Outlines << /First {first} >> >>",
+        2: "<< /Type /Pages /Kids [] /Count 0 >>",
+        5: "<< /Title (indirect) >>",
+    }
+    if kind == "alias":
+        objects[6] = "5 0 R"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    doc.outline = []
+    assert set(doc.objects) == {1, 2}
+
+
+def test_failed_outline_cleanup_rolls_back_inside_an_open_transaction() -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture({4: "<< /First 5 0 R >>", 5: "<< /Title (keep) >>", 6: "<< /Broken [ >>"})
+    )
+    with doc.transaction("Keep a failed replacement atomic"):
+        with pytest.raises(pyropdf.MalformedPdfError):
+            doc.outline = []
+        assert [item.title for item in doc.outline] == ["keep"]
+    assert [item.title for item in doc.outline] == ["keep"]
+
+
+@pytest.mark.parametrize("kind", ["Page", "Pages", "Catalog"])
+def test_open_state_refuses_an_outline_root_aliasing_another_identity(kind: str) -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture(
+            {
+                4: f"<< /Type /{kind} /First 5 0 R /Count 99 >>",
+                5: "<< /Title (parent) /First 6 0 R >>",
+                6: "<< /Title (child) >>",
+            }
+        )
+    )
+    core = doc._core()  # noqa: SLF001
+    opened = True
+    with pytest.raises(pyropdf.MalformedPdfError, match="outline"):
+        _core.outline_set_open(core, (5, 0), opened)
+    assert doc.objects[4]["Count"] == 99
+
+
+def test_outline_aliases_name_the_resolved_item_identity() -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture({4: "<< /First 5 0 R >>", 5: "6 0 R", 6: "<< /Title (item) /Next 7 0 R >>", 7: "6 0 R"})
+    )
+    assert len(doc.outline.entries()) == 1
+    assert [item.xref for item in doc.outline.walk()] == [6]
+    assert [item.xref for item in doc.outline] == [6]
+    doc.outline[0].title = "changed"
+    assert doc.objects[6]["Title"] == b"changed"
+
+
+def test_open_state_counts_direct_children_and_updates_their_ancestors() -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture(
+            {
+                4: "<< /First 5 0 R >>",
+                5: "<< /Title (top) /First << /Title (direct) /First 6 0 R /Count -1 >> /Count -1 >>",
+                6: "<< /Title (nested) /First 7 0 R /Count -1 >>",
+                7: "<< /Title (leaf) >>",
+            }
+        )
+    )
+    doc.outline[0].is_open = True
+    assert doc.objects[5]["Count"] == 1
+    nested = list(doc.outline.walk())[1]
+    nested.is_open = True
+    assert doc.objects[5]["First"]["Count"] == -2
+    assert doc.objects[6]["Count"] == 1
+    assert doc.objects[5]["Count"] == 1
+    assert doc.catalog["Outlines"]["Count"] == 2
+
+
+@pytest.mark.parametrize("field", ["title", "destination"])
+def test_outline_rejects_excessive_characters_before_the_binding(field: str) -> None:
+    text = "x" * (MAX_TOC_TEXT_BYTES + 1)
+    title, destination = (text, None) if field == "title" else ("item", text)
+    with pytest.raises(LimitError) as caught:
+        OutlineEntry(1, title, destination)
+    assert caught.value.code == "toc_input_size"
+
+
+def test_outline_bounds_aggregate_characters_before_the_binding(
+    three_page_pdf: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    doc = pyropdf.open(three_page_pdf)
+    entries = [OutlineEntry(1, "x" * (MAX_TOC_TEXT_BYTES // 2 + 1))] * 2
+
+    def unexpected(*_args: object) -> None:
+        pytest.fail("oversized text reached the binding")
+
+    monkeypatch.setattr(_core, "outline_write", unexpected)
+    with pytest.raises(LimitError) as caught:
+        doc.outline = entries
+    assert caught.value.code == "toc_input_size"
+
+
+def test_renumbering_a_save_preserves_current_outline_handles(three_page_pdf: bytes) -> None:
+    doc = pyropdf.open(three_page_pdf)
+    doc.outline = BOOK
+    item = doc.outline[0]
+    identity = item.xref
+    saved = doc.to_bytes(renumber=True)
+    assert pyropdf.open(saved).outline.entries() == BOOK
+    assert item.xref == identity
+    assert item.title == BOOK[0].title
+    item.title = "still live"
+    assert doc.outline[0].title == "still live"
+
+
+def test_outline_handle_refuses_a_parent_cycle() -> None:
+    doc = pyropdf.open(_build_outline_fixture({4: "<< /First 5 0 R >>", 5: "<< /Title (cycle) /Parent 5 0 R >>"}))
+    with pytest.raises(pyropdf.PdfError, match="parent cycle"):
+        _ = doc.outline[0].level

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyropdf_engine::pages::copy::Copies;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::refs::{self, Edits};
@@ -29,21 +29,7 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 const A4: (f64, f64) = (595.0, 842.0);
 
 pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    index_of(document, document.reading_parent()?)
-}
-
-/// Returns the page index of the version that an edit of annotations reads,
-/// as [`_Document::editing_parent`] gives it.
-pub(crate) fn editing_index(
-    document: &_Document,
-) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    index_of(document, document.editing_parent()?)
-}
-
-fn index_of(
-    document: &_Document,
-    (version, parent): (Arc<Version>, Option<Arc<Version>>),
-) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
+    let (version, parent) = document.reading_parent()?;
     let budget = document.budget();
     let index = match &parent {
         // An open transaction that has written nothing reads its parent.
@@ -187,48 +173,49 @@ pub fn set_pages(
     if !copies.is_empty() && copies.len() != pages.len() {
         return Err(PyValueError::new_err("copies must mark every page or none"));
     }
-    let (_, index, _) = index(document)?;
-    let order = pages
-        .into_iter()
-        .map(|(number, generation)| Reference::new(number, generation))
-        .collect::<Vec<_>>();
-    let copied = |at: usize| copies.get(at).copied().unwrap_or(false);
-    for (at, &page) in order.iter().enumerate() {
-        if copied(at) && index.index_of(page).is_none() {
-            return Err(not_a_page(page));
-        }
-    }
-    let mut retained: Vec<u32> = order
-        .iter()
-        .enumerate()
-        .filter(|&(at, _)| !copied(at))
-        .map(|(_, page)| page.number())
-        .collect();
-    retained.sort_unstable();
-    if retained.windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err(PyValueError::new_err(
-            "a page stays at most once; copies repeat it",
-        ));
-    }
-    let sources = order.iter().map(|page| page.number()).collect::<Vec<_>>();
-    let before = current_order(&index)?
-        .iter()
-        .map(|page| page.number())
-        .collect::<Vec<_>>();
-    let mut removed = before
-        .iter()
-        .copied()
-        .filter(|number| retained.binary_search(number).is_err())
-        .collect::<Vec<_>>();
-    removed.sort_unstable();
-    removed.dedup();
     document.edit(py, |transaction, budget| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
+        let view = transaction.snapshot();
+        let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
+        let mut order = BudgetVec::new(budget);
+        let mut retained = BudgetVec::new(budget);
+        let mut sources = BudgetVec::new(budget);
+        for (at, (number, generation)) in pages.into_iter().enumerate() {
+            let page = Reference::new(number, generation);
+            if index.index_of(page).is_none() {
+                return Err(not_a_page(page));
+            }
+            order.try_push(page).map_err(limit)?;
+            sources.try_push(number).map_err(limit)?;
+            if !copies.get(at).copied().unwrap_or(false) {
+                retained.try_push(number).map_err(limit)?;
+            }
+        }
+        retained.sort_unstable();
+        if retained.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(PyValueError::new_err(
+                "a page stays at most once; copies repeat it",
+            ));
+        }
+        let mut before = BudgetVec::new(budget);
+        let mut removed = BudgetVec::new(budget);
+        for (at, page) in index.pages().iter().enumerate() {
+            let number = indirect(page, at)?.number();
+            before.try_push(number).map_err(limit)?;
+            if retained.binary_search(&number).is_err() {
+                removed.try_push(number).map_err(limit)?;
+            }
+        }
+        let mut removed = removed.into_vec();
+        removed.sort_unstable();
+        removed.dedup();
         let savepoint = transaction.savepoint();
-        let mut order = order.clone();
         let result =
             copy_pages(transaction, &index, &mut order, &copies, budget).and_then(|added| {
-                let mut retained = retained.clone();
-                retained.extend(added.iter().map(|page| page.number()));
+                for page in &added {
+                    retained.try_push(page.number()).map_err(limit)?;
+                }
                 retained.sort_unstable();
                 let pages = Pages {
                     before: &before,
@@ -335,6 +322,7 @@ fn remove_pages(
         added,
     } = *pages;
     let before = transaction.snapshot();
+    let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
     let labels = refs::relabel(&mut Reads::new(&before, budget), old, sources).map_err(store)?;
     if removed.is_empty()
         && labels
@@ -381,9 +369,14 @@ fn remove_pages(
             .map_err(store)?,
         None => return Ok(()),
     };
-    let mut candidates = edits.orphans().to_vec();
+    let mut candidates = BudgetVec::new(budget);
+    candidates
+        .try_extend_from_slice(edits.orphans())
+        .map_err(limit)?;
     if let Some(labels) = &labels {
-        candidates.extend_from_slice(labels.nodes());
+        candidates
+            .try_extend_from_slice(labels.nodes())
+            .map_err(limit)?;
     }
     let freed = refs::unreferenced(&references, removed, &candidates, budget).map_err(store)?;
     for &number in freed.iter() {
@@ -489,13 +482,20 @@ fn rewrite_with(
         // The rules may have edited the page in this transaction.
         let mut dict = match resolve(version, Some(&Value::Reference(reference)), budget)? {
             Some(Value::Dict(dict)) => dict,
-            _ => page.dict().clone(),
+            _ => {
+                return Err(MalformedPdfError::new_err(
+                    "a retained page is no longer a dictionary",
+                ));
+            }
         };
         dict.insert(Name::from("Parent"), Value::Reference(root));
         for key in INHERITABLE {
             match page.inherited(key) {
                 Some(value) => {
-                    dict.insert(Name::from(key), value.clone());
+                    dict.insert(
+                        Name::from(key),
+                        refs::copy_for_edit(value, budget).map_err(store)?,
+                    );
                 }
                 None => {
                     dict.remove(key);
@@ -506,11 +506,13 @@ fn rewrite_with(
             .write(reference.number(), &Value::Dict(dict), budget)
             .map_err(store)?;
     }
-    let kids = order
-        .iter()
-        .map(|&r| Value::Reference(r))
-        .collect::<Vec<_>>();
-    root_dict.insert(Name::from("Kids"), Value::Array(Array::from(kids)));
+    let mut kids = BudgetVec::new(budget);
+    kids.try_extend(order.iter().copied().map(Value::Reference))
+        .map_err(|e| store_error(&e.into()))?;
+    root_dict.insert(
+        Name::from("Kids"),
+        Value::Array(Array::from(kids.into_vec())),
+    );
     root_dict.insert(Name::from("Count"), Value::Integer(order.len() as i64));
     transaction
         .write(root.number(), &Value::Dict(root_dict), budget)
@@ -547,7 +549,11 @@ pub(crate) fn resolve(
     let mut current = match value {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::Reference(reference)) => *reference,
-        Some(value) => return Ok(Some(value.clone())),
+        Some(value) => {
+            return refs::copy_for_edit(value, budget)
+                .map(Some)
+                .map_err(|e| store_error(&e));
+        }
     };
     for _ in 0..MAX_CHAIN {
         let Some(object) = version
@@ -560,7 +566,11 @@ pub(crate) fn resolve(
         match &**object.value() {
             Value::Null => return Ok(None),
             Value::Reference(next) => current = *next,
-            value => return Ok(Some(value.clone())),
+            value => {
+                return refs::copy_for_edit(value, budget)
+                    .map(Some)
+                    .map_err(|e| store_error(&e));
+            }
         }
     }
     Err(MalformedPdfError::new_err(
