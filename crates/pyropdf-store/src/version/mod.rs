@@ -28,6 +28,7 @@
 
 mod base;
 mod document;
+mod stale;
 mod table;
 mod transaction;
 
@@ -39,6 +40,9 @@ use std::sync::{Arc, OnceLock};
 
 use base::{Origin, VALUE_BYTES};
 use table::Table;
+
+use crate::settle::{Mark, Structure};
+pub(crate) use stale::Stale;
 
 pub use base::{Base, MemoryBase};
 pub use document::{Document, HistoryStatus};
@@ -68,6 +72,8 @@ pub struct Version {
     next: u64,
     /// What the transaction that made the version wrote.
     written: ChangeSet,
+    /// The structures that the version leaves stale (DESIGN.md section 7).
+    pub(crate) stale: Stale,
 }
 
 /// A written trailer, retained as bytes and a parsed dictionary.
@@ -144,6 +150,7 @@ impl Version {
             trailer: None,
             next,
             written: ChangeSet::default(),
+            stale: Stale::default(),
         }
     }
 
@@ -156,6 +163,7 @@ impl Version {
             trailer: self.trailer.clone(),
             next: self.next,
             written: ChangeSet::default(),
+            stale: self.stale.clone(),
         }
     }
 
@@ -221,6 +229,25 @@ impl Version {
     #[must_use]
     pub fn has_changes(&self) -> bool {
         self.trailer.is_some() || self.slots().next().is_some()
+    }
+
+    /// Returns whether the version leaves `structure` of object `number`
+    /// stale: a font subset that only a save settles, or a structure that no
+    /// settler is registered for.
+    #[must_use]
+    pub fn is_stale(&self, structure: Structure, number: u32) -> bool {
+        self.stale.contains(Mark { structure, number })
+    }
+
+    /// Returns the structures that the version leaves stale, sorted.
+    pub fn stale(&self) -> impl Iterator<Item = Mark> + '_ {
+        self.stale.marks()
+    }
+
+    /// Returns whether this version leaves any dependent structure stale.
+    #[must_use]
+    pub fn has_stale(&self) -> bool {
+        self.stale.any(crate::settle::Scope::Save)
     }
 
     /// Returns the trailer: the one that a transaction wrote last, or the
@@ -403,6 +430,7 @@ impl ChangeSet {
 /// What two versions of one document hold differently.
 struct Difference {
     changes: ChangeSet,
+    stale: bool,
     /// The bytes of the chunks, the branches, and the written objects that
     /// only the first version holds.
     first: u64,
@@ -446,12 +474,18 @@ fn difference(
         first_bytes = first_bytes.saturating_add(first.trailer.as_ref().map_or(0, |t| t.size()));
         second_bytes = second_bytes.saturating_add(second.trailer.as_ref().map_or(0, |t| t.size()));
     }
+    let (stale, stale_bytes) = first.stale.diff(&second.stale, budget)?;
     Ok(Difference {
+        stale,
         changes: ChangeSet {
             objects: objects.into_vec().into_boxed_slice(),
             trailer,
         },
-        first: first_bytes.saturating_add(unshared.first),
-        second: second_bytes.saturating_add(unshared.second),
+        first: first_bytes
+            .saturating_add(unshared.first)
+            .saturating_add(stale_bytes.first),
+        second: second_bytes
+            .saturating_add(unshared.second)
+            .saturating_add(stale_bytes.second),
     })
 }

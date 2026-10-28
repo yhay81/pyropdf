@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use super::base::Origin;
 use super::{Base, Transaction, Version};
+use crate::settle::Settlers;
 
 /// The versions of a document: the current one, the writer lock through
 /// which transactions publish the next, and the history that undo and redo
@@ -34,6 +35,8 @@ struct Shared {
     writer: Mutex<Writer>,
     /// Signals that a transaction released the writer lock.
     idle: Condvar,
+    /// The settlers that transactions settle stale structures with.
+    settlers: RwLock<Settlers>,
 }
 
 /// What the writer lock guards.
@@ -79,8 +82,19 @@ impl Document {
                     history: History::new(first, history_limit),
                 }),
                 idle: Condvar::new(),
+                settlers: RwLock::default(),
             }),
         }
+    }
+
+    /// Registers the settlers that the transactions which begin from now
+    /// on settle stale structures with (DESIGN.md section 7).
+    pub fn set_settlers(&self, settlers: Settlers) {
+        *self
+            .shared
+            .settlers
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = settlers;
     }
 
     /// Returns the current version.
@@ -229,6 +243,15 @@ pub(super) struct WriterLock {
 impl WriterLock {
     pub(super) const fn next_number(&self) -> u64 {
         self.next
+    }
+
+    /// Returns the document's settlers.
+    pub(super) fn settlers(&self) -> Settlers {
+        self.shared
+            .settlers
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub(super) fn reserve_through(&mut self, next: u64) {

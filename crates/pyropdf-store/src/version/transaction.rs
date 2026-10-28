@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::document::WriterLock;
 use super::{Slot, Trailer, Version, Written, difference};
 use crate::budget::{Budget, BudgetVec, LimitCode};
+use crate::settle::{self, Mark, Scope, Settlers, Structure};
 use crate::value::{Bytes, Dict, Reference, Value};
 use crate::{Error, Result, write};
 
@@ -23,10 +24,15 @@ use crate::{Error, Result, write};
 ///
 /// A refused allocation, write, or free changes nothing, so the transaction
 /// may go on or be dropped.
+///
+/// A write that makes a dependent structure stale marks it with
+/// [`Transaction::mark`], and the transaction settles it with the
+/// document's settlers ([`crate::settle`]).
 pub struct Transaction {
     lock: WriterLock,
     parent: Arc<Version>,
     draft: Version,
+    settlers: Settlers,
 }
 
 impl Transaction {
@@ -34,10 +40,12 @@ impl Transaction {
     pub(super) fn new(lock: WriterLock, parent: Arc<Version>) -> Self {
         let mut draft = parent.draft();
         draft.next = draft.next.max(lock.next_number());
+        let settlers = lock.settlers();
         Self {
             lock,
             parent,
             draft,
+            settlers,
         }
     }
 
@@ -163,6 +171,51 @@ impl Transaction {
         Ok(())
     }
 
+    /// Marks `structure` of object `number` stale, so that the transaction
+    /// settles it. Marking it again before it settles adds nothing. Refuses
+    /// with `memory_size` when the budget does not allow a new mark.
+    pub fn mark(&mut self, structure: Structure, number: u32, budget: &Budget) -> Result<()> {
+        self.draft.stale.insert(Mark { structure, number }, budget)
+    }
+
+    /// Returns whether `structure` of object `number` is stale in what the
+    /// transaction has written so far.
+    #[must_use]
+    pub fn is_stale(&self, structure: Structure, number: u32) -> bool {
+        self.draft.stale.contains(Mark { structure, number })
+    }
+
+    /// Settles the stale structures that `scope` covers and that a settler
+    /// is registered for. A read that depends on a structure calls this
+    /// with [`Scope::One`] first; a commit settles [`Scope::Commit`].
+    ///
+    /// Refuses with what a settler refuses, and with a malformed input error
+    /// when the settlers keep marking one another's structures. The
+    /// transaction restores its writes and marks to before the call on any
+    /// error, so a read may retry without observing a partial settlement.
+    pub fn settle(&mut self, scope: Scope, budget: &Budget) -> Result<()> {
+        if !self.draft.stale.any(scope) {
+            return Ok(());
+        }
+        let settlers = self.settlers.clone();
+        let savepoint = self.savepoint();
+        let result = settle::settle(self, &settlers, scope, budget);
+        if result.is_err() {
+            self.rollback(savepoint);
+        }
+        result
+    }
+
+    /// Removes the marks of `structure` for a settler, and returns the
+    /// numbers they named.
+    pub(crate) fn take_stale<'b>(
+        &mut self,
+        structure: Structure,
+        budget: &'b Budget,
+    ) -> Result<BudgetVec<'b, u32>> {
+        self.draft.stale.take(structure, budget)
+    }
+
     /// Returns what the transaction has written so far as a version of its
     /// own, sharing everything with the draft, for reads that need to own
     /// a version. It is no version of the document's history.
@@ -191,18 +244,23 @@ impl Transaction {
     /// version, and returns that version.
     ///
     /// The new version is current at once for every thread, and the history
-    /// records it as one step. A transaction that wrote no object and no
-    /// trailer publishes nothing and returns the version it started from.
-    /// Refuses with a limit when the budget does not allow the change set,
-    /// and then publishes nothing: the transaction is dropped.
-    pub fn commit(self, budget: &Budget) -> Result<Arc<Version>> {
+    /// records it as one step. A transaction that changed no object, trailer,
+    /// or stale mark returns the version it started from.
+    ///
+    /// The commit first settles every stale structure but font subsets
+    /// ([`Scope::Commit`]), as part of the same step. It refuses with what
+    /// settling refuses, and with a limit when the budget does not allow the
+    /// change set, and then publishes nothing: the transaction is dropped.
+    pub fn commit(mut self, budget: &Budget) -> Result<Arc<Version>> {
+        self.settle(Scope::Commit, budget)?;
         let Self {
             mut lock,
             parent,
             mut draft,
+            settlers: _,
         } = self;
         let difference = difference(&parent, &draft, budget)?;
-        if difference.changes.is_empty() {
+        if difference.changes.is_empty() && !difference.stale {
             return Ok(parent);
         }
         budget.charge(LimitCode::MemorySize, Version::OVERHEAD)?;
