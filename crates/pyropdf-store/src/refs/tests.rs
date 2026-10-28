@@ -1693,3 +1693,478 @@ fn targeted_structure_reads_skip_unrelated_structure_elements() {
         );
     }
 }
+
+#[test]
+fn form_impact_finds_ancestors_without_reading_unrelated_fields() {
+    let mut objects = vec![
+        (
+            1,
+            dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+        ),
+        (2, dict(vec![("Fields", array(vec![reference(4)]))])),
+        (
+            3,
+            dict(vec![("Type", name("Page")), ("Annots", reference(6))]),
+        ),
+        (
+            4,
+            dict(vec![
+                ("FT", name("Tx")),
+                ("T", string("field")),
+                ("Kids", reference(7)),
+            ]),
+        ),
+        (
+            5,
+            dict(vec![("Subtype", name("Widget")), ("P", reference(3))]),
+        ),
+        (6, array(vec![reference(5)])),
+        (7, array(vec![reference(5)])),
+    ];
+    for number in 20..1020 {
+        objects.push((
+            number,
+            dict(vec![("FT", name("Tx")), ("T", string("unrelated"))]),
+        ));
+    }
+    let document = document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+    let numbers: Vec<_> = affected
+        .iter()
+        .map(|reference| reference.number())
+        .collect();
+    assert_eq!(numbers, [2, 4, 5, 6, 7]);
+    let read_set = reads.finish().unwrap();
+    assert!(
+        read_set
+            .objects()
+            .iter()
+            .all(|&number| !(20..1020).contains(&number))
+    );
+}
+
+#[test]
+fn form_impact_follows_page_reference_aliases() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(4)]))])),
+            (3, dict(vec![("Type", name("Page"))])),
+            (
+                4,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Kids", array(vec![reference(5)])),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![("Subtype", name("Widget")), ("P", reference(9))]),
+            ),
+            (9, reference(3)),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+    assert!(affected.iter().any(|reference| reference.number() == 5));
+    assert!(affected.iter().any(|reference| reference.number() == 4));
+}
+
+#[test]
+fn form_impact_ignores_stale_seed_generations_and_polls_cancellation() {
+    let document = document_of(
+        &[
+            (1, dict(vec![("Type", name("Catalog"))])),
+            (
+                3,
+                dict(vec![
+                    ("Type", name("Page")),
+                    (
+                        "Annots",
+                        array(vec![Value::Reference(Reference::new(5, 1))]),
+                    ),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![
+                    ("Subtype", name("Widget")),
+                    ("P", Value::Reference(Reference::new(3, 1))),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    assert!(
+        affected_form_objects(&mut reads, &index, &[3], &[])
+            .unwrap()
+            .is_empty()
+    );
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let mut reads = Reads::new(&version, &budget);
+    let error = affected_form_objects(&mut reads, &index, &[], &[]).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(2_048))]
+    #[test]
+    fn form_impact_matches_an_independent_reverse_graph_oracle(
+        edges in proptest::collection::vec(proptest::collection::vec(0_u8..8, 0..4), 1..9),
+        seeds in any::<u8>(),
+    ) {
+        let count = edges.len();
+        let mut objects = vec![
+            (1, dict(vec![("Type", name("Catalog"))])),
+            (2, dict(vec![("Type", name("Page")), ("Annots", array((0..count).filter(|&at| seeds & (1 << at) != 0).map(|at| reference(3 + at as u32)).collect()))])),
+        ];
+        for (at, targets) in edges.iter().enumerate() {
+            let links = targets.iter().filter(|&&target| usize::from(target) < count).map(|&target| reference(3 + u32::from(target))).collect();
+            objects.push((3 + at as u32, dict(vec![("Subtype", name("Widget")), ("Links", array(links))])));
+        }
+        let document = document_of(&objects, [(Name::from("Root"), reference(1))].into_iter().collect());
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        let mut reads = Reads::new(&version, &budget);
+        let actual: Vec<_> = affected_form_objects(&mut reads, &index, &[2], &[]).unwrap().iter().map(|reference| reference.number()).collect();
+        let mut expected = (0..count).map(|at| seeds & (1 << at) != 0).collect::<Vec<_>>();
+        loop {
+            let mut changed = false;
+            for (owner, targets) in edges.iter().enumerate() {
+                if !expected[owner] && targets.iter().any(|&target| usize::from(target) < count && expected[usize::from(target)]) {
+                    expected[owner] = true;
+                    changed = true;
+                }
+            }
+            if !changed { break; }
+        }
+        let expected: Vec<_> = expected.iter().enumerate().filter_map(|(at, &kept)| kept.then_some(3 + at as u32)).collect();
+        prop_assert_eq!(actual, expected);
+    }
+}
+
+#[test]
+fn form_impact_charges_memory_and_refuses_reference_cycles_at_the_bound() {
+    let mut objects = vec![
+        (1, dict(vec![("Type", name("Catalog"))])),
+        (
+            2,
+            dict(vec![
+                ("Type", name("Page")),
+                ("Annots", array(vec![reference(3)])),
+            ]),
+        ),
+        (3, dict(vec![("Subtype", name("Widget"))])),
+    ];
+    for number in 4..80 {
+        objects.push((number, dict(vec![("Link", reference(number - 1))])));
+    }
+    let document = document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(1));
+    let mut reads = Reads::new(&version, &budget);
+    let error = affected_form_objects(&mut reads, &index, &[2], &[]).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    let budget = Budget::default();
+    let mut reads = Reads::new(&version, &budget);
+    let error = affected_form_objects(&mut reads, &index, &[2], &[]).unwrap_err();
+    assert!(error.to_string().contains("64 levels"));
+}
+
+#[test]
+#[ignore = "manual form-impact benchmark; run via evidence/page-deletion/measure_form_impact.py"]
+fn measure_form_impact() {
+    use std::time::Instant;
+    let warm = document_of(&[(1, Value::Null)], Dict::new());
+    build(&warm.current(), &Budget::default()).unwrap();
+    for count in [0_u32, 10, 100, 1_000, 4_000] {
+        let mut fields = vec![reference(4)];
+        fields.extend((20..20 + count).map(reference));
+        let mut objects = vec![
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(fields))])),
+            (
+                3,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(5)])),
+                ]),
+            ),
+            (
+                4,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("affected")),
+                    ("Kids", array(vec![reference(5)])),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![("Subtype", name("Widget")), ("P", reference(3))]),
+            ),
+        ];
+        for number in 20..20 + count {
+            objects.push((
+                number,
+                dict(vec![("FT", name("Tx")), ("T", string("unrelated"))]),
+            ));
+        }
+        let document = document_of(
+            &objects,
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let start = Instant::now();
+        let index = build(&version, &Budget::default()).unwrap();
+        let index_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let mut times = Vec::new();
+        for _ in 0..7 {
+            let start = Instant::now();
+            for _ in 0..200 {
+                let budget = Budget::default();
+                let mut reads = Reads::new(&version, &budget);
+                let result = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+                std::hint::black_box(result);
+            }
+            times.push(start.elapsed().as_secs_f64() * 1000.0 / 200.0);
+        }
+        times.sort_by(f64::total_cmp);
+        println!("FORM_IMPACT|{count}|{index_ms:.3}|{:.4}", times[3]);
+    }
+}
+
+#[test]
+fn form_impact_follows_indirect_annotation_aliases_and_keeps_shared_candidates() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (2, dict(vec![("Fields", array(vec![reference(4)]))])),
+            (
+                3,
+                dict(vec![("Type", name("Page")), ("Annots", reference(6))]),
+            ),
+            (
+                4,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("T", string("field")),
+                    ("Kids", array(vec![reference(5)])),
+                ]),
+            ),
+            (
+                5,
+                dict(vec![("Subtype", name("Widget")), ("P", reference(3))]),
+            ),
+            (6, reference(7)),
+            (7, array(vec![reference(8)])),
+            (8, reference(5)),
+            (
+                9,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(5)])),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[9]).unwrap();
+    let numbers: Vec<_> = affected
+        .iter()
+        .map(|reference| reference.number())
+        .collect();
+    assert_eq!(numbers, [2, 4, 5, 6, 7, 8]);
+}
+
+#[test]
+fn form_impact_refuses_catalog_aliases_and_cyclic_annotation_arrays() {
+    for annotations in [reference(1), reference(6)] {
+        let document = document_of(
+            &[
+                (1, dict(vec![("Type", name("Catalog"))])),
+                (
+                    3,
+                    dict(vec![
+                        ("Type", name("Page")),
+                        ("Annots", array(vec![annotations])),
+                    ]),
+                ),
+                (6, reference(7)),
+                (7, reference(6)),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        let mut reads = Reads::new(&version, &budget);
+        assert!(affected_form_objects(&mut reads, &index, &[3], &[]).is_err());
+    }
+}
+
+#[test]
+fn form_impact_refuses_catalog_reached_through_a_reference_alias() {
+    let document = document_of(
+        &[
+            (1, reference(2)),
+            (2, dict(vec![("AcroForm", reference(4))])),
+            (
+                3,
+                dict(vec![
+                    ("Type", name("Page")),
+                    ("Annots", array(vec![reference(2)])),
+                ]),
+            ),
+            (4, dict(vec![("Fields", array(vec![]))])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    assert!(affected_form_objects(&mut reads, &index, &[3], &[]).is_err());
+}
+
+#[test]
+fn form_impact_detects_a_direct_widget_nested_in_a_form_object() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("AcroForm", reference(2))]),
+            ),
+            (
+                2,
+                dict(vec![(
+                    "Fields",
+                    array(vec![dict(vec![
+                        ("FT", name("Tx")),
+                        ("T", string("field")),
+                        (
+                            "Kids",
+                            array(vec![dict(vec![
+                                ("Subtype", name("Widget")),
+                                ("P", reference(3)),
+                            ])]),
+                        ),
+                    ])]),
+                )]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+    assert!(affected.iter().any(|reference| reference.number() == 2));
+}
+
+#[test]
+fn form_impact_detects_a_direct_form_embedded_in_the_catalog() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    (
+                        "AcroForm",
+                        dict(vec![(
+                            "Fields",
+                            array(vec![dict(vec![
+                                ("FT", name("Tx")),
+                                ("T", string("field")),
+                                (
+                                    "Kids",
+                                    array(vec![dict(vec![
+                                        ("Subtype", name("Widget")),
+                                        ("P", reference(3)),
+                                    ])]),
+                                ),
+                            ])]),
+                        )]),
+                    ),
+                ]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+    assert!(affected.iter().any(|reference| reference.number() == 1));
+}
+
+#[test]
+fn form_impact_ignores_unrelated_or_stale_page_references_in_catalog() {
+    for (key, page) in [
+        ("Other", Reference::new(3, 0)),
+        ("AcroForm", Reference::new(3, 1)),
+    ] {
+        let document = document_of(
+            &[
+                (
+                    1,
+                    dict(vec![(key, dict(vec![("P", Value::Reference(page))]))]),
+                ),
+                (3, dict(vec![("Type", name("Page"))])),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let version = document.current();
+        let budget = Budget::default();
+        let index = build(&version, &budget).unwrap();
+        let mut reads = Reads::new(&version, &budget);
+        let affected = affected_form_objects(&mut reads, &index, &[3], &[]).unwrap();
+        assert!(affected.is_empty());
+    }
+}
