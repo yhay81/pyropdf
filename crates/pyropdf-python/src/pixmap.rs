@@ -552,7 +552,7 @@ pub fn render_page(
             })?;
         let bridged = document
             .bridge
-            .get(&version, &index, &budget)
+            .get_for_render(&version, &index, &budget, annotations)
             .map_err(|e| bridge_error(&e))?;
         render::raster(&bridged, at, &options).map_err(raster_error)
     })?;
@@ -613,7 +613,7 @@ pub fn render_pages(
     let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {
         let bridged = document
             .bridge
-            .get(&version, &index, &budget)
+            .get_for_render(&version, &index, &budget, annotations)
             .map_err(|e| bridge_error(&e))?;
         render::batch(&bridged, &indexes, &options, workers, |raster| {
             let mut out = Bounded::new(&written, max_size);

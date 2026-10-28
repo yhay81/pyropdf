@@ -19,7 +19,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::budget::{Budget, LimitCode};
+use crate::budget::Budget;
 use crate::version::Transaction;
 use crate::{Error, Result};
 
@@ -52,7 +52,7 @@ impl Structure {
         Self::FontSubset,
     ];
 
-    const fn index(self) -> usize {
+    pub(crate) const fn index(self) -> usize {
         self as usize
     }
 }
@@ -133,59 +133,6 @@ impl Scope {
 /// again, so settlers that only mark structures after their own need two.
 pub const MAX_ROUNDS: usize = 2 * Structure::ALL.len();
 
-/// The marks of a version, sorted and distinct.
-#[derive(Clone, Default, Debug)]
-pub(crate) struct Stale(Vec<Mark>);
-
-impl Stale {
-    /// The bytes that one mark keeps alive, which a new mark charges.
-    pub(crate) const MARK_SIZE: u64 = size_of::<Mark>() as u64;
-
-    /// Adds `mark`, charging its memory when it is new.
-    pub(crate) fn insert(&mut self, mark: Mark, budget: &Budget) -> Result<()> {
-        if let Err(at) = self.0.binary_search(&mark) {
-            budget.charge(LimitCode::MemorySize, Self::MARK_SIZE)?;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the budget charged the mark before the vector grows"
-            )]
-            self.0.insert(at, mark);
-        }
-        Ok(())
-    }
-
-    /// Returns whether `mark` is stale.
-    pub(crate) fn contains(&self, mark: Mark) -> bool {
-        self.0.binary_search(&mark).is_ok()
-    }
-
-    /// Returns whether a structure that `scope` covers is stale.
-    pub(crate) fn any(&self, scope: Scope) -> bool {
-        self.0.iter().any(|mark| scope.covers(mark.structure))
-    }
-
-    /// Returns whether a structure of the kind `structure` is stale.
-    pub(crate) fn has(&self, structure: Structure) -> bool {
-        self.0.iter().any(|mark| mark.structure == structure)
-    }
-
-    /// Removes the marks of `structure`, and returns the numbers they named.
-    pub(crate) fn take(&mut self, structure: Structure) -> Vec<u32> {
-        let start = self.0.partition_point(|mark| mark.structure < structure);
-        let end = self.0.partition_point(|mark| mark.structure <= structure);
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the numbers are as many as the marks, which the budget charged"
-        )]
-        self.0.drain(start..end).map(|mark| mark.number).collect()
-    }
-
-    /// Returns the marks.
-    pub(crate) fn marks(&self) -> &[Mark] {
-        &self.0
-    }
-}
-
 /// Settles what `scope` covers in `transaction` with `settlers`.
 ///
 /// Refuses with a malformed input error when settlers keep marking one
@@ -202,7 +149,8 @@ pub(crate) fn settle(
             let Some(settler) = settlers.get(structure).filter(|_| scope.covers(structure)) else {
                 continue;
             };
-            let numbers = transaction.take_stale(structure);
+            budget.poll()?;
+            let numbers = transaction.take_stale(structure, budget)?;
             if numbers.is_empty() {
                 continue;
             }

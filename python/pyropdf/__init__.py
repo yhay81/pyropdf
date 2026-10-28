@@ -90,7 +90,7 @@ from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
-from pyropdf._text import Block, Char, Layout, Line, Span, Unmapped, Word
+from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 
 for _public in (
     Attachment,
@@ -141,6 +141,7 @@ __all__ = [
     "CancellationToken",
     "ChangeReport",
     "Char",
+    "Chars",
     "Circle",
     "ClaimChange",
     "Clip",
