@@ -159,11 +159,17 @@ pub enum LimitCode {
     /// One generated annotation appearance contains more than 16 MiB of
     /// content.
     AnnotationAppearanceSize,
+    /// One render synthesizes more than 4,096 missing annotation appearances
+    /// across the document.
+    AnnotationSynthesisCount,
+    /// Missing annotation appearances generated for one render contain more
+    /// than 262,144 path points together.
+    AnnotationSynthesisPointCount,
 }
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 58] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -220,6 +226,8 @@ impl LimitCode {
         Self::AnnotationQuadCount,
         Self::AnnotationPointCount,
         Self::AnnotationAppearanceSize,
+        Self::AnnotationSynthesisCount,
+        Self::AnnotationSynthesisPointCount,
     ];
 
     /// The stable code, as Python's `LimitError.code` carries it.
@@ -282,6 +290,8 @@ impl LimitCode {
             Self::AnnotationQuadCount => "annotation_quad_count",
             Self::AnnotationPointCount => "annotation_point_count",
             Self::AnnotationAppearanceSize => "annotation_appearance_size",
+            Self::AnnotationSynthesisCount => "annotation_synthesis_count",
+            Self::AnnotationSynthesisPointCount => "annotation_synthesis_point_count",
         }
     }
 
@@ -346,6 +356,10 @@ impl LimitCode {
             Self::AnnotationQuadCount => "the annotation has too many quadrilaterals",
             Self::AnnotationPointCount => "the annotation has too many points",
             Self::AnnotationAppearanceSize => "the annotation appearance is too large",
+            Self::AnnotationSynthesisCount => "the render needs too many annotation appearances",
+            Self::AnnotationSynthesisPointCount => {
+                "the render needs too many annotation path points"
+            }
         }
     }
 
@@ -410,6 +424,8 @@ impl LimitCode {
             Self::AnnotationQuadCount => Some("quadrilaterals"),
             Self::AnnotationPointCount => Some("points"),
             Self::AnnotationAppearanceSize => Some("bytes"),
+            Self::AnnotationSynthesisCount => Some("appearances"),
+            Self::AnnotationSynthesisPointCount => Some("points"),
         }
     }
 
@@ -474,6 +490,8 @@ impl LimitCode {
             Self::AnnotationQuadCount => Some(4_096),
             Self::AnnotationPointCount => Some(65_536),
             Self::AnnotationAppearanceSize => Some(16_777_216),
+            Self::AnnotationSynthesisCount => Some(4_096),
+            Self::AnnotationSynthesisPointCount => Some(262_144),
         }
     }
 }

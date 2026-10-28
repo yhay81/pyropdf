@@ -790,6 +790,19 @@ pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>>
 /// for a kind that [`draws`] refuses, or for a dictionary without a usable
 /// rectangle, geometry, or opacity.
 pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
+    appearance_with(reader, dict, false)
+}
+
+/// Charges aggregate path points only for render-time synthesis.
+fn appearance_for_render(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
+    appearance_with(reader, dict, true)
+}
+
+fn appearance_with(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    aggregate: bool,
+) -> Result<Option<Appearance>> {
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
     };
@@ -837,6 +850,7 @@ pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>
         None => None,
     };
     let mut canvas = Canvas::new(size.1, reader.budget);
+    canvas.aggregate = aggregate;
     if alpha < 1.0 || blend.is_some() {
         canvas.out.push_str("/G0 gs\n");
     }
@@ -990,6 +1004,7 @@ struct Canvas<'b> {
     height: f64,
     /// The path points drawn so far.
     points: usize,
+    aggregate: bool,
 }
 
 impl<'b> Canvas<'b> {
@@ -1001,12 +1016,27 @@ impl<'b> Canvas<'b> {
             },
             height,
             points: 0,
+            aggregate: false,
         }
     }
 
     /// Appends a path: `m` and `l` take one point, `c` three, `h` none.
     fn path(&mut self, operators: &str, coordinates: &[f64]) {
-        self.points = self.points.saturating_add(coordinates.len() / 2);
+        if self.out.refusal.is_some() {
+            return;
+        }
+        let count = coordinates.len() / 2;
+        if self.aggregate
+            && let Err(error) = self
+                .out
+                .bytes
+                .budget()
+                .charge(LimitCode::AnnotationSynthesisPointCount, count as u64)
+        {
+            self.out.refusal = Some(error.into());
+            return;
+        }
+        self.points = self.points.saturating_add(count);
         let mut points = coordinates.as_chunks::<2>().0.iter();
         for operator in operators.chars() {
             let count = match operator {

@@ -16,6 +16,7 @@ import pyropdf
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+    from typing import Literal
 
 YELLOWISH_BLUE_MAX = 210
 WHITE_MIN = 240
@@ -262,7 +263,11 @@ def test_missing_text_markup_quad_budget_is_atomic() -> None:
     )
     page = pyropdf.open(pdf).pages[0]
 
-    assert not _has_yellowish(_region_pixels(page, page.rect))
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.pixmap()
+    assert raised.value.code == "annotation_quad_count"
+    assert page.document.to_bytes() == before
 
 
 def test_missing_text_markup_segment_budget_is_atomic() -> None:
@@ -285,7 +290,11 @@ def test_missing_text_markup_segment_budget_is_atomic() -> None:
     )
     page = pyropdf.open(pdf).pages[0]
 
-    assert not _has_yellowish(_region_pixels(page, page.rect))
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.pixmap()
+    assert raised.value.code == "annotation_point_count"
+    assert page.document.to_bytes() == before
 
 
 def _squiggles(count: int) -> pyropdf.Page:
@@ -317,7 +326,11 @@ def _squiggles(count: int) -> pyropdf.Page:
 def test_missing_appearance_point_budget_is_atomic() -> None:
     """Do not synthesize a partial set above the aggregate point budget of a rendering snapshot."""
     page = _squiggles(5)
-    assert not _has_yellowish(_region_pixels(page, page.rect))
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.pixmap()
+    assert raised.value.code == "annotation_synthesis_point_count"
+    assert page.document.to_bytes() == before
     # Four of them fit in the budget, and their peer is drawn.
     page = _squiggles(4)
     assert _has_yellowish(_region_pixels(page, page.rect))
@@ -346,8 +359,13 @@ def _highlights(count: int) -> pyropdf.Page:
 
 
 def test_missing_appearance_count_budget_is_atomic() -> None:
-    """Draw none of the appearances that a render lacks when there are more than 4,096 of them."""
-    assert not _has_yellowish(_region_pixels(_highlights(4097), pyropdf.Rect(0, 0, 100, 100)))
+    """Refuse an oversized annotation array without producing a partial drawing."""
+    page = _highlights(4097)
+    before = page.document.to_bytes()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.pixmap()
+    assert raised.value.code == "annotation_count"
+    assert page.document.to_bytes() == before
     assert _has_yellowish(_region_pixels(_highlights(4096), pyropdf.Rect(0, 0, 100, 100)))
 
 
@@ -423,3 +441,71 @@ def test_annotation_add_at_metadata_boundary_remains_readable() -> None:
     doc = pyropdf.open(build_pdf([""]))
     doc.pages[0].annotations.add(pyropdf.Highlight((10, 10, 20, 20), contents=content))
     assert doc.pages[0].annotations[0].contents == content
+
+
+@pytest.mark.parametrize("operation", ["pixmap", "svg", "render", "text", "words"])
+def test_operations_without_annotation_drawing_skip_synthesis(operation: str) -> None:
+    dashes = "1 " * 33
+    doc = _one_page(
+        "[4 0 R]",
+        {
+            4: "<< /Type /Annot /Subtype /Highlight /Rect [10 10 30 20] "
+            "/QuadPoints [10 20 30 20 10 10 30 10] /C [1 1 0] "
+            f"/BS << /S /D /D [{dashes}] >> >>"
+        },
+    )
+    page = doc.pages[0]
+    if operation == "pixmap":
+        assert bytes(page.pixmap(annotations=False)) == b"\xff" * (100 * 100 * 3)
+    elif operation == "svg":
+        assert "<svg" in page.svg(annotations=False)
+    elif operation == "render":
+        assert len(doc.render(annotations=False)) == 1
+    else:
+        assert not getattr(page, operation)()
+    assert "AP" not in doc.objects[4]
+
+
+@pytest.mark.parametrize("state", ["<< >>", "<< /On 7 >>"])
+def test_unusable_normal_appearance_states_are_synthesized(state: str) -> None:
+    doc = _one_page(
+        "[4 0 R]",
+        {
+            4: "<< /Type /Annot /Subtype /Highlight /Rect [10 10 30 20] "
+            "/QuadPoints [10 20 30 20 10 10 30 10] /C [1 1 0] "
+            f"/AP << /N {state} >> /AS /On >>"
+        },
+    )
+    assert _has_yellowish(_region_pixels(doc.pages[0], pyropdf.Rect(10, 80, 30, 90)))
+
+
+@pytest.mark.parametrize("state", ["", "/AS /Unknown"])
+def test_valid_off_appearance_is_preserved_when_no_state_stream_is_selected(state: str) -> None:
+    content = "0 0 1 rg 0 0 20 10 re f"
+    doc = _one_page(
+        "[4 0 R]",
+        {
+            4: "<< /Type /Annot /Subtype /Highlight /Rect [10 10 30 20] "
+            "/QuadPoints [10 20 30 20 10 10 30 10] /C [1 1 0] "
+            f"/AP << /N << /Off 5 0 R >> >> {state} >>",
+            5: f"<< /BBox [0 0 20 10] /Length {len(content)} >>\nstream\n{content}\nendstream",
+        },
+    )
+    assert _has_dominant_color(_region_pixels(doc.pages[0], pyropdf.Rect(10, 80, 30, 90)), 2)
+
+
+@pytest.mark.parametrize("method", ["aes-128", "aes-256"])
+def test_encrypted_missing_appearances_render_without_publishing_objects(method: Literal["aes-128", "aes-256"]) -> None:
+    original = _highlights(1).document
+    data = original.to_bytes(
+        encryption=pyropdf.Encryption(user_password="secret", method=method),  # noqa: S106 - public test fixture.
+    )
+    document = pyropdf.open(data)
+    document.unlock("secret")
+    before = document.to_bytes()
+    page = document.pages[0]
+    assert _has_yellowish(_region_pixels(page, pyropdf.Rect(10, 80, 30, 90)))
+    assert bytes(page.pixmap(annotations=False)) == b"\xff" * (100 * 100 * 3)
+    assert "AP" not in document.objects[5]
+    assert not document.history.can_undo
+    assert document.to_bytes() == before

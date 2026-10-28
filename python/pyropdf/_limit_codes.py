@@ -66,6 +66,8 @@ LimitCode: TypeAlias = Literal[
     "annotation_quad_count",
     "annotation_point_count",
     "annotation_appearance_size",
+    "annotation_synthesis_count",
+    "annotation_synthesis_point_count",
 ]
 
 #: Each code and when an operation reaches it, in the order of the registry.
@@ -189,5 +191,11 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "An annotation's geometry, including generated squiggly points, has more than 65,536 points."
         ),
         "annotation_appearance_size": "One generated annotation appearance contains more than 16 MiB of content.",
+        "annotation_synthesis_count": (
+            "One render synthesizes more than 4,096 missing annotation appearances across the document."
+        ),
+        "annotation_synthesis_point_count": (
+            "Missing annotation appearances generated for one render contain more than 262,144 path points together."
+        ),
     }
 )

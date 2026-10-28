@@ -59,3 +59,5 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `annotation_quad_count` | 4,096 quadrilaterals | A text-markup annotation has more than 4,096 quadrilaterals. |
 | `annotation_point_count` | 65,536 points | An annotation's geometry, including generated squiggly points, has more than 65,536 points. |
 | `annotation_appearance_size` | 16 MiB | One generated annotation appearance contains more than 16 MiB of content. |
+| `annotation_synthesis_count` | 4,096 appearances | One render synthesizes more than 4,096 missing annotation appearances across the document. |
+| `annotation_synthesis_point_count` | 262,144 points | Missing annotation appearances generated for one render contain more than 262,144 path points together. |
