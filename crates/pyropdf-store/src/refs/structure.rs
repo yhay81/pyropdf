@@ -28,13 +28,14 @@ use crate::version::table::Table;
 use crate::{LimitExceeded, Result};
 
 use super::navigation::{catalog, dict_of, is_aliasing, is_in, readable, type_of};
-use super::{Edits, References, Rule, Step};
+use super::rules::copy_path;
+use super::{Edits, References, Rule, Step, copy_for_edit};
 
 /// The most levels of the parent tree or the ID tree.
 const MAX_LOOKUP_TREE_DEPTH: u64 = 32;
 
-/// The most references that a value leads through to what it names; a
-/// longer chain reads as absent, as a cycle does.
+/// The most references followed to a value. A detected cycle is absent;
+/// a longer acyclic chain refuses instead of hiding structure content.
 const MAX_REFERENCE_DEPTH: usize = 32;
 
 /// The most objects between a removed page or an annotation that leaves
@@ -65,6 +66,7 @@ pub(super) fn plan(
     reach: Reach,
 ) -> Result<Reach> {
     let budget = reads.budget();
+    budget.poll()?;
     if removed.is_empty() {
         return Ok(reach);
     }
@@ -82,7 +84,7 @@ pub(super) fn plan(
         return Ok(reach);
     };
     if is_aliasing(&root) {
-        return Ok(reach);
+        return Err(aliasing());
     }
     let mut links = BudgetVec::new(budget);
     links.try_extend_from_slice(edits.orphans())?;
@@ -211,8 +213,8 @@ impl<'b> Tree<'_, 'b> {
             })?;
         }
         for leaf in id_leaves.iter() {
-            walk.pairs(reads, edits, leaf, |_, walk, _, value| {
-                Ok(walk.is_removed(value))
+            walk.pairs(reads, edits, leaf, |reads, walk, _, value| {
+                walk.is_removed(reads, value)
             })?;
         }
         Ok(true)
@@ -327,8 +329,7 @@ impl<'b> Location<'b> {
     }
 
     fn child(&self, step: Step) -> Result<Self> {
-        let mut path = BudgetVec::new(self.path.budget());
-        path.try_extend_from_slice(&self.path)?;
+        let mut path = copy_path(&self.path, self.path.budget())?;
         path.try_push(step)?;
         Ok(Self {
             number: self.number,
@@ -337,8 +338,7 @@ impl<'b> Location<'b> {
     }
 
     fn duplicate(&self) -> Result<Self> {
-        let mut path = BudgetVec::new(self.path.budget());
-        path.try_extend_from_slice(&self.path)?;
+        let path = copy_path(&self.path, self.path.budget())?;
         Ok(Self {
             number: self.number,
             path,
@@ -366,37 +366,51 @@ impl<'b> Location<'b> {
 
 /// Follows `value` through references, and returns what it names with its
 /// location: `at` for a direct value, or the last object it leads to.
-/// Null, a reference to an object that the store cannot read, and a chain
-/// longer than [`MAX_REFERENCE_DEPTH`] read as absent.
+/// Null and missing or cyclic references read as absent. Store errors and
+/// chains longer than [`MAX_REFERENCE_DEPTH`] refuse the operation.
 fn resolve<'b>(
     reads: &mut Reads<'b>,
     mut at: Option<Location<'b>>,
     value: &Value,
 ) -> Result<Option<(Option<Location<'b>>, Value)>> {
-    let mut value = value.clone();
-    let mut steps = 0;
+    let budget = reads.budget();
+    let mut value = copy_for_edit(value, budget)?;
+    let mut seen = BudgetVec::new(budget);
     while let Value::Reference(reference) = value {
-        steps += 1;
-        if steps > MAX_REFERENCE_DEPTH {
+        budget.poll()?;
+        if seen.contains(&reference) {
             return Ok(None);
         }
+        if seen.len() >= MAX_REFERENCE_DEPTH {
+            return Err(LimitExceeded::over(
+                LimitCode::StructureTreeCount,
+                MAX_REFERENCE_DEPTH as u64,
+                (seen.len() + 1) as u64,
+            )
+            .into());
+        }
+        seen.try_push(reference)?;
         let Some(object) = readable(reads, reference.number())?
             .filter(|object| object.generation() == reference.generation())
         else {
             return Ok(None);
         };
         at = Some(Location::object(reference.number(), reads.budget()));
-        value = (**object.value()).clone();
+        value = copy_for_edit(object.value(), budget)?;
     }
     Ok((!matches!(value, Value::Null)).then_some((at, value)))
 }
 
 /// Returns the page that `/Pg` of `dict` names.
-fn page_of(dict: &Dict) -> Option<u32> {
-    match dict.get("Pg") {
-        Some(Value::Reference(page)) => Some(page.number()),
+fn page_of(reads: &mut Reads<'_>, dict: &Dict) -> Result<Option<u32>> {
+    Ok(match dict.get("Pg") {
+        Some(Value::Reference(page))
+            if reads.generation(page.number())? == Some(page.generation()) =>
+        {
+            Some(page.number())
+        }
         _ => None,
-    }
+    })
 }
 
 fn integer_of(dict: &Dict, key: &str) -> Option<i64> {
@@ -449,6 +463,9 @@ impl<'b> Annotations<'b> {
                         continue;
                     };
                     let number = annotation.number();
+                    if reads.generation(number)? != Some(annotation.generation()) {
+                        continue;
+                    }
                     if !stays {
                         annotations.listed.insert(number, (), budget)?;
                     } else if annotations.retained.get(number).is_none() {
@@ -517,6 +534,7 @@ impl<'b> Keys<'b> {
         }
         keys.dropped.sort_unstable();
         keys.retained.sort_unstable();
+        budget.poll()?;
         Ok(keys)
     }
 
@@ -592,7 +610,11 @@ fn leaves<'b>(
     let mut leaves = BudgetVec::new(budget);
     let mut seen: Table<()> = Table::new();
     let mut pending = BudgetVec::new(budget);
-    pending.try_push((Some(root.child(Step::Key(key.into()))?), tree.clone(), 1))?;
+    pending.try_push((
+        Some(root.child(Step::Key(key.into()))?),
+        copy_for_edit(tree, budget)?,
+        1,
+    ))?;
     while let Some((at, value, depth)) = pending.pop() {
         budget.poll()?;
         if let (Some(marked), Value::Reference(node)) = (marked, &value)
@@ -607,9 +629,11 @@ fn leaves<'b>(
         if at
             .indirect()
             .is_some_and(|number| seen.get(number).is_some())
-            || is_aliasing(&node)
         {
             continue;
+        }
+        if is_aliasing(&node) {
+            return Err(aliasing());
         }
         if let Some(number) = at.indirect() {
             seen.insert(number, (), budget)?;
@@ -632,17 +656,21 @@ fn leaves<'b>(
         if let Some(kids) = node.get("Kids")
             && let Some((_, Value::Array(items))) = resolve(reads, None, kids)?
         {
-            if depth >= MAX_LOOKUP_TREE_DEPTH {
-                return Err(LimitExceeded::over(
-                    LimitCode::StructureTreeCount,
-                    MAX_LOOKUP_TREE_DEPTH,
-                    depth + 1,
-                )
-                .into());
-            }
             for item in items.iter() {
-                if matches!(item, Value::Reference(_)) {
-                    pending.try_push((None, item.clone(), depth + 1))?;
+                budget.poll()?;
+                if let Value::Reference(reference) = item {
+                    if seen.get(reference.number()).is_some() {
+                        continue;
+                    }
+                    if depth >= MAX_LOOKUP_TREE_DEPTH {
+                        return Err(LimitExceeded::over(
+                            LimitCode::StructureTreeCount,
+                            MAX_LOOKUP_TREE_DEPTH,
+                            depth + 1,
+                        )
+                        .into());
+                    }
+                    pending.try_push((None, Value::Reference(*reference), depth + 1))?;
                 }
             }
         }
@@ -751,9 +779,10 @@ impl<'b> Walk<'_, 'b> {
     }
 
     /// Returns whether `value` refers to an element that the walk removed.
-    fn is_removed(&self, value: &Value) -> bool {
-        matches!(value, Value::Reference(element)
-            if self.states.get(element.number()) == Some(&State::Removed))
+    fn is_removed(&self, reads: &mut Reads<'_>, value: &Value) -> Result<bool> {
+        Ok(matches!(value, Value::Reference(element)
+            if self.states.get(element.number()) == Some(&State::Removed)
+                && reads.generation(element.number())? == Some(element.generation())))
     }
 
     /// Returns whether the walk reads the object `number`: every object,
@@ -919,7 +948,7 @@ impl<'b> Walk<'_, 'b> {
                         };
                     }
                 }
-                Some(_) => kids = Kids::Single(Some(value.clone())),
+                Some(_) => kids = Kids::Single(Some(copy_for_edit(value, self.budget)?)),
             }
         }
         if !root && let Some(value) = dict.get("Ref") {
@@ -943,7 +972,7 @@ impl<'b> Walk<'_, 'b> {
                 }
                 _ => Some(Named::Single {
                     element: at.duplicate()?,
-                    value: value.clone(),
+                    value: copy_for_edit(value, self.budget)?,
                 }),
             };
             if let Some(named) = named {
@@ -951,7 +980,7 @@ impl<'b> Walk<'_, 'b> {
             }
         }
         Ok(Frame {
-            page: if root { None } else { page_of(dict) },
+            page: if root { None } else { page_of(reads, dict)? },
             at,
             root,
             kids,
@@ -980,13 +1009,15 @@ impl<'b> Walk<'_, 'b> {
             return Ok(Kid::Kept);
         };
         if is_aliasing(&dict) {
-            return Ok(Kid::Kept);
+            return Err(aliasing());
         }
         match type_of(&dict) {
-            Some(b"MCR") => Ok(self.on(page_of(&dict).or(frame.page))),
+            Some(b"MCR") => Ok(self.on(page_of(reads, &dict)?.or(frame.page))),
             Some(b"OBJR") => {
-                let own = page_of(&dict);
-                if let Some(Value::Reference(target)) = dict.get("Obj") {
+                let own = page_of(reads, &dict)?;
+                if let Some(Value::Reference(target)) = dict.get("Obj")
+                    && reads.generation(target.number())? == Some(target.generation())
+                {
                     let target = target.number();
                     if let Some(listing) = self.annotations.listing(target) {
                         if !self.dropped(own) {
@@ -1027,6 +1058,7 @@ impl<'b> Walk<'_, 'b> {
         Ok(matches!(
             dict_of(&object).and_then(|dict| dict.get("P")),
             Some(Value::Reference(page)) if is_in(self.removed, page.number())
+                && reads.generation(page.number())? == Some(page.generation())
         ))
     }
 
@@ -1048,13 +1080,18 @@ impl<'b> Walk<'_, 'b> {
         if self.states.get(number).is_some() {
             return Ok(());
         }
-        let Some(object) = readable(reads, number)? else {
+        let Some(object) =
+            readable(reads, number)?.filter(|object| object.generation() == element.generation())
+        else {
             return Ok(());
         };
         let Value::Dict(dict) = &**object.value() else {
             return Ok(());
         };
-        if dict.get("S").is_none() || is_aliasing(dict) {
+        if is_aliasing(dict) {
+            return Err(aliasing());
+        }
+        if dict.get("S").is_none() {
             return Ok(());
         }
         self.states.insert(number, State::Walking, self.budget)?;
@@ -1091,7 +1128,12 @@ impl<'b> Walk<'_, 'b> {
                 Kids::None => None,
                 Kids::Single(value) => value.take().map(|value| (None, value)),
                 Kids::Array { items, next, .. } => {
-                    let item = items.get(*next).map(|value| (Some(*next), value.clone()));
+                    let item = items
+                        .get(*next)
+                        .map(|value| {
+                            copy_for_edit(value, self.budget).map(|value| (Some(*next), value))
+                        })
+                        .transpose()?;
                     *next += 1;
                     item
                 }
@@ -1227,7 +1269,8 @@ impl<'b> Walk<'_, 'b> {
                     }
                     let mut gone = BudgetVec::new(self.budget);
                     for (position, item) in items.iter().enumerate() {
-                        if self.is_removed(item) {
+                        self.budget.poll()?;
+                        if self.is_removed(reads, item)? {
                             gone.try_push(position)?;
                         }
                     }
@@ -1248,9 +1291,10 @@ impl<'b> Walk<'_, 'b> {
                     }
                     (element, true)
                 }
-                Named::Single { element, value } => {
-                    (element, !self.is_gone(element) && self.is_removed(value))
-                }
+                Named::Single { element, value } => (
+                    element,
+                    !self.is_gone(element) && self.is_removed(reads, value)?,
+                ),
             };
             if gone {
                 element.apply(
@@ -1275,7 +1319,7 @@ impl<'b> Walk<'_, 'b> {
     /// Returns whether a parent tree value names removed elements and
     /// nothing else but nulls.
     fn names_only_removed(&self, reads: &mut Reads<'b>, value: &Value) -> Result<bool> {
-        if self.is_removed(value) {
+        if self.is_removed(reads, value)? {
             return Ok(true);
         }
         let Some((_, Value::Array(items))) = resolve(reads, None, value)? else {
@@ -1283,9 +1327,10 @@ impl<'b> Walk<'_, 'b> {
         };
         let mut any = false;
         for item in items.iter() {
+            self.budget.poll()?;
             match item {
                 Value::Null => {}
-                item if self.is_removed(item) => any = true,
+                item if self.is_removed(reads, item)? => any = true,
                 _ => return Ok(false),
             }
         }
@@ -1314,4 +1359,9 @@ impl<'b> Walk<'_, 'b> {
         }
         Ok(())
     }
+}
+
+/// Refuse aliases before page freeing can leave the structure tree dangling.
+fn aliasing() -> crate::Error {
+    crate::Error::malformed("structure tree cannot alias a page or catalog dictionary")
 }

@@ -9,7 +9,8 @@ moving pages is covered here by the page label cases. Not ported:
 - importing pages with ``extend`` and its entry limit (yhay81/pyropdf#176);
 - the batches of pylopdf's internal core document, which pyropdf has no
   counterpart of: its Python API is the contract, and the entry limit cases
-  below bound the same batches;
+  below bound the same batches. Selection refuses a duplicate immediately
+  until page copying is implemented (#175), before reading another entry;
 - the outline that a large table of contents writes (yhay81/pyropdf#183).
 """
 
@@ -124,9 +125,8 @@ def test_delete_pages_accepts_more_than_the_floor(large_pdf: bytes) -> None:
         lambda doc, pages: doc.text(pages),
         lambda doc, pages: doc.markdown(pages),
         lambda doc, pages: doc.render(pages, matrix=SCALE, alpha=True),
-        lambda doc, pages: doc.pages.select(pages),
     ],
-    ids=["text", "markdown", "render", "select"],
+    ids=["text", "markdown", "render"],
 )
 def test_explicit_entries_stop_after_the_page_count(
     large_pdf: bytes,
@@ -263,3 +263,30 @@ def test_labels_stay_when_no_page_changes_its_label(labels_before: str, deleted:
     del doc.pages[deleted]
 
     assert _ranges(doc.catalog["PageLabels"]) == before
+
+
+@pytest.mark.parametrize("target", [1, 2, 3], ids=["catalog", "page-tree", "page"])
+def test_label_tree_cannot_overwrite_a_live_document_object(target: int) -> None:
+    doc = labelled_pdf(f"{target} 0 R")
+    doc.objects[target]["Nums"] = [0, {"S": pyropdf.Name("D")}]
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.MalformedPdfError):
+        del doc.pages[1]
+    assert doc.to_bytes() == before
+    assert len(doc.pages) == 7
+
+
+@pytest.mark.parametrize("broken", ["99 0 R", "42", "<< /Nums [4 99 0 R] >>"])
+def test_unreadable_label_subtree_is_not_partially_rewritten(broken: str) -> None:
+    doc = labelled_pdf(f"<< /Kids [10 0 R {broken}] >>", extra={10: LABELS})
+    del doc.pages[0]
+    assert "Kids" in doc.catalog["PageLabels"]
+    assert 10 in doc.objects
+
+
+def test_empty_kids_at_label_depth_limit_do_not_hide_valid_labels() -> None:
+    nodes = {10 + index: f"<< /Kids [{11 + index} 0 R] >>" for index in range(31)}
+    nodes[41] = "<< /Nums [0 << /S /D >>] /Kids [] >>"
+    doc = labelled_pdf("10 0 R", extra=nodes)
+    del doc.pages[0]
+    assert labels(doc) == ["2", "3", "4", "5", "6", "7"]

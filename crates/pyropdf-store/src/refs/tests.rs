@@ -965,3 +965,402 @@ proptest! {
         prop_assert_eq!(&affected.2, &whole.2);
     }
 }
+
+#[test]
+fn find_charges_every_owned_key_copy() {
+    let long_key = "k".repeat(64 * 1024);
+    let document = document_of(
+        &[(1, dict(vec![(&long_key, array(vec![reference(2); 8]))]))],
+        Dict::new(),
+    );
+    let version = document.current();
+    // Warm the parsed-object cache: the operation pays for its own copies.
+    version.get(1, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let error = find(&mut reads, Referrer::Object(1), 2)
+        .map(|found| found.len())
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn warm_cache_and_empty_update_obey_cancellation() {
+    let document = tagged();
+    let version = document.current();
+    let cache = Cache::new();
+    let index = cache.get(&version, &Budget::default()).unwrap();
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let error = cache.get(&version, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    let changes = version
+        .changes(&version, &Budget::default())
+        .unwrap()
+        .unwrap();
+    let error = index
+        .update(&mut Reads::new(&version, &budget), &changes)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn malformed_objects_cannot_produce_a_complete_index() {
+    let mut base = MemoryBase::new(Dict::new());
+    base.insert(
+        Reference::new(1, 0),
+        Bytes::new(b"<< /Next 2 0 R /Broken (".to_vec()),
+    );
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+    let budget = Budget::default();
+    assert!(version.get(1, &budget).is_err());
+    assert!(build(&version, &budget).is_err());
+    assert!(find(&mut Reads::new(&version, &budget), Referrer::Object(1), 2).is_err());
+
+    let cache = Cache::new();
+    let readable = tagged();
+    let good = readable.current();
+    let previous = cache.get(&good, &budget).unwrap();
+    assert!(cache.get(&version, &budget).is_err());
+    assert!(Arc::ptr_eq(&previous, &cache.get(&good, &budget).unwrap()));
+}
+
+#[test]
+fn warm_cache_obeys_an_expired_deadline() {
+    let document = tagged();
+    let version = document.current();
+    let cache = Cache::new();
+    cache.get(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_deadline(std::time::Instant::now());
+    let error = cache.get(&version, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Deadline)
+    );
+}
+
+#[test]
+fn sparse_referrer_numbers_preserve_every_reference_generation() {
+    let document = document_of(
+        &[(
+            u32::MAX,
+            array(vec![
+                Value::Reference(Reference::new(1, 7)),
+                Value::Reference(Reference::new(1, 9)),
+            ]),
+        )],
+        Dict::new(),
+    );
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let index = build(&version, &budget).unwrap();
+    assert_eq!(index.targets(u32::MAX), &[1]);
+    assert_eq!(index.referrers(1), &[u32::MAX]);
+    let mut reads = Reads::new(&version, &budget);
+    let found = find(&mut reads, Referrer::Object(u32::MAX), 1).unwrap();
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].reference, Reference::new(1, 9));
+    assert_eq!(found[1].reference, Reference::new(1, 7));
+}
+
+#[test]
+fn the_trailer_is_a_container_for_the_depth_limit() {
+    let document = document_of(
+        &[],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(0));
+    let error = find(&mut Reads::new(&version, &budget), Referrer::Trailer, 1).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(1));
+    assert_eq!(build(&version, &budget).unwrap().trailer(), &[1]);
+}
+
+#[test]
+fn removing_a_link_preserves_references_from_other_arrays() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![("Type", name("Catalog")), ("Custom", reference(6))]),
+            ),
+            (2, dict(vec![("Type", name("Page"))])),
+            (
+                3,
+                dict(vec![("Type", name("Page")), ("Annots", reference(4))]),
+            ),
+            (4, array(vec![reference(5)])),
+            (
+                5,
+                dict(vec![
+                    ("Type", name("Annot")),
+                    ("Subtype", name("Link")),
+                    ("Dest", array(vec![reference(2), name("Fit")])),
+                ]),
+            ),
+            (6, array(vec![reference(5)])),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let index = apply_everywhere(&document, 2, Some(5), Rule::RemoveReferrer).unwrap();
+    assert_eq!(index.referrers(5), &[6]);
+    assert_eq!(index.targets(4), &[] as &[u32]);
+}
+
+#[test]
+fn orphan_cycles_are_freed_but_shared_cycles_stay() {
+    for shared in [false, true] {
+        let document = document_of(
+            &[
+                (1, if shared { reference(3) } else { Value::Null }),
+                (2, reference(3)),
+                (3, reference(4)),
+                (4, reference(3)),
+            ],
+            [(Name::from("Root"), reference(1))].into_iter().collect(),
+        );
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let freed = unreferenced(&index, &[2], &[], &budget).unwrap();
+        assert_eq!(&*freed, if shared { &[2][..] } else { &[2, 3, 4][..] });
+    }
+}
+
+#[test]
+fn planned_paths_and_edit_copies_pay_for_owned_bytes() {
+    let path = [Step::Key(Name::from("k".repeat(64 * 1024).as_str()))];
+    let document = document_of(&[], Dict::new());
+    let version = document.current();
+    let index = References::default();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(128 * 1024));
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    edits
+        .apply(&mut reads, &index, 1, &path, Rule::RemoveEntry)
+        .unwrap();
+    let error = edits
+        .apply(&mut reads, &index, 2, &path, Rule::RemoveEntry)
+        .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+
+    let value = string(&"x".repeat(1024));
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(512));
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn edit_copies_preserve_lexemes_and_bound_recursive_cloning() {
+    let source = Bytes::new(b"<< /Odd#20Key [1.000  2 0 R] /Text <0061> >>".to_vec());
+    let budget = Budget::default();
+    let value = Value::parse(&source, &budget).unwrap();
+    assert_eq!(bytes_of(&copy_for_edit(&value, &budget).unwrap()), source);
+    let mut value = Value::Null;
+    for _ in 0..65 {
+        value = array(vec![value]);
+    }
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+}
+
+proptest! {
+    #[test]
+    fn orphan_collection_matches_reachability(
+        graph in proptest::collection::vec(proptest::collection::vec(1..=8u32, 0..5), 8),
+        seeds in proptest::collection::vec(1..=8u32, 0..5),
+        candidates in proptest::collection::vec(1..=8u32, 0..5),
+    ) {
+        let objects: Vec<_> = graph.iter().enumerate().map(|(at, links)| {
+            ((at + 1) as u32, array(links.iter().copied().map(reference).collect()))
+        }).collect();
+        let document = document_of(&objects, [(Name::from("Root"), reference(1))].into_iter().collect());
+        let budget = Budget::default();
+        let index = build(&document.current(), &budget).unwrap();
+        let actual = unreferenced(&index, &seeds, &candidates, &budget).unwrap();
+        // Independent fixed-size reachability oracle: first find the
+        // affected closure, then mark every surviving root's descendants.
+        let mut closure = [false; 9];
+        let mut forced = [false; 9];
+        for &number in seeds.iter().chain(&candidates) { closure[number as usize] = true; }
+        for &number in &seeds { forced[number as usize] = number != 1; }
+        for (at, links) in graph.iter().enumerate() {
+            if links.iter().any(|target| candidates.contains(target)) { closure[at + 1] = true; }
+        }
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if closure[at + 1] {
+                    for &next in links { closure[next as usize] = true; }
+                }
+            }
+        }
+        let mut live = closure.map(|affected| !affected);
+        live[1] = true;
+        for _ in 0..8 {
+            for (at, links) in graph.iter().enumerate() {
+                if live[at + 1] && !forced[at + 1] {
+                    for &next in links {
+                        if !forced[next as usize] { live[next as usize] = true; }
+                    }
+                }
+            }
+        }
+        let expected: Vec<_> = (1..=8u32).filter(|&number| {
+            closure[number as usize] && !live[number as usize] && number != 1
+        }).collect();
+        prop_assert_eq!(&*actual, &*expected);
+    }
+}
+
+#[test]
+fn structure_planning_charges_copies_of_unknown_fields() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    ("StructTreeRoot", reference(6)),
+                ]),
+            ),
+            (3, dict(vec![("Type", name("Page"))])),
+            (4, dict(vec![("Type", name("Page"))])),
+            (
+                6,
+                dict(vec![
+                    ("Type", name("StructTreeRoot")),
+                    ("K", reference(7)),
+                    ("Unknown", string(&"x".repeat(1024 * 1024))),
+                ]),
+            ),
+            (
+                7,
+                dict(vec![
+                    ("S", name("P")),
+                    ("Pg", reference(4)),
+                    ("K", Value::Integer(0)),
+                ]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    let index = build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let mut edits = Edits::new(&budget);
+    let error = super::structure::plan(
+        &mut Reads::new(&version, &budget),
+        &index,
+        &[3],
+        &[4],
+        &mut edits,
+        structure::Reach::Whole,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert!(edits.is_empty());
+    assert!(Arc::ptr_eq(&version, &document.current()));
+}
+
+#[test]
+fn label_rewriting_charges_owned_prefixes_before_copying() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("Type", name("Catalog")),
+                    ("PageLabels", reference(10)),
+                ]),
+            ),
+            (
+                10,
+                dict(vec![(
+                    "Nums",
+                    array(vec![
+                        Value::Integer(0),
+                        dict(vec![("P", string(&"x".repeat(1024 * 1024)))]),
+                    ]),
+                )]),
+            ),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let version = document.current();
+    build(&version, &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let result = relabel(&mut Reads::new(&version, &budget), &[3, 4], &[4]);
+    assert!(
+        matches!(result, Err(ref error) if error.limit().map(LimitExceeded::code) == Some(LimitCode::MemorySize))
+    );
+}
+
+#[test]
+fn cached_rule_searches_refuse_cancellation_even_without_matches() {
+    let document = document_of(&[(1, Value::Null)], Dict::new());
+    let version = document.current();
+    let token = crate::budget::CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    assert!(edits.find(&mut reads, 1, 2).unwrap().is_empty());
+    token.cancel();
+    let error = edits.find(&mut reads, 1, 2).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn writing_rules_invalidates_the_cached_reference_paths() {
+    let document = document_of(&[(1, array(vec![reference(2), reference(3)]))], Dict::new());
+    let version = document.current();
+    let budget = Budget::default();
+    let index = build(&version, &budget).unwrap();
+    let mut reads = Reads::new(&version, &budget);
+    let mut edits = Edits::new(&budget);
+    assert_eq!(
+        &*edits.find(&mut reads, 1, 3).unwrap()[0].path,
+        &[Step::Index(1)]
+    );
+    edits
+        .apply(&mut reads, &index, 1, &[Step::Index(0)], Rule::RemoveEntry)
+        .unwrap();
+    let mut transaction = document.begin();
+    edits.write(&mut transaction, &budget).unwrap();
+    let changed = transaction.snapshot();
+    assert_eq!(
+        &*edits
+            .find(&mut Reads::new(&changed, &budget), 1, 3)
+            .unwrap()[0]
+            .path,
+        &[Step::Index(0)]
+    );
+}
