@@ -28,11 +28,13 @@ def _numbers(data: bytes) -> set[int]:
 
 def test_a_pruned_save_leaves_out_what_an_edit_unlinked() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
-    doc.attachments.add("a.txt", b"data")
+    data = doc.objects.add_stream(b"data")
+    doc.catalog["PieceInfo"] = {"Example": doc.objects[doc.objects.add({"Data": doc.objects[data]})]}
     doc = pyropdf.open(doc.to_bytes())
-    filespec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][1]
-    unlinked = {filespec.xref, filespec["EF"]["F"].xref}
-    del doc.attachments["a.txt"]
+    holder = doc.catalog["PieceInfo"]["Example"]
+    unlinked = {holder.xref, holder["Data"].xref}
+    # Deleting an entry unlinks its objects without freeing them.
+    del doc.catalog["PieceInfo"]
 
     pruned = pyropdf.open(doc.to_bytes(prune=True))
     assert not unlinked & set(pruned.objects)
@@ -438,8 +440,9 @@ def test_a_renumbered_save_follows_each_reference_with_the_other_options() -> No
     assert len(saved.objects) < len(numbers) + 3
     assert sorted(saved.objects) == list(range(1, len(saved.objects) + 1))
     assert _content(saved) == _content(doc)
-    # The document in memory keeps its numbers.
-    assert list(doc.objects)[: len(numbers)] == numbers
+    # The document in memory keeps the numbers of what the delete did not free.
+    kept = [number for number in numbers if number in doc.objects]
+    assert list(doc.objects)[: len(kept)] == kept
 
 
 @pytest.mark.parametrize("encryption", ["new", "kept"])

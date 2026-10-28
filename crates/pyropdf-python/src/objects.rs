@@ -30,7 +30,9 @@ use pyo3::types::{PyBool, PyBytes, PyList, PyTuple};
 use pyo3::{IntoPyObjectExt, intern};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -654,4 +656,36 @@ pub fn stream_write(
 #[pyfunction]
 pub fn decode_text_string(data: &[u8]) -> String {
     crate::document::text_string(data)
+}
+
+/// Frees the objects of `candidates` that nothing in the edit's version
+/// refers to but freed objects, with every object that only freed objects
+/// refer to, in one transaction, as the reverse-reference index finds them;
+/// an object that anything else refers to stays. Returns the freed objects,
+/// ascending.
+#[pyfunction]
+pub fn object_free_unreferenced(
+    py: Python<'_>,
+    document: &_Document,
+    candidates: Vec<u32>,
+) -> PyResult<Vec<u32>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    document.edit(py, |transaction, budget| {
+        let parent = Arc::clone(transaction.parent());
+        let before = transaction.snapshot();
+        let references = document.references.get(&parent, budget).map_err(store)?;
+        let references = match parent.changes(&before, budget).map_err(store)? {
+            Some(changes) if !changes.is_empty() => Arc::new(
+                references
+                    .update(&mut Reads::new(&before, budget), &changes)
+                    .map_err(store)?,
+            ),
+            _ => references,
+        };
+        let freed = refs::unreferenced(&references, &[], &candidates, budget).map_err(store)?;
+        for &number in freed.iter() {
+            transaction.free(number, budget).map_err(store)?;
+        }
+        Ok(freed.into_vec())
+    })
 }

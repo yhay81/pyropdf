@@ -76,8 +76,8 @@ def catalog_entry(doc: pyropdf.Document) -> set[int]:
 def flattened(doc: pyropdf.Document) -> set[int]:
     """Return the page-tree objects that writing the page list rewrites."""
     # Writing the page list flattens the page tree: it writes the root and
-    # every page that is not already the root's kid (#272 narrows what those
-    # pages keep).
+    # every page that is not already the root's kid, which keeps what it
+    # inherits as the reference that held it (#272).
     root = doc.catalog["Pages"]
     return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
 

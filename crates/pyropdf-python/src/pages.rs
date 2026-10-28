@@ -818,6 +818,74 @@ fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
         .collect()
 }
 
+/// Returns the reference through which page `page` inherits `inherited`,
+/// its value of `key`: the entry of the page itself or of the nearest node
+/// of its `/Parent` chain in `version` that holds the key, when that entry
+/// is a reference to `inherited`. Returns `None` for a direct value, or
+/// for a chain that the page walk did not follow.
+fn held(
+    version: &Version,
+    page: &Dict,
+    key: &str,
+    inherited: &Value,
+    budget: &Budget,
+) -> PyResult<Option<Reference>> {
+    let mut node: Option<Arc<Value>> = None;
+    for depth in 0.. {
+        budget
+            .check(LimitCode::ObjectDepth, depth)
+            .map_err(|e| store_error(&e.into()))?;
+        let dict = match node.as_deref() {
+            None => page,
+            Some(Value::Dict(dict)) => dict,
+            Some(_) => return Ok(None),
+        };
+        match dict.get(key) {
+            Some(Value::Reference(entry)) => {
+                // The walk passes over an entry that names no object.
+                if let Some(value) = target(version, *entry, budget)? {
+                    let same = std::ptr::eq(&*value, inherited) || *value == *inherited;
+                    return Ok(same.then_some(*entry));
+                }
+            }
+            Some(Value::Null) | None => {}
+            Some(_) => return Ok(None),
+        }
+        let Some(Value::Reference(parent)) = dict.get("Parent") else {
+            return Ok(None);
+        };
+        node = target(version, *parent, budget)?;
+    }
+    Ok(None)
+}
+
+/// Returns the value that `reference` names in `version`, through a chain
+/// of references, without copying it; `None` for a missing object or null.
+fn target(
+    version: &Version,
+    reference: Reference,
+    budget: &Budget,
+) -> PyResult<Option<Arc<Value>>> {
+    let mut current = reference;
+    for _ in 0..MAX_CHAIN {
+        let Some(object) = version
+            .get(current.number(), budget)
+            .map_err(|e| store_error(&e))?
+            .filter(|object| object.generation() == current.generation())
+        else {
+            return Ok(None);
+        };
+        match &**object.value() {
+            Value::Null => return Ok(None),
+            Value::Reference(next) => current = *next,
+            _ => return Ok(Some(Arc::clone(object.value()))),
+        }
+    }
+    Err(MalformedPdfError::new_err(
+        "a reference chain is longer than 16 references",
+    ))
+}
+
 /// Writes the root node with `order` as its kids, and each page that the
 /// flattening changes. `added` are pages that the transaction wrote, which
 /// the index does not list yet.
@@ -871,10 +939,13 @@ fn rewrite_with(
         for key in INHERITABLE {
             match page.inherited(key) {
                 Some(value) => {
-                    dict.insert(
-                        Name::from(key),
-                        refs::copy_for_edit(value, budget).map_err(store)?,
-                    );
+                    // A reference stays a reference, so that the pages keep
+                    // sharing what they shared.
+                    let value = match held(version, page.dict(), key, value, budget)? {
+                        Some(held) => Value::Reference(held),
+                        None => refs::copy_for_edit(value, budget).map_err(store)?,
+                    };
+                    dict.insert(Name::from(key), value);
                 }
                 None => {
                     dict.remove(key);

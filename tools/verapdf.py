@@ -48,13 +48,6 @@ REJECTED: dict[str, str] = {
         for edit in ("add", "write")
         for mode in ("full", "incremental")
     },
-    # A deleted attachment leaves its file specification and embedded file
-    # behind, and veraPDF checks every object.
-    **{
-        f"{part} pdfa-{part}-delete_attachment-{mode}.pdf": "#304"
-        for part in ("1b", "2b", "2u", "3b", "4")
-        for mode in ("full", "incremental")
-    },
 }
 
 #: The Arlington extensions that a PDF/A part adds to the PDF version it is based on, by flavour.
