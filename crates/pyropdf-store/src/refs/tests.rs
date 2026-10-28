@@ -1598,3 +1598,46 @@ proptest! {
         prop_assert_eq!(&affected.2, &whole.2);
     }
 }
+
+#[test]
+fn collection_does_not_expand_a_large_retained_root_child() {
+    let mut objects = vec![
+        (1, reference(2)),
+        (2, array((100..10_100).map(reference).collect())),
+        (3, array(vec![reference(2), reference(4)])),
+        (4, Value::Integer(7)),
+    ];
+    objects.extend((100..10_100).map(|number| (number, Value::Null)));
+    let document = document_of(
+        &objects,
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let index = build(&document.current(), &Budget::default()).unwrap();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    assert_eq!(&*unreferenced(&index, &[3], &[], &budget).unwrap(), &[3, 4]);
+}
+
+#[test]
+fn collection_preserves_candidates_referenced_by_a_live_boundary() {
+    let document = document_of(
+        &[
+            (1, reference(2)),
+            (2, array(vec![reference(3), reference(4)])),
+            (3, reference(4)),
+            (4, reference(3)),
+            (5, reference(6)),
+            (6, reference(5)),
+        ],
+        [(Name::from("Root"), reference(1))].into_iter().collect(),
+    );
+    let budget = Budget::default();
+    let index = build(&document.current(), &budget).unwrap();
+    assert_eq!(
+        &*unreferenced(&index, &[], &[2, 3, 5], &budget).unwrap(),
+        &[5, 6]
+    );
+    assert_eq!(
+        &*unreferenced(&index, &[1, 2], &[], &budget).unwrap(),
+        &[2, 3, 4]
+    );
+}
