@@ -25,6 +25,7 @@ use pyropdf_store::{Error, write};
 
 use crate::annotations::links::NamedDestinations;
 use crate::errors::{DocumentClosedError, MalformedPdfError, save_error, store_error};
+use crate::forms::Form;
 use crate::history::DEFAULT_HISTORY_LIMIT;
 use crate::outline::Outline;
 use crate::source;
@@ -57,6 +58,11 @@ pub struct _Document {
     pub(crate) outline: Memo<(), Outline>,
     /// The outline items of what an open transaction has written.
     pub(crate) draft_outline: Memo<(), Outline>,
+    /// The terminal fields of the form, memoized by what walking its field
+    /// tree read.
+    pub(crate) form: Memo<(), Form>,
+    /// The form fields of what an open transaction has written.
+    pub(crate) draft_form: Memo<(), Form>,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
     /// The reverse-reference index of the latest version that a structural
@@ -88,6 +94,8 @@ impl _Document {
             draft_destinations: Memo::new(1),
             outline: Memo::new(1),
             draft_outline: Memo::new(1),
+            form: Memo::new(1),
+            draft_form: Memo::new(1),
             bridge: pyropdf_engine::bridge::Cache::new(),
             references: pyropdf_store::refs::Cache::new(),
             history: crate::history::State::default(),
@@ -123,6 +131,8 @@ impl _Document {
         self.draft_destinations.clear();
         self.outline.clear();
         self.draft_outline.clear();
+        self.form.clear();
+        self.draft_form.clear();
         self.history.clear();
     }
 
@@ -351,6 +361,8 @@ impl _Document {
         self.draft_destinations.clear();
         self.outline.clear();
         self.draft_outline.clear();
+        self.form.clear();
+        self.draft_form.clear();
         self.history.clear();
     }
 }

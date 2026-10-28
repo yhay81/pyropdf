@@ -20,6 +20,7 @@ from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
+from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
@@ -113,6 +114,12 @@ class Document:
         """Return the named destinations, a read-only mapping from name to :class:`Destination`."""
         self._ensure_open()
         return Destinations(self)
+
+    @property
+    def form(self) -> Form:
+        """Return the interactive form, a mapping from full field names to :class:`Field` handles."""
+        self._ensure_open()
+        return Form(self)
 
     @property
     def outline(self) -> Outline:
