@@ -88,6 +88,16 @@ def new_page(doc: pyropdf.Document) -> set[int]:
     return touched
 
 
+def delete_page(doc: pyropdf.Document) -> set[int]:
+    if len(doc.pages) == 1:
+        doc.pages.new((200, 300))
+    touched = flattened(doc) | {number(doc.pages[0].obj)}
+    present = set(doc.objects)
+    del doc.pages[0]
+    # The delete frees what only the deleted page reached.
+    return touched | (present - set(doc.objects))
+
+
 def replace_object(doc: pyropdf.Document) -> set[int]:
     number = doc.objects.add([1, 2])
     doc.objects[number] = [Real("3.14159265358979323846264338327950288")]
@@ -207,6 +217,7 @@ EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "add_object": add_object,
     "catalog_entry": catalog_entry,
     "new_page": new_page,
+    "delete_page": delete_page,
     "replace_object": replace_object,
     "rewrite_stream": rewrite_stream,
     "move_page": move_page,
