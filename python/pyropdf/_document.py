@@ -276,6 +276,7 @@ class Document:
         keep_id: bool = False,
         cross_reference: Literal["table", "stream"] | None = None,
         object_streams: bool = False,
+        renumber: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -330,6 +331,14 @@ class Document:
         ``decompress``, and an encrypted save encrypts each object stream
         as a whole. An incremental save keeps the form of the opened file,
         so it refuses both.
+
+        ``renumber=True`` numbers the objects that a full save writes 1, 2,
+        3, and so on in the order of their numbers, with generation 0, and
+        the objects that it adds after them; each reference follows its
+        object, and a reference to an object that the save does not write
+        becomes null. An encrypted save encrypts each object with the key
+        of its new number. The document in memory keeps its numbers, and an
+        incremental save, which keeps the opened file's, refuses it.
         """
         self._ensure_open()
         options = _save_options(
@@ -341,6 +350,7 @@ class Document:
             keep_id=keep_id,
             cross_reference=cross_reference,
             object_streams=object_streams,
+            renumber=renumber,
         )
         arg = _encryption_arg(encryption)
         _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
@@ -358,6 +368,7 @@ class Document:
         keep_id: bool = False,
         cross_reference: Literal["table", "stream"] | None = None,
         object_streams: bool = False,
+        renumber: bool = False,
     ) -> bytes:
         """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
@@ -375,6 +386,7 @@ class Document:
             keep_id=keep_id,
             cross_reference=cross_reference,
             object_streams=object_streams,
+            renumber=renumber,
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
@@ -579,11 +591,12 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     keep_id: bool,
     cross_reference: object,
     object_streams: bool,
-) -> tuple[bool, int | None, bool, bool, bool | None, bool]:
+    renumber: bool,
+) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool]:
     """Check the save options, and return them as the core's save methods take them.
 
     They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
-    ``cross_reference_stream``, and ``object_streams``.
+    ``cross_reference_stream``, ``object_streams``, and ``renumber``.
     """
     flags = {
         "incremental": incremental,
@@ -592,6 +605,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         "decompress": decompress,
         "keep_id": keep_id,
         "object_streams": object_streams,
+        "renumber": renumber,
     }
     for name, value in flags.items():
         _validate_bool(name, value)
@@ -601,29 +615,55 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     if not 0 <= compression_level <= _MAX_COMPRESSION_LEVEL:
         msg = f"compression_level must be from 0 through 9: {compression_level}"
         raise ValueError(msg)
-    if incremental and prune:
-        msg = "prune requires a full save: an incremental save keeps the objects of the opened file"
-        raise ValueError(msg)
-    if incremental and decompress:
-        msg = "decompress requires a full save: an incremental save keeps the streams of the opened file"
-        raise ValueError(msg)
+    if incremental:
+        _refuse_full_save_options(
+            prune=prune,
+            decompress=decompress,
+            cross_reference=cross_reference,
+            object_streams=object_streams,
+            renumber=renumber,
+        )
     if compress and decompress:
         msg = "decompress=True needs compress=False, which would compress the streams again"
         raise ValueError(msg)
     if cross_reference not in (None, "table", "stream"):
         msg = f"cross_reference must be 'table', 'stream', or None: {cross_reference!r}"
         raise ValueError(msg)
-    if incremental and (cross_reference is not None or object_streams):
-        msg = (
-            "cross_reference and object_streams require a full save: "
-            "an incremental save keeps the form of the opened file"
-        )
-        raise ValueError(msg)
     if object_streams and cross_reference == "table":
         msg = "object_streams=True writes a cross-reference stream, so it needs cross_reference='stream' or None"
         raise ValueError(msg)
     stream = None if cross_reference is None else cross_reference == "stream"
-    return prune, compression_level if compress else None, decompress, not keep_id, stream, object_streams
+    return (
+        prune,
+        compression_level if compress else None,
+        decompress,
+        not keep_id,
+        stream,
+        object_streams,
+        renumber,
+    )
+
+
+def _refuse_full_save_options(
+    *,
+    prune: bool,
+    decompress: bool,
+    cross_reference: object,
+    object_streams: bool,
+    renumber: bool,
+) -> None:
+    """Raise :class:`ValueError` for an option that an incremental save refuses, as only a full save takes it."""
+    kept = {
+        "prune": (prune, "the objects"),
+        "decompress": (decompress, "the streams"),
+        "cross_reference and object_streams": (cross_reference is not None or object_streams, "the form"),
+        "renumber": (renumber, "the numbers"),
+    }
+    for name, (given, what) in kept.items():
+        if given:
+            verb = "require" if " and " in name else "requires"
+            msg = f"{name} {verb} a full save: an incremental save keeps {what} of the opened file"
+            raise ValueError(msg)
 
 
 def _resolve_limits(limits: object) -> DocumentLimits:

@@ -191,7 +191,7 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
@@ -205,6 +205,7 @@ impl _Document {
         renew_id: bool,
         cross_reference_stream: Option<bool>,
         object_streams: bool,
+        renumber: bool,
     ) -> PyResult<()> {
         let options = save_options(
             prune,
@@ -213,6 +214,7 @@ impl _Document {
             renew_id,
             cross_reference_stream,
             object_streams,
+            renumber,
         );
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
@@ -237,7 +239,7 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
@@ -251,6 +253,7 @@ impl _Document {
         renew_id: bool,
         cross_reference_stream: Option<bool>,
         object_streams: bool,
+        renumber: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let options = save_options(
             prune,
@@ -259,6 +262,7 @@ impl _Document {
             renew_id,
             cross_reference_stream,
             object_streams,
+            renumber,
         );
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
@@ -392,8 +396,9 @@ fn write_version(
 /// Returns the options of a save that prunes when `prune`, compresses at the
 /// level `compress` when it is given, decompresses when `decompress`, renews
 /// the file identifier when `renew_id`, writes a cross-reference stream or a
-/// table as `cross_reference_stream` asks or else the base's form, and packs
-/// objects into object streams when `object_streams`.
+/// table as `cross_reference_stream` asks or else the base's form, packs
+/// objects into object streams when `object_streams`, and renumbers the
+/// objects when `renumber`.
 const fn save_options(
     prune: bool,
     compress: Option<u8>,
@@ -401,6 +406,7 @@ const fn save_options(
     renew_id: bool,
     cross_reference_stream: Option<bool>,
     object_streams: bool,
+    renumber: bool,
 ) -> save::Options {
     let streams = match (compress, decompress) {
         (Some(level), _) => save::Streams::Compress(level),
@@ -417,6 +423,7 @@ const fn save_options(
             Some(true) => save::CrossReference::Stream,
         },
         object_streams,
+        renumber,
     }
 }
 

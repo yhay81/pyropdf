@@ -1,7 +1,8 @@
 //! Object streams: the objects that a save packs into them on request
 //! (DESIGN.md section 4.4, ISO 32000-2 section 7.5.7).
 
-use super::{Mode, Output, Result, Row, raw, recode};
+use super::renumber::Renumbering;
+use super::{Mode, Output, Result, Row, Streams, raw, recode};
 use crate::budget::{Budget, BudgetVec};
 use crate::security;
 use crate::value::{Bytes, Dict, Name, Reference, Stream, Value};
@@ -50,17 +51,23 @@ impl<'a> Packer<'a> {
     /// Packs the object of `row` into an object stream and returns true, or
     /// returns false for an object that an object stream may not hold: a
     /// stream, an object with a generation other than 0, the `/Encrypt`
-    /// dictionary `encrypt`, and an object that does not parse.
+    /// dictionary `encrypt`, and an object that does not parse. A
+    /// `renumbering` save packs each member with its new number and
+    /// generation 0.
     pub(super) fn pack(
         &mut self,
         version: &Version,
         row: &mut Row,
         encrypt: Option<u32>,
+        renumbering: Option<&Renumbering<'_>>,
         out: &mut Output<'_>,
         mode: &Mode<'_>,
     ) -> Result<bool> {
         let budget = self.budget;
-        if row.offset.is_none() || row.generation != 0 || Some(row.number) == encrypt {
+        if row.offset.is_none()
+            || (row.generation != 0 && renumbering.is_none())
+            || Some(row.number) == encrypt
+        {
             return Ok(false);
         }
         match version.get(row.number, budget) {
@@ -70,10 +77,21 @@ impl<'a> Packer<'a> {
             Err(error) => return Err(error.into()),
         }
         // A member is never encrypted on its own: its object stream is.
-        let bytes = match version.slot(row.number) {
-            Some(Slot::Written(object)) => object.bytes().clone(),
-            _ => raw::body(&**version.base(), Reference::new(row.number, 0), budget)
-                .map_err(|e| e.context(format!("saving object {} 0", row.number)))?,
+        let reference = Reference::new(row.number, row.generation);
+        let (member, bytes) = match renumbering {
+            Some(renumbering) => (
+                renumbering.number(row.number)?,
+                renumbering.bytes(version, reference, Streams::Keep, budget)?,
+            ),
+            None => (
+                row.number,
+                match version.slot(row.number) {
+                    Some(Slot::Written(object)) => object.bytes().clone(),
+                    _ => raw::body(&**version.base(), reference, budget).map_err(|error| {
+                        error.context(format!("saving object {} {}", row.number, row.generation))
+                    })?,
+                },
+            ),
         };
         let number = match self.number {
             Some(number) => number,
@@ -85,7 +103,7 @@ impl<'a> Packer<'a> {
         };
         let offset = self.values.len();
         self.table
-            .try_extend_from_slice(format!("{} {offset} ", row.number).as_bytes())?;
+            .try_extend_from_slice(format!("{member} {offset} ").as_bytes())?;
         self.values.try_extend_from_slice(&bytes)?;
         self.values.try_push(b'\n')?;
         row.member = Some((number, self.count));
