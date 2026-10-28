@@ -3,9 +3,8 @@
 Ported from pylopdf's ``tests/test_field_creation.py`` at
 ebb01d3c4c742046e8ce7fd72957cd15a2933321. Intended differences: the
 specifications take no ``font``, which waits for #194, so the validation
-case of a ``font`` that is no Font is left out; reading a widget's
-``caption`` and ``font`` back waits for #200; pyropdf's ``to_bytes`` has no
-``prune``.
+case of a ``font`` that is no Font and the check of the font that a widget
+reads back are left out; pyropdf's ``to_bytes`` has no ``prune``.
 """
 
 from __future__ import annotations
@@ -49,7 +48,7 @@ def test_every_kind_of_field_is_created_with_its_widget() -> None:
     page.widgets.add(RadioButton("plan", (60, 100, 75, 115), on_state="Pro"))
     page.widgets.add(ComboBox("level", (20, 140, 200, 160), choices=["low", FieldChoice(value="hi", label="High")]))
     page.widgets.add(ListBox("items", (20, 170, 200, 220), choices=["a", "b"], value="b"))
-    page.widgets.add(PushButton("go", (220, 20, 280, 40), caption="Go"))
+    button = page.widgets.add(PushButton("go", (220, 20, 280, 40), caption="Go"))
     page.widgets.add(SignatureField("sig", (20, 240, 200, 280)))
 
     assert text.rect == Rect(20, 20, 200, 40)
@@ -77,6 +76,7 @@ def test_every_kind_of_field_is_created_with_its_widget() -> None:
     }
     assert len(doc.form["plan"].widgets) == 2
     assert doc.form["level"].choices == (FieldChoice(value="low", label="low"), FieldChoice(value="hi", label="High"))
+    assert button.caption == "Go"
     assert "Ada" in page.text()
     assert "Go" in page.text()
     assert doc.form.need_appearances is False
