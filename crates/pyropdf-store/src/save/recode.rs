@@ -54,7 +54,7 @@ pub(super) fn recoded(value: &Value, streams: Streams, budget: &Budget) -> Resul
     Ok(recoded.map(|stream| Value::Stream(Box::new(stream))))
 }
 
-fn compressed(stream: &Stream, level: u8, budget: &Budget) -> Result<Option<Stream>> {
+pub(super) fn compressed(stream: &Stream, level: u8, budget: &Budget) -> Result<Option<Stream>> {
     let dict = stream.dict();
     let metadata =
         matches!(dict.get("Type"), Some(Value::Name(name)) if name.as_bytes() == b"Metadata");

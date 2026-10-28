@@ -6,6 +6,7 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod pack;
 mod prune;
 mod raw;
 mod recode;
@@ -19,9 +20,9 @@ use std::io::{self, Write};
 use md5::{Digest, Md5};
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
-use crate::index::{Index, Location};
+use crate::index::{Index, Location, SectionKind};
 use crate::security::{self, Encryption, Handler};
-use crate::value::{Array, Bytes, Dict, PdfString, Reference, Value};
+use crate::value::{Array, Bytes, Dict, PdfString, Reference, Stream, Value};
 use crate::version::{Slot, Version};
 use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
 
@@ -49,8 +50,9 @@ pub enum Refusal {
     RepairedBase,
     /// Encryption is implemented separately in issue #28.
     Encryption,
-    /// Pruning and decompressing rewrite the objects of the original file,
-    /// which an incremental save keeps.
+    /// Pruning, decompressing, another cross-reference form, and object
+    /// streams rewrite the original file, whose objects and cross-reference
+    /// form an incremental save keeps.
     FullSaveOption,
 }
 
@@ -84,7 +86,9 @@ impl fmt::Display for Error {
                 Refusal::NoOriginalFile => "incremental save requires an original PDF file",
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
-                Refusal::FullSaveOption => "prune and decompress require a full save",
+                Refusal::FullSaveOption => {
+                    "prune, decompress, a new cross-reference form, and object streams require a full save"
+                }
             }),
         }
     }
@@ -107,10 +111,14 @@ struct Row {
     /// `None` is a free entry; in-use offsets are set while writing objects.
     offset: Option<u64>,
     next_free: u32,
+    /// The object stream that holds the object, and the object's index in
+    /// it, for an object that the save packs into one.
+    member: Option<(u32, u32)>,
 }
 
-/// Writes all live objects to `target`, with a classic cross-reference
-/// table and a new trailer. Object-stream members become ordinary objects;
+/// Writes all live objects to `target`, with cross-reference data in the
+/// form of the base's ([`CrossReference::Base`]) and a new trailer.
+/// Object-stream members become ordinary objects;
 /// their exact decoded member bytes are preserved. Existing object-stream
 /// and xref-stream objects also retain their bytes.
 ///
@@ -155,6 +163,57 @@ pub struct Options {
     /// Otherwise, and without this option, `/ID` stays as the trailer has
     /// it.
     pub renew_id: bool,
+    /// The form of the cross-reference data.
+    pub cross_reference: CrossReference,
+    /// Packs into object streams of up to 100 members the objects that ISO
+    /// 32000-2 section 7.5.7 lets them hold: every object that is not a
+    /// stream, has generation 0, and is not the `/Encrypt` dictionary. The
+    /// save then writes a cross-reference stream, whatever
+    /// `cross_reference` asks. Object streams are compressed with Flate at
+    /// the level of [`Streams::Compress`], or 6, and with
+    /// [`Streams::Decompress`] not at all.
+    pub object_streams: bool,
+}
+
+/// The form of the cross-reference data that a save writes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CrossReference {
+    /// The form of the section that the `startxref` of the base's file
+    /// names: a stream for a cross-reference stream, and a table for a
+    /// table, a hybrid-reference section, and a version without a file.
+    #[default]
+    Base,
+    /// A table and its trailer (ISO 32000-2 sections 7.5.4 and 7.5.5).
+    Table,
+    /// A cross-reference stream (section 7.5.8). A full save raises the
+    /// header's version to 1.5 when it is lower.
+    Stream,
+}
+
+impl CrossReference {
+    /// Returns whether a save of `version` writes a cross-reference stream.
+    fn stream(self, version: &Version) -> bool {
+        match self {
+            Self::Table => false,
+            Self::Stream => true,
+            Self::Base => version
+                .base()
+                .file()
+                .and_then(|file| file.revisions().last())
+                .and_then(|revision| revision.sections().first())
+                .is_some_and(|section| section.kind() == SectionKind::Stream),
+        }
+    }
+}
+
+/// The level of the Flate data of the streams that a save adds: a
+/// cross-reference stream and object streams.
+const fn level(streams: Streams) -> Option<u8> {
+    match streams {
+        Streams::Keep => Some(6),
+        Streams::Compress(level) => Some(level),
+        Streams::Decompress => None,
+    }
 }
 
 /// Writes the objects of `version` to `target` as [`full`] does, encrypted
@@ -196,13 +255,24 @@ pub fn full_with(
         let encrypt = !matches!(mode, Mode::New { .. });
         prune::free_unreachable(version, &mut rows, encrypt, budget)?;
     }
+    let stream = options.object_streams || options.cross_reference.stream(version);
     let mut out = Output::new(target, budget, 0, options.renew_id);
     let header = version
         .base()
         .file()
         .and_then(|file| file.bytes().get(file.origin()..file.origin() + 8))
-        .filter(|bytes| bytes.starts_with(b"%PDF-"));
-    out.bytes(header.unwrap_or(b"%PDF-1.7"))?;
+        .filter(|bytes| bytes.starts_with(b"%PDF-"))
+        .unwrap_or(b"%PDF-1.7");
+    // Cross-reference streams and object streams are of PDF 1.5.
+    if stream
+        && header
+            .get(5..)
+            .is_some_and(|number| number < b"1.5".as_slice())
+    {
+        out.bytes(b"%PDF-1.5")?;
+    } else {
+        out.bytes(header)?;
+    }
     out.bytes(b"\n%\xE2\xE3\xCF\xD3\n")?;
     // A copied linearization dictionary must not remain the first object:
     // its old offsets describe the base, not this full save. Write the
@@ -211,13 +281,32 @@ pub fn full_with(
         Some(Value::Reference(root)) => Some(root.number()),
         _ => None,
     };
+    // The objects that the save adds take the numbers after the version's
+    // and the new /Encrypt's.
+    let next = version.next_number() + u64::from(matches!(mode, Mode::New { .. }));
+    let level = level(options.streams);
+    let mut packer = options
+        .object_streams
+        .then(|| pack::Packer::new(budget, level, next));
+    let encrypt = match version.trailer().get("Encrypt") {
+        Some(Value::Reference(encrypt)) => Some(encrypt.number()),
+        _ => None,
+    };
+    let mut place = |row: &mut Row, out: &mut Output<'_>| {
+        if let Some(packer) = &mut packer
+            && packer.pack(version, row, encrypt, out, &mode)?
+        {
+            return Ok(());
+        }
+        write_object(version, row, out, &mode, options.streams)
+    };
     if let Some(at) = root.and_then(|root| rows.binary_search_by_key(&root, |row| row.number).ok())
     {
-        write_object(version, &mut rows[at], &mut out, &mode, options.streams)?;
+        place(&mut rows[at], &mut out)?;
     }
     for row in &mut rows {
         if Some(row.number) != root {
-            write_object(version, row, &mut out, &mode, options.streams)?;
+            place(row, &mut out)?;
         }
     }
     if let Mode::New { dict, number, .. } = &mode {
@@ -228,6 +317,7 @@ pub fn full_with(
             generation: 0,
             offset: Some(out.offset()?),
             next_free: 0,
+            member: None,
         };
         let mut bytes = BudgetVec::new(budget);
         write::value(&mut bytes, &Value::Dict(dict.clone()))?;
@@ -237,12 +327,29 @@ pub fn full_with(
         row.next_free = 0;
         rows.try_push(row)?;
     }
-    finish(version, &mut rows, None, &mut out, &mode, options.renew_id)?;
+    let mut next = next;
+    if let Some(mut packer) = packer {
+        packer.flush(&mut out, &mode)?;
+        let (after, streams) = packer.finish();
+        next = after;
+        rows.try_extend(streams.into_vec())?;
+    }
+    let ending = Ending {
+        previous: None,
+        renew_id: options.renew_id,
+        stream: if stream {
+            Some((pack::take(&mut next)?, level))
+        } else {
+            None
+        },
+    };
+    finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
 }
 
 /// Writes the original file byte for byte, followed only by the latest
-/// slots written since the base and a cross-reference section with /Prev.
+/// slots written since the base and a cross-reference section with /Prev,
+/// a table or a stream as the base's last section is.
 /// No-edit saves (including undo to the initial version) reproduce the
 /// original bytes exactly and do not parse any objects.
 ///
@@ -254,15 +361,21 @@ pub fn incremental(version: &Version, target: &mut dyn Write, budget: &Budget) -
 
 /// Writes the update as [`incremental`] does, compressing the streams that
 /// it writes as [`Streams::Compress`] asks and renewing `/ID` as
-/// [`Options::id`] asks. The objects of the original file stay as they
-/// are, so `prune` and [`Streams::Decompress`] are refused before writing.
+/// [`Options::renew_id`] asks. The objects of the original file and the
+/// form of its cross-reference data stay as they are, so `prune`,
+/// [`Streams::Decompress`], another [`CrossReference`], and
+/// `object_streams` are refused before writing.
 pub fn incremental_with(
     version: &Version,
     target: &mut dyn Write,
     budget: &Budget,
     options: Options,
 ) -> Result<u64> {
-    if options.prune || options.streams == Streams::Decompress {
+    if options.prune
+        || options.streams == Streams::Decompress
+        || options.cross_reference != CrossReference::Base
+        || options.object_streams
+    {
         return Err(Error::Refused(Refusal::FullSaveOption));
     }
     let file = version
@@ -303,14 +416,18 @@ pub fn incremental_with(
     {
         rows.try_push(row(version, last))?;
     }
-    finish(
-        version,
-        &mut rows,
-        Some(previous as u64),
-        &mut out,
-        &mode,
-        options.renew_id,
-    )?;
+    // The update keeps the form of the base's cross-reference data.
+    let mut next = version.next_number();
+    let ending = Ending {
+        previous: Some(previous as u64),
+        renew_id: options.renew_id,
+        stream: if CrossReference::Base.stream(version) {
+            Some((pack::take(&mut next)?, level(options.streams)))
+        } else {
+            None
+        },
+    };
+    finish(version, &mut rows, &mut out, &mode, ending)?;
     Ok(out.position)
 }
 
@@ -392,6 +509,7 @@ fn row(version: &Version, number: u32) -> Row {
             generation: u16::MAX,
             offset: None,
             next_free: 0,
+            member: None,
         };
     }
     let generation = version.generation(number);
@@ -404,6 +522,7 @@ fn row(version: &Version, number: u32) -> Row {
         generation: generation.unwrap_or(free),
         offset: generation.map(|_| 0),
         next_free: 0,
+        member: None,
     }
 }
 
@@ -492,13 +611,23 @@ fn recode(
     }))
 }
 
+/// How [`finish`] ends a save.
+struct Ending {
+    /// The offset of the base's last cross-reference section, for an
+    /// incremental save.
+    previous: Option<u64>,
+    renew_id: bool,
+    /// The object number of the cross-reference stream and the Flate level
+    /// of its data, for a save that writes one instead of a table.
+    stream: Option<(u32, Option<u8>)>,
+}
+
 fn finish(
     version: &Version,
     rows: &mut [Row],
-    previous: Option<u64>,
     out: &mut Output<'_>,
     mode: &Mode<'_>,
-    renew_id: bool,
+    ending: Ending,
 ) -> Result<()> {
     let mut next_free = 0;
     for row in rows.iter_mut().rev() {
@@ -511,6 +640,53 @@ fn finish(
         }
     }
     let xref = out.offset()?;
+    let mut size = match mode {
+        Mode::New { number, .. } => u64::from(*number) + 1,
+        _ => version.next_number(),
+    };
+    if let Some((number, _)) = ending.stream {
+        // The cross-reference stream takes the last number.
+        size = u64::from(number) + 1;
+        out.display(format_args!("{number} 0 obj\n<< /Type /XRef"))?;
+    } else {
+        table(rows, out)?;
+        out.bytes(b"trailer\n<<")?;
+    }
+    if let Mode::New { id, number, .. } = mode {
+        trailer(version.trailer(), out, &[b"Encrypt", b"ID"])?;
+        out.display(format_args!(" /Encrypt {number} 0 R"))?;
+        // The keys derive from the first element.
+        let first = Value::String(PdfString::hexadecimal(id.as_slice()));
+        let second = out.digest().unwrap_or_else(|| first.clone());
+        identifier(out, first, second)?;
+    } else if let Some(first) = renews(version, ending.renew_id) {
+        trailer(version.trailer(), out, &[b"ID"])?;
+        let digest = out.digest().expect("a renewing save keeps a digest");
+        identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
+    } else {
+        trailer(version.trailer(), out, &[])?;
+    }
+    out.display(format_args!(" /Size {size}"))?;
+    if let Some(previous) = ending.previous {
+        out.display(format_args!(" /Prev {previous}"))?;
+    }
+    if let Some((number, level)) = ending.stream {
+        let own = Row {
+            number,
+            generation: 0,
+            offset: Some(xref),
+            next_free: 0,
+            member: None,
+        };
+        stream(rows, &own, level, out)?;
+        out.display(format_args!("startxref\n{xref}\n%%EOF\n"))
+    } else {
+        out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+    }
+}
+
+/// Writes the rows as a classic cross-reference table.
+fn table(rows: &[Row], out: &mut Output<'_>) -> Result<()> {
     out.bytes(b"xref\n")?;
     let mut start = 0;
     while start < rows.len() {
@@ -538,28 +714,70 @@ fn finish(
         }
         start = end;
     }
-    out.bytes(b"trailer\n<<")?;
-    let mut size = version.next_number();
-    if let Mode::New { id, number, .. } = mode {
-        trailer(version.trailer(), out, &[b"Encrypt", b"ID"])?;
-        out.display(format_args!(" /Encrypt {number} 0 R"))?;
-        // The keys derive from the first element.
-        let first = Value::String(PdfString::hexadecimal(id.as_slice()));
-        let second = out.digest().unwrap_or_else(|| first.clone());
-        identifier(out, first, second)?;
-        size = u64::from(*number) + 1;
-    } else if let Some(first) = renews(version, renew_id) {
-        trailer(version.trailer(), out, &[b"ID"])?;
-        let digest = out.digest().expect("a renewing save keeps a digest");
-        identifier(out, first.unwrap_or_else(|| digest.clone()), digest)?;
-    } else {
-        trailer(version.trailer(), out, &[])?;
+    Ok(())
+}
+
+/// Returns the fields of the cross-reference stream entry of `row` (ISO
+/// 32000-2 Table 18): its type, then the two fields that the type defines.
+fn fields(row: &Row) -> (u8, u64, u64) {
+    match (row.offset, row.member) {
+        (_, Some((stream, index))) => (2, u64::from(stream), u64::from(index)),
+        (Some(offset), None) => (1, offset, u64::from(row.generation)),
+        (None, _) => (0, u64::from(row.next_free), u64::from(row.generation)),
     }
-    out.display(format_args!(" /Size {size}"))?;
-    if let Some(previous) = previous {
-        out.display(format_args!(" /Prev {previous}"))?;
+}
+
+/// Writes the entries of a cross-reference stream that describe its data,
+/// which lists the rows and then the stream itself, `own`, and then the
+/// data and the end of the stream's object.
+fn stream(rows: &[Row], own: &Row, level: Option<u8>, out: &mut Output<'_>) -> Result<()> {
+    let budget = out.budget;
+    let all = || rows.iter().chain(std::iter::once(own));
+    // The fewest bytes that hold each field, and at least one.
+    let width = |max: u64| (u64::BITS - max.leading_zeros()).div_ceil(8).max(1) as usize;
+    let (second, third) = all().fold((0, 0), |(second, third), row| {
+        let (_, two, three) = fields(row);
+        (two.max(second), three.max(third))
+    });
+    let (second, third) = (width(second), width(third));
+    let mut data = BudgetVec::new(budget);
+    for row in all() {
+        budget.poll()?;
+        let (kind, two, three) = fields(row);
+        data.try_push(kind)?;
+        data.try_extend_from_slice(&two.to_be_bytes()[8 - second..])?;
+        data.try_extend_from_slice(&three.to_be_bytes()[8 - third..])?;
     }
-    out.display(format_args!(" >>\nstartxref\n{xref}\n%%EOF\n"))
+    let data = Stream::new(Dict::new(), Bytes::new(data.into_vec()));
+    let compressed = match level {
+        Some(level) => recode::compressed(&data, level, budget)?,
+        None => None,
+    };
+    out.display(format_args!(" /W [1 {second} {third}] /Index ["))?;
+    let mut run: Option<(u32, u32)> = None;
+    for row in all() {
+        budget.poll()?;
+        match &mut run {
+            Some((start, count)) if start.checked_add(*count) == Some(row.number) => *count += 1,
+            _ => {
+                if let Some((start, count)) = run {
+                    out.display(format_args!(" {start} {count}"))?;
+                }
+                run = Some((row.number, 1));
+            }
+        }
+    }
+    if let Some((start, count)) = run {
+        out.display(format_args!(" {start} {count}"))?;
+    }
+    let data = compressed.as_ref().unwrap_or(&data).data();
+    out.display(format_args!(" ] /Length {}", data.len()))?;
+    if compressed.is_some() {
+        out.bytes(b" /Filter /FlateDecode")?;
+    }
+    out.bytes(b" >>\nstream\n")?;
+    out.bytes(data)?;
+    out.bytes(b"\nendstream\nendobj\n")
 }
 
 /// Write each original trailer entry separately, avoiding a clone of its
