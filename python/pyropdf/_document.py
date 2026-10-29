@@ -708,8 +708,11 @@ class Document:
         dictionary and every ``/Metadata`` and ``/PieceInfo``. ``comments``
         removes markup annotations and their pop-ups, keeping links and
         widgets. ``hidden_text`` removes text shown in rendering mode 3, as
-        OCR layers are, from page content. ``unused`` writes only the
-        objects that the trailer reaches.
+        OCR layers are, from page content and from the form XObjects that
+        pages and appearances paint, each with the mode it is painted in; a
+        form painted both invisibly and visibly keeps the text that it
+        does not hide itself. ``unused`` writes only the objects that the
+        trailer reaches.
 
         The save is never incremental, so the file has one revision. The
         returned :class:`SanitizeReport` counts what each kind removed and

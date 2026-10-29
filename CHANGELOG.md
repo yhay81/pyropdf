@@ -19,6 +19,9 @@
 - `doc.sanitize` removes JavaScript, actions, attachments, metadata,
   comments, hidden text, and unused objects, saves one revision, and
   reports the signatures and profile claims that break (#363).
+- `doc.sanitize(hidden_text=True)` also removes invisible text inside the
+  form XObjects that pages and appearances paint, with the rendering mode
+  each form inherits (#378).
 - `doc.subset_fonts` subsets each embedded TrueType, OpenType, and CFF
   program to the glyphs that the pages draw, keeping glyph IDs, so text and
   widths are unchanged (#364).

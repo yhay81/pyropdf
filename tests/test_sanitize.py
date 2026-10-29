@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import pyropdf
-from pyropdf import Name
+from pyropdf import Name, _sanitize
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 CORPUS = sorted((ASSETS / "real_world").glob("*.pdf"))
@@ -287,3 +287,94 @@ def test_options_must_be_bools(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="comments"):
         doc.sanitize(tmp_path / "out.pdf", comments=1)  # ty: ignore[invalid-argument-type]
     assert not (tmp_path / "out.pdf").exists()
+
+
+def _forms(page_content: bytes, forms: dict[str, bytes], painted: dict[str, tuple[str, ...]]) -> pyropdf.Document:
+    """Return a page that paints form XObjects ``forms``, each of which paints the forms ``painted`` names."""
+    doc = pyropdf.Document()
+    doc.pages.new((200, 100))
+    page = doc.pages[0].obj
+    font = doc.objects[doc.objects.add({"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Helvetica")})]
+    numbers = {
+        name: doc.objects.add_stream(data, {"Type": Name("XObject"), "Subtype": Name("Form"), "BBox": [0, 0, 200, 100]})
+        for name, data in forms.items()
+    }
+    for name, number in numbers.items():
+        children = {child: doc.objects[numbers[child]] for child in painted.get(name, ())}
+        doc.objects[number]["Resources"] = {"Font": {"F1": font}, "XObject": children}
+    page["Resources"] = {"Font": {"F1": font}, "XObject": {name: doc.objects[n] for name, n in numbers.items()}}
+    page["Contents"] = doc.objects[doc.objects.add_stream(page_content)]
+    return doc
+
+
+def _shown(doc: pyropdf.Document, name: str) -> list[bytes]:
+    form = doc.pages[0].obj["Resources"]["XObject"][name]
+    operations = pyropdf.Operations.parse(form.read())
+    return [bytes(operation.operands[0]) for operation in operations if operation.operator == "Tj"]
+
+
+def test_hidden_text_inside_nested_forms_leaves(tmp_path: Path) -> None:
+    doc = _forms(
+        b"/FA Do",
+        {
+            "FA": b"BT /F1 12 Tf 10 70 Td (Shown) Tj 3 Tr (Hidden) Tj ET /FI Do",
+            "FI": b"BT /F1 12 Tf 10 30 Td (Inner) Tj ET",
+        },
+        {"FA": ("FI",)},
+    )
+    report = doc.sanitize(tmp_path / "out.pdf", **_only("hidden_text"))
+    sanitized = pyropdf.open(tmp_path / "out.pdf")
+    assert report.removed["hidden_text"] == 2
+    assert _shown(sanitized, "FA") == [b"Shown"]
+    assert _shown(sanitized, "FI") == []
+    assert sanitized.pages[0].text().split() == ["Shown"]
+
+
+def test_a_form_painted_visibly_and_invisibly_keeps_its_inherited_text(tmp_path: Path) -> None:
+    doc = _forms(
+        b"q 3 Tr /FS Do Q /FS Do",
+        {"FS": b"BT /F1 12 Tf 10 70 Td (Both) Tj 3 Tr (Own) Tj ET"},
+        {},
+    )
+    report = doc.sanitize(tmp_path / "out.pdf", **_only("hidden_text"))
+    assert report.removed["hidden_text"] == 1
+    assert _shown(pyropdf.open(tmp_path / "out.pdf"), "FS") == [b"Both"]
+
+
+def test_a_form_painted_only_invisibly_loses_its_inherited_text(tmp_path: Path) -> None:
+    doc = _forms(b"3 Tr /FS Do q 0 Tr Q /FS Do", {"FS": b"BT /F1 12 Tf 10 70 Td (Gone) Tj 0 Tr (Kept) Tj ET"}, {})
+    doc.sanitize(tmp_path / "out.pdf", **_only("hidden_text"))
+    assert _shown(pyropdf.open(tmp_path / "out.pdf"), "FS") == [b"Kept"]
+
+
+def test_forms_that_paint_each_other_end(tmp_path: Path) -> None:
+    doc = _forms(
+        b"/FA Do",
+        {"FA": b"3 Tr BT /F1 12 Tf (A) Tj ET /FB Do", "FB": b"BT /F1 12 Tf (B) Tj ET 0 Tr /FA Do"},
+        {"FA": ("FB",), "FB": ("FA",)},
+    )
+    report = doc.sanitize(tmp_path / "out.pdf", **_only("hidden_text"))
+    sanitized = pyropdf.open(tmp_path / "out.pdf")
+    # FA is painted invisibly by the page and visibly by FB, so only its own mode 3 text decides.
+    assert report.removed["hidden_text"] == 2
+    assert _shown(sanitized, "FA") == []
+    assert _shown(sanitized, "FB") == []
+
+
+def test_hidden_text_in_appearance_streams_leaves(tmp_path: Path) -> None:
+    doc = _forms(b"", {"AP": b"BT /F1 12 Tf 3 Tr (Hidden) Tj 0 Tr (Shown) Tj ET"}, {})
+    appearance = doc.pages[0].obj["Resources"]["XObject"]["AP"]
+    doc.pages[0].obj["Annots"] = [
+        {"Type": Name("Annot"), "Subtype": Name("Square"), "Rect": [0, 0, 100, 50], "AP": {"N": appearance}}
+    ]
+    report = doc.sanitize(tmp_path / "out.pdf", **_only("hidden_text"))
+    assert report.removed["hidden_text"] == 1
+    assert _shown(pyropdf.open(tmp_path / "out.pdf"), "AP") == [b"Shown"]
+
+
+def test_the_forms_that_hidden_text_removal_visits_are_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_sanitize, "_MAX_FORMS", 2)
+    doc = _forms(b"/FA Do", {"FA": b"/FB Do", "FB": b"/FC Do", "FC": b""}, {"FA": ("FB",), "FB": ("FC",)})
+    with pytest.raises(pyropdf.LimitError) as error:
+        doc.sanitize(tmp_path / "out.pdf", **_only("hidden_text"))
+    assert error.value.code == "sanitize_forms"
