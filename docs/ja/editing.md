@@ -195,6 +195,23 @@ with pyropdf.open("input.pdf") as doc:
     print(dict(report.removed), report.changes.signatures, report.dropped_claims)
 ```
 
+## フォントのサブセット化
+
+`doc.subset_fonts()` は埋め込まれた TrueType・OpenType・CFF の各プログラムを、
+すべてのオプショナルコンテンツグループを表示にした状態でページが描くグリフだけに、1 つのトランザクションで絞ります。
+グリフ ID はそのままで、使わないアウトラインだけを空にするので、テキスト抽出と幅は変わりません。
+注釈の外観やフォームの既定リソースから届くプログラムはそのまま残ります。
+戻り値の `SubsetFont` は、それぞれ小さくなったプログラムを 1 つ表します。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for font in doc.subset_fonts():
+        print(font.name, font.kept, font.glyphs, font.size_before, font.size_after)
+    doc.save("smaller.pdf")
+```
+
 ## オブジェクト
 
 `doc.objects` はオブジェクト番号から間接オブジェクトへの対応で、値はどれも型付きの

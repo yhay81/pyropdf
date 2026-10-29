@@ -77,6 +77,7 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
+from pyropdf._fonts import SubsetFont
 from pyropdf._form import (
     CheckBox,
     ComboBox,
@@ -288,6 +289,7 @@ __all__ = [
     "Stroke",
     "StructuralDefect",
     "StructuralReport",
+    "SubsetFont",
     "Table",
     "TableDiagnostics",
     "Target",

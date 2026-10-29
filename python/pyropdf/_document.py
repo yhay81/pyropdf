@@ -21,6 +21,7 @@ from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
+from pyropdf._fonts import SubsetFont, subset_fonts
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._images import remove_image, replace_image
@@ -730,6 +731,21 @@ class Document:
             hidden_text=hidden_text,
             unused=unused,
         )
+
+    def subset_fonts(self) -> tuple[SubsetFont, ...]:
+        """Subset each embedded TrueType, OpenType, and CFF program to the glyphs that the pages draw, as one step.
+
+        The glyphs are those that rendering draws with every optional
+        content group on, with the glyphs that they draw as composite
+        components or ``seac`` accents. A subset keeps every glyph ID and
+        empties the outlines of the others, so text, encodings, widths, and
+        ToUnicode are unchanged; the font names gain a subset tag. Programs
+        that annotation appearances or the form's default resources reach,
+        and Type 1 and Type 3 fonts, stay whole. Returns the programs that
+        shrank; :attr:`history` can undo the step.
+        """
+        self._ensure_open()
+        return subset_fonts(self)
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""

@@ -19,6 +19,9 @@
 - `doc.sanitize` removes JavaScript, actions, attachments, metadata,
   comments, hidden text, and unused objects, saves one revision, and
   reports the signatures and profile claims that break (#363).
+- `doc.subset_fonts` subsets each embedded TrueType, OpenType, and CFF
+  program to the glyphs that the pages draw, keeping glyph IDs, so text and
+  widths are unchanged (#364).
 
 ## 0.1.0 (2026-10-29)
 

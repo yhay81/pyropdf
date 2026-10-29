@@ -11,6 +11,7 @@ mod check;
 mod content;
 mod document;
 mod errors;
+mod fonts;
 mod forms;
 mod history;
 mod images;
@@ -63,6 +64,8 @@ mod _core {
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,
         PasswordError, PdfError, StaleObjectError,
     };
+    #[pymodule_export]
+    use super::fonts::{subset_font_program, used_glyphs};
     #[pymodule_export]
     use super::forms::{
         flatten, form_field, form_field_choices, form_field_details, form_field_edit,
