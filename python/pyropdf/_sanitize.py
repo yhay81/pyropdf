@@ -14,8 +14,8 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from pyropdf._errors import LimitError
-from pyropdf._objects import Array, Dictionary
-from pyropdf._operations import Operation
+from pyropdf._objects import Array, Dictionary, Name, Stream
+from pyropdf._operations import Operation, Operations
 
 if TYPE_CHECKING:
     import os
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from pyropdf._changes import ChangeReport
     from pyropdf._document import Document
-    from pyropdf._page import Page
+    from pyropdf._operations import InlineImage
 
 #: Actions of one ``/Next`` chain that a check follows.
 _MAX_ACTION_CHAIN = 256
@@ -55,6 +55,12 @@ _COMMENTS = frozenset(
 _INVISIBLE = 3
 #: Text-showing operators; ``'`` and ``"`` also move to the next line.
 _SHOW = frozenset({"Tj", "TJ", "'", '"'})
+#: Form XObjects, appearance streams included, that hidden text removal visits.
+_MAX_FORMS = 4096
+#: Levels of the page tree that a page's inherited resources are looked up through.
+_MAX_TREE_DEPTH = 64
+#: A form's entry mode before any use of it is seen.
+_UNSEEN = -1
 #: The order in which the kinds are removed and reported.
 KINDS = ("javascript", "actions", "attachments", "metadata", "comments", "hidden_text")
 
@@ -196,12 +202,20 @@ def _remove_annotations(document: Document, subtypes: frozenset[str]) -> int:
     return removed
 
 
-def _visible_operations(page: Page) -> tuple[list[object], int]:
-    """Return the page's operations without those that show text in rendering mode 3, and how many went."""
-    kept: list[object] = []
+def _visible_operations(
+    operations: Operations, mode: int | None
+) -> tuple[list[Operation | InlineImage], int, list[tuple[str, int | None]]]:
+    """Return ``operations`` without those that show text in rendering mode 3, how many went, and each ``Do``.
+
+    ``mode`` is the rendering mode where the stream starts, ``None`` when
+    it is painted in different modes; text shown before the stream sets a
+    mode of its own then stays. Each ``Do`` comes with the mode it paints in.
+    """
+    kept: list[Operation | InlineImage] = []
     removed = 0
-    mode, saved = 0, []
-    for operation in page.operations:
+    painted: list[tuple[str, int | None]] = []
+    saved: list[int | None] = []
+    for operation in operations:
         operator = operation.operator
         if operator == "q":
             saved.append(mode)
@@ -210,6 +224,10 @@ def _visible_operations(page: Page) -> tuple[list[object], int]:
         elif operator == "Tr" and isinstance(operation, Operation) and operation.operands:
             value = operation.operands[0]
             mode = value if isinstance(value, int) and not isinstance(value, bool) else mode
+        elif operator == "Do" and isinstance(operation, Operation) and operation.operands:
+            name = operation.operands[0]
+            if isinstance(name, Name):
+                painted.append((name, mode))
         elif operator in _SHOW and mode == _INVISIBLE:
             removed += 1
             # Keep the line move and spacing of ' and ".
@@ -219,15 +237,103 @@ def _visible_operations(page: Page) -> tuple[list[object], int]:
                 kept.append(Operation("T*", ()))
             continue
         kept.append(operation)
-    return kept, removed
+    return kept, removed, painted
+
+
+def _page_resources(page: Dictionary) -> Dictionary | None:
+    """Return the resources of ``page``, inherited through the page tree."""
+    node: object = page
+    for _ in range(_MAX_TREE_DEPTH):
+        if not isinstance(node, Dictionary):
+            return None
+        resources = node.get("Resources")
+        if isinstance(resources, Dictionary):
+            return resources
+        node = node.get("Parent")
+    return None
+
+
+class _Forms:
+    """The form XObjects that hidden text removal visits, and the rendering mode each is painted in.
+
+    A form's entry mode only moves from unseen to one mode to mixed
+    (``None``), so a form is read at most three times and cycles end.
+    """
+
+    def __init__(self) -> None:
+        self.streams: dict[int, Stream] = {}
+        self.entries: dict[int, int | None] = {}
+        # A form without resources of its own uses those of the stream that paints it.
+        self.resources: dict[int, Dictionary | None] = {}
+        self.pending: list[int] = []
+
+    def enter(self, form: Stream, mode: int | None, resources: Dictionary | None) -> None:
+        xref = form.xref
+        if xref is None:
+            return
+        if xref not in self.streams:
+            if len(self.streams) >= _MAX_FORMS:
+                msg = f"hidden text removal reaches more than {_MAX_FORMS} form XObjects"
+                code = "sanitize_forms"
+                raise LimitError(code, msg)
+            self.streams[xref] = form
+            self.entries[xref] = _UNSEEN
+            own = form.get("Resources")
+            self.resources[xref] = own if isinstance(own, Dictionary) else resources
+        entry = self.entries[xref]
+        merged = mode if entry == _UNSEEN else (entry if entry == mode else None)
+        if merged != entry:
+            self.entries[xref] = merged
+            self.pending.append(xref)
+
+    def paint(self, painted: list[tuple[str, int | None]], resources: Dictionary | None) -> None:
+        """Enter the forms that ``Do`` operations paint from ``resources``."""
+        forms = resources.get("XObject") if isinstance(resources, Dictionary) else None
+        if not isinstance(forms, Dictionary):
+            return
+        for name, mode in painted:
+            form = forms.get(name)
+            if isinstance(form, Stream) and form.get("Subtype") == "Form":
+                self.enter(form, mode, resources)
+
+
+def _appearances(annotation: object) -> Iterator[Stream]:
+    """Yield the appearance streams of ``annotation``, every state of each kind."""
+    appearance = annotation.get("AP") if isinstance(annotation, Dictionary) else None
+    if not isinstance(appearance, Dictionary):
+        return
+    for kind in appearance:
+        value = appearance[kind]
+        if isinstance(value, Stream):
+            yield value
+        elif isinstance(value, Dictionary):
+            yield from (state for key in value if isinstance(state := value[key], Stream))
 
 
 def _remove_hidden_text(document: Document) -> int:
+    """Remove text shown in rendering mode 3 from pages and from the forms that pages and appearances paint."""
     removed = 0
+    forms = _Forms()
     for page in document.pages:
-        kept, count = _visible_operations(page)
+        kept, count, painted = _visible_operations(page.operations, 0)
         if count:
-            page.operations = kept  # ty: ignore[invalid-assignment]
+            page.operations = kept
+            removed += count
+        forms.paint(painted, _page_resources(page.obj))
+        annotations = page.obj.get("Annots")
+        for annotation in annotations if isinstance(annotations, Array) else ():
+            for stream in _appearances(annotation):
+                forms.enter(stream, 0, None)
+    while forms.pending:
+        xref = forms.pending.pop()
+        operations = Operations.parse(forms.streams[xref].read())
+        _, _, painted = _visible_operations(operations, forms.entries[xref])
+        forms.paint(painted, forms.resources[xref])
+    # Every entry mode is final now: rewrite each form once.
+    for xref, stream in forms.streams.items():
+        kept, count, _ = _visible_operations(Operations.parse(stream.read()), forms.entries[xref])
+        if count:
+            stream.write(Operations(kept).to_bytes())
             removed += count
     return removed
 
