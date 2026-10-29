@@ -75,7 +75,7 @@ with pyropdf.open("input.pdf") as doc:
 
 Text markup (highlight, underline, squiggly, strike-out), notes, lines,
 squares, circles, polygons, polylines, ink, and file attachments are
-available; the [API reference](api.md#annotations) lists their options.
+available; the [API reference](api/annotations.md) lists their options.
 
 ## Links
 
