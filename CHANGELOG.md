@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 (2026-10-30)
 
 - `doc.metadata` reads and writes the Info dictionary and writes the matching
   properties of an existing XMP packet in the same transaction; `doc.xmp`
@@ -25,6 +25,9 @@
 - `doc.subset_fonts` subsets each embedded TrueType, OpenType, and CFF
   program to the glyphs that the pages draw, keeping glyph IDs, so text and
   widths are unchanged (#364).
+- The API reference gives every method and property its full description,
+  one page per topic (#382), and the guides add recipes, concepts, and a
+  comparison with other libraries (#383).
 
 ## 0.1.0 (2026-10-29)
 
