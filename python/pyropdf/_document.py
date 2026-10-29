@@ -24,6 +24,7 @@ from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._images import remove_image, replace_image
+from pyropdf._layers import Layers
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
 from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp, write_entries, write_xmp
@@ -215,6 +216,17 @@ class Document:
         """Make image object ``xref`` one transparent pixel, so that no placement shows it, in one transaction."""
         self._ensure_open()
         remove_image(self, xref)
+
+    @property
+    def layers(self) -> Layers:
+        """Return the optional content groups and configurations as a live :class:`Layers` sequence.
+
+        ``doc.layers.switch(xref, on=False)`` hides a group and
+        ``doc.layers.use(index)`` applies a configuration of
+        ``doc.layers.configs``; rendering and text extraction follow both.
+        """
+        self._ensure_open()
+        return Layers(self)
 
     @property
     def page_labels(self) -> list[PageLabelRange]:

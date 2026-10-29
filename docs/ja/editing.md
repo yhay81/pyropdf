@@ -143,6 +143,24 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.pages[1].label, doc.pages.labeled("A-1"))
 ```
 
+## レイヤー
+
+`doc.layers` はオプショナルコンテンツのグループを `Layer` の列として、名前と既定の構成で表示されるかどうかを返し、
+`doc.layers.configs` は構成の一覧を返します。`switch` でグループを表示・非表示にし、`use` で構成を適用すると、
+レンダリングとテキスト抽出はその両方に従います。`visible` はグループやメンバーシップ辞書の可視性を、
+可視性式も含めて評価します。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for layer in doc.layers:
+        print(layer.name, layer.on)
+        if layer.name == "Draft":
+            doc.layers.switch(layer.xref, on=False)
+    print(doc.pages[0].text())
+```
+
 ## メタデータ
 
 `doc.metadata` は Info 辞書をそのまま読み書きするマッピングです。文書に

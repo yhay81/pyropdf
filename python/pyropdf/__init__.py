@@ -98,6 +98,7 @@ from pyropdf._form import (
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import PageImage, StoredImage
+from pyropdf._layers import Layer, LayerConfig, Layers
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
 from pyropdf._metadata import Metadata, parse_pdf_date, pdf_date
@@ -204,6 +205,9 @@ __all__ = [
     "Ink",
     "InlineImage",
     "Launch",
+    "Layer",
+    "LayerConfig",
+    "Layers",
     "Layout",
     "LimitError",
     "Line",

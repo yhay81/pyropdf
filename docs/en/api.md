@@ -39,6 +39,7 @@ empty one. Documents are context managers that close on exit.
 - `profiles`: Return the PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
 - `replace_image(xref: int, data: bytes)`: Replace image object `xref` with JPEG, JPEG 2000, or PNG `data`, in one transaction.
 - `remove_image(xref: int)`: Make image object `xref` one transparent pixel, so that no placement shows it, in one transaction.
+- `layers`: Return the optional content groups and configurations as a live `Layers` sequence.
 - `page_labels` (settable): Return the page label ranges in page order, or `[]` without labels.
 - `metadata` (settable): Return the Info dictionary as a live `Metadata` mapping.
 - `xmp` (settable): Return the catalog's XMP metadata packet as text, or `None` when absent.
@@ -188,6 +189,40 @@ StoredImage(filter: str, data: bytes, parameters: Dictionary | None)
 An image's data as the document stores it, for an image filter that a file format holds.
 
 - `extension`: Return the usual file extension of the data: `jpg`, `jp2`, `jb2`, or `ccitt`.
+
+## Layers
+
+### `Layer`
+
+```python
+Layer(xref: int, name: str, intent: tuple[str, ...], on: bool, locked: bool)
+```
+
+An optional content group (`/Type /OCG`) and its state in the default configuration.
+
+### `LayerConfig`
+
+```python
+LayerConfig(index: int, name: str, creator: str, base_state: str, on: tuple[int, ...], off: tuple[int, ...], locked: tuple[int, ...])
+```
+
+An optional content configuration: the default `/D` at index 0, then each of `/Configs`.
+
+### `Layers`
+
+```python
+Layers(document: Document)
+```
+
+The optional content groups of a document, in `/OCGs` order; empty without optional content.
+
+- `__len__() -> int`: Return the number of optional content groups.
+- `__getitem__(index: int | slice) -> Layer | list[Layer]`: Return the group at `index`, or a list for a slice.
+- `__iter__() -> Iterator[Layer]`: Iterate over the groups, read once.
+- `configs`: Return the default configuration, then the alternate ones of `/Configs`.
+- `switch(xref: int, *, on: bool)`: Show or hide group `xref` in the default configuration, in one transaction.
+- `use(index: int)`: Make configuration `index` of `configs` the default, in one transaction.
+- `visible(oc: Dictionary | None) -> bool`: Return whether content marked with `oc`, a group or membership dictionary, shows by default.
 
 ## Pages
 

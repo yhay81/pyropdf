@@ -17,7 +17,7 @@ column from `docs/en/api.md`.
 | Page labels | `get_page_labels`, `set_page_labels` | yes; every corpus page matches `get_label` | #358 |
 | Document metadata | `metadata`, `set_metadata`, `set_xml_metadata` | yes: `doc.metadata` and `doc.xmp`, kept in step | |
 | Outline | `get_toc`, `set_toc` | yes: `doc.outline` | |
-| Optional content (layers) | `get_layers`, `set_layer`, `set_oc` | no | #360 |
+| Optional content (layers) | `get_layers`, `set_layer`, `set_oc` | yes: `doc.layers`; marking content with `/OC` is the object API | #360 |
 | Embedded files | `embfile_*` | yes: `doc.attachments` | |
 | Low-level objects | `xref_object`, `update_object`, `update_stream` | yes: `doc.objects`, typed objects | |
 | Undo and redo | `journal_*` | yes: transactions and `doc.history` | |
