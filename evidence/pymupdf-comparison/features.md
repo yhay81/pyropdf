@@ -76,7 +76,7 @@ column from `docs/en/api.md`.
 | Encryption | AES-256, RC4 | yes: the standard handler | |
 | Redaction | `add_redact_annot`, `apply_redactions` | no | #362 |
 | Sanitizing | `scrub` | yes: `doc.sanitize`, which also reports broken signatures and claims | #363 |
-| Font subsetting | `subset_fonts` | no | #364 |
+| Font subsetting | `subset_fonts` | yes: `doc.subset_fonts`, which keeps glyph IDs, so text and widths are unchanged | #364 |
 | Recolor and rewrite images | `recolor`, `rewrite_images` | no | #250 |
 
 ## What PyMuPDF does not have

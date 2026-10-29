@@ -59,6 +59,7 @@ empty one. Documents are context managers that close on exit.
 - `markdown(pages: Iterable[int] | None = None, *, table_strategy: Literal['lines', 'text'] | None = 'lines', max_size: int | None = 67108864) -> str`: Return the given pages of the current version as Markdown, joined in their order.
 - `flatten(*, annotations: bool = True, widgets: bool = True)`: Draw annotation and widget appearances into page content and take them off their pages.
 - `sanitize(path: str | os.PathLike[str], /, *, javascript: bool = True, actions: bool = True, attachments: bool = True, metadata: bool = True, comments: bool = True, hidden_text: bool = True, unused: bool = True) -> SanitizeReport`: Remove hidden or active content in one transaction and save the document in full to `path`.
+- `subset_fonts() -> tuple[SubsetFont, ...]`: Subset each embedded TrueType, OpenType, and CFF program to the glyphs that the pages draw, as one step.
 - `close()`: Close the document and release its data; later operations raise `DocumentClosedError`.
 
 ### `open`
@@ -234,6 +235,16 @@ SanitizeReport(removed: Mapping[str, int], changes: ChangeReport, dropped_claims
 ```
 
 What `Document.sanitize` removed, and what the result invalidates.
+
+## Fonts
+
+### `SubsetFont`
+
+```python
+SubsetFont(xref: int, name: str, glyphs: int, kept: int, size_before: int, size_after: int)
+```
+
+One font program that `Document.subset_fonts` subset.
 
 ## Pages
 

@@ -203,6 +203,24 @@ with pyropdf.open("input.pdf") as doc:
     print(dict(report.removed), report.changes.signatures, report.dropped_claims)
 ```
 
+## Font subsetting
+
+`doc.subset_fonts()` cuts each embedded TrueType, OpenType, and CFF program
+down to the glyphs that the pages draw, with every optional content group
+on, in one transaction. Glyph IDs stay as they were and the unused outlines
+become empty, so text extraction and widths are unchanged. Programs that
+annotation appearances or the form's default resources reach stay whole.
+Each returned `SubsetFont` reports a program that shrank.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for font in doc.subset_fonts():
+        print(font.name, font.kept, font.glyphs, font.size_before, font.size_after)
+    doc.save("smaller.pdf")
+```
+
 ## Objects
 
 `doc.objects` maps object numbers to the indirect objects, and every value

@@ -17,6 +17,7 @@ use pyropdf_store::budget::Budget;
 
 use crate::bridge::Bridged;
 
+mod glyphs;
 mod images;
 mod model;
 mod provenance;
@@ -25,6 +26,7 @@ mod reads;
 mod tests;
 mod text;
 
+pub use glyphs::used_glyphs;
 pub use images::{DecodedImage, page_image};
 pub use model::{
     BBox, ClipTuple, ContentItem, ContentSink, FontTuple, GlyphStyle, GlyphsTuple, GroupTuple,
