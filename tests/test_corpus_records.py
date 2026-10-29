@@ -16,7 +16,7 @@ from functools import cache
 from typing import NamedTuple
 
 import pytest
-from corpus import ASSETS, DAMAGE, MEASURED, NAMES, damaged
+from corpus import ADDED, ASSETS, DAMAGE, MEASURED, NAMES, damaged
 
 # A record's license names one of these, each of which allows redistributing an
 # unmodified file with the attribution that the record gives.
@@ -97,7 +97,8 @@ def test_damage_records_cover_every_file_under_every_kind() -> None:
 
 
 def test_the_measured_kinds_make_the_112_inputs_of_design_section_2_2() -> None:
-    assert len(NAMES) * len(MEASURED) == 112
+    measured = [name for name in NAMES if name not in ADDED]
+    assert len(measured) * len(MEASURED) == 112
 
 
 @pytest.mark.parametrize("kind", DAMAGE)

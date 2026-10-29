@@ -922,7 +922,7 @@ pub(crate) fn corpus() -> Vec<(String, Vec<u8>)> {
         .filter(|path| path.extension().is_some_and(|extension| extension == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 14, "the corpus has 14 files");
+    assert_eq!(files.len(), 15, "the corpus has 15 files");
     files
         .into_iter()
         .map(|path| {
@@ -1104,7 +1104,7 @@ pub(crate) fn damaged_inputs() -> Vec<Damaged> {
         rest = &rest[end..];
     }
     assert!(rest.is_empty());
-    assert_eq!(inputs.len(), 14 * 9);
+    assert_eq!(inputs.len(), 15 * 9);
     inputs
 }
 

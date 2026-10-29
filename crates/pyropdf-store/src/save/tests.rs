@@ -22,7 +22,7 @@ fn corpus() -> Vec<PathBuf> {
         .filter(|p| p.extension().is_some_and(|ext| ext == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 14);
+    assert_eq!(files.len(), 15);
     files
 }
 

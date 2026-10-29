@@ -377,7 +377,7 @@ fn every_corpus_page_reads_the_content_that_hayro_reads() {
         .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 14);
+    assert_eq!(files.len(), 15);
     let (mut operations_read, mut pages_read) = (0, 0);
     for path in &files {
         let bytes = fs::read(path).unwrap();
@@ -413,7 +413,7 @@ fn every_corpus_page_reads_the_content_that_hayro_reads() {
             pages_read += 1;
         }
     }
-    // 155 pages, with 80,233 operations.
-    assert_eq!(pages_read, 155);
+    // 156 pages, with more than 80,000 operations.
+    assert_eq!(pages_read, 156);
     assert!(operations_read > 80_000, "{operations_read}");
 }

@@ -1449,7 +1449,7 @@ fn every_corpus_stream_with_an_indirect_length_reads_the_data_that_hayro_reads()
         .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 14);
+    assert_eq!(files.len(), 15);
     let budget = Budget::default();
     let mut streams = BTreeMap::new();
     for path in &files {

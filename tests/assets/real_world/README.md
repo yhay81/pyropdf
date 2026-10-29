@@ -14,10 +14,11 @@ files exposed, and pylopdf's other fixtures; those notes stay there.
 
 [corpus.py](../../corpus.py) derives damaged inputs from these files with the
 damage generators of pylopdf's `tests/test_real_world.py` at the same commit:
-14 files under 9 kinds of damage. [damage.sha256](damage.sha256) records the
-SHA-256 of each input that pylopdf's generators wrote, as
-`shasum -a 256 <kind>/<file>` prints it, and the records test checks that the
-helper reproduces every one.
+15 files under 9 kinds of damage. [damage.sha256](damage.sha256) records the
+SHA-256 of each input, as `shasum -a 256 <kind>/<file>` prints it, and the
+records test checks that the helper reproduces every one. pylopdf's generators
+wrote the inputs of the first 14 files; the helper wrote those of
+`pdfium-ocg-invisible.pdf`, which pyropdf added.
 
 ## Files
 
@@ -37,12 +38,14 @@ helper reproduces every one.
 | `pdfium-smask-blend.pdf` | [PDFium `smask_blend.in`](https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/pixel/smask_blend.in) | PDFium BSD 3-Clause; see [LICENSES/PDFium-BSD-3-Clause.txt](LICENSES/PDFium-BSD-3-Clause.txt) | Form XObjects, an alpha soft mask, partial opacity, and Screen blending; the forms spell `/Type XObject` without the name's slash |
 | `pdfium-jpx-lzw.pdf` | [PDFium `jpx_lzw.pdf`](https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/jpx_lzw.pdf) | PDFium BSD 3-Clause; see [LICENSES/PDFium-BSD-3-Clause.txt](LICENSES/PDFium-BSD-3-Clause.txt) | Full-page red image with an `ASCIIHexDecode` → `LZWDecode` → `JPXDecode` filter chain |
 | `pdfium-links-highlights-annots.pdf` | [PDFium `links_highlights_annots.pdf`](https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/links_highlights_annots.pdf) | PDFium BSD 3-Clause; see [LICENSES/PDFium-BSD-3-Clause.txt](LICENSES/PDFium-BSD-3-Clause.txt) | Existing Widget, URI Link, and Highlight annotations from an independent producer |
+| `pdfium-ocg-invisible.pdf` | [PDFium `bug_491_invisible.in`](https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/testing/resources/pixel/bug_491_invisible.in) | PDFium BSD 3-Clause; see [LICENSES/PDFium-BSD-3-Clause.txt](LICENSES/PDFium-BSD-3-Clause.txt) | Optional content: one group, `/BaseState /OFF`, and marked content under a membership dictionary; retrieved 2026-10-29 |
 
 ## Provenance
 
-The four PDFium fixtures are pinned to revision
-`a84323421e94f484faca52dd9d027934eba42ab8` and were retrieved on
-2026-07-26. The two `.in` templates were converted with PDFium's
+The PDFium fixtures are pinned to revision
+`a84323421e94f484faca52dd9d027934eba42ab8`; the first four were retrieved on
+2026-07-26 and `pdfium-ocg-invisible.pdf` on 2026-10-29. The three `.in`
+templates were converted with PDFium's
 [`fixup_pdf_template.py`](https://github.com/chromium/pdfium/blob/a84323421e94f484faca52dd9d027934eba42ab8/testing/tools/fixup_pdf_template.py).
 The resulting fixture SHA-256 values are:
 
@@ -54,6 +57,8 @@ The resulting fixture SHA-256 values are:
   `ba14897a4139944e56674fefe176a56f29326e69ff2baf3e07ba096b520def78`
 - `pdfium-links-highlights-annots.pdf`:
   `d6b813376c52b326a0eac798d215eb135054ba77fdaa2c059f99e57d6726ac9f`
+- `pdfium-ocg-invisible.pdf`:
+  `cd8a567bc9d7c595b6dd9545ab2885c0246744ce638179ed5c938d91352589f9`
 
 `bunka-kokugo-series-019-p4.pdf` was prepared on 2026-07-25 from
 `kokugo_series_019_02.pdf` (source SHA-256
