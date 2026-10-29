@@ -186,8 +186,9 @@ def _entry(name: str, obj: object) -> str:
 
 def generate() -> str:
     """Return the text of the API reference."""
-    sys.path.insert(0, str(ROOT / "python"))
-    import pyropdf  # noqa: PLC0415  # The package may be rebuilt before this runs.
+    # The installed package, which `uv run` rebuilds; CI installs it without
+    # an editable link, so the checkout's python/ has no extension to import.
+    import pyropdf  # noqa: PLC0415
 
     modules = _definitions()
     exported = [name for name in pyropdf.__all__ if not name.startswith("__")]
