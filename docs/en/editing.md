@@ -148,6 +148,26 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.pages[1].label, doc.pages.labeled("A-1"))
 ```
 
+## Layers
+
+`doc.layers` lists the optional content groups as `Layer` records, with their
+names and whether the default configuration shows them; `doc.layers.configs`
+lists the configurations. `switch` shows or hides a group and `use` applies a
+configuration, and rendering and text extraction follow both.
+`visible` evaluates a group or membership dictionary, visibility expressions
+included.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for layer in doc.layers:
+        print(layer.name, layer.on)
+        if layer.name == "Draft":
+            doc.layers.switch(layer.xref, on=False)
+    print(doc.pages[0].text())
+```
+
 ## Metadata
 
 `doc.metadata` is a live mapping of the Info dictionary. When the document

@@ -13,6 +13,9 @@
 - `page.images()` decodes each image that a page paints and returns its
   data as stored; `doc.replace_image` and `doc.remove_image` rewrite an
   image object for every placement (#359).
+- `doc.layers` lists the optional content groups and configurations,
+  switches groups and applies configurations, which rendering and text
+  follow, and evaluates visibility expressions with a bounded depth (#360).
 
 ## 0.1.0 (2026-10-29)
 
