@@ -187,6 +187,22 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.xmp is None)                             # True: no XMP packet
 ```
 
+## Sanitizing
+
+`doc.sanitize(path)` removes JavaScript, actions, attachments, metadata,
+comments, hidden text, and unused objects, each behind its own switch, and
+saves the document in full, so the file has one revision. The returned
+`SanitizeReport` counts what each kind removed and lists the signatures and
+profile claims that the result breaks or no longer makes.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    report = doc.sanitize("clean.pdf", comments=False)
+    print(dict(report.removed), report.changes.signatures, report.dropped_claims)
+```
+
 ## Objects
 
 `doc.objects` maps object numbers to the indirect objects, and every value

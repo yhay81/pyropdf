@@ -58,6 +58,7 @@ empty one. Documents are context managers that close on exit.
 - `text(pages: Iterable[int] | None = None, *, clip: Sequence[float] | None = None, clipped: bool = False, ligatures: bool = True, whitespace: bool = True, dehyphenate: bool = False, unmapped: Unmapped = 'skip', max_glyphs: int | None = 262144, max_size: int | None = 67108864) -> str`: Return the text of the given pages of the current version, joined in their order.
 - `markdown(pages: Iterable[int] | None = None, *, table_strategy: Literal['lines', 'text'] | None = 'lines', max_size: int | None = 67108864) -> str`: Return the given pages of the current version as Markdown, joined in their order.
 - `flatten(*, annotations: bool = True, widgets: bool = True)`: Draw annotation and widget appearances into page content and take them off their pages.
+- `sanitize(path: str | os.PathLike[str], /, *, javascript: bool = True, actions: bool = True, attachments: bool = True, metadata: bool = True, comments: bool = True, hidden_text: bool = True, unused: bool = True) -> SanitizeReport`: Remove hidden or active content in one transaction and save the document in full to `path`.
 - `close()`: Close the document and release its data; later operations raise `DocumentClosedError`.
 
 ### `open`
@@ -223,6 +224,16 @@ The optional content groups of a document, in `/OCGs` order; empty without optio
 - `switch(xref: int, *, on: bool)`: Show or hide group `xref` in the default configuration, in one transaction.
 - `use(index: int)`: Make configuration `index` of `configs` the default, in one transaction.
 - `visible(oc: Dictionary | None) -> bool`: Return whether content marked with `oc`, a group or membership dictionary, shows by default.
+
+## Sanitizing
+
+### `SanitizeReport`
+
+```python
+SanitizeReport(removed: Mapping[str, int], changes: ChangeReport, dropped_claims: tuple[str, ...])
+```
+
+What `Document.sanitize` removed, and what the result invalidates.
 
 ## Pages
 

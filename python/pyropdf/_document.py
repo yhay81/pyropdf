@@ -36,6 +36,7 @@ from pyropdf._pages import Pages, _page_entries
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
+from pyropdf._sanitize import SanitizeReport, sanitize
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
@@ -681,6 +682,54 @@ class Document:
         _validate_bool("annotations", annotations)
         _validate_bool("widgets", widgets)
         _core.flatten(self._core(), None, annotations, widgets)
+
+    def sanitize(  # noqa: PLR0913 - one switch per kind
+        self,
+        path: str | os.PathLike[str],
+        /,
+        *,
+        javascript: bool = True,
+        actions: bool = True,
+        attachments: bool = True,
+        metadata: bool = True,
+        comments: bool = True,
+        hidden_text: bool = True,
+        unused: bool = True,
+    ) -> SanitizeReport:
+        """Remove hidden or active content in one transaction and save the document in full to ``path``.
+
+        ``javascript`` removes every action whose ``/Next`` chain runs
+        JavaScript and the document's JavaScript name tree; ``actions``
+        removes every action: ``/A``, ``/OpenAction``, and ``/AA``, while
+        links keep their ``/Dest`` destinations. ``attachments`` removes
+        the embedded file name tree, portfolios, ``/AF`` associations, and
+        file attachment annotations. ``metadata`` removes the Info
+        dictionary and every ``/Metadata`` and ``/PieceInfo``. ``comments``
+        removes markup annotations and their pop-ups, keeping links and
+        widgets. ``hidden_text`` removes text shown in rendering mode 3, as
+        OCR layers are, from page content. ``unused`` writes only the
+        objects that the trailer reaches.
+
+        The save is never incremental, so the file has one revision. The
+        returned :class:`SanitizeReport` counts what each kind removed and
+        reports, as :meth:`changes` does before the save, the signatures
+        and profile claims that the result breaks, and the claims that it
+        no longer makes, as removing the XMP metadata drops them. The
+        document in memory
+        keeps the edits, which :attr:`history` can undo.
+        """
+        self._ensure_open()
+        return sanitize(
+            self,
+            path,
+            javascript=javascript,
+            actions=actions,
+            attachments=attachments,
+            metadata=metadata,
+            comments=comments,
+            hidden_text=hidden_text,
+            unused=unused,
+        )
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""

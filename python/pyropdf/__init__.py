@@ -111,6 +111,7 @@ from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
+from pyropdf._sanitize import SanitizeReport
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
@@ -263,6 +264,7 @@ __all__ = [
     "Real",
     "Rect",
     "RemoteDestination",
+    "SanitizeReport",
     "ScriptTrigger",
     "Scripts",
     "Segment",
