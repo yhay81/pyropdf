@@ -8,7 +8,7 @@ hide:
 
 <section class="pp-hero" aria-labelledby="pp-hero-title">
   <div>
-    <p class="pp-eyebrow">0.1 alpha · the successor of pylopdf</p>
+    <p class="pp-eyebrow">0.2 alpha</p>
     <h1 id="pp-hero-title">Every PDF edit is a <em>version</em>.</h1>
     <p class="pp-lede">
       pyropdf reads, renders, and edits PDF from Python on one versioned object store in Rust.
@@ -16,6 +16,7 @@ hide:
     </p>
     <div class="pp-actions">
       <a class="pp-button pp-button--primary" href="getting-started/">Get started →</a>
+      <a class="pp-button" href="recipes/">Recipes</a>
       <a class="pp-button" href="api/">API reference</a>
     </div>
     <div class="pp-install" aria-label="Installation command">
@@ -74,7 +75,7 @@ hide:
 
 <div class="pp-section-title">
 <h2>What it does today</h2>
-<p>The 0.1 releases cover reading, rendering, and editing. Drawing with <code>page.draw</code> comes later.</p>
+<p>0.2 reads, renders, edits, cleans, and shrinks documents. Drawing with <code>page.draw</code> comes later.</p>
 </div>
 
 <div class="pp-cards">
@@ -95,7 +96,7 @@ hide:
   </a>
   <a class="pp-card" href="editing/">
     <h3>Edit pages and annotations</h3>
-    <p>Insert, import, move, rotate, and flatten pages; add highlights, notes, shapes, and links.</p>
+    <p>Insert, import, move, rotate, crop, and flatten pages; add highlights, notes, shapes, and links; edit metadata, labels, and layers.</p>
     <code>doc.pages.insert(0, other.pages)</code>
   </a>
   <a class="pp-card" href="editing/#forms">
@@ -104,8 +105,8 @@ hide:
     <code>doc.form["name"].value = "Ada"</code>
   </a>
   <a class="pp-card" href="versions/">
-    <h3>Save precisely</h3>
-    <p>Incremental saves that append only the changed objects, full rewrites, and AES-256 encryption.</p>
+    <h3>Save, clean, and shrink</h3>
+    <p>Incremental saves that append only the changed objects, AES-256 encryption, sanitizing before sharing, and font subsetting.</p>
     <code>doc.save(path, incremental=True)</code>
   </a>
 </div>

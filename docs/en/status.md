@@ -1,6 +1,6 @@
 ---
 title: Status and safety
-description: What the 0.1 alpha covers, what it does not yet, and what pyropdf does and does not claim about input safety.
+description: What the 0.2 alpha covers, what it does not yet, and what pyropdf does and does not claim about input safety.
 ---
 
 # Status and safety
@@ -9,16 +9,16 @@ description: What the 0.1 alpha covers, what it does not yet, and what pyropdf d
 
 pyropdf is in **alpha**. The API may change between minor versions, and the
 [changelog](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md) lists
-each change. It is the successor of
-[pylopdf](https://github.com/yhay81/pylopdf), whose concept it keeps on a new
-foundation, described in
-[DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md).
+each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
+describes its foundation, and [Specification coverage](specification.md)
+how much of ISO 32000-2 each part covers.
 
-Not yet in 0.1:
+Not yet in 0.2:
 
 - drawing on a page with `page.draw` and creating fonts, which wait for
   changes in krilla;
 - free text and stamp annotations, which need drawing;
+- creating digital signatures, which is being prototyped;
 - the content provenance and interpreter fuel that depend on hayro changes
   under review.
 

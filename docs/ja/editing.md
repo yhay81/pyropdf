@@ -84,7 +84,7 @@ with pyropdf.open("input.pdf") as doc:
     page.links.add((72, 100, 200, 118), pyropdf.Destination(0))
 ```
 
-## フォーム
+## フォーム {#forms}
 
 `doc.form` は完全なフィールド名から `Field` ハンドルへの対応です。値を設定すると
 フィールドが更新され、ウィジェットの外観も整います。
@@ -180,7 +180,7 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.xmp is None)                             # True: XMP パケットなし
 ```
 
-## サニタイズ
+## サニタイズ {#sanitizing}
 
 `doc.sanitize(path)` は JavaScript・アクション・添付ファイル・メタデータ・コメント・不可視テキスト・
 未使用オブジェクトを種類ごとのスイッチに従って取り除き、文書を全体保存するので、ファイルのリビジョンは 1 つになります。

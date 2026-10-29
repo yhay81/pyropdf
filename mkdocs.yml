@@ -54,11 +54,13 @@ nav:
   - Home: index.md
   - Guide:
       - Getting started: getting-started.md
+      - Concepts: concepts.md
       - Reading content: reading.md
       - Rendering: rendering.md
       - Editing: editing.md
       - Versions and saving: versions.md
       - Limits and errors: limits.md
+      - Recipes: recipes.md
   - API reference:
       - api/index.md
       - Documents: api/documents.md
@@ -86,7 +88,9 @@ nav:
       - Checks and profiles: api/checks-and-profiles.md
       - Typed objects: api/typed-objects.md
   - Project:
+      - Choosing pyropdf: choosing.md
       - Status and safety: status.md
+      - Specification coverage: specification.md
       - Design: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
       - Changelog: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
 
