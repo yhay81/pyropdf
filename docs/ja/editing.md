@@ -111,6 +111,25 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read())
 ```
 
+## メタデータ
+
+`doc.metadata` は Info 辞書をそのまま読み書きするマッピングです。文書に
+XMP パケットがあれば、同じトランザクションで対応する XMP のプロパティも
+書き換えるので、PDF/A の文書でも 2 つの写しが一致したままになります。
+
+```python
+from datetime import UTC, datetime
+
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    doc.metadata.update(title="請求書 42", author="経理部")
+    doc.metadata["modified"] = datetime.now(UTC)
+    print(doc.metadata["title"])                       # 請求書 42
+    print(pyropdf.parse_pdf_date(doc.metadata["modified"]).year > 2000)  # True
+    print(doc.xmp is None)                             # True: XMP パケットなし
+```
+
 ## オブジェクト
 
 `doc.objects` はオブジェクト番号から間接オブジェクトへの対応で、値はどれも型付きの

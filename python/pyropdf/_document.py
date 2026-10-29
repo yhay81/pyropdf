@@ -6,6 +6,7 @@ import os
 import secrets
 import stat
 import sys
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +25,7 @@ from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
+from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp, write_entries, write_xmp
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box
@@ -34,7 +36,8 @@ from pyropdf._profiles import profiles as _profiles
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Sequence
+    from datetime import datetime
     from types import TracebackType
     from typing import Self
 
@@ -194,6 +197,55 @@ class Document:
         """
         self._ensure_open()
         return _profiles(self)
+
+    @property
+    def metadata(self) -> Metadata:
+        """Return the Info dictionary as a live :class:`Metadata` mapping.
+
+        Assign a mapping to replace every entry in one transaction, or an
+        empty one to remove them. Edits write the matching properties of an
+        existing XMP packet too, so that the two stay equivalent.
+        """
+        self._ensure_open()
+        return Metadata(self)
+
+    @metadata.setter
+    def metadata(self, values: Mapping[str, str | datetime]) -> None:
+        self._ensure_open()
+        if not isinstance(values, Mapping):
+            msg = f"metadata must be a mapping: {type(values).__name__}"
+            raise TypeError(msg)
+        checked = {key: _metadata_value(key, value) for key, value in values.items()}
+        write_entries(self, {key: checked.get(key, "") for key in METADATA_KEYS})
+
+    @property
+    def xmp(self) -> str | None:
+        """Return the catalog's XMP metadata packet as text, or ``None`` when absent.
+
+        The read is capped at 1 MiB, beyond which :class:`LimitError` is
+        raised with code ``stream_data_size``; read a larger packet through
+        ``doc.catalog["Metadata"].read(max_size=...)``. Assigning a string
+        writes it unfiltered, into the existing stream or a new one, and
+        ``del doc.xmp`` removes the catalog's entry. Assigning a packet does
+        not change :attr:`metadata`.
+        """
+        self._ensure_open()
+        return read_xmp(self)
+
+    @xmp.setter
+    def xmp(self, packet: str) -> None:
+        self._ensure_open()
+        if not isinstance(packet, str):
+            msg = f"xmp must be a str: {type(packet).__name__}"
+            raise TypeError(msg)
+        write_xmp(self, packet)
+
+    @xmp.deleter
+    def xmp(self) -> None:
+        self._ensure_open()
+        catalog = self.catalog
+        if "Metadata" in catalog:
+            del catalog["Metadata"]
 
     @property
     def pdfa_claim(self) -> tuple[int, str] | None:

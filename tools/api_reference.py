@@ -31,6 +31,7 @@ COMMAND = "uv run python tools/api_reference.py"
 #: The sections of the reference, in order, and the modules each gathers.
 SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Documents", ("_document",)),
+    ("Metadata", ("_metadata",)),
     ("Pages", ("_pages", "_page")),
     ("Text and content", ("_text", "_content", "_tables", "_markdown")),
     ("OCR", ("_ocr",)),

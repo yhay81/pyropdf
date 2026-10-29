@@ -15,7 +15,7 @@ column from `docs/en/api.md`.
 | Rotate and flatten | `set_rotation`, `bake` | yes | |
 | Page boxes | `set_mediabox`, `set_cropbox`, and the other boxes | partial: `Page.rect` reads the visible box | #357 |
 | Page labels | `get_page_labels`, `set_page_labels` | no | #358 |
-| Document metadata | `metadata`, `set_metadata`, `set_xml_metadata` | partial: profile claims from XMP | #356 |
+| Document metadata | `metadata`, `set_metadata`, `set_xml_metadata` | yes: `doc.metadata` and `doc.xmp`, kept in step | |
 | Outline | `get_toc`, `set_toc` | yes: `doc.outline` | |
 | Optional content (layers) | `get_layers`, `set_layer`, `set_oc` | no | #360 |
 | Embedded files | `embfile_*` | yes: `doc.attachments` | |

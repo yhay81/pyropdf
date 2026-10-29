@@ -37,6 +37,8 @@ empty one. Documents are context managers that close on exit.
 - `changes(*, incremental: bool) -> ChangeReport`: Return what the edits since opening invalidate if the document is saved now.
 - `check() -> StructuralReport`: Return how the document departs from the Arlington PDF Model.
 - `profiles`: Return the PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
+- `metadata` (settable): Return the Info dictionary as a live `Metadata` mapping.
+- `xmp` (settable): Return the catalog's XMP metadata packet as text, or `None` when absent.
 - `pdfa_claim`: Return the PDF/A part and conformance level of the XMP metadata, such as `(2, "B")`, or `None`.
 - `history`: Return the steps that undo and redo walk.
 - `is_closed`: Return whether `close` was called.
@@ -93,6 +95,51 @@ This suits scanning many files. `max_file_size` refuses larger input
 before parsing with `LimitError` code `file_size`; `None`, the
 default, leaves it unbounded. The metadata text is capped at 1 MiB, and
 passwords at 127 UTF-8 bytes; a wrong password raises `PasswordError`.
+
+## Metadata
+
+### `Metadata`
+
+```python
+Metadata(document: Document)
+```
+
+The document's Info dictionary as a live mapping, as `doc.metadata` returns it.
+
+The keys are `title`, `author`, `subject`, `keywords`,
+`creator`, `producer`, `created`, `modified`, and `trapped`;
+only the entries present are listed. Values are strings as stored, the
+dates as PDF date strings such as `"D:20240101120000Z"`; assign a
+`datetime` to `created` or `modified` to store one. Each
+assignment or deletion is one transaction, and `update` applies all
+of its values in one. When the document has an XMP packet, its matching
+properties are written in the same transaction, so that the two stay
+equivalent as PDF/A requires.
+
+- `__getitem__(key: str) -> str`: Return the entry `key`; an absent or unknown key raises `KeyError`.
+- `__iter__() -> Iterator[str]`: Iterate over the keys present, in the order of `METADATA_KEYS`.
+- `__len__() -> int`: Return the number of entries present.
+- `update(other: object = (), /, **values: str | datetime)`: Store every value of `other` and `values` in one transaction, or none of them.
+- `clear()`: Remove every entry, and the matching XMP properties.
+
+### `parse_pdf_date`
+
+```python
+parse_pdf_date(value: str) -> datetime | None
+```
+
+Return the moment of a PDF date string, or `None` when it is not one.
+
+Missing fields take their earliest values, and a date without a time zone
+is returned naive, as ISO 32000-2 section 7.9.4 leaves its zone unknown.
+
+### `pdf_date`
+
+```python
+pdf_date(moment: datetime) -> str
+```
+
+Return `moment` as a PDF date string, such as `"D:20240101120000Z"`; a naive moment is UTC.
 
 ## Pages
 
