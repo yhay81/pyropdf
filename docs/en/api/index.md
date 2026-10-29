@@ -64,7 +64,7 @@ method and property of its classes with its full description.
 - [`ClosePath`](text-and-content.md#closepath): Close the current subpath with a line to its start.
 - [`Color`](text-and-content.md#color): A solid paint, as the sRGB color and alpha that hayro converts it to.
 - [`Content`](text-and-content.md#content): The items that a page paints, in paint order.
-- [`ContentItem`](text-and-content.md#contentitem): Represent a union type
+- [`ContentItem`](text-and-content.md#contentitem)
 - [`CurveTo`](text-and-content.md#curveto): Draw a cubic Bézier curve to `to` with two control points.
 - [`FillRule`](text-and-content.md#fillrule): The rule that decides which areas a path fills or clips.
 - [`FontRef`](text-and-content.md#fontref): The font that a text run uses, as hayro reads its font program.
@@ -79,9 +79,9 @@ method and property of its classes with its full description.
 - [`LineTo`](text-and-content.md#lineto): Draw a line to `to`.
 - [`MarkedContent`](text-and-content.md#markedcontent): A marked-content sequence (`BMC` or `BDC`).
 - [`MoveTo`](text-and-content.md#moveto): Start a new subpath at `to`.
-- [`Paint`](text-and-content.md#paint): Represent a union type
+- [`Paint`](text-and-content.md#paint)
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
-- [`Segment`](text-and-content.md#segment): Represent a union type
+- [`Segment`](text-and-content.md#segment)
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
 - [`ShadingType`](text-and-content.md#shadingtype): A shading type of ISO 32000-2 §8.7.4.5.
 - [`SoftMask`](text-and-content.md#softmask): A soft mask: the transparency group that masks what it encloses.
@@ -94,13 +94,13 @@ method and property of its classes with its full description.
 - [`TextRun`](text-and-content.md#textrun): The glyphs that one text-showing operator paints.
 - [`TilingPattern`](text-and-content.md#tilingpattern): A paint that repeats a pattern cell.
 - [`TransparencyGroup`](text-and-content.md#transparencygroup): A transparency group and what it applies to everything inside it.
-- [`Unmapped`](text-and-content.md#unmapped): What text extraction makes of a glyph without Unicode: `"skip"` leaves it out with a `PyropdfWarning`, `"replacement"` gives U+FFFD, and `"glyph_id"` gives the character whose code point is the glyph ID.
+- [`Unmapped`](text-and-content.md#unmapped)
 - [`Word`](text-and-content.md#word): One word of `Page.words`, in reading order.
 
 ## [OCR](ocr.md)
 
 - [`OcrEngine`](ocr.md#ocrengine): Reusable, pure-Rust PP-OCR engine.
-- [`OcrRotation`](ocr.md#ocrrotation): A clockwise correction of sideways OCR input, in degrees.
+- [`OcrRotation`](ocr.md#ocrrotation)
 - [`OcrWord`](ocr.md#ocrword): One recognized word: its text, its box, and the engine's confidence from 0 to 1.
 
 ## [Rendering](rendering.md)
@@ -113,7 +113,7 @@ method and property of its classes with its full description.
 - [`Annotation`](annotations.md#annotation): A handle on one annotation of a page, as `page.annotations` lists it.
 - [`AnnotationFlags`](annotations.md#annotationflags_1): Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.
 - [`Annotations`](annotations.md#annotations_1): The annotations of a page other than links and form widgets, as `page.annotations` returns them.
-- [`AnnotationSpecification`](annotations.md#annotationspecification): Represent a union type
+- [`AnnotationSpecification`](annotations.md#annotationspecification)
 - [`AnnotationType`](annotations.md#annotationtype_1): Annotation types by `/Subtype`; the values are pymupdf's `PDF_ANNOT_*` codes.
 - [`AttachmentIcon`](annotations.md#attachmenticon): The icon of a file attachment, `/Name` (ISO 32000-2 §12.5.6.15).
 - [`Border`](annotations.md#border): The border of an annotation: its line width, style, and dash pattern.
@@ -123,7 +123,7 @@ method and property of its classes with its full description.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
 - [`LineEnding`](annotations.md#lineending): The shape at an end of a line or polyline, `/LE` (ISO 32000-2 Table 179).
-- [`MarkupRects`](annotations.md#markuprects): Represent a union type
+- [`MarkupRects`](annotations.md#markuprects)
 - [`Note`](annotations.md#note): A note shown as an icon, as `page.annotations.add` takes it.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.
@@ -143,7 +143,7 @@ method and property of its classes with its full description.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
-- [`Target`](links-and-destinations.md#target): Represent a union type
+- [`Target`](links-and-destinations.md#target)
 
 ## [Forms and widgets](forms-and-widgets.md)
 
@@ -152,7 +152,7 @@ method and property of its classes with its full description.
 - [`Field`](forms-and-widgets.md#field): A handle on one terminal form field, as `doc.form[name]` returns it.
 - [`FieldChoice`](forms-and-widgets.md#fieldchoice): One option of a choice field's `/Opt`.
 - [`FieldFlags`](forms-and-widgets.md#fieldflags_1): The field flags of `/Ff` (ISO 32000-2 Tables 227, 229, 231, and 233).
-- [`FieldSpecification`](forms-and-widgets.md#fieldspecification): Represent a union type
+- [`FieldSpecification`](forms-and-widgets.md#fieldspecification)
 - [`FieldType`](forms-and-widgets.md#fieldtype_1): The kind of a form field, from its `/FT` and the flags that refine it.
 - [`Form`](forms-and-widgets.md#form): The terminal fields of a document's interactive form, as `doc.form` returns them.
 - [`ListBox`](forms-and-widgets.md#listbox): A list of choices, as `page.widgets.add` takes it.
