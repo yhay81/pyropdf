@@ -242,6 +242,16 @@ def _entry(name: str, obj: object) -> str:
     return f"## `{name}`\n\n`{name} = {obj!r}`\n"
 
 
+def _described(obj: object) -> str:
+    """Return the summary of a name that has a docstring of its own, else an empty string.
+
+    An alias such as a union would show its type's docstring, which differs
+    between Python versions.
+    """
+    own = isinstance(obj, type) or inspect.ismodule(obj) or inspect.isroutine(obj)
+    return _summary(obj) if own else ""
+
+
 def _slug(title: str) -> str:
     """Return the file name of a section's page."""
     return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
@@ -288,7 +298,7 @@ def generate() -> dict[str, str]:
         pages[f"{slug}.md"] = page
         anchors = _anchors(page)
         index.append(f"## [{title}]({slug}.md)\n")
-        links = (f"- [`{n}`]({slug}.md#{anchors[n]}): {_summary(getattr(pyropdf, n))}".rstrip(": ") for n in names)
+        links = (f"- [`{n}`]({slug}.md#{anchors[n]}): {_described(getattr(pyropdf, n))}".rstrip(": ") for n in names)
         index.append("\n".join(links) + "\n")
     pages["index.md"] = "\n".join(index).rstrip() + "\n"
     return pages
