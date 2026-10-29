@@ -37,6 +37,7 @@ empty one. Documents are context managers that close on exit.
 - `changes(*, incremental: bool) -> ChangeReport`: Return what the edits since opening invalidate if the document is saved now.
 - `check() -> StructuralReport`: Return how the document departs from the Arlington PDF Model.
 - `profiles`: Return the PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
+- `page_labels` (settable): Return the page label ranges in page order, or `[]` without labels.
 - `metadata` (settable): Return the Info dictionary as a live `Metadata` mapping.
 - `xmp` (settable): Return the catalog's XMP metadata packet as text, or `None` when absent.
 - `pdfa_claim`: Return the PDF/A part and conformance level of the XMP metadata, such as `(2, "B")`, or `None`.
@@ -141,6 +142,28 @@ pdf_date(moment: datetime) -> str
 
 Return `moment` as a PDF date string, such as `"D:20240101120000Z"`; a naive moment is UTC.
 
+## Page labels
+
+### `PageLabelRange`
+
+```python
+PageLabelRange(start: int, style: PageLabelStyle | str | None = <PageLabelStyle.DECIMAL: 'D'>, prefix: str = '', first: int = 1)
+```
+
+The labels of the pages from `start` up to the next range.
+
+A page is labeled `prefix` followed by its number in `style`,
+counting from `first` at `start`; `style=None` labels it with the
+prefix alone.
+
+- `label(page: int) -> str`: Return the label of zero-based `page`, which the range must cover.
+
+### `PageLabelStyle`
+
+How a page-label range numbers its pages (`/S`, ISO 32000-2 table 161).
+
+Members: `DECIMAL`, `UPPER_ROMAN`, `LOWER_ROMAN`, `UPPER_LETTERS`, `LOWER_LETTERS`.
+
 ## Pages
 
 ### `Page`
@@ -164,6 +187,7 @@ the same document.
 - `links`: Return the page's link annotations, in `/Annots` order.
 - `widgets`: Return the page's form widgets, in `/Annots` order.
 - `index`: Return the zero-based index of the page, in time that does not grow with the page count.
+- `label`: Return the page's label from `doc.page_labels`, or `""` when no range covers it.
 - `rotation` (settable): Return the page's `/Rotate`, inherited and normalized to 0, 90, 180, or 270.
 - `rect`: Return the display `Rect` `(0, 0, width, height)`, with the rotation applied.
 - `media_box` (settable): Return the page's MediaBox in display space, inherited, or the A4 page that the renderer draws.
@@ -201,6 +225,7 @@ naming their pages through later edits. `new`, `insert`,
 one transaction.
 
 - `__len__() -> int`: Return the number of pages.
+- `labeled(label: str) -> list[int]`: Return the indexes of the pages whose page label is `label`.
 - `__getitem__(index: int | slice) -> Page | list[Page]`: Return page `index`, or a list of the pages of a slice.
 - `__iter__() -> Iterator[Page]`: Iterate over the pages; a structural edit during the iteration raises `RuntimeError`.
 - `index(page: object, start: int = 0, stop: int | None = None) -> int`: Return the index of `page`, in time that does not grow with the page count.

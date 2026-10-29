@@ -105,6 +105,7 @@ from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._outline import Outline, OutlineEntry, OutlineItem
 from pyropdf._page import Page
+from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
@@ -235,6 +236,8 @@ __all__ = [
     "OutlineItem",
     "OutputIntent",
     "Page",
+    "PageLabelRange",
+    "PageLabelStyle",
     "Pages",
     "Paint",
     "PasswordError",

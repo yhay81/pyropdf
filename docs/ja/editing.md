@@ -125,6 +125,24 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read())
 ```
 
+## ページラベル
+
+`doc.page_labels` は文書の `PageLabelRange` の列を、`page.label` は 1 ページのラベルを返します。
+リストを代入すると置き換わり、最初の範囲はページ 0 から始めます。ページの挿入・移動・削除の後も、
+各ページは同じラベルを保ちます。
+
+```python
+import pyropdf
+from pyropdf import PageLabelRange, PageLabelStyle
+
+with pyropdf.open("input.pdf") as doc:
+    doc.page_labels = [
+        PageLabelRange(0, PageLabelStyle.LOWER_ROMAN),   # i, ii, iii, ...
+        PageLabelRange(1, prefix="A-"),                  # A-1, A-2, ...
+    ]
+    print(doc.pages[1].label, doc.pages.labeled("A-1"))
+```
+
 ## メタデータ
 
 `doc.metadata` は Info 辞書をそのまま読み書きするマッピングです。文書に

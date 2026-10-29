@@ -9,6 +9,7 @@ are the floor). Measured for #354.
 | `features.md` | The capabilities of PyMuPDF 2.0 against pyropdf 0.1.0, each gap linked to its issue |
 | `bench.py ENGINE OUT FILE...` | Times the shared operations for one engine |
 | `run.py` | Installs PyMuPDF 2.0 and pyropdf 0.1.0 from PyPI, each in its own environment under `target/pymupdf-comparison/`, runs `bench.py` with both, and writes `results/` |
+| `labels.py` | Writes `results/page-labels.json`, PyMuPDF's `get_label` of every corpus page, from the environment that `run.py` installs; `tests/test_page_labels.py` compares pyropdf with it |
 | `results/darwin-arm64.md` | The measured comparison, with the raw timings in the `.json` beside it |
 
 ```bash

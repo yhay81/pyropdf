@@ -29,6 +29,7 @@ from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box
+from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
 from pyropdf._pages import Pages, _page_entries
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
@@ -197,6 +198,33 @@ class Document:
         """
         self._ensure_open()
         return _profiles(self)
+
+    @property
+    def page_labels(self) -> list[PageLabelRange]:
+        """Return the page label ranges in page order, or ``[]`` without labels.
+
+        Each :class:`PageLabelRange` labels the pages from its zero-based
+        ``start`` up to the next range; ``page.label`` gives one page's
+        label. Assigning a list replaces the ranges in one transaction, the
+        first of which must start at page 0, and ``del doc.page_labels``
+        removes them. Inserting, moving, and deleting pages keeps each
+        page's label. Reads raise :class:`LimitError` past 4,096 ranges or
+        kids, 32 levels, or 1 MiB of text; writes stop at 4,096 ranges and
+        1 MiB of prefixes (``page_label_input_size``).
+        """
+        self._ensure_open()
+        return _read_page_labels(self)
+
+    @page_labels.setter
+    def page_labels(self, ranges: Iterable[PageLabelRange]) -> None:
+        self._ensure_open()
+        with self.transaction("page labels"):
+            _write_page_labels(self, ranges)
+
+    @page_labels.deleter
+    def page_labels(self) -> None:
+        self._ensure_open()
+        _write_page_labels(self, ())
 
     @property
     def metadata(self) -> Metadata:

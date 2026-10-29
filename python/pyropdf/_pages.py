@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, overload
 from pyropdf import _core
 from pyropdf._errors import LimitError
 from pyropdf._page import Page
+from pyropdf._page_labels import _label, _read_page_labels
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -77,6 +78,21 @@ class Pages(Sequence[Page]):
     def __len__(self) -> int:
         """Return the number of pages."""
         return _core.page_count(self._document._core())  # noqa: SLF001
+
+    def labeled(self, label: str) -> list[int]:
+        """Return the indexes of the pages whose page label is ``label``.
+
+        An empty label, or a document without page labels, matches no page.
+        """
+        if not isinstance(label, str):
+            msg = f"label must be a string: {label!r}"
+            raise TypeError(msg)
+        if not label:
+            return []
+        ranges = _read_page_labels(self._document)
+        if not ranges:
+            return []
+        return [index for index in range(len(self)) if _label(ranges, index) == label]
 
     @overload
     def __getitem__(self, index: int) -> Page: ...

@@ -129,6 +129,25 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read())
 ```
 
+## Page labels
+
+`doc.page_labels` lists the `PageLabelRange` records of the document, and
+`page.label` gives one page's label. Assigning a list replaces them; the first
+range starts at page 0. Inserting, moving, and deleting pages keeps each
+page's label.
+
+```python
+import pyropdf
+from pyropdf import PageLabelRange, PageLabelStyle
+
+with pyropdf.open("input.pdf") as doc:
+    doc.page_labels = [
+        PageLabelRange(0, PageLabelStyle.LOWER_ROMAN),   # i, ii, iii, ...
+        PageLabelRange(1, prefix="A-"),                  # A-1, A-2, ...
+    ]
+    print(doc.pages[1].label, doc.pages.labeled("A-1"))
+```
+
 ## Metadata
 
 `doc.metadata` is a live mapping of the Info dictionary. When the document
