@@ -1,15 +1,37 @@
 # pyropdf
 
-pyropdf is the planned successor of [pylopdf](https://github.com/yhay81/pylopdf):
+pyropdf is the successor of [pylopdf](https://github.com/yhay81/pylopdf):
 a Python library, implemented in Rust, for complete control of PDF as
 ISO 32000-2 defines it. It keeps pylopdf's concept and replaces its
-foundation with one versioned object store that every engine reads.
+foundation with one versioned object store that every engine reads, so an
+edit costs what it touches, every change can be undone, and a failed
+transaction leaves the document as it was.
 
-**Status:** design. Nothing is implemented or published yet.
-[DESIGN.md](DESIGN.md) describes the foundation that comes first, the
-evidence from pylopdf behind it, and how pylopdf's users and code move over.
-[evidence/pylopdf-baseline](evidence/pylopdf-baseline) holds the scripts
-behind that evidence.
+**Status:** alpha. The API may change between minor versions. Documentation:
+<https://pyropdf.haya.works/>. [DESIGN.md](DESIGN.md) describes the
+foundation, and [CHANGELOG.md](CHANGELOG.md) what each release holds.
+
+```bash
+pip install pyropdf
+```
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    print(page.text())
+    page.pixmap(dpi=144).save("page-1.png")
+    with doc.transaction("rotate"):
+        page.rotation = 90
+    doc.save("output.pdf", incremental=True)
+```
+
+The 0.1 releases read text, words, layout, tables, and Markdown, run
+offline OCR, render pages to pixmaps and SVG, edit pages, annotations,
+links, form fields, outlines, and attachments, and save incrementally or
+in full, with encryption. Drawing on a page with `page.draw` comes in a
+later release.
 
 ## Safety claims
 
