@@ -23,6 +23,7 @@ from pyropdf._ocr import (
     _validate_ocr_rotation,
 )
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
+from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
 from pyropdf._tables import Table, build_tables
 from pyropdf._text import (
@@ -163,6 +164,11 @@ class Page:
         if index is None:
             raise self._stale()
         return index
+
+    @property
+    def label(self) -> str:
+        """Return the page's label from ``doc.page_labels``, or ``""`` when no range covers it."""
+        return _label(_read_page_labels(self._document), self.index)
 
     @property
     def rotation(self) -> int:

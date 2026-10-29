@@ -32,6 +32,7 @@ COMMAND = "uv run python tools/api_reference.py"
 SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Documents", ("_document",)),
     ("Metadata", ("_metadata",)),
+    ("Page labels", ("_page_labels",)),
     ("Pages", ("_pages", "_page")),
     ("Text and content", ("_text", "_content", "_tables", "_markdown")),
     ("OCR", ("_ocr",)),

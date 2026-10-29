@@ -8,6 +8,8 @@
   convert PDF dates (#356).
 - `Page.media_box`, `crop_box`, `bleed_box`, `trim_box`, and `art_box` read
   the page boxes in display space and set them on one page (#357).
+- `doc.page_labels` reads and replaces the page label ranges, and
+  `page.label` and `doc.pages.labeled` read the labels (#358).
 
 ## 0.1.0 (2026-10-29)
 
