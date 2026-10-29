@@ -2,13 +2,21 @@
 //! holds it, which decides the rule that a structural edit runs for it
 //! (DESIGN.md section 8).
 //!
-//! Each role has a hand-written matcher of the referrer's value and the
-//! path to the reference. The matchers cover the roles that structural
-//! edits of pages need; roles derived from the Arlington model come later.
+//! The roles come from the links of the Arlington model. An object type
+//! that names itself by `/Type`, `/Subtype`, or `/S` gives a reference at
+//! one of its linking keys, or in the array at one, the role of that
+//! [`Link`]; `tools/arlington/generate.py` writes these links into
+//! `derived.rs`. The roles that rules name attach to links in [`ATTACHED`].
+//!
+//! An object type known only from where it is reached, such as an outline
+//! item, a structure element without `/Type`, a node of a name or number
+//! tree, or an explicit destination, does not name itself; hand-written
+//! matchers of the referrer's value and the path give those roles.
 
 use crate::value::{Dict, Value};
 
 use super::Step;
+use super::derived::HOLDERS;
 
 /// What a reference means to the object that holds it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -44,14 +52,174 @@ pub enum Role {
     /// A value of a number tree node, in its `/Nums`, or in an array that is
     /// one, as the structure parent tree holds.
     NumberTreeValue,
+    /// A link of the Arlington model that no role above names.
+    Link(Link),
+}
+
+/// A link of the Arlington model: a key of an object type that names
+/// itself, at which the type holds references.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Link {
+    /// The object type that holds the reference, as the model's file is
+    /// named, such as `PageObject`.
+    pub holder: &'static str,
+    /// The key, as the model writes it.
+    pub key: &'static str,
+    /// Whether the reference is an entry of the array at the key, rather
+    /// than the key's value.
+    pub element: bool,
+}
+
+/// An object type that names itself, and its links.
+#[derive(Debug)]
+pub(super) struct Holder {
+    pub name: &'static str,
+    /// The keys that name the type. A dictionary is of the type when it
+    /// has one of them, and each that it has, or must have, holds one of
+    /// the names.
+    pub identity: &'static [Identity],
+    pub links: &'static [Linking],
+}
+
+/// A key that names an object type, such as `/Type /Page`.
+#[derive(Debug)]
+pub(super) struct Identity {
+    pub key: &'static str,
+    pub values: &'static [&'static str],
+    pub required: bool,
+}
+
+/// A key of an object type at which it holds references.
+#[derive(Debug)]
+pub(super) struct Linking {
+    pub key: &'static str,
+    /// Whether the references are entries of the array at the key.
+    pub element: bool,
+    /// The object types that the references may be.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the tests check the links against the model")
+    )]
+    pub targets: &'static [&'static str],
+}
+
+impl Holder {
+    /// Returns whether `dict` names itself as of this type.
+    fn names(&self, dict: &Dict) -> bool {
+        let mut named = false;
+        for identity in self.identity {
+            match dict.get(identity.key) {
+                Some(Value::Name(name))
+                    if identity
+                        .values
+                        .iter()
+                        .any(|value| value.as_bytes() == name.as_bytes()) =>
+                {
+                    named = true;
+                }
+                None if !identity.required => {}
+                _ => return false,
+            }
+        }
+        named
+    }
+}
+
+/// Which links a role attaches to: the holders, a name or a prefix ending
+/// in `*`, the key, and whether the reference is an entry of the key's
+/// array, or either when `None`.
+type Attachment = (&'static [&'static str], &'static str, Option<bool>, Role);
+
+/// The roles that rules name, by the links that they attach to.
+pub(super) const ATTACHED: &[Attachment] = &[
+    (
+        &["PageTreeNode", "PageTreeNodeRoot"],
+        "Kids",
+        Some(true),
+        Role::PageTreeKid,
+    ),
+    (
+        &["PageObject", "PageTreeNode"],
+        "Parent",
+        Some(false),
+        Role::PageTreeParent,
+    ),
+    (&["PageObject"], "Annots", Some(true), Role::PageAnnotation),
+    (&["Annot*"], "P", Some(false), Role::AnnotationPage),
+    (&["Outline"], "First", Some(false), Role::OutlineLink),
+    (&["Outline"], "Last", Some(false), Role::OutlineLink),
+    (
+        &["StructTreeRoot", "StructElem"],
+        "K",
+        None,
+        Role::StructureKid,
+    ),
+    (&["StructElem"], "P", Some(false), Role::StructureParent),
+    (
+        &["StructElem", "MarkedContentReference", "ObjectReference"],
+        "Pg",
+        Some(false),
+        Role::StructurePage,
+    ),
+    (
+        &["ObjectReference"],
+        "Obj",
+        Some(false),
+        Role::StructureObject,
+    ),
+];
+
+/// Returns whether `pattern`, a name or a prefix ending in `*`, matches the
+/// object type `holder`.
+pub(super) fn matches(pattern: &str, holder: &str) -> bool {
+    pattern
+        .strip_suffix('*')
+        .map_or(pattern == holder, |prefix| holder.starts_with(prefix))
+}
+
+/// Returns the role that `link` has: the role attached to it, or the link.
+pub(super) fn attached(link: Link) -> Role {
+    ATTACHED
+        .iter()
+        .find(|(holders, key, element, _)| {
+            *key == link.key
+                && element.is_none_or(|element| element == link.element)
+                && holders.iter().any(|pattern| matches(pattern, link.holder))
+        })
+        .map_or(Role::Link(link), |(.., role)| *role)
+}
+
+/// Returns the link of the reference at `path` in `dict`, if an object type
+/// that `dict` names itself as links there.
+fn derived(dict: &Dict, path: &[Step]) -> Option<Link> {
+    let (key, element) = match path {
+        [Step::Key(key)] => (key.as_bytes(), false),
+        [Step::Key(key), Step::Index(_)] => (key.as_bytes(), true),
+        _ => return None,
+    };
+    HOLDERS
+        .iter()
+        .filter(|holder| holder.names(dict))
+        .find_map(|holder| {
+            holder
+                .links
+                .iter()
+                .find(|linking| linking.key.as_bytes() == key && linking.element == element)
+                .map(|linking| Link {
+                    holder: holder.name,
+                    key: linking.key,
+                    element,
+                })
+        })
 }
 
 /// A matcher: the role that a referrer whose value is the dictionary gives
 /// a reference at the path, if it is its role.
 type Matcher = fn(&Dict, &[Step]) -> Option<Role>;
 
-/// The matchers, in the order that they are tried.
-const MATCHERS: &[Matcher] = &[page_tree, annotation, outline, structure, tree];
+/// The matchers of the roles that the links do not give, in the order
+/// that they are tried.
+const MATCHERS: &[Matcher] = &[outline, structure, tree];
 
 /// The names of the kinds of explicit destination.
 const FITS: &[&[u8]] = &[
@@ -69,7 +237,9 @@ pub(super) fn role(top: &Value, path: &[Step]) -> Option<Role> {
         Value::Stream(stream) => stream.dict(),
         _ => return None,
     };
-    MATCHERS.iter().find_map(|matcher| matcher(dict, path))
+    derived(dict, path)
+        .map(attached)
+        .or_else(|| MATCHERS.iter().find_map(|matcher| matcher(dict, path)))
 }
 
 /// Returns whether the reference at `path` in `top` is the page of an
@@ -108,35 +278,6 @@ fn only_key(path: &[Step]) -> Option<&[u8]> {
         [Step::Key(key)] => Some(key.as_bytes()),
         _ => None,
     }
-}
-
-/// Returns the key of a path of a key and an array position.
-fn key_index(path: &[Step]) -> Option<(&[u8], usize)> {
-    match path {
-        [Step::Key(key), Step::Index(index)] => Some((key.as_bytes(), *index)),
-        _ => None,
-    }
-}
-
-fn page_tree(dict: &Dict, path: &[Step]) -> Option<Role> {
-    let pages = is_type(dict, b"Pages");
-    let page = is_type(dict, b"Page");
-    if pages && key_index(path).is_some_and(|(key, _)| key == b"Kids") {
-        return Some(Role::PageTreeKid);
-    }
-    if (pages || page) && only_key(path) == Some(b"Parent") {
-        return Some(Role::PageTreeParent);
-    }
-    if page && key_index(path).is_some_and(|(key, _)| key == b"Annots") {
-        return Some(Role::PageAnnotation);
-    }
-    None
-}
-
-fn annotation(dict: &Dict, path: &[Step]) -> Option<Role> {
-    let annotation =
-        is_type(dict, b"Annot") || (dict.get("Subtype").is_some() && dict.get("Rect").is_some());
-    (annotation && only_key(path) == Some(b"P")).then_some(Role::AnnotationPage)
 }
 
 fn outline(dict: &Dict, path: &[Step]) -> Option<Role> {

@@ -22,6 +22,8 @@
 //! and never follows them, so reference chains and cycles cost nothing.
 
 mod copy;
+#[rustfmt::skip]
+mod derived;
 mod form_impact;
 mod forms;
 mod labels;
@@ -45,7 +47,7 @@ use crate::version::{ChangeSet, Version};
 pub use copy::copy_for_edit;
 pub use form_impact::affected_form_objects;
 pub use labels::{Labels, relabel};
-pub use roles::Role;
+pub use roles::{Link, Role};
 pub use rules::{Edits, Rule, unreferenced};
 
 /// Plans in `edits` the rules for `removed`, the pages that leave the
