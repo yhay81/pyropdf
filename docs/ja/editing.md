@@ -180,6 +180,21 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.xmp is None)                             # True: XMP パケットなし
 ```
 
+## サニタイズ
+
+`doc.sanitize(path)` は JavaScript・アクション・添付ファイル・メタデータ・コメント・不可視テキスト・
+未使用オブジェクトを種類ごとのスイッチに従って取り除き、文書を全体保存するので、ファイルのリビジョンは 1 つになります。
+戻り値の `SanitizeReport` は種類ごとに取り除いた数と、結果が壊す署名とプロファイルの主張、
+そして結果がもう宣言しない主張を示します。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    report = doc.sanitize("clean.pdf", comments=False)
+    print(dict(report.removed), report.changes.signatures, report.dropped_claims)
+```
+
 ## オブジェクト
 
 `doc.objects` はオブジェクト番号から間接オブジェクトへの対応で、値はどれも型付きの

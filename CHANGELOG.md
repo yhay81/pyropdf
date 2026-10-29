@@ -16,6 +16,9 @@
 - `doc.layers` lists the optional content groups and configurations,
   switches groups and applies configurations, which rendering and text
   follow, and evaluates visibility expressions with a bounded depth (#360).
+- `doc.sanitize` removes JavaScript, actions, attachments, metadata,
+  comments, hidden text, and unused objects, saves one revision, and
+  reports the signatures and profile claims that break (#363).
 
 ## 0.1.0 (2026-10-29)
 
