@@ -1,0 +1,12 @@
+// The documentation site, served as static assets on Cloudflare Workers.
+// .github/workflows/docs.yml builds site/ and deploys it from main.
+{
+  "name": "pyropdf-docs",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./site",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "pyropdf.haya.works", "custom_domain": true }],
+  "workers_dev": false
+}
