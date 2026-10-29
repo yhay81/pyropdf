@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from corpus import ASSETS, NAMES
+from corpus import ADDED, ASSETS, NAMES
 
 import pyropdf
 
@@ -43,12 +43,13 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
     results = json.loads((HARNESS / "results.json").read_text())
     report = (HARNESS / "report.md").read_text()
 
-    assert sorted(results) == sorted(name.removesuffix(".pdf") for name in NAMES)
+    measured = sorted(set(NAMES) - ADDED)
+    assert sorted(results) == sorted(name.removesuffix(".pdf") for name in measured)
     compare = _compare()
     metadata = json.loads((HARNESS / "metadata.json").read_text())
     assert metadata["pylopdf_commit"] == "ebb01d3c4c742046e8ce7fd72957cd15a2933321"
-    assert set(metadata["corpus_sha256"]) == set(NAMES)
-    for name in NAMES:
+    assert set(metadata["corpus_sha256"]) == set(measured)
+    for name in measured:
         assert metadata["corpus_sha256"][name] == hashlib.sha256((ASSETS / name).read_bytes()).hexdigest()
         result = results[Path(name).stem]
         with pyropdf.open(ASSETS / name) as document:

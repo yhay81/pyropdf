@@ -37,7 +37,7 @@ fn corpus() -> Vec<(String, Vec<u8>)> {
         .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 14, "the corpus has 14 files");
+    assert_eq!(files.len(), 15, "the corpus has 15 files");
     files
         .into_iter()
         .map(|path| {

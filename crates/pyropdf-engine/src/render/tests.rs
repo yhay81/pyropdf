@@ -26,7 +26,7 @@ fn corpus_pages_raster_at_1x_as_pylopdf_renders_the_original() {
         .filter(|path| path.extension().is_some_and(|e| e == "pdf"))
         .collect();
     files.sort();
-    assert_eq!(files.len(), 14);
+    assert_eq!(files.len(), 15);
     std::thread::scope(|scope| {
         for path in &files {
             scope.spawn(move || {

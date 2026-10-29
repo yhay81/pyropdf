@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import pyropdf
 from pyropdf import Layer, LayerConfig, Name
 
+CORPUS = Path(__file__).resolve().parent / "assets" / "real_world"
 WIDTH, HEIGHT = 200, 100
 #: Content marked with group L1 (marked content), L2 (an XObject's /OC), and membership dictionary M.
 CONTENT = (
@@ -77,6 +80,19 @@ def test_layers_list_names_and_states() -> None:
     assert len(doc.layers) == 3
     assert doc.layers[1].name == "Boxes"
     assert [layer.name for layer in doc.layers[1:]] == ["Boxes", "Unused"]
+
+
+def test_a_corpus_document_lists_its_layers_and_follows_a_switch() -> None:
+    doc = pyropdf.open(CORPUS / "pdfium-ocg-invisible.pdf")
+    assert list(doc.layers) == [Layer(8, "Show Text", ("View",), on=False, locked=False)]
+    assert doc.layers.configs == [LayerConfig(0, "", "", "OFF", (), (), ())]
+    hidden = bytes(doc.pages[0].pixmap(dpi=72))
+    doc.layers.switch(8, on=True)
+    assert doc.layers[0].on
+    shown = bytes(doc.pages[0].pixmap(dpi=72))
+    assert shown != hidden
+    doc.layers.switch(8, on=False)
+    assert bytes(doc.pages[0].pixmap(dpi=72)) == hidden
 
 
 def test_a_document_without_optional_content_has_no_layers() -> None:

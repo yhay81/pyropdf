@@ -22,6 +22,10 @@ ASSETS = Path(__file__).resolve().parent / "assets" / "real_world"
 # The names of the corpus files, sorted.
 NAMES = tuple(sorted(path.name for path in ASSETS.glob("*.pdf")))
 
+# The files that pyropdf added after DESIGN.md section 2.2 and the Phase 1
+# parity evidence measured the corpus, which those measurements leave out.
+ADDED = frozenset({"pdfium-ocg-invisible.pdf"})
+
 # A kind of damage, which takes a file's name and bytes and returns the damaged bytes.
 Damage = Callable[[str, bytes], bytes]
 
