@@ -82,6 +82,25 @@ with pyropdf.open("input.pdf") as doc:
     print(page.operations[:3])
 ```
 
+## 画像
+
+`page.images()` はページが描く画像を `page.content()` と同じ順で返します。`pixmap()` は描画と同じように
+画像をデコードし、ソフトマスクをアルファにします。`stored()` は JPEG・JPEG 2000・JBIG2・CCITT のデータを
+文書に格納されたまま返します。`doc.replace_image(xref, data)` は JPEG・JPEG 2000・PNG に差し替え、
+`doc.remove_image(xref)` は画像を消します。どちらもその画像を描く全ページに及びます。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for image in doc.pages[0].images():
+        stored = image.stored()
+        if stored is not None:
+            print(image.item.xref, stored.extension, len(stored.data))
+        else:
+            image.pixmap().save(f"image-{image.index}.png")
+```
+
 ## オフライン OCR
 
 `ocr` extra を入れると、`OcrEngine()` が PP-OCR モデルを読み込み、`page.ocr` が

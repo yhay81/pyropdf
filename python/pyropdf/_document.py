@@ -23,6 +23,7 @@ from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
+from pyropdf._images import remove_image, replace_image
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
 from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp, write_entries, write_xmp
@@ -198,6 +199,22 @@ class Document:
         """
         self._ensure_open()
         return _profiles(self)
+
+    def replace_image(self, xref: int, data: bytes) -> None:
+        """Replace image object ``xref`` with JPEG, JPEG 2000, or PNG ``data``, in one transaction.
+
+        The object keeps its number, so every page and form that paints it
+        paints the new image. JPEG and JPEG 2000 data is stored as it is;
+        PNG is decoded, its alpha written as a soft mask. The image's other
+        entries, such as ``/Interpolate``, stay.
+        """
+        self._ensure_open()
+        replace_image(self, xref, data)
+
+    def remove_image(self, xref: int) -> None:
+        """Make image object ``xref`` one transparent pixel, so that no placement shows it, in one transaction."""
+        self._ensure_open()
+        remove_image(self, xref)
 
     @property
     def page_labels(self) -> list[PageLabelRange]:

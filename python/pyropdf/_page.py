@@ -11,6 +11,7 @@ from pyropdf._annotations import Annotations
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
+from pyropdf._images import PageImage, page_images
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._links import Links
 from pyropdf._objects import Dictionary
@@ -164,6 +165,16 @@ class Page:
         if index is None:
             raise self._stale()
         return index
+
+    def images(self, *, annotations: bool = True) -> list[PageImage]:
+        """Return the images that the page paints, in the paint order of :meth:`content`.
+
+        Each :class:`PageImage` decodes its pixels with ``pixmap()`` and
+        returns its data as stored with ``stored()``; ``annotations`` counts
+        the images of annotation appearances, as in :meth:`content`.
+        """
+        _validate_bool("annotations", annotations)
+        return page_images(self, annotations=annotations)
 
     @property
     def label(self) -> str:

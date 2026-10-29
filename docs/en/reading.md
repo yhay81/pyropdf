@@ -87,6 +87,27 @@ with pyropdf.open("input.pdf") as doc:
     print(page.operations[:3])
 ```
 
+## Images
+
+`page.images()` lists the images that the page paints, in the order of
+`page.content()`. `pixmap()` decodes an image as the renderer does, its soft
+mask as alpha; `stored()` returns JPEG, JPEG 2000, JBIG2, or CCITT data as
+the document stores it. `doc.replace_image(xref, data)` swaps in JPEG,
+JPEG 2000, or PNG data, and `doc.remove_image(xref)` blanks the image, on
+every page that paints it.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for image in doc.pages[0].images():
+        stored = image.stored()
+        if stored is not None:
+            print(image.item.xref, stored.extension, len(stored.data))
+        else:
+            image.pixmap().save(f"image-{image.index}.png")
+```
+
 ## Offline OCR
 
 With the `ocr` extra installed, `OcrEngine()` loads the PP-OCR models, and

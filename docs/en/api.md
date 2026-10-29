@@ -37,6 +37,8 @@ empty one. Documents are context managers that close on exit.
 - `changes(*, incremental: bool) -> ChangeReport`: Return what the edits since opening invalidate if the document is saved now.
 - `check() -> StructuralReport`: Return how the document departs from the Arlington PDF Model.
 - `profiles`: Return the PDF/A, PDF/UA, PDF/X, and PDF/VT claims of the XMP metadata, and the output intents.
+- `replace_image(xref: int, data: bytes)`: Replace image object `xref` with JPEG, JPEG 2000, or PNG `data`, in one transaction.
+- `remove_image(xref: int)`: Make image object `xref` one transparent pixel, so that no placement shows it, in one transaction.
 - `page_labels` (settable): Return the page label ranges in page order, or `[]` without labels.
 - `metadata` (settable): Return the Info dictionary as a live `Metadata` mapping.
 - `xmp` (settable): Return the catalog's XMP metadata packet as text, or `None` when absent.
@@ -164,6 +166,29 @@ How a page-label range numbers its pages (`/S`, ISO 32000-2 table 161).
 
 Members: `DECIMAL`, `UPPER_ROMAN`, `LOWER_ROMAN`, `UPPER_LETTERS`, `LOWER_LETTERS`.
 
+## Images
+
+### `PageImage`
+
+```python
+PageImage(page: Page, index: int, item: Image, annotations: bool)
+```
+
+One image that a page paints: its content item and its place among the page's images.
+
+- `pixmap() -> Pixmap`: Return the image's pixels as hayro decodes them, with its mask as alpha.
+- `stored() -> StoredImage | None`: Return the image's data as stored, or `None` for an inline image or one without an image filter.
+
+### `StoredImage`
+
+```python
+StoredImage(filter: str, data: bytes, parameters: Dictionary | None)
+```
+
+An image's data as the document stores it, for an image filter that a file format holds.
+
+- `extension`: Return the usual file extension of the data: `jpg`, `jp2`, `jb2`, or `ccitt`.
+
 ## Pages
 
 ### `Page`
@@ -187,6 +212,7 @@ the same document.
 - `links`: Return the page's link annotations, in `/Annots` order.
 - `widgets`: Return the page's form widgets, in `/Annots` order.
 - `index`: Return the zero-based index of the page, in time that does not grow with the page count.
+- `images(*, annotations: bool = True) -> list[PageImage]`: Return the images that the page paints, in the paint order of `content`.
 - `label`: Return the page's label from `doc.page_labels`, or `""` when no range covers it.
 - `rotation` (settable): Return the page's `/Rotate`, inherited and normalized to 0, 90, 180, or 270.
 - `rect`: Return the display `Rect` `(0, 0, width, height)`, with the rotation applied.

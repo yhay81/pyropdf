@@ -97,6 +97,7 @@ from pyropdf._form import (
 )
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
+from pyropdf._images import PageImage, StoredImage
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
 from pyropdf._metadata import Metadata, parse_pdf_date, pdf_date
@@ -236,6 +237,7 @@ __all__ = [
     "OutlineItem",
     "OutputIntent",
     "Page",
+    "PageImage",
     "PageLabelRange",
     "PageLabelStyle",
     "Pages",
@@ -273,6 +275,7 @@ __all__ = [
     "StaleObjectError",
     "StalePageError",
     "StampIcon",
+    "StoredImage",
     "Stream",
     "StrikeOut",
     "String",
