@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  {% set social_title = (page.meta and page.meta.title) or page.title or config.site_name %}
+  {% set social_description = (page.meta and page.meta.description) or config.site_description %}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ social_title }}">
+  <meta property="og:description" content="{{ social_description }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f3ec">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15120f">
+  <style>{% include "partials/pyropdf.css" %}</style>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    document.addEventListener("click", async (event) => {
+      const button = event.target.closest("[data-copy-command]");
+      if (!button) return;
+      const label = button.querySelector("[data-copy-label]");
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyCommand);
+      } catch {
+        button.closest(".pp-install")?.querySelector("code")?.focus();
+        return;
+      }
+      const previous = label.textContent;
+      label.textContent = button.dataset.copiedLabel;
+      window.setTimeout(() => { label.textContent = previous; }, 1600);
+    });
+  </script>
+{% endblock %}

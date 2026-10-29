@@ -1,0 +1,104 @@
+site_name: pyropdf
+site_url: https://pyropdf.haya.works/
+site_description: Complete control of PDF from Python, on one versioned object store in Rust. Every edit is a version, every change can be undone, and a failed transaction leaves the document as it was.
+site_author: Yusuke Hayashi
+copyright: Copyright &copy; 2026 Yusuke Hayashi · MIT License
+repo_url: https://github.com/yhay81/pyropdf
+repo_name: yhay81/pyropdf
+edit_uri: edit/main/docs/en/
+docs_dir: docs/en
+site_dir: site
+
+theme:
+  name: material
+  variant: modern
+  language: en
+  custom_dir: docs/overrides
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    logo: material/fire
+    repo: fontawesome/brands/github
+    alternate: material/translate
+  features:
+    - navigation.footer
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.action.edit
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Guide:
+      - Getting started: getting-started.md
+      - Reading content: reading.md
+      - Rendering: rendering.md
+      - Editing: editing.md
+      - Versions and saving: versions.md
+      - Limits and errors: limits.md
+  - API reference: api.md
+  - Project:
+      - Status and safety: status.md
+      - Design: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
+      - Changelog: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: [docs]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+extra:
+  current_language: en
+  alternate:
+    - name: English
+      link: https://pyropdf.haya.works/
+      lang: en
+    - name: 日本語
+      link: https://pyropdf.haya.works/ja/
+      lang: ja
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yhay81/pyropdf
+      name: pyropdf on GitHub
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/pyropdf/
+      name: pyropdf on PyPI
