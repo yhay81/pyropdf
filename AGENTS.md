@@ -233,7 +233,7 @@ every later turn, so read only what the task needs:
 
 ## Repository facts
 
-- The repository is private. GitHub Actions minutes are limited, and macOS
+- The repository is public. GitHub Actions minutes are limited, and macOS
   and Windows runners count several times as much as Linux, so CI runs on
   Linux unless an issue needs another system.
 - `rust-toolchain.toml` pins the one Rust toolchain, and `uv.lock` pins the

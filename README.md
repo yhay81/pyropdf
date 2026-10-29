@@ -39,3 +39,8 @@ No pyropdf release claims safety for untrusted input before hayro's bounded
 construction (I2, [#15](https://github.com/yhay81/pyropdf/issues/15)) is
 released. `DocumentLimits` bounds the work of an operation, but it is not
 that claim.
+
+## Contributing
+
+[CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test, and propose
+a change, and [SECURITY.md](SECURITY.md) how to report a vulnerability.
