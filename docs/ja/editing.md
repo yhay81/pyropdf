@@ -36,6 +36,20 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
     doc.pages.select([0, 1])        # この 2 ページだけを、この順で残す
 ```
 
+`page.media_box`・`crop_box`・`bleed_box`・`trim_box`・`art_box` はページボックスを、
+継承して MediaBox に収めたうえで、テキストや描画と同じ表示座標で返します。`(0, 0)` は
+見えるページの左上です。`Rect` を代入するとそのページだけにボックスを設定し、MediaBox
+からはみ出すボックスは `ValueError` になります。描画とテキストは新しい CropBox に従います。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    page.crop_box = (36, 36, page.rect.width - 36, page.rect.height - 36)
+    page.pixmap(dpi=72).save("cropped.png")
+```
+
 `page.flatten()` は注釈とウィジェットの外観をページの内容に描き込み、ページから取り除きます。
 
 ## 注釈

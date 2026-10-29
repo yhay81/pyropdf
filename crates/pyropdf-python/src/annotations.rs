@@ -682,7 +682,7 @@ impl<'b> Annots<'b> {
 
 /// Converts a point of PDF user space to display space on a page whose
 /// display box is `crop` and whose normalized `/Rotate` is `rotation`.
-fn to_display(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
+pub(crate) fn to_display(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
     let [cx0, cy0, cx1, cy1] = crop;
     match rotation {
         90 => (y - cy0, x - cx0),
@@ -694,7 +694,7 @@ fn to_display(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
 
 /// Converts a point of display space to PDF user space, as the inverse of
 /// [`to_display`].
-fn to_pdf(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
+pub(crate) fn to_pdf(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
     let [cx0, cy0, cx1, cy1] = crop;
     match rotation {
         90 => (cx0 + y, cy0 + x),

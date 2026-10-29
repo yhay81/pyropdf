@@ -23,7 +23,7 @@ use pyropdf_store::version::{Transaction, Version};
 use crate::annotations::links::{
     Destination, Lead, LeadReader, NamedDestinations, lead, named, read,
 };
-use crate::annotations::{CopyPart, charge_copy};
+use crate::annotations::{CopyPart, charge_copy, to_display, to_pdf};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, store_error};
 use crate::forms;
@@ -152,6 +152,130 @@ pub fn set_page_rotation(
     };
     let mut dict = index.pages()[at].dict().clone();
     dict.insert(Name::from("Rotate"), Value::Integer(rotation));
+    document.edit(py, |transaction, budget| {
+        transaction
+            .write(number, &Value::Dict(dict), budget)
+            .map_err(|e| store_error(&e))
+    })?;
+    Ok(true)
+}
+
+/// The page boxes, in the order that [`page_boxes`] returns them.
+const BOXES: [&str; 5] = ["MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"];
+
+type Box4 = (f64, f64, f64, f64);
+
+/// Returns the page boxes of `page` in unrotated user space: the inherited
+/// media box, or hayro's A4, then the crop, bleed, trim, and art boxes,
+/// each clipped to the media box and defaulting to the crop box
+/// (ISO 32000-2 14.11.2).
+fn user_boxes(page: &Page) -> [Box4; 5] {
+    let media = page
+        .media_box()
+        .and_then(rect)
+        .unwrap_or((0.0, 0.0, A4.0, A4.1));
+    let clip = |b: Box4| {
+        (
+            b.0.max(media.0),
+            b.1.max(media.1),
+            b.2.min(media.2),
+            b.3.min(media.3),
+        )
+    };
+    let crop = page.crop_box().and_then(rect).map_or(media, clip);
+    let own = |key: &str| page.dict().get(key).and_then(rect).map_or(crop, clip);
+    [media, crop, own(BOXES[2]), own(BOXES[3]), own(BOXES[4])]
+}
+
+/// Converts a user-space rectangle of a page with display box `frame` and
+/// normalized `rotation` to display space.
+fn display_rect(frame: [f64; 4], rotation: i64, (x0, y0, x1, y1): Box4) -> Box4 {
+    let (a, b) = to_display(frame, rotation, x0, y0);
+    let (c, d) = to_display(frame, rotation, x1, y1);
+    (a.min(c), b.min(d), a.max(c), b.max(d))
+}
+
+/// Returns the media, crop, bleed, trim, and art boxes of a page in display
+/// space, as [`user_boxes`] resolves them, or `None` for a stale page.
+#[pyfunction]
+pub fn page_boxes(
+    document: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<Vec<Box4>>> {
+    let (_, index, _) = index(document)?;
+    let Some(at) = index.index_of(Reference::new(number, generation)) else {
+        return Ok(None);
+    };
+    let page = &index.pages()[at];
+    let (frame, rotation) = (display_box(page), rotation(page.rotate()));
+    Ok(Some(
+        user_boxes(page)
+            .into_iter()
+            .map(|b| display_rect(frame, rotation, b))
+            .collect(),
+    ))
+}
+
+/// Sets box `kind`, an index of [`BOXES`], of a page to `display`, a
+/// rectangle in the page's current display space, in one transaction.
+/// A box other than the media box must lie inside the media box, and a new
+/// media box must hold the boxes that the page sets; otherwise nothing is
+/// written and `ValueError` is raised. Returns `false` for a stale page.
+#[pyfunction]
+pub fn set_page_box(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    kind: usize,
+    display: Box4,
+) -> PyResult<bool> {
+    const SLACK: f64 = 1e-6;
+    let Some(&key) = BOXES.get(kind) else {
+        return Err(PyValueError::new_err(format!("no page box {kind}")));
+    };
+    let (_, index, _) = index(document)?;
+    let Some(at) = index.index_of(Reference::new(number, generation)) else {
+        return Ok(false);
+    };
+    let page = &index.pages()[at];
+    let (frame, rotation) = (display_box(page), rotation(page.rotate()));
+    let (a, b) = to_pdf(frame, rotation, display.0, display.1);
+    let (c, d) = to_pdf(frame, rotation, display.2, display.3);
+    let user = (a.min(c), b.min(d), a.max(c), b.max(d));
+    if user.2 - user.0 < SLACK || user.3 - user.1 < SLACK {
+        return Err(PyValueError::new_err(format!("the {key} is empty")));
+    }
+    let inside = |inner: Box4, outer: Box4| {
+        inner.0 >= outer.0 - SLACK
+            && inner.1 >= outer.1 - SLACK
+            && inner.2 <= outer.2 + SLACK
+            && inner.3 <= outer.3 + SLACK
+    };
+    let boxes = user_boxes(page);
+    if kind == 0 {
+        let set = [page.crop_box().and_then(rect)].into_iter().chain(
+            BOXES[2..]
+                .iter()
+                .map(|key| page.dict().get(*key).and_then(rect)),
+        );
+        if set.flatten().any(|inner| !inside(inner, user)) {
+            return Err(PyValueError::new_err(
+                "the new MediaBox does not hold the page's other boxes; set them first",
+            ));
+        }
+    } else if !inside(user, boxes[0]) {
+        return Err(PyValueError::new_err(format!(
+            "the {key} leaves the MediaBox"
+        )));
+    }
+    let mut dict = page.dict().clone();
+    let array = [user.0, user.1, user.2, user.3]
+        .into_iter()
+        .map(self::number)
+        .collect::<Vec<_>>();
+    dict.insert(Name::from(key), Value::Array(Array::from(array)));
     document.edit(py, |transaction, budget| {
         transaction
             .write(number, &Value::Dict(dict), budget)

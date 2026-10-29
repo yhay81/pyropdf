@@ -37,6 +37,21 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
     doc.pages.select([0, 1])        # keep only these, in this order
 ```
 
+`page.media_box`, `crop_box`, `bleed_box`, `trim_box`, and `art_box` read
+the page boxes, inherited and clipped to the MediaBox, in the same display
+space as text and rendering: `(0, 0)` is the top-left of the visible page.
+Assigning a `Rect` sets that box on this page only; a box that leaves the
+MediaBox raises `ValueError`. Rendering and text follow a new CropBox:
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    page.crop_box = (36, 36, page.rect.width - 36, page.rect.height - 36)
+    page.pixmap(dpi=72).save("cropped.png")
+```
+
 `page.flatten()` draws annotation and widget appearances into the page
 content and removes them from the page.
 
