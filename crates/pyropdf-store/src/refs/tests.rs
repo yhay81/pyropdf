@@ -2755,3 +2755,111 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn every_attached_role_names_links_of_the_model() {
+    for (holders, key, element, role) in roles::ATTACHED {
+        for pattern in *holders {
+            let linked = derived::HOLDERS.iter().any(|holder| {
+                roles::matches(pattern, holder.name)
+                    && holder.links.iter().any(|linking| {
+                        linking.key == *key
+                            && element.is_none_or(|element| element == linking.element)
+                    })
+            });
+            assert!(
+                linked,
+                "{role:?} attaches to {pattern} /{key}, which no link names"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_role_of_a_type_that_names_itself_is_derived() {
+    // The roles that only the place of a referrer gives: explicit
+    // destinations, and the nodes of name and number trees.
+    let context = [
+        Role::Destination,
+        Role::TreeKid,
+        Role::NameTreeValue,
+        Role::NumberTreeValue,
+    ];
+    let hand = [
+        Role::PageTreeKid,
+        Role::PageTreeParent,
+        Role::PageAnnotation,
+        Role::AnnotationPage,
+        Role::OutlineLink,
+        Role::StructureParent,
+        Role::StructureKid,
+        Role::StructurePage,
+        Role::StructureObject,
+    ];
+    let derived: Vec<Role> = derived::HOLDERS
+        .iter()
+        .flat_map(|holder| {
+            holder.links.iter().map(|linking| {
+                roles::attached(Link {
+                    holder: holder.name,
+                    key: linking.key,
+                    element: linking.element,
+                })
+            })
+        })
+        .collect();
+    for role in hand {
+        assert!(derived.contains(&role), "{role:?} has no derived link");
+    }
+    for role in context {
+        assert!(!derived.contains(&role), "{role:?} comes from a link");
+    }
+    assert!(derived::HOLDERS.iter().all(|holder| {
+        holder
+            .links
+            .iter()
+            .all(|linking| !linking.targets.is_empty())
+    }));
+}
+
+#[test]
+fn a_link_that_no_role_names_is_its_own_role() {
+    let document = document_of(
+        &[
+            (
+                1,
+                dict(vec![
+                    ("FT", name("Tx")),
+                    ("Kids", array(vec![reference(2)])),
+                ]),
+            ),
+            (
+                2,
+                dict(vec![
+                    ("Type", name("Annot")),
+                    ("Subtype", name("Widget")),
+                    ("Parent", reference(1)),
+                    ("Rect", array(vec![Value::Integer(0); 4])),
+                ]),
+            ),
+        ],
+        Dict::default(),
+    );
+    let version = document.current();
+    assert_eq!(
+        found(&version, Referrer::Object(2), 1),
+        [(
+            vec![key("Parent")],
+            Some(Role::Link(Link {
+                holder: "AnnotWidget",
+                key: "Parent",
+                element: false,
+            }))
+        )]
+    );
+    // A field names no type: its kids keep no role.
+    assert_eq!(
+        found(&version, Referrer::Object(1), 2),
+        [(vec![key("Kids"), Step::Index(0)], None)]
+    );
+}

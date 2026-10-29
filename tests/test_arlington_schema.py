@@ -1,8 +1,10 @@
 """pyropdf-schema's descriptors are generated from the pinned Arlington PDF Model.
 
 tools/arlington/generate.py reads the model's TSV files, vendored under
-tools/arlington/model, and writes crates/pyropdf-schema/src/generated.rs and
-the stub of the typed views, python/pyropdf/typed.pyi (DESIGN.md section 8).
+tools/arlington/model, and writes crates/pyropdf-schema/src/generated.rs, the
+stub of the typed views, python/pyropdf/typed.pyi, and the links that the
+store's reverse-reference index reads as roles,
+crates/pyropdf-store/src/refs/derived.rs (DESIGN.md section 8).
 The Rust tests of the crate sample the descriptors; these tests check that
 the committed tables are the model's, whole.
 """
@@ -21,10 +23,13 @@ GENERATOR = ROOT / "tools/arlington/generate.py"
 MODEL = Path("tools/arlington/model")
 GENERATED = Path("crates/pyropdf-schema/src/generated.rs")
 STUB = Path("python/pyropdf/typed.pyi")
+DERIVED = Path("crates/pyropdf-store/src/refs/derived.rs")
 COMMAND = "python3 tools/arlington/generate.py"
 
 OBJECT = re.compile(r'    Object \{ name: "([^"]+)", keys: &\[$')
 KEY = re.compile(r'        key\("((?:[^"\\]|\\.)*)", ')
+HOLDER = re.compile(r'    Holder \{ name: "([^"]+)", ')
+LINKING = re.compile(r'        Linking \{ key: "((?:[^"\\]|\\.)*)", ')
 
 
 def generate(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -36,7 +41,7 @@ def generate(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 def copy_model(root: Path) -> Path:
     """Copy the model and the generated files to another root, and return it."""
     shutil.copytree(ROOT / MODEL, root / MODEL)
-    for path in (GENERATED, STUB):
+    for path in (GENERATED, STUB, DERIVED):
         (root / path).parent.mkdir(parents=True)
         shutil.copyfile(ROOT / path, root / path)
     return root
@@ -111,3 +116,37 @@ def test_a_model_the_generator_does_not_understand_is_refused(tmp_path: Path) ->
         result = generate(root, "--check")
         assert result.returncode == 1
         assert message in result.stderr
+
+
+def linked() -> dict[str, set[str]]:
+    """Return the linking keys of every holder of the derived roles."""
+    holders: dict[str, set[str]] = {}
+    keys: set[str] = set()
+    for line in (ROOT / DERIVED).read_text(encoding="utf-8").splitlines():
+        if match := HOLDER.match(line):
+            assert match.group(1) not in holders
+            keys = holders.setdefault(match.group(1), set())
+        elif match := LINKING.match(line):
+            keys.add(match.group(1))
+    return holders
+
+
+def test_the_derived_roles_cover_every_link_of_a_type_that_names_itself() -> None:
+    holders = linked()
+    expected: dict[str, set[str]] = {}
+    for path in sorted((ROOT / MODEL / "tsv").glob("*.tsv")):
+        with path.open(encoding="utf-8", newline="") as file:
+            rows = list(csv.reader(file, delimiter="\t", quoting=csv.QUOTE_NONE))[1:]
+        # A type names itself when /Type, /Subtype, or /S holds names
+        # (columns Type and PossibleValues) other than any name, `*`.
+        names = any(
+            row[0] in {"Type", "Subtype", "S"} and "name" in row[1] and row[8] and "*" not in row[8] for row in rows
+        )
+        keys = {row[0] for row in rows if row[0] != "*" and row[10].strip("[];")}
+        if names and keys:
+            expected[path.stem] = keys
+
+    assert holders == expected
+    assert {"PageObject", "PageTreeNode", "AnnotLink", "StructTreeRoot", "ObjectReference"} <= holders.keys()
+    # Context-typed holders name no type and keep the hand-written matchers.
+    assert not {"OutlineItem", "Field"} & holders.keys()
