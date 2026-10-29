@@ -114,6 +114,25 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.attachments["data.csv"].read())
 ```
 
+## Metadata
+
+`doc.metadata` is a live mapping of the Info dictionary. When the document
+has an XMP packet, each edit writes the matching XMP properties in the same
+transaction, so a PDF/A document keeps its two copies equivalent.
+
+```python
+from datetime import UTC, datetime
+
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    doc.metadata.update(title="Invoice 42", author="Accounts")
+    doc.metadata["modified"] = datetime.now(UTC)
+    print(doc.metadata["title"])                       # Invoice 42
+    print(pyropdf.parse_pdf_date(doc.metadata["modified"]).year > 2000)  # True
+    print(doc.xmp is None)                             # True: no XMP packet
+```
+
 ## Objects
 
 `doc.objects` maps object numbers to the indirect objects, and every value
