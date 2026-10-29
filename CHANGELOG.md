@@ -6,6 +6,8 @@
   properties of an existing XMP packet in the same transaction; `doc.xmp`
   reads, replaces, and removes the packet; `pdf_date` and `parse_pdf_date`
   convert PDF dates (#356).
+- `Page.media_box`, `crop_box`, `bleed_box`, `trim_box`, and `art_box` read
+  the page boxes in display space and set them on one page (#357).
 
 ## 0.1.0 (2026-10-29)
 

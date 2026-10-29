@@ -194,6 +194,90 @@ class Page:
         _, width, height = self._geometry()
         return Rect(0.0, 0.0, width, height)
 
+    def _box(self, kind: int) -> Rect:
+        boxes = _core.page_boxes(self._document._core(), self._number, self._generation)  # noqa: SLF001
+        if boxes is None:
+            raise self._stale()
+        return Rect(boxes[kind])
+
+    def _set_box(self, kind: int, rect: Rect | Sequence[float]) -> None:
+        value = tuple(Rect(rect))
+        if not _core.set_page_box(self._document._core(), self._number, self._generation, kind, value):  # noqa: SLF001
+            raise self._stale()
+
+    @property
+    def media_box(self) -> Rect:
+        """Return the page's MediaBox in display space, inherited, or the A4 page that the renderer draws.
+
+        Display space is the visible page's, with ``(0, 0)`` at its top-left,
+        so a MediaBox larger than the CropBox has negative coordinates.
+        Assigning a :class:`Rect` in the same space sets the page's own
+        ``/MediaBox`` in one transaction. A MediaBox that would not hold a
+        box the page sets raises ``ValueError``; set that box first.
+        """
+        return self._box(0)
+
+    @media_box.setter
+    def media_box(self, rect: Rect | Sequence[float]) -> None:
+        self._set_box(0, rect)
+
+    @property
+    def crop_box(self) -> Rect:
+        """Return the page's CropBox in display space: inherited, clipped to the MediaBox, and the MediaBox when absent.
+
+        Assigning a :class:`Rect` in the current display space sets the
+        page's own ``/CropBox`` in one transaction, and the visible page,
+        the renderer, and text coordinates follow it. A box that leaves the
+        MediaBox raises ``ValueError``.
+        """
+        return self._box(1)
+
+    @crop_box.setter
+    def crop_box(self, rect: Rect | Sequence[float]) -> None:
+        self._set_box(1, rect)
+
+    @property
+    def bleed_box(self) -> Rect:
+        """Return the page's BleedBox in display space, clipped to the MediaBox, and the CropBox when absent.
+
+        Assigning a :class:`Rect` in the current display space sets the
+        page's own ``/BleedBox`` in one transaction; a box that leaves the
+        MediaBox raises ``ValueError``.
+        """
+        return self._box(2)
+
+    @bleed_box.setter
+    def bleed_box(self, rect: Rect | Sequence[float]) -> None:
+        self._set_box(2, rect)
+
+    @property
+    def trim_box(self) -> Rect:
+        """Return the page's TrimBox in display space, clipped to the MediaBox, and the CropBox when absent.
+
+        Assigning a :class:`Rect` in the current display space sets the
+        page's own ``/TrimBox`` in one transaction; a box that leaves the
+        MediaBox raises ``ValueError``.
+        """
+        return self._box(3)
+
+    @trim_box.setter
+    def trim_box(self, rect: Rect | Sequence[float]) -> None:
+        self._set_box(3, rect)
+
+    @property
+    def art_box(self) -> Rect:
+        """Return the page's ArtBox in display space, clipped to the MediaBox, and the CropBox when absent.
+
+        Assigning a :class:`Rect` in the current display space sets the
+        page's own ``/ArtBox`` in one transaction; a box that leaves the
+        MediaBox raises ``ValueError``.
+        """
+        return self._box(4)
+
+    @art_box.setter
+    def art_box(self, rect: Rect | Sequence[float]) -> None:
+        self._set_box(4, rect)
+
     def pixmap(  # noqa: PLR0913 - the rendering options are all keyword-only
         self,
         *,

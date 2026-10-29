@@ -166,6 +166,11 @@ the same document.
 - `index`: Return the zero-based index of the page, in time that does not grow with the page count.
 - `rotation` (settable): Return the page's `/Rotate`, inherited and normalized to 0, 90, 180, or 270.
 - `rect`: Return the display `Rect` `(0, 0, width, height)`, with the rotation applied.
+- `media_box` (settable): Return the page's MediaBox in display space, inherited, or the A4 page that the renderer draws.
+- `crop_box` (settable): Return the page's CropBox in display space: inherited, clipped to the MediaBox, and the MediaBox when absent.
+- `bleed_box` (settable): Return the page's BleedBox in display space, clipped to the MediaBox, and the CropBox when absent.
+- `trim_box` (settable): Return the page's TrimBox in display space, clipped to the MediaBox, and the CropBox when absent.
+- `art_box` (settable): Return the page's ArtBox in display space, clipped to the MediaBox, and the CropBox when absent.
 - `pixmap(*, dpi: float | None = None, matrix: Sequence[float] | None = None, clip: Sequence[float] | None = None, alpha: bool = False, background: tuple[int, int, int] | tuple[int, int, int, int] | None = None, annotations: bool = True, colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>) -> Pixmap`: Render the current version of the page to a `Pixmap`.
 - `flatten(*, annotations: bool = True, widgets: bool = True)`: Draw this page's annotation and widget appearances into its content and take them off.
 - `ocr(*, engine: OcrEngine | None = None, dpi: float = 300, clip: Sequence[float] | None = None, rotation: OcrRotation = 0, tile_size: int = 1408, overlap: int = 192, min_confidence: float = 0.5) -> list[OcrWord]`: Recognize the rendered page's text without changing the document.

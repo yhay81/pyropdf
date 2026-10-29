@@ -13,7 +13,7 @@ column from `docs/en/api.md`.
 | Open, repair, and probe | `open`, `repair`, `is_repaired` | yes: `open`, `probe`, `is_repaired` | |
 | Insert, move, delete, and select pages | `insert_pdf`, `move_page`, `delete_pages`, `select` | yes, with page identity and referential rules | |
 | Rotate and flatten | `set_rotation`, `bake` | yes | |
-| Page boxes | `set_mediabox`, `set_cropbox`, and the other boxes | partial: `Page.rect` reads the visible box | #357 |
+| Page boxes | `set_mediabox`, `set_cropbox`, and the other boxes | yes | #357 |
 | Page labels | `get_page_labels`, `set_page_labels` | no | #358 |
 | Document metadata | `metadata`, `set_metadata`, `set_xml_metadata` | yes: `doc.metadata` and `doc.xmp`, kept in step | |
 | Outline | `get_toc`, `set_toc` | yes: `doc.outline` | |
