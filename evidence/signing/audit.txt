@@ -1,0 +1,22 @@
+    Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+      Loaded 1381 security advisories (from /Users/yhay81/.cargo/advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (69 crate dependencies)
+Crate:     crypto-bigint
+Version:   0.5.5
+Title:     Multiple timing variability issues in operations intended to be constant-time
+Date:      2026-10-23
+ID:        RUSTSEC-2026-0387
+URL:       https://github.com/RustCrypto/crypto-bigint/pull/1365
+Solution:  Upgrade to >=0.7.6
+
+Crate:     rsa
+Version:   0.9.10
+Title:     Marvin Attack: potential key recovery through timing sidechannels
+Date:      2023-11-22
+ID:        RUSTSEC-2023-0071
+URL:       https://rustsec.org/advisories/RUSTSEC-2023-0071
+Severity:  5.9 (medium)
+Solution:  No fixed upgrade is available!
+
+error: 2 vulnerabilities found!

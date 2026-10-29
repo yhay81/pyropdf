@@ -1,0 +1,18 @@
+# The signing prototype of evidence/signing: its own workspace, so that
+# pyropdf's dependencies stay as they are until the owner chooses a stack.
+[package]
+name = "signing-prototype"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+cms = { version = "0.2.3", features = ["builder"] }
+der = { version = "0.7.10", features = ["alloc", "oid"] }
+x509-cert = { version = "0.2.5", features = ["builder"] }
+spki = "0.7.3"
+p256 = { version = "0.13.2", features = ["ecdsa", "pkcs8", "pem"] }
+sha2 = { version = "0.10.9", features = ["oid"] }
+const-oid = { version = "0.9.6", features = ["db"] }
