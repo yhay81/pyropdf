@@ -1,0 +1,104 @@
+site_name: pyropdf
+site_url: https://pyropdf.haya.works/ja/
+site_description: PythonからPDFを完全に扱う。Rustの版付きオブジェクトストアの上で、すべての編集は版になり、どの変更も取り消せ、失敗したトランザクションは文書を元のまま残す。
+site_author: Yusuke Hayashi
+copyright: Copyright &copy; 2026 Yusuke Hayashi · MIT License
+repo_url: https://github.com/yhay81/pyropdf
+repo_name: yhay81/pyropdf
+edit_uri: edit/main/docs/ja/
+docs_dir: docs/ja
+site_dir: site/ja
+
+theme:
+  name: material
+  variant: modern
+  language: ja
+  custom_dir: docs/overrides
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    logo: material/fire
+    repo: fontawesome/brands/github
+    alternate: material/translate
+  features:
+    - navigation.footer
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.path
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.action.edit
+    - content.code.copy
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: ダークモードに切り替え
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: ライトモードに切り替え
+
+nav:
+  - ホーム: index.md
+  - ガイド:
+      - はじめに: getting-started.md
+      - 内容を読む: reading.md
+      - 描画: rendering.md
+      - 編集: editing.md
+      - 版と保存: versions.md
+      - 制限とエラー: limits.md
+  - API リファレンス（英語）: https://pyropdf.haya.works/api/
+  - プロジェクト:
+      - 状態と安全性: status.md
+      - 設計: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
+      - 変更履歴: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: [docs]
+      check_paths: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+extra:
+  current_language: ja
+  alternate:
+    - name: English
+      link: https://pyropdf.haya.works/
+      lang: en
+    - name: 日本語
+      link: https://pyropdf.haya.works/ja/
+      lang: ja
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yhay81/pyropdf
+      name: GitHub の pyropdf
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/pyropdf/
+      name: PyPI の pyropdf

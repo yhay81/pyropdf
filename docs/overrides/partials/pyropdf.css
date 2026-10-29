@@ -1,0 +1,556 @@
+/* pyropdf site theme: warm paper and ink, one ember accent, and a version
+   stack on the home page. Every colour is a token, redefined for dark. */
+
+[data-md-color-scheme="default"] {
+  --pp-paper: #f7f3ec;
+  --pp-surface: #fffdf9;
+  --pp-sunken: #efe8dc;
+  --pp-ink: #1d1a16;
+  --pp-ink-soft: #57503f;
+  --pp-ink-faint: #8a8170;
+  --pp-rule: #e2d9c9;
+  --pp-ember: #c9431a;
+  --pp-ember-strong: #a8350f;
+  --pp-ember-wash: #fbe6da;
+  --pp-moss: #3f6b4a;
+  --pp-moss-wash: #e2eddf;
+  --pp-shadow: 0 1px 2px rgb(60 40 20 / 6%), 0 8px 24px -12px rgb(60 40 20 / 18%);
+
+  --md-default-bg-color: var(--pp-paper);
+  --md-default-fg-color: var(--pp-ink);
+  --md-default-fg-color--light: var(--pp-ink-soft);
+  --md-default-fg-color--lighter: var(--pp-ink-faint);
+  --md-default-fg-color--lightest: var(--pp-rule);
+  --md-primary-fg-color: var(--pp-paper);
+  --md-primary-fg-color--light: var(--pp-surface);
+  --md-primary-fg-color--dark: var(--pp-sunken);
+  --md-primary-bg-color: var(--pp-ink);
+  --md-primary-bg-color--light: var(--pp-ink-soft);
+  --md-accent-fg-color: var(--pp-ember);
+  --md-accent-fg-color--transparent: rgb(201 67 26 / 10%);
+  --md-typeset-a-color: var(--pp-ember-strong);
+  --md-code-bg-color: var(--pp-sunken);
+  --md-code-fg-color: var(--pp-ink);
+  --md-footer-bg-color: var(--pp-ink);
+  --md-footer-bg-color--dark: #120f0c;
+  --md-footer-fg-color: var(--pp-paper);
+}
+
+[data-md-color-scheme="slate"] {
+  --pp-paper: #15120f;
+  --pp-surface: #1e1a16;
+  --pp-sunken: #27221c;
+  --pp-ink: #f1ebe0;
+  --pp-ink-soft: #c2b8a6;
+  --pp-ink-faint: #8f8574;
+  --pp-rule: #3a332a;
+  --pp-ember: #ff7a45;
+  --pp-ember-strong: #ff9466;
+  --pp-ember-wash: #3a2216;
+  --pp-moss: #8cc49a;
+  --pp-moss-wash: #1f3024;
+  --pp-shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 12px 32px -16px rgb(0 0 0 / 70%);
+
+  --md-default-bg-color: var(--pp-paper);
+  --md-default-fg-color: var(--pp-ink);
+  --md-default-fg-color--light: var(--pp-ink-soft);
+  --md-default-fg-color--lighter: var(--pp-ink-faint);
+  --md-default-fg-color--lightest: var(--pp-rule);
+  --md-primary-fg-color: var(--pp-paper);
+  --md-primary-fg-color--light: var(--pp-surface);
+  --md-primary-fg-color--dark: var(--pp-sunken);
+  --md-primary-bg-color: var(--pp-ink);
+  --md-primary-bg-color--light: var(--pp-ink-soft);
+  --md-accent-fg-color: var(--pp-ember);
+  --md-accent-fg-color--transparent: rgb(255 122 69 / 12%);
+  --md-typeset-a-color: var(--pp-ember-strong);
+  --md-code-bg-color: var(--pp-sunken);
+  --md-code-fg-color: var(--pp-ink);
+  --md-footer-bg-color: #0f0d0b;
+  --md-footer-bg-color--dark: #0a0908;
+  --md-footer-fg-color: var(--pp-ink);
+  --md-hue: 30;
+}
+
+/* Header and tabs sit on the paper, separated by a hairline. */
+.md-header,
+.md-tabs {
+  background-color: var(--pp-paper);
+  color: var(--pp-ink);
+}
+.md-header {
+  box-shadow: none;
+  border-bottom: 1px solid var(--pp-rule);
+}
+.md-header__title {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.md-header__button.md-logo {
+  color: var(--pp-ember);
+}
+.md-tabs__link {
+  opacity: 1;
+  color: var(--pp-ink-soft);
+}
+.md-tabs__item--active .md-tabs__link {
+  color: var(--pp-ink);
+  font-weight: 600;
+}
+.md-search__form {
+  background-color: var(--pp-sunken);
+}
+
+/* Reading pages. */
+.md-typeset {
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+.md-typeset h1 {
+  color: var(--pp-ink);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.md-typeset h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  border-top: 1px solid var(--pp-rule);
+  padding-top: 1.2em;
+}
+.md-typeset h3 code {
+  font-size: 0.95em;
+}
+.md-typeset pre > code {
+  border: 1px solid var(--pp-rule);
+  border-radius: 10px;
+}
+.md-typeset code {
+  border-radius: 5px;
+}
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 10px;
+  box-shadow: none;
+  border-width: 1px;
+}
+.md-typeset table:not([class]) {
+  border-radius: 10px;
+  border: 1px solid var(--pp-rule);
+  font-size: 0.72rem;
+}
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+  color: var(--pp-ember-strong);
+}
+
+/* ---------- Home ---------- */
+
+.md-typeset a.pp-card,
+.md-typeset a.pp-card *,
+.md-typeset .pp-button {
+  text-decoration: none;
+}
+
+.md-typeset .pp-hero h1,
+.md-typeset .pp-principle h2,
+.md-typeset .pp-section-title h2,
+.md-typeset .pp-card h3 {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.pp-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: center;
+  padding: clamp(1rem, 4vw, 3rem) 0 clamp(2rem, 5vw, 4rem);
+}
+.pp-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  margin: 0 0 1rem;
+  padding: 0.25em 0.7em;
+  border: 1px solid var(--pp-rule);
+  border-radius: 999px;
+  background: var(--pp-surface);
+  color: var(--pp-ink-soft);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.pp-eyebrow::before {
+  content: "";
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: var(--pp-ember);
+}
+.pp-hero h1 {
+  font-size: clamp(2rem, 5.2vw, 3.3rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  font-weight: 750;
+  color: var(--pp-ink);
+}
+.pp-hero h1 em {
+  font-style: normal;
+  color: var(--pp-ember);
+}
+.pp-lede {
+  margin: 1.2rem 0 1.6rem;
+  max-width: 34em;
+  color: var(--pp-ink-soft);
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+.pp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.2rem;
+}
+.md-typeset .pp-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.6em 1.1em;
+  border-radius: 10px;
+  border: 1px solid var(--pp-rule);
+  background: var(--pp-surface);
+  color: var(--pp-ink);
+  font-weight: 600;
+  font-size: 0.78rem;
+  transition: border-color 120ms, transform 120ms;
+}
+.md-typeset .pp-button:hover {
+  border-color: var(--pp-ink-faint);
+  color: var(--pp-ink);
+  transform: translateY(-1px);
+}
+.md-typeset .pp-button--primary {
+  background: var(--pp-ink);
+  border-color: var(--pp-ink);
+  color: var(--pp-paper);
+}
+.md-typeset .pp-button--primary:hover {
+  background: var(--pp-ember-strong);
+  border-color: var(--pp-ember-strong);
+  color: #fff;
+}
+.pp-install {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  max-width: 26rem;
+  padding: 0.35rem 0.35rem 0.35rem 0.9rem;
+  border: 1px solid var(--pp-rule);
+  border-radius: 12px;
+  background: var(--pp-surface);
+  font-family: var(--md-code-font-family);
+  font-size: 0.75rem;
+}
+.pp-install__prompt {
+  color: var(--pp-ember);
+}
+.md-typeset .pp-install code {
+  flex: 1;
+  background: none;
+  padding: 0;
+  color: var(--pp-ink);
+}
+.pp-install button {
+  padding: 0.4em 0.8em;
+  border-radius: 8px;
+  background: var(--pp-sunken);
+  color: var(--pp-ink-soft);
+  font: 600 0.65rem var(--md-text-font-family);
+  cursor: pointer;
+}
+.pp-install button:hover {
+  color: var(--pp-ink);
+}
+.pp-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 1rem 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--pp-ink-faint);
+  font-size: 0.68rem;
+}
+.md-typeset ul.pp-facts {
+  margin-left: 0;
+}
+.md-typeset ul.pp-facts li {
+  margin: 0;
+  list-style: none;
+}
+.pp-facts li::before {
+  content: "✓ ";
+  color: var(--pp-moss);
+}
+
+/* The version stack: three saved versions, each a card offset from the
+   one before, with the edit that made it. */
+.pp-stack {
+  position: relative;
+  min-height: 21rem;
+}
+.pp-version {
+  position: absolute;
+  inset: auto 0 auto auto;
+  width: min(100%, 23rem);
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--pp-rule);
+  border-radius: 14px;
+  background: var(--pp-surface);
+  box-shadow: var(--pp-shadow);
+  font-family: var(--md-code-font-family);
+  font-size: 0.66rem;
+  line-height: 1.6;
+}
+.pp-version:nth-child(1) {
+  top: 0;
+  right: 3.2rem;
+  opacity: 0.55;
+}
+.pp-version:nth-child(2) {
+  top: 4.4rem;
+  right: 1.6rem;
+  opacity: 0.8;
+}
+.pp-version:nth-child(3) {
+  top: 8.8rem;
+  right: 0;
+}
+.pp-version__head {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.45rem;
+  color: var(--pp-ink-faint);
+  font-family: var(--md-text-font-family);
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pp-version__head b {
+  color: var(--pp-ink);
+}
+.pp-version__line {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--pp-ink-soft);
+}
+.pp-version__line--add {
+  color: var(--pp-moss);
+}
+.pp-version__line--add::before {
+  content: "+ ";
+}
+.pp-version__line--change {
+  color: var(--pp-ember-strong);
+}
+.pp-version__line--change::before {
+  content: "~ ";
+}
+.pp-version__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+}
+.pp-chip {
+  padding: 0.15em 0.6em;
+  border-radius: 999px;
+  background: var(--pp-sunken);
+  color: var(--pp-ink-soft);
+  font-family: var(--md-text-font-family);
+  font-size: 0.6rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pp-chip--ember {
+  background: var(--pp-ember-wash);
+  color: var(--pp-ember-strong);
+}
+.pp-chip--moss {
+  background: var(--pp-moss-wash);
+  color: var(--pp-moss);
+}
+
+/* Principles: three numbered claims about the store. */
+.pp-principles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 clamp(2rem, 5vw, 3.5rem);
+  border: 1px solid var(--pp-rule);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--pp-rule);
+}
+.pp-principle {
+  padding: 1.3rem 1.3rem 1.4rem;
+  background: var(--pp-surface);
+}
+.pp-principle__number {
+  color: var(--pp-ember);
+  font-family: var(--md-code-font-family);
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.md-typeset .pp-principle h2 {
+  margin: 0.5rem 0 0.4rem;
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.md-typeset .pp-principle p {
+  margin: 0;
+  color: var(--pp-ink-soft);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
+/* Capabilities: a card per area, each with the call that does it. */
+.pp-section-title {
+  margin: 0 0 1rem;
+}
+.md-typeset .pp-section-title h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.md-typeset .pp-section-title p {
+  margin: 0.3rem 0 0;
+  color: var(--pp-ink-soft);
+}
+.pp-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+  margin-bottom: clamp(2rem, 5vw, 3.5rem);
+}
+.md-typeset a.pp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.1rem;
+  border: 1px solid var(--pp-rule);
+  border-radius: 14px;
+  background: var(--pp-surface);
+  color: var(--pp-ink);
+  transition: border-color 120ms, transform 120ms;
+}
+.md-typeset a.pp-card:hover {
+  border-color: var(--pp-ember);
+  transform: translateY(-2px);
+}
+.md-typeset .pp-card h3 {
+  font-size: 0.85rem;
+  font-weight: 650;
+}
+.md-typeset .pp-card p {
+  margin: 0;
+  color: var(--pp-ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+.md-typeset .pp-card code {
+  align-self: flex-start;
+  margin-top: auto;
+  background: var(--pp-sunken);
+  color: var(--pp-ember-strong);
+  font-size: 0.66rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The example and the status note. */
+.pp-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: clamp(1rem, 3vw, 2.5rem);
+  align-items: start;
+  margin-bottom: clamp(2rem, 5vw, 3rem);
+}
+.md-typeset .pp-split pre {
+  margin: 0;
+}
+.pp-status {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--pp-rule);
+  border-left: 3px solid var(--pp-ember);
+  border-radius: 12px;
+  background: var(--pp-surface);
+  margin-bottom: 2rem;
+}
+.md-typeset .pp-status p {
+  margin: 0;
+  color: var(--pp-ink-soft);
+  font-size: 0.74rem;
+}
+.md-typeset .pp-status strong {
+  color: var(--pp-ink);
+}
+
+@media screen and (max-width: 60em) {
+  .pp-hero,
+  .pp-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .pp-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pp-stack {
+    min-height: 19rem;
+  }
+}
+
+@media screen and (max-width: 38em) {
+  .pp-principles,
+  .pp-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* On a phone the versions stack in the flow, each overlapping the one
+     before, so the newest never runs into the next section. */
+  .pp-stack {
+    min-height: 0;
+  }
+  .pp-version,
+  .pp-version:nth-child(n) {
+    position: relative;
+    inset: auto;
+    width: auto;
+  }
+  .pp-version:nth-child(1) {
+    margin-right: 2rem;
+  }
+  .pp-version:nth-child(2) {
+    margin: -1.6rem 1rem 0 0.5rem;
+  }
+  .pp-version:nth-child(3) {
+    margin: -1.6rem 0 0 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .pp-button,
+  .md-typeset a.pp-card {
+    transition: none;
+  }
+}
+
+/* Codes in the first column of a table read as one token. */
+.md-typeset td:first-child > code {
+  white-space: nowrap;
+}

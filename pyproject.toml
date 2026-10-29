@@ -58,6 +58,11 @@ dev = [
     # The OCR tests run the models of the `ocr` extra.
     "pylopdf-ocr-models>=0.1.0,<0.2",
 ]
+# The documentation site (mkdocs.yml, mkdocs.ja.yml), built in
+# .github/workflows/docs.yml.
+docs = [
+    "zensical>=0.0.71,<0.1",
+]
 # Independent readers that tools/oracles.py compares saves with, outside CI.
 # pymupdf 2 depends on onnxruntime, which has no wheel for every Python here.
 oracles = [
