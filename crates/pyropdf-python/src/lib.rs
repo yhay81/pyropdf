@@ -13,6 +13,7 @@ mod document;
 mod errors;
 mod forms;
 mod history;
+mod images;
 mod items;
 mod objects;
 mod ocr;
@@ -74,6 +75,8 @@ mod _core {
         begin_transaction, end_transaction, history_clear, history_redo, history_state,
         history_undo, set_history_limit,
     };
+    #[pymodule_export]
+    use super::images::{decode_png, image_stored, page_image};
     #[pymodule_export]
     use super::items::page_content;
     #[pymodule_export]

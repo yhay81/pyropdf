@@ -10,6 +10,9 @@
   the page boxes in display space and set them on one page (#357).
 - `doc.page_labels` reads and replaces the page label ranges, and
   `page.label` and `doc.pages.labeled` read the labels (#358).
+- `page.images()` decodes each image that a page paints and returns its
+  data as stored; `doc.replace_image` and `doc.remove_image` rewrite an
+  image object for every placement (#359).
 
 ## 0.1.0 (2026-10-29)
 

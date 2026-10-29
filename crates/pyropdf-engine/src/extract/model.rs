@@ -589,6 +589,11 @@ pub trait ContentSink {
     /// Whether the sink refused more input, so that the collector stops
     /// sending glyphs.
     fn stopped(&self) -> bool;
+    /// Receive the image that the collector records as the page's image
+    /// `ordinal`, counted from 0 in paint order, when it records images.
+    fn image(&mut self, _ordinal: usize, _image: &Image<'_, '_>) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 /// The sink of `Page.content()`, which reads only the items.
@@ -719,6 +724,8 @@ pub(crate) struct ContentCollector<'b, S> {
     runs: u32,
     outlines: HashMap<u128, Option<GlyphInk>>,
     type3_boxes: HashMap<u128, Option<Rect>>,
+    /// The images recorded so far, the ordinal of the next one.
+    images: usize,
     budget: &'b Budget,
     error: Option<Error>,
 }
@@ -748,6 +755,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             runs: 0,
             outlines: HashMap::new(),
             type3_boxes: HashMap::new(),
+            images: 0,
             budget,
             error: None,
         }
@@ -1152,6 +1160,8 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         }
         let context = self.item_context(props.blend_mode, props.soft_mask.as_ref())?;
         self.charge(1)?;
+        self.sink.image(self.images, image)?;
+        self.images += 1;
         let default_resolution = (DEFAULT_IMAGE_RESOLUTION, DEFAULT_IMAGE_RESOLUTION);
         let record = match image {
             // hayro does not expose the stream of an image mask.

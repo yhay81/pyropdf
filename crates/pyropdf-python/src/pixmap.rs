@@ -41,6 +41,25 @@ pub struct Pixmap {
 }
 
 impl Pixmap {
+    /// Returns the pixmap of `data`, `width` by `height` pixels of gray or
+    /// RGB, each followed by an alpha byte when `alpha`, at 96 dpi.
+    pub(crate) fn from_samples(
+        width: u32,
+        height: u32,
+        gray: bool,
+        alpha: bool,
+        data: Vec<u8>,
+    ) -> Self {
+        Self {
+            width,
+            height,
+            alpha,
+            gray,
+            data: Arc::new(data),
+            resolution: (96, 96),
+        }
+    }
+
     fn channels(&self) -> u32 {
         u32::from(!self.gray) * 2 + 1 + u32::from(self.alpha)
     }
