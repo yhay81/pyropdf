@@ -18,8 +18,8 @@ opening the document again each pass as ``bench.py`` does, while ``sample``
 records its main thread. The script charges each sample's leaf frame to the
 crate that defines it, sums whole phases of a page's rendering, and times each
 page against PyMuPDF, from the environment that ``run.py`` installs, both with
-the samples read as PyMuPDF's ``samples`` does and with the PNG that
-``bench.py`` asks pyropdf for. It writes
+the samples read as ``bench.py`` does and with a PNG encoded by pyropdf's
+``to_bytes()`` for comparison. It writes
 ``results/profile-<platform>.md`` and the numbers in the ``.json`` beside it;
 the raw call graphs stay in ``target/pymupdf-comparison/profile/``.
 """
@@ -128,7 +128,7 @@ def _pages(engine: str, path: Path, dpi: int) -> None:
     """Print, as JSON, the best of RUNS times of each page in milliseconds.
 
     ENGINE ``pymupdf`` and ``pyropdf`` read the samples; ``pyropdf-png``
-    encodes the PNG that ``bench.py`` times.
+    encodes a PNG for comparison with the raw samples timed by ``bench.py``.
     """
     if engine == "pymupdf":
         import pymupdf  # noqa: PLC0415 - installed only in run.py's environment
@@ -335,8 +335,8 @@ def _report(results: dict, system: str) -> list[str]:
     lines += ["", "## Pages", ""]
     lines += [
         "Best of three renders of each page, in ms, on a document opened once: every page, then the five",
-        'where pyropdf spends the most time. PyMuPDF and pyropdf read the samples; "with PNG" is what',
-        "`bench.py` times for pyropdf, `to_bytes()`, which encodes a PNG.",
+        "where pyropdf spends the most time. PyMuPDF and pyropdf read the samples as `bench.py` does;",
+        '"with PNG" includes encoding a PNG with pyropdf `to_bytes()` for comparison.',
         "",
     ]
     for case, result in results.items():

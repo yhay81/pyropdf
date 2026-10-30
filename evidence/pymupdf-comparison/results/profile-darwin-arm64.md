@@ -44,8 +44,8 @@ Inclusive samples of the outermost frame of each phase.
 ## Pages
 
 Best of three renders of each page, in ms, on a document opened once: every page, then the five
-where pyropdf spends the most time. PyMuPDF and pyropdf read the samples; "with PNG" is what
-`bench.py` times for pyropdf, `to_bytes()`, which encodes a PNG.
+where pyropdf spends the most time. PyMuPDF and pyropdf read the samples as `bench.py` does;
+"with PNG" includes encoding a PNG with pyropdf `to_bytes()` for comparison.
 
 ### bill-hr815 72 dpi
 
