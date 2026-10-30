@@ -15,7 +15,7 @@ import pytest
 from PIL import Image
 
 import pyropdf
-from pyropdf import ImageRewriteReport, Name
+from pyropdf import ImageRewriteReport, Name, _images
 
 CORPUS = Path(__file__).resolve().parent / "assets" / "real_world"
 #: A noise raster's samples, which Flate cannot shrink.
@@ -642,7 +642,7 @@ def test_cmyk_samples_keep_their_color_space_and_resample_by_channel() -> None:
     doc = image_document(zlib.compress(samples), entries, [(36, 36)])
     before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
 
-    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72, lossless_format="jpeg")
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
 
     assert (report.rewritten, report.unsupported) == (1, ())
     image = stream(doc)
@@ -678,16 +678,172 @@ def test_an_icc_based_image_keeps_its_profile_and_its_samples() -> None:
     assert mean_difference(expected, pyropdf.Pixmap.from_bytes(stored(doc))) < 3
 
 
-def test_a_cmyk_jpeg_is_reported() -> None:
-    out = io.BytesIO()
-    Image.new("CMYK", (64, 64), (10, 20, 30, 40)).save(out, "JPEG")
-    entries = {"Width": 64, "Height": 64, "BitsPerComponent": 8, "ColorSpace": Name("DeviceCMYK")}
-    doc = image_document(out.getvalue(), {**entries, "Filter": Name("DCTDecode")}, [(10, 10)])
+def without_app14(data: bytes) -> bytes:
+    """Return JPEG data without its Adobe APP14 segment."""
+    at = 2
+    while data[at] == 0xFF and data[at + 1] != 0xC0:
+        (length,) = struct.unpack(">H", data[at + 2 : at + 4])
+        if data[at + 1] == 0xEE:
+            return data[:at] + data[at + 2 + length :]
+        at += 2 + length
+    return data
 
+
+def placed(data: bytes, entries: dict[str, object]) -> pyropdf.Document:
+    """Return a page that paints a 128 by 128 image at 36 points, so that 150 dpi resamples it to 36 pixels."""
+    return image_document(data, {"Width": SIDE, "Height": SIDE, **entries}, [(36, 36)])
+
+
+def renders_agree(doc: pyropdf.Document, bound: float = 4) -> None:
+    """Rewrite ``doc``'s image at 72 dpi, and check that pyropdf and Ghostscript render it as before."""
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
     report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+    assert (report.rewritten, report.unsupported) == (1, ())
+    assert (stream(doc)["Width"], stream(doc)["Height"]) == (36, 36)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < bound
+    assert gs_difference(gs_before, ghostscript(doc)) < bound
 
-    assert report.rewritten == 0
-    assert report.unsupported == (f"object {stream(doc).xref}: a CMYK JPEG",)
+
+@pytest.mark.parametrize("adobe", [True, False])
+def test_a_cmyk_jpeg_stays_cmyk_with_its_adobe_marker(*, adobe: bool) -> None:
+    out = io.BytesIO()
+    Image.frombytes("CMYK", (SIDE, SIDE), gradient(4)).save(out, "JPEG", quality=95)
+    data = out.getvalue() if adobe else without_app14(out.getvalue())
+    assert (b"Adobe" in data) is adobe
+    doc = placed(data, {"BitsPerComponent": 8, "ColorSpace": Name("DeviceCMYK"), "Filter": Name("DCTDecode")})
+
+    renders_agree(doc)
+
+    image = stream(doc)
+    assert (image["ColorSpace"], image["Filter"]) == ("DeviceCMYK", "DCTDecode")
+    jpeg = stored(doc)
+    assert _images._jpeg_frame(jpeg) == (36, 36, 4, adobe)  # noqa: SLF001
+
+
+def jp2(mode: str, data: bytes) -> bytes:
+    out = io.BytesIO()
+    Image.frombytes(mode, (SIDE, SIDE), data).save(out, "JPEG2000")
+    return out.getvalue()
+
+
+def test_jpeg_2000_without_a_color_space_is_rewritten_in_the_colors_it_paints() -> None:
+    doc = placed(jp2("RGB", gradient(3)), {"Filter": Name("JPXDecode")})
+
+    renders_agree(doc)
+
+    assert (stream(doc)["ColorSpace"], stream(doc)["Filter"]) == ("DeviceRGB", "DCTDecode")
+
+
+def test_jpeg_2000_with_its_own_alpha_gains_a_soft_mask() -> None:
+    alpha = bytes(x * 2 for _ in range(SIDE) for x in range(SIDE))
+    color = gradient(3)
+    rgba = bytes(value for pixel in zip(*(color[c::3] for c in range(3)), alpha, strict=True) for value in pixel)
+    doc = placed(jp2("RGBA", rgba), {"ColorSpace": Name("DeviceRGB"), "Filter": Name("JPXDecode"), "SMaskInData": 1})
+
+    renders_agree(doc)
+
+    image = stream(doc)
+    assert "SMaskInData" not in image
+    assert isinstance(image["SMask"], pyropdf.Stream)
+
+
+def test_icc_based_jpeg_2000_keeps_its_space_and_its_samples() -> None:
+    doc = placed(jp2("RGB", gradient(3)), {"BitsPerComponent": 8, "Filter": Name("JPXDecode")})
+    profile = doc.objects[doc.objects.add_stream(b"not read", {"N": 3, "Alternate": Name("DeviceRGB")})]
+    stream(doc)["ColorSpace"] = [Name("ICCBased"), profile]
+
+    assert doc.rewrite_images(dpi_threshold=150, dpi_target=72, quality=95).rewritten == 1
+
+    space = stream(doc)["ColorSpace"]
+    assert isinstance(space, pyropdf.Array)
+    assert space[1].xref == profile.xref
+    assert stream(doc)["Filter"] == "DCTDecode"
+    expected = pyropdf.Pixmap.from_bytes(pam(SIDE, 3, gradient(3))).scale(36, 36)
+    assert mean_difference(expected, pyropdf.Pixmap.from_bytes(stored(doc))) < 3
+
+
+def packed(values: bytes, bits: int) -> bytes:
+    """Return one-byte samples packed at ``bits`` bits, in rows of ``SIDE`` samples."""
+    return _images._pack(values, SIDE, bits)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("bits", [2, 4, 8])
+def test_an_indexed_image_keeps_its_palette_and_its_bits(bits: int) -> None:
+    colors = 1 << bits
+    palette = bytes(
+        (index * 255 // (colors - 1), 255 - index * 255 // (colors - 1), index * 37 % 256)[c]
+        for index in range(colors)
+        for c in range(3)
+    )
+    indexes = bytes(noise(1)[(y // 4) * SIDE + x // 4] % colors for y in range(SIDE) for x in range(SIDE))
+    space = [Name("Indexed"), Name("DeviceRGB"), colors - 1, pyropdf.String(palette)]
+    doc = placed(
+        zlib.compress(packed(indexes, bits)),
+        {"BitsPerComponent": bits, "ColorSpace": space, "Filter": Name("FlateDecode")},
+    )
+
+    renders_agree(doc, bound=12)
+
+    image = stream(doc)
+    assert image["BitsPerComponent"] == bits
+    assert image["ColorSpace"][0] == "Indexed"
+    # The nearest sample keeps every index one of the palette's.
+    assert set(_images._unpack(image.read(), doc.pages[0].images()[0].item, keep=True)) <= set(indexes)  # noqa: SLF001
+
+
+def separation(_: pyropdf.Document) -> list[object]:
+    function = {"FunctionType": 2, "Domain": [0, 1], "C0": [0, 0, 0, 0], "C1": [0, 0.8, 0.2, 0], "N": 1}
+    return [Name("Separation"), Name("Spot"), Name("DeviceCMYK"), function]
+
+
+def device_n(doc: pyropdf.Document) -> list[object]:
+    # Cyan and magenta, as CMYK with no yellow or black.
+    entries = {"FunctionType": 4, "Domain": [0, 1, 0, 1], "Range": [0, 1, 0, 1, 0, 1, 0, 1]}
+    function = doc.objects[doc.objects.add_stream(b"{ 0 0 }", entries)]
+    return [Name("DeviceN"), [Name("Cyan"), Name("Magenta")], Name("DeviceCMYK"), function]
+
+
+SPACES = {
+    "DeviceGray": (1, lambda _: Name("DeviceGray")),
+    "DeviceCMYK": (4, lambda _: Name("DeviceCMYK")),
+    "Lab": (3, lambda _: [Name("Lab"), {"WhitePoint": [0.9505, 1, 1.089], "Range": [-100, 100, -100, 100]}]),
+    "Separation": (1, separation),
+    "DeviceN": (2, device_n),
+}
+
+
+@pytest.mark.parametrize("bits", [2, 4, 16])
+@pytest.mark.parametrize("name", list(SPACES))
+def test_samples_of_other_depths_and_spaces_keep_their_space(name: str, bits: int) -> None:
+    components, space = SPACES[name]
+    # A gradient with noise, which Flate does not shrink as it does a gradient.
+    values = bytes(
+        min(255, value + grain % 48) for value, grain in zip(gradient(components), noise(components), strict=True)
+    )
+    if bits == 16:
+        data = bytes(byte for value in values for byte in (value, value))
+    else:
+        data = _images._pack(bytes(value >> (8 - bits) for value in values), SIDE * components, bits)  # noqa: SLF001
+    doc = placed(zlib.compress(data), {"BitsPerComponent": bits, "Filter": Name("FlateDecode")})
+    stream(doc)["ColorSpace"] = space(doc)
+
+    renders_agree(doc)
+
+    image = stream(doc)
+    assert image["BitsPerComponent"] == min(bits, 8)
+    assert _images._family(image["ColorSpace"]) == name  # noqa: SLF001
+
+
+def test_a_decode_array_stays_with_the_samples() -> None:
+    doc = placed(
+        zlib.compress(gradient(4)),
+        {"BitsPerComponent": 8, "ColorSpace": Name("DeviceCMYK"), "Filter": Name("FlateDecode")},
+    )
+    stream(doc)["Decode"] = [1, 0, 1, 0, 1, 0, 1, 0]
+
+    renders_agree(doc)
+
+    assert list(stream(doc)["Decode"]) == [1, 0, 1, 0, 1, 0, 1, 0]
 
 
 def test_the_lossless_format_can_be_jpeg() -> None:

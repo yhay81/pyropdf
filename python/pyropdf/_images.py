@@ -320,8 +320,11 @@ _BITONAL_FILTERS = frozenset({"JBIG2Decode", "CCITTFaxDecode"})
 #: The color spaces whose decoded colors, as hayro paints them, are their samples.
 _PAINTED_SPACES = {"DeviceGray": 1, "DeviceRGB": 3}
 #: The color spaces whose stored samples a rewrite resamples and keeps, with the space itself.
-_SAMPLE_SPACES = frozenset({"DeviceCMYK", "ICCBased", "CalGray", "CalRGB"})
+_SAMPLE_SPACES = frozenset({"DeviceCMYK", "ICCBased", "CalGray", "CalRGB", "Lab", "Indexed", "Separation", "DeviceN"})
 _BITS = 8
+#: The bits per component of stored samples that a rewrite reads; 1 is bitonal.
+_SAMPLE_BITS = frozenset({2, 4, 8, 16})
+_JPEG_COMPONENTS = frozenset({1, 3, _CMYK})
 _MAX_QUALITY = 100
 _LOSSLESS_FORMATS = ("flate", "jpeg")
 _BITONAL_FORMATS = ("fax", "flate")
@@ -343,6 +346,8 @@ class _Candidate:
     gray: bool
     samples: bool
     """Whether the stored samples are resampled, in the image's own color space, rather than hayro's colors."""
+    indexed: bool = False
+    """Whether the stored samples are palette indexes, which keep their bits and are resampled to the nearest."""
     width: float = 0.0
     """The longest length, in points, that a placement gives the image's width."""
     height: float = 0.0
@@ -465,8 +470,6 @@ def _family(value: object) -> str:
 
 def _mask_reason(stream: Stream, item: Image) -> str | None:
     """Return why a rewrite cannot keep an image's mask, or ``None`` when it can."""
-    if stream.get("SMaskInData"):
-        return "JPEG 2000 data with its own alpha"
     mask = stream.get("SMask")
     if isinstance(mask, Stream) and "Matte" in mask:
         matte = mask["Matte"]
@@ -487,8 +490,8 @@ def _other_size(mask: Stream, item: Image) -> bool:
     return (mask.get("Width"), mask.get("Height")) != (item.width, item.height)
 
 
-def _classify(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[str, bool, bool] | str | None:
-    """Return a selected image's kind, whether it is gray, and whether its stored samples are resampled.
+def _classify(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[str, bool, bool, bool] | str | None:
+    """Return a selected image's kind, whether it is gray, whether its stored samples are resampled, and are indexes.
 
     An image that its kind and color flags leave out returns ``None``, and
     one selected but not rewritten returns why.
@@ -497,32 +500,46 @@ def _classify(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[s
     image_filter = names[-1] if names else ""
     bitonal = item.is_stencil or item.bits == 1 or image_filter in _BITONAL_FILTERS
     kind = "bitonal" if bitonal else "lossy" if image_filter in _LOSSY_FILTERS else "lossless"
-    gray = bitonal or item.components == 1
+    indexed = item.colorspace == "Indexed"
+    gray = bitonal or (item.components == 1 and not indexed)
     if not selected[kind] or not (bitonal or selected["gray" if gray else "color"]):
         return None
-    reason = _unsupported(stream, item, image_filter, bitonal=bitonal) or _mask_reason(stream, item)
+    reason = _unsupported(item, image_filter, bitonal=bitonal) or _mask_reason(stream, item)
     if reason is not None:
         return reason
-    return kind, gray, not bitonal and _PAINTED_SPACES.get(item.colorspace) != item.components
+    samples = _keeps_samples(item, image_filter, bitonal=bitonal)
+    return kind, gray, samples, samples and indexed
 
 
-def _unsupported(stream: Stream, item: Image, image_filter: str, *, bitonal: bool) -> str | None:
+def _keeps_samples(item: Image, image_filter: str, *, bitonal: bool) -> bool:
+    """Return whether a rewrite resamples an image's stored samples in its own space, rather than hayro's colors.
+
+    Samples of 2 or 4 bits keep their space and depth; JPEG 2000 that
+    names no color space paints the colors of its own.
+    """
+    if bitonal or (image_filter == "JPXDecode" and not item.colorspace):
+        return False
+    return item.bits < _BITS or _PAINTED_SPACES.get(item.colorspace) != item.components
+
+
+def _unsupported(item: Image, image_filter: str, *, bitonal: bool) -> str | None:
     """Return why a rewrite would not keep an image's samples, or ``None`` when it would."""
     family = item.colorspace or "no color space"
-    stored = not bitonal and _PAINTED_SPACES.get(item.colorspace) != item.components
+    stored = _keeps_samples(item, image_filter, bitonal=bitonal)
     checks = (
         (item.is_stencil, "a stencil mask"),
         (item.width * item.height > _MAX_SOURCE_PIXELS, f"more than {_MAX_SOURCE_PIXELS:,} pixels"),
         (bitonal and item.colorspace != "DeviceGray", f"a bitonal image in {family}"),
-        (image_filter == "JPXDecode" and not item.colorspace, "JPEG 2000 that names no color space"),
-        (not bitonal and item.bits != _BITS, f"{item.bits} bits per component"),
+        # JPEG 2000 states its own depth, which hayro scales to 8 bits.
         (
-            stored and (item.colorspace not in _SAMPLE_SPACES or item.components not in (1, 3, _CMYK)),
+            not bitonal and image_filter != "JPXDecode" and item.bits not in _SAMPLE_BITS,
+            f"{item.bits} bits per component",
+        ),
+        (
+            stored and (item.colorspace not in _SAMPLE_SPACES | _PAINTED_SPACES.keys() or item.components < 1),
             f"a {family} color space",
         ),
-        (stored and image_filter == "JPXDecode", f"JPEG 2000 in {family}"),
-        (stored and image_filter == "DCTDecode" and item.components == _CMYK, "a CMYK JPEG"),
-        (stored and "Decode" in stream, f"a /Decode array in {family}"),
+        (stored and family == "Indexed" and image_filter in _LOSSY_FILTERS, f"an Indexed image in {image_filter}"),
     )
     return next((reason for failed, reason in checks if failed), None)
 
@@ -615,7 +632,7 @@ def _resized(pixels: _Pixels, size: tuple[int, int]) -> _Pixels:
     if size == (pixels.width, pixels.height):
         return pixels
     width, height = pixels.width, pixels.height
-    if pixels.components < _CMYK:
+    if pixels.components in (1, 3):
         depth = pixels.components + (pixels.alpha is not None)
         data = (
             pixels.color
@@ -639,21 +656,24 @@ def _bitonal(pixels: _Pixels) -> bytes:
     return pbm.split(b"\n", 2)[2].translate(_INVERT)
 
 
-def _encode(pixels: _Pixels, form: str, quality: int, limit: int) -> bytes | None:
-    """Return the color samples encoded as ``form``: ``"jpeg"``, ``"flate"``, ``"fax"``, or ``"flate1"`` for 1 bit."""
+def _encode(pixels: _Pixels, form: str, quality: int, limit: int, *, adobe: bool = False) -> bytes | None:
+    """Return the color samples encoded as ``form``: ``"jpeg"``, ``"flate"``, ``"fax"``, or ``"flate1"`` for 1 bit.
+
+    CMYK JPEG data carries an Adobe marker when ``adobe``, as its source did.
+    """
     if form == "fax":
         return _core.encode_ccitt_g4(_bitonal(pixels), pixels.width, pixels.height, limit)
     if form == "flate1":
         return zlib.compress(_bitonal(pixels), 9)
     if form == "jpeg":
-        return _pixmap(pixels.width, pixels.height, pixels.components, pixels.color).to_bytes("jpeg", quality=quality)
+        return _core.encode_jpeg_samples(pixels.color, pixels.width, pixels.height, pixels.components, quality, adobe)
     return zlib.compress(pixels.color, 9)
 
 
-def _form(kind: str, components: int, options: _Options) -> str:
+def _form(kind: str, components: int, options: _Options, *, indexed: bool = False) -> str:
     if kind == "bitonal":
         return "fax" if options.bitonal_format == "fax" else "flate1"
-    return "jpeg" if options.jpeg(kind) and components < _CMYK else "flate"
+    return "jpeg" if options.jpeg(kind) and components in _JPEG_COMPONENTS and not indexed else "flate"
 
 
 def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
@@ -670,11 +690,13 @@ def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
         msg = f"image object {item.xref} decodes to another size"
         raise PdfError(msg)
     stored = candidate.image.stored()
-    if stored is not None and stored.filter == "DCTDecode":
-        decoded = _core.Pixmap.from_bytes(stored.data)
-        color = bytes(decoded)
+    if stored is not None and stored.filter in _LOSSY_FILTERS:
+        width, height, components, color, _ = _core.image_samples(stored.data, stored.filter == "JPXDecode")
+        if (width, height, components) != (item.width, item.height, item.components):
+            msg = f"image object {item.xref} stores {components}-component data of {width} by {height} pixels"
+            raise PdfError(msg)
     else:
-        color = stream.read()[: item.width * item.height * item.components]
+        color = _unpack(stream.read(), item, keep=candidate.indexed)
     if len(color) != item.width * item.height * item.components:
         msg = f"image object {item.xref} holds fewer samples than its size needs"
         raise PdfError(msg)
@@ -682,6 +704,63 @@ def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
     if isinstance(mask, Stream) and isinstance(mask.get("Matte"), Array) and painted.alpha is not None:
         color = _unmatte(color, painted.alpha, mask["Matte"], item.components)
     return _Pixels(item.width, item.height, item.components, color, painted.alpha)
+
+
+def _unpack(data: bytes, item: Image, *, keep: bool) -> bytes:
+    """Return stored samples of 2, 4, 8, or 16 bits as one byte each, rows unpadded.
+
+    Samples of 2 and 4 bits scale exactly to 8 bits unless ``keep``, which
+    keeps their values, as palette indexes; 16-bit samples keep their high
+    8 bits.
+    """
+    bits, count = item.bits, item.width * item.components
+    if bits == _BITS:
+        return data[: count * item.height]
+    if bits == _BITS * 2:
+        return data[: count * item.height * 2 : 2]
+    stride, per_byte = (count * bits + 7) // 8, 8 // bits
+    top = (1 << bits) - 1
+    scale = 1 if keep else 255 // top
+    tables = [
+        bytes(((byte >> (8 - bits * (slot + 1))) & top) * scale for byte in range(256)) for slot in range(per_byte)
+    ]
+    rows = []
+    for row in range(min(item.height, len(data) // stride)):
+        packed = data[row * stride : (row + 1) * stride]
+        rows.append(_interleave([packed.translate(table) for table in tables])[:count])
+    return b"".join(rows)
+
+
+def _pack(data: bytes, width: int, bits: int) -> bytes:
+    """Return one-byte samples of ``bits`` bits packed into rows of ``width`` samples, padded to whole bytes."""
+    if bits == _BITS:
+        return data
+    per_byte = 8 // bits
+    stride = (width + per_byte - 1) // per_byte
+    rows = []
+    for at in range(0, len(data), width):
+        row = data[at : at + width].ljust(stride * per_byte, b"\0")
+        value = 0
+        for slot in range(per_byte):
+            value |= int.from_bytes(row[slot::per_byte]) << (8 - bits * (slot + 1))
+        rows.append(value.to_bytes(stride))
+    return b"".join(rows)
+
+
+def _nearest(pixels: _Pixels, size: tuple[int, int]) -> _Pixels:
+    """Resample ``pixels`` to ``size`` by the nearest sample, which keeps each value, as a palette index."""
+    if size == (pixels.width, pixels.height):
+        return pixels
+    width, height, components = pixels.width, pixels.height, pixels.components
+    xs = [min(width - 1, (2 * x + 1) * width // (2 * size[0])) for x in range(size[0])]
+    ys = [min(height - 1, (2 * y + 1) * height // (2 * size[1])) for y in range(size[1])]
+    picks = [x * components + channel for x in xs for channel in range(components)]
+    stride = width * components
+    color = b"".join(bytes(pixels.color[y * stride + at] for at in picks) for y in ys)
+    alpha = None
+    if pixels.alpha is not None:
+        alpha = _resized(_Pixels(width, height, 1, pixels.alpha, None), size).color
+    return _Pixels(size[0], size[1], components, color, alpha)
 
 
 def _unmatte(color: bytes, alpha: bytes, matte: Array, components: int) -> bytes:
@@ -734,10 +813,9 @@ def _rewrite(
         if isinstance(mask := stream.get(key), Stream) and key not in kept
     )
     limit = int(before * (1 - _MIN_SAVING))
-    pixels = _resized(_source(candidate, stream), size)
-    form = _form(candidate.kind, pixels.components, options)
-    quality = _DEFAULT_QUALITY if options.quality is None else options.quality
-    data = _encode(pixels, form, quality, limit)
+    pixels = (_nearest if candidate.indexed else _resized)(_source(candidate, stream), size)
+    form = _form(candidate.kind, pixels.components, options, indexed=candidate.indexed)
+    data = _encode_candidate(candidate, pixels, form, options, limit)
     alpha = None if pixels.alpha is None else zlib.compress(pixels.alpha, 9)
     resampled = [
         (key, mask_size, _encode_mask(mask, mask_size, options, limit, stencil=key == "Mask"))
@@ -749,15 +827,15 @@ def _rewrite(
         after = None if after is None or encoded is None else after + len(encoded[0])
     if after is None or after > limit:
         return None
-    # Resampled stored samples keep the color space, which stays in place.
+    # Resampled stored samples keep the color space and the /Decode array, which stay in place.
     for key in _DATA_KEYS:
-        if key in stream and key not in kept and not (candidate.samples and key == "ColorSpace"):
+        if key in stream and key not in kept and not (candidate.samples and key in ("ColorSpace", "Decode")):
             del stream[key]
     stream.write(data, filter=None)
     entries: dict[str, object] = {
         "Width": size[0],
         "Height": size[1],
-        "BitsPerComponent": 1 if candidate.kind == "bitonal" else 8,
+        "BitsPerComponent": 1 if candidate.kind == "bitonal" else _depth(candidate, form),
         "Filter": Name({"jpeg": "DCTDecode", "fax": "CCITTFaxDecode"}.get(form, "FlateDecode")),
     }
     if not candidate.samples:
@@ -771,6 +849,28 @@ def _rewrite(
         if encoded is not None:
             stream[key] = _add_mask(document, mask_size, encoded, stencil=key == "Mask")
     return after
+
+
+def _encode_candidate(candidate: _Candidate, pixels: _Pixels, form: str, options: _Options, limit: int) -> bytes | None:
+    """Encode a candidate's resampled pixels: palette indexes at their bits, and CMYK JPEG with its source's marker."""
+    bits = candidate.image.item.bits
+    if candidate.indexed:
+        return zlib.compress(_pack(pixels.color, pixels.width * pixels.components, bits), 9)
+    if candidate.samples and bits < _BITS and form == "flate":
+        # Resampled samples round to the nearest of their depth's levels.
+        top = (1 << bits) - 1
+        levels = bytes((value * top + 127) // 255 for value in range(256))
+        return zlib.compress(_pack(pixels.color.translate(levels), pixels.width * pixels.components, bits), 9)
+    stored = candidate.image.stored() if candidate.samples and form == "jpeg" else None
+    adobe = stored is not None and stored.filter == "DCTDecode" and _jpeg_frame(stored.data)[3]
+    quality = _DEFAULT_QUALITY if options.quality is None else options.quality
+    return _encode(pixels, form, quality, limit, adobe=adobe)
+
+
+def _depth(candidate: _Candidate, form: str) -> int:
+    """Return the bits per component of a candidate's new samples: 2 and 4 bits stay, but not in JPEG."""
+    bits = candidate.image.item.bits
+    return bits if candidate.samples and bits < _BITS and form == "flate" else _BITS
 
 
 def _mask_size(mask: Stream, lengths: tuple[float, float], options: _Options) -> tuple[int, int]:

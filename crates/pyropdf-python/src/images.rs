@@ -221,3 +221,189 @@ pub fn decode_png<'py>(
         Some(PyBytes::new(py, &opacity)),
     ))
 }
+
+/// Width, height, color components, 8-bit samples, and the alpha that
+/// JPEG 2000 data may carry.
+type Samples<'py> = (
+    u32,
+    u32,
+    u8,
+    Bound<'py, PyBytes>,
+    Option<Bound<'py, PyBytes>>,
+);
+
+/// Decodes the JPEG (or, with `jpx`, JPEG 2000) data of an image to the
+/// samples that hayro-syntax's `DCTDecode` and `JPXDecode` filters give
+/// its color space, without converting them to RGB: CMYK as stored, YCCK
+/// as pdf.js turns it into CMYK, and JPEG 2000's palette indexes kept.
+#[pyfunction]
+pub fn image_samples<'py>(py: Python<'py>, data: &[u8], jpx: bool) -> PyResult<Samples<'py>> {
+    let decoded = py.detach(|| {
+        if jpx {
+            jpx_samples(data)
+        } else {
+            jpeg_samples(data)
+        }
+    });
+    let (width, height, components, color, alpha) = decoded.map_err(PyValueError::new_err)?;
+    Ok((
+        width,
+        height,
+        components,
+        PyBytes::new(py, &color),
+        alpha.map(|alpha| PyBytes::new(py, &alpha)),
+    ))
+}
+
+type Decoded = (u32, u32, u8, Vec<u8>, Option<Vec<u8>>);
+
+fn jpeg_samples(data: &[u8]) -> Result<Decoded, String> {
+    use zune_jpeg::JpegDecoder;
+    use zune_jpeg::zune_core::bytestream::ZCursor;
+    use zune_jpeg::zune_core::colorspace::ColorSpace;
+    use zune_jpeg::zune_core::options::DecoderOptions;
+
+    let invalid = |error: zune_jpeg::errors::DecodeErrors| format!("not a JPEG image: {error}");
+    let options = DecoderOptions::default()
+        .set_max_width(usize::from(u16::MAX))
+        .set_max_height(usize::from(u16::MAX));
+    let mut decoder = JpegDecoder::new_with_options(ZCursor::new(data), options);
+    decoder.decode_headers().map_err(invalid)?;
+    let (width, height) = decoder
+        .dimensions()
+        .ok_or_else(|| "the JPEG image has no size".to_owned())?;
+    crate::pixel_ops::check_size(width as u32, height as u32)?;
+    let three = decoder.info().is_some_and(|info| info.components == 3);
+    let (out, components) = match decoder.input_colorspace() {
+        Some(ColorSpace::Luma | ColorSpace::LumaA) => (ColorSpace::Luma, 1),
+        Some(ColorSpace::CMYK) if !three => (ColorSpace::CMYK, 4),
+        Some(ColorSpace::YCCK) => (ColorSpace::YCCK, 4),
+        _ => (ColorSpace::RGB, 3),
+    };
+    decoder.set_options(options.jpeg_set_out_colorspace(out));
+    let mut samples = decoder.decode().map_err(invalid)?;
+    if out == ColorSpace::YCCK {
+        // As hayro-syntax, after pdf.js's jpg.js.
+        for pixel in samples.as_chunks_mut::<4>().0 {
+            let (y, cb, cr) = (
+                f32::from(pixel[0]),
+                f32::from(pixel[1]),
+                f32::from(pixel[2]),
+            );
+            pixel[0] = (434.456 - y - 1.402 * cr) as u8;
+            pixel[1] = (119.541 - y + 0.344 * cb + 0.714 * cr) as u8;
+            pixel[2] = (481.816 - y - 1.772 * cb) as u8;
+        }
+    }
+    if samples.len() != width * height * usize::from(components) {
+        return Err("the JPEG image decoded to the wrong number of samples".to_owned());
+    }
+    Ok((width as u32, height as u32, components, samples, None))
+}
+
+fn jpx_samples(data: &[u8]) -> Result<Decoded, String> {
+    use hayro_jpeg2000::{DecodeSettings, DecoderContext, Image};
+
+    let invalid = |error| format!("not a JPEG 2000 image the decoder reads: {error:?}");
+    let settings = DecodeSettings {
+        resolve_palette_indices: false,
+        strict: false,
+        target_resolution: None,
+    };
+    let image = Image::new(data, &settings).map_err(invalid)?;
+    let (width, height) = (image.width(), image.height());
+    crate::pixel_ops::check_size(width, height)?;
+    let components = image.color_space().num_channels();
+    let alpha = image.has_alpha();
+    let mut context = DecoderContext::default();
+    let samples = image.decode(&mut context).map_err(invalid)?.data_u8();
+    let channels = usize::from(components) + usize::from(alpha);
+    if components == 0 || samples.len() != width as usize * height as usize * channels {
+        return Err("the JPEG 2000 image decodes to an unexpected number of samples".to_owned());
+    }
+    if !alpha {
+        return Ok((width, height, components, samples, None));
+    }
+    let pixels = width as usize * height as usize;
+    let mut color = Vec::with_capacity(pixels * usize::from(components));
+    let mut opacity = Vec::with_capacity(pixels);
+    for pixel in samples.chunks_exact(channels) {
+        let (last, rest) = pixel.split_last().expect("a pixel has channels");
+        color.extend_from_slice(rest);
+        opacity.push(*last);
+    }
+    Ok((width, height, components, color, Some(opacity)))
+}
+
+/// Encodes interleaved 8-bit samples of one, three, or four components as
+/// JPEG data that decodes to them: four components as CMYK with an Adobe
+/// APP14 marker of transform 0 when `adobe`, and without one otherwise.
+#[pyfunction]
+pub fn encode_jpeg_samples<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    width: u16,
+    height: u16,
+    components: u8,
+    quality: u8,
+    adobe: bool,
+) -> PyResult<Bound<'py, PyBytes>> {
+    use jpeg_encoder::{ColorType, Encoder};
+
+    let color = match components {
+        1 => ColorType::Luma,
+        3 => ColorType::Rgb,
+        4 => ColorType::Cmyk,
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "no {components}-component samples in JPEG"
+            )));
+        }
+    };
+    if width == 0
+        || height == 0
+        || data.len() != usize::from(width) * usize::from(height) * usize::from(components)
+    {
+        return Err(PyValueError::new_err(format!(
+            "{} bytes are not the samples of a {width} by {height} image of {components} components",
+            data.len()
+        )));
+    }
+    let out = py.detach(|| {
+        // jpeg-encoder stores each CMYK sample inverted, as Adobe's
+        // JPEGs do, so it is given the inverse of the sample to store.
+        let inverted;
+        let samples = if components == 4 {
+            inverted = data.iter().map(|sample| 255 - sample).collect::<Vec<_>>();
+            &inverted[..]
+        } else {
+            data
+        };
+        let mut out = Vec::new();
+        Encoder::new(&mut out, quality.clamp(1, 100))
+            .encode(samples, width, height, color)
+            .map_err(|e| e.to_string())?;
+        if components == 4 && !adobe {
+            strip_app14(&mut out);
+        }
+        Ok::<_, String>(out)
+    });
+    Ok(PyBytes::new(py, &out.map_err(PyValueError::new_err)?))
+}
+
+/// Removes the Adobe APP14 segment before the first frame of JPEG `data`.
+fn strip_app14(data: &mut Vec<u8>) {
+    let mut at = 2;
+    while at + 4 <= data.len() && data[at] == 0xFF {
+        let marker = data[at + 1];
+        let length = usize::from(u16::from_be_bytes([data[at + 2], data[at + 3]]));
+        if marker == 0xEE && data.get(at + 4..at + 9) == Some(b"Adobe") {
+            data.drain(at..at + 2 + length);
+            return;
+        }
+        if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            return;
+        }
+        at += 2 + length;
+    }
+}

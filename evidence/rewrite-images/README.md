@@ -39,8 +39,18 @@ blurred the mask's edges, so it stays 1-bit. Ghostscript at 100 dpi moves
 the two pages by 4.61 and 4.53 of 255; at 72 dpi, the bound of
 `tests/test_rewrite_images.py`, the first page moves by 5.06, of which
 quality 65 alone gives 3.19 and the 1-bit masks at a third of their
-resolution the rest. pdfium-jpx-lzw.pdf's JPEG 2000 image names no color space and
-is reported too.
+resolution the rest. pdfium-jpx-lzw.pdf's JPEG 2000 image names no color space; since #451 a
+rewrite reads it from the colors that hayro paints, but its 1,224 stored
+bytes are smaller than any re-encoding, so it stays.
+
+The corpus holds no CMYK JPEG, Indexed, Lab, Separation, DeviceN, or
+2-, 4-, or 16-bit image. `tests/test_rewrite_images.py` builds them: CMYK
+JPEGs with and without an Adobe APP14 marker, JPEG 2000 without a color
+space, with `/SMaskInData`, and in ICCBased, Indexed images of 2, 4, and
+8 bits, and the other spaces at 2, 4, and 16 bits, each a 128 by 128
+image at 36 points resampled to 36 pixels. pyropdf and Ghostscript, each
+rendering the page at 72 dpi before and after, agree within a mean of 4
+of 255, and within 12 for the nearest-index resampling of Indexed images.
 
 patent-us223898.pdf's four 2320 by 3408 CCITT scans, placed at 300 dpi,
 become 774 by 1136 CCITT Group 4 images at 100 dpi; before #432 they stayed,

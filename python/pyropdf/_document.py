@@ -268,10 +268,18 @@ class Document:
         (``/ImageMask``) are resampled as bitonal stencils.
 
         DeviceGray and DeviceRGB images are rewritten from the colors that
-        hayro paints, with their ``/Decode`` arrays applied. 8-bit
-        DeviceCMYK, ICCBased, CalGray, and CalRGB images keep their color
-        space: their stored samples are resampled channel by channel, and
-        CMYK is written as Flate in every case. Inline images are rewritten
+        hayro paints, with their ``/Decode`` arrays applied, and so is JPEG
+        2000 that names no color space, its own alpha (``/SMaskInData``)
+        becoming a soft mask. Images in DeviceCMYK, ICCBased, CalGray,
+        CalRGB, Lab, Separation, DeviceN, and Indexed keep their color space
+        and ``/Decode`` array: their stored samples, JPEG and JPEG 2000
+        decoded as hayro decodes them, are resampled channel by channel, and
+        a CMYK JPEG stays a CMYK JPEG, with an Adobe marker when its source
+        had one. Indexed images keep their bits and are resampled to the
+        nearest index, so that every color stays one of the palette's;
+        samples of 2 or 4 bits keep their depth, the resampled values
+        rounded to its levels, unless they become JPEG; 16-bit samples keep
+        their high 8 bits. Inline images are rewritten
         too, by the placement that the ``cm`` operators give: those of a
         page's own content make it one new stream, and a Form XObject or
         annotation appearance that holds them is rewritten once, at their
@@ -282,9 +290,9 @@ class Document:
         the kinds of image to rewrite. A selected image that a rewrite would
         not keep stays as it is and is named in
         :attr:`ImageRewriteReport.unsupported`: soft masks with ``/Matte``
-        of another size, CMYK JPEGs, JPEG 2000 outside DeviceGray and
-        DeviceRGB, other bit depths and color spaces, and inline images
-        that the walk of content does not reach, as in patterns.
+        of another size, Indexed JPEG and JPEG 2000, other color spaces,
+        and inline images that the walk of content does not reach, as in
+        patterns.
 
         ``set_to_gray`` converts the selected color images to DeviceGray,
         and only images, where PyMuPDF's option of the same name converts

@@ -87,7 +87,7 @@ mod _core {
         history_save, history_state, history_undo, set_history_limit,
     };
     #[pymodule_export]
-    use super::images::{decode_png, image_stored, page_image};
+    use super::images::{decode_png, encode_jpeg_samples, image_samples, image_stored, page_image};
     #[pymodule_export]
     use super::items::page_content;
     #[pymodule_export]
