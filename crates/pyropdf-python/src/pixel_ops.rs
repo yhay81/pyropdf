@@ -305,6 +305,244 @@ pub fn scale(data: &[u8], layout: Layout, width: u32, height: u32) -> Vec<u8> {
     out
 }
 
+/// Returns the samples of `layout` turned clockwise by `quarters` quarter
+/// turns, 1 through 3, whose layout swaps width and height for an odd
+/// count.
+pub fn rotate(data: &[u8], layout: Layout, quarters: u8) -> Vec<u8> {
+    let (width, height) = (layout.width as usize, layout.height as usize);
+    let channels = layout.channels();
+    let mut out = Vec::with_capacity(data.len());
+    let (out_width, out_height) = if quarters % 2 == 1 {
+        (height, width)
+    } else {
+        (width, height)
+    };
+    for y in 0..out_height {
+        for x in 0..out_width {
+            let (from_x, from_y) = match quarters {
+                1 => (y, height - 1 - x),
+                2 => (width - 1 - x, height - 1 - y),
+                _ => (width - 1 - y, x),
+            };
+            let at = (from_y * width + from_x) * channels;
+            out.extend_from_slice(&data[at..at + channels]);
+        }
+    }
+    out
+}
+
+/// Returns the samples mirrored left to right, or top to bottom when
+/// `vertical`.
+pub fn flip(data: &[u8], layout: Layout, vertical: bool) -> Vec<u8> {
+    let stride = layout.stride();
+    let channels = layout.channels();
+    let mut out = Vec::with_capacity(data.len());
+    for row in 0..layout.height as usize {
+        let source = if vertical {
+            layout.height as usize - 1 - row
+        } else {
+            row
+        };
+        let line = &data[source * stride..(source + 1) * stride];
+        if vertical {
+            out.extend_from_slice(line);
+        } else {
+            for pixel in line.chunks_exact(channels).rev() {
+                out.extend_from_slice(pixel);
+            }
+        }
+    }
+    out
+}
+
+/// A projective map from the unit square onto a quadrilateral: `(u, v)`
+/// goes to `((a u + b v + c) / w, (d u + e v + f) / w)` with
+/// `w = g u + h v + 1`.
+#[derive(Clone, Copy, Debug)]
+pub struct Projection([f64; 8]);
+
+impl Projection {
+    /// Returns the map that sends the unit square's corners `(0, 0)`,
+    /// `(1, 0)`, `(0, 1)`, and `(1, 1)` to `ul`, `ur`, `ll`, and `lr`, as
+    /// Heckbert's square-to-quadrilateral mapping computes it; `None` for a
+    /// quadrilateral with three corners on a line, or that is not convex.
+    pub fn new(quad: [(f64, f64); 4]) -> Option<Self> {
+        let [(x0, y0), (x1, y1), (x3, y3), (x2, y2)] = quad;
+        if !quad.iter().all(|(x, y)| x.is_finite() && y.is_finite()) {
+            return None;
+        }
+        // Each corner turns the same way, around the corners in order.
+        let corners = [(x0, y0), (x1, y1), (x2, y2), (x3, y3)];
+        let turns: [f64; 4] = std::array::from_fn(|at| {
+            let (ax, ay) = corners[at];
+            let (bx, by) = corners[(at + 1) % 4];
+            let (cx, cy) = corners[(at + 2) % 4];
+            (bx - ax) * (cy - by) - (by - ay) * (cx - bx)
+        });
+        if !(turns.iter().all(|turn| *turn > 0.0) || turns.iter().all(|turn| *turn < 0.0)) {
+            return None;
+        }
+        let (dx1, dx2, dx3) = (x1 - x2, x3 - x2, x0 - x1 + x2 - x3);
+        let (dy1, dy2, dy3) = (y1 - y2, y3 - y2, y0 - y1 + y2 - y3);
+        let (g, h) = if dx3 == 0.0 && dy3 == 0.0 {
+            (0.0, 0.0)
+        } else {
+            let denominator = dx1 * dy2 - dx2 * dy1;
+            (
+                (dx3 * dy2 - dx2 * dy3) / denominator,
+                (dx1 * dy3 - dx3 * dy1) / denominator,
+            )
+        };
+        Some(Self([
+            x1 - x0 + g * x1,
+            x3 - x0 + h * x3,
+            x0,
+            y1 - y0 + g * y1,
+            y3 - y0 + h * y3,
+            y0,
+            g,
+            h,
+        ]))
+    }
+
+    fn apply(self, u: f64, v: f64) -> (f64, f64) {
+        let [a, b, c, d, e, f, g, h] = self.0;
+        let w = g * u + h * v + 1.0;
+        ((a * u + b * v + c) / w, (d * u + e * v + f) / w)
+    }
+}
+
+/// Returns `width` by `height` pixels whose corners are those of the
+/// quadrilateral that `projection` maps the unit square onto: each pixel's
+/// center maps into the source, which is sampled bilinearly between pixel
+/// centers, with alpha weighting the colors, and clamped to its edge
+/// pixels.
+pub fn warp(
+    data: &[u8],
+    layout: Layout,
+    projection: Projection,
+    width: u32,
+    height: u32,
+) -> Vec<u8> {
+    let channels = layout.channels();
+    let colors = layout.colors();
+    let (source_width, source_height) = (layout.width as usize, layout.height as usize);
+    let mut out = Vec::with_capacity(width as usize * height as usize * channels);
+    let sample = |x: usize, y: usize| &data[(y * source_width + x) * channels..][..channels];
+    for row in 0..height {
+        for column in 0..width {
+            let u = (f64::from(column) + 0.5) / f64::from(width);
+            let v = (f64::from(row) + 0.5) / f64::from(height);
+            let (x, y) = projection.apply(u, v);
+            let at = |value: f64, length: usize| {
+                let value = (value - 0.5).clamp(0.0, (length - 1) as f64);
+                let low = value.floor();
+                (
+                    low as usize,
+                    ((low as usize) + 1).min(length - 1),
+                    value - low,
+                )
+            };
+            let (x0, x1, fx) = at(x, source_width);
+            let (y0, y1, fy) = at(y, source_height);
+            let (mut mixed, mut plain) = ([0.0; 4], [0.0; 3]);
+            for (px, py, weight) in [
+                (x0, y0, (1.0 - fx) * (1.0 - fy)),
+                (x1, y0, fx * (1.0 - fy)),
+                (x0, y1, (1.0 - fx) * fy),
+                (x1, y1, fx * fy),
+            ] {
+                let pixel = sample(px, py);
+                let alpha = if layout.alpha {
+                    f64::from(pixel[colors]) / 255.0
+                } else {
+                    1.0
+                };
+                for component in 0..colors {
+                    mixed[component] += weight * alpha * f64::from(pixel[component]);
+                    plain[component] += weight * f64::from(pixel[component]);
+                }
+                if layout.alpha {
+                    mixed[colors] += weight * f64::from(pixel[colors]);
+                }
+            }
+            let alpha = if layout.alpha {
+                mixed[colors] / 255.0
+            } else {
+                1.0
+            };
+            // Where every sample is transparent, their colors mix unweighted.
+            for component in 0..colors {
+                out.push(if alpha == 0.0 {
+                    byte(plain[component])
+                } else {
+                    byte(mixed[component] / alpha)
+                });
+            }
+            if layout.alpha {
+                out.push(byte(mixed[colors]));
+            }
+        }
+    }
+    out
+}
+
+/// Returns the pixels of `area` as big-endian keys of their channels,
+/// sorted, so that equal pixels lie together.
+fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u32> {
+    let channels = layout.channels();
+    let (x0, y0, x1, y1) = area;
+    let mut keys = Vec::with_capacity((x1 - x0) as usize * (y1 - y0) as usize);
+    for y in y0..y1 {
+        let at = y as usize * layout.stride() + x0 as usize * channels;
+        let row = &data[at..at + (x1 - x0) as usize * channels];
+        keys.extend(row.chunks_exact(channels).map(|pixel| {
+            pixel
+                .iter()
+                .fold(0_u32, |key, &byte| key << 8 | u32::from(byte))
+        }));
+    }
+    keys.sort_unstable();
+    keys
+}
+
+/// Calls `each` with every distinct pixel of `area`, as its channels, and
+/// its count, in ascending order of the channels, until it returns `false`.
+pub fn color_runs(
+    data: &[u8],
+    layout: Layout,
+    area: Area,
+    mut each: impl FnMut(Vec<u8>, u64) -> bool,
+) {
+    let channels = layout.channels();
+    let keys = sorted_pixels(data, layout, area);
+    let mut at = 0;
+    while at < keys.len() {
+        let key = keys[at];
+        let end = at + keys[at..].partition_point(|&other| other == key);
+        let pixel = key.to_be_bytes()[4 - channels..].to_vec();
+        if !each(pixel, (end - at) as u64) {
+            return;
+        }
+        at = end;
+    }
+}
+
+/// Returns the samples with every pixel of `area` set to `pixel`, one byte
+/// per channel.
+pub fn fill(data: &[u8], layout: Layout, area: Area, pixel: &[u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    let channels = layout.channels();
+    let (x0, y0, x1, y1) = area;
+    for y in y0..y1 {
+        let at = y as usize * layout.stride() + x0 as usize * channels;
+        for target in out[at..at + (x1 - x0) as usize * channels].chunks_exact_mut(channels) {
+            target.copy_from_slice(pixel);
+        }
+    }
+    out
+}
+
 /// A decoded image: its layout, samples, and resolution in dots per inch.
 pub struct Decoded {
     pub layout: Layout,
@@ -339,14 +577,16 @@ fn decode_png(data: &[u8]) -> Result<Decoded, String> {
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let header = decoder.read_header_info().map_err(invalid)?;
     check_size(header.width, header.height)?;
-    let resolution = header
+    let mut reader = decoder.read_info().map_err(invalid)?;
+    // pHYs follows the header, so only the full info holds it.
+    let resolution = reader
+        .info()
         .pixel_dims
         .filter(|dims| dims.unit == png::Unit::Meter)
         .map_or((96, 96), |dims| {
             let dpi = |per_metre: u32| ((f64::from(per_metre) * 0.0254).round() as u32).max(1);
             (dpi(dims.xppu), dpi(dims.yppu))
         });
-    let mut reader = decoder.read_info().map_err(invalid)?;
     let size = reader
         .output_buffer_size()
         .ok_or_else(|| "the PNG image is too large".to_owned())?;

@@ -61,7 +61,7 @@ rendering accuracy need independent comparisons (#430).
 | Selectable text in SVG | `get_svg_image(text_as_path=False)` | Missing: `page.svg` emits text as paths | #435 |
 | CMYK raster output | `get_pixmap(colorspace=csCMYK)` | Missing; engine support is tracked separately | #248, #425, #433 |
 | Pixmap conversion and basic operations | invert, gamma, tint, crop, scale, Pillow | Available: `Pixmap.invert`, `gamma`, `tint`, `crop`, `scale`, `to_gray`, `to_rgb`, alpha and Pillow conversion | #398 |
-| Pixmap transforms, inspection and editing | `flip_rotate`, `warp`, `color_count`, `color_topusage`, `pixel`, `set_pixel`, `set_rect` | Partial: raw bytes and Pillow interop exist; no corresponding public pixmap operations | #424 |
+| Pixmap transforms, inspection and editing | `flip_rotate`, `warp`, `color_count`, `color_topusage`, `pixel`, `set_pixel`, `set_rect` | Available: `Pixmap.rotate`, `flip`, `warp`, `color_count`, `colors`, `top_color`, `pixel`, `with_pixel`, `fill`; edits return new pixmaps | |
 | Pixmap image formats | PNG, JPEG, PAM, PNM family, PS, PSD output; additional input formats | Partial: direct Pixmap input and output support PNG and JPEG; Pillow interop covers some other cases | #431 |
 | Rendering speed | MuPDF | Not established for this main. The published 0.1.0 corpus comparison reports 2.03× and 2.34× the time at 72 and 144 dpi respectively, on one machine | #365; [method and limitations](README.md) |
 

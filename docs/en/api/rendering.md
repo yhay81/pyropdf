@@ -35,6 +35,27 @@ Pixmap.channels
 
 Bytes per pixel: 1 for gray, 3 for RGB, and one more with alpha.
 
+### `Pixmap.color_count`
+
+```python
+Pixmap.color_count(rect=None)
+```
+
+Returns the number of distinct pixels, alpha included, inside
+`rect`, or in the whole pixmap when `rect` is `None`; 0 for a rect
+outside it.
+
+### `Pixmap.colors`
+
+```python
+Pixmap.colors(rect=None, *, max_colors=...)
+```
+
+Returns each distinct pixel, alpha included, inside `rect`, or in
+the whole pixmap when `rect` is `None`, with the number of pixels
+that have it, in ascending order of the channels. More than
+`max_colors` distinct pixels raise `ValueError`; `None` lifts it.
+
 ### `Pixmap.colorspace`
 
 ```python
@@ -51,6 +72,26 @@ Pixmap.crop(rect)
 
 Returns the pixels of `rect`, `(x0, y0, x1, y1)` in whole pixels,
 cut to the pixmap; a rect outside it raises `ValueError`.
+
+### `Pixmap.fill`
+
+```python
+Pixmap.fill(value, rect=None)
+```
+
+Returns a copy with every pixel inside `rect` set to `value`, one
+integer of 0 to 255 per channel, alpha included, or every pixel when
+`rect` is `None`. `rect` is `(x0, y0, x1, y1)` in whole pixels, cut
+to the pixmap; one outside it changes nothing.
+
+### `Pixmap.flip`
+
+```python
+Pixmap.flip(axis)
+```
+
+Returns the pixmap mirrored left to right for `"horizontal"`, or top
+to bottom for `"vertical"`.
 
 ### `Pixmap.from_bytes`
 
@@ -97,6 +138,14 @@ Pixmap.open(path)
 
 Reads a PNG or JPEG file into a pixmap, as `from_bytes` decodes it.
 
+### `Pixmap.pixel`
+
+```python
+Pixmap.pixel(x, y)
+```
+
+Returns the channels of the pixel at column `x` and row `y`.
+
 ### `Pixmap.resolution`
 
 ```python
@@ -105,6 +154,15 @@ Pixmap.resolution
 
 The horizontal and vertical resolution in dots per inch, which PNG
 output records.
+
+### `Pixmap.rotate`
+
+```python
+Pixmap.rotate(degrees)
+```
+
+Returns the pixmap turned clockwise by `degrees`, a multiple of 90;
+a quarter turn swaps the width, the height, and the resolution.
 
 ### `Pixmap.save`
 
@@ -185,6 +243,30 @@ Pixmap.to_rgb()
 
 Returns the pixmap in RGB, keeping alpha.
 
+### `Pixmap.top_color`
+
+```python
+Pixmap.top_color(rect=None)
+```
+
+Returns the share of the pixels inside `rect`, or in the whole
+pixmap when `rect` is `None`, that the most frequent pixel has, and
+that pixel, alpha included; of pixels as frequent, the least in
+ascending order of the channels. `None` for a rect outside it.
+
+### `Pixmap.warp`
+
+```python
+Pixmap.warp(quad, width, height)
+```
+
+Returns `width` by `height` pixels whose corners are the corners
+`ul`, `ur`, `ll`, and `lr` of `quad`, in pixel coordinates from the
+top left: each pixel's center maps through the perspective map onto
+the quadrilateral, where the pixmap is sampled bilinearly between
+pixel centers and clamped to its edge pixels. The quadrilateral must
+be convex; at most 64,000,000 pixels.
+
 ### `Pixmap.width`
 
 ```python
@@ -200,6 +282,15 @@ Pixmap.with_alpha()
 ```
 
 Returns the pixmap with an alpha channel, opaque where it had none.
+
+### `Pixmap.with_pixel`
+
+```python
+Pixmap.with_pixel(x, y, value)
+```
+
+Returns a copy with the pixel at column `x` and row `y` set to
+`value`, one integer of 0 to 255 per channel, alpha included.
 
 ### `Pixmap.without_alpha`
 

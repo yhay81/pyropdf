@@ -14,10 +14,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use jpeg_encoder::{ColorType, Encoder as JpegEncoder, PixelDensity, PixelDensityUnit};
 use pyo3::buffer::PyBuffer;
-use pyo3::exceptions::{PyBufferError, PyImportError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyBufferError, PyImportError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyInt};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyTuple};
 use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::ocr;
 use pyropdf_engine::render::{self, Raster, RasterError};
@@ -26,6 +26,9 @@ use pyropdf_store::value::Reference;
 use crate::document::_Document;
 use crate::errors::{EncryptedDocumentError, LimitError, PdfError, StaleObjectError, store_error};
 use crate::pixel_ops::{self, Area, Layout};
+
+/// The most distinct colors that `Pixmap.colors` returns by default.
+const DEFAULT_MAX_COLORS: u64 = 65_536;
 
 /// Metres per inch, for PNG's pixels per metre.
 const METRES_PER_INCH: f64 = 0.0254;
@@ -123,6 +126,38 @@ impl Pixmap {
             cut(y1, self.height),
         );
         Ok((area.0 < area.2 && area.1 < area.3).then_some(area))
+    }
+
+    /// Returns the pixels of `rect` as [`Pixmap::area`] cuts it, or every
+    /// pixel for `None`.
+    fn region(&self, rect: Option<(i64, i64, i64, i64)>) -> PyResult<Option<Area>> {
+        match rect {
+            None => Ok(Some((0, 0, self.width, self.height))),
+            Some(rect) => self.area(rect),
+        }
+    }
+
+    /// Returns the offset of the pixel at column `x` and row `y`, or
+    /// raises `IndexError` outside the pixmap.
+    fn position(&self, x: i64, y: i64) -> PyResult<usize> {
+        if !(0..i64::from(self.width)).contains(&x) || !(0..i64::from(self.height)).contains(&y) {
+            return Err(PyIndexError::new_err(format!(
+                "pixel ({x}, {y}) is outside the {}x{} pixmap",
+                self.width, self.height
+            )));
+        }
+        Ok((y as usize * self.width as usize + x as usize) * self.channels() as usize)
+    }
+
+    /// Checks that `value` has one byte per channel.
+    fn value(&self, value: Vec<u8>) -> PyResult<Vec<u8>> {
+        if value.len() != self.channels() as usize {
+            return Err(PyValueError::new_err(format!(
+                "value must have {} components, one per channel: {value:?}",
+                self.channels()
+            )));
+        }
+        Ok(value)
     }
 
     /// Returns the samples and their layout, which OCR reads.
@@ -468,6 +503,220 @@ impl Pixmap {
             follow(self.resolution.1, height, self.height),
         );
         Ok(scaled)
+    }
+
+    /// Returns the pixmap turned clockwise by `degrees`, a multiple of 90;
+    /// a quarter turn swaps the width, the height, and the resolution.
+    fn rotate(&self, py: Python<'_>, degrees: i64) -> PyResult<Self> {
+        if degrees % 90 != 0 {
+            return Err(PyValueError::new_err(format!(
+                "degrees must be a multiple of 90: {degrees}"
+            )));
+        }
+        let quarters = degrees.rem_euclid(360) / 90;
+        if quarters == 0 {
+            return Ok(self.share());
+        }
+        let layout = self.layout();
+        let mut rotated = self.derive(
+            layout,
+            py.detach(|| pixel_ops::rotate(&self.data, layout, quarters as u8)),
+        );
+        if quarters % 2 == 1 {
+            rotated.width = self.height;
+            rotated.height = self.width;
+            rotated.resolution = (self.resolution.1, self.resolution.0);
+        }
+        Ok(rotated)
+    }
+
+    /// Returns the pixmap mirrored left to right for `"horizontal"`, or top
+    /// to bottom for `"vertical"`.
+    fn flip(&self, py: Python<'_>, axis: &str) -> PyResult<Self> {
+        let vertical = match axis {
+            "horizontal" => false,
+            "vertical" => true,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "axis must be 'horizontal' or 'vertical': {axis:?}"
+                )));
+            }
+        };
+        let layout = self.layout();
+        Ok(self.derive(
+            layout,
+            py.detach(|| pixel_ops::flip(&self.data, layout, vertical)),
+        ))
+    }
+
+    /// Returns `width` by `height` pixels whose corners are the corners
+    /// `ul`, `ur`, `ll`, and `lr` of `quad`, in pixel coordinates from the
+    /// top left: each pixel's center maps through the perspective map onto
+    /// the quadrilateral, where the pixmap is sampled bilinearly between
+    /// pixel centers and clamped to its edge pixels. The quadrilateral must
+    /// be convex; at most 64,000,000 pixels.
+    fn warp(
+        &self,
+        py: Python<'_>,
+        quad: [(f64, f64); 4],
+        width: u32,
+        height: u32,
+    ) -> PyResult<Self> {
+        let pixels = u64::from(width) * u64::from(height);
+        if width == 0 || height == 0 || pixels > pixel_ops::MAX_PIXELS {
+            return Err(PyValueError::new_err(format!(
+                "a warped pixmap has 1 to {} pixels, not {width}x{height}",
+                pixel_ops::MAX_PIXELS
+            )));
+        }
+        let projection = pixel_ops::Projection::new(quad).ok_or_else(|| {
+            PyValueError::new_err(format!("quad must be finite and convex: {quad:?}"))
+        })?;
+        let layout = self.layout();
+        Ok(self.derive(
+            Layout {
+                width,
+                height,
+                ..layout
+            },
+            py.detach(|| pixel_ops::warp(&self.data, layout, projection, width, height)),
+        ))
+    }
+
+    /// Returns the channels of the pixel at column `x` and row `y`.
+    fn pixel<'py>(&self, py: Python<'py>, x: i64, y: i64) -> PyResult<Bound<'py, PyTuple>> {
+        let at = self.position(x, y)?;
+        PyTuple::new(py, &self.data[at..at + self.channels() as usize])
+    }
+
+    /// Returns a copy with the pixel at column `x` and row `y` set to
+    /// `value`, one integer of 0 to 255 per channel, alpha included.
+    fn with_pixel(&self, py: Python<'_>, x: i64, y: i64, value: Vec<u8>) -> PyResult<Self> {
+        self.position(x, y)?;
+        let value = self.value(value)?;
+        let layout = self.layout();
+        let area = (x as u32, y as u32, x as u32 + 1, y as u32 + 1);
+        Ok(self.derive(
+            layout,
+            py.detach(|| pixel_ops::fill(&self.data, layout, area, &value)),
+        ))
+    }
+
+    /// Returns a copy with every pixel inside `rect` set to `value`, one
+    /// integer of 0 to 255 per channel, alpha included, or every pixel when
+    /// `rect` is `None`. `rect` is `(x0, y0, x1, y1)` in whole pixels, cut
+    /// to the pixmap; one outside it changes nothing.
+    #[pyo3(signature = (value, rect=None))]
+    fn fill(
+        &self,
+        py: Python<'_>,
+        value: Vec<u8>,
+        rect: Option<(i64, i64, i64, i64)>,
+    ) -> PyResult<Self> {
+        let value = self.value(value)?;
+        let area = match rect {
+            None => Some((0, 0, self.width, self.height)),
+            Some(rect) => self.area(rect)?,
+        };
+        let Some(area) = area else {
+            return Ok(self.share());
+        };
+        let layout = self.layout();
+        Ok(self.derive(
+            layout,
+            py.detach(|| pixel_ops::fill(&self.data, layout, area, &value)),
+        ))
+    }
+
+    /// Returns the number of distinct pixels, alpha included, inside
+    /// `rect`, or in the whole pixmap when `rect` is `None`; 0 for a rect
+    /// outside it.
+    #[pyo3(signature = (rect=None))]
+    fn color_count(&self, py: Python<'_>, rect: Option<(i64, i64, i64, i64)>) -> PyResult<u64> {
+        let Some(area) = self.region(rect)? else {
+            return Ok(0);
+        };
+        let layout = self.layout();
+        let mut count = 0;
+        py.detach(|| {
+            pixel_ops::color_runs(&self.data, layout, area, |_, _| {
+                count += 1;
+                true
+            });
+        });
+        Ok(count)
+    }
+
+    /// Returns each distinct pixel, alpha included, inside `rect`, or in
+    /// the whole pixmap when `rect` is `None`, with the number of pixels
+    /// that have it, in ascending order of the channels. More than
+    /// `max_colors` distinct pixels raise `ValueError`; `None` lifts it.
+    #[pyo3(signature = (rect=None, *, max_colors=Some(DEFAULT_MAX_COLORS)))]
+    fn colors<'py>(
+        &self,
+        py: Python<'py>,
+        rect: Option<(i64, i64, i64, i64)>,
+        max_colors: Option<u64>,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        if max_colors == Some(0) {
+            return Err(PyValueError::new_err("max_colors must be positive"));
+        }
+        let dict = PyDict::new(py);
+        let Some(area) = self.region(rect)? else {
+            return Ok(dict);
+        };
+        let layout = self.layout();
+        let mut runs = Vec::new();
+        let mut exceeded = false;
+        py.detach(|| {
+            pixel_ops::color_runs(&self.data, layout, area, |pixel, count| {
+                if max_colors.is_some_and(|max| runs.len() as u64 >= max) {
+                    exceeded = true;
+                    return false;
+                }
+                runs.push((pixel, count));
+                true
+            });
+        });
+        if exceeded {
+            return Err(PyValueError::new_err(format!(
+                "the pixmap has more than {} distinct colors; pass a larger max_colors",
+                max_colors.unwrap_or_default()
+            )));
+        }
+        for (pixel, count) in runs {
+            dict.set_item(PyTuple::new(py, pixel)?, count)?;
+        }
+        Ok(dict)
+    }
+
+    /// Returns the share of the pixels inside `rect`, or in the whole
+    /// pixmap when `rect` is `None`, that the most frequent pixel has, and
+    /// that pixel, alpha included; of pixels as frequent, the least in
+    /// ascending order of the channels. `None` for a rect outside it.
+    #[pyo3(signature = (rect=None))]
+    fn top_color<'py>(
+        &self,
+        py: Python<'py>,
+        rect: Option<(i64, i64, i64, i64)>,
+    ) -> PyResult<Option<(f64, Bound<'py, PyTuple>)>> {
+        let Some(area) = self.region(rect)? else {
+            return Ok(None);
+        };
+        let layout = self.layout();
+        let mut top: Option<(Vec<u8>, u64)> = None;
+        py.detach(|| {
+            pixel_ops::color_runs(&self.data, layout, area, |pixel, count| {
+                if top.as_ref().is_none_or(|(_, most)| count > *most) {
+                    top = Some((pixel, count));
+                }
+                true
+            });
+        });
+        let (x0, y0, x1, y1) = area;
+        let total = f64::from(x1 - x0) * f64::from(y1 - y0);
+        top.map(|(pixel, count)| Ok((count as f64 / total, PyTuple::new(py, pixel)?)))
+            .transpose()
     }
 
     /// Decodes PNG or JPEG `data`, any bytes-like object, into a pixmap:
