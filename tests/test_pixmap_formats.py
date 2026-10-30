@@ -206,6 +206,185 @@ def test_invalid_and_oversized_input_fails(data: bytes, message: str) -> None:
         Pixmap.from_bytes(data)
 
 
+# GIF, TIFF, JPEG 2000, and run-length BMP (issue 446).
+
+
+def _matches_pillow(pixmap: Pixmap, data: bytes, tolerance: int = 0) -> None:
+    gray = pixmap.colorspace is Colorspace.GRAY
+    reference = Image.open(io.BytesIO(data)).convert(("L" if gray else "RGB") + ("A" if pixmap.alpha else ""))
+    assert (pixmap.width, pixmap.height) == reference.size
+    expected = reference.tobytes()
+    assert len(bytes(pixmap)) == len(expected)
+    assert max(abs(a - b) for a, b in zip(bytes(pixmap), expected, strict=True)) <= tolerance
+
+
+@pytest.mark.parametrize("mode", ["L", "P", "RGB"])
+def test_gif_decodes_its_first_frame_as_pillow_does(mode: str) -> None:
+    image = _image("L") if mode == "L" else _image("RGB").convert(mode)
+    data = _saved(image, "GIF")
+    assert data.startswith(b"GIF8")
+
+    pixmap = Pixmap.from_bytes(data)
+
+    assert _shape(pixmap) == (WIDTH, HEIGHT, False, False)
+    _matches_pillow(pixmap, data)
+
+
+def test_gif_transparency_becomes_alpha() -> None:
+    image = _image("RGB").convert("P")
+    out = io.BytesIO()
+    image.save(out, "GIF", transparency=image.getpixel((0, 0)))
+    later = Image.new("P", (WIDTH, HEIGHT))
+    out_two = io.BytesIO()
+    image.save(out_two, "GIF", save_all=True, append_images=[later])
+
+    pixmap = Pixmap.from_bytes(out.getvalue())
+
+    assert _shape(pixmap) == (WIDTH, HEIGHT, False, True)
+    assert bytes(pixmap)[3] == 0
+    _matches_pillow(pixmap, out.getvalue())
+    # An animation decodes its first frame.
+    _matches_pillow(Pixmap.from_bytes(out_two.getvalue()), out_two.getvalue())
+
+
+TIFF_COMPRESSIONS = [None, "tiff_lzw", "tiff_adobe_deflate", "packbits"]
+
+
+@pytest.mark.parametrize("compression", TIFF_COMPRESSIONS)
+@pytest.mark.parametrize("mode", ["1", "L", "LA", "P", "RGB", "RGBA"])
+def test_tiff_decodes_as_pillow_does(mode: str, compression: str | None) -> None:
+    image = _image("RGB").convert(mode) if mode in {"1", "P"} else _image(mode)
+    out = io.BytesIO()
+    image.save(out, "TIFF", compression=compression, dpi=(150, 150))
+    data = out.getvalue()
+
+    pixmap = Pixmap.from_bytes(data)
+
+    assert _shape(pixmap) == (WIDTH, HEIGHT, mode in {"1", "L", "LA"}, "A" in mode)
+    assert pixmap.resolution == (150, 150)
+    _matches_pillow(pixmap, data)
+
+
+@pytest.mark.parametrize(
+    ("mode", "compression", "tolerance"), [("1", "group4", 0), ("L", "jpeg", 2), ("RGB", "jpeg", 2)]
+)
+def test_tiff_fax_and_jpeg_compression_decode(mode: str, compression: str, tolerance: int) -> None:
+    image = _image("RGB").convert(mode) if mode == "1" else _image(mode)
+    out = io.BytesIO()
+    image.save(out, "TIFF", compression=compression)
+
+    _matches_pillow(Pixmap.from_bytes(out.getvalue()), out.getvalue(), tolerance)
+
+
+def test_tiff_sixteen_bits_keep_their_high_byte() -> None:
+    image = Image.new("I;16", (2, 1))
+    image.putdata([0x1234, 0xFEDC])
+
+    pixmap = Pixmap.from_bytes(_saved(image, "TIFF"))
+
+    assert _shape(pixmap) == (2, 1, True, False)
+    assert bytes(pixmap) == bytes([0x12, 0xFE])
+
+
+@pytest.mark.parametrize("mode", ["L", "RGB", "RGBA"])
+def test_jpeg_2000_decodes_as_pillow_does(mode: str) -> None:
+    for kind in ("jp2", "j2k"):
+        out = io.BytesIO()
+        _image(mode).save(out, "JPEG2000", irreversible=False, no_jp2=kind == "j2k")
+        data = out.getvalue()
+
+        pixmap = Pixmap.from_bytes(data)
+
+        assert _shape(pixmap) == (WIDTH, HEIGHT, mode == "L", mode == "RGBA")
+        _matches_pillow(pixmap, data)
+
+
+def _oversized_gif() -> bytes:
+    """Return a one-pixel GIF whose logical screen is 65535 pixels square."""
+    data = _saved(Image.new("P", (1, 1)), "GIF")
+    return data[:6] + struct.pack("<HH", 65535, 65535) + data[10:]
+
+
+def _tiff(image: Image.Image, compression: str) -> bytes:
+    out = io.BytesIO()
+    image.save(out, "TIFF", compression=compression)
+    return out.getvalue()
+
+
+def _rle(bits: int, codes: bytes, width: int = 6, height: int = 3) -> bytes:
+    """Return a run-length encoded BMP of a four-color palette: black, red, green, and blue."""
+    palette = bytes([0, 0, 0, 0, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 0])
+    info = struct.pack("<IiiHHIIiiII", 40, width, height, 1, bits, 1 if bits == 8 else 2, len(codes), 0, 0, 4, 0)
+    offset = 14 + len(info) + len(palette)
+    return b"BM" + struct.pack("<IHHI", offset + len(codes), 0, 0, offset) + info + palette + codes
+
+
+RLE8 = (
+    bytes([3, 1, 0, 3, 2, 3, 1, 0, 0, 0])  # a run of red, then an absolute run of green, blue, red, padded
+    + bytes([0, 2, 2, 0, 2, 3])  # a delta of two pixels, then two of blue
+    + bytes([0, 0, 6, 2, 0, 1])  # the next line, a row of green, and the end of the bitmap
+)
+RLE4 = (
+    bytes([6, 0x12])  # red, green, red, green, red, green
+    + bytes([0, 0, 0, 3, 0x31, 0x20, 0, 0])  # the next line, then an absolute run of blue, red, green, padded
+    + bytes([0, 2, 0, 1, 5, 0x33])  # a delta to the next line, then five blue pixels
+    + bytes([0, 1])
+)
+
+
+@pytest.mark.parametrize(("bits", "codes"), [(8, RLE8), (4, RLE4)])
+def test_run_length_bmp_decodes_as_pillow_does(bits: int, codes: bytes) -> None:
+    data = _rle(bits, codes)
+
+    pixmap = Pixmap.from_bytes(data)
+
+    assert _shape(pixmap) == (6, 3, False, False)
+    _matches_pillow(pixmap, data)
+    # The bottom row comes first in the file.
+    red, green, blue = [255, 0, 0], [0, 255, 0], [0, 0, 255]
+    if bits == 8:
+        assert bytes(pixmap)[-18:] == bytes(red * 3 + green + blue + red)
+
+
+@pytest.mark.parametrize(
+    ("data", "message"),
+    [
+        (_rle(8, bytes([3, 1, 0, 0])), "end-of-bitmap"),
+        (_rle(8, bytes([0, 5, 1, 2])), "end-of-bitmap"),
+        (_bmp(1, 1, 4, [b"\0"], compression=1), "RLE8 has 8"),
+        (b"II\xbc\x01" + b"\0" * 20, "JPEG XR is not supported"),
+        (_oversized_gif(), "pixmap holds 1 to"),
+        (b"GIF89a\x01\0\x01\0", "not a GIF"),
+        (b"II*\0\x08\0\0\0", "not a TIFF"),
+        (b"\xff\x4f\xff\x51\0", "not a JPEG 2000"),
+        (_saved(Image.new("CMYK", (2, 2)), "TIFF"), "CMYK TIFF"),
+        (_tiff(Image.new("1", (2, 2)), "group3"), "Fax3"),
+    ],
+)
+def test_new_formats_refuse_what_they_do_not_read(data: bytes, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        Pixmap.from_bytes(data)
+
+
+def test_an_oversized_tiff_fails_before_decoding() -> None:
+    # A compressed strip, whose length does not depend on the size.
+    data = _tiff(Image.new("L", (1, 1)), "tiff_adobe_deflate")
+    # Rewrite the width, height, and rows per strip, tags 256, 257, and 278, to 65535.
+    count = struct.unpack_from("<H", data, struct.unpack_from("<I", data, 4)[0])[0]
+    entries = struct.unpack_from("<I", data, 4)[0] + 2
+    patched = bytearray(data)
+    for index in range(count):
+        at = entries + index * 12
+        tag, kind = struct.unpack_from("<HH", data, at)
+        if tag in {256, 257, 278}:
+            struct.pack_into("<HHIH", patched, at, tag, 3, 1, 65535) if kind == 3 else struct.pack_into(
+                "<HHII", patched, at, tag, 4, 1, 65535
+            )
+
+    with pytest.raises(ValueError, match="pixmap holds 1 to"):
+        Pixmap.from_bytes(bytes(patched))
+
+
 def test_files_decode_as_bytes_do(tmp_path: Path) -> None:
     for name, data in [
         ("image.ppm", _saved(_image("RGB"), "PPM")),

@@ -774,12 +774,17 @@ impl Pixmap {
             .transpose()
     }
 
-    /// Decodes PNG, JPEG, PBM, PGM, PPM (plain or raw), PAM, or
-    /// uncompressed BMP `data`, any bytes-like object, into a pixmap: PNG
-    /// keeps its alpha and resolution, BMP its resolution and bit-field
-    /// alpha, and PAM its alpha; JPEG and the portable anymaps decode at
-    /// 96 dpi. Samples of more than 8 bits scale to 8, and palettes of only
-    /// gray decode to gray. CMYK is refused. At most 64,000,000 pixels.
+    /// Decodes PNG, JPEG, PBM, PGM, PPM (plain or raw), PAM, BMP
+    /// (uncompressed or RLE8 and RLE4), GIF, TIFF, or JPEG 2000 `data`, any
+    /// bytes-like object, into a pixmap: PNG and TIFF keep their alpha and
+    /// resolution, BMP its resolution and bit-field alpha, PAM and JPEG 2000
+    /// their alpha, and GIF decodes its first frame, with alpha where it is
+    /// transparent; JPEG, GIF, JPEG 2000, and the portable anymaps decode at
+    /// 96 dpi. Samples of more than 8 bits scale to 8, and BMP palettes of
+    /// only gray decode to gray. TIFF reads gray, gray with alpha, RGB,
+    /// RGBA, and palettes, uncompressed or with PackBits, LZW, Deflate,
+    /// JPEG, or CCITT Group 4. CMYK, CCITT Group 3 TIFF, and JPEG XR are
+    /// refused. At most 64,000,000 pixels.
     #[staticmethod]
     fn from_bytes(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Self> {
         let bytes = PyBuffer::<u8>::get(data)?.to_vec(py)?;
