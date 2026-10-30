@@ -38,6 +38,8 @@ from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _rende
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
 from pyropdf._sanitize import SanitizeReport, sanitize
+from pyropdf._signing import DEFAULT_RESERVE
+from pyropdf._signing import sign as _sign
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
     from pyropdf._profiles import Profiles
+    from pyropdf._signing import Signer, Timestamper
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -543,6 +546,55 @@ class Document:
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
+
+    def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
+        self,
+        field: str,
+        signer: Signer,
+        *,
+        timestamper: Timestamper | None = None,
+        reason: str | None = None,
+        location: str | None = None,
+        contact: str | None = None,
+        reserve: int = DEFAULT_RESERVE,
+    ) -> bytes:
+        """Sign the document as PAdES B-B, or B-T with ``timestamper``, in a new revision, and return its bytes.
+
+        ``field`` names an unsigned signature field, or a new invisible one
+        on the first page. The signature dictionary, the field, and any
+        unsaved edits are saved incrementally after the opened file's bytes,
+        so earlier signatures stay intact, and the CMS signature of
+        ``signer`` covers every byte but its own (ETSI EN 319 142-1). The
+        signature dictionary's ``/M`` is the current time, and ``reason``,
+        ``location``, and ``contact`` become ``/Reason``, ``/Location``, and
+        ``/ContactInfo``.
+
+        ``timestamper`` receives the digest of the signature value and the
+        name of its hash algorithm, and returns an RFC 3161 time-stamp token
+        over that digest; pyropdf makes no network access. A token that
+        does not stamp the signature raises :class:`ValueError`.
+
+        ``reserve`` is the bytes kept for the CMS signature, 16 KiB by
+        default; a signature that needs more raises :class:`ValueError`.
+        Afterwards the document reads the signed revision, so that
+        ``save(path, incremental=True)`` writes the returned bytes, and its
+        undo history starts anew. A failure undoes the edits that signing
+        made. An encrypted document raises :class:`ValueError`.
+        """
+        return _sign(
+            self,
+            field,
+            signer,
+            timestamper=timestamper,
+            reason=reason,
+            location=location,
+            contact=contact,
+            reserve=reserve,
+        )
+
+    def _reopen(self, data: bytes) -> None:
+        """Read ``data``, a later revision of the opened file, in place of the document."""
+        self._setup(lambda limits: _Document.open_buffer(data, limits, None), self._limits)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,

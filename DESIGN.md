@@ -503,7 +503,8 @@ crates/
                    writer, security handler                        (hayro-syntax)
   pyropdf-schema   typed object descriptors generated from the Arlington PDF Model
   pyropdf-engine   content model and provenance, rendering, writing,
-                   understanding, budgets                          (hayro, krilla, RTen)
+                   understanding, signing, budgets                 (hayro, krilla, RTen,
+                                                                    RustCrypto)
   pyropdf-python   the PyO3 binding, the only crate that depends on PyO3
 python/pyropdf     the Python API
 tests              Python tests: the public contract
@@ -517,6 +518,14 @@ splits further only when compile times or dependency boundaries call for it.
 Packaging follows pylopdf: maturin, one `abi3-py311` wheel per platform,
 free-threaded wheels for 3.14t and 3.15t, and a PyEmscripten wheel. Fonts and
 OCR models stay separate data packages.
+
+Signing (issue #397, `evidence/signing`) uses the RustCrypto line of `cms`
+0.3, `x509-cert` 0.3, `der` 0.8, `p256` and `p384` 0.14, `pkcs8` 0.11,
+`sha2` 0.11, and `hmac` 0.13, with `cms` built without its `builder` feature
+so that the `rsa` crate stays out of the tree. pyropdf signs with ECDSA keys
+itself; RSA, HSM, and PKCS#11 keys sign through a callback, and a time-stamp
+is a callback that returns an RFC 3161 token, so the library makes no
+network access.
 
 ## 12. Verification
 

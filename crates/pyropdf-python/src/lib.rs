@@ -25,6 +25,7 @@ mod pixmap;
 mod render;
 mod schema;
 mod security;
+mod sign;
 mod source;
 mod text;
 #[cfg(windows)]
@@ -110,6 +111,8 @@ mod _core {
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]
     use super::security::{security_state, unlock};
+    #[pymodule_export]
+    use super::sign::{_Signer, sign_document};
     #[pymodule_export]
     use super::text::{
         document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,

@@ -10,4 +10,5 @@ pub mod forms;
 pub mod ocr;
 pub mod pages;
 pub mod render;
+pub mod sign;
 pub mod standard;

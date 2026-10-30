@@ -1,5 +1,6 @@
 # Type stubs for the extension module that crates/pyropdf-python builds.
 
+from collections.abc import Callable
 from os import PathLike
 from typing import Any, Literal, TypeAlias, final
 
@@ -129,6 +130,26 @@ def insert_ocr_layer(
     rotation: int,
     /,
 ) -> bool: ...
+
+class _Signer:
+    @staticmethod
+    def from_pem(key: bytes, certificates: bytes, password: bytes | None = None, /) -> _Signer: ...
+    @staticmethod
+    def from_pkcs12(data: bytes, password: str, /) -> _Signer: ...
+    @staticmethod
+    def callback(certificates: list[bytes], sign: Callable[[bytes], bytes], /) -> _Signer: ...
+    @property
+    def certificates(self) -> list[bytes]: ...
+    @property
+    def digest_algorithm(self) -> str: ...
+
+def sign_document(
+    data: bytes,
+    reserve: int,
+    signer: _Signer,
+    timestamper: Callable[[bytes, str], bytes] | None = None,
+    /,
+) -> bytes: ...
 
 class _OcrEngine:
     def __init__(
