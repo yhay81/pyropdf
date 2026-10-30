@@ -117,6 +117,33 @@ class History:
         """Redo one step; raises :class:`PdfError` with nothing to redo or inside a transaction."""
         _core.history_redo(self._document._core())  # noqa: SLF001
 
+    def save(self) -> bytes:
+        """Return the steps, their names, and the position among them as bytes that :meth:`restore` reads.
+
+        The bytes hold what each step wrote, not the document: restoring
+        them needs the document they were saved from. They hold the objects
+        that the steps wrote unencrypted, even for an encrypted document.
+        Raises :class:`PdfError` inside a transaction.
+        """
+        return _core.history_save(self._document._core())  # noqa: SLF001
+
+    def restore(self, data: bytes) -> None:
+        """Restore the steps that :meth:`save` returned, and make the document as it was then.
+
+        The document must be the one that the steps were saved from, opened
+        again and not edited since: raises :class:`ValueError` for another
+        document and :class:`PdfError` for an edited one or inside a
+        transaction. Every byte is checked before the document changes, so
+        :class:`MalformedPdfError` for data that is not a saved history and
+        :class:`LimitError` for what the document's limits refuse leave the
+        document and its history as they were. :attr:`max_size` still
+        applies: the steps that do not fit it are dropped, as after an edit.
+        """
+        if not isinstance(data, bytes):
+            msg = f"data must be bytes, not {type(data).__name__}"
+            raise TypeError(msg)
+        _core.history_restore(self._document._core(), data)  # noqa: SLF001
+
     def clear(self) -> None:
         """Forget every step, keeping the document as it is."""
         _core.history_clear(self._document._core())  # noqa: SLF001

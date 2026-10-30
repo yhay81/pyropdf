@@ -111,6 +111,36 @@ History.redo()
 
 Redo one step; raises `PdfError` with nothing to redo or inside a transaction.
 
+### `History.save`
+
+```python
+History.save() -> bytes
+```
+
+Return the steps, their names, and the position among them as bytes that `restore` reads.
+
+The bytes hold what each step wrote, not the document: restoring
+them needs the document they were saved from. They hold the objects
+that the steps wrote unencrypted, even for an encrypted document.
+Raises `PdfError` inside a transaction.
+
+### `History.restore`
+
+```python
+History.restore(data: bytes)
+```
+
+Restore the steps that `save` returned, and make the document as it was then.
+
+The document must be the one that the steps were saved from, opened
+again and not edited since: raises `ValueError` for another
+document and `PdfError` for an edited one or inside a
+transaction. Every byte is checked before the document changes, so
+`MalformedPdfError` for data that is not a saved history and
+`LimitError` for what the document's limits refuse leave the
+document and its history as they were. `max_size` still
+applies: the steps that do not fit it are dropped, as after an edit.
+
 ### `History.clear`
 
 ```python

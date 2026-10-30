@@ -35,7 +35,7 @@ rendering accuracy need independent comparisons (#430).
 | Embedded files | `embfile_*` | Available: `doc.attachments`; attachment annotations are separate | #162, #227 |
 | Low-level objects | `xref_object`, `update_object`, `update_stream` | Available: `doc.objects`, `page.obj`, typed objects | |
 | Undo and redo | `journal_*` | Available in memory: `doc.transaction`, `doc.history` | |
-| Persist and reload undo history | `journal_save`, `journal_load` | Missing | #428 |
+| Persist and reload undo history | `journal_save`, `journal_load` | Available: `doc.history.save()`, `doc.history.restore()`; the bytes are pyropdf's own | #428 |
 
 ## Reading and understanding
 

@@ -28,6 +28,7 @@
 
 mod base;
 mod document;
+mod journal;
 mod stale;
 pub(crate) mod table;
 mod transaction;
@@ -45,7 +46,7 @@ use crate::settle::{Mark, Structure};
 pub(crate) use stale::Stale;
 
 pub use base::{Base, MemoryBase};
-pub use document::{Document, HistoryStatus};
+pub use document::{Document, HistoryStatus, RestoredHistory};
 pub use transaction::{Savepoint, Transaction};
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
