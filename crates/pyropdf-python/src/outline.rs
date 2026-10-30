@@ -981,9 +981,29 @@ fn objects(reads: &mut Reads<'_>, catalog: &Dict) -> PyResult<Vec<u32>> {
     Ok(out)
 }
 
+/// Returns the references between the objects that `transaction` sees.
+pub(crate) fn references(
+    document: &_Document,
+    transaction: &Transaction,
+    budget: &Budget,
+) -> PyResult<Arc<refs::References>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let parent = Arc::clone(transaction.parent());
+    let references = document.references.get(&parent, budget).map_err(store)?;
+    let after = transaction.snapshot();
+    Ok(match parent.changes(&after, budget).map_err(store)? {
+        Some(changes) if !changes.is_empty() => Arc::new(
+            references
+                .update(&mut Reads::new(&after, budget), &changes)
+                .map_err(store)?,
+        ),
+        _ => references,
+    })
+}
+
 /// Frees the objects of `candidates`, and those that only they refer to,
 /// that nothing refers to after the edits of `transaction`.
-fn free(
+pub(crate) fn free(
     document: &_Document,
     transaction: &mut Transaction,
     candidates: &[u32],
@@ -993,17 +1013,7 @@ fn free(
         return Ok(());
     }
     let store = |e: pyropdf_store::Error| store_error(&e);
-    let parent = Arc::clone(transaction.parent());
-    let references = document.references.get(&parent, budget).map_err(store)?;
-    let after = transaction.snapshot();
-    let references = match parent.changes(&after, budget).map_err(store)? {
-        Some(changes) if !changes.is_empty() => Arc::new(
-            references
-                .update(&mut Reads::new(&after, budget), &changes)
-                .map_err(store)?,
-        ),
-        _ => references,
-    };
+    let references = references(document, transaction, budget)?;
     let freed = refs::unreferenced(&references, &[], candidates, budget).map_err(store)?;
     for &number in freed.iter() {
         transaction.free(number, budget).map_err(store)?;
