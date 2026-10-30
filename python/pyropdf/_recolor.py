@@ -245,8 +245,9 @@ class _PageEdit:
     drawn: dict[str, int | Stream]
     appearances: list[tuple[Dictionary, str, str | None, int]]
     """The annotation, the appearance's key, its state or ``None``, and the pending copy."""
-    colors: list[tuple[Dictionary, str, list[int | Real]]]
-    """The color arrays that change: the dictionary, the key, and the new array."""
+    colors: list[tuple[Dictionary, str | None, str, list[int | Real]]]
+    """The color arrays that change: the annotation, ``"MK"`` for an array of its appearance characteristics, the
+    key, and the new array."""
 
 
 def recolor(document: Document, target: object, indexes: Iterable[int]) -> RecolorReport:
@@ -279,17 +280,23 @@ class _Recoloring:
         self.unconverted: list[Unconverted] = []
         self.omitted = 0
         self.seen: set[tuple[int, str, str]] = set()
+        #: What the Forms and images being read leave as they were, so that a later drawing reports it again.
+        self.recorders: list[dict[tuple[str, str], None]] = []
         self.pending: list[_Pending] = []
         self.forms = 0
         #: The copy of each drawing of a Form XObject, by the form, its inherited resources, and spaces.
-        self.copies: dict[tuple[object, ...], tuple[int | None, Any]] = {}
-        self.converted: dict[int, int | None] = {}
+        self.copies: dict[tuple[object, ...], tuple[int | None, Any, tuple[tuple[str, str], ...]]] = {}
+        #: The conversion of each image object, and what it leaves as it was.
+        self.converted: dict[int, tuple[int | None, tuple[tuple[str, str], ...]]] = {}
         self.parsed: dict[int, Operations] = {}
         self.page_index = 0
         self.page_images: dict[int, PageImage] | None = None
         self.current: Page | None = None
 
     def report(self, kind: str, detail: str) -> None:
+        for recorder in self.recorders:
+            if len(recorder) < _MAX_UNCONVERTED:
+                recorder[kind, detail] = None
         key = (self.page_index, kind, detail)
         if key in self.seen:
             return
@@ -316,11 +323,11 @@ class _Recoloring:
 
     def _annotation(self, annotation: Dictionary, edit: _PageEdit) -> None:
         for key in _ANNOTATION_COLORS:
-            self._color_array(annotation, key, edit)
+            self._color_array(annotation, None, key, edit)
         characteristics = annotation.get("MK")
         if isinstance(characteristics, Dictionary):
             for key in _APPEARANCE_COLORS:
-                self._color_array(characteristics, key, edit)
+                self._color_array(annotation, "MK", key, edit)
         appearances = annotation.get("AP")
         if not isinstance(appearances, Dictionary):
             return
@@ -334,13 +341,14 @@ class _Recoloring:
                 if copy is not None:
                     edit.appearances.append((annotation, key, state, copy))
 
-    def _color_array(self, dictionary: Dictionary, key: str, edit: _PageEdit) -> None:
+    def _color_array(self, annotation: Dictionary, inner: str | None, key: str, edit: _PageEdit) -> None:
+        dictionary = annotation if inner is None else annotation[inner]
         value = dictionary.get(key)
         values = _numbers(tuple(value)) if isinstance(value, Array) else None
         family = _FAMILIES.get(len(values)) if values is not None else None
         if values is None or family is None or family == self.target:
             return
-        edit.colors.append((dictionary, key, [_number(v) for v in _convert(family, values, self.target)]))
+        edit.colors.append((annotation, inner, key, [_number(v) for v in _convert(family, values, self.target)]))
 
     def _edit(
         self, operations: Operations, resources: Dictionary | None, state: _State, depth: int
@@ -497,6 +505,7 @@ class _Recoloring:
         key = (number, None if resources is own else _key(inherited), state.fill, state.stroke)
         cached = self.copies.get(key)
         if cached is not None:
+            self._replay(cached[2])
             return cached[0]
         if depth > _MAX_FORM_DEPTH:
             self.report("form", f"Form XObjects nested deeper than {_MAX_FORM_DEPTH}")
@@ -513,7 +522,12 @@ class _Recoloring:
                 self.report("form", f"object {number} cannot be read")
                 return None
             self.parsed[number] = operations
-        edited = self._edit(operations, resources, _State(state.fill, state.stroke), depth)
+        notes: dict[tuple[str, str], None] = {}
+        self.recorders.append(notes)
+        try:
+            edited = self._edit(operations, resources, _State(state.fill, state.stroke), depth)
+        finally:
+            self.recorders.pop()
         copy = None
         if edited is not None:
             out, drawn = edited
@@ -521,15 +535,31 @@ class _Recoloring:
             self.pending.append(_Pending(form, data, resources, drawn))
             copy = len(self.pending) - 1
         # The cache holds the inherited resources, so that their handle stays theirs.
-        self.copies[key] = (copy, inherited)
+        self.copies[key] = (copy, inherited, tuple(notes))
         return copy
+
+    def _replay(self, notes: tuple[tuple[str, str], ...]) -> None:
+        """Report again, for this page, what a Form or image that an earlier drawing read left as it was."""
+        for kind, detail in notes:
+            self.report(kind, detail)
 
     def _image(self, stream: Stream, name: str) -> int | None:
         """Return the pending conversion of an image object, or ``None`` when it stays."""
         number = _xref(stream)
-        if number in self.converted:
-            return self.converted[number]
-        self.converted[number] = None
+        cached = self.converted.get(number)
+        if cached is not None:
+            self._replay(cached[1])
+            return cached[0]
+        notes: dict[tuple[str, str], None] = {}
+        self.recorders.append(notes)
+        try:
+            converted = self._convert_image(stream, number, name)
+        finally:
+            self.recorders.pop()
+        self.converted[number] = (converted, tuple(notes))
+        return converted
+
+    def _convert_image(self, stream: Stream, number: int, name: str) -> int | None:
         if stream.get("ImageMask") is True:
             return None
         space = self._space(stream.get("ColorSpace"), None, 0) if "ColorSpace" in stream else None
@@ -563,7 +593,6 @@ class _Recoloring:
         }
         self.pending.append(_Pending(stream, data, entries=entries, jpeg=jpeg))
         self.images += 1
-        self.converted[number] = len(self.pending) - 1
         return len(self.pending) - 1
 
     def _inline(self, image: InlineImage, resources: Dictionary | None) -> InlineImage:
@@ -579,8 +608,7 @@ class _Recoloring:
         data = _inline_data(entries.get("F", entries.get("Filter")), image.data)
         if (
             data is None
-            or "D" in entries
-            or "Decode" in entries
+            or any(key in entries for key in ("D", "Decode", "DP", "DecodeParms"))
             or space.components == 0
             or bits != 8  # noqa: PLR2004 - 8-bit samples only.
             or not isinstance(width, int)
@@ -597,7 +625,9 @@ class _Recoloring:
             sample = data[at : at + step]
             color = colors.get(sample)
             if color is None:
-                converted = space.convert(tuple(byte / 255 for byte in sample), self.target)
+                # An Indexed sample is an index; another space's is a component of 0 to 1.
+                values = tuple(sample) if space.lookup else tuple(byte / 255 for byte in sample)
+                converted = space.convert(values, self.target)
                 if converted is None:
                     self.report("image", f"inline image in {space.detail}")
                     return image
@@ -622,8 +652,8 @@ class _Recoloring:
                     edit.page.operations = Operations(edit.operations, tail=edit.tail)
                 if edit.drawn:
                     _repoint_page(edit.page, {name: self._object(value) for name, value in edit.drawn.items()})
-                for dictionary, key, values in edit.colors:
-                    dictionary[key] = values
+                for annotation, inner, key, values in edit.colors:
+                    _set_color(annotation, inner, key, values)
                 for annotation, key, state, at in edit.appearances:
                     _set_appearance(annotation, key, state, self._object(at))
 
@@ -734,6 +764,17 @@ def _jpeg_quality(data: bytes) -> int:
             break
         at += 2 + length
     return _DEFAULT_QUALITY
+
+
+def _set_color(annotation: Dictionary, inner: str | None, key: str, values: list[int | Real]) -> None:
+    """Set an annotation's color array, through appearance characteristics of its own, which other widgets may share."""
+    dictionary = annotation
+    if inner is not None:
+        dictionary = annotation[inner]
+        if dictionary.is_indirect:
+            annotation[inner] = dict(dictionary.items())
+            dictionary = annotation[inner]
+    dictionary[key] = values
 
 
 def _set_appearance(annotation: Dictionary, key: str, state: str | None, appearance: Stream) -> None:

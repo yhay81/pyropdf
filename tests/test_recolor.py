@@ -293,6 +293,31 @@ def test_an_inline_image_converts() -> None:
     assert_gray(doc.pages[0])
 
 
+def test_an_indexed_inline_image_converts_by_index() -> None:
+    content = b"q 100 0 0 100 0 0 cm BI /W 2 /H 1 /BPC 8 /CS [/I /RGB 1 <000000FF0000>] ID \x00\x01\nEI Q"
+    doc = pyropdf.open(pages_pdf(content.decode("latin-1")))
+    assert doc.recolor("gray").images == 1
+    (image,) = [op for op in doc.pages[0].operations if op.operator == "BI"]
+    assert isinstance(image, pyropdf.InlineImage)
+    assert zlib.decompress(image.data) == bytes([0, 76])
+
+
+def test_an_inline_image_with_decode_parameters_is_reported() -> None:
+    # PNG Up predictor: each row starts with its filter byte.
+    samples = zlib.compress(b"\x02\xff\x00\x00\x00\xff\x00")
+    content = (
+        b"q 100 0 0 100 0 0 cm BI /W 2 /H 1 /BPC 8 /CS /RGB /F /Fl "
+        b"/DP << /Predictor 12 /Colors 3 /Columns 2 >> ID " + samples + b"\nEI Q"
+    )
+    doc = pyropdf.open(pages_pdf(content.decode("latin-1")))
+    report = doc.recolor("gray")
+    assert report.images == 0
+    assert [(u.kind, u.detail) for u in report.unconverted] == [("image", "inline image in DeviceRGB")]
+    (image,) = [op for op in doc.pages[0].operations if op.operator == "BI"]
+    assert isinstance(image, pyropdf.InlineImage)
+    assert image.dictionary["CS"] == "RGB"
+
+
 # Annotations.
 
 
@@ -310,6 +335,24 @@ def test_annotation_appearances_and_colors_convert() -> None:
     assert_gray(doc.pages[0])
 
 
+def test_shared_appearance_characteristics_stay_on_other_pages() -> None:
+    extra = {
+        4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R /Annots [21 0 R] >>",
+        6: "<< /Type /Page /Parent 2 0 R /Contents 7 0 R /Annots [22 0 R] >>",
+        20: "<< /BC [1 0 0] /BG [0 0 1] >>",
+        21: "<< /Type /Annot /Subtype /Widget /Rect [10 10 90 90] /MK 20 0 R >>",
+        22: "<< /Type /Annot /Subtype /Widget /Rect [10 10 90 90] /MK 20 0 R >>",
+    }
+    doc = pyropdf.open(pages_pdf("", "", extra=extra))
+    doc.pages[0].recolor("gray")
+    first, second = (page.obj["Annots"][0]["MK"] for page in doc.pages)
+    assert [float(v) for v in first["BC"]] == [pytest.approx(0.299)]
+    assert [float(v) for v in first["BG"]] == [pytest.approx(0.114)]
+    assert second.xref == 20
+    assert [float(v) for v in second["BC"]] == [1.0, 0.0, 0.0]
+    assert [float(v) for v in doc.objects[20]["BG"]] == [0.0, 0.0, 1.0]
+
+
 # The call.
 
 
@@ -320,6 +363,25 @@ def test_pages_select_the_pages_and_the_call_is_one_step() -> None:
     assert [colors(page.operations)[0][0] for page in doc.pages] == ["g", "rg", "g"]
     doc.history.undo()
     assert [colors(page.operations)[0][0] for page in doc.pages] == ["rg", "rg", "rg"]
+
+
+def test_shared_objects_are_reported_on_every_page_that_draws_them() -> None:
+    image = stream(
+        "\xff\x00\x00\x00\x00\xff",
+        "/Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 /ColorSpace /DeviceRGB "
+        "/Mask [0 10 0 10 0 10]",
+    )
+    resources = "/XObject << /Im0 20 0 R /Fm0 21 0 R >> /ColorSpace << /L0 [/Lab << /WhitePoint [1 1 1] >>] >>"
+    extra = {20: image, 21: form("/L0 cs 50 0 0 sc")}
+    doc = pyropdf.open(pages_pdf("/Im0 Do /Fm0 Do", "/Fm0 Do /Im0 Do", resources=resources, extra=extra))
+    report = doc.recolor("gray")
+    image_detail = "/Im0 (object 20): its mask reads its samples"
+    assert [(u.page, u.kind, u.detail) for u in report.unconverted] == [
+        (0, "image", image_detail),
+        (0, "colorspace", "Lab"),
+        (1, "colorspace", "Lab"),
+        (1, "image", image_detail),
+    ]
 
 
 def test_a_bad_target_raises() -> None:
