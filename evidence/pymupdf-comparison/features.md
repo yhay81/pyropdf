@@ -46,7 +46,7 @@ rendering accuracy need independent comparisons (#430).
 | Search and selection | `search_for`, `get_text_selection` | Available: `page.search`, `page.selection` | |
 | Tables | `find_tables` | Available: `page.tables`; option and quality parity not established | #253, #430 |
 | Markdown | `to_markdown` | Available: `page.markdown`, `doc.markdown`; tagged structure and retrieval features remain | #253 |
-| Retrieval chunks and structured document JSON | `to_chunks`, `to_json` | Partial: page layout records exist, but no equivalent document-level export and chunking | #253, #427 |
+| Retrieval chunks and structured document JSON | `to_chunks`, `to_json` | Yes: `Document.to_json` and `Document.to_chunks`, with a character budget instead of tokens; see `evidence/document-chunks/` | #253, #427 |
 | OCR and searchable OCR layer | `get_textpage_ocr`, `Pixmap.pdfocr_tobytes` | Available: offline `page.ocr` and `page.apply_ocr`; hybrid region selection remains | #145, #146, #253 |
 | Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`; provenance for all nested content remains | #104 |
 | Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records | #359 |

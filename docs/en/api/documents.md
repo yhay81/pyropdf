@@ -649,6 +649,53 @@ of UTF-8 in all raise `LimitError` with code
 `markdown_output_size` without a partial result;
 `max_size=None` lifts the limit.
 
+### `Document.to_json`
+
+```python
+Document.to_json(
+    pages: Iterable[int] | None = None,
+    *,
+    table_strategy: Literal['lines', 'text'] | None = 'lines',
+    max_size: int | None = 67108864,
+) -> str
+```
+
+Return the given pages of the current version as JSON: each page's size and its elements.
+
+The document is `{"pages": [...]}`, each page `{"index",
+"width", "height", "elements"}`, and each element as
+`Element.to_dict` gives it: a heading, paragraph, list item,
+table, or image in reading order with its page index and its box in
+display space. Headings, lists, and tables are found as
+`markdown` finds them, and `pages` and `table_strategy`
+are as for it. More than `max_size` bytes of UTF-8 element text
+raise `LimitError` with code `export_output_size` without a
+partial result; `max_size=None` lifts the limit.
+
+### `Document.to_chunks`
+
+```python
+Document.to_chunks(
+    pages: Iterable[int] | None = None,
+    *,
+    max_chars: int = 2000,
+    table_strategy: Literal['lines', 'text'] | None = 'lines',
+    max_size: int | None = 67108864,
+) -> list[Chunk]
+```
+
+Return the elements of `to_json` grouped into retrieval chunks of at most `max_chars` characters.
+
+A chunk is a run of consecutive elements joined as Markdown, headings
+marked with `#`; each heading starts a chunk, and
+`Chunk.section` names the headings above it. A paragraph or
+list item longer than `max_chars` is split at white space, its
+pieces keeping its page and box; a table, image, or heading is never
+split, and a chunk of one that is longer is
+`Chunk.oversized`. Every element keeps its page index and box,
+and `Chunk.to_dict` gives JSON-safe values. `pages`,
+`table_strategy`, and `max_size` are as for `to_json`.
+
 ### `Document.flatten`
 
 ```python

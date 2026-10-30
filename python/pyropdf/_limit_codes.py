@@ -44,6 +44,7 @@ LimitCode: TypeAlias = Literal[
     "stream_data_size",
     "object_value_depth",
     "markdown_output_size",
+    "export_output_size",
     "pdf_output_size",
     "pixmap_output_size",
     "svg_output_size",
@@ -154,6 +155,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "markdown_output_size": (
             "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is "
             "larger than the call's `max_size`."
+        ),
+        "export_output_size": (
+            "The UTF-8 of the element text that `Document.to_json` or `Document.to_chunks` exports is larger than the "
+            "call's `max_size`."
         ),
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
         "pixmap_output_size": "Encoding a pixmap writes more bytes than the call's `max_size`.",

@@ -33,6 +33,7 @@ from pyropdf._attachments import Attachment, Attachments
 from pyropdf._canvas import Canvas, PathBuilder
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._check import StructuralDefect, StructuralReport
+from pyropdf._chunks import Chunk, Element
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -178,6 +179,7 @@ __all__ = [
     "Char",
     "Chars",
     "CheckBox",
+    "Chunk",
     "Circle",
     "ClaimChange",
     "Clip",
@@ -194,6 +196,7 @@ __all__ = [
     "Document",
     "DocumentClosedError",
     "DocumentLimits",
+    "Element",
     "EncryptedDocumentError",
     "Encryption",
     "Field",

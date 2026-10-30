@@ -228,6 +228,12 @@ unit = "bytes"
 default = 67_108_864
 reached = "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`."
 
+[codes.export_output_size]
+message = "the exported text is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The UTF-8 of the element text that `Document.to_json` or `Document.to_chunks` exports is larger than the call's `max_size`."
+
 [codes.pdf_output_size]
 message = "the PDF output is too large"
 unit = "bytes"
