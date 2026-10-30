@@ -2,12 +2,17 @@
 """Profile pyropdf's rendering of the documents where it trails PyMuPDF most.
 
     cargo install rustfilt
+    git apply evidence/pymupdf-comparison/patches/split-draw.patch
     CARGO_PROFILE_RELEASE_DEBUG=line-tables-only uv sync --reinstall-package pyropdf
     uv run python evidence/pymupdf-comparison/profile.py
 
 macOS only: ``/usr/bin/sample`` records the stacks. The extension needs line
 tables to name its frames, hence the variable above, which changes no code;
-``rustfilt`` demangles the frames. For each document and
+``rustfilt`` demangles the frames. ``patches/split-draw.patch`` keeps the
+two steps after rasterization, taking the pixels and narrowing them, out of
+line, so that each has a frame of its own; ``patches/rgb8-draw.patch`` is
+the candidate fix measured in ``results/profile-<platform>-rgb8.md``, with the
+output renamed. Neither patch is committed to the crates. For each document and
 resolution, a worker renders every page in a loop and reads its samples,
 opening the document again each pass as ``bench.py`` does, while ``sample``
 records its main thread. The script charges each sample's leaf frame to the
@@ -92,6 +97,8 @@ PHASES = {
     "interpret and encode (hayro::render_into)": "hayro::render_into",
     "glyph fills (hayro::Renderer::fill_outline_run)": "<hayro::Renderer>::fill_outline_run",
     "rasterize (vello_cpu Dispatcher::rasterize)": "Dispatcher>::rasterize",
+    "take pixels (pyropdf_engine::render::take)": ("pyropdf_engine::render::take", "unpremultiply_rgba8"),
+    "RGBA to RGB (pyropdf_engine::render::to_layout)": "pyropdf_engine::render::to_layout",
     "store, bridge, and open (pyropdf)": ("pyropdf_store::", "pyropdf_engine::bridge::", "_Document>::__pymethod_open"),
 }
 FRAME = re.compile(
