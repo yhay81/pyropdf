@@ -7,7 +7,9 @@ use std::mem;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use super::base::Origin;
-use super::{Base, Transaction, Version};
+use super::{Base, Transaction, Version, journal};
+use crate::Result;
+use crate::budget::{Budget, BudgetVec};
 use crate::settle::Settlers;
 
 /// The versions of a document: the current one, the writer lock through
@@ -175,6 +177,86 @@ impl Document {
         self.shared.writer().history.set_limit(limit);
     }
 
+    /// Returns the bytes of the history: every version that undo and redo
+    /// can reach, as what it wrote, with the current one marked. `labels`
+    /// name the steps around the current version: the first `undo` of them
+    /// the nearest steps that undo takes, oldest first, and the rest the
+    /// nearest that redo takes; a step that they do not reach is named
+    /// `""`. [`Document::restore_history`] restores it into the document as
+    /// opened.
+    ///
+    /// The bytes hold the objects that transactions wrote unencrypted, and
+    /// no object of the base. Waits for the writer lock as
+    /// [`Document::begin`] does; refuses with a limit what the budget does
+    /// not allow.
+    pub fn save_history(&self, labels: &[String], undo: usize, budget: &Budget) -> Result<Vec<u8>> {
+        let mut versions = BudgetVec::new(budget);
+        let position = {
+            let writer = self.shared.idle_writer();
+            versions.try_extend(
+                writer
+                    .history
+                    .steps
+                    .iter()
+                    .map(|step| Arc::clone(&step.version)),
+            )?;
+            writer.history.position
+        };
+        journal::save(&versions, position, (labels, undo), budget)
+    }
+
+    /// Restores the history that [`Document::save_history`] saved, and
+    /// makes its current version current. The document must be as opened:
+    /// its history holds one version, which no transaction wrote.
+    ///
+    /// Reads and checks every byte, and builds every version, before it
+    /// touches the document, so a refusal changes nothing: refuses as
+    /// malformed what is not a saved history, and with a limit what the
+    /// budget does not allow. Returns [`RestoredHistory::Changed`] for a
+    /// document that is not as opened and [`RestoredHistory::OtherDocument`]
+    /// for a history that belongs to another document, without changing
+    /// either. The history keeps its limit, so restoring drops the steps
+    /// that do not fit it, as commits do.
+    pub fn restore_history(&self, data: &[u8], budget: &Budget) -> Result<RestoredHistory> {
+        let opened = self.current();
+        if opened.has_changes() || self.history().undo + self.history().redo > 0 {
+            return Ok(RestoredHistory::Changed);
+        }
+        let Some(restored) = journal::restore(&opened, data, budget)? else {
+            return Ok(RestoredHistory::OtherDocument);
+        };
+        let mut writer = self.shared.idle_writer();
+        if !Arc::ptr_eq(writer.history.current(), &opened) || writer.history.steps.len() > 1 {
+            return Ok(RestoredHistory::Changed);
+        }
+        let limit = writer.history.limit;
+        let mut built = restored.versions.into_vec().into_iter();
+        let oldest = built.next().expect("a restored history has a version");
+        let mut history = History::new(oldest.version, None);
+        let mut next = writer.next;
+        for step in built {
+            next = next.max(step.version.next);
+            history.commit(step.version, step.added, step.released);
+        }
+        while history.position > restored.position {
+            history.undo();
+        }
+        history.set_limit(limit);
+        // Fitting the limit dropped the oldest steps and the farthest redo
+        // steps, and their names go with them.
+        let mut labels = restored.labels.into_vec();
+        let undo = history.position;
+        labels.truncate(restored.position + history.steps.len() - 1 - undo);
+        labels.drain(..restored.position - undo);
+        writer.next = next.max(history.steps[0].version.next);
+        self.shared.publish(history.current());
+        writer.history = history;
+        Ok(RestoredHistory::Restored {
+            labels,
+            position: undo,
+        })
+    }
+
     /// Returns the versions of the history, oldest first, and the index of
     /// the current one.
     #[cfg(test)]
@@ -284,6 +366,23 @@ impl Drop for WriterLock {
             self.shared.idle.notify_all();
         }
     }
+}
+
+/// What [`Document::restore_history`] did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RestoredHistory {
+    /// The history is restored: the names of the steps it keeps, oldest
+    /// first, and how many of them undo can take.
+    Restored {
+        /// The names of the steps.
+        labels: Vec<String>,
+        /// How many steps undo can take.
+        position: usize,
+    },
+    /// The history belongs to another document, and nothing changed.
+    OtherDocument,
+    /// The document is not as opened, and nothing changed.
+    Changed,
 }
 
 /// The versions that undo and redo publish (DESIGN.md section 4.1).

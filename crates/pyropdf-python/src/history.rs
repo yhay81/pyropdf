@@ -14,10 +14,12 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, ThreadId};
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyropdf_store::budget::Budget;
 use pyropdf_store::settle::Scope;
-use pyropdf_store::version::{Document, Savepoint, Transaction, Version};
+use pyropdf_store::version::{Document, RestoredHistory, Savepoint, Transaction, Version};
 
 use crate::document::_Document;
 use crate::errors::{PdfError, store_error};
@@ -360,4 +362,51 @@ pub fn history_clear(document: &_Document) -> PyResult<()> {
     store.set_history_limit(limit);
     sync(&mut lock(&document.history.steps), &store);
     Ok(())
+}
+
+/// Returns the bytes of the history, which `history_restore` restores into
+/// the document as opened.
+#[pyfunction]
+pub fn history_save<'py>(py: Python<'py>, document: &_Document) -> PyResult<Bound<'py, PyBytes>> {
+    outside_transaction(document, "save the history")?;
+    let store = document.document()?;
+    let (names, position) = {
+        let mut steps = lock(&document.history.steps);
+        sync(&mut steps, &store);
+        (steps.names.clone(), steps.position)
+    };
+    let budget = document.budget();
+    let data = py
+        .detach(|| store.save_history(&names, position, &budget))
+        .map_err(|e| store_error(&e))?;
+    Ok(PyBytes::new(py, &data))
+}
+
+/// Restores the history that `history_save` returned into the document as
+/// opened, and makes its current version current.
+#[pyfunction]
+pub fn history_restore(py: Python<'_>, document: &_Document, data: &[u8]) -> PyResult<()> {
+    outside_transaction(document, "restore a history")?;
+    let store = document.document()?;
+    let budget = document.budget();
+    match py
+        .detach(|| store.restore_history(data, &budget))
+        .map_err(|e| store_error(&e))?
+    {
+        RestoredHistory::Restored { labels, position } => {
+            let mut steps = lock(&document.history.steps);
+            *steps = Steps {
+                names: labels,
+                position,
+            };
+            sync(&mut steps, &store);
+            Ok(())
+        }
+        RestoredHistory::OtherDocument => Err(PyValueError::new_err(
+            "the history was saved from another document",
+        )),
+        RestoredHistory::Changed => Err(PdfError::new_err(
+            "a history is restored only into a document as opened, before any edit",
+        )),
+    }
 }
