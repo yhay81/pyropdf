@@ -59,6 +59,7 @@ LimitCode: TypeAlias = Literal[
     "form_default_appearance_size",
     "form_field_parent_depth",
     "script_size",
+    "text_edit_forms",
     "text_line_count",
     "named_destination_count",
     "named_destination_edge_count",
@@ -183,6 +184,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "script_size": (
             "A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or "
             "written."
+        ),
+        "text_edit_forms": (
+            "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
         ),
         "text_line_count": "The text that a form field's appearance draws lays out in more than 4,096 lines.",
         "named_destination_count": (

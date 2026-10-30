@@ -20,6 +20,7 @@ import contextlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pyropdf._errors import LimitError
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Dictionary, Name, Real, Stream, String
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
 #: Nesting of Form XObjects that a replacement follows from the page.
 _MAX_FORM_DEPTH = 16
-#: Form XObjects that one replacement reads.
+#: Drawings of Form XObjects that one replacement reads.
 _MAX_FORMS = 4096
 #: Fonts that one discarded transaction shows every code of.
 _PROBE_FONTS = 256
@@ -102,13 +103,25 @@ class _State:
 
 @dataclass(slots=True)
 class _Scope:
-    """A content stream: the page's or a Form XObject's, with its resources."""
+    """A content stream as one drawing reads it: the page's, or a Form XObject's where a ``Do`` draws it."""
 
     operations: Operations
     resources: Dictionary | None
     stream: Stream | None
     """The Form XObject, or ``None`` for the page's content."""
     depth: int
+    forms: dict[int, _Scope] = field(default_factory=dict)
+    """The drawing of the Form XObject that each ``Do`` draws, by the operation's index."""
+
+
+@dataclass(slots=True)
+class _Copy:
+    """A drawing of a Form XObject that changed, which becomes a new Form."""
+
+    scope: _Scope
+    operations: list[Operation | InlineImage]
+    drawn: dict[str, int]
+    """The copies that it draws, by the name that it draws them by."""
 
 
 @dataclass(slots=True)
@@ -142,7 +155,7 @@ def replace_text(page: Page, old: str, new: str, *, count: int | None) -> int:
 
 
 class _Editor:
-    """One replacement: reads the page's scopes, then writes the ones that changed."""
+    """One replacement: reads the drawings of the page, then writes the ones that changed."""
 
     def __init__(self, page: Page, old: str, new: str, count: int | None) -> None:
         self.page = page
@@ -152,52 +165,56 @@ class _Editor:
         self.replaced = 0
         self.fonts: dict[object, _Font] = {}
         self.forms = 0
-        #: The new operations of each scope that changed, by the scope's place.
-        self.changed: dict[int, list[Operation | InlineImage]] = {}
-        #: The scopes, in the order that the walk read them.
-        self.scopes: list[_Scope] = []
-        #: The parent of each Form scope and the name it draws it by.
-        self.parents: dict[int, tuple[int, str]] = {}
+        #: The operations of each Form XObject, parsed once for all its drawings.
+        self.parsed: dict[object, Operations] = {}
+        self.root = _Scope(page.operations, _resources(page), None, 0)
+        #: The new operations of the page's content, when they changed.
+        self.operations: list[Operation | InlineImage] | None = None
+        #: The copies that the page draws, by the name that it draws them by.
+        self.drawn: dict[str, int] = {}
+        #: The drawings that changed, each after the copies that it draws.
+        self.copies: list[_Copy] = []
 
     def read(self) -> None:
-        """Find the scopes and fonts, read the fonts' codes, and plan the replacements."""
-        page_resources = _resources(self.page)
-        self._collect(_Scope(self.page.operations, page_resources, None, 0), None)
+        """Find the drawings and fonts, read the fonts' codes, and plan the replacements in drawing order."""
+        self._collect(self.root)
         self._probe([font for font in self.fonts.values() if font.simple])
         self._refuse_composite()
-        for index, scope in enumerate(self.scopes):
-            if self.count is not None and self.replaced >= self.count:
-                break
-            operations = self._edit(scope)
-            if operations is not None:
-                self.changed[index] = operations
+        edited = self._edit(self.root, _State())
+        if edited is not None:
+            self.operations, self.drawn = edited
 
-    def _collect(self, scope: _Scope, parent: tuple[int, str] | None) -> None:
-        """Add ``scope`` and the Form XObjects that it draws, and the fonts they use."""
-        place = len(self.scopes)
-        self.scopes.append(scope)
-        if parent is not None:
-            self.parents[place] = parent
+    def _collect(self, scope: _Scope) -> None:
+        """Add the drawings of the Form XObjects that ``scope`` draws, and the fonts they use."""
         fonts = _sub(scope.resources, "Font")
         xobjects = _sub(scope.resources, "XObject")
-        for operation in scope.operations:
+        for index, operation in enumerate(scope.operations):
             if not isinstance(operation, Operation):
                 continue
             if operation.operator == "Tf" and operation.operands and isinstance(operation.operands[0], Name):
                 self._font(fonts, operation.operands[0])
             elif operation.operator == "Do" and operation.operands and isinstance(operation.operands[0], Name):
-                name = operation.operands[0]
-                form = xobjects.get(name) if xobjects is not None else None
+                form = xobjects.get(operation.operands[0]) if xobjects is not None else None
                 if not isinstance(form, Stream) or form.get("Subtype") != "Form":
                     continue
-                if scope.depth + 1 > _MAX_FORM_DEPTH or self.forms >= _MAX_FORMS:
-                    continue
+                if scope.depth + 1 > _MAX_FORM_DEPTH:
+                    msg = f"replace_text reaches Form XObjects nested deeper than {_MAX_FORM_DEPTH}"
+                    code = "text_edit_forms"
+                    raise LimitError(code, msg)
+                if self.forms >= _MAX_FORMS:
+                    msg = f"replace_text reaches more than {_MAX_FORMS} drawings of Form XObjects"
+                    code = "text_edit_forms"
+                    raise LimitError(code, msg)
                 self.forms += 1
                 resources = form.get("Resources")
                 if not isinstance(resources, Dictionary):
                     resources = scope.resources
-                child = _Scope(Operations.parse(form.read()), resources, form, scope.depth + 1)
-                self._collect(child, (place, str(name)))
+                key = _key(form)
+                if key not in self.parsed:
+                    self.parsed[key] = Operations.parse(form.read())
+                child = _Scope(self.parsed[key], resources, form, scope.depth + 1)
+                scope.forms[index] = child
+                self._collect(child)
 
     def _font(self, fonts: Dictionary | None, name: str) -> _Font | None:
         """Return the font of ``name`` in a scope's fonts, recording it on first use."""
@@ -218,8 +235,7 @@ class _Editor:
 
     def _refuse_composite(self) -> None:
         """Refuse when ``old`` is in the text of a composite font of the page's content."""
-        scope = self.scopes[0]
-        composite = {index for index, font in _shown(scope, self._font) if font is not None and not font.simple}
+        composite = {index for index, font in _shown(self.root, self._font) if font is not None and not font.simple}
         if not composite:
             return
         texts: dict[int, list[str]] = {}
@@ -231,14 +247,23 @@ class _Editor:
                 msg = f"{self.old!r} is drawn in a composite font, which replace_text does not edit"
                 raise ValueError(msg)
 
-    def _edit(self, scope: _Scope) -> list[Operation | InlineImage] | None:
-        """Return the scope's operations with the replacements, or ``None`` when none applies."""
+    def _edit(self, scope: _Scope, state: _State) -> tuple[list[Operation | InlineImage], dict[str, int]] | None:
+        """Return the drawing's operations with the replacements and the copies they draw, or ``None``.
+
+        A Form XObject starts from the state where it is drawn (ISO 32000-2
+        8.10.1). A drawing of one that changes draws its copy under a new
+        name, so the other drawings keep the Form.
+        """
         fonts = _sub(scope.resources, "Font")
+        xobjects = _sub(scope.resources, "XObject")
         states: list[_State] = []
-        state = _State()
         out: list[Operation | InlineImage] = []
+        drawn: dict[str, int] = {}
         changed = False
-        for operation in scope.operations:
+        for index, operation in enumerate(scope.operations):
+            if self.count is not None and self.replaced >= self.count:
+                out.extend(scope.operations[index:])
+                break
             if not isinstance(operation, Operation):
                 out.append(operation)
                 continue
@@ -256,8 +281,17 @@ class _Editor:
                     out.extend(replacement)
                     changed = True
                     continue
+            form = scope.forms.get(index)
+            edited = None if form is None else self._edit(form, state.copy())
+            if form is not None and edited is not None:
+                name = _fresh(str(operation.operands[0]), xobjects, drawn)
+                drawn[name] = len(self.copies)
+                self.copies.append(_Copy(form, *edited))
+                out.append(Operation("Do", (Name(name),)))
+                changed = True
+                continue
             out.append(operation)
-        return out if changed else None
+        return (out, drawn) if changed else None
 
     def _replace(self, operation: Operation, state: _State) -> list[Operation] | None:
         """Return the operations that replace ``operation``, or ``None`` when ``old`` is not in it."""
@@ -318,46 +352,31 @@ class _Editor:
         return out
 
     def write(self) -> None:
-        """Write the scopes that changed, in one transaction."""
+        """Write the copies and the page's content, in one transaction."""
         document = self.page.document
-        # A Form changes when it or a Form that it draws changes.
-        for place in sorted(self.changed, reverse=True):
-            parent = self.parents.get(place)
-            while parent is not None:
-                self.changed.setdefault(parent[0], list(self.scopes[parent[0]].operations))
-                parent = self.parents.get(parent[0])
-        copies: dict[int, int] = {}
+        numbers: list[int] = []
         with document.transaction():
-            for place in sorted(self.changed, reverse=True):
-                scope = self.scopes[place]
-                if scope.stream is None:
-                    continue
-                dictionary = {key: value for key, value in scope.stream.items() if key not in _STREAM_KEYS}
-                resources = self._own_resources(place, scope.stream.get("Resources"), copies)
-                if resources is not None:
-                    dictionary["Resources"] = resources
-                data = Operations(self.changed[place], tail=scope.operations.tail).to_bytes()
-                copies[place] = document.objects.add_stream(data, dictionary)
-            if 0 in self.changed:
-                self.page.operations = Operations(self.changed[0], tail=self.scopes[0].operations.tail)
-            drawn = self._drawn(0, copies)
-            if drawn:
-                _repoint_page(self.page, drawn)
+            for copy in self.copies:
+                stream = copy.scope.stream
+                assert stream is not None  # noqa: S101 - only Forms are copied.
+                dictionary = {key: value for key, value in stream.items() if key not in _STREAM_KEYS}
+                drawn = {name: numbers[place] for name, place in copy.drawn.items()}
+                if drawn:
+                    dictionary["Resources"] = self._own_resources(copy.scope, drawn)
+                data = Operations(copy.operations, tail=copy.scope.operations.tail).to_bytes()
+                numbers.append(document.objects.add_stream(data, dictionary))
+            if self.operations is not None:
+                self.page.operations = Operations(self.operations, tail=self.root.operations.tail)
+            if self.drawn:
+                _repoint_page(self.page, {name: numbers[place] for name, place in self.drawn.items()})
 
-    def _drawn(self, place: int, copies: dict[int, int]) -> dict[str, int]:
-        """Return the copies that scope ``place`` draws directly, by the name it draws them by."""
-        return {
-            name: copies[child] for child, (parent, name) in self.parents.items() if parent == place and child in copies
-        }
-
-    def _own_resources(self, place: int, resources: object, copies: dict[int, int]) -> dict[str, Any] | None:
-        """Return the resources of a Form's copy that draws the copies of its own Forms."""
-        drawn = self._drawn(place, copies)
-        if not drawn:
-            return None
+    def _own_resources(self, scope: _Scope, drawn: dict[str, int]) -> dict[str, Any]:
+        """Return the resources of a Form's copy that draws the copies ``drawn`` too."""
+        assert scope.stream is not None  # noqa: S101 - only Forms are copied.
+        resources = scope.stream.get("Resources")
         if not isinstance(resources, Dictionary):
             # A Form without resources uses its parent's, which name its Forms.
-            resources = self.scopes[place].resources
+            resources = scope.resources
         own = dict(resources.items()) if isinstance(resources, Dictionary) else {}
         xobjects = own.get("XObject")
         own["XObject"] = dict(xobjects.items()) if isinstance(xobjects, Dictionary) else {}
@@ -365,6 +384,14 @@ class _Editor:
         for name, number in drawn.items():
             own["XObject"][name] = document.objects[number]
         return own
+
+
+def _fresh(name: str, xobjects: Dictionary | None, taken: dict[str, int]) -> str:
+    """Return a name for a copy of the Form ``name`` that neither ``xobjects`` nor ``taken`` holds."""
+    number = 1
+    while f"{name}_{number}" in taken or (xobjects is not None and f"{name}_{number}" in xobjects):
+        number += 1
+    return f"{name}_{number}"
 
 
 #: The stream entries that a copy of a Form sets from its new data.

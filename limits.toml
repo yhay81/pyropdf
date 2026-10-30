@@ -320,6 +320,12 @@ unit = "bytes"
 default = 1_048_576
 reached = "A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written."
 
+[codes.text_edit_forms]
+message = "the text edit reaches too many form XObjects"
+unit = "drawings"
+default = 4_096
+reached = "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
+
 [codes.text_line_count]
 message = "the text has too many lines"
 unit = "lines"
