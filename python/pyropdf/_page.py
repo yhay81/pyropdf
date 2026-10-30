@@ -322,8 +322,9 @@ class Page:
         box under the matrix, rounded outward to whole pixels and
         intersected with the page, is all that is rasterized. A clip that
         leaves no pixel of the page raises :class:`PdfError`, and the size
-        limits of the whole page still apply. The GIL is released while
-        hayro renders.
+        limits of the whole page still apply: a raster is at most 65,408
+        pixels wide, 65,532 high, and 64,000,000 in all, and a larger one
+        raises ``ValueError``. The GIL is released while hayro renders.
         """
         linear = _render_matrix(matrix, dpi)
         rgba = _render_background(background, alpha=alpha)
