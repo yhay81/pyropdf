@@ -166,18 +166,26 @@ def test_entries_beyond_the_bound_raise(monkeypatch: pytest.MonkeyPatch) -> None
     assert raised.value.code == "page_fonts_entries"
 
 
-def test_a_page_tree_deeper_than_the_bound_raises() -> None:
-    depth = 70
-    objects = {1: "<< /Type /Catalog /Pages 2 0 R >>"}
-    for level in range(depth):
+def _tree(parents: int, *, resources: bool) -> pyropdf.Document:
+    """Return one page under a chain of ``parents`` page tree nodes, the root holding the fonts if ``resources``."""
+    objects = {1: "<< /Type /Catalog /Pages 2 0 R >>", 5000: FORM_ONLY[5]}
+    for level in range(parents):
         parent = f" /Parent {level + 1} 0 R" if level else ""
-        resources = " /Resources << /Font << /F1 5000 0 R >> >>" if level == 0 else ""
-        objects[2 + level] = f"<< /Type /Pages /Kids [{3 + level} 0 R] /Count 1{parent}{resources} >>"
-    objects[2 + depth] = f"<< /Type /Page /Parent {1 + depth} 0 R /MediaBox [0 0 100 100] >>"
-    objects[5000] = FORM_ONLY[5]
-    doc = pyropdf.open(build_raw_pdf(objects))
+        fonts = " /Resources << /Font << /F1 5000 0 R >> >>" if level == 0 and resources else ""
+        objects[2 + level] = f"<< /Type /Pages /Kids [{3 + level} 0 R] /Count 1{parent}{fonts} >>"
+    objects[2 + parents] = f"<< /Type /Page /Parent {1 + parents} 0 R /MediaBox [0 0 100 100] >>"
+    return pyropdf.open(build_raw_pdf(objects))
+
+
+def test_resources_inherited_through_64_parents() -> None:
+    assert _tree(63, resources=False).pages[0].fonts() == []
+    assert _tree(64, resources=False).pages[0].fonts() == []
+    assert [font.xref for font in _tree(64, resources=True).pages[0].fonts()] == [5000]
+
+
+def test_a_page_tree_deeper_than_the_bound_raises() -> None:
     with pytest.raises(LimitError) as raised:
-        doc.pages[0].fonts()
+        _tree(65, resources=True).pages[0].fonts()
     assert raised.value.code == "page_fonts_tree"
 
 

@@ -155,12 +155,15 @@ def _embedded(font: Dictionary) -> tuple[Stream, str] | None:
 
 def _page_resources(page: Page) -> object:
     node: object = page.obj
-    for _ in range(_MAX_TREE_DEPTH):
+    # The page itself, then up to _MAX_TREE_DEPTH parents.
+    for _ in range(_MAX_TREE_DEPTH + 1):
         if not isinstance(node, Dictionary):
             return None
         if "Resources" in node:
             return node["Resources"]
         node = node.get("Parent")
+    if not isinstance(node, Dictionary):
+        return None
     msg = f"the page inherits its resources through more than {_MAX_TREE_DEPTH} parents"
     code = "page_fonts_tree"
     raise LimitError(code, msg)
