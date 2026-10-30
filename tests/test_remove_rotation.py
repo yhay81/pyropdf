@@ -187,3 +187,68 @@ def test_a_stale_page_raises() -> None:
 
     with pytest.raises(pyropdf.StalePageError):
         page.remove_rotation()
+
+
+def _navigation(rotation: int) -> bytes:
+    """Return a turned page whose destinations come from links, an action, an outline, names, and the catalog."""
+    dest = "3 0 R"
+    return build_raw_pdf(
+        {
+            1: f"<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R /Names << /Dests 9 0 R >> "
+            f"/OpenAction [{dest} /XYZ 40 50 null] >>",
+            2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 300 200] >>",
+            3: f"<< /Type /Page /Parent 2 0 R /Rotate {rotation} /CropBox [10 5 290 195] "
+            f"/Annots [<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [{dest} /XYZ 120 90 0] >>] >>",
+            4: "<< /Type /Page /Parent 2 0 R /Annots [5 0 R 10 0 R 11 0 R 12 0 R] >>",
+            5: f"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [{dest} /XYZ 100 150 0] >>",
+            6: "<< /Type /Outlines /First 7 0 R /Last 8 0 R /Count 2 >>",
+            7: f"<< /Title (vertical) /Parent 6 0 R /Next 8 0 R /Dest [{dest} /FitV 80] >>",
+            8: f"<< /Title (horizontal) /Parent 6 0 R /Prev 7 0 R /Dest [{dest} /FitBH 90] >>",
+            9: f"<< /Names [(here) [{dest} /XYZ null 150 2] (area) [{dest} /FitR 50 60 150 160]] >>",
+            10: f"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /GoTo /D [{dest} /FitH 120] >> >>",
+            11: f"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [{dest} /XYZ 70 null null] >>",
+            12: f"<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /Dest [{dest} /Fit] >>",
+        }
+    )
+
+
+# What each destination of _navigation specifies, in the order _targets lists them: both coordinates, or
+# only a top or a left. A null coordinate keeps the viewer's, so only the specified display axis must hold.
+_LINK_KINDS = ["both", "both", "top", "left", "both"]
+_OUTLINE_KINDS = ["left", "top"]
+_NAME_KINDS = {"here": "top", "area": "both"}
+
+
+def _specified(target: object, kind: str, rotation: int) -> object:
+    """Return ``target`` reduced to what it specifies on the display of a page that was turned ``rotation``."""
+    if not isinstance(target, pyropdf.Destination) or target.point is None or kind == "both":
+        return target
+    vertical = (kind == "top") == (rotation % 180 == 0)
+    return (target.page, target.zoom, target.point.y if vertical else target.point.x)
+
+
+def _targets(doc: pyropdf.Document, rotation: int) -> tuple:
+    links = [link.target for page in doc.pages for link in page.links]
+    items = [item.destination for item in doc.outline.walk()]
+    names = dict(doc.destinations)
+    return (
+        [_specified(target, kind, rotation) for target, kind in zip(links, _LINK_KINDS, strict=True)],
+        [_specified(target, kind, rotation) for target, kind in zip(items, _OUTLINE_KINDS, strict=True)],
+        {name: _specified(target, _NAME_KINDS[name], rotation) for name, target in names.items()},
+    )
+
+
+@pytest.mark.parametrize("rotation", [90, 180, 270])
+def test_destinations_into_the_page_keep_their_place(rotation: int) -> None:
+    doc = pyropdf.open(_navigation(rotation))
+    before = _targets(doc, rotation)
+    assert all(target is not None for target in before[0] + before[1])
+
+    doc.pages[0].remove_rotation()
+
+    assert _targets(doc, rotation) == before
+    reopened = pyropdf.open(doc.to_bytes())
+    assert _targets(reopened, rotation) == before
+    doc.history.undo()
+    assert _targets(doc, rotation) == before
+    assert doc.to_bytes() == pyropdf.open(_navigation(rotation)).to_bytes()
