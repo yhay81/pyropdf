@@ -315,6 +315,24 @@ Annotation.replies: list[Annotation]
 
 The annotations of the page that reply to this one, in `/Annots` order.
 
+### `Annotation.sound`
+
+```python
+Annotation.sound(
+    *,
+    decode: bool = True,
+    max_size: int | None = 67108864,
+) -> Sound | None
+```
+
+Return the sound that a sound annotation plays, or `None` for another kind of annotation.
+
+`decode` and `max_size` read the `/Sound` stream as
+`Stream.read` reads it, with `LimitError` code
+`stream_data_size` past `max_size`. A sound annotation without a
+`/Sound` stream, and a sound whose `/R`, `/C`, `/B`, `/E`,
+or `/CO` is malformed, raise `MalformedPdfError`.
+
 ## `AnnotationFlags`
 
 Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.
@@ -579,6 +597,32 @@ An open line through two or more display points, as `page.annotations.add` takes
 
 The fields are those of `LineAnnotation`, with `line_endings` at
 the first and last points; one annotation holds at most 65,536 points.
+
+## `Sound`
+
+```python
+Sound(
+    data: bytes,
+    rate: float,
+    channels: int,
+    bits: int,
+    encoding: SoundEncoding,
+    compression: str | None,
+)
+```
+
+The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
+
+`data` holds the samples as the stream stores them after its filters,
+or the stream's bytes before them when read with `decode=False`; the
+samples stay in `encoding` and, for a compressed sound, in the format
+that `compression` names.
+
+## `SoundEncoding`
+
+How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).
+
+Members: `RAW`, `SIGNED`, `MU_LAW`, `A_LAW`.
 
 ## `Square`
 
