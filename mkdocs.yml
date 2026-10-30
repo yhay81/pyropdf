@@ -54,14 +54,43 @@ nav:
   - Home: index.md
   - Guide:
       - Getting started: getting-started.md
+      - Concepts: concepts.md
       - Reading content: reading.md
       - Rendering: rendering.md
       - Editing: editing.md
       - Versions and saving: versions.md
       - Limits and errors: limits.md
-  - API reference: api.md
+      - Recipes: recipes.md
+  - API reference:
+      - api/index.md
+      - Documents: api/documents.md
+      - Metadata: api/metadata.md
+      - Page labels: api/page-labels.md
+      - Images: api/images.md
+      - Layers: api/layers.md
+      - Sanitizing: api/sanitizing.md
+      - Fonts: api/fonts.md
+      - Pages: api/pages.md
+      - Text and content: api/text-and-content.md
+      - OCR: api/ocr.md
+      - Rendering: api/rendering.md
+      - Annotations: api/annotations.md
+      - Links and destinations: api/links-and-destinations.md
+      - Forms and widgets: api/forms-and-widgets.md
+      - Outline: api/outline.md
+      - Attachments: api/attachments.md
+      - History and changes: api/history-and-changes.md
+      - Encryption: api/encryption.md
+      - Limits and errors: api/limits-and-errors.md
+      - Content operations: api/content-operations.md
+      - Objects: api/objects.md
+      - Geometry: api/geometry.md
+      - Checks and profiles: api/checks-and-profiles.md
+      - Typed objects: api/typed-objects.md
   - Project:
+      - Choosing pyropdf: choosing.md
       - Status and safety: status.md
+      - Specification coverage: specification.md
       - Design: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
       - Changelog: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
 
@@ -72,6 +101,7 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+      toc_depth: 3
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true

@@ -8,7 +8,7 @@ hide:
 
 <section class="pp-hero" aria-labelledby="pp-hero-title">
   <div>
-    <p class="pp-eyebrow">0.1 alpha · pylopdf の後継</p>
+    <p class="pp-eyebrow">0.2 alpha</p>
     <h1 id="pp-hero-title">PDF の編集は、すべて<em>版</em>になる。</h1>
     <p class="pp-lede">
       pyropdf は、Rust で書かれた一つの版付きオブジェクトストアの上で、Python から PDF を読み、描画し、編集します。
@@ -16,6 +16,7 @@ hide:
     </p>
     <div class="pp-actions">
       <a class="pp-button pp-button--primary" href="getting-started/">はじめる →</a>
+      <a class="pp-button" href="recipes/">レシピ</a>
       <a class="pp-button" href="https://pyropdf.haya.works/api/">API リファレンス</a>
     </div>
     <div class="pp-install" aria-label="インストールのコマンド">
@@ -74,7 +75,7 @@ hide:
 
 <div class="pp-section-title">
 <h2>いまできること</h2>
-<p>0.1 系は読み取り・描画・編集に対応します。<code>page.draw</code> による作図は後のリリースです。</p>
+<p>0.2 は文書の読み取り・描画・編集・クリーンアップ・軽量化に対応します。<code>page.draw</code> による作図は後のリリースです。</p>
 </div>
 
 <div class="pp-cards">
@@ -95,7 +96,7 @@ hide:
   </a>
   <a class="pp-card" href="editing/">
     <h3>ページと注釈を編集する</h3>
-    <p>ページの挿入・取り込み・移動・回転・平坦化。ハイライト、メモ、図形、リンクの追加。</p>
+    <p>ページの挿入・取り込み・移動・回転・切り抜き・平坦化。ハイライト、メモ、図形、リンクの追加。メタデータ、ページラベル、レイヤーの編集。</p>
     <code>doc.pages.insert(0, other.pages)</code>
   </a>
   <a class="pp-card" href="editing/#forms">
@@ -104,8 +105,8 @@ hide:
     <code>doc.form["name"].value = "Ada"</code>
   </a>
   <a class="pp-card" href="versions/">
-    <h3>正確に保存する</h3>
-    <p>変わったオブジェクトだけを追記する増分保存、全体の書き直し、AES-256 暗号化。</p>
+    <h3>保存し、クリーンにし、軽くする</h3>
+    <p>変わったオブジェクトだけを追記する増分保存、AES-256 暗号化、共有前のサニタイズ、フォントのサブセット化。</p>
     <code>doc.save(path, incremental=True)</code>
   </a>
 </div>

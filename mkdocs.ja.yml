@@ -54,14 +54,18 @@ nav:
   - ホーム: index.md
   - ガイド:
       - はじめに: getting-started.md
+      - 概念: concepts.md
       - 内容を読む: reading.md
       - 描画: rendering.md
       - 編集: editing.md
       - 版と保存: versions.md
       - 制限とエラー: limits.md
+      - レシピ: recipes.md
   - API リファレンス（英語）: https://pyropdf.haya.works/api/
   - プロジェクト:
+      - pyropdf を選ぶ: choosing.md
       - 状態と安全性: status.md
+      - 仕様の対応状況: specification.md
       - 設計: https://github.com/yhay81/pyropdf/blob/main/DESIGN.md
       - 変更履歴: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
 
@@ -72,6 +76,7 @@ markdown_extensions:
   - tables
   - toc:
       permalink: true
+      toc_depth: 3
   - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
