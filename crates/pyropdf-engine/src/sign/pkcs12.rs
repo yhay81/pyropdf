@@ -17,6 +17,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use x509_cert::Certificate;
 use x509_cert::spki::AlgorithmIdentifierOwned;
 
+use super::key::{MAX_ITERATIONS, bounded};
 use super::{Error, Key};
 
 const ID_DATA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.7.1");
@@ -29,8 +30,6 @@ const X509_CERTIFICATE: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840
 const SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
 const SHA384: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.2");
 const SHA512: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.3");
-/// The most iterations of the MAC's key derivation: OpenSSL writes 2048.
-const MAX_MAC_ITERATIONS: u32 = 10_000_000;
 /// The PKCS#12 key derivation's ID of a MAC key (RFC 7292 appendix B.3).
 const MAC_KEY_ID: u8 = 3;
 
@@ -169,6 +168,7 @@ fn decrypt(data: &EncryptedData, password: &str) -> Result<Vec<u8>, Error> {
     if !matches!(scheme, EncryptionScheme::Pbes2(_)) {
         return Err(legacy());
     }
+    bounded(&scheme)?;
     let ciphertext = info
         .encrypted_content
         .as_ref()
@@ -179,9 +179,9 @@ fn decrypt(data: &EncryptedData, password: &str) -> Result<Vec<u8>, Error> {
 }
 
 fn verify_mac(mac: &MacData, password: &str, content: &[u8]) -> Result<(), Error> {
-    if mac.iterations > MAX_MAC_ITERATIONS {
+    if mac.iterations > MAX_ITERATIONS {
         return Err(Error::Invalid(format!(
-            "the PKCS#12 MAC takes {} iterations, more than {MAX_MAC_ITERATIONS}",
+            "the PKCS#12 MAC takes {} iterations, more than {MAX_ITERATIONS}",
             mac.iterations
         )));
     }

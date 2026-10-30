@@ -180,3 +180,56 @@ fn keys_that_pyropdf_does_not_sign_with_are_refused() {
     assert!(Key::from_pem(b"not PEM", None).is_err());
     assert!(Chain::from_der(&[]).is_err());
 }
+
+#[test]
+fn a_costly_key_derivation_is_refused_before_it_runs() {
+    use pkcs8::pkcs5::pbes2::{self, Pbkdf2Params};
+    // The most iterations that RustCrypto reads would take a minute.
+    let parameters = pbes2::Parameters {
+        kdf: Pbkdf2Params::hmac_sha256(Pbkdf2Params::MAX_ITERATION_COUNT, &[0; 16])
+            .expect("parameters")
+            .into(),
+        encryption: pbes2::EncryptionScheme::Aes256Cbc { iv: [0; 16] },
+    };
+    let ciphertext = der::asn1::OctetString::new(vec![0; 48]).expect("an octet string");
+    let info = pkcs8::EncryptedPrivateKeyInfo {
+        encryption_algorithm: parameters.into(),
+        encrypted_data: ciphertext,
+    };
+    let der = info.to_der().expect("DER");
+    let error = Key::from_encrypted_pkcs8(&der, b"password").expect_err("refused");
+    assert!(error.to_string().contains("iterations"), "{error}");
+}
+
+#[test]
+fn a_certificate_may_hold_the_point_compressed() {
+    use der::Any;
+    let key = key();
+    let Key::P256(signing) = &key else {
+        unreachable!("the test key is P-256")
+    };
+    let certificate = chain().signer().clone();
+    let mut info = certificate
+        .tbs_certificate()
+        .subject_public_key_info()
+        .clone();
+    let compressed = signing.verifying_key().to_sec1_point(true);
+    info.subject_public_key =
+        der::asn1::BitString::from_bytes(compressed.as_bytes()).expect("bits");
+    // The certificate's signature no longer matches; matching ignores it.
+    let mut outer: Vec<Any> = Vec::from_der(&certificate.to_der().expect("DER")).expect("fields");
+    let mut tbs: Vec<Any> = outer[0].decode_as().expect("the TBS fields");
+    tbs[6] = Any::from_der(&info.to_der().expect("DER")).expect("the key");
+    outer[0] = Any::from_der(&tbs.to_der().expect("DER")).expect("the TBS");
+    let certificate = Certificate::from_der(&outer.to_der().expect("DER")).expect("a certificate");
+    assert_eq!(
+        certificate
+            .tbs_certificate()
+            .subject_public_key_info()
+            .subject_public_key
+            .raw_bytes()
+            .len(),
+        33
+    );
+    assert!(key.matches(&certificate));
+}

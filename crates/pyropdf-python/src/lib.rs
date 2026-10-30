@@ -112,7 +112,7 @@ mod _core {
     #[pymodule_export]
     use super::security::{security_state, unlock};
     #[pymodule_export]
-    use super::sign::{_Signer, sign_document};
+    use super::sign::{_Signer, begin_signing, sign_document};
     #[pymodule_export]
     use super::text::{
         document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,

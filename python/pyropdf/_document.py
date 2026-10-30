@@ -623,8 +623,12 @@ class Document:
         default; a signature that needs more raises :class:`ValueError`.
         Afterwards the document reads the signed revision, so that
         ``save(path, incremental=True)`` writes the returned bytes, and its
-        undo history starts anew. A failure undoes the edits that signing
-        made. An encrypted document raises :class:`ValueError`.
+        undo history starts anew. A failure leaves the document as it was.
+
+        Signing runs as one transaction, which other threads' edits wait
+        for. Signing inside a transaction raises :class:`PdfError`, as does
+        a callback that edits the document. An encrypted document raises
+        :class:`ValueError`.
         """
         return _sign(
             self,
@@ -636,10 +640,6 @@ class Document:
             contact=contact,
             reserve=reserve,
         )
-
-    def _reopen(self, data: bytes) -> None:
-        """Read ``data``, a later revision of the opened file, in place of the document."""
-        self._setup(lambda limits: _Document.open_buffer(data, limits, None), self._limits)
 
     def render(  # noqa: PLR0913 - the rendering and batch options are all keyword-only
         self,

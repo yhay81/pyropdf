@@ -239,14 +239,15 @@ def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
     if document.encryption_method is not None:
         msg = "pyropdf does not sign encrypted documents"
         raise ValueError(msg)
-    with document.transaction("sign"):
+    core = document._core()  # noqa: SLF001
+    _core.begin_signing(core)
+    try:
         signature = document.objects[document.objects.add(entries)]
         _signature_field(document, field, signature)
-    try:
-        data = document.to_bytes(incremental=True)
-        signed = _core.sign_document(data, reserve, signer._core, timestamper)  # noqa: SLF001
+        signed = _core.sign_document(core, reserve, signer._core, timestamper)  # noqa: SLF001
     except BaseException:
-        document.history.undo()
+        # Signing ends its transaction only once it replaced the document.
+        _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
         raise
-    document._reopen(signed)  # noqa: SLF001
+    document._drawn = None  # noqa: SLF001 - what canvases drew lived in the replaced document.
     return signed

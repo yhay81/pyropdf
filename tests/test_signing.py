@@ -11,12 +11,22 @@ from __future__ import annotations
 
 import asyncio
 import io
+import sysconfig
+import threading
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+
+if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+    # pyHanko's dependencies have C extensions without free-threading
+    # support, whose import enables the GIL for the rest of the run, which
+    # tests/test_threads.py checks that pyropdf keeps disabled.
+    pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
+
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509
 from cryptography import x509
@@ -38,7 +48,7 @@ from pyhanko_certvalidator.policy_decl import NO_REVOCATION, CertRevTrustPolicy
 from pyhanko_certvalidator.registry import SimpleTrustManager
 
 import pyropdf
-from pyropdf import FieldType, SignatureField, Signer
+from pyropdf import FieldType, PdfError, SignatureField, Signer
 
 if TYPE_CHECKING:
     from pyropdf._signing import Timestamper
@@ -328,6 +338,96 @@ def test_a_failed_signature_leaves_the_document_as_it_was(pki: Pki) -> None:
     with pytest.raises(ValueError, match="time-stamp token"):
         doc.sign("Signature1", _pem_signer(pki), timestamper=lambda _digest, _algorithm: b"\x30\x00")
     assert doc.to_bytes(incremental=True) == before
+
+
+def test_a_failure_leaves_no_field_without_a_history(pki: Pki) -> None:
+    doc = _document()
+    doc.history.max_size = 0
+    before = doc.to_bytes(incremental=True)
+
+    def edit_then_fail(_data: bytes) -> bytes:
+        doc.catalog["Lang"] = "en"
+        msg = "the HSM is offline"
+        raise RuntimeError(msg)
+
+    _, certificate = pki.signers["rsa"]
+    with pytest.raises(RuntimeError, match="offline"):
+        doc.sign("Signature1", Signer.callback([certificate.public_bytes(DER)], edit_then_fail))
+    assert doc.to_bytes(incremental=True) == before
+    assert "Signature1" not in doc.form
+    assert "Lang" not in doc.catalog
+
+
+def test_a_callback_that_edits_the_document_is_refused(pki: Pki) -> None:
+    doc = _document()
+    before = doc.to_bytes(incremental=True)
+    key, certificate = pki.signers["p256"]
+
+    def sign_and_add_a_page(data: bytes) -> bytes:
+        doc.pages.new()
+        return key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+    with pytest.raises(PdfError, match="changed while it was being signed"):
+        doc.sign("Signature1", Signer.callback([certificate.public_bytes(DER)], sign_and_add_a_page))
+    assert doc.to_bytes(incremental=True) == before
+    assert len(doc.pages) == 1
+
+
+def test_signing_inside_a_transaction_is_refused(pki: Pki) -> None:
+    doc = _document()
+    before = doc.to_bytes(incremental=True)
+    with doc.transaction("outer"):
+        doc.catalog["Lang"] = "en"
+        with pytest.raises(PdfError, match="inside a transaction"):
+            doc.sign("Signature1", _pem_signer(pki))
+        assert "Lang" in doc.catalog
+    assert "Lang" in doc.catalog
+    assert "Signature1" not in doc.form
+    assert doc.history.steps[doc.history.position - 1] == "outer"
+
+    def discard() -> None:
+        with doc.transaction("discarded"):
+            doc.catalog["PageMode"] = pyropdf.Name("UseOutlines")
+            with pytest.raises(PdfError, match="inside a transaction"):
+                doc.sign("Signature1", _pem_signer(pki))
+            msg = "discarded"
+            raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match="discarded"):
+        discard()
+    assert "PageMode" not in doc.catalog
+    doc.history.undo()
+    assert doc.to_bytes(incremental=True) == before
+
+
+def test_another_threads_edit_waits_for_the_signature(pki: Pki) -> None:
+    doc = _document()
+    key, certificate = pki.signers["p256"]
+    errors: list[BaseException] = []
+
+    def add_a_page() -> None:
+        try:
+            doc.pages.new()
+        except BaseException as error:  # noqa: BLE001 - reported by the assertion below.
+            errors.append(error)
+
+    thread = threading.Thread(target=add_a_page)
+
+    def sign_while_another_thread_edits(data: bytes) -> bytes:
+        thread.start()
+        # The thread's edit waits for the signing transaction's writer lock.
+        time.sleep(0.2)
+        return key.sign(data, ec.ECDSA(hashes.SHA256()))
+
+    signed = doc.sign("Signature1", Signer.callback([certificate.public_bytes(DER)], sign_while_another_thread_edits))
+    thread.join()
+    assert errors == []
+    assert len(doc.pages) == 2
+    after = doc.to_bytes(incremental=True)
+    assert after.startswith(signed)
+    assert len(after) > len(signed)
+    (status,) = _statuses(pki, signed)
+    _assert_whole_file(status)
 
 
 def test_fields_that_cannot_take_a_signature(pki: Pki) -> None:

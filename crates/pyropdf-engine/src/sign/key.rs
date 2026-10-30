@@ -6,9 +6,56 @@ use der::pem;
 use p256::ecdsa::signature::Signer as _;
 use p256::pkcs8::DecodePrivateKey as _;
 use pkcs8::EncryptedPrivateKeyInfoRef;
+use pkcs8::pkcs5::EncryptionScheme;
+use pkcs8::pkcs5::pbes2::Kdf;
 use x509_cert::Certificate;
 
 use super::{Error, SignatureAlgorithm};
+
+/// The most iterations of a key derivation from a password: of PBKDF2, and
+/// of a PKCS#12 MAC. OpenSSL writes 2048, and OWASP asks 600,000 for
+/// PBKDF2 with SHA-256.
+pub(super) const MAX_ITERATIONS: u32 = 1_000_000;
+/// The most memory of a scrypt key derivation, 128 r N bytes: 64 MiB, four
+/// times what the common N = 2^14 and r = 8 take.
+const MAX_SCRYPT_MEMORY: u64 = 64 << 20;
+/// The most work of a scrypt key derivation, 128 r N p bytes mixed.
+const MAX_SCRYPT_WORK: u64 = 256 << 20;
+
+/// Refuses an encryption other than PBES2, and a key derivation that would
+/// take more iterations or memory than pyropdf's bounds, before it runs.
+pub(super) fn bounded(scheme: &EncryptionScheme) -> Result<(), Error> {
+    let EncryptionScheme::Pbes2(parameters) = scheme else {
+        return Err(Error::Invalid(
+            "the key's encryption is not PBES2, which pyropdf reads".to_owned(),
+        ));
+    };
+    match &parameters.kdf {
+        Kdf::Pbkdf2(pbkdf2) if pbkdf2.iteration_count > MAX_ITERATIONS => {
+            Err(Error::Invalid(format!(
+                "the key's PBKDF2 takes {} iterations, more than {MAX_ITERATIONS}",
+                pbkdf2.iteration_count
+            )))
+        }
+        Kdf::Pbkdf2(_) => Ok(()),
+        Kdf::Scrypt(scrypt) => {
+            let memory = 128_u64
+                .saturating_mul(u64::from(scrypt.block_size))
+                .saturating_mul(scrypt.cost_parameter);
+            let work = memory.saturating_mul(u64::from(scrypt.parallelization));
+            if memory > MAX_SCRYPT_MEMORY || work > MAX_SCRYPT_WORK {
+                return Err(Error::Invalid(format!(
+                    "the key's scrypt takes {memory} bytes and {work} bytes of work, \
+                     more than {MAX_SCRYPT_MEMORY} and {MAX_SCRYPT_WORK}"
+                )));
+            }
+            Ok(())
+        }
+        _ => Err(Error::Invalid(
+            "the key's derivation is neither PBKDF2 nor scrypt".to_owned(),
+        )),
+    }
+}
 
 /// An ECDSA private key.
 #[derive(Clone)]
@@ -80,12 +127,10 @@ impl Key {
     pub(super) fn from_encrypted_pkcs8(der: &[u8], password: &[u8]) -> Result<Self, Error> {
         let info = EncryptedPrivateKeyInfoRef::try_from(der)
             .map_err(|error| Error::invalid("the key is not encrypted PKCS#8", error))?;
-        let document = info.decrypt(password).map_err(|_| {
-            Error::Invalid(
-                "the key does not decrypt: a wrong password, or encryption other than PBES2"
-                    .to_owned(),
-            )
-        })?;
+        bounded(&info.encryption_algorithm)?;
+        let document = info
+            .decrypt(password)
+            .map_err(|_| Error::Invalid("the key does not decrypt: a wrong password".to_owned()))?;
         Self::from_pkcs8(document.as_bytes())
     }
 
@@ -101,13 +146,18 @@ impl Key {
     /// Returns whether `certificate` holds this key's public key.
     #[must_use]
     pub fn matches(&self, certificate: &Certificate) -> bool {
-        let public = match self {
-            Self::P256(key) => key.verifying_key().to_sec1_point(false).as_bytes().to_vec(),
-            Self::P384(key) => key.verifying_key().to_sec1_point(false).as_bytes().to_vec(),
-        };
         let info = certificate.tbs_certificate().subject_public_key_info();
+        let Some(point) = info.subject_public_key.as_bytes() else {
+            return false;
+        };
+        // The certificate may hold the point compressed or uncompressed.
         SignatureAlgorithm::of(certificate).ok() == Some(self.algorithm())
-            && info.subject_public_key.as_bytes() == Some(&public[..])
+            && match self {
+                Self::P256(key) => p256::ecdsa::VerifyingKey::from_sec1_bytes(point)
+                    .is_ok_and(|public| &public == key.verifying_key()),
+                Self::P384(key) => p384::ecdsa::VerifyingKey::from_sec1_bytes(point)
+                    .is_ok_and(|public| &public == key.verifying_key()),
+            }
     }
 
     /// Returns the DER ECDSA signature of `data`, hashed with the key's

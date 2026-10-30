@@ -143,8 +143,9 @@ class _Signer:
     @property
     def digest_algorithm(self) -> str: ...
 
+def begin_signing(document: _Document, /) -> None: ...
 def sign_document(
-    data: bytes,
+    document: _Document,
     reserve: int,
     signer: _Signer,
     timestamper: Callable[[bytes, str], bytes] | None = None,

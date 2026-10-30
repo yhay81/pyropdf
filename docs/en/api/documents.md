@@ -513,8 +513,12 @@ does not stamp the signature raises `ValueError`.
 default; a signature that needs more raises `ValueError`.
 Afterwards the document reads the signed revision, so that
 `save(path, incremental=True)` writes the returned bytes, and its
-undo history starts anew. A failure undoes the edits that signing
-made. An encrypted document raises `ValueError`.
+undo history starts anew. A failure leaves the document as it was.
+
+Signing runs as one transaction, which other threads' edits wait
+for. Signing inside a transaction raises `PdfError`, as does
+a callback that edits the document. An encrypted document raises
+`ValueError`.
 
 ### `Document.render`
 
