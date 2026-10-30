@@ -1,0 +1,118 @@
+{
+ "document": "f1040.pdf",
+ "page": 1,
+ "checked": false,
+ "notes": "Agent-labeled from Ghostscript renderings at 60 to 150 dpi; awaiting the owner's check.",
+ "anchors": [
+  "U.S. Individual Income Tax Return",
+  "For the year Jan. 1–Dec. 31, 2025, or other tax year beginning",
+  "Your first name and middle initial",
+  "If joint return, spouse’s first name and middle initial",
+  "Home address (number and street).",
+  "City, town, or post office.",
+  "Foreign country name",
+  "Filing Status",
+  "Single",
+  "Digital Assets",
+  "Dependents",
+  "Total amount from Form(s) W-2, box 1",
+  "Household employee wages not reported on Form(s) W-2",
+  "Tax-exempt interest",
+  "Capital gain or (loss)",
+  "Additional income from Schedule 1, line 10",
+  "Subtract line 10 from line 9. This is your adjusted gross income",
+  "For Disclosure, Privacy Act, and Paperwork Reduction Act Notice"
+ ],
+ "words": [
+  {
+   "text": "Department",
+   "seed": [
+    97.1,
+    25.62,
+    129.78,
+    32.62
+   ],
+   "ink": [
+    98.0,
+    27.0,
+    129.25,
+    32.5
+   ]
+  },
+  {
+   "text": "town,",
+   "seed": [
+    51.7,
+    157.33,
+    70.07,
+    165.5
+   ],
+   "ink": [
+    52.25,
+    159.25,
+    68.75,
+    165.0
+   ]
+  },
+  {
+   "text": "income)",
+   "seed": [
+    257.22,
+    218.1,
+    286.52,
+    227.42
+   ],
+   "ink": [
+    258.25,
+    220.0,
+    285.75,
+    227.25
+   ]
+  },
+  {
+   "text": "services);",
+   "seed": [
+    434.83,
+    278.9,
+    469.45,
+    288.22
+   ],
+   "ink": [
+    435.5,
+    280.75,
+    468.25,
+    288.0
+   ]
+  },
+  {
+   "text": "Total",
+   "seed": [
+    114.7,
+    452.1,
+    133.48,
+    461.42
+   ],
+   "ink": [
+    115.25,
+    454.0,
+    132.5,
+    459.75
+   ]
+  },
+  {
+   "text": "Ordinary",
+   "seed": [
+    347.24,
+    584.1,
+    378.91,
+    593.42
+   ],
+   "ink": [
+    348.0,
+    586.0,
+    378.5,
+    593.5
+   ]
+  }
+ ]
+}
