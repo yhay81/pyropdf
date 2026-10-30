@@ -32,6 +32,7 @@ method and property of its classes with its full description.
 
 ## [Images](images.md)
 
+- [`ImageRewriteReport`](images.md#imagerewritereport): What `Document.rewrite_images` did.
 - [`PageImage`](images.md#pageimage): One image that a page paints: its content item and its place among the page's images.
 - [`StoredImage`](images.md#storedimage): An image's data as the document stores it, for an image filter that a file format holds.
 
