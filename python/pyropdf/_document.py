@@ -13,7 +13,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
-from pyropdf import _core, _markdown
+from pyropdf import _chunks, _core, _markdown
 from pyropdf._attachments import Attachments
 from pyropdf._changes import changes as _changes
 from pyropdf._check import structural_check as _structural_check
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from pyropdf._canvas import _Images
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
+    from pyropdf._chunks import Chunk
     from pyropdf._profiles import Profiles
     from pyropdf._signing import Signer, Timestamper
 
@@ -798,6 +799,63 @@ class Document:
         indexes = range(count) if pages is None else _page_entries(pages, count)
         return _markdown.pages_markdown(
             [self.pages[index] for index in indexes], table_strategy=table_strategy, max_size=max_size
+        )
+
+    def to_json(
+        self,
+        pages: Iterable[int] | None = None,
+        *,
+        table_strategy: Literal["lines", "text"] | None = "lines",
+        max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
+    ) -> str:
+        """Return the given pages of the current version as JSON: each page's size and its elements.
+
+        The document is ``{"pages": [...]}``, each page ``{"index",
+        "width", "height", "elements"}``, and each element as
+        :meth:`Element.to_dict` gives it: a heading, paragraph, list item,
+        table, or image in reading order with its page index and its box in
+        display space. Headings, lists, and tables are found as
+        :meth:`markdown` finds them, and ``pages`` and ``table_strategy``
+        are as for it. More than ``max_size`` bytes of UTF-8 element text
+        raise :class:`LimitError` with code ``export_output_size`` without a
+        partial result; ``max_size=None`` lifts the limit.
+        """
+        _chunks.validate_options(table_strategy, max_size)
+        count = _core.page_count(self._core())
+        indexes = range(count) if pages is None else _page_entries(pages, count)
+        return _chunks.export_json(
+            [self.pages[index] for index in indexes], table_strategy=table_strategy, max_size=max_size
+        )
+
+    def to_chunks(
+        self,
+        pages: Iterable[int] | None = None,
+        *,
+        max_chars: int = _chunks._DEFAULT_MAX_CHARS,  # noqa: SLF001
+        table_strategy: Literal["lines", "text"] | None = "lines",
+        max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
+    ) -> list[Chunk]:
+        """Return the elements of :meth:`to_json` grouped into retrieval chunks of at most ``max_chars`` characters.
+
+        A chunk is a run of consecutive elements joined as Markdown, headings
+        marked with ``#``; each heading starts a chunk, and
+        :attr:`Chunk.section` names the headings above it. A paragraph or
+        list item longer than ``max_chars`` is split at white space, its
+        pieces keeping its page and box; a table, image, or heading is never
+        split, and a chunk of one that is longer is
+        :attr:`Chunk.oversized`. Every element keeps its page index and box,
+        and :meth:`Chunk.to_dict` gives JSON-safe values. ``pages``,
+        ``table_strategy``, and ``max_size`` are as for :meth:`to_json`.
+        """
+        _chunks.validate_max_chars(max_chars)
+        _chunks.validate_options(table_strategy, max_size)
+        count = _core.page_count(self._core())
+        indexes = range(count) if pages is None else _page_entries(pages, count)
+        return _chunks.export_chunks(
+            [self.pages[index] for index in indexes],
+            max_chars=max_chars,
+            table_strategy=table_strategy,
+            max_size=max_size,
         )
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:

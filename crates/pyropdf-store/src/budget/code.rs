@@ -103,6 +103,9 @@ pub enum LimitCode {
     /// The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or
     /// `Table.markdown` returns is larger than the call's `max_size`.
     MarkdownOutputSize,
+    /// The UTF-8 of the element text that `Document.to_json` or
+    /// `Document.to_chunks` exports is larger than the call's `max_size`.
+    ExportOutputSize,
     /// Saving writes more bytes than the call's `max_size`.
     PdfOutputSize,
     /// Encoding a pixmap writes more bytes than the call's `max_size`.
@@ -205,7 +208,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 70] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -240,6 +243,7 @@ impl LimitCode {
         Self::StreamDataSize,
         Self::ObjectValueDepth,
         Self::MarkdownOutputSize,
+        Self::ExportOutputSize,
         Self::PdfOutputSize,
         Self::PixmapOutputSize,
         Self::SvgOutputSize,
@@ -315,6 +319,7 @@ impl LimitCode {
             Self::StreamDataSize => "stream_data_size",
             Self::ObjectValueDepth => "object_value_depth",
             Self::MarkdownOutputSize => "markdown_output_size",
+            Self::ExportOutputSize => "export_output_size",
             Self::PdfOutputSize => "pdf_output_size",
             Self::PixmapOutputSize => "pixmap_output_size",
             Self::SvgOutputSize => "svg_output_size",
@@ -392,6 +397,7 @@ impl LimitCode {
             Self::StreamDataSize => "the stream is too large to read",
             Self::ObjectValueDepth => "a written value nests arrays and dictionaries too deeply",
             Self::MarkdownOutputSize => "the Markdown is too large",
+            Self::ExportOutputSize => "the exported text is too large",
             Self::PdfOutputSize => "the PDF output is too large",
             Self::PixmapOutputSize => "the encoded image is too large",
             Self::SvgOutputSize => "the SVG document is too large",
@@ -471,6 +477,7 @@ impl LimitCode {
             Self::StreamDataSize => Some("bytes"),
             Self::ObjectValueDepth => Some("levels"),
             Self::MarkdownOutputSize => Some("bytes"),
+            Self::ExportOutputSize => Some("bytes"),
             Self::PdfOutputSize => Some("bytes"),
             Self::PixmapOutputSize => Some("bytes"),
             Self::SvgOutputSize => Some("bytes"),
@@ -548,6 +555,7 @@ impl LimitCode {
             Self::StreamDataSize => Some(67_108_864),
             Self::ObjectValueDepth => Some(32),
             Self::MarkdownOutputSize => Some(67_108_864),
+            Self::ExportOutputSize => Some(67_108_864),
             Self::PdfOutputSize => Some(536_870_912),
             Self::PixmapOutputSize => Some(67_108_864),
             Self::SvgOutputSize => Some(67_108_864),

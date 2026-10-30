@@ -37,6 +37,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `stream_data_size` | 64 MiB | Reading a stream returns more bytes than the call's `max_size`. |
 | `object_value_depth` | 32 levels | A value written to the document nests arrays and dictionaries deeper than its limit. |
 | `markdown_output_size` | 64 MiB | The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`. |
+| `export_output_size` | 64 MiB | The UTF-8 of the element text that `Document.to_json` or `Document.to_chunks` exports is larger than the call's `max_size`. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |
 | `pixmap_output_size` | 64 MiB | Encoding a pixmap writes more bytes than the call's `max_size`. |
 | `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |

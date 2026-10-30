@@ -73,12 +73,14 @@ method and property of its classes with its full description.
 - [`Block`](text-and-content.md#block): A block of lines of a `Layout`; `text` joins the lines with newlines.
 - [`Char`](text-and-content.md#char): One glyph of a `Span`, from `Page.layout` with `chars=True`.
 - [`Chars`](text-and-content.md#chars): The chars of a page as columns, from `Page.chars` and `Layout.chars`.
+- [`Chunk`](text-and-content.md#chunk): Consecutive elements within one section, joined as Markdown in `text`.
 - [`Clip`](text-and-content.md#clip): A clipping path in display space.
 - [`ClosePath`](text-and-content.md#closepath): Close the current subpath with a line to its start.
 - [`Color`](text-and-content.md#color): A solid paint, as the sRGB color and alpha that hayro converts it to.
 - [`Content`](text-and-content.md#content): The items that a page paints, in paint order.
 - [`ContentItem`](text-and-content.md#contentitem)
 - [`CurveTo`](text-and-content.md#curveto): Draw a cubic Bézier curve to `to` with two control points.
+- [`Element`](text-and-content.md#element): One piece of a page's structure, with where it is.
 - [`FillRule`](text-and-content.md#fillrule): The rule that decides which areas a path fills or clips.
 - [`FontRef`](text-and-content.md#fontref): The font that a text run uses, as hayro reads its font program.
 - [`Glyph`](text-and-content.md#glyph): One glyph of a text run.

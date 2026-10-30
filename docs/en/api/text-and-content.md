@@ -106,6 +106,40 @@ Chars.column(name: str) -> memoryview
 
 Return the column `name` of `names` as a read-only `memoryview`, without a copy.
 
+## `Chunk`
+
+```python
+Chunk(
+    index: int,
+    text: str,
+    elements: tuple[Element, ...],
+    section: tuple[str, ...],
+    oversized: bool,
+)
+```
+
+Consecutive elements within one section, joined as Markdown in `text`.
+
+`index` is the chunk's position in the export, `section` the
+headings above it from the outermost, and `oversized` whether its one
+indivisible element passes the budget.
+
+### `Chunk.pages`
+
+```python
+Chunk.pages: tuple[int, ...]
+```
+
+The indexes of the pages that the chunk's elements come from, in order.
+
+### `Chunk.to_dict`
+
+```python
+Chunk.to_dict() -> dict[str, Any]
+```
+
+Return the chunk as JSON-safe values, its elements as `Element.to_dict` gives them.
+
 ## `Clip`
 
 ```python
@@ -226,6 +260,36 @@ CurveTo(c1: Point, c2: Point, to: Point)
 ```
 
 Draw a cubic Bézier curve to `to` with two control points.
+
+## `Element`
+
+```python
+Element(
+    kind: ElementKind,
+    page: int,
+    bbox: Rect,
+    text: str,
+    level: int | None = None,
+    rows: tuple[tuple[str | None, ...], ...] | None = None,
+)
+```
+
+One piece of a page's structure, with where it is.
+
+`text` is a heading's or paragraph's plain text, a list item with its
+bullet as `- ` or its number as `1. `, a table's Markdown, or empty
+for an image. `page` is the page's index and `bbox` the box in
+display space; a paragraph's box spans its lines. `level` is a
+heading's level, 1 through 4, and `rows` a table's cells as
+`Table.rows` holds them.
+
+### `Element.to_dict`
+
+```python
+Element.to_dict() -> dict[str, Any]
+```
+
+Return the element as JSON-safe values: `kind`, `page`, `bbox`, `text`, and `level` or `rows`.
 
 ## `FillRule`
 
