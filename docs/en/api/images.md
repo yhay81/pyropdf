@@ -11,7 +11,13 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 ## `ImageRewriteReport`
 
 ```python
-ImageRewriteReport(considered: int, rewritten: int, bytes_before: int, bytes_after: int)
+ImageRewriteReport(
+    considered: int,
+    rewritten: int,
+    bytes_before: int,
+    bytes_after: int,
+    unsupported: tuple[str, ...] = (),
+)
 ```
 
 What `Document.rewrite_images` did.

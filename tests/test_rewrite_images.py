@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import functools
 import io
+import shutil
+import struct
+import subprocess
 import zlib
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from PIL import Image
@@ -258,19 +262,16 @@ def test_repeating_the_same_settings_changes_nothing() -> None:
 
 
 @pytest.mark.parametrize("entry", [{"Mask": [0, 0, 0, 0, 0, 0]}, {"Decode": [1, 0, 1, 0, 1, 0]}])
-def test_masks_skip_and_decode_arrays_are_applied(entry: dict[str, object]) -> None:
+def test_color_key_masks_become_soft_masks_and_decode_arrays_are_applied(entry: dict[str, object]) -> None:
     doc = jpeg_document([(72, 72)], extra=entry)
     before = doc.pages[0].pixmap(dpi=100)
 
     report = doc.rewrite_images(dpi_threshold=150, dpi_target=100, quality=65)
 
-    assert report.considered == 1
-    if "Mask" in entry:
-        assert report.rewritten == 0
-    else:
-        assert report.rewritten == 1
-        assert "Decode" not in stream(doc)
-        assert mean_difference(before, doc.pages[0].pixmap(dpi=100)) < 8
+    assert (report.considered, report.rewritten, report.unsupported) == (1, 1, ())
+    assert "Decode" not in stream(doc)
+    assert "Mask" not in stream(doc)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=100)) < 8
 
 
 def test_a_decoding_failure_rolls_back_every_image() -> None:
@@ -319,14 +320,6 @@ def test_a_document_without_images_is_a_no_op() -> None:
     assert doc.rewrite_images(quality=75) == ImageRewriteReport(0, 0, 0, 0)
 
 
-def test_inline_images_are_not_considered() -> None:
-    doc = image_document(b"", {}, [])
-    commands = b"q 10 0 0 10 0 0 cm BI /W 1 /H 1 /CS /RGB /BPC 8 /F /AHx ID FF0000> EI Q"
-    doc.pages[0].obj["Contents"] = doc.objects[doc.objects.add_stream(commands)]
-
-    assert doc.rewrite_images(quality=75) == ImageRewriteReport(0, 0, 0, 0)
-
-
 @pytest.mark.parametrize(
     ("dpi", "error"),
     [(True, TypeError), ("150", TypeError), (35, ValueError), (2401, ValueError), (float("inf"), ValueError)],
@@ -367,7 +360,8 @@ def test_resampling_a_jpeg_without_quality_uses_75() -> None:
     expected = doc.pages[0].images()[0].pixmap().scale(100, 100).to_bytes("jpeg", quality=75)
 
     assert doc.rewrite_images(dpi_threshold=150, dpi_target=100).rewritten == 1
-    assert stored(doc) == expected
+    # The same pixels; the JFIF header's density may differ.
+    assert bytes(pyropdf.Pixmap.from_bytes(stored(doc))) == bytes(pyropdf.Pixmap.from_bytes(expected))
 
 
 def test_set_to_gray_converts_color_images() -> None:
@@ -413,7 +407,7 @@ def test_the_flags_select_kinds_of_image(keyword: str, kind: str) -> None:
         doc, _ = flate_document(gray=kind == "gray")
     original = doc.to_bytes()
 
-    excluded = doc.rewrite_images(dpi_threshold=96, dpi_target=64, **{keyword: False})
+    excluded = doc.rewrite_images(dpi_threshold=96, dpi_target=64, **{keyword: False})  # ty: ignore[invalid-argument-type]
 
     assert (excluded.rewritten, excluded.skipped) == (0, 1)
     assert doc.to_bytes() == original
@@ -443,3 +437,301 @@ def test_corpus_documents_with_large_images_shrink_and_render_alike(name: str) -
     assert len(doc.to_bytes()) < before
     for page, pixmap in zip(doc.pages, pixmaps, strict=True):
         assert mean_difference(pixmap, page.pixmap(dpi=100)) < 4
+
+
+def gradient(components: int, side: int = SIDE) -> bytes:
+    """Return smooth 8-bit samples that resampling keeps close to the source."""
+    return bytes(
+        (x * 2 + y + channel * 40) % 256 for y in range(side) for x in range(side) for channel in range(components)
+    )
+
+
+def add_image(doc: pyropdf.Document, data: bytes, entries: dict[str, object]) -> pyropdf.Stream:
+    xref = doc.objects.add_stream(data, {"Type": Name("XObject"), "Subtype": Name("Image"), **entries})
+    return doc.objects[xref]
+
+
+def soft_mask(doc: pyropdf.Document, side: int = SIDE, **extra: object) -> pyropdf.Stream:
+    alpha = bytes((x * 255 // (side - 1)) for _ in range(side) for x in range(side))
+    entries = {"Width": side, "Height": side, "BitsPerComponent": 8, "ColorSpace": Name("DeviceGray"), **extra}
+    return add_image(doc, alpha, entries)
+
+
+def rgb_entries(**extra: object) -> dict[str, object]:
+    return {"Width": SIDE, "Height": SIDE, "BitsPerComponent": 8, "ColorSpace": Name("DeviceRGB"), **extra}
+
+
+def ghostscript(doc: pyropdf.Document) -> Image.Image:
+    """Render the first page with Ghostscript at 72 dpi, an independent renderer."""
+    executable = shutil.which("gs")
+    if executable is None:
+        pytest.skip("Ghostscript is not installed")
+    result = subprocess.run(  # noqa: S603 - a fixed command on a document that the test wrote
+        [executable, "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", "-r72", "-sOutputFile=-", "-"],
+        input=doc.to_bytes(),
+        capture_output=True,
+        check=True,
+    )
+    return Image.open(io.BytesIO(result.stdout)).convert("RGB")
+
+
+def gs_difference(before: Image.Image, after: Image.Image) -> float:
+    left, right = before.tobytes(), after.tobytes()
+    return sum(abs(a - b) for a, b in zip(left, right, strict=True)) / len(left)
+
+
+def test_a_soft_mask_is_resampled_into_a_new_mask_and_a_shared_one_stays() -> None:
+    doc = image_document(gradient(3), rgb_entries(), [(36, 36)])
+    mask = soft_mask(doc)
+    stream(doc)["SMask"] = mask
+    other = add_image(doc, zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode"), SMask=mask))
+    mask_data = mask.read(decode=False)
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert (report.rewritten, report.unsupported) == (1, ())
+    assert size(doc) == (36, 36)
+    new_mask = stream(doc)["SMask"]
+    assert isinstance(new_mask, pyropdf.Stream)
+    assert (new_mask["Width"], new_mask["Height"]) == (36, 36)
+    assert new_mask.read() != mask.read()
+    assert mask.read(decode=False) == mask_data
+    assert other["SMask"].read(decode=False) == mask_data
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    assert gs_difference(gs_before, ghostscript(doc)) < 4
+
+
+@pytest.mark.parametrize("kind", ["stencil", "matte", "other-size"])
+def test_masks_that_a_rewrite_cannot_keep_are_reported(kind: str) -> None:
+    doc = image_document(zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode")), [(36, 36)])
+    if kind == "stencil":
+        stencil = add_image(
+            doc, bytes(SIDE * SIDE // 4 // 8), {"Width": SIDE // 2, "Height": SIDE // 2, "ImageMask": True}
+        )
+        stream(doc)["Mask"] = stencil
+        expected = "stencil mask of another size"
+    elif kind == "matte":
+        stream(doc)["SMask"] = soft_mask(doc, Matte=[0, 0, 0])
+        expected = "soft mask with /Matte"
+    else:
+        stream(doc)["SMask"] = soft_mask(doc, side=SIDE // 2)
+        expected = "soft mask of another size"
+    original = doc.to_bytes()
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert report.rewritten == 0
+    assert len(report.unsupported) == 1
+    assert expected in report.unsupported[0]
+    assert doc.to_bytes() == original
+
+
+def test_a_stencil_mask_of_the_image_size_becomes_a_soft_mask() -> None:
+    doc = image_document(gradient(3), rgb_entries(), [(36, 36)])
+    rows = bytes([0b11110000] * (SIDE // 8)) * SIDE
+    stream(doc)["Mask"] = add_image(doc, rows, {"Width": SIDE, "Height": SIDE, "ImageMask": True})
+    before = doc.pages[0].pixmap(dpi=72)
+
+    assert doc.rewrite_images(dpi_threshold=150, dpi_target=72).rewritten == 1
+
+    assert "Mask" not in stream(doc)
+    assert isinstance(stream(doc)["SMask"], pyropdf.Stream)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 6
+
+
+def test_cmyk_samples_keep_their_color_space_and_resample_by_channel() -> None:
+    samples = gradient(4)
+    entries = {**rgb_entries(Filter=Name("FlateDecode")), "ColorSpace": Name("DeviceCMYK")}
+    doc = image_document(zlib.compress(samples), entries, [(36, 36)])
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72, lossless_format="jpeg")
+
+    assert (report.rewritten, report.unsupported) == (1, ())
+    image = stream(doc)
+    assert (image["ColorSpace"], image["Filter"], image["BitsPerComponent"]) == ("DeviceCMYK", "FlateDecode", 8)
+    channels = [
+        bytes(pyropdf.Pixmap.from_bytes(pam(SIDE, 1, samples[channel::4])).scale(36, 36)) for channel in range(4)
+    ]
+    assert image.read() == bytes(value for pixel in zip(*channels, strict=True) for value in pixel)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    assert gs_difference(gs_before, ghostscript(doc)) < 4
+
+
+def pam(side: int, depth: int, data: bytes) -> bytes:
+    kinds = {1: "GRAYSCALE", 3: "RGB"}
+    header = f"P7\nWIDTH {side}\nHEIGHT {side}\nDEPTH {depth}\nMAXVAL 255\nTUPLTYPE {kinds[depth]}\nENDHDR\n"
+    return header.encode() + data
+
+
+def test_an_icc_based_image_keeps_its_profile_and_its_samples() -> None:
+    doc = image_document(gradient(3), rgb_entries(), [(36, 36)])
+    profile = doc.objects[doc.objects.add_stream(b"not read", {"N": 3, "Alternate": Name("DeviceRGB")})]
+    stream(doc)["ColorSpace"] = [Name("ICCBased"), profile]
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72, lossless_format="jpeg", quality=95)
+
+    assert report.rewritten == 1
+    space = stream(doc)["ColorSpace"]
+    assert isinstance(space, pyropdf.Array)
+    assert space[0] == "ICCBased"
+    assert space[1].xref == profile.xref
+    assert stream(doc)["Filter"] == "DCTDecode"
+    expected = pyropdf.Pixmap.from_bytes(pam(SIDE, 3, gradient(3))).scale(36, 36)
+    assert mean_difference(expected, pyropdf.Pixmap.from_bytes(stored(doc))) < 3
+
+
+def test_a_cmyk_jpeg_is_reported() -> None:
+    out = io.BytesIO()
+    Image.new("CMYK", (64, 64), (10, 20, 30, 40)).save(out, "JPEG")
+    entries = {"Width": 64, "Height": 64, "BitsPerComponent": 8, "ColorSpace": Name("DeviceCMYK")}
+    doc = image_document(out.getvalue(), {**entries, "Filter": Name("DCTDecode")}, [(10, 10)])
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert report.rewritten == 0
+    assert report.unsupported == (f"object {stream(doc).xref}: a CMYK JPEG",)
+
+
+def test_the_lossless_format_can_be_jpeg() -> None:
+    doc, _ = flate_document()
+
+    assert doc.rewrite_images(quality=80).rewritten == 0  # Flate again does not save 5%.
+    assert doc.rewrite_images(quality=80, lossless_format="jpeg").rewritten == 1
+    assert stream(doc)["Filter"] == "DCTDecode"
+
+
+def scan(side: int = 256) -> bytes:
+    """Return 1-bit rows, 1 for white, of black bars that Group 4 codes well."""
+    rows = []
+    for y in range(side):
+        row = bytearray(b"\xff" * (side // 8))
+        if (y // 8) % 3 == 0:
+            for x in range(side // 8):
+                row[x] = 0x0F if x % 4 else 0x00
+        rows.append(bytes(row))
+    return b"".join(rows)
+
+
+def tiff_g4(data: bytes, width: int, height: int) -> Image.Image:
+    """Wrap Group 4 data in a TIFF, as libtiff reads it: an independent decoder."""
+    tags = [(256, 4, width), (257, 4, height), (258, 3, 1), (259, 3, 4), (262, 3, 0), (273, 4, 122)]
+    tags += [(277, 3, 1), (278, 4, height), (279, 4, len(data))]
+    entries = b"".join(
+        struct.pack("<HHII", tag, kind, 1, value) if kind == 4 else struct.pack("<HHIHH", tag, kind, 1, value, 0)
+        for tag, kind, value in tags
+    )
+    header = b"II*\x00" + struct.pack("<I", 8) + struct.pack("<H", len(tags)) + entries + b"\x00" * 4
+    return Image.open(io.BytesIO(header + data))
+
+
+@pytest.mark.parametrize("bitonal_format", ["fax", "flate"])
+def test_bitonal_images_are_written_as_group_4_or_one_bit_flate(bitonal_format: Literal["fax", "flate"]) -> None:
+    rows = scan()
+    entries: dict[str, object] = {"Width": 256, "Height": 256, "BitsPerComponent": 1, "ColorSpace": Name("DeviceGray")}
+    doc = image_document(rows, entries, [(72, 72)])
+    before = doc.pages[0].pixmap(dpi=72)
+
+    report = doc.rewrite_images(quality=75, bitonal_format=bitonal_format)
+
+    assert report.rewritten == 1
+    image = stream(doc)
+    assert image["BitsPerComponent"] == 1
+    if bitonal_format == "fax":
+        assert image["Filter"] == "CCITTFaxDecode"
+        assert dict(image["DecodeParms"].items()) == {"K": -1, "Columns": 256, "Rows": 256}
+        decoded = tiff_g4(stored(doc), 256, 256)
+        decoded.load()
+        assert decoded.convert("1").tobytes() == rows
+    else:
+        assert image["Filter"] == "FlateDecode"
+        assert image.read() == rows
+    assert bytes(doc.pages[0].pixmap(dpi=72)) == bytes(before)
+
+
+def test_a_resampled_bitonal_image_stays_one_bit() -> None:
+    rows = scan()
+    entries: dict[str, object] = {"Width": 256, "Height": 256, "BitsPerComponent": 1, "ColorSpace": Name("DeviceGray")}
+    doc = image_document(rows, entries, [(36, 36)])
+    gs_before = ghostscript(doc)
+
+    assert doc.rewrite_images(dpi_threshold=300, dpi_target=200).rewritten == 1
+
+    assert size(doc) == (100, 100)
+    assert (stream(doc)["BitsPerComponent"], stream(doc)["Filter"]) == (1, "CCITTFaxDecode")
+    assert gs_difference(gs_before, ghostscript(doc)) < 12
+
+
+def inline_document(dictionary: str, data: bytes, placement: str = "10 0 0 10 0 0") -> pyropdf.Document:
+    doc = image_document(b"", {}, [])
+    commands = f"q {placement} cm BI {dictionary} ID ".encode() + data + b"\nEI Q"
+    doc.pages[0].obj["Contents"] = doc.objects[doc.objects.add_stream(commands)]
+    return doc
+
+
+def inline_images(doc: pyropdf.Document) -> list[pyropdf.InlineImage]:
+    return [op for op in doc.pages[0].operations if isinstance(op, pyropdf.InlineImage)]
+
+
+def test_an_inline_image_is_resampled_by_its_placement() -> None:
+    samples = gradient(3, 64)
+    doc = inline_document("/W 64 /H 64 /CS /RGB /BPC 8 /F /Fl", zlib.compress(samples), "32 0 0 32 10 10")
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=100, dpi_target=72)
+
+    assert (report.considered, report.rewritten, report.unsupported) == (1, 1, ())
+    (image,) = inline_images(doc)
+    assert (image.dictionary["W"], image.dictionary["H"], image.dictionary["F"]) == (32, 32, "Fl")
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    assert gs_difference(gs_before, ghostscript(doc)) < 4
+
+
+def test_an_inline_bitonal_image_becomes_group_4() -> None:
+    rows = scan(64)
+    doc = inline_document("/W 64 /H 64 /CS /G /BPC 1", rows, "64 0 0 64 0 0")
+    before = doc.pages[0].pixmap(dpi=72)
+
+    assert doc.rewrite_images(quality=75).rewritten == 1
+
+    (image,) = inline_images(doc)
+    assert image.dictionary["F"] == "CCF"
+    assert bytes(doc.pages[0].pixmap(dpi=72)) == bytes(before)
+
+
+def test_inline_images_that_a_rewrite_does_not_read_are_reported() -> None:
+    doc = inline_document("/W 1 /H 1 /CS /CMYK /BPC 8", b"\x00\x00\x00\x00")
+    form = doc.objects.add_stream(
+        b"BI /W 1 /H 1 /CS /RGB /BPC 8 ID \xff\x00\x00\nEI",
+        {"Type": Name("XObject"), "Subtype": Name("Form"), "BBox": [0, 0, 1, 1]},
+    )
+    doc.pages[0].obj["Resources"]["XObject"]["Fm0"] = doc.objects[form]
+    contents = doc.pages[0].obj["Contents"]
+    contents.write(contents.read() + b" q 10 0 0 10 0 0 cm /Fm0 Do Q")
+
+    report = doc.rewrite_images(quality=75)
+
+    assert report.rewritten == 0
+    assert "an inline image in CMYK" in report.unsupported
+    assert "page 0: 1 inline images in Form XObjects or annotation appearances" in report.unsupported
+
+
+@pytest.mark.parametrize("keyword", ["lossless_format", "bitonal_format"])
+def test_refuses_an_unknown_format(keyword: str) -> None:
+    with pytest.raises(ValueError, match=keyword):
+        pyropdf.Document().rewrite_images(quality=75, **{keyword: "png"})  # ty: ignore[invalid-argument-type]
+
+
+def test_set_to_gray_leaves_vector_colors_to_recolor() -> None:
+    doc, _ = flate_document()
+    contents = doc.pages[0].obj["Contents"]
+    contents.write(contents.read() + b" 1 0 0 rg 100 0 50 50 re f")
+
+    doc.rewrite_images(set_to_gray=True)
+
+    assert doc.pages[0].pixmap(dpi=72).pixel(120, 70)[:3] == (255, 0, 0)
+    assert stream(doc)["ColorSpace"] == "DeviceGray"
+    doc.recolor("gray")
+    red = doc.pages[0].pixmap(dpi=72).pixel(120, 70)[:3]
+    assert red[0] == red[1] == red[2]

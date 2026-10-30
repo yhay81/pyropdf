@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 from pyropdf import _core
 from pyropdf._errors import PdfError
 from pyropdf._objects import Array, Dictionary, Name, Stream
+from pyropdf._operations import InlineImage, Operation, Operations
+from pyropdf._recolor import _MAX_INLINE_PIXELS, _inline_data
 
 if TYPE_CHECKING:
     from pyropdf._content import Image
@@ -274,6 +276,9 @@ class ImageRewriteReport:
     """The stored bytes of the rewritten images before the call."""
     bytes_after: int
     """Their stored bytes after it."""
+    unsupported: tuple[str, ...] = ()
+    """The selected images left as they are because a rewrite would not keep
+    them, such as ``"object 12: a CMYK JPEG"``, at most 1,024."""
 
     @property
     def skipped(self) -> int:
@@ -298,9 +303,20 @@ _POINTS_PER_INCH = 72
 #: The image filters whose data is lossy; their images are rewritten as JPEG.
 _LOSSY_FILTERS = frozenset({"DCTDecode", "JPXDecode"})
 _BITONAL_FILTERS = frozenset({"JBIG2Decode", "CCITTFaxDecode"})
-_REWRITE_SPACES = {"DeviceGray": 1, "DeviceRGB": 3}
+#: The color spaces whose decoded colors, as hayro paints them, are their samples.
+_PAINTED_SPACES = {"DeviceGray": 1, "DeviceRGB": 3}
+#: The color spaces whose stored samples a rewrite resamples and keeps, with the space itself.
+_SAMPLE_SPACES = frozenset({"DeviceCMYK", "ICCBased", "CalGray", "CalRGB"})
 _BITS = 8
 _MAX_QUALITY = 100
+_LOSSLESS_FORMATS = ("flate", "jpeg")
+_BITONAL_FORMATS = ("fax", "flate")
+_PAM_TYPES = {1: "GRAYSCALE", 2: "GRAYSCALE_ALPHA", 3: "RGB", 4: "RGB_ALPHA"}
+#: Inverts the bits of a byte: PBM's 1 is black, and a DeviceGray sample's 1 is white.
+_INVERT = bytes(range(255, -1, -1))
+#: The inline image abbreviations of ISO 32000-2 table 91 and 92 that a rewrite reads.
+_INLINE_SPACES = {"G": 1, "DeviceGray": 1, "RGB": 3, "DeviceRGB": 3}
+_INLINE_DCT = frozenset({"DCT", "DCTDecode"})
 
 
 @dataclass(slots=True)
@@ -308,11 +324,64 @@ class _Candidate:
     """One image object that ``rewrite_images`` selected, and the largest size that its placements paint it at."""
 
     image: PageImage
-    lossy: bool
+    kind: str
+    """``"lossy"``, ``"lossless"``, or ``"bitonal"``."""
     gray: bool
+    samples: bool
+    """Whether the stored samples are resampled, in the image's own color space, rather than hayro's colors."""
     width: float = 0.0
     """The longest length, in points, that a placement gives the image's width."""
     height: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class _Options:
+    threshold: float | None
+    target: float
+    quality: int | None
+    selected: dict[str, bool]
+    set_to_gray: bool
+    lossless_format: str
+    bitonal_format: str
+
+    def jpeg(self, kind: str) -> bool:
+        return kind == "lossy" or (kind == "lossless" and self.lossless_format == "jpeg")
+
+
+@dataclass(slots=True)
+class _Pixels:
+    """Interleaved 8-bit samples of one to four components, and straight alpha."""
+
+    width: int
+    height: int
+    components: int
+    color: bytes
+    alpha: bytes | None
+
+
+@dataclass(slots=True)
+class _Tally:
+    considered: int = 0
+    rewritten: int = 0
+    before: int = 0
+    after: int = 0
+    unsupported: dict[str, None] | None = None
+
+    def report(self, detail: str) -> None:
+        if self.unsupported is None:
+            self.unsupported = {}
+        if len(self.unsupported) < _MAX_UNSUPPORTED:
+            self.unsupported[detail] = None
+
+    def kept(self, before: int, after: int | None) -> None:
+        if after is not None:
+            self.rewritten += 1
+            self.before += before
+            self.after += after
+
+
+#: The most entries that :attr:`ImageRewriteReport.unsupported` lists.
+_MAX_UNSUPPORTED = 1024
 
 
 def _rewrite_dpi(name: str, value: object) -> float:
@@ -323,6 +392,16 @@ def _rewrite_dpi(name: str, value: object) -> float:
         msg = f"{name} must be a number from {_MIN_DPI} through {_MAX_DPI}: {value!r}"
         raise ValueError(msg)
     return float(value)
+
+
+def _check_formats(lossless_format: object, bitonal_format: object) -> None:
+    for name, value, choices in (
+        ("lossless_format", lossless_format, _LOSSLESS_FORMATS),
+        ("bitonal_format", bitonal_format, _BITONAL_FORMATS),
+    ):
+        if value not in choices:
+            msg = f"{name} must be one of {', '.join(map(repr, choices))}: {value!r}"
+            raise ValueError(msg)
 
 
 def _rewrite_options(
@@ -356,41 +435,85 @@ def _rewrite_options(
     return threshold, target
 
 
-def _rewrite_class(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[bool, bool] | None:
-    """Return whether a selected image is lossy and gray, or ``None`` when it is not rewritten.
+def _filters(value: object) -> list[str]:
+    if isinstance(value, Name):
+        return [str(value)]
+    return [str(name) for name in value] if isinstance(value, (Array, tuple, list)) else []
 
-    Only unmasked 8-bit or bitonal DeviceGray and DeviceRGB images qualify:
-    their decoded samples are their colors, so rewriting them keeps them.
+
+def _family(value: object) -> str:
+    if isinstance(value, Name):
+        return str(value)
+    if isinstance(value, (Array, tuple, list)) and len(value) and isinstance(value[0], Name):
+        return str(value[0])
+    return ""
+
+
+def _mask_reason(stream: Stream, item: Image) -> str | None:
+    """Return why an image's mask cannot become a soft mask of its own size, or ``None`` when it can."""
+    if stream.get("SMaskInData"):
+        return "JPEG 2000 data with its own alpha"
+    for key, what in (("SMask", "soft mask"), ("Mask", "stencil mask")):
+        mask = stream.get(key)
+        if not isinstance(mask, Stream):
+            continue
+        if key == "SMask" and "Matte" in mask:
+            return "a soft mask with /Matte"
+        if (mask.get("Width"), mask.get("Height")) != (item.width, item.height):
+            return f"a {what} of another size"
+    return None
+
+
+def _classify(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[str, bool, bool] | str | None:
+    """Return a selected image's kind, whether it is gray, and whether its stored samples are resampled.
+
+    An image that its kind and color flags leave out returns ``None``, and
+    one selected but not rewritten returns why.
     """
-    if (
-        item.is_stencil
-        or item.mask is not None
-        or any(key in stream for key in ("Mask", "SMask", "SMaskInData", "ImageMask"))
-        or _REWRITE_SPACES.get(item.colorspace) != item.components
-        or item.width * item.height > _MAX_SOURCE_PIXELS
-    ):
-        return None
-    filters = stream.get("Filter")
-    names = [str(filters)] if isinstance(filters, Name) else [str(name) for name in filters or ()]
+    names = _filters(stream.get("Filter"))
     image_filter = names[-1] if names else ""
-    if item.bits == 1 or image_filter in _BITONAL_FILTERS:
-        kind, lossy, gray = "bitonal", False, True
-    else:
-        lossy, gray = image_filter in _LOSSY_FILTERS, item.components == 1
-        kind = "lossy" if lossy else "lossless"
-        if item.bits != _BITS or not selected["gray" if gray else "color"]:
-            return None
-    return (lossy, gray) if selected[kind] else None
+    bitonal = item.is_stencil or item.bits == 1 or image_filter in _BITONAL_FILTERS
+    kind = "bitonal" if bitonal else "lossy" if image_filter in _LOSSY_FILTERS else "lossless"
+    gray = bitonal or item.components == 1
+    if not selected[kind] or not (bitonal or selected["gray" if gray else "color"]):
+        return None
+    reason = _unsupported(stream, item, image_filter, bitonal=bitonal) or _mask_reason(stream, item)
+    if reason is not None:
+        return reason
+    return kind, gray, not bitonal and _PAINTED_SPACES.get(item.colorspace) != item.components
 
 
-def _target_size(candidate: _Candidate, threshold: float | None, target: float) -> tuple[int, int]:
+def _unsupported(stream: Stream, item: Image, image_filter: str, *, bitonal: bool) -> str | None:
+    """Return why a rewrite would not keep an image's samples, or ``None`` when it would."""
+    family = item.colorspace or "no color space"
+    stored = not bitonal and _PAINTED_SPACES.get(item.colorspace) != item.components
+    checks = (
+        (item.is_stencil, "a stencil mask"),
+        (item.width * item.height > _MAX_SOURCE_PIXELS, f"more than {_MAX_SOURCE_PIXELS:,} pixels"),
+        (bitonal and item.colorspace != "DeviceGray", f"a bitonal image in {family}"),
+        (image_filter == "JPXDecode" and not item.colorspace, "JPEG 2000 that names no color space"),
+        (not bitonal and item.bits != _BITS, f"{item.bits} bits per component"),
+        (
+            stored and (item.colorspace not in _SAMPLE_SPACES or item.components not in (1, 3, _CMYK)),
+            f"a {family} color space",
+        ),
+        (stored and image_filter == "JPXDecode", f"JPEG 2000 in {family}"),
+        (stored and image_filter == "DCTDecode" and item.components == _CMYK, "a CMYK JPEG"),
+        (stored and "Decode" in stream, f"a /Decode array in {family}"),
+    )
+    return next((reason for failed, reason in checks if failed), None)
+
+
+def _target_size(
+    pixels: tuple[int, int], lengths: tuple[float, float], threshold: float | None, target: float
+) -> tuple[int, int]:
     """Return the pixels that an image keeps: ``target`` per inch of its largest placement, over ``threshold``.
 
     An axis never gains pixels, and an image whose resolution exceeds the
     threshold on either axis is resampled on both, so it keeps its aspect.
     """
-    width, height = candidate.image.item.width, candidate.image.item.height
-    axes = ((width, candidate.width), (height, candidate.height))
+    width, height = pixels
+    axes = ((width, lengths[0]), (height, lengths[1]))
     if threshold is None or not any(
         length > 0 and pixels * _POINTS_PER_INCH / length > threshold for pixels, length in axes
     ):
@@ -402,21 +525,28 @@ def _target_size(candidate: _Candidate, threshold: float | None, target: float) 
     return sizes[0], sizes[1]
 
 
-def _candidates(document: Document, selected: dict[str, bool]) -> dict[int, _Candidate | None]:
+def _candidates(
+    document: Document, options: _Options, tally: _Tally, inline: list[int]
+) -> dict[int, _Candidate | None]:
     """Return each image object that the pages place, with its largest placement, or ``None`` when not selected.
 
-    One record per object, so memory grows with the objects, not the placements.
+    One record per object, so memory grows with the objects, not the
+    placements; ``inline`` gains each page's count of inline images.
     """
     candidates: dict[int, _Candidate | None] = {}
     for page in document.pages:
+        inline.append(0)
         for image in page.images(annotations=True):
             item = image.item
             if item.xref == 0:
+                inline[-1] += 1
                 continue
             if item.xref not in candidates:
                 stream = document.objects.get(item.xref)
-                kind = _rewrite_class(stream, item, selected) if isinstance(stream, Stream) else None
-                candidates[item.xref] = None if kind is None else _Candidate(image, *kind)
+                kind = _classify(stream, item, options.selected) if isinstance(stream, Stream) else None
+                if isinstance(kind, str):
+                    tally.report(f"object {item.xref}: {kind}")
+                candidates[item.xref] = None if kind is None or isinstance(kind, str) else _Candidate(image, *kind)
             candidate = candidates[item.xref]
             if candidate is not None:
                 a, b, c, d = item.matrix[:4]
@@ -425,38 +555,297 @@ def _candidates(document: Document, selected: dict[str, bool]) -> dict[int, _Can
     return candidates
 
 
-def _rewrite(document: Document, xref: int, candidate: _Candidate, size: tuple[int, int], quality: int) -> int | None:
-    """Re-encode one image at ``size`` and store it when it is smaller enough; return its new stored length."""
+def _pixmap(width: int, height: int, depth: int, data: bytes) -> Pixmap:
+    """Return 8-bit samples of ``depth`` channels as a pixmap, through a PAM header."""
+    header = f"P7\nWIDTH {width}\nHEIGHT {height}\nDEPTH {depth}\nMAXVAL 255\nTUPLTYPE {_PAM_TYPES[depth]}\nENDHDR\n"
+    return _core.Pixmap.from_bytes(header.encode() + data)
+
+
+def _planes(data: bytes, channels: int) -> list[bytes]:
+    return [data[channel::channels] for channel in range(channels)]
+
+
+def _interleave(planes: list[bytes]) -> bytes:
+    if len(planes) == 1:
+        return planes[0]
+    out = bytearray(len(planes[0]) * len(planes))
+    for channel, plane in enumerate(planes):
+        out[channel :: len(planes)] = plane
+    return bytes(out)
+
+
+def _from_pixmap(pixmap: Pixmap) -> _Pixels:
+    """Split a pixmap into its color samples and its alpha, ``None`` when every pixel is opaque."""
+    data = bytes(pixmap)
+    components = 1 if pixmap.colorspace == "gray" else 3
+    if not pixmap.alpha:
+        return _Pixels(pixmap.width, pixmap.height, components, data, None)
+    planes = _planes(data, components + 1)
+    alpha = planes.pop()
+    return _Pixels(
+        pixmap.width, pixmap.height, components, _interleave(planes), None if alpha.count(0xFF) == len(alpha) else alpha
+    )
+
+
+def _resized(pixels: _Pixels, size: tuple[int, int]) -> _Pixels:
+    """Resample ``pixels`` to ``size``: color and alpha together, through premultiplied alpha, below four components."""
+    if size == (pixels.width, pixels.height):
+        return pixels
+    width, height = pixels.width, pixels.height
+    if pixels.components < _CMYK:
+        depth = pixels.components + (pixels.alpha is not None)
+        data = (
+            pixels.color
+            if pixels.alpha is None
+            else _interleave([*_planes(pixels.color, pixels.components), pixels.alpha])
+        )
+        scaled = _from_pixmap(_pixmap(width, height, depth, data).scale(*size))
+        if pixels.alpha is not None and scaled.alpha is None:
+            scaled.alpha = b"\xff" * (size[0] * size[1])
+        return scaled
+    planes = [
+        bytes(_pixmap(width, height, 1, plane).scale(*size)) for plane in _planes(pixels.color, pixels.components)
+    ]
+    alpha = None if pixels.alpha is None else bytes(_pixmap(width, height, 1, pixels.alpha).scale(*size))
+    return _Pixels(size[0], size[1], pixels.components, _interleave(planes), alpha)
+
+
+def _bitonal(pixels: _Pixels) -> bytes:
+    """Return gray samples as 1-bit rows, padded to whole bytes, 1 for white: below 128 is black."""
+    pbm = _pixmap(pixels.width, pixels.height, 1, pixels.color).to_bytes("pbm", max_size=None)
+    return pbm.split(b"\n", 2)[2].translate(_INVERT)
+
+
+def _encode(pixels: _Pixels, form: str, quality: int, limit: int) -> bytes | None:
+    """Return the color samples encoded as ``form``: ``"jpeg"``, ``"flate"``, ``"fax"``, or ``"flate1"`` for 1 bit."""
+    if form == "fax":
+        return _core.encode_ccitt_g4(_bitonal(pixels), pixels.width, pixels.height, limit)
+    if form == "flate1":
+        return zlib.compress(_bitonal(pixels), 9)
+    if form == "jpeg":
+        return _pixmap(pixels.width, pixels.height, pixels.components, pixels.color).to_bytes("jpeg", quality=quality)
+    return zlib.compress(pixels.color, 9)
+
+
+def _form(kind: str, components: int, options: _Options) -> str:
+    if kind == "bitonal":
+        return "fax" if options.bitonal_format == "fax" else "flate1"
+    return "jpeg" if options.jpeg(kind) and components < _CMYK else "flate"
+
+
+def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
+    """Return an image's pixels: hayro's colors, or its stored samples with hayro's alpha."""
     item = candidate.image.item
     pixmap = candidate.image.pixmap()
-    if pixmap.alpha:
-        pixmap = pixmap.without_alpha()
     if candidate.gray and pixmap.colorspace != "gray":
         pixmap = pixmap.to_gray()
-    if size != (pixmap.width, pixmap.height):
-        pixmap = pixmap.scale(*size)
-    data = pixmap.to_bytes("jpeg", quality=quality) if candidate.lossy else zlib.compress(bytes(pixmap), 9)
-    if len(data) > item.encoded_size * (1 - _MIN_SAVING):
-        return None
+    painted = _from_pixmap(pixmap)
+    if not candidate.samples:
+        return painted
+    if (painted.width, painted.height) != (item.width, item.height):
+        msg = f"image object {item.xref} decodes to another size"
+        raise PdfError(msg)
+    stored = candidate.image.stored()
+    if stored is not None and stored.filter == "DCTDecode":
+        decoded = _core.Pixmap.from_bytes(stored.data)
+        color = bytes(decoded)
+    else:
+        color = stream.read()[: item.width * item.height * item.components]
+    if len(color) != item.width * item.height * item.components:
+        msg = f"image object {item.xref} holds fewer samples than its size needs"
+        raise PdfError(msg)
+    return _Pixels(item.width, item.height, item.components, color, painted.alpha)
+
+
+def _rewrite(
+    document: Document, xref: int, candidate: _Candidate, size: tuple[int, int], options: _Options
+) -> int | None:
+    """Re-encode one image at ``size`` and store it when it is smaller enough; return its new stored length."""
+    item = candidate.image.item
     stream = document.objects[xref]
-    if candidate.lossy:
-        _store_image(document, stream, data)
-        return len(data)
-    _clear(stream)
+    before = item.encoded_size + sum(
+        len(mask.read(decode=False)) for key in ("SMask", "Mask") if isinstance(mask := stream.get(key), Stream)
+    )
+    limit = int(before * (1 - _MIN_SAVING))
+    pixels = _resized(_source(candidate, stream), size)
+    form = _form(candidate.kind, pixels.components, options)
+    quality = _DEFAULT_QUALITY if options.quality is None else options.quality
+    data = _encode(pixels, form, quality, limit)
+    alpha = None if pixels.alpha is None else zlib.compress(pixels.alpha, 9)
+    if data is None or len(data) + len(alpha or b"") > limit:
+        return None
+    # Resampled stored samples keep the color space, which stays in place.
+    for key in _DATA_KEYS:
+        if key in stream and not (candidate.samples and key == "ColorSpace"):
+            del stream[key]
     stream.write(data, filter=None)
-    stream.update(
-        {
+    entries: dict[str, object] = {
+        "Width": size[0],
+        "Height": size[1],
+        "BitsPerComponent": 1 if candidate.kind == "bitonal" else 8,
+        "Filter": Name({"jpeg": "DCTDecode", "fax": "CCITTFaxDecode"}.get(form, "FlateDecode")),
+    }
+    if not candidate.samples:
+        entries["ColorSpace"] = Name("DeviceGray" if pixels.components == 1 else "DeviceRGB")
+    if form == "fax":
+        entries["DecodeParms"] = {"K": -1, "Columns": size[0], "Rows": size[1]}
+    stream.update(entries)
+    if alpha is not None:
+        mask = {
+            "Type": Name("XObject"),
+            "Subtype": Name("Image"),
             "Width": size[0],
             "Height": size[1],
             "BitsPerComponent": 8,
-            "ColorSpace": Name("DeviceGray" if candidate.gray else "DeviceRGB"),
+            "ColorSpace": Name("DeviceGray"),
             "Filter": Name("FlateDecode"),
         }
+        number = document.objects.add_stream(b"", mask, filter=None)
+        document.objects[number].write(alpha, filter=None)
+        document.objects[number]["Filter"] = Name("FlateDecode")
+        stream["SMask"] = document.objects[number]
+    return len(data) + len(alpha or b"")
+
+
+def _inline_pixels(image: InlineImage, selected: dict[str, bool]) -> tuple[str, _Pixels] | str | None:
+    """Return an inline image's kind and pixels, why it is not rewritten, or ``None`` when its kind is not selected."""
+    entries = image.dictionary
+    width, height = entries.get("W", entries.get("Width")), entries.get("H", entries.get("Height"))
+    bits = entries.get("BPC", entries.get("BitsPerComponent"))
+    space = entries.get("CS", entries.get("ColorSpace"))
+    names = _filters(entries.get("F", entries.get("Filter")))
+    stencil = entries.get("IM", entries.get("ImageMask")) is True
+    bitonal = stencil or bits == 1
+    lossy = bool(names) and names[-1] in _INLINE_DCT
+    kind = "bitonal" if bitonal else "lossy" if lossy else "lossless"
+    components = _INLINE_SPACES.get(str(space)) if isinstance(space, Name) else None
+    gray = bitonal or components == 1
+    if not selected[kind] or not (bitonal or selected["gray" if gray else "color"]):
+        return None
+    checks = (
+        (stencil, "an inline stencil mask"),
+        (
+            components is None or (bitonal and components != 1),
+            f"an inline image in {_family(space) or 'no color space'}",
+        ),
+        (
+            bits not in (1, _BITS) or any(key in entries for key in ("D", "Decode", "DP", "DecodeParms")),
+            "an inline image with other bits, /Decode, or /DecodeParms",
+        ),
+        (
+            not (isinstance(width, int) and isinstance(height, int) and 0 < width * height <= _MAX_INLINE_PIXELS),
+            "an inline image of another size",
+        ),
+        (lossy and len(names) != 1, "an inline JPEG under other filters"),
     )
-    return len(data)
+    reason = next((reason for failed, reason in checks if failed), None)
+    if reason is not None:
+        return reason
+    if not isinstance(width, int) or not isinstance(height, int) or components is None:
+        return "an inline image of another size"
+    pixels = _inline_decode(image, (width, height, components), lossy=lossy, bitonal=bitonal)
+    return (kind, pixels) if isinstance(pixels, _Pixels) else pixels
 
 
-def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments
+def _inline_decode(image: InlineImage, shape: tuple[int, int, int], *, lossy: bool, bitonal: bool) -> _Pixels | str:
+    """Return an inline image's pixels, or why they are not read."""
+    width, height, components = shape
+    if lossy:
+        pixels = _from_pixmap(_core.Pixmap.from_bytes(image.data))
+        if (pixels.width, pixels.height, pixels.components) != shape:
+            return "an inline JPEG that does not match its dictionary"
+        return pixels
+    entries = image.dictionary
+    data = _inline_data(entries.get("F", entries.get("Filter")), image.data)
+    stride = (width + 7) // 8 if bitonal else width * components
+    if data is None or len(data) < stride * height:
+        return "an inline image whose filters a rewrite does not decode"
+    data = data[: stride * height]
+    if bitonal:
+        pbm = f"P4\n{width} {height}\n".encode() + data.translate(_INVERT)
+        return _from_pixmap(_core.Pixmap.from_bytes(pbm))
+    return _Pixels(width, height, components, data, None)
+
+
+def _rewrite_inline(image: InlineImage, matrix: tuple[float, ...], options: _Options, tally: _Tally) -> InlineImage:
+    """Return an inline image rewritten as its placement and the options say, or ``image`` when it stays."""
+    found = _inline_pixels(image, options.selected)
+    if found is None:
+        return image
+    tally.considered += 1
+    if isinstance(found, str):
+        tally.report(found)
+        return image
+    kind, pixels = found
+    recolor = options.set_to_gray and pixels.components != 1
+    if recolor:
+        pixels = _from_pixmap(_pixmap(pixels.width, pixels.height, 3, pixels.color).to_gray())
+    lengths = (math.hypot(matrix[0], matrix[1]), math.hypot(matrix[2], matrix[3]))
+    size = _target_size((pixels.width, pixels.height), lengths, options.threshold, options.target)
+    if size == (pixels.width, pixels.height) and not recolor and options.quality is None:
+        return image
+    pixels = _resized(pixels, size)
+    form = _form(kind, pixels.components, options)
+    limit = int(len(image.data) * (1 - _MIN_SAVING))
+    quality = _DEFAULT_QUALITY if options.quality is None else options.quality
+    data = _encode(pixels, form, quality, limit)
+    if data is None or len(data) > limit:
+        return image
+    entries = image.dictionary
+    dictionary: dict[str, object] = {
+        "W": size[0],
+        "H": size[1],
+        "BPC": 1 if kind == "bitonal" else 8,
+        "CS": Name("G" if pixels.components == 1 else "RGB"),
+        "F": Name({"jpeg": "DCT", "fax": "CCF"}.get(form, "Fl")),
+    }
+    if form == "fax":
+        dictionary["DP"] = {"K": -1, "Columns": size[0], "Rows": size[1]}
+    dictionary.update({key: value for key, value in entries.items() if key in ("I", "Interpolate", "Intent")})
+    tally.kept(len(image.data), len(data))
+    return InlineImage(dictionary, data)
+
+
+def _rewrite_page_inline(page: Page, options: _Options, tally: _Tally) -> int:
+    """Rewrite the inline images of a page's own content, which the page then writes as one new stream.
+
+    Return how many inline images the page's own content holds.
+    """
+    found = 0
+    operations = page.operations
+    matrix: tuple[float, ...] = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    saved: list[tuple[float, ...]] = []
+    out: list[Operation | InlineImage] = []
+    changed = False
+    for operation in operations:
+        if isinstance(operation, InlineImage):
+            found += 1
+            image = _rewrite_inline(operation, matrix, options, tally)
+            changed = changed or image is not operation
+            out.append(image)
+            continue
+        if operation.operator == "q":
+            saved.append(matrix)
+        elif operation.operator == "Q" and saved:
+            matrix = saved.pop()
+        elif operation.operator == "cm" and len(operation.operands) == 6:  # noqa: PLR2004 - a matrix.
+            values = operation.operands
+            if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values):
+                matrix = _concat(tuple(float(value) for value in values), matrix)
+        out.append(operation)
+    if changed:
+        page.operations = Operations(out, tail=operations.tail)
+    return found
+
+
+def _concat(first: tuple[float, ...], second: tuple[float, ...]) -> tuple[float, ...]:
+    """Return ``first`` then ``second``, as ``cm`` prepends to the current matrix."""
+    a, b, c, d, e, f = first
+    p, q, r, s, t, u = second
+    return (a * p + b * r, a * q + b * s, c * p + d * r, c * q + d * s, e * p + f * r + t, e * q + f * s + u)
+
+
+def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf's output choices
     document: Document,
     *,
     dpi_threshold: float | None,
@@ -464,29 +853,38 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments
     quality: int | None,
     selected: dict[str, bool],
     set_to_gray: bool,
+    lossless_format: str,
+    bitonal_format: str,
 ) -> ImageRewriteReport:
     """Downsample and recompress the images that the pages place, each object once, in one transaction."""
     threshold, target = _rewrite_options(dpi_threshold, dpi_target, quality, {**selected, "set_to_gray": set_to_gray})
+    _check_formats(lossless_format, bitonal_format)
     if threshold is None and quality is None and not set_to_gray:
         return ImageRewriteReport(0, 0, 0, 0)
-    candidates = _candidates(document, selected)
-    rewritten = bytes_before = bytes_after = 0
+    options = _Options(threshold, target, quality, selected, set_to_gray, lossless_format, bitonal_format)
+    tally = _Tally()
+    inline: list[int] = []
+    candidates = _candidates(document, options, tally, inline)
+    tally.considered = len(candidates)
     with document.transaction("rewrite images"):
         for xref, candidate in candidates.items():
             if candidate is None:
                 continue
             item = candidate.image.item
-            size = _target_size(candidate, threshold, target)
+            size = _target_size((item.width, item.height), (candidate.width, candidate.height), threshold, target)
             recolor = set_to_gray and not candidate.gray
             if size == (item.width, item.height) and not recolor and quality is None:
                 continue
-            candidate.gray = candidate.gray or set_to_gray
-            length = _rewrite(document, xref, candidate, size, _DEFAULT_QUALITY if quality is None else quality)
-            if length is not None:
-                rewritten += 1
-                bytes_before += item.encoded_size
-                bytes_after += length
-    return ImageRewriteReport(len(candidates), rewritten, bytes_before, bytes_after)
+            if recolor:
+                candidate.gray, candidate.samples = True, False
+            tally.kept(item.encoded_size, _rewrite(document, xref, candidate, size, options))
+        for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
+            nested = count - (_rewrite_page_inline(page, options, tally) if count else 0)
+            if nested > 0:
+                tally.report(f"page {index}: {nested} inline images in Form XObjects or annotation appearances")
+    return ImageRewriteReport(
+        tally.considered, tally.rewritten, tally.before, tally.after, tuple(tally.unsupported or ())
+    )
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.

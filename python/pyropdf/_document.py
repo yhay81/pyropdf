@@ -227,7 +227,7 @@ class Document:
         self._ensure_open()
         remove_image(self, xref)
 
-    def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments
+    def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf's output choices
         self,
         *,
         dpi_threshold: float | None = None,
@@ -239,28 +239,56 @@ class Document:
         color: bool = True,
         gray: bool = True,
         set_to_gray: bool = False,
+        lossless_format: Literal["flate", "jpeg"] = "flate",
+        bitonal_format: Literal["fax", "flate"] = "fax",
     ) -> ImageRewriteReport:
         """Downsample and recompress the images that the pages place, each image object once, in one transaction.
 
         An image whose resolution at its largest placement exceeds
         ``dpi_threshold`` on either axis is resampled to ``dpi_target`` on
         both, never gaining pixels, so an image placed on several pages
-        keeps the pixels that its largest placement needs. ``quality`` (1 through 100) re-encodes every
-        selected image even when it keeps its size. Lossy images (JPEG and
-        JPEG 2000) are written as JPEG at ``quality``, or 75 when it is
-        ``None``; lossless and bitonal ones as 8-bit Flate.
-        ``set_to_gray`` converts color images to DeviceGray.
+        keeps the pixels that its largest placement needs. Resampling uses
+        :meth:`Pixmap.scale`'s filter, through premultiplied alpha.
+        ``quality`` (1 through 100) re-encodes every selected image even
+        when it keeps its size.
+
+        Lossy images (JPEG and JPEG 2000) are written as JPEG at
+        ``quality``, or 75 when it is ``None``. Lossless ones are written as
+        8-bit Flate, or as JPEG when ``lossless_format`` is ``"jpeg"``.
+        Bitonal ones (1 bit, CCITT, or JBIG2) are written as CCITT Group 4
+        with ``bitonal_format="fax"``, or as 1-bit Flate with ``"flate"``;
+        resampled bitonal pixels below half gray become black. A soft mask,
+        a stencil ``/Mask`` of the image's size, or a color-key mask
+        becomes a new 8-bit soft mask resampled with the image, so a mask
+        that other images share stays as it is.
+
+        DeviceGray and DeviceRGB images are rewritten from the colors that
+        hayro paints, with their ``/Decode`` arrays applied. 8-bit
+        DeviceCMYK, ICCBased, CalGray, and CalRGB images keep their color
+        space: their stored samples are resampled channel by channel, and
+        CMYK is written as Flate in every case. Inline images of a page's
+        own content are rewritten too, by the placement that its ``cm``
+        operators give, and the page's content becomes one new stream.
 
         ``lossy``, ``lossless``, ``bitonal``, ``color``, and ``gray`` select
-        the kinds of image to rewrite. Only unmasked DeviceGray and
-        DeviceRGB images with 8 bits per component, or 1 for bitonal ones,
-        qualify, and inline images are not considered. A rewrite is kept
-        only when it saves at least 5% of the stored data, so repeating a
-        call does not re-encode a JPEG again. With none of
-        ``dpi_threshold``, ``quality``, and ``set_to_gray`` there is nothing
-        to do, and the call returns zero counts. A decoding
-        failure raises and leaves the document as it was;
-        :attr:`history` can undo the step.
+        the kinds of image to rewrite. A selected image that a rewrite would
+        not keep stays as it is and is named in
+        :attr:`ImageRewriteReport.unsupported`: stencil masks, soft masks
+        with ``/Matte`` or of another size, CMYK JPEGs, JPEG 2000 outside
+        DeviceGray and DeviceRGB, other bit depths and color spaces, and
+        inline images inside Form XObjects or annotation appearances.
+
+        ``set_to_gray`` converts the selected color images to DeviceGray,
+        and only images, where PyMuPDF's option of the same name converts
+        whole pages: :meth:`recolor` with ``"gray"`` converts the text,
+        vector graphics, and images of pages.
+
+        A rewrite is kept only when it saves at least 5% of the stored
+        data, its masks included, so repeating a call does not re-encode a
+        JPEG again. With none of ``dpi_threshold``, ``quality``, and
+        ``set_to_gray`` there is nothing to do, and the call returns zero
+        counts. A decoding failure raises and leaves the document as it
+        was; :attr:`history` can undo the step.
         """
         self._ensure_open()
         return rewrite_images(
@@ -270,6 +298,8 @@ class Document:
             quality=quality,
             selected={"lossy": lossy, "lossless": lossless, "bitonal": bitonal, "color": color, "gray": gray},
             set_to_gray=set_to_gray,
+            lossless_format=lossless_format,
+            bitonal_format=bitonal_format,
         )
 
     def recolor(self, target: RecolorTarget, pages: Iterable[int] | None = None) -> RecolorReport:
