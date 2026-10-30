@@ -456,6 +456,19 @@ class Document:
         return self._doc.is_repaired()
 
     @property
+    def is_linearized(self) -> bool:
+        """Return whether the opened file is linearized for fast web view (ISO 32000-2 Annex F).
+
+        The file's first object, in its first 1024 bytes, is a linearization
+        dictionary whose ``/L`` is the file's length. An update appended to
+        a linearized file changes its length, so such a file reads as not
+        linearized. Edits in memory do not change the answer; a document
+        without a file is not linearized.
+        """
+        self._ensure_open()
+        return self._doc.is_linearized()
+
+    @property
     def needs_password(self) -> bool:
         """Return whether the document is locked until :meth:`unlock` receives its password."""
         self._ensure_open()
@@ -536,6 +549,7 @@ class Document:
         object_streams: bool = False,
         renumber: bool = False,
         dedupe: bool = False,
+        linearize: bool = False,
     ) -> None:
         """Write the document to a file.
 
@@ -607,6 +621,18 @@ class Document:
         objects in cycles of references never merge. It needs
         ``prune=True``, and so a full save. The document in memory keeps its
         objects.
+
+        ``linearize=True`` writes the file linearized for fast web view
+        (ISO 32000-2 Annex F): the first page's objects, then a hint stream
+        and the other pages' objects in page order, so that a viewer shows
+        the first page before the rest arrives. It writes the objects that
+        the pages, the trailer, and the catalog reach, numbered anew, so it
+        prunes and renumbers whatever ``prune`` and ``renumber`` say, and
+        moves the attributes that pages inherit from the page tree into the
+        pages. It writes a cross-reference table, so it refuses
+        ``cross_reference="stream"``, ``object_streams``, and ``dedupe``,
+        and an incremental save refuses it. :attr:`is_linearized` reads
+        whether an opened file is linearized.
         """
         self._ensure_open()
         options = _save_options(
@@ -620,6 +646,7 @@ class Document:
             object_streams=object_streams,
             renumber=renumber,
             dedupe=dedupe,
+            linearize=linearize,
         )
         arg = _encryption_arg(encryption)
         _atomic_save_file(path, lambda temporary: self._doc.save_path(temporary, incremental, arg, *options))
@@ -639,6 +666,7 @@ class Document:
         object_streams: bool = False,
         renumber: bool = False,
         dedupe: bool = False,
+        linearize: bool = False,
     ) -> bytes:
         """Return the document as PDF bytes, as :meth:`save` writes them with the same options.
 
@@ -658,6 +686,7 @@ class Document:
             object_streams=object_streams,
             renumber=renumber,
             dedupe=dedupe,
+            linearize=linearize,
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
@@ -1043,12 +1072,13 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     object_streams: bool,
     renumber: bool,
     dedupe: bool,
-) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool]:
+    linearize: bool,
+) -> tuple[bool, int | None, bool, bool, bool | None, bool, bool, bool, bool]:
     """Check the save options, and return them as the core's save methods take them.
 
     They are ``prune``, the ``compress`` level, ``decompress``, ``renew_id``,
-    ``cross_reference_stream``, ``object_streams``, ``renumber``, and
-    ``dedupe``.
+    ``cross_reference_stream``, ``object_streams``, ``renumber``,
+    ``dedupe``, and ``linearize``.
     """
     flags = {
         "incremental": incremental,
@@ -1059,6 +1089,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         "object_streams": object_streams,
         "renumber": renumber,
         "dedupe": dedupe,
+        "linearize": linearize,
     }
     for name, value in flags.items():
         _validate_bool(name, value)
@@ -1076,6 +1107,7 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
             object_streams=object_streams,
             renumber=renumber,
             dedupe=dedupe,
+            linearize=linearize,
         )
     if compress and decompress:
         msg = "decompress=True needs compress=False, which would compress the streams again"
@@ -1089,6 +1121,8 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
     if object_streams and cross_reference == "table":
         msg = "object_streams=True writes a cross-reference stream, so it needs cross_reference='stream' or None"
         raise ValueError(msg)
+    if linearize:
+        _refuse_linearized_options(cross_reference=cross_reference, object_streams=object_streams, dedupe=dedupe)
     stream = None if cross_reference is None else cross_reference == "stream"
     return (
         prune,
@@ -1099,7 +1133,24 @@ def _save_options(  # noqa: PLR0913 - the save options are all keyword-only
         object_streams,
         renumber,
         dedupe,
+        linearize,
     )
+
+
+def _refuse_linearized_options(*, cross_reference: object, object_streams: bool, dedupe: bool) -> None:
+    """Raise ValueError for an option that a linearized file cannot hold."""
+    conflicts = {
+        "cross_reference='stream'": cross_reference == "stream",
+        "object_streams=True": object_streams,
+        "dedupe=True": dedupe,
+    }
+    for name, given in conflicts.items():
+        if given:
+            msg = (
+                "linearize=True writes a cross-reference table without object streams or merged objects, "
+                f"so it refuses {name}"
+            )
+            raise ValueError(msg)
 
 
 def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keyword-only
@@ -1110,6 +1161,7 @@ def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keywo
     object_streams: bool,
     renumber: bool,
     dedupe: bool,
+    linearize: bool,
 ) -> None:
     """Raise :class:`ValueError` for an option that an incremental save refuses, as only a full save takes it."""
     kept = {
@@ -1118,6 +1170,7 @@ def _refuse_full_save_options(  # noqa: PLR0913 - the save options are all keywo
         "cross_reference and object_streams": (cross_reference is not None or object_streams, "the form"),
         "renumber": (renumber, "the numbers"),
         "dedupe": (dedupe, "the objects"),
+        "linearize": (linearize, "the order"),
     }
     for name, (given, what) in kept.items():
         if given:
