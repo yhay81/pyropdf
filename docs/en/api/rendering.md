@@ -43,6 +43,34 @@ Pixmap.colorspace
 
 The color space of the samples, a `pyropdf.Colorspace`.
 
+### `Pixmap.crop`
+
+```python
+Pixmap.crop(rect)
+```
+
+Returns the pixels of `rect`, `(x0, y0, x1, y1)` in whole pixels,
+cut to the pixmap; a rect outside it raises `ValueError`.
+
+### `Pixmap.from_bytes`
+
+```python
+Pixmap.from_bytes(data)
+```
+
+Decodes PNG or JPEG `data`, any bytes-like object, into a pixmap:
+PNG keeps its alpha and resolution, and JPEG decodes to gray or RGB
+at 96 dpi. At most 64,000,000 pixels.
+
+### `Pixmap.gamma`
+
+```python
+Pixmap.gamma(value)
+```
+
+Returns a copy with each color component `c`, from 0 to 1, replaced
+by `c ** value`: a `value` above 1 darkens and one below lightens.
+
 ### `Pixmap.height`
 
 ```python
@@ -50,6 +78,24 @@ Pixmap.height
 ```
 
 Height in pixels.
+
+### `Pixmap.invert`
+
+```python
+Pixmap.invert(rect=None)
+```
+
+Returns a copy with the colors inside `rect` inverted, or all of
+them when `rect` is `None`; alpha is kept. `rect` is
+`(x0, y0, x1, y1)` in whole pixels, cut to the pixmap.
+
+### `Pixmap.open`
+
+```python
+Pixmap.open(path)
+```
+
+Reads a PNG or JPEG file into a pixmap, as `from_bytes` decodes it.
 
 ### `Pixmap.resolution`
 
@@ -72,6 +118,17 @@ else the format that the extension of `path` names, and replaces
 permissions and a final symlink. A failed save leaves `path` as it
 was.
 
+### `Pixmap.scale`
+
+```python
+Pixmap.scale(width, height)
+```
+
+Returns the pixmap resampled to `width` by `height` pixels with a
+bilinear filter, as Pillow's `Image.resize` with `BILINEAR`; the
+resolution follows, so the image keeps its size in inches. At most
+64,000,000 pixels.
+
 ### `Pixmap.stride`
 
 ```python
@@ -79,6 +136,16 @@ Pixmap.stride
 ```
 
 Bytes per row: width × channels.
+
+### `Pixmap.tint`
+
+```python
+Pixmap.tint(black=..., white=...)
+```
+
+Returns a copy whose black becomes `black` and whose white becomes
+`white`, RGB colors of 0 to 255, with the values between mapped
+linearly; a gray pixmap uses their luma. Alpha is kept.
 
 ### `Pixmap.to_bytes`
 
@@ -93,6 +160,31 @@ Returns the pixels encoded as `format`, `"png"` or `"jpeg"` at
 write that would pass it with `LimitError` code
 `pixmap_output_size`; `None` leaves it unbounded.
 
+### `Pixmap.to_gray`
+
+```python
+Pixmap.to_gray()
+```
+
+Returns the pixmap in gray, with ITU-R BT.601 luma weights, keeping alpha.
+
+### `Pixmap.to_pil`
+
+```python
+Pixmap.to_pil()
+```
+
+Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, or
+`RGBA`, with the resolution in its `dpi` info; it needs Pillow.
+
+### `Pixmap.to_rgb`
+
+```python
+Pixmap.to_rgb()
+```
+
+Returns the pixmap in RGB, keeping alpha.
+
 ### `Pixmap.width`
 
 ```python
@@ -100,3 +192,20 @@ Pixmap.width
 ```
 
 Width in pixels.
+
+### `Pixmap.with_alpha`
+
+```python
+Pixmap.with_alpha()
+```
+
+Returns the pixmap with an alpha channel, opaque where it had none.
+
+### `Pixmap.without_alpha`
+
+```python
+Pixmap.without_alpha(background=...)
+```
+
+Returns the pixmap without alpha, composited over `background`, an
+RGB color of 0 to 255 whose luma a gray pixmap uses.

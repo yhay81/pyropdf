@@ -61,6 +61,24 @@ boxes that `words()` and `search()` return; see
 `pixmap.to_bytes("png")` or `to_bytes("jpeg", quality=...)` returns the
 encoded bytes. JPEG has no alpha, so encode an opaque pixmap.
 
+## Pixel operations
+
+Each operation returns a new pixmap: `invert(rect=None)`, `gamma(value)`,
+`tint(black, white)`, `to_gray()`, `to_rgb()`, `with_alpha()`,
+`without_alpha(background)`, `crop(rect)`, and `scale(width, height)`.
+Rectangles are in whole pixels. `Pixmap.from_bytes(data)` and
+`Pixmap.open(path)` read PNG and JPEG, and `to_pil()` returns a Pillow
+image when Pillow is installed.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    pixmap = doc.pages[0].pixmap(dpi=72)
+    thumbnail = pixmap.to_gray().scale(pixmap.width // 4, pixmap.height // 4)
+    thumbnail.invert((0, 0, 10, 10)).save("thumbnail.png")
+```
+
 ## Batches
 
 `doc.render` renders several pages in parallel, on up to `workers` threads

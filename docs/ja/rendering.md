@@ -59,6 +59,23 @@ with pyropdf.open("input.pdf") as doc:
 `to_bytes("jpeg", quality=...)` はエンコードしたバイト列を返します。JPEG にアルファはないので、
 不透明な pixmap をエンコードしてください。
 
+## ピクセル操作
+
+どの操作も新しい pixmap を返します：`invert(rect=None)`、`gamma(value)`、
+`tint(black, white)`、`to_gray()`、`to_rgb()`、`with_alpha()`、
+`without_alpha(background)`、`crop(rect)`、`scale(width, height)`。矩形はピクセル単位です。
+`Pixmap.from_bytes(data)` と `Pixmap.open(path)` は PNG と JPEG を読み、`to_pil()` は
+Pillow があれば Pillow の画像を返します。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    pixmap = doc.pages[0].pixmap(dpi=72)
+    thumbnail = pixmap.to_gray().scale(pixmap.width // 4, pixmap.height // 4)
+    thumbnail.invert((0, 0, 10, 10)).save("thumbnail.png")
+```
+
 ## まとめて描画する
 
 `doc.render` は複数ページを、GIL を手放した最大 `workers` 個のスレッドで並列に描画し、

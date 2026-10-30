@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jpeg_encoder::{ColorType, Encoder as JpegEncoder, PixelDensity, PixelDensityUnit};
-use pyo3::exceptions::{PyBufferError, PyTypeError, PyValueError};
+use pyo3::buffer::PyBuffer;
+use pyo3::exceptions::{PyBufferError, PyImportError, PyTypeError, PyValueError};
 use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyInt};
@@ -24,6 +25,7 @@ use pyropdf_store::value::Reference;
 
 use crate::document::_Document;
 use crate::errors::{EncryptedDocumentError, LimitError, PdfError, StaleObjectError, store_error};
+use crate::pixel_ops::{self, Area, Layout};
 
 /// Metres per inch, for PNG's pixels per metre.
 const METRES_PER_INCH: f64 = 0.0254;
@@ -62,6 +64,65 @@ impl Pixmap {
 
     fn channels(&self) -> u32 {
         u32::from(!self.gray) * 2 + 1 + u32::from(self.alpha)
+    }
+
+    const fn layout(&self) -> Layout {
+        Layout {
+            width: self.width,
+            height: self.height,
+            gray: self.gray,
+            alpha: self.alpha,
+        }
+    }
+
+    /// Returns a pixmap of `data` in `layout` at this pixmap's resolution.
+    fn derive(&self, layout: Layout, data: Vec<u8>) -> Self {
+        Self {
+            width: layout.width,
+            height: layout.height,
+            alpha: layout.alpha,
+            gray: layout.gray,
+            data: Arc::new(data),
+            resolution: self.resolution,
+        }
+    }
+
+    fn converted(&self, py: Python<'_>, gray: bool) -> Self {
+        if self.gray == gray {
+            return self.share();
+        }
+        let layout = self.layout();
+        self.derive(
+            Layout { gray, ..layout },
+            py.detach(|| pixel_ops::convert(&self.data, layout, gray)),
+        )
+    }
+
+    /// Returns a pixmap that shares this one's samples.
+    fn share(&self) -> Self {
+        Self {
+            data: Arc::clone(&self.data),
+            ..*self
+        }
+    }
+
+    /// Returns the pixels of `rect`, `(x0, y0, x1, y1)` in whole pixels,
+    /// cut to the pixmap; `None` when none is left.
+    fn area(&self, rect: (i64, i64, i64, i64)) -> PyResult<Option<Area>> {
+        let (x0, y0, x1, y1) = rect;
+        if x0 >= x1 || y0 >= y1 {
+            return Err(PyValueError::new_err(format!(
+                "rect must have x0 < x1 and y0 < y1: {rect:?}"
+            )));
+        }
+        let cut = |value: i64, limit: u32| value.clamp(0, i64::from(limit)) as u32;
+        let area = (
+            cut(x0, self.width),
+            cut(y0, self.height),
+            cut(x1, self.width),
+            cut(y1, self.height),
+        );
+        Ok((area.0 < area.2 && area.1 < area.3).then_some(area))
     }
 
     /// Returns the samples and their layout, which OCR reads.
@@ -255,6 +316,224 @@ impl Pixmap {
     #[getter]
     const fn resolution(&self) -> (u32, u32) {
         self.resolution
+    }
+
+    /// Returns a copy with the colors inside `rect` inverted, or all of
+    /// them when `rect` is `None`; alpha is kept. `rect` is
+    /// `(x0, y0, x1, y1)` in whole pixels, cut to the pixmap.
+    #[pyo3(signature = (rect=None))]
+    fn invert(&self, py: Python<'_>, rect: Option<(i64, i64, i64, i64)>) -> PyResult<Self> {
+        let area = match rect {
+            None => Some((0, 0, self.width, self.height)),
+            Some(rect) => self.area(rect)?,
+        };
+        let Some(area) = area else {
+            return Ok(self.share());
+        };
+        let layout = self.layout();
+        Ok(self.derive(
+            layout,
+            py.detach(|| pixel_ops::invert(&self.data, layout, area)),
+        ))
+    }
+
+    /// Returns a copy with each color component `c`, from 0 to 1, replaced
+    /// by `c ** value`: a `value` above 1 darkens and one below lightens.
+    fn gamma(&self, py: Python<'_>, value: f64) -> PyResult<Self> {
+        if !(value.is_finite() && value > 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "gamma must be a positive number: {value}"
+            )));
+        }
+        let table = pixel_ops::gamma_table(value);
+        let layout = self.layout();
+        Ok(self.derive(
+            layout,
+            py.detach(|| pixel_ops::map_colors(&self.data, layout, &[table; 3])),
+        ))
+    }
+
+    /// Returns a copy whose black becomes `black` and whose white becomes
+    /// `white`, RGB colors of 0 to 255, with the values between mapped
+    /// linearly; a gray pixmap uses their luma. Alpha is kept.
+    #[pyo3(signature = (black=(0, 0, 0), white=(255, 255, 255)))]
+    fn tint(&self, py: Python<'_>, black: (u8, u8, u8), white: (u8, u8, u8)) -> Self {
+        let (black, white) = ([black.0, black.1, black.2], [white.0, white.1, white.2]);
+        let tables = if self.gray {
+            [pixel_ops::tint_table(pixel_ops::luma(black), pixel_ops::luma(white)); 3]
+        } else {
+            std::array::from_fn(|component| {
+                pixel_ops::tint_table(black[component], white[component])
+            })
+        };
+        let layout = self.layout();
+        self.derive(
+            layout,
+            py.detach(|| pixel_ops::map_colors(&self.data, layout, &tables)),
+        )
+    }
+
+    /// Returns the pixmap in gray, with ITU-R BT.601 luma weights, keeping alpha.
+    fn to_gray(&self, py: Python<'_>) -> Self {
+        self.converted(py, true)
+    }
+
+    /// Returns the pixmap in RGB, keeping alpha.
+    fn to_rgb(&self, py: Python<'_>) -> Self {
+        self.converted(py, false)
+    }
+
+    /// Returns the pixmap with an alpha channel, opaque where it had none.
+    fn with_alpha(&self, py: Python<'_>) -> Self {
+        if self.alpha {
+            return self.share();
+        }
+        let layout = self.layout();
+        self.derive(
+            Layout {
+                alpha: true,
+                ..layout
+            },
+            py.detach(|| pixel_ops::add_alpha(&self.data, layout)),
+        )
+    }
+
+    /// Returns the pixmap without alpha, composited over `background`, an
+    /// RGB color of 0 to 255 whose luma a gray pixmap uses.
+    #[pyo3(signature = (background=(255, 255, 255)))]
+    fn without_alpha(&self, py: Python<'_>, background: (u8, u8, u8)) -> Self {
+        if !self.alpha {
+            return self.share();
+        }
+        let layout = self.layout();
+        let background = [background.0, background.1, background.2];
+        self.derive(
+            Layout {
+                alpha: false,
+                ..layout
+            },
+            py.detach(|| pixel_ops::drop_alpha(&self.data, layout, background)),
+        )
+    }
+
+    /// Returns the pixels of `rect`, `(x0, y0, x1, y1)` in whole pixels,
+    /// cut to the pixmap; a rect outside it raises `ValueError`.
+    fn crop(&self, py: Python<'_>, rect: (i64, i64, i64, i64)) -> PyResult<Self> {
+        let Some(area) = self.area(rect)? else {
+            return Err(PyValueError::new_err(format!(
+                "rect {rect:?} does not overlap the {}x{} pixmap",
+                self.width, self.height
+            )));
+        };
+        let layout = self.layout();
+        let (x0, y0, x1, y1) = area;
+        Ok(self.derive(
+            Layout {
+                width: x1 - x0,
+                height: y1 - y0,
+                ..layout
+            },
+            py.detach(|| pixel_ops::crop(&self.data, layout, area)),
+        ))
+    }
+
+    /// Returns the pixmap resampled to `width` by `height` pixels with a
+    /// bilinear filter, as Pillow's `Image.resize` with `BILINEAR`; the
+    /// resolution follows, so the image keeps its size in inches. At most
+    /// 64,000,000 pixels.
+    fn scale(&self, py: Python<'_>, width: u32, height: u32) -> PyResult<Self> {
+        let pixels = u64::from(width) * u64::from(height);
+        if width == 0 || height == 0 || pixels > pixel_ops::MAX_PIXELS {
+            return Err(PyValueError::new_err(format!(
+                "a scaled pixmap has 1 to {} pixels, not {width}x{height}",
+                pixel_ops::MAX_PIXELS
+            )));
+        }
+        let layout = self.layout();
+        let mut scaled = self.derive(
+            Layout {
+                width,
+                height,
+                ..layout
+            },
+            py.detach(|| pixel_ops::scale(&self.data, layout, width, height)),
+        );
+        let follow = |dpi: u32, to: u32, from: u32| {
+            (f64::from(dpi) * f64::from(to) / f64::from(from))
+                .round()
+                .clamp(1.0, 65_535.0) as u32
+        };
+        scaled.resolution = (
+            follow(self.resolution.0, width, self.width),
+            follow(self.resolution.1, height, self.height),
+        );
+        Ok(scaled)
+    }
+
+    /// Decodes PNG or JPEG `data`, any bytes-like object, into a pixmap:
+    /// PNG keeps its alpha and resolution, and JPEG decodes to gray or RGB
+    /// at 96 dpi. At most 64,000,000 pixels.
+    #[staticmethod]
+    fn from_bytes(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = PyBuffer::<u8>::get(data)?.to_vec(py)?;
+        let decoded = py
+            .detach(|| pixel_ops::decode(&bytes))
+            .map_err(PyValueError::new_err)?;
+        let layout = decoded.layout;
+        Ok(Self {
+            width: layout.width,
+            height: layout.height,
+            alpha: layout.alpha,
+            gray: layout.gray,
+            data: Arc::new(decoded.data),
+            resolution: decoded.resolution,
+        })
+    }
+
+    /// Reads a PNG or JPEG file into a pixmap, as `from_bytes` decodes it.
+    #[staticmethod]
+    fn open(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+        let bytes = py.detach(|| fs::read(&path))?;
+        let decoded = py
+            .detach(|| pixel_ops::decode(&bytes))
+            .map_err(PyValueError::new_err)?;
+        let layout = decoded.layout;
+        Ok(Self {
+            width: layout.width,
+            height: layout.height,
+            alpha: layout.alpha,
+            gray: layout.gray,
+            data: Arc::new(decoded.data),
+            resolution: decoded.resolution,
+        })
+    }
+
+    /// Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, or
+    /// `RGBA`, with the resolution in its `dpi` info; it needs Pillow.
+    fn to_pil<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let module = py.import("PIL.Image").map_err(|error| {
+            if error.is_instance_of::<PyImportError>(py) {
+                PyImportError::new_err("Pixmap.to_pil needs Pillow: pip install pillow")
+            } else {
+                error
+            }
+        })?;
+        let mode = match (self.gray, self.alpha) {
+            (true, false) => "L",
+            (true, true) => "LA",
+            (false, false) => "RGB",
+            (false, true) => "RGBA",
+        };
+        let image = module.call_method1(
+            "frombytes",
+            (
+                mode,
+                (self.width, self.height),
+                PyBytes::new(py, &self.data),
+            ),
+        )?;
+        image.getattr("info")?.set_item("dpi", self.resolution)?;
+        Ok(image)
     }
 
     /// Returns the pixels encoded as `format`, `"png"` or `"jpeg"` at
