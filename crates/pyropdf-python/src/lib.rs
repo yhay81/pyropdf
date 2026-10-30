@@ -20,6 +20,7 @@ mod objects;
 mod ocr;
 mod outline;
 mod pages;
+mod pixel_ops;
 mod pixmap;
 mod render;
 mod schema;

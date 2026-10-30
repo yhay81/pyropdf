@@ -850,6 +850,7 @@ dependencies = [
  "pyropdf-schema",
  "pyropdf-store",
  "windows-sys",
+ "zune-jpeg",
 ]
 
 [[package]]

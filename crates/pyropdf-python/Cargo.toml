@@ -24,6 +24,8 @@ flate2 = "1.1.10"
 png = "0.18.1"
 # JPEG output of Pixmap and doc.render, as pylopdf encodes it.
 jpeg-encoder = "0.7.0"
+# JPEG input of Pixmap.from_bytes, the version that hayro already pulls in.
+zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # maturin sets PYO3_BUILD_EXTENSION_MODULE, which replaces PyO3's deprecated
 # extension-module feature.
 pyo3 = { version = "0.30.1", features = ["abi3-py311"] }
