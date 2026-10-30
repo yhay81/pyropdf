@@ -71,7 +71,7 @@ with pyropdf.open("input.pdf") as doc:
 
 テキストマークアップ（ハイライト、下線、波線、取り消し線）、メモ、線、四角、円、
 多角形、折れ線、手書き、添付ファイルを使えます。オプションは
-[API リファレンス](https://pyropdf.haya.works/api/#annotations)にあります。
+[API リファレンス](https://pyropdf.haya.works/api/annotations/)にあります。
 
 ## リンク
 

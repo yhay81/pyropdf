@@ -21,7 +21,6 @@ def _examples() -> list[tuple[str, str]]:
         (f"{page.relative_to(ROOT)}#{index}", code)
         for pages in PAGES.values()
         for page in pages
-        if page.name != "api.md"  # signatures, not examples
         for index, code in enumerate(EXAMPLE.findall(page.read_text(encoding="utf-8")))
     ]
 
@@ -41,15 +40,19 @@ def test_the_example_runs(where: str, code: str, tmp_path: Path, monkeypatch: py
 
 def test_every_page_has_a_translation() -> None:
     names = {language: [page.name for page in pages] for language, pages in PAGES.items()}
-    english = [name for name in names["en"] if name != "api.md"]
-    assert names["ja"] == english
+    assert names["ja"] == names["en"]
 
 
 def test_the_home_pages_link_to_pages_that_exist() -> None:
     for language in LANGUAGES:
         home = (ROOT / "docs" / language / "index.md").read_text(encoding="utf-8")
         targets = {link.split("#")[0].strip("/") for link in re.findall(r'href="([^":]+)"', home)}
-        missing = [target for target in targets if target and not (ROOT / "docs" / language / f"{target}.md").exists()]
+        pages = ROOT / "docs" / language
+        missing = [
+            target
+            for target in targets
+            if target and not ((pages / f"{target}.md").exists() or (pages / target / "index.md").exists())
+        ]
         assert missing == [], language
 
 
