@@ -12,6 +12,7 @@ mod codecs;
 mod content;
 mod document;
 mod errors;
+mod fax;
 mod fonts;
 mod forms;
 mod history;
@@ -69,6 +70,8 @@ mod _core {
         DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,
         PasswordError, PdfError, StaleObjectError,
     };
+    #[pymodule_export]
+    use super::fax::encode_ccitt_g4;
     #[pymodule_export]
     use super::fonts::{subset_font_program, used_glyphs};
     #[pymodule_export]
