@@ -149,3 +149,53 @@ def test_forms_beyond_the_bound_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(LimitError) as raised:
         doc.pages[0].fonts()
     assert raised.value.code == "page_fonts_forms"
+
+
+def test_entries_beyond_the_bound_raise(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Two forms share one /Font dictionary; each visit spends its entries.
+    objects = dict(FORM_ONLY)
+    objects[3] = objects[3].replace("/XObject << /Fm0 4 0 R >>", "/XObject << /Fm0 4 0 R /Fm1 7 0 R >>")
+    objects[4] = objects[4].replace("/Font << /F1 5 0 R >> /XObject << /Fm1 4 0 R >>", "/Font 8 0 R")
+    objects[7] = objects[4]
+    objects[8] = "<< /F1 5 0 R /F2 5 0 R /F3 5 0 R >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    assert doc.pages[0].fonts()[0].names == ("F1", "F2", "F3") * 2
+    monkeypatch.setattr("pyropdf._fonts._MAX_PAGE_ENTRIES", 7)
+    with pytest.raises(LimitError) as raised:
+        doc.pages[0].fonts()
+    assert raised.value.code == "page_fonts_entries"
+
+
+def test_a_page_tree_deeper_than_the_bound_raises() -> None:
+    depth = 70
+    objects = {1: "<< /Type /Catalog /Pages 2 0 R >>"}
+    for level in range(depth):
+        parent = f" /Parent {level + 1} 0 R" if level else ""
+        resources = " /Resources << /Font << /F1 5000 0 R >> >>" if level == 0 else ""
+        objects[2 + level] = f"<< /Type /Pages /Kids [{3 + level} 0 R] /Count 1{parent}{resources} >>"
+    objects[2 + depth] = f"<< /Type /Page /Parent {1 + depth} 0 R /MediaBox [0 0 100 100] >>"
+    objects[5000] = FORM_ONLY[5]
+    doc = pyropdf.open(build_raw_pdf(objects))
+    with pytest.raises(LimitError) as raised:
+        doc.pages[0].fonts()
+    assert raised.value.code == "page_fonts_tree"
+
+
+def test_font_program_rejects_a_font_info_of_another_document() -> None:
+    first = pyropdf.open(CORPUS / "bill-hr815.pdf")
+    second = pyropdf.open(CORPUS / "bill-hr815.pdf")
+    font = first.pages[0].fonts()[0]
+    with pytest.raises(ValueError, match="another document"):
+        second.font_program(font)
+
+
+def test_a_direct_font_in_resources_that_the_page_and_a_form_share_is_listed_once() -> None:
+    objects = dict(FORM_ONLY)
+    objects[3] = objects[3].replace("/Resources << /XObject << /Fm0 4 0 R >> >>", "/Resources 7 0 R")
+    objects[4] = objects[4].replace(
+        "/Resources << /Font << /F1 5 0 R >> /XObject << /Fm1 4 0 R >> >>", "/Resources 7 0 R"
+    )
+    objects[7] = f"<< /Font << /F1 {FORM_ONLY[5]} >> /XObject << /Fm0 4 0 R >> >>"
+    doc = pyropdf.open(build_raw_pdf(objects))
+    (font,) = doc.pages[0].fonts()
+    assert (font.xref, font.names, font.forms) == (None, ("F1", "F1"), (4,))

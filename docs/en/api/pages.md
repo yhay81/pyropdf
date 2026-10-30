@@ -101,8 +101,10 @@ Return the fonts that the page's resources and its Form XObjects' resources name
 The resources are the page's own or those it inherits from the page
 tree; Form XObjects are followed through their `/Resources` to any
 depth, each once. Fonts that only annotation appearances or Type 3
-glyph procedures name are not listed. `Document.font_program`
-returns a font's embedded program.
+glyph procedures name are not listed. A page tree deeper than 64
+parents, more than 4096 forms, or more than 65536 font and XObject
+entries over the walk raise `LimitError`.
+`Document.font_program` returns a font's embedded program.
 
 ### `Page.label`
 

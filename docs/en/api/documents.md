@@ -704,7 +704,8 @@ The program is the decoded `FontFile`, `FontFile2`, or
 `FontFile3` stream of the font's descriptor, or of a `Type0`
 font's descendant font; `None` when the font embeds none, as Type 3
 fonts and the standard 14 fonts do. A value that is not a font
-dictionary raises `ValueError`.
+dictionary, or a `FontInfo` of another document, raises
+`ValueError`.
 
 ### `Document.close`
 

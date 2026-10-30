@@ -53,6 +53,8 @@ _MAX_APPEARANCE_FORMS = 4096
 _MAX_DEPTH = 32
 #: Form XObjects that ``page.fonts()`` visits.
 _MAX_PAGE_FORMS = 4096
+#: ``/Font`` and ``/XObject`` entries that ``page.fonts()`` visits, over all its resources.
+_MAX_PAGE_ENTRIES = 65536
 #: Parents that a page's inherited ``/Resources`` lookup follows.
 _MAX_TREE_DEPTH = 64
 
@@ -159,23 +161,46 @@ def _page_resources(page: Page) -> object:
         if "Resources" in node:
             return node["Resources"]
         node = node.get("Parent")
-    return None
+    msg = f"the page inherits its resources through more than {_MAX_TREE_DEPTH} parents"
+    code = "page_fonts_tree"
+    raise LimitError(code, msg)
 
 
 #: The fonts that a page walk found, by identity: the dictionary, its resource names, and its forms.
 _Found = dict[object, tuple[Dictionary, list[str], list[int]]]
 
 
-def _collect(found: _Found, fonts: object, form: int) -> None:
-    """Record the fonts of the ``/Font`` resources ``fonts`` of ``form``, 0 for the page."""
+class _Budget:
+    """The ``/Font`` and ``/XObject`` entries that one ``page.fonts()`` walk may visit."""
+
+    __slots__ = ("left",)
+
+    def __init__(self) -> None:
+        self.left = _MAX_PAGE_ENTRIES
+
+    def spend(self, entries: int) -> None:
+        self.left -= entries
+        if self.left < 0:
+            msg = f"the page's resources and forms hold more than {_MAX_PAGE_ENTRIES} font and XObject entries"
+            code = "page_fonts_entries"
+            raise LimitError(code, msg)
+
+
+def _collect(found: _Found, budget: _Budget, resources: Dictionary, form: int) -> None:
+    """Record the fonts of the ``/Font`` entry of ``resources``, the resources of ``form`` or 0 for the page."""
+    fonts = resources.get("Font")
     if not isinstance(fonts, Dictionary):
         return
+    budget.spend(len(fonts))
+    # A direct font dictionary is one entry of the indirect dictionary that holds it.
+    owner: object = fonts.xref if fonts.xref is not None else resources.xref
+    if owner is None:
+        owner = ("form", form)
     for key in fonts:
         font = fonts[key]
         if not isinstance(font, Dictionary):
             continue
-        # A direct font dictionary is its own entry.
-        identity = font.xref if font.xref is not None else ("direct", form, key)
+        identity = font.xref if font.xref is not None else ("direct", owner, key)
         _, names, forms = found.setdefault(identity, (font, [], []))
         names.append(str(key))
         if form and form not in forms:
@@ -201,16 +226,20 @@ def _info(font: Dictionary, names: list[str], forms: list[int]) -> FontInfo:
 def page_fonts(page: Page) -> list[FontInfo]:
     """Return the fonts that the resources of ``page`` and of its Form XObjects name."""
     found: _Found = {}
+    budget = _Budget()
     pending: deque[tuple[object, int]] = deque([(_page_resources(page), 0)])
     seen: set[int] = set()
     while pending:
         resources, form = pending.popleft()
         if not isinstance(resources, Dictionary):
             continue
-        _collect(found, resources.get("Font"), form)
+        _collect(found, budget, resources, form)
         xobjects = resources.get("XObject")
-        forms = [xobjects[key] for key in xobjects] if isinstance(xobjects, Dictionary) else []
-        for xobject in forms:
+        if not isinstance(xobjects, Dictionary):
+            continue
+        budget.spend(len(xobjects))
+        for key in xobjects:
+            xobject = xobjects[key]
             if not isinstance(xobject, Stream) or xobject.get("Subtype") != "Form" or xobject.xref is None:
                 continue
             if xobject.xref in seen:
@@ -228,6 +257,9 @@ def font_program(document: Document, font: int | FontInfo) -> FontProgram | None
     """Return the decoded embedded program of ``font``, or ``None`` when it embeds none."""
     if isinstance(font, FontInfo):
         dictionary: object = font._font  # noqa: SLF001 - the module's own record.
+        if font._font._document is not document:  # noqa: SLF001 - the package's own handle.
+            msg = "the FontInfo comes from another document"
+            raise ValueError(msg)
     else:
         dictionary = document.objects.get(font)
     if not isinstance(dictionary, Dictionary) or dictionary.get("Subtype") not in _FONT_SUBTYPES:

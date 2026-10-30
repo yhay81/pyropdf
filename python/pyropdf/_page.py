@@ -185,8 +185,10 @@ class Page:
         The resources are the page's own or those it inherits from the page
         tree; Form XObjects are followed through their ``/Resources`` to any
         depth, each once. Fonts that only annotation appearances or Type 3
-        glyph procedures name are not listed. :meth:`Document.font_program`
-        returns a font's embedded program.
+        glyph procedures name are not listed. A page tree deeper than 64
+        parents, more than 4096 forms, or more than 65536 font and XObject
+        entries over the walk raise :class:`LimitError`.
+        :meth:`Document.font_program` returns a font's embedded program.
         """
         return page_fonts(self)
 
