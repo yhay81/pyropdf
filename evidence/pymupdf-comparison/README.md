@@ -6,7 +6,7 @@ are the floor). Measured for #354.
 
 | File | Role |
 | --- | --- |
-| `features.md` | The capabilities of PyMuPDF 2.0 against pyropdf 0.1.0, each gap linked to its issue |
+| `features.md` | The capabilities of PyMuPDF 2.0 against an identified pyropdf main commit, with gaps linked to their issues |
 | `bench.py ENGINE OUT FILE...` | Times the shared operations for one engine |
 | `run.py` | Installs PyMuPDF 2.0 and pyropdf 0.1.0 from PyPI, each in its own environment under `target/pymupdf-comparison/`, runs `bench.py` with both, and writes `results/` |
 | `labels.py` | Writes `results/page-labels.json`, PyMuPDF's `get_label` of every corpus page, from the environment that `run.py` installs; `tests/test_page_labels.py` compares pyropdf with it |
@@ -14,6 +14,8 @@ are the floor). Measured for #354.
 | `profile.py` | Samples pyropdf rendering bill-hr815 and usrguide at 72 and 144 dpi on macOS, and writes `results/profile-<platform>.md`, for #365; `patches/` holds the uncommitted crate changes it measures with |
 | `results/darwin-arm64.md` | The measured comparison, with the raw timings in the `.json` beside it |
 | `sample_hashes.py OUT` | Hashes every corpus page's samples in each raster layout, to show that a change keeps every byte; `results/rgb8-take-darwin-arm64.md` records its use for #393 |
+| `compare_text.py` | Compares text hashes and word multisets on the corpus in separate engine environments; `results/text-main.md` explains its limits |
+| `gray_probe.py` | Reproduces the engines' different `rewrite_images(set_to_gray=True)` behavior on a synthetic PDF |
 
 ```bash
 python3 evidence/pymupdf-comparison/run.py
@@ -38,7 +40,8 @@ environment, and is never a dependency of pyropdf.
 
 ## Results
 
-On an Apple M-series machine (`results/darwin-arm64.md`), as corpus totals:
+For pyropdf **0.1.0**, not current main, on an Apple M-series machine
+(`results/darwin-arm64.md`), as corpus totals:
 
 | Operation | pyropdf / PyMuPDF |
 | --- | ---: |
@@ -95,6 +98,8 @@ protocol, `bytes(pixmap)`; the corpus totals of rendering fell from 2.65 and
 
 - Open and full save without edits are not profiled: each row is what a user
   waits for, and whether both engines do equal work for it is not measured.
-- Text and words are timed, not compared for quality. Phase 1's parity
-  evidence (`evidence/phase1-parity`) compares pyropdf's output with pylopdf's.
+- The benchmark times text and words, not their quality. The separate
+  [main comparison](results/text-main.md) compares default outputs, not
+  labeled accuracy. Phase 1's parity evidence (`evidence/phase1-parity`)
+  compares pyropdf's output with pylopdf's.
 - One machine, one thread, and a 15-document corpus.
