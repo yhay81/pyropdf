@@ -99,9 +99,12 @@ to bottom for `"vertical"`.
 Pixmap.from_bytes(data)
 ```
 
-Decodes PNG or JPEG `data`, any bytes-like object, into a pixmap:
-PNG keeps its alpha and resolution, and JPEG decodes to gray or RGB
-at 96 dpi. At most 64,000,000 pixels.
+Decodes PNG, JPEG, PBM, PGM, PPM (plain or raw), PAM, or
+uncompressed BMP `data`, any bytes-like object, into a pixmap: PNG
+keeps its alpha and resolution, BMP its resolution and bit-field
+alpha, and PAM its alpha; JPEG and the portable anymaps decode at
+96 dpi. Samples of more than 8 bits scale to 8, and palettes of only
+gray decode to gray. CMYK is refused. At most 64,000,000 pixels.
 
 ### `Pixmap.gamma`
 
@@ -136,7 +139,7 @@ them when `rect` is `None`; alpha is kept. `rect` is
 Pixmap.open(path)
 ```
 
-Reads a PNG or JPEG file into a pixmap, as `from_bytes` decodes it.
+Reads an image file into a pixmap, as `from_bytes` decodes it.
 
 ### `Pixmap.pixel`
 
@@ -170,7 +173,7 @@ a quarter turn swaps the width, the height, and the resolution.
 Pixmap.save(path, /, *, format=None, quality=...)
 ```
 
-Writes the pixels as `format`, `"png"` or `"jpeg"` at `quality`, or
+Writes the pixels as `format`, as `to_bytes` encodes it, or
 else the format that the extension of `path` names, and replaces
 `path` atomically after a complete write, keeping an existing file's
 permissions and a final symlink. A failed save leaves `path` as it
@@ -211,8 +214,12 @@ linearly; a gray pixmap uses their luma. Alpha is kept.
 Pixmap.to_bytes(format='png', *, quality=..., max_size=...)
 ```
 
-Returns the pixels encoded as `format`, `"png"` or `"jpeg"` at
-`quality`, 1 through 100. JPEG has no alpha.
+Returns the pixels encoded as `format` (`"png"`, `"jpeg"` at
+`quality`, 1 through 100, `"pam"`, `"pbm"`, `"pgm"`, `"ppm"`,
+`"pnm"`, `"psd"`, or `"ps"`). PNG, PAM, and PSD keep alpha; the
+others refuse it. PBM and PGM take gray, thresholding PBM at 128;
+PPM takes RGB; PNM writes PGM or PPM. PSD sides end at 30,000
+pixels, and PostScript is one Level 2 page at the resolution.
 
 `max_size` bounds the output, 64 MiB by default, and refuses the
 write that would pass it with `LimitError` code
