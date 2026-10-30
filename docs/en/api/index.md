@@ -141,6 +141,8 @@ method and property of its classes with its full description.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.
 - [`PolyLine`](annotations.md#polyline): An open line through two or more display points, as `page.annotations.add` takes it.
+- [`Sound`](annotations.md#sound): The sound of a sound annotation, `/Sound`, as `Annotation.sound` reads it.
+- [`SoundEncoding`](annotations.md#soundencoding): How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).
 - [`Square`](annotations.md#square): A rectangle, as `page.annotations.add` takes it.
 - [`Squiggly`](annotations.md#squiggly): A wavy line under text, as `page.annotations.add` takes it.
 - [`StampIcon`](annotations.md#stampicon): The stamps of ISO 32000-2 §12.5.6.12, `/Name`; pymupdf's `STAMP_*` codes in their order.
