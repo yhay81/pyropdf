@@ -40,16 +40,16 @@ On an Apple M-series machine (`results/darwin-arm64.md`), as corpus totals:
 
 | Operation | pyropdf / PyMuPDF |
 | --- | ---: |
-| Open | 0.19 |
-| Text | 0.79 |
-| Words | 0.75 |
-| Search | 1.16 |
-| Render 72 dpi | 2.65 |
-| Render 144 dpi | 3.97 |
+| Open | 0.21 |
+| Text | 0.80 |
+| Words | 0.79 |
+| Search | 1.19 |
+| Render 72 dpi | 2.03 |
+| Render 144 dpi | 2.34 |
 | Full save | 0.15 |
 
-pyropdf is faster at text and words, and search is close. Rendering is the gap, worst on bill-hr815 (6 to 8
-times) and usrguide (3 to 5 times); #365 closes it.
+pyropdf is faster at text and words, and search is close. Rendering is the gap, worst on bill-hr815 (4.3 to
+4.6 times) and usrguide (2.9 to 3.7 times); #365 closes it.
 
 ## Rendering profile
 
@@ -68,10 +68,11 @@ build it needs). On both documents, at both resolutions:
   leaves every pixel opaque.
 - The store, the bridge, and opening take 0.2 to 1.2%.
 
-`bench.py` times `to_bytes()` for pyropdf, which encodes a PNG, against
-PyMuPDF's raw `samples`. The PNG adds 40 to 90% to pyropdf's time; with the
-samples read on both sides, pyropdf is 4.5 to 5.6 times slower than PyMuPDF
-on these documents, not 6.4 to 10.6 times.
+Until #365, `bench.py` timed `to_bytes()` for pyropdf, which encodes a PNG,
+against PyMuPDF's raw `samples`. The PNG adds 40 to 90% to pyropdf's time on
+these documents. `bench.py` now reads pyropdf's samples through the buffer
+protocol, `bytes(pixmap)`; the corpus totals of rendering fell from 2.65 and
+3.97 to 2.03 and 2.34.
 
 ## Limits
 
@@ -79,4 +80,4 @@ on these documents, not 6.4 to 10.6 times.
   waits for, and whether both engines do equal work for it is not measured.
 - Text and words are timed, not compared for quality. Phase 1's parity
   evidence (`evidence/phase1-parity`) compares pyropdf's output with pylopdf's.
-- One machine, one thread, and a 14-document corpus.
+- One machine, one thread, and a 15-document corpus.
