@@ -450,3 +450,27 @@ def test_replace_text_names_a_copy_apart_from_undefined_names() -> None:
     assert doc.pages[0].replace_text("PDF", "Cat") == 1
     assert lines(doc.pages[0]) == ["Form Cat here"]
     assert "/X1_1 Do" in doc.pages[0].operations.to_bytes().decode()
+
+
+def test_replace_text_names_a_copy_apart_from_undefined_names_of_inheriting_forms() -> None:
+    # /X2 has no resources, so it draws by the page's names, and /X1_1 is not one of them.
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 612 792] "
+                "/Resources << /Font << /F1 3 0 R >> /XObject << /X1 6 0 R /X2 7 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream("q 1 0 0 1 72 700 cm /X1 Do Q q 1 0 0 1 72 600 cm /X2 Do Q"),
+                6: stream(
+                    "BT /F1 20 Tf 0 0 Td (Form PDF here) Tj ET", FORM + "/Resources << /Font << /F1 3 0 R >> >> "
+                ),
+                7: stream("/X1_1 Do", FORM),
+            }
+        )
+    )
+
+    assert doc.pages[0].replace_text("PDF", "Cat") == 1
+    assert lines(doc.pages[0]) == ["Form Cat here"]
+    assert lines(pyropdf.open(doc.to_bytes()).pages[0]) == ["Form Cat here"]

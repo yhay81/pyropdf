@@ -413,15 +413,22 @@ def _taken_names(scope: _Scope) -> set[str]:
     """Return the names of the scope's XObjects and the names that its ``Do`` operations draw, defined or not.
 
     A name that the content draws without defining it draws nothing, and
-    must keep drawing nothing, so a copy does not take it.
+    must keep drawing nothing, so a copy does not take it. A Form without
+    resources of its own draws by the scope's names too, so its names are
+    taken as well.
     """
     xobjects = _sub(scope.resources, "XObject")
     names = set(xobjects) if xobjects is not None else set()
-    names.update(
-        str(operation.operands[0])
-        for operation in scope.operations
-        if isinstance(operation, Operation) and operation.operator == "Do" and operation.operands
-    )
+    # The Forms read the same resources, and _collect bounds their number and depth.
+    pending = [scope]
+    while pending:
+        current = pending.pop()
+        names.update(
+            str(operation.operands[0])
+            for operation in current.operations
+            if isinstance(operation, Operation) and operation.operator == "Do" and operation.operands
+        )
+        pending.extend(form for form in current.forms.values() if form.resources is scope.resources)
     return names
 
 
