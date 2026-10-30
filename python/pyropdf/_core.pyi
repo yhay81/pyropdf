@@ -246,6 +246,7 @@ def page_space(
 ) -> tuple[int, tuple[float, float, float, float]] | None: ...
 def copy_page_resources(document: _Document, source: _Document, number: int, generation: int, /) -> int | None: ...
 def set_page_rotation(document: _Document, number: int, generation: int, rotation: int, /) -> bool: ...
+def remove_page_rotation(document: _Document, number: int, generation: int, /) -> bool: ...
 def set_pages(document: _Document, pages: list[tuple[int, int]], copies: list[bool] = ..., /) -> None: ...
 
 _Id: TypeAlias = tuple[int, int]
@@ -268,6 +269,29 @@ def annotation_list(document: _Document, number: int, generation: int, /) -> lis
 def annotation_read(
     document: _Document, number: int, generation: int, index: int, annotation: _Id, /
 ) -> _Annotation | None: ...
+def annotation_pixmap(
+    document: _Document,
+    number: int,
+    generation: int,
+    index: int,
+    annotation: _Id,
+    matrix: tuple[float, float, float, float],
+    alpha: bool,
+    gray: bool,
+    background: tuple[int, int, int, int],
+    /,
+) -> Pixmap | None: ...
+def annotation_text(
+    document: _Document,
+    number: int,
+    generation: int,
+    index: int,
+    annotation: _Id,
+    options: _TextOptions,
+    max_glyphs: int | None,
+    max_size: int | None,
+    /,
+) -> tuple[str, int] | None: ...
 def annotation_add(document: _Document, number: int, generation: int, spec: dict[str, object], /) -> _Id | None: ...
 def annotation_geometry(
     document: _Document, number: int, generation: int, index: int, annotation: _Id, /

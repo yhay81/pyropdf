@@ -25,7 +25,7 @@ use crate::pixmap::bridge_error;
 /// clipped glyphs, unmapped code, expand ligatures, normalize whitespace,
 /// dehyphenate, exact boxes, styles)`, with the unmapped codes 0 to skip, 1
 /// for U+FFFD, and 2 for the glyph ID.
-type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool);
+pub(crate) type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool);
 
 /// The text options as a memo key, with the clip's coordinates as bits.
 pub(crate) type TextKey = (Option<[u64; 4]>, bool, u8, bool, bool, bool, bool, bool);
@@ -71,7 +71,7 @@ fn stale(number: u32, generation: u16) -> PyErr {
     ))
 }
 
-fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
+pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
     let (
         clip,
         keep_clipped,
@@ -104,7 +104,7 @@ fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
     })
 }
 
-fn text_error(error: Error) -> PyErr {
+pub(crate) fn text_error(error: Error) -> PyErr {
     match error {
         Error::Limit(refusal) => limit_error(&refusal),
         Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(error.to_string()),

@@ -28,7 +28,7 @@ rendering accuracy need independent comparisons (#430).
 | Open, repair and probe | `open`, `repair`, `is_repaired` | Available: `open`, `probe`, `is_repaired`; recovery coverage has not been shown equal | #252 |
 | Insert, move, delete and select pages | `insert_pdf`, `move_page`, `delete_pages`, `select` | Available: `doc.pages` with identity and referential rules | |
 | Rotate and flatten | `set_rotation`, `bake` | Available: `page.rotation`, `page.flatten`, `doc.flatten` | |
-| Normalize rotation without changing appearance | `remove_rotation` | Missing: setting `rotation` alone changes the displayed page | #429 |
+| Normalize rotation without changing appearance | `remove_rotation` | Available: `page.remove_rotation()` keeps content, boxes, annotations, links, and widgets as displayed | #429 |
 | Page boxes and labels | `set_mediabox`, `get_page_labels`, `set_page_labels` | Available: five page boxes, `doc.page_labels`, `page.label`; labels checked against PyMuPDF on the corpus | #357, #358 |
 | Metadata and outline | `metadata`, `set_xml_metadata`, `get_toc`, `set_toc` | Available: `doc.metadata`, `doc.xmp`, `doc.outline` | #356 |
 | Layers and visibility | `get_layers`, `set_layer`, `set_oc` | Partial: `doc.layers` reads and changes configuration; rendering and extraction do not yet honor OCMD `/VE` or annotation `/OC` | #360, #372, #373 |
@@ -51,7 +51,7 @@ rendering accuracy need independent comparisons (#430).
 | Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`; provenance for all nested content remains | #104 |
 | Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records | #359 |
 | Page fonts and font programs | `get_fonts`, `extract_font` | Available: `page.fonts`, `doc.font_program`; page font listings are compared with PyMuPDF on the corpus | #399, #418 |
-| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Partial: page-level rendering and extraction exist, but not isolated annotation appearance or sound accessors | #422, #423 |
+| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Available: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; `annotation.sound()` reads a sound annotation's audio and format | #422, #423 |
 
 ## Rendering and pixmaps
 
@@ -72,7 +72,7 @@ rendering accuracy need independent comparisons (#430).
 | Shapes, paths, images and placed pages | `Shape`, `insert_image`, `show_pdf_page` | Available: `page.draw()` canvas, with paths, images and `page` placement | #396 |
 | Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Missing from canvas; text and fonts wait on krilla | #153, #323 |
 | Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image`; supported formats and optional Pillow are documented in its API | #361, #412 |
-| Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`; individual appearance and sound access are separate gaps | #160, #422, #423 |
+| Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`, with each annotation's appearance and sound | #160, #422, #423 |
 | Create markup annotations | `add_*_annot` | Partial: text markup, notes, shapes, lines, polygons, ink and carets have settled appearances; free text, stamps and attachments remain | #161, #168, #162, #421 |
 | Links | `insert_link`, `update_link` | Available: `page.links` | #163 |
 | Form fields | `widgets`, `add_widget`, `Widget.update` | Partial: create, read, fill and flatten exist; embedded Unicode form fonts and widget font API remain | #194, #212 |

@@ -238,15 +238,15 @@ pub fn set_page_rotation(
 }
 
 /// The page boxes, in the order that [`page_boxes`] returns them.
-const BOXES: [&str; 5] = ["MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"];
+pub(crate) const BOXES: [&str; 5] = ["MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"];
 
-type Box4 = (f64, f64, f64, f64);
+pub(crate) type Box4 = (f64, f64, f64, f64);
 
 /// Returns the page boxes of `page` in unrotated user space: the inherited
 /// media box, or hayro's A4, then the crop, bleed, trim, and art boxes,
 /// each clipped to the media box and defaulting to the crop box
 /// (ISO 32000-2 14.11.2).
-fn user_boxes(page: &Page) -> [Box4; 5] {
+pub(crate) fn user_boxes(page: &Page) -> [Box4; 5] {
     let media = page
         .media_box()
         .and_then(rect)
