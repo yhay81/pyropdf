@@ -500,8 +500,8 @@ class Field:
     def is_signed(self) -> bool:
         """Return whether this is a signature field whose value is a signature dictionary.
 
-        pyropdf does not verify signatures; a signing tool such as pyHanko
-        signs and validates them.
+        :attr:`Document.signatures` lists the signatures, and
+        :meth:`Signature.verify` checks one.
         """
         if self.type is not FieldType.SIGNATURE:
             return False

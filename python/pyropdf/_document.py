@@ -41,6 +41,7 @@ from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
 from pyropdf._sanitize import SanitizeReport, sanitize
 from pyropdf._signing import DEFAULT_RESERVE
 from pyropdf._signing import sign as _sign
+from pyropdf._signing import signatures as _signatures
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
     from pyropdf._check import StructuralReport
     from pyropdf._chunks import Chunk
     from pyropdf._profiles import Profiles
-    from pyropdf._signing import Signer, Timestamper
+    from pyropdf._signing import Signature, Signer, Timestamper
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -698,6 +699,15 @@ class Document:
         )
         _validate_optional_positive_int("max_size", max_size)
         return self._doc.to_bytes(incremental, max_size, _encryption_arg(encryption), *options)
+
+    @property
+    def signatures(self) -> list[Signature]:
+        """Return the signed signature fields of the opened file, in field order.
+
+        Each :class:`Signature` verifies against the bytes that the document
+        was opened from: edits since then are not part of any revision.
+        """
+        return _signatures(self)
 
     def sign(  # noqa: PLR0913 - the signature's options are all keyword-only
         self,

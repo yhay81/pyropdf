@@ -1,0 +1,112 @@
+{
+ "document": "usrguide.pdf",
+ "page": 2,
+ "checked": false,
+ "notes": "Agent-labeled from Ghostscript renderings at 60 to 150 dpi; awaiting the owner's check.",
+ "anchors": [
+  "Expandable floating point (and other) calculations",
+  "Expandable \\input equivalent",
+  "Case changing",
+  "Text sub- and superscripts",
+  "Support for problem solving",
+  "Introduction",
+  "was released in 1994 and added a number of then-new concepts to",
+  "Creating document commands and environ",
+  "Overview",
+  "Creating document commands and environments using the",
+  "Describing argument types",
+  "In order to allow each argument to be defined independently, the parser does"
+ ],
+ "words": [
+  {
+   "text": "floating",
+   "seed": [
+    201.65,
+    127.79,
+    240.05,
+    137.75
+   ],
+   "ink": [
+    202.5,
+    128.75,
+    239.25,
+    137.75
+   ]
+  },
+  {
+   "text": "usrguide-historic,",
+   "seed": [
+    256.22,
+    291.11,
+    348.9,
+    301.29
+   ],
+   "ink": [
+    257.0,
+    293.25,
+    347.5,
+    301.5
+   ]
+  },
+  {
+   "text": "work.",
+   "seed": [
+    358.88,
+    338.93,
+    383.72,
+    348.89
+   ],
+   "ink": [
+    359.5,
+    340.0,
+    382.5,
+    347.0
+   ]
+  },
+  {
+   "text": "users.",
+   "seed": [
+    443.52,
+    386.75,
+    469.01,
+    396.71
+   ],
+   "ink": [
+    444.25,
+    390.25,
+    467.75,
+    394.75
+   ]
+  },
+  {
+   "text": "this",
+   "seed": [
+    400.66,
+    529.36,
+    417.79,
+    539.32
+   ],
+   "ink": [
+    401.5,
+    530.5,
+    416.75,
+    537.5
+   ]
+  },
+  {
+   "text": "appli-",
+   "seed": [
+    443.07,
+    593.87,
+    469.01,
+    603.83
+   ],
+   "ink": [
+    444.0,
+    595.0,
+    468.0,
+    604.0
+   ]
+  }
+ ]
+}
