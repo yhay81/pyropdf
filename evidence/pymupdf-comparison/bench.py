@@ -60,8 +60,8 @@ def _pyropdf() -> tuple[str, Callable[[Path], Any], dict[str, Callable[[Any], ob
             "text": lambda doc: [page.text() for page in doc.pages],
             "words": lambda doc: [page.words() for page in doc.pages],
             "search": lambda doc: [page.search(NEEDLE) for page in doc.pages],
-            "render_72": lambda doc: [page.pixmap(dpi=72).to_bytes() for page in doc.pages],
-            "render_144": lambda doc: [page.pixmap(dpi=144).to_bytes() for page in doc.pages],
+            "render_72": lambda doc: [bytes(page.pixmap(dpi=72)) for page in doc.pages],
+            "render_144": lambda doc: [bytes(page.pixmap(dpi=144)) for page in doc.pages],
             "save": lambda doc: doc.to_bytes(),
         },
     )

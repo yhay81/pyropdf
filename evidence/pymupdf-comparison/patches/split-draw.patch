@@ -1,0 +1,33 @@
+diff --git i/crates/pyropdf-engine/src/render/mod.rs w/crates/pyropdf-engine/src/render/mod.rs
+index de8b6b6..177d59d 100644
+--- i/crates/pyropdf-engine/src/render/mod.rs
++++ w/crates/pyropdf-engine/src/render/mod.rs
+@@ -357,7 +357,7 @@ fn draw<'a>(
+             ..Default::default()
+         },
+     );
+-    let mut data = pixmap.take_rgba8(ImageAlphaType::Alpha);
++    let mut data = take(pixmap);
+     to_layout(&mut data, options.gray, options.alpha);
+     Ok(Raster {
+         width: raster_width,
+@@ -369,6 +369,11 @@ fn draw<'a>(
+     })
+ }
+ 
++#[inline(never)]
++fn take(pixmap: hayro::vello_cpu::Pixmap) -> Vec<u8> {
++    pixmap.take_rgba8(hayro::vello_cpu::peniko::ImageAlphaType::Alpha)
++}
++
+ /// The ITU-R BT.601 luma of an RGBA pixel's color, rounded, as pylopdf
+ /// computes it.
+ fn luma(pixel: &[u8]) -> u8 {
+@@ -380,6 +385,7 @@ fn luma(pixel: &[u8]) -> u8 {
+ /// bytes go, and with `gray` the color components become their luma. Each
+ /// pixel is read before its narrower replacement is written, which never
+ /// reaches a later pixel.
++#[inline(never)]
+ fn to_layout(data: &mut Vec<u8>, gray: bool, alpha: bool) {
+     let count = data.len() / 4;
+     let channels = usize::from(!gray) * 2 + 1 + usize::from(alpha);
