@@ -108,7 +108,7 @@ reached = "The content that `Operations.parse` reads is larger than the call's `
 message = "the page paints too many items"
 unit = "elements"
 default = 262_144
-reached = "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`."
+reached = "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image."
 
 [codes.text_glyph_count]
 message = "the page holds too many glyphs to read as text"
@@ -325,6 +325,12 @@ message = "the text edit reaches too many form XObjects"
 unit = "drawings"
 default = 4_096
 reached = "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
+
+[codes.image_input_size]
+message = "the image data is too large"
+unit = "bytes"
+default = 268_435_456
+reached = "The encoded image that `Pages.new_from_image` reads is larger than 256 MiB."
 
 [codes.text_line_count]
 message = "the text has too many lines"

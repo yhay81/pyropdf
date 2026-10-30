@@ -60,6 +60,7 @@ LimitCode: TypeAlias = Literal[
     "form_field_parent_depth",
     "script_size",
     "text_edit_forms",
+    "image_input_size",
     "text_line_count",
     "named_destination_count",
     "named_destination_edge_count",
@@ -114,7 +115,8 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "content_element_count": (
             "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's "
-            "`max_elements`."
+            "`max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one "
+            "image."
         ),
         "text_glyph_count": (
             "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the "
@@ -188,6 +190,7 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "text_edit_forms": (
             "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
         ),
+        "image_input_size": "The encoded image that `Pages.new_from_image` reads is larger than 256 MiB.",
         "text_line_count": "The text that a form field's appearance draws lays out in more than 4,096 lines.",
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
