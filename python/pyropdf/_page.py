@@ -365,16 +365,20 @@ class Page:
         extraction reads it, across the strings and kerning of a ``TJ``
         array but not across operations. ``new`` is encoded through the
         same font, and a kerning number after it makes up the difference in
-        advance, so the text that follows keeps its position. ``count``
-        bounds the replacements, in content order; ``None`` replaces all.
+        advance, so the text that follows keeps its position. A Form
+        XObject's text is read with the text state where it is drawn.
+        ``count`` bounds the replacements, in drawing order; ``None``
+        replaces all.
 
         A character of ``new`` that the font has no code for, and ``old``
         drawn in a composite (Type 0) font of the page's content, raise
-        :class:`ValueError` and leave the document unchanged. A font subset
-        is not extended, so a code without a glyph in the program shows as
-        the program's missing glyph. A Form XObject that changes is copied
-        and the page draws the copy, so the pages and Forms that share it
-        keep the old text. The replacement is one transaction.
+        :class:`ValueError` and leave the document unchanged. Form XObjects
+        nested deeper than 16, or more than 4,096 drawings of them, raise
+        :class:`LimitError`. A font subset is not extended, so a code
+        without a glyph in the program shows as the program's missing glyph.
+        A drawing of a Form XObject that changes draws a copy, so the other
+        drawings, pages, and Forms that share it keep the old text. The
+        replacement is one transaction.
         """
         return replace_text(self, old, new, count=count)
 
