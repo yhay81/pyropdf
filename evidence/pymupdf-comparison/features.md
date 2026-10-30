@@ -51,7 +51,7 @@ rendering accuracy need independent comparisons (#430).
 | Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`; provenance for all nested content remains | #104 |
 | Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records | #359 |
 | Page fonts and font programs | `get_fonts`, `extract_font` | Available: `page.fonts`, `doc.font_program`; page font listings are compared with PyMuPDF on the corpus | #399, #418 |
-| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Partial: page-level rendering and extraction exist, but not isolated annotation appearance or sound accessors | #422, #423 |
+| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Partial: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; no sound accessors | #423 |
 
 ## Rendering and pixmaps
 

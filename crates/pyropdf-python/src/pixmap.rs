@@ -894,7 +894,7 @@ pub fn render_page(
     Ok(Pixmap::from(raster))
 }
 
-fn raster_error(error: RasterError) -> PyErr {
+pub(crate) fn raster_error(error: RasterError) -> PyErr {
     match error {
         RasterError::Geometry(message) => PyValueError::new_err(message),
         RasterError::NoPage(_) | RasterError::Clip(_) => PdfError::new_err(error.to_string()),

@@ -315,6 +315,53 @@ Annotation.replies: list[Annotation]
 
 The annotations of the page that reply to this one, in `/Annots` order.
 
+### `Annotation.pixmap`
+
+```python
+Annotation.pixmap(
+    *,
+    dpi: float | None = None,
+    matrix: Sequence[float] | None = None,
+    alpha: bool = False,
+    background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
+) -> Pixmap
+```
+
+Render the annotation's appearance alone, over its display rectangle `rect`.
+
+The page's content and its other annotations and widgets are left
+out. The appearance is the current version's, as a render draws it:
+its normal appearance, or the one a render synthesizes for an
+annotation without one; a hidden annotation renders as the bare
+background. The options are those of `Page.pixmap`, and so
+are its size limits; a rectangle that leaves no pixel of the page
+raises `PdfError`, and an empty one `ValueError`. The GIL
+is released while hayro renders.
+
+### `Annotation.text`
+
+```python
+Annotation.text(
+    *,
+    clipped: bool = False,
+    ligatures: bool = True,
+    whitespace: bool = True,
+    dehyphenate: bool = False,
+    unmapped: Unmapped = 'skip',
+    max_glyphs: int | None = 262144,
+    max_size: int | None = 67108864,
+) -> str
+```
+
+Return the text that the annotation's appearance draws, in reading order.
+
+The appearance is the one that `pixmap` renders, read as
+`Page.text` reads a page that draws nothing else, with its
+options; an appearance that draws no text, or a hidden annotation,
+gives `""`. `/Contents` is not read; `contents` returns
+it.
+
 ## `AnnotationFlags`
 
 Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.

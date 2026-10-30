@@ -18,18 +18,25 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::{
-    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points, is_text_markup, valid_dashes,
-    zigzag_points,
+    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points, is_text_markup,
+    synthesized_for, valid_dashes, zigzag_points,
 };
+use pyropdf_engine::bridge::Bridged;
+use pyropdf_engine::extract;
+use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
+use pyropdf_engine::render::{self, Raster};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
-use pyropdf_store::settle::Structure;
+use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::{_Document, text_string};
 use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
 use crate::pages::{display_box, index as page_index, number, rect, rotation};
+use crate::pixmap::{Pixmap, bridge_error, raster_error};
+use crate::text::{OptionsTuple, text_error, text_options};
 
 /// The text entries of a [`Record`], in its order.
 const TEXT_KEYS: [&str; 8] = [
@@ -1876,4 +1883,169 @@ pub fn annotation_add(
             Ok((reference.number(), reference.generation()))
         },
     )
+}
+
+/// A version where a page draws nothing but one annotation's appearance:
+/// the version, its page index, the page's position in it, and the
+/// annotation's display rectangle.
+type Isolated = (Arc<Version>, Arc<PageIndex>, usize, Rect);
+
+/// Builds the [`Isolated`] version of the annotation that a handle names,
+/// in a transaction whose writes are then discarded: the version that reads
+/// see, with the page's content and every other annotation taken off and
+/// the annotation flattened into the page, as `page.flatten` draws it, or
+/// as a render synthesizes it when it has no appearance. A hidden
+/// annotation, or one whose appearance draws nothing, leaves the page
+/// empty. Returns `None` for a page that is gone.
+fn isolated(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<Isolated>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    document.scratch(py, |transaction, budget| {
+        transaction.settle(Scope::Commit, budget).map_err(store)?;
+        let version = transaction.snapshot();
+        let pages = Arc::new(PageIndex::build(&mut Reads::new(&version, budget)).map_err(store)?);
+        let Some(annots) = Annots::read(version, pages, budget, number, generation)? else {
+            return Ok(None);
+        };
+        let (position, dict) = annots.find(index, id)?;
+        let Some(record) = annots.record(position, id, &dict, &mut (0, 0))? else {
+            return Err(StaleObjectError::new_err(format!(
+                "annotation {} is no longer one that page.annotations lists",
+                id.0
+            )));
+        };
+        let (_, _, at) = annots.pages();
+        let page = annots.page();
+        let Some(object) = page.object() else {
+            return Err(PdfError::new_err("the page is not an indirect object"));
+        };
+        charge_copy(CopyPart::Dict(page.dict()), budget)?;
+        let mut blank = page.dict().clone();
+        blank.remove("Contents");
+        blank.remove("Annots");
+        transaction
+            .write(object.number(), &Value::Dict(blank), budget)
+            .map_err(store)?;
+        let item = annots.items.as_slice()[position].clone();
+        let version = transaction.snapshot();
+        let pages = Arc::new(PageIndex::build(&mut Reads::new(&version, budget)).map_err(store)?);
+        let items = Array::from(vec![item]);
+        let reader = Reader {
+            version: &version,
+            budget,
+        };
+        let selection = Selection {
+            annotations: true,
+            widgets: false,
+        };
+        if let Some(plan) = flattening::plan(&reader, &items, selection).map_err(store)? {
+            let objects = match items.as_slice() {
+                [Value::Reference(reference)] => {
+                    synthesized_for(&version, *reference, budget).map_err(store)?
+                }
+                _ => Vec::new(),
+            };
+            let mut missing = Missing::new(objects, budget).map_err(store)?;
+            let page = &pages.pages()[at];
+            flattening::draw(
+                transaction,
+                object.number(),
+                page,
+                plan,
+                &mut missing,
+                budget,
+            )
+            .map_err(store)?;
+        }
+        Ok(Some((transaction.snapshot(), pages, at, record.3)))
+    })
+}
+
+/// Renders the appearance of the annotation that a handle names alone,
+/// over its display rectangle, through the linear `matrix`, with the GIL
+/// released while hayro renders. The Python layer has checked the options
+/// and resolved `background` to straight RGBA. Returns `None` for a page
+/// that is gone.
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the handle and the options of Annotation.pixmap"
+)]
+pub fn annotation_pixmap(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    matrix: (f64, f64, f64, f64),
+    alpha: bool,
+    gray: bool,
+    background: (u8, u8, u8, u8),
+) -> PyResult<Option<Pixmap>> {
+    let Some((version, pages, at, rect)) = isolated(py, document, number, generation, index, id)?
+    else {
+        return Ok(None);
+    };
+    let budget = document.budget();
+    let (red, green, blue, opacity) = background;
+    let options = render::Options {
+        matrix,
+        alpha,
+        gray,
+        background: [red, green, blue, opacity],
+        clip: Some(rect),
+        annotations: false,
+    };
+    let raster = py.detach(|| -> PyResult<Raster> {
+        let bridged =
+            Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
+        render::raster(&bridged, at, &options).map_err(raster_error)
+    })?;
+    Ok(Some(Pixmap::from(raster)))
+}
+
+/// Returns the text of the appearance of the annotation that a handle
+/// names alone, and the glyphs without Unicode that it left out, with the
+/// GIL released while hayro interprets it. `max_glyphs` and `max_size`
+/// bound it as they bound `page_text`. Returns `None` for a page that is
+/// gone.
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the handle and the options of Annotation.text"
+)]
+pub fn annotation_text(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    options: OptionsTuple,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<Option<(String, usize)>> {
+    let options = text_options(options)?;
+    let Some((version, pages, at, _)) = isolated(py, document, number, generation, index, id)?
+    else {
+        return Ok(None);
+    };
+    let budget = document
+        .budget()
+        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
+        .with_limit(LimitCode::TextSize, max_size);
+    py.detach(|| {
+        let bridged = Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?;
+        let mut text = String::new();
+        let (skipped, _) =
+            extract::page_text(&bridged, at, &options, &budget, &mut text).map_err(text_error)?;
+        Ok(Some((text, skipped)))
+    })
 }
