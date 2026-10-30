@@ -26,10 +26,11 @@ and changes its foundation.
   applied. pylopdf's API rules
   ([api/DESIGN.md](https://github.com/yhay81/pylopdf/blob/main/api/DESIGN.md),
   section 1) are pyropdf's starting rules.
-- **Engine-faithful.** hayro interprets and renders, krilla writes, and work
-  that an engine owns lands upstream first. pyropdf builds the store, the
-  binding, the resource policy, the consistency of edits, and document
-  understanding.
+- **Engine-faithful.** hayro interprets and renders, krilla writes text and
+  fonts, and work that an engine owns lands upstream first. pyropdf builds
+  the store, the binding, the resource policy, the consistency of edits,
+  document understanding, and the content operators that need no engine
+  (section 7).
 - **Trustworthy.** Hostile input meets typed, bounded refusal. Results carry
   their provenance, independent validators check what pyropdf writes, and
   benchmarks publish losses with wins.
@@ -350,6 +351,17 @@ workaround that links the upstream discussion.
 
 ## 7. Writing contract and settling
 
+The canvas has two writers. pyropdf writes paths, shapes, graphics state,
+clipping, transforms, opacity, blending, images, and placed pages itself:
+they are content operators, image XObjects, and Form XObjects that need
+nothing an engine owns, and an image is registered once per document so
+that drawing it again reuses its object. krilla writes text: shaping,
+font embedding, and subsetting are an engine's work. A text drawing
+becomes a Form XObject that krilla writes through the object sink, and the
+canvas paints it in order with its own operators, so one canvas still
+commits one content stream and one transaction. Drawing without text
+therefore waits on no upstream release; text waits on W1 and W2.
+
 | Item | Requirement |
 | --- | --- |
 | W1 Object sink | krilla writes content, fonts, images, and Form XObjects into a sink that the caller supplies, with object numbers that the sink allocates, instead of a complete PDF that pyropdf parses and imports. |
@@ -565,7 +577,8 @@ Exit:
 ### Phase 2: Writing and interaction
 
 Scope:
-- the canvas on W1 and W2, and settling;
+- the canvas without text, written by pyropdf (section 7);
+- text on the canvas through W1 and W2, and settling;
 - appearances, annotations, links, and forms and widgets with identity
   handles;
 - page operations with referential rules.
@@ -643,7 +656,8 @@ Exit: pylopdf's v1.0 criteria.
   remains the oracle and the fallback until the archive gate.
 - **Upstream dependence.** I1, I2, and W1 to W4 need the maintainers'
   agreement. The bridge removes the need to wait for I1, and pylopdf's
-  guards are the fallback for I2.
+  guards are the fallback for I2. Only text waits on W1 and W2: the rest of
+  the canvas is pyropdf's own (section 7).
 - **Later failures.** Lazy opening moves some refusals from `open` to first
   use. `validate()` and the web profile keep rejection at open available.
 - **Overhead.** Persistent maps and read-set recording add constant costs,
