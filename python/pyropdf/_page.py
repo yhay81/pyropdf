@@ -42,6 +42,7 @@ from pyropdf._text import (
     build_words,
     text_options,
 )
+from pyropdf._text_edit import replace_text
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
@@ -354,6 +355,28 @@ class Page:
         page's content or, with ``underlay=True``, beneath it.
         """
         return Canvas(self, underlay=underlay)
+
+    def replace_text(self, old: str, new: str, *, count: int | None = None) -> int:
+        """Replace ``old`` with ``new`` where simple fonts draw it, and return the number of replacements.
+
+        ``old`` is found in the strings of each text-showing operation of
+        the page's content and of the Form XObjects that it draws, decoded
+        through the operation's Type 1, TrueType, or Type 3 font as text
+        extraction reads it, across the strings and kerning of a ``TJ``
+        array but not across operations. ``new`` is encoded through the
+        same font, and a kerning number after it makes up the difference in
+        advance, so the text that follows keeps its position. ``count``
+        bounds the replacements, in content order; ``None`` replaces all.
+
+        A character of ``new`` that the font has no code for, and ``old``
+        drawn in a composite (Type 0) font of the page's content, raise
+        :class:`ValueError` and leave the document unchanged. A font subset
+        is not extended, so a code without a glyph in the program shows as
+        the program's missing glyph. A Form XObject that changes is copied
+        and the page draws the copy, so the pages and Forms that share it
+        keep the old text. The replacement is one transaction.
+        """
+        return replace_text(self, old, new, count=count)
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
         """Draw this page's annotation and widget appearances into its content and take them off.
