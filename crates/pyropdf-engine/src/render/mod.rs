@@ -313,7 +313,6 @@ fn draw<'a>(
 ) -> std::result::Result<Raster, RasterError> {
     use hayro::hayro_interpret::TransformExt;
     use hayro::kurbo::Affine;
-    use hayro::vello_cpu::peniko::ImageAlphaType;
     use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
 
     let pages = pdf.pages();
@@ -357,8 +356,7 @@ fn draw<'a>(
             ..Default::default()
         },
     );
-    let mut data = pixmap.take_rgba8(ImageAlphaType::Alpha);
-    to_layout(&mut data, options.gray, options.alpha);
+    let data = take_samples(pixmap, options.gray, options.alpha);
     Ok(Raster {
         width: raster_width,
         height: raster_height,
@@ -367,6 +365,26 @@ fn draw<'a>(
         data,
         resolution: resolution(options.matrix),
     })
+}
+
+/// Takes the straight-alpha samples of `pixmap` in the layout of `gray` and
+/// `alpha`. RGB without alpha goes through vello_cpu's SIMD narrowing, which
+/// returns RGB whenever the pixmap is opaque, as an opaque background leaves
+/// it; anything else narrows through `to_layout`.
+fn take_samples(pixmap: hayro::vello_cpu::Pixmap, gray: bool, alpha: bool) -> Vec<u8> {
+    use hayro::vello_cpu::Pixels;
+    use hayro::vello_cpu::peniko::ImageAlphaType;
+
+    let mut data = if !gray && !alpha {
+        match pixmap.try_take_rgb8(ImageAlphaType::Alpha) {
+            Pixels::Rgb8(data) => return data,
+            Pixels::Rgba8(data) => data,
+        }
+    } else {
+        pixmap.take_rgba8(ImageAlphaType::Alpha)
+    };
+    to_layout(&mut data, gray, alpha);
+    data
 }
 
 /// The ITU-R BT.601 luma of an RGBA pixel's color, rounded, as pylopdf

@@ -143,3 +143,34 @@ fn a_batch_checks_every_page_before_rendering_any() {
     });
     assert_eq!(failed.unwrap_err(), RasterError::Clip("stop".to_owned()));
 }
+
+/// Samples taken through vello_cpu's RGB narrowing equal `to_layout`'s,
+/// for an opaque pixmap, which takes that path, and a translucent one,
+/// which falls back, in every layout.
+#[test]
+fn take_samples_matches_to_layout() {
+    use hayro::vello_cpu::peniko::ImageAlphaType;
+    use hayro::vello_cpu::{PixelMetadata, Pixmap};
+
+    let pixmap = |opacity: u8| {
+        let data = (0..17 * 3)
+            .flat_map(|at: u32| [(at * 5) as u8, (at * 11) as u8, (at * 23) as u8, opacity])
+            .collect();
+        let metadata = PixelMetadata {
+            may_have_transparency: true,
+            alpha_type: ImageAlphaType::Alpha,
+        };
+        Pixmap::from_parts(data, 17, 3, metadata)
+    };
+    for opacity in [255, 128] {
+        for (gray, alpha) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut expected = pixmap(opacity).take_rgba8(ImageAlphaType::Alpha);
+            to_layout(&mut expected, gray, alpha);
+            assert_eq!(
+                take_samples(pixmap(opacity), gray, alpha),
+                expected,
+                "opacity {opacity}, gray {gray}, alpha {alpha}"
+            );
+        }
+    }
+}
