@@ -69,7 +69,9 @@ const BLEND_MODES: [&str; 16] = [
 /// The most dash lengths that a border pattern holds.
 pub const MAX_BORDER_DASHES: usize = 32;
 
-pub use missing::{MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized};
+pub use missing::{
+    MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
+};
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
 
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`

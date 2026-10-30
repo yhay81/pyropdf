@@ -13,7 +13,7 @@ import math
 import time
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core
 from pyropdf._content import BlendMode, Color
@@ -21,9 +21,11 @@ from pyropdf._errors import LimitError, MalformedPdfError, StaleObjectError, Sta
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
+from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
+from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
-    from pyropdf._core import _Annotation, _Document
+    from pyropdf._core import Pixmap, _Annotation, _Document
     from pyropdf._page import Page
 
 #: The UTF-8 bytes of the texts that one edit writes (``annotation_input_size``).
@@ -839,6 +841,72 @@ class Annotation:
         return [
             Annotation(self._page, entry[1], entry[0]) for entry in _entries(self._page) if entry[11][0] == self._id
         ]
+
+    def pixmap(
+        self,
+        *,
+        dpi: float | None = None,
+        matrix: Sequence[float] | None = None,
+        alpha: bool = False,
+        background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
+        colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+    ) -> Pixmap:
+        """Render the annotation's appearance alone, over its display rectangle :attr:`rect`.
+
+        The page's content and its other annotations and widgets are left
+        out. The appearance is the current version's, as a render draws it:
+        its normal appearance, or the one a render synthesizes for an
+        annotation without one; a hidden annotation renders as the bare
+        background. The options are those of :meth:`Page.pixmap`, and so
+        are its size limits; a rectangle that leaves no pixel of the page
+        raises :class:`PdfError`, and an empty one ``ValueError``. The GIL
+        is released while hayro renders.
+        """
+        linear = _render_matrix(matrix, dpi)
+        rgba = _render_background(background, alpha=alpha)
+        gray = _render_gray(colorspace)
+        page = self._page
+        pixmap = _core.annotation_pixmap(*self._location(), linear, alpha, gray, rgba)
+        if pixmap is None:
+            raise page._stale()  # noqa: SLF001
+        return pixmap
+
+    def text(  # noqa: PLR0913 - the text options are all keyword-only
+        self,
+        *,
+        clipped: bool = False,
+        ligatures: bool = True,
+        whitespace: bool = True,
+        dehyphenate: bool = False,
+        unmapped: Unmapped = "skip",
+        max_glyphs: int | None = _DEFAULT_MAX_TEXT_GLYPHS,
+        max_size: int | None = _DEFAULT_MAX_TEXT_SIZE,
+    ) -> str:
+        """Return the text that the annotation's appearance draws, in reading order.
+
+        The appearance is the one that :meth:`pixmap` renders, read as
+        :meth:`Page.text` reads a page that draws nothing else, with its
+        options; an appearance that draws no text, or a hidden annotation,
+        gives ``""``. ``/Contents`` is not read; :attr:`contents` returns
+        it.
+        """
+        options = text_options(
+            clip=None,
+            clipped=clipped,
+            ligatures=ligatures,
+            whitespace=whitespace,
+            dehyphenate=dehyphenate,
+            unmapped=unmapped,
+            max_glyphs=max_glyphs,
+            max_size=max_size,
+        )
+        page = self._page
+        result = _core.annotation_text(*self._location(), options, max_glyphs, max_size)
+        if result is None:
+            raise page._stale()  # noqa: SLF001
+        text, skipped = result
+        _warn_skipped(skipped)
+        return text
 
     def sound(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> Sound | None:
         """Return the sound that a sound annotation plays, or ``None`` for another kind of annotation.

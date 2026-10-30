@@ -58,27 +58,54 @@ pub fn synthesized(
                 .try_reserve(1)
                 .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
             visited.insert(reference);
-            let Some((mut dict, form)) = plan(&reader, reference)? else {
+            let Some((dict, form)) = plan(&reader, reference)? else {
                 continue;
             };
-            // Leave an object number for the bridge's cross-reference stream.
-            let number = u32::try_from(next)
-                .ok()
-                .filter(|number| *number < u32::MAX)
-                .ok_or_else(|| {
-                    Error::malformed("no object number remains for a synthesized appearance")
-                })?;
+            let [annotation, form] = substitute(reference, dict, form, next)?;
             next += 1;
-            let mut normal = Dict::new();
-            normal.insert(Name::from("N"), Value::Reference(Reference::new(number, 0)));
-            dict.insert(Name::from("AP"), Value::Dict(normal));
-            objects.try_push((reference, Value::Dict(dict)))?;
-            objects.try_push((Reference::new(number, 0), Value::from(form)))?;
+            objects.try_push(annotation)?;
+            objects.try_push(form)?;
         }
     }
     objects.sort_unstable_by_key(|(reference, _)| reference.number());
     budget.poll()?;
     Ok(objects.into_vec())
+}
+
+/// Returns what [`synthesized`] lists for annotation `reference` alone:
+/// nothing when it needs no appearance, or its dictionary and its form.
+pub fn synthesized_for(
+    version: &Version,
+    reference: Reference,
+    budget: &Budget,
+) -> Result<Vec<(Reference, Value)>> {
+    let reader = Reader { version, budget };
+    let Some((dict, form)) = plan(&reader, reference)? else {
+        return Ok(Vec::new());
+    };
+    Ok(substitute(reference, dict, form, version.next_number())?.into())
+}
+
+/// Returns annotation `reference`'s dictionary `dict`, whose `/AP /N`
+/// names object `next`, and `form` as that object.
+fn substitute(
+    reference: Reference,
+    mut dict: Dict,
+    form: Stream,
+    next: u64,
+) -> Result<[(Reference, Value); 2]> {
+    // Leave an object number for the bridge's cross-reference stream.
+    let number = u32::try_from(next)
+        .ok()
+        .filter(|number| *number < u32::MAX)
+        .ok_or_else(|| Error::malformed("no object number remains for a synthesized appearance"))?;
+    let mut normal = Dict::new();
+    normal.insert(Name::from("N"), Value::Reference(Reference::new(number, 0)));
+    dict.insert(Name::from("AP"), Value::Dict(normal));
+    Ok([
+        (reference, Value::Dict(dict)),
+        (Reference::new(number, 0), Value::from(form)),
+    ])
 }
 
 /// Returns an annotation copy and its form only when a drawing is needed.
