@@ -28,6 +28,7 @@ from pyropdf._ocr import (
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
 from pyropdf._tables import Table, build_tables
 from pyropdf._text import (
     _DEFAULT_MAX_TEXT_GLYPHS,
@@ -395,6 +396,17 @@ class Page:
         replacement is one transaction.
         """
         return replace_text(self, old, new, count=count)
+
+    def recolor(self, target: RecolorTarget) -> RecolorReport:
+        """Convert the colors that the page paints to ``target``: ``"gray"``, ``"rgb"``, or ``"cmyk"``.
+
+        Rewrites the color operators of the page's content, of the Form
+        XObjects that it draws, and of its annotations' appearances, and
+        converts its images and the color arrays of its annotations; see
+        :meth:`Document.recolor`. Returns what it converted and what it
+        left as it was.
+        """
+        return recolor(self._document, target, [self.index])
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
         """Draw this page's annotation and widget appearances into its content and take them off.

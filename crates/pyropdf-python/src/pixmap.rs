@@ -813,6 +813,43 @@ fn temporary_sibling(target: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
+/// Returns the colors of `pixmap` without its alpha, as the samples of an
+/// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
+/// or as a JPEG at `quality` when it is given, for gray or RGB.
+#[pyfunction]
+#[pyo3(signature = (pixmap, components, quality=None))]
+pub fn recolor_samples<'py>(
+    py: Python<'py>,
+    pixmap: &Pixmap,
+    components: usize,
+    quality: Option<u8>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let color = match (components, quality) {
+        (1 | 3 | 4, None) => None,
+        (1, Some(_)) => Some(ColorType::Luma),
+        (3, Some(_)) => Some(ColorType::Rgb),
+        _ => {
+            return Err(PyValueError::new_err(format!(
+                "no {components}-component samples{}",
+                if quality.is_some() { " in JPEG" } else { "" }
+            )));
+        }
+    };
+    let layout = pixmap.layout();
+    let samples = py.detach(|| pixel_ops::device_samples(&pixmap.data, layout, components));
+    let (Some(color), Some(quality)) = (color, quality) else {
+        return Ok(PyBytes::new(py, &samples));
+    };
+    let side = |length: u32| {
+        u16::try_from(length).map_err(|_| PyValueError::new_err("JPEG sides end at 65535 pixels"))
+    };
+    let (width, height) = (side(pixmap.width)?, side(pixmap.height)?);
+    let mut out = Vec::new();
+    py.detach(|| JpegEncoder::new(&mut out, quality).encode(&samples, width, height, color))
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    Ok(PyBytes::new(py, &out))
+}
+
 /// Renders the page whose object is `number` and `generation` through the
 /// linear `matrix`, with the GIL released. The Python layer has checked the
 /// options and resolved `background` to straight RGBA.

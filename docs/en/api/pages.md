@@ -286,6 +286,20 @@ A drawing of a Form XObject that changes draws a copy, so the other
 drawings, pages, and Forms that share it keep the old text. The
 replacement is one transaction.
 
+### `Page.recolor`
+
+```python
+Page.recolor(target: RecolorTarget) -> RecolorReport
+```
+
+Convert the colors that the page paints to `target`: `"gray"`, `"rgb"`, or `"cmyk"`.
+
+Rewrites the color operators of the page's content, of the Form
+XObjects that it draws, and of its annotations' appearances, and
+converts its images and the color arrays of its annotations; see
+`Document.recolor`. Returns what it converted and what it
+left as it was.
+
 ### `Page.flatten`
 
 ```python

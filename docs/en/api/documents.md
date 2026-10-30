@@ -210,6 +210,38 @@ to do, and the call returns zero counts. A decoding
 failure raises and leaves the document as it was;
 `history` can undo the step.
 
+### `Document.recolor`
+
+```python
+Document.recolor(
+    target: RecolorTarget,
+    pages: Iterable[int] | None = None,
+) -> RecolorReport
+```
+
+Convert the colors that `pages` paint to `target`, `"gray"`, `"rgb"`, or `"cmyk"`, as one step.
+
+Every color operator of each page's content, of the Form XObjects
+that it draws, and of its annotations' appearances becomes `g`,
+`rg`, or `k` (and `G`, `RG`, `K`) in the target. Device,
+CIE-based gray and RGB, and ICC-based spaces convert by their
+component count, Indexed through its base, and Separation through
+its alternate space when its tint transform is exponential, with
+the conversions of ISO 32000-2 10.4.2: BT.601 luma for gray, and
+full black generation for CMYK. Image objects and 8-bit inline
+images convert too: a JPEG to a JPEG at the quality that its
+quantization tables show, or Flate for CMYK, and others to 8-bit
+Flate; their masks stay. The color arrays of annotations (`/C`,
+`/IC`, and `/MK`'s `/BC` and `/BG`) convert as well.
+
+Nothing is edited in place: a Form XObject, appearance, or image
+that changes becomes a new object, so pages left out keep their
+colors. Shadings, patterns, Lab, DeviceN, other tint transforms,
+images whose masks read their samples, and Form XObjects nested
+deeper than 16 or past 4,096 drawings are left as they are and
+listed in `RecolorReport.unconverted`. `pages` holds page
+indexes, negative ones from the end; it defaults to every page.
+
 ### `Document.layers`
 
 ```python

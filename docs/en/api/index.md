@@ -36,6 +36,11 @@ method and property of its classes with its full description.
 - [`PageImage`](images.md#pageimage): One image that a page paints: its content item and its place among the page's images.
 - [`StoredImage`](images.md#storedimage): An image's data as the document stores it, for an image filter that a file format holds.
 
+## [Recoloring](recoloring.md)
+
+- [`RecolorReport`](recoloring.md#recolorreport): What `Page.recolor` or `Document.recolor` converted, and what it could not.
+- [`Unconverted`](recoloring.md#unconverted): A color that `Page.recolor` left as it was.
+
 ## [Layers](layers.md)
 
 - [`Layer`](layers.md#layer): An optional content group (`/Type /OCG`) and its state in the default configuration.

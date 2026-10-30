@@ -113,6 +113,7 @@ from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
+from pyropdf._recolor import RecolorReport, Unconverted
 from pyropdf._sanitize import SanitizeReport
 from pyropdf._signing import Signer
 from pyropdf._tables import Table, TableDiagnostics
@@ -271,6 +272,7 @@ __all__ = [
     "Quad",
     "RadioButton",
     "Real",
+    "RecolorReport",
     "Rect",
     "RemoteDestination",
     "SanitizeReport",
@@ -308,6 +310,7 @@ __all__ = [
     "TilingPattern",
     "Transaction",
     "TransparencyGroup",
+    "Unconverted",
     "Underline",
     "Unmapped",
     "Widget",
