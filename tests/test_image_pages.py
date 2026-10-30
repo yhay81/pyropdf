@@ -164,9 +164,8 @@ def test_a_jpeg_exif_resolution_after_fill_bytes() -> None:
 
 
 def test_image_data_is_limited_in_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("pyropdf._pages._MAX_IMAGE_INPUT", 100)
     data = _encoded(_image(), "PNG")
-    assert len(data) > 100
+    monkeypatch.setattr("pyropdf._pages._MAX_IMAGE_INPUT", len(data) - 1)
     path = tmp_path / "image.png"
     path.write_bytes(data)
     pages = pyropdf.Document().pages
