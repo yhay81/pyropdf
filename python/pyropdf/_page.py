@@ -11,6 +11,7 @@ from pyropdf._annotations import Annotations
 from pyropdf._canvas import Canvas
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
+from pyropdf._fonts import FontInfo, page_fonts
 from pyropdf._geometry import Quad, Rect
 from pyropdf._images import PageImage, page_images
 from pyropdf._limits import _validate_optional_positive_int
@@ -177,6 +178,19 @@ class Page:
         """
         _validate_bool("annotations", annotations)
         return page_images(self, annotations=annotations)
+
+    def fonts(self) -> list[FontInfo]:
+        """Return the fonts that the page's resources and its Form XObjects' resources name, one per font dictionary.
+
+        The resources are the page's own or those it inherits from the page
+        tree; Form XObjects are followed through their ``/Resources`` to any
+        depth, each once. Fonts that only annotation appearances or Type 3
+        glyph procedures name are not listed. A page tree deeper than 64
+        parents, more than 4096 forms, or more than 65536 font and XObject
+        entries over the walk raise :class:`LimitError`.
+        :meth:`Document.font_program` returns a font's embedded program.
+        """
+        return page_fonts(self)
 
     @property
     def label(self) -> str:

@@ -8,6 +8,32 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Fonts
 
+## `FontInfo`
+
+```python
+FontInfo(
+    xref: int | None,
+    names: tuple[str, ...],
+    base_font: str,
+    subtype: str,
+    encoding: str,
+    program: str | None,
+    subset: bool,
+    forms: tuple[int, ...],
+    _font: Dictionary,
+)
+```
+
+One font dictionary that a page's resources name, from `Page.fonts`.
+
+## `FontProgram`
+
+```python
+FontProgram(type: str, data: bytes)
+```
+
+An embedded font program, from `Document.font_program`.
+
 ## `SubsetFont`
 
 ```python

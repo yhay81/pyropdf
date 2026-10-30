@@ -34,7 +34,7 @@ column from `docs/en/api.md`.
 | Vector paths and content items | `get_drawings`, `get_texttrace` | yes: `page.content()` | |
 | Image placements | `get_image_info`, `get_image_rects` | yes: content items | |
 | Image data | `extract_image`, `get_images`, `replace_image`, `delete_image` | yes: `page.images()`, `doc.replace_image`, `doc.remove_image` | #359 |
-| Fonts of a page | `get_fonts`, `extract_font` | partial: font references on text items | #364 |
+| Fonts of a page | `get_fonts`, `extract_font` | yes: `page.fonts()`, `doc.font_program` | #399 |
 
 ## Rendering
 

@@ -78,7 +78,7 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
-from pyropdf._fonts import SubsetFont
+from pyropdf._fonts import FontInfo, FontProgram, SubsetFont
 from pyropdf._form import (
     CheckBox,
     ComboBox,
@@ -199,6 +199,8 @@ __all__ = [
     "FieldSpecification",
     "FieldType",
     "FillRule",
+    "FontInfo",
+    "FontProgram",
     "FontRef",
     "Form",
     "Glyph",
