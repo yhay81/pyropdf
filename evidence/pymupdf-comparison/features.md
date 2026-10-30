@@ -90,7 +90,7 @@ rendering accuracy need independent comparisons (#430).
 | Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Available: `page.clean_contents()` normalizes page content and appearance streams and prunes unnamed resources; no `save(clean=True)` | #250, #434 |
 | Sanitizing | `scrub` | Available: `doc.sanitize`, with a report | #363 |
 | Font subsetting | `subset_fonts` | Available: `doc.subset_fonts`; format coverage is not asserted identical | #364 |
-| Bulk image rewriting | `rewrite_images` | Mostly: `doc.rewrite_images` rewrites masked, CMYK, ICC-based, and page-level inline images, writes bitonal images as CCITT Group 4 and lossless ones as Flate or JPEG, and reports what it leaves; CMYK JPEGs, other JPEG 2000, masks of another size, and nested inline images remain. `set_to_gray` changes images only; `recolor` converts whole pages | #401, #432, #451, #452; whole-page recoloring #400; [probe](results/text-main.md) |
+| Bulk image rewriting | `rewrite_images` | Mostly: `doc.rewrite_images` rewrites masked (masks of another size at their own resolution, `/Matte` un-premultiplied), CMYK, ICC-based, stencil mask, and inline images, including those in Form XObjects and appearances, writes bitonal images as CCITT Group 4 and lossless ones as Flate or JPEG, and reports what it leaves; CMYK JPEGs and other JPEG 2000 remain. `set_to_gray` changes images only; `recolor` converts whole pages | #401, #432, #451, #452; whole-page recoloring #400; [probe](results/text-main.md) |
 | Recolor | `Page.recolor`, `Document.recolor` | Missing | #400 |
 
 ## Additional pyropdf capabilities and project goals

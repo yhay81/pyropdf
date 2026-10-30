@@ -502,29 +502,125 @@ def test_a_soft_mask_is_resampled_into_a_new_mask_and_a_shared_one_stays() -> No
     assert gs_difference(gs_before, ghostscript(doc)) < 4
 
 
-@pytest.mark.parametrize("kind", ["stencil", "matte", "other-size"])
-def test_masks_that_a_rewrite_cannot_keep_are_reported(kind: str) -> None:
+def test_a_stencil_mask_of_another_size_is_resampled_at_its_own_resolution() -> None:
     doc = image_document(zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode")), [(36, 36)])
-    if kind == "stencil":
-        stencil = add_image(
-            doc, bytes(SIDE * SIDE // 4 // 8), {"Width": SIDE // 2, "Height": SIDE // 2, "ImageMask": True}
-        )
-        stream(doc)["Mask"] = stencil
-        expected = "stencil mask of another size"
-    elif kind == "matte":
-        stream(doc)["SMask"] = soft_mask(doc, Matte=[0, 0, 0])
-        expected = "soft mask with /Matte"
-    else:
-        stream(doc)["SMask"] = soft_mask(doc, side=SIDE // 2)
-        expected = "soft mask of another size"
+    rows = bytes([0b11110000] * (SIDE * 2 // 8)) * (SIDE * 2)
+    stream(doc)["Mask"] = add_image(doc, rows, {"Width": SIDE * 2, "Height": SIDE * 2, "ImageMask": True})
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert (report.rewritten, report.unsupported) == (1, ())
+    mask = stream(doc)["Mask"]
+    assert (mask["Width"], mask["Height"], mask["ImageMask"], mask["Filter"]) == (36, 36, True, "CCITTFaxDecode")
+    assert "SMask" not in stream(doc)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 12
+    assert gs_difference(gs_before, ghostscript(doc)) < 12
+
+
+def test_a_soft_mask_of_another_size_stays_a_soft_mask_of_its_own_size() -> None:
+    doc = image_document(zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode")), [(36, 36)])
+    stream(doc)["SMask"] = soft_mask(doc, side=SIDE * 2)
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert (report.rewritten, report.unsupported) == (1, ())
+    mask = stream(doc)["SMask"]
+    assert (mask["Width"], mask["Height"], mask["ColorSpace"]) == (36, 36, "DeviceGray")
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    assert gs_difference(gs_before, ghostscript(doc)) < 4
+
+
+def test_a_mask_of_another_size_that_keeps_its_pixels_stays_as_stored() -> None:
+    doc = image_document(zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode")), [(36, 36)])
+    mask = soft_mask(doc, side=16)
+    stream(doc)["SMask"] = mask
+
+    assert doc.rewrite_images(dpi_threshold=150, dpi_target=72).rewritten == 1
+
+    assert stream(doc)["SMask"].xref == mask.xref
+    assert size(doc) == (36, 36)
+
+
+def premultiplied(components: int, matte: list[int]) -> tuple[bytes, bytes]:
+    """Return samples premultiplied with ``matte`` as /Matte stores them, and their alpha."""
+    color, alpha = gradient(components), bytes((x * 255 // (SIDE - 1)) for _ in range(SIDE) for x in range(SIDE))
+    stored = bytearray(color)
+    for at, sample in enumerate(color):
+        opacity, background = alpha[at // components] / 255, matte[at % components] * 255
+        stored[at] = round(background + opacity * (sample - background))
+    return bytes(stored), alpha
+
+
+@pytest.mark.parametrize("space", ["DeviceRGB", "DeviceCMYK"])
+def test_a_matte_soft_mask_is_un_premultiplied(space: str) -> None:
+    components = 3 if space == "DeviceRGB" else 4
+    matte = [1] * components if components == 3 else [0] * components
+    samples, alpha = premultiplied(components, matte)
+    entries = {**rgb_entries(Filter=Name("FlateDecode")), "ColorSpace": Name(space)}
+    doc = image_document(zlib.compress(samples), entries, [(36, 36)])
+    mask: dict[str, object] = {
+        "Width": SIDE,
+        "Height": SIDE,
+        "BitsPerComponent": 8,
+        "ColorSpace": Name("DeviceGray"),
+        "Matte": matte,
+    }
+    stream(doc)["SMask"] = add_image(doc, alpha, mask)
+    before = doc.pages[0].pixmap(dpi=72)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert (report.rewritten, report.unsupported) == (1, ())
+    assert "Matte" not in stream(doc)["SMask"]
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+
+
+def test_a_matte_soft_mask_of_another_size_is_reported() -> None:
+    doc = image_document(zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode")), [(36, 36)])
+    stream(doc)["SMask"] = soft_mask(doc, side=SIDE // 2, Matte=[0, 0, 0])
     original = doc.to_bytes()
 
     report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
 
     assert report.rewritten == 0
-    assert len(report.unsupported) == 1
-    assert expected in report.unsupported[0]
+    assert report.unsupported == (f"object {stream(doc).xref}: a soft mask with /Matte of another size",)
     assert doc.to_bytes() == original
+
+
+def test_a_stencil_mask_image_is_downsampled_as_a_stencil() -> None:
+    doc = image_document(scan(SIDE), {"Width": SIDE, "Height": SIDE, "ImageMask": True}, [(36, 36)])
+    contents = doc.pages[0].obj["Contents"]
+    contents.write(b"0 0 1 rg " + contents.read())
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72)
+
+    assert (report.considered, report.rewritten, report.unsupported) == (1, 1, ())
+    image = doc.pages[0].obj["Resources"]["XObject"]["Im0"]
+    assert (image["ImageMask"], image["BitsPerComponent"], image["Filter"]) == (True, 1, "CCITTFaxDecode")
+    assert (image["Width"], image["Height"]) == (36, 36)
+    assert "ColorSpace" not in image
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 12
+    assert gs_difference(gs_before, ghostscript(doc)) < 12
+
+
+def test_the_masked_jpegs_of_a_corpus_manuscript_are_rewritten() -> None:
+    doc = pyropdf.open(CORPUS / "wdl6812-manuscript.pdf")
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=100, quality=65)
+
+    assert (report.rewritten, report.unsupported) == (4, ())
+    for page in doc.pages:
+        masked = [image for image in page.images() if "Mask" in doc.objects[image.item.xref]]
+        (image,) = masked
+        mask = doc.objects[image.item.xref]["Mask"]
+        assert (mask["ImageMask"], mask["Width"]) == (True, 450)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    # Quality 65 alone gives 3.2; the 1-bit masks, at a third of their resolution, give the rest.
+    assert gs_difference(gs_before, ghostscript(doc)) < 6
 
 
 def test_a_stencil_mask_of_the_image_size_becomes_a_soft_mask() -> None:
@@ -702,19 +798,106 @@ def test_an_inline_bitonal_image_becomes_group_4() -> None:
 
 def test_inline_images_that_a_rewrite_does_not_read_are_reported() -> None:
     doc = inline_document("/W 1 /H 1 /CS /CMYK /BPC 8", b"\x00\x00\x00\x00")
-    form = doc.objects.add_stream(
-        b"BI /W 1 /H 1 /CS /RGB /BPC 8 ID \xff\x00\x00\nEI",
-        {"Type": Name("XObject"), "Subtype": Name("Form"), "BBox": [0, 0, 1, 1]},
-    )
-    doc.pages[0].obj["Resources"]["XObject"]["Fm0"] = doc.objects[form]
-    contents = doc.pages[0].obj["Contents"]
-    contents.write(contents.read() + b" q 10 0 0 10 0 0 cm /Fm0 Do Q")
 
     report = doc.rewrite_images(quality=75)
 
-    assert report.rewritten == 0
-    assert "an inline image in CMYK" in report.unsupported
-    assert "page 0: 1 inline images in Form XObjects or annotation appearances" in report.unsupported
+    assert (report.considered, report.rewritten, report.unsupported) == (1, 0, ("an inline image in CMYK",))
+
+
+def inline_form(doc: pyropdf.Document, side: int = 64, **extra: object) -> pyropdf.Stream:
+    """Return a Form XObject that paints an RGB inline image of ``side`` pixels on its unit square."""
+    data = zlib.compress(gradient(3, side))
+    content = f"q 1 0 0 1 0 0 cm BI /W {side} /H {side} /CS /RGB /BPC 8 /F /Fl ID ".encode() + data + b"\nEI Q"
+    entries = {"Type": Name("XObject"), "Subtype": Name("Form"), "BBox": [0, 0, 1, 1], **extra}
+    return doc.objects[doc.objects.add_stream(content, entries)]
+
+
+def form_images(form: pyropdf.Stream) -> list[pyropdf.InlineImage]:
+    return [op for op in pyropdf.Operations.parse(form.read()) if isinstance(op, pyropdf.InlineImage)]
+
+
+def test_an_inline_image_in_a_form_is_rewritten_in_a_copy_of_the_form() -> None:
+    doc = image_document(b"", {}, [])
+    form = inline_form(doc, Resources={})
+    outer = doc.objects[
+        doc.objects.add_stream(
+            b"q 0.5 0 0 0.5 0 0 cm /Fm0 Do Q",
+            {
+                "Type": Name("XObject"),
+                "Subtype": Name("Form"),
+                "BBox": [0, 0, 1, 1],
+                "Resources": {"XObject": {"Fm0": form}},
+            },
+        )
+    ]
+    doc.pages[0].obj["Resources"]["XObject"]["Fm1"] = outer
+    doc.pages[0].obj["Contents"].write(b"q 64 0 0 64 10 10 cm /Fm1 Do Q")
+    # Something other than the pages draws the original form.
+    doc.catalog["Extra"] = outer
+    original = form.read()
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=100, dpi_target=72)
+
+    assert (report.considered, report.rewritten, report.unsupported) == (1, 1, ())
+    assert form.read() == original
+    copy = doc.pages[0].obj["Resources"]["XObject"]["Fm1"]
+    assert copy.xref != outer.xref
+    (image,) = form_images(copy["Resources"]["XObject"]["Fm0"])
+    assert (image.dictionary["W"], image.dictionary["H"]) == (32, 32)
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    assert gs_difference(gs_before, ghostscript(doc)) < 4
+
+
+def test_a_form_drawn_at_several_sizes_keeps_the_pixels_of_its_largest_drawing() -> None:
+    doc = image_document(b"", {}, [], pages=2)
+    form = inline_form(doc)
+    for page, side in zip(doc.pages, (16, 48), strict=True):
+        page.obj["Resources"] = {"XObject": {"Fm0": form}}
+        page.obj["Contents"] = doc.objects[doc.objects.add_stream(f"q {side} 0 0 {side} 0 0 cm /Fm0 Do Q".encode())]
+
+    report = doc.rewrite_images(dpi_threshold=80, dpi_target=36)
+
+    assert (report.considered, report.rewritten) == (1, 1)
+    copies = {page.obj["Resources"]["XObject"]["Fm0"].xref for page in doc.pages}
+    (copy,) = copies
+    assert copy != form.xref
+    (image,) = form_images(doc.objects[copy])
+    assert (image.dictionary["W"], image.dictionary["H"]) == (24, 24)
+    (kept,) = form_images(form)
+    assert kept.dictionary["W"] == 64
+
+
+def test_an_inline_image_in_an_annotation_appearance_is_rewritten() -> None:
+    doc = image_document(b"", {}, [])
+    appearance = inline_form(doc, Resources={})
+    annotation = {"Type": Name("Annot"), "Subtype": Name("Square"), "Rect": [10, 10, 42, 42], "AP": {"N": appearance}}
+    doc.pages[0].obj["Annots"] = [annotation]
+    before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)
+
+    report = doc.rewrite_images(dpi_threshold=100, dpi_target=72)
+
+    assert (report.considered, report.rewritten, report.unsupported) == (1, 1, ())
+    copy = doc.pages[0].obj["Annots"][0]["AP"]["N"]
+    assert copy.xref != appearance.xref
+    (image,) = form_images(copy)
+    assert (image.dictionary["W"], image.dictionary["H"]) == (32, 32)
+    assert form_images(appearance)[0].dictionary["W"] == 64
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 4
+    assert gs_difference(gs_before, ghostscript(doc)) < 4
+
+
+def test_an_inline_stencil_mask_is_downsampled_as_a_stencil() -> None:
+    doc = inline_document("/W 64 /H 64 /IM true", scan(64), "0 0 1 rg 32 0 0 32 0 0")
+    before = doc.pages[0].pixmap(dpi=72)
+
+    report = doc.rewrite_images(dpi_threshold=100, dpi_target=72)
+
+    assert (report.rewritten, report.unsupported) == (1, ())
+    (image,) = inline_images(doc)
+    assert (image.dictionary["IM"], image.dictionary["W"], image.dictionary["F"]) == (True, 32, "CCF")
+    assert "CS" not in image.dictionary
+    assert mean_difference(before, doc.pages[0].pixmap(dpi=72)) < 12
 
 
 @pytest.mark.parametrize("keyword", ["lossless_format", "bitonal_format"])
