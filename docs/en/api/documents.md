@@ -364,6 +364,20 @@ Document.is_repaired: bool
 
 Whether opening recovered damaged cross-reference data.
 
+### `Document.is_linearized`
+
+```python
+Document.is_linearized: bool
+```
+
+Whether the opened file is linearized for fast web view (ISO 32000-2 Annex F).
+
+The file's first object, in its first 1024 bytes, is a linearization
+dictionary whose `/L` is the file's length. An update appended to
+a linearized file changes its length, so such a file reads as not
+linearized. Edits in memory do not change the answer; a document
+without a file is not linearized.
+
 ### `Document.needs_password`
 
 ```python
@@ -438,6 +452,7 @@ Document.save(
     object_streams: bool = False,
     renumber: bool = False,
     dedupe: bool = False,
+    linearize: bool = False,
 )
 ```
 
@@ -512,6 +527,18 @@ objects in cycles of references never merge. It needs
 `prune=True`, and so a full save. The document in memory keeps its
 objects.
 
+`linearize=True` writes the file linearized for fast web view
+(ISO 32000-2 Annex F): the first page's objects, then a hint stream
+and the other pages' objects in page order, so that a viewer shows
+the first page before the rest arrives. It writes the objects that
+the pages, the trailer, and the catalog reach, numbered anew, so it
+prunes and renumbers whatever `prune` and `renumber` say, and
+moves the attributes that pages inherit from the page tree into the
+pages. It writes a cross-reference table, so it refuses
+`cross_reference="stream"`, `object_streams`, and `dedupe`,
+and an incremental save refuses it. `is_linearized` reads
+whether an opened file is linearized.
+
 ### `Document.to_bytes`
 
 ```python
@@ -529,6 +556,7 @@ Document.to_bytes(
     object_streams: bool = False,
     renumber: bool = False,
     dedupe: bool = False,
+    linearize: bool = False,
 ) -> bytes
 ```
 

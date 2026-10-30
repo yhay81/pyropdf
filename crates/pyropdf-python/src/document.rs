@@ -223,6 +223,13 @@ impl _Document {
         })
     }
 
+    /// Returns whether the opened file is linearized.
+    fn is_linearized(&self) -> PyResult<bool> {
+        let version = self.current()?;
+        let budget = Budget::new(&self.limits);
+        save::is_linearized(&version, &budget).map_err(|error| crate::errors::store_error(&error))
+    }
+
     /// Returns whether opening recovered damaged cross-reference data.
     fn is_repaired(&self) -> PyResult<bool> {
         Ok(self
@@ -234,7 +241,7 @@ impl _Document {
 
     /// Writes the document to the file at `path`, created or truncated; the
     /// caller replaces the target with it.
-    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false))]
+    #[pyo3(signature = (path, incremental, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn save_path(
         &self,
@@ -250,6 +257,7 @@ impl _Document {
         object_streams: bool,
         renumber: bool,
         dedupe: bool,
+        linearize: bool,
     ) -> PyResult<()> {
         let options = save_options(
             prune,
@@ -260,6 +268,7 @@ impl _Document {
             object_streams,
             renumber,
             dedupe,
+            linearize,
         );
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
@@ -284,7 +293,7 @@ impl _Document {
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
-    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false))]
+    #[pyo3(signature = (incremental, max_size, encryption=None, prune=false, compress=None, decompress=false, renew_id=false, cross_reference_stream=None, object_streams=false, renumber=false, dedupe=false, linearize=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
     fn to_bytes<'py>(
         &self,
@@ -300,6 +309,7 @@ impl _Document {
         object_streams: bool,
         renumber: bool,
         dedupe: bool,
+        linearize: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let options = save_options(
             prune,
@@ -310,6 +320,7 @@ impl _Document {
             object_streams,
             renumber,
             dedupe,
+            linearize,
         );
         let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
         let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
@@ -451,7 +462,8 @@ fn write_version(
 /// the file identifier when `renew_id`, writes a cross-reference stream or a
 /// table as `cross_reference_stream` asks or else the base's form, packs
 /// objects into object streams when `object_streams`, renumbers the objects
-/// when `renumber`, and merges identical ones when `dedupe`.
+/// when `renumber`, merges identical ones when `dedupe`, and linearizes the
+/// file when `linearize`.
 #[expect(clippy::too_many_arguments, reason = "the options of Document.save")]
 const fn save_options(
     prune: bool,
@@ -462,6 +474,7 @@ const fn save_options(
     object_streams: bool,
     renumber: bool,
     dedupe: bool,
+    linearize: bool,
 ) -> save::Options {
     let streams = match (compress, decompress) {
         (Some(level), _) => save::Streams::Compress(level),
@@ -480,6 +493,7 @@ const fn save_options(
         object_streams,
         renumber,
         dedupe,
+        linearize,
     }
 }
 

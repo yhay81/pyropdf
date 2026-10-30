@@ -39,6 +39,7 @@ class _Document:
         data: bytes | bytearray | memoryview, limits: object, password: bytes | None = None, /
     ) -> _Document: ...
     def is_repaired(self) -> bool: ...
+    def is_linearized(self) -> bool: ...
     def save_path(
         self,
         path: str,
@@ -52,6 +53,7 @@ class _Document:
         object_streams: bool = False,
         renumber: bool = False,
         dedupe: bool = False,
+        linearize: bool = False,
         /,
     ) -> None: ...
     def to_bytes(
@@ -67,6 +69,7 @@ class _Document:
         object_streams: bool = False,
         renumber: bool = False,
         dedupe: bool = False,
+        linearize: bool = False,
         /,
     ) -> bytes: ...
     def _objects(self) -> list[tuple[int, int, bytes]]: ...

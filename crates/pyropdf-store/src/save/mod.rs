@@ -6,6 +6,7 @@
 //! never changes the version, its base, or its object allocation state.
 
 mod base;
+mod linear;
 mod merge;
 mod pack;
 mod prune;
@@ -30,6 +31,7 @@ use crate::{Error as StoreError, ErrorKind, LimitExceeded, write};
 use renumber::Renumbering;
 
 pub use base::FileBase;
+pub use linear::is_linearized;
 pub use recode::Streams;
 
 /// A save either reports a typed store error, preserves the sink's I/O
@@ -57,6 +59,9 @@ pub enum Refusal {
     /// streams, and renumbering rewrite the original file, whose objects,
     /// numbers, and cross-reference form an incremental save keeps.
     FullSaveOption,
+    /// A linearized save writes a cross-reference table, and neither
+    /// object streams nor merged objects.
+    Linearization,
 }
 
 /// The result of saving to an output writer.
@@ -100,7 +105,10 @@ impl fmt::Display for Error {
                 Refusal::RepairedBase => "incremental save is unavailable for a repaired base",
                 Refusal::Encryption => "saving encrypted documents requires the security handler",
                 Refusal::FullSaveOption => {
-                    "prune, decompress, a new cross-reference form, object streams, and renumbering require a full save"
+                    "prune, decompress, a new cross-reference form, object streams, renumbering, and linearization require a full save"
+                }
+                Refusal::Linearization => {
+                    "a linearized save writes a cross-reference table, without object streams or merged objects"
                 }
             }),
         }
@@ -200,6 +208,13 @@ pub struct Options {
     /// references never merge. The merged objects' numbers become free
     /// entries, unless the save renumbers.
     pub dedupe: bool,
+    /// Writes the file linearized (ISO 32000-2 Annex F), with hint tables,
+    /// for viewers that show the first page before the rest has arrived.
+    /// The save then writes only the objects that the pages, the trailer,
+    /// and the catalog reach, numbered anew, moves the page tree's
+    /// inherited attributes into the pages, and refuses object streams, a
+    /// cross-reference stream, and `dedupe`.
+    pub linearize: bool,
 }
 
 /// The form of the cross-reference data that a save writes.
@@ -263,6 +278,22 @@ pub fn full_with(
         .into());
     }
     let mut mode = Mode::of(version, encryption, budget)?;
+    if options.linearize {
+        if options.object_streams
+            || options.dedupe
+            || options.cross_reference == CrossReference::Stream
+        {
+            return Err(Error::Refused(Refusal::Linearization));
+        }
+        return linear::write(
+            version,
+            target,
+            budget,
+            &mode,
+            options.streams,
+            options.renew_id,
+        );
+    }
     let mut numbers = BudgetVec::new(budget);
     version.base().numbers(&mut numbers)?;
     for (number, _) in version.slots() {
@@ -455,6 +486,7 @@ pub fn incremental_with(
         || options.object_streams
         || options.renumber
         || options.dedupe
+        || options.linearize
     {
         return Err(Error::Refused(Refusal::FullSaveOption));
     }
@@ -915,6 +947,24 @@ fn identifier(out: &mut Output<'_>, first: Value, second: Value) -> Result<()> {
     out.bytes(&bytes)
 }
 
+/// Returns whether a save copies the trailer entry `name`: the entries of
+/// cross-reference data are its own.
+fn trailer_key(name: &[u8]) -> bool {
+    !matches!(
+        name,
+        b"Size"
+            | b"Prev"
+            | b"XRefStm"
+            | b"Type"
+            | b"W"
+            | b"Index"
+            | b"Length"
+            | b"Filter"
+            | b"DecodeParms"
+            | b"DL"
+    )
+}
+
 fn trailer(
     dict: &Dict,
     out: &mut Output<'_>,
@@ -925,19 +975,7 @@ fn trailer(
         if replaced.contains(&name.as_bytes()) {
             continue;
         }
-        if matches!(
-            name.as_bytes(),
-            b"Size"
-                | b"Prev"
-                | b"XRefStm"
-                | b"Type"
-                | b"W"
-                | b"Index"
-                | b"Length"
-                | b"Filter"
-                | b"DecodeParms"
-                | b"DL"
-        ) {
+        if !trailer_key(name.as_bytes()) {
             continue;
         }
         out.budget.poll()?;
@@ -966,6 +1004,9 @@ struct Output<'a> {
     origin: u64,
     /// The digest of the bytes written, for a save that renews `/ID`.
     digest: Option<Md5>,
+    /// Whether the bytes count against the output size: not those of a
+    /// pass that only measures.
+    charge: bool,
 }
 
 impl<'a> Output<'a> {
@@ -976,6 +1017,7 @@ impl<'a> Output<'a> {
             position: 0,
             origin,
             digest: digest.then(Md5::new),
+            charge: true,
         }
     }
 
@@ -995,8 +1037,10 @@ impl<'a> Output<'a> {
     fn bytes(&mut self, bytes: &[u8]) -> Result<()> {
         for chunk in bytes.chunks(64 * 1024) {
             self.budget.poll()?;
-            self.budget
-                .charge(LimitCode::PdfOutputSize, chunk.len() as u64)?;
+            if self.charge {
+                self.budget
+                    .charge(LimitCode::PdfOutputSize, chunk.len() as u64)?;
+            }
             self.target.write_all(chunk)?;
             if let Some(digest) = &mut self.digest {
                 digest.update(chunk);
