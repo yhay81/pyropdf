@@ -131,6 +131,7 @@ method and property of its classes with its full description.
 - [`AttachmentIcon`](annotations.md#attachmenticon): The icon of a file attachment, `/Name` (ISO 32000-2 §12.5.6.15).
 - [`Border`](annotations.md#border): The border of an annotation: its line width, style, and dash pattern.
 - [`BorderStyle`](annotations.md#borderstyle): The style of an annotation's border, `/BS /S` (ISO 32000-2 Table 168).
+- [`Caret`](annotations.md#caret): A caret that marks where text goes, as `page.annotations.add` takes it.
 - [`Circle`](annotations.md#circle): An ellipse inscribed in a rectangle, as `page.annotations.add` takes it.
 - [`Highlight`](annotations.md#highlight): A highlight over text, as `page.annotations.add` takes it.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.

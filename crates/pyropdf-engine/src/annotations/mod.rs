@@ -87,7 +87,7 @@ pub type PointLists = Vec<Vec<(f64, f64)>>;
 pub fn draws(subtype: &[u8]) -> bool {
     is_text_markup(subtype)
         || has_points(subtype)
-        || matches!(subtype, b"Text" | b"Square" | b"Circle")
+        || matches!(subtype, b"Text" | b"Square" | b"Circle" | b"Caret")
 }
 
 /// Returns whether `subtype` is a line, polygon, polyline, or ink
@@ -877,6 +877,20 @@ fn appearance_with(
                 icon.as_deref().unwrap_or(b"Note"),
                 size,
             );
+        }
+        (b"Caret", _) => {
+            let insets = reader.rect_differences(dict, size)?;
+            let turn = match dict.get("Rotate") {
+                Some(value) => reader.number(value)?.unwrap_or(0.0),
+                None => 0.0,
+            };
+            // Only quarter turns are drawn turned.
+            let turn = if turn.fract() == 0.0 && turn.abs() < 1e9 {
+                turn as i64
+            } else {
+                0
+            };
+            icons::caret(&mut canvas, &paint, size, insets, turn);
         }
         (b"Square" | b"Circle", _) => {
             let insets = reader.rect_differences(dict, size)?;

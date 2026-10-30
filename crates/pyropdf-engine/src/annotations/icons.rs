@@ -98,3 +98,44 @@ pub(super) fn draw(canvas: &mut Canvas, paint: &Paint, icon: &[u8], size: (f64, 
         }
     }
 }
+
+/// The caret upright in a unit square, top-down: a point at the top whose
+/// sides curve in to a base along the bottom.
+const CARET: [f64; 14] = [
+    0.0, 1.0, 0.3, 0.8, 0.45, 0.35, 0.5, 0.0, 0.55, 0.35, 0.7, 0.8, 1.0, 1.0,
+];
+
+/// Draws a caret filled with the annotation's color in a box of `size`
+/// less `insets` (`/RD`: left, top, right, bottom), its point turned
+/// `turn` degrees counterclockwise from the top, as `/Rotate` gives it.
+pub(super) fn caret(
+    canvas: &mut Canvas,
+    paint: &Paint,
+    size: (f64, f64),
+    insets: [f64; 4],
+    turn: i64,
+) {
+    let Some(color) = paint.stroke else {
+        return;
+    };
+    let [left, top, right, bottom] = insets;
+    let (width, height) = (size.0 - left - right, size.1 - top - bottom);
+    let mut coordinates = [0.0; 14];
+    for (&[x, y], [u, v]) in CARET
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .zip(coordinates.as_chunks_mut::<2>().0)
+    {
+        // Quarter turns counterclockwise, top-down: the top goes left.
+        let (x, y) = match turn.rem_euclid(360) {
+            90 => (y, 1.0 - x),
+            180 => (1.0 - x, 1.0 - y),
+            270 => (1.0 - y, x),
+            _ => (x, y),
+        };
+        (*u, *v) = (left + x * width, top + y * height);
+    }
+    canvas.path("mcch", &coordinates);
+    canvas.fill(color);
+}

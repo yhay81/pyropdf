@@ -1602,7 +1602,7 @@ pub struct Spec {
 }
 
 /// The subtypes that `page.annotations.add` adds.
-const ADDED_SUBTYPES: [&str; 11] = [
+const ADDED_SUBTYPES: [&str; 12] = [
     "Highlight",
     "Underline",
     "StrikeOut",
@@ -1614,6 +1614,7 @@ const ADDED_SUBTYPES: [&str; 11] = [
     "Polygon",
     "PolyLine",
     "Ink",
+    "Caret",
 ];
 
 impl Spec {
@@ -1825,6 +1826,11 @@ impl Spec {
             // 32000-2 section 12.5.6.4); viewers that honor the flags keep
             // it upright.
             dict.insert(Name::from("F"), Value::Integer(4 | 8 | 16));
+        }
+        // A caret points up on the display: its appearance turns with the
+        // page's rotation, as `/Rotate` says.
+        if subtype == "Caret" && annots.rotation != 0 {
+            dict.insert(Name::from("Rotate"), Value::Integer(annots.rotation));
         }
         if let Some(created) = &self.created {
             if !created.starts_with("D:") || !created.is_ascii() || created.len() > 64 {
