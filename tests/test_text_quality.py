@@ -21,7 +21,7 @@ LABELS = sorted((ROOT / "evidence" / "pymupdf-comparison" / "quality").glob("*.j
 #: The share of a word's ink box that its box covers.
 COVERED = 0.9
 #: Pages whose labels pyropdf does not meet yet, with the issue that tracks each.
-KNOWN = {"patent-us223898-p2": "#460: headings above two columns are split into the columns"}
+KNOWN: dict[str, str] = {}
 
 
 def _normalize(text: str) -> str:

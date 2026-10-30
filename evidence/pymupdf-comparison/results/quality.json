@@ -1,5 +1,5 @@
 {
- "commit": "967fc36",
+ "commit": "3115d2c with #460",
  "engines": [
   "PyMuPDF 2.0",
   "PyMuPDF 2.0 sort=True",
@@ -291,18 +291,11 @@
    "pyropdf 0.2.0": {
     "anchors": {
      "anchors": 9,
-     "found": 8,
-     "in_order": 6,
-     "pairs": 7,
-     "missing": [
-      "TEOAs A CDSON, or KAO PARK, NSW JERREY"
-     ],
-     "inversions": [
-      [
-       "PATENT OFFICE.",
-       "Beit known that I, Ticy. As ALYA EDDaox,"
-      ]
-     ]
+     "found": 9,
+     "in_order": 8,
+     "pairs": 8,
+     "missing": [],
+     "inversions": []
     },
     "words": {
      "words": 0,
