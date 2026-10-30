@@ -11,6 +11,7 @@ are the floor). Measured for #354.
 | `run.py` | Installs PyMuPDF 2.0 and pyropdf 0.1.0 from PyPI, each in its own environment under `target/pymupdf-comparison/`, runs `bench.py` with both, and writes `results/` |
 | `labels.py` | Writes `results/page-labels.json`, PyMuPDF's `get_label` of every corpus page, from the environment that `run.py` installs; `tests/test_page_labels.py` compares pyropdf with it |
 | `results/darwin-arm64.md` | The measured comparison, with the raw timings in the `.json` beside it |
+| `sample_hashes.py OUT` | Hashes every corpus page's samples in each raster layout, to show that a change keeps every byte; `results/rgb8-take-darwin-arm64.md` records its use for #393 |
 
 ```bash
 python3 evidence/pymupdf-comparison/run.py
