@@ -8,6 +8,68 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Signing
 
+## `Signature`
+
+```python
+Signature(
+    field: str,
+    xref: int | None,
+    byte_range: tuple[int, ...],
+    revision: int | None,
+    _document: Document,
+)
+```
+
+A signature of the opened file: its field, its signature dictionary, and the revision that it signs.
+
+`revision` counts the file's revisions from 0, the oldest, and is
+`None` when the byte ranges end where no revision does.
+
+### `Signature.verify`
+
+```python
+Signature.verify(trust: Sequence[bytes] | None = None) -> SignatureVerification
+```
+
+Verify the signature against the opened file, with `trust` the DER or PEM certificates to trust.
+
+Nothing is fetched: revocation, long-term validation, and DocMDP
+permissions are not checked.
+
+## `SignatureVerification`
+
+```python
+SignatureVerification(
+    intact: bool,
+    covers_revision: bool,
+    valid: bool | None,
+    trusted: bool | None,
+    signer: str | None,
+    signing_time: datetime | None,
+    timestamp: datetime | None,
+    timestamp_valid: bool | None,
+    modifications: str,
+    problems: tuple[str, ...],
+)
+```
+
+What `Signature.verify` found.
+
+`intact` says whether the digest of the signed byte ranges matches the
+one that the signature signs, `covers_revision` whether the byte ranges
+cover the whole signed revision except `/Contents`, and `valid`
+whether the CMS signature verifies with the signer's certificate:
+`None` when it cannot be checked, as an RSA signature without the
+`cryptography` package. `trusted` is whether the certificates chain
+to one of the trust anchors given, each valid at the signing time,
+`None` without anchors. `timestamp` and `timestamp_valid` describe
+a signature time-stamp token: its time, and whether it stamps this
+signature and its own signature verifies (its authority's trust is not
+checked). `modifications` classifies the later revisions as pyHanko's
+default diff policy does: `"none"`, `"form filling"`, or `"other"`,
+which an added or changed annotation other than a widget is.
+`problems` explains each check that failed or could not be made.
+
 ## `Signer`
 
 ```python

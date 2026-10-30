@@ -211,6 +211,8 @@ method and property of its classes with its full description.
 
 ## [Signing](signing.md)
 
+- [`Signature`](signing.md#signature): A signature of the opened file: its field, its signature dictionary, and the revision that it signs.
+- [`SignatureVerification`](signing.md#signatureverification): What `Signature.verify` found.
 - [`Signer`](signing.md#signer): A signing key or callback, with its certificate chain, which `Document.sign` signs with.
 
 ## [Limits and errors](limits-and-errors.md)

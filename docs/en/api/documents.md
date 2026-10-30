@@ -574,6 +574,17 @@ Return the document as PDF bytes, as `save` writes them with the same options.
 write that would pass it with `LimitError` code
 `pdf_output_size`; `None` leaves it unbounded for trusted input.
 
+### `Document.signatures`
+
+```python
+Document.signatures: list[Signature]
+```
+
+The signed signature fields of the opened file, in field order.
+
+Each `Signature` verifies against the bytes that the document
+was opened from: edits since then are not part of any revision.
+
 ### `Document.sign`
 
 ```python

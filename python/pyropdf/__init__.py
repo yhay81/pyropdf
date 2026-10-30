@@ -119,7 +119,7 @@ from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._recolor import RecolorReport, Unconverted
 from pyropdf._sanitize import SanitizeReport
-from pyropdf._signing import Signer
+from pyropdf._signing import Signature, SignatureVerification, Signer
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
@@ -138,6 +138,8 @@ for _public in (
     Document,
     Probe,
     Signer,
+    Signature,
+    SignatureVerification,
     DocumentLimits,
     CancellationToken,
     ChangeReport,
@@ -288,9 +290,11 @@ __all__ = [
     "Segment",
     "ShadingPattern",
     "ShadingType",
+    "Signature",
     "SignatureChange",
     "SignatureField",
     "SignatureFlags",
+    "SignatureVerification",
     "Signer",
     "SoftMask",
     "SoftMaskType",

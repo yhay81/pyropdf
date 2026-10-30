@@ -113,6 +113,11 @@ def _certificate(
 
 @pytest.fixture(scope="module")
 def pki() -> Pki:
+    return make_pki()
+
+
+def make_pki() -> Pki:
+    """Return a new test CA, its signers on P-256, P-384, and RSA, and its time-stamping authority."""
     ca_key = ec.generate_private_key(ec.SECP256R1())
     issuer = (ca_key, _name("pyropdf test CA"))
     root = _certificate("pyropdf test CA", ca_key.public_key(), issuer, ca=True)
