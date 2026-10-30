@@ -1,5 +1,6 @@
-//! The Pixmap codecs beyond PNG and JPEG (issue 431): decoding portable
-//! anymaps (PBM, PGM, PPM, plain and raw), PAM, and uncompressed BMP, and
+//! The Pixmap codecs beyond PNG and JPEG (issues 431 and 446): decoding
+//! portable anymaps (PBM, PGM, PPM, plain and raw), PAM, BMP, GIF, TIFF,
+//! and JPEG 2000, and
 //! encoding PAM, PBM, PGM, PPM, PSD, and PostScript. Every decoder checks
 //! the pixel count against [`pixel_ops::MAX_PIXELS`] and the input length
 //! against the samples it promises before it allocates them.
@@ -337,8 +338,9 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
             .map_err(|_| "the BMP height is too large".to_owned())?,
     );
     pixel_ops::check_size(width, height)?;
+    let rle = matches!(compression, 1 | 2);
     let fields = match (compression, bits) {
-        (0, 1 | 4 | 8 | 24) => None,
+        (0, 1 | 4 | 8 | 24) | (1, 8) | (2, 4) => None,
         (0, 16) => Some([0x7c00, 0x03e0, 0x001f, 0]),
         (0, 32) => Some([0x00ff_0000, 0x0000_ff00, 0x0000_00ff, 0]),
         (3 | 6, 16 | 32) => {
@@ -351,7 +353,11 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
                 if alpha { u32_at(data, 66)? } else { 0 },
             ])
         }
-        (1 | 2, _) => return Err("run-length encoded BMP is not supported".to_owned()),
+        (1 | 2, _) => {
+            return Err(format!(
+                "run-length encoded BMP of {bits} bits is not supported: RLE8 has 8 and RLE4 4"
+            ));
+        }
         (4 | 5, _) => return Err("BMP with embedded JPEG or PNG data is not supported".to_owned()),
         _ => {
             return Err(format!(
@@ -359,11 +365,27 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
             ));
         }
     };
-    let stride = (u64::from(bits) * u64::from(width)).div_ceil(32) * 4;
+    let stride = if rle {
+        0
+    } else {
+        (u64::from(bits) * u64::from(width)).div_ceil(32) * 4
+    };
     let rows = data
         .get(offset..)
         .filter(|rows| rows.len() as u64 >= stride * u64::from(height))
         .ok_or_else(|| "the BMP ends before its pixels".to_owned())?;
+    // One palette index per pixel, top row first.
+    let indices = if rle {
+        Some(expand_rle(
+            rows,
+            width as usize,
+            height as usize,
+            bits,
+            top_down,
+        )?)
+    } else {
+        None
+    };
     let stride = stride as usize;
     let row = |y: u32| {
         let line = if top_down { y } else { height - 1 - y } as usize;
@@ -447,10 +469,15 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
     let mut samples = Vec::with_capacity(width_us * height_us * layout.colors());
     let per_byte = 8 / usize::from(bits);
     for y in 0..height {
-        let line = row(y);
+        let line = if indices.is_some() { &[][..] } else { row(y) };
         for x in 0..width_us {
-            let shift = (per_byte - 1 - x % per_byte) * usize::from(bits);
-            let index = usize::from(line[x / per_byte] >> shift) & ((1 << bits) - 1);
+            let index = match &indices {
+                Some(indices) => usize::from(indices[y as usize * width_us + x]),
+                None => {
+                    let shift = (per_byte - 1 - x % per_byte) * usize::from(bits);
+                    usize::from(line[x / per_byte] >> shift) & ((1 << bits) - 1)
+                }
+            };
             let &color = palette
                 .get(index)
                 .ok_or_else(|| "a BMP pixel indexes past the palette".to_owned())?;
@@ -466,6 +493,412 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
         data: samples,
         resolution,
     })
+}
+
+/// Expands the run-length encoded pixels of a BMP, RLE8 for 8 `bits` and
+/// RLE4 for 4, into one palette index per pixel, top row first. Pixels that
+/// a delta or an end of line skips take index 0, as in Pillow. Every code
+/// takes two bytes and writes at most 255 pixels, which bounds the work by
+/// the input.
+fn expand_rle(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    bits: u16,
+    top_down: bool,
+) -> Result<Vec<u8>, String> {
+    let ends = || "the run-length BMP data ends before its end-of-bitmap code".to_owned();
+    let mut indices = vec![0; width * height];
+    let mut put = |x: usize, y: usize, index: u8| {
+        if x < width && y < height {
+            let line = if top_down { y } else { height - 1 - y };
+            indices[line * width + x] = index;
+        }
+    };
+    let nibble = |byte: u8, at: usize| {
+        if at.is_multiple_of(2) {
+            byte >> 4
+        } else {
+            byte & 0x0f
+        }
+    };
+    let (mut x, mut y, mut at) = (0, 0, 0);
+    loop {
+        let [count, value] = *data
+            .get(at..at + 2)
+            .and_then(|code| <&[u8; 2]>::try_from(code).ok())
+            .ok_or_else(ends)?;
+        at += 2;
+        match (count, value) {
+            (0, 0) => (x, y) = (0, y + 1),
+            (0, 1) => break,
+            (0, 2) => {
+                let delta = data.get(at..at + 2).ok_or_else(ends)?;
+                (x, y) = (x + usize::from(delta[0]), y + usize::from(delta[1]));
+                at += 2;
+            }
+            (0, length) => {
+                let length = usize::from(length);
+                let bytes = if bits == 8 {
+                    length
+                } else {
+                    length.div_ceil(2)
+                };
+                let run = data.get(at..at + bytes).ok_or_else(ends)?;
+                for i in 0..length {
+                    put(
+                        x,
+                        y,
+                        if bits == 8 {
+                            run[i]
+                        } else {
+                            nibble(run[i / 2], i)
+                        },
+                    );
+                    x += 1;
+                }
+                // An absolute run ends on a 16-bit boundary.
+                at += bytes.next_multiple_of(2);
+            }
+            (count, value) => {
+                for i in 0..usize::from(count) {
+                    put(x, y, if bits == 8 { value } else { nibble(value, i) });
+                    x += 1;
+                }
+            }
+        }
+    }
+    Ok(indices)
+}
+
+/// Returns whether `data` begins as a GIF.
+pub fn is_gif(data: &[u8]) -> bool {
+    data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")
+}
+
+/// Decodes the first frame of a GIF onto its logical screen, as Pillow
+/// opens it: RGB, or RGBA where the frame has a transparent color or leaves
+/// part of the screen uncovered.
+pub fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
+    let invalid = |error: gif::DecodingError| format!("not a GIF image: {error}");
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    // The frame's RGBA samples stay within the limit of a pixmap's.
+    options.set_memory_limit(gif::MemoryLimit::Bytes(
+        std::num::NonZeroU64::new(pixel_ops::MAX_PIXELS * 4).expect("the limit is not 0"),
+    ));
+    let mut decoder = options.read_info(io::Cursor::new(data)).map_err(invalid)?;
+    let (width, height) = (u32::from(decoder.width()), u32::from(decoder.height()));
+    pixel_ops::check_size(width, height)?;
+    let frame = decoder
+        .read_next_frame()
+        .map_err(invalid)?
+        .ok_or_else(|| "the GIF holds no image".to_owned())?;
+    let (left, top) = (usize::from(frame.left), usize::from(frame.top));
+    let (frame_width, width_us) = (usize::from(frame.width), width as usize);
+    let mut canvas = vec![0; width_us * height as usize * 4];
+    for (y, line) in frame.buffer.chunks_exact(frame_width * 4).enumerate() {
+        let y = top + y;
+        if y >= height as usize || left >= width_us {
+            continue;
+        }
+        let length = frame_width.min(width_us - left) * 4;
+        let at = (y * width_us + left) * 4;
+        canvas[at..at + length].copy_from_slice(&line[..length]);
+    }
+    let alpha = canvas
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .any(|pixel| pixel[3] != 255);
+    let data = if alpha {
+        canvas
+    } else {
+        canvas
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|&[red, green, blue, _]| [red, green, blue])
+            .collect()
+    };
+    Ok(Decoded {
+        layout: Layout {
+            width,
+            height,
+            gray: false,
+            alpha,
+        },
+        data,
+        resolution: DEFAULT_RESOLUTION,
+    })
+}
+
+/// Returns whether `data` begins as a TIFF, classic or BigTIFF.
+pub fn is_tiff(data: &[u8]) -> bool {
+    [b"II*\0", b"MM\0*", b"II+\0", b"MM\0+"]
+        .iter()
+        .any(|magic| data.starts_with(*magic))
+}
+
+/// Decodes the first image of a TIFF: gray, gray with alpha, RGB, RGBA, or
+/// a palette, of 1 to 16 bits, uncompressed or compressed with PackBits,
+/// LZW, Deflate, JPEG, or CCITT. Sixteen-bit samples keep their high byte,
+/// and associated alpha is divided out.
+pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
+    use tiff::ColorType;
+    use tiff::decoder::{Decoder, DecodingResult, Limits};
+    use tiff::tags::{ExtraSamples, Tag};
+
+    let invalid = |error: tiff::TiffError| format!("not a TIFF image the decoder reads: {error}");
+    let open = |data| {
+        let mut limits = Limits::default();
+        // Sixteen-bit RGBA samples of the largest pixmap.
+        limits.decoding_buffer_size = (pixel_ops::MAX_PIXELS * 8) as usize;
+        Decoder::new(io::Cursor::new(data))
+            .map(|decoder| decoder.with_limits(limits))
+            .map_err(invalid)
+    };
+    let mut decoder = open(data)?;
+    // The decoder refuses palette images, so it reads a copy whose first
+    // image says gray, and the color map turns its indices into RGB.
+    let palette = if decoder
+        .find_tag_unsigned::<u16>(Tag::PhotometricInterpretation)
+        .map_err(invalid)?
+        == Some(3)
+    {
+        let map = decoder.get_tag_u16_vec(Tag::ColorMap).map_err(invalid)?;
+        let copy = palette_as_gray(data)
+            .ok_or_else(|| "the TIFF palette image has no photometric entry".to_owned())?;
+        Some((map, copy))
+    } else {
+        None
+    };
+    let mut decoder = match &palette {
+        Some((_, copy)) => open(copy)?,
+        None => decoder,
+    };
+    let (width, height) = decoder.dimensions().map_err(invalid)?;
+    pixel_ops::check_size(width, height)?;
+    let color = decoder.colortype().map_err(invalid)?;
+    let associated = decoder
+        .find_tag_unsigned_vec::<u16>(Tag::ExtraSamples)
+        .map_err(invalid)?
+        .is_some_and(|extra| extra.first() == Some(&(ExtraSamples::AssociatedAlpha as u16)));
+    let (channels, gray, alpha, bits) = match color {
+        ColorType::Gray(bits @ (1 | 2 | 4 | 8)) if palette.is_some() => (1, false, false, bits),
+        ColorType::Gray(bits @ (1 | 2 | 4 | 8 | 16)) if palette.is_none() => (1, true, false, bits),
+        ColorType::Multiband {
+            bit_depth: bits @ (8 | 16),
+            num_samples: 2,
+        } if palette.is_none() => (2, true, true, bits),
+        ColorType::RGB(bits @ (8 | 16)) => (3, false, false, bits),
+        ColorType::RGBA(bits @ (8 | 16)) => (4, false, true, bits),
+        ColorType::CMYK(_) | ColorType::CMYKA(_) => {
+            return Err("CMYK TIFF is not supported".to_owned());
+        }
+        other if palette.is_some() => {
+            return Err(format!(
+                "TIFF palette image of {} bits is not supported",
+                other.bit_depth()
+            ));
+        }
+        other => return Err(format!("TIFF of color type {other:?} is not supported")),
+    };
+    let resolution = resolution(&mut decoder).unwrap_or(DEFAULT_RESOLUTION);
+    let palette = palette.as_ref().map(|(map, _)| map.as_slice());
+    let (width_us, height_us) = (width as usize, height as usize);
+    let samples: Vec<u8> = match decoder.read_image().map_err(invalid)? {
+        DecodingResult::U8(samples) if bits < 8 => {
+            // Rows of packed samples, each padded to a byte.
+            let stride = (width_us * usize::from(bits)).div_ceil(8);
+            let max = (1 << bits) - 1;
+            let mut unpacked = Vec::with_capacity(width_us * height_us);
+            for line in samples.chunks_exact(stride).take(height_us) {
+                for x in 0..width_us {
+                    let bit = x * usize::from(bits);
+                    let value = (line[bit / 8] >> (8 - usize::from(bits) - bit % 8)) & max;
+                    unpacked.push(if palette.is_some() {
+                        value
+                    } else {
+                        scale(u32::from(value), u32::from(max))
+                    });
+                }
+            }
+            unpacked
+        }
+        DecodingResult::U8(samples) => samples,
+        DecodingResult::U16(samples) => samples.iter().map(|&value| (value >> 8) as u8).collect(),
+        _ => return Err("TIFF samples of this format are not supported".to_owned()),
+    };
+    if samples.len() < width_us * height_us * channels {
+        return Err("the TIFF ends before its samples".to_owned());
+    }
+    let mut samples = samples;
+    samples.truncate(width_us * height_us * channels);
+    if let Some(map) = palette {
+        // Red, then green, then blue entries, each of 16 bits.
+        let colors = 1 << bits;
+        if map.len() < colors * 3 {
+            return Err("the TIFF color map is shorter than its bits promise".to_owned());
+        }
+        let mut rgb = Vec::with_capacity(samples.len() * 3);
+        for &index in &samples {
+            let index = usize::from(index);
+            rgb.extend((0..3).map(|plane| (map[plane * colors + index] >> 8) as u8));
+        }
+        samples = rgb;
+    }
+    if alpha && associated {
+        for pixel in samples.chunks_exact_mut(channels) {
+            let (colors, [alpha]) = pixel.split_at_mut(channels - 1) else {
+                unreachable!("a pixel with alpha has a last channel");
+            };
+            for sample in colors {
+                *sample = match *alpha {
+                    0 => 0,
+                    alpha => ((u32::from(*sample) * 255 + u32::from(alpha) / 2) / u32::from(alpha))
+                        .min(255) as u8,
+                };
+            }
+        }
+    }
+    Ok(Decoded {
+        layout: Layout {
+            width,
+            height,
+            gray,
+            alpha,
+        },
+        data: samples,
+        resolution,
+    })
+}
+
+/// Returns a copy of the TIFF `data` whose first image has photometric
+/// interpretation 1, gray with black at 0, in place of 3, a palette, or
+/// `None` if its first directory has no such entry.
+fn palette_as_gray(data: &[u8]) -> Option<Vec<u8>> {
+    let little = data.starts_with(b"II");
+    let u16_at = |at: usize| {
+        let bytes = [*data.get(at)?, *data.get(at + 1)?];
+        Some(if little {
+            u16::from_le_bytes(bytes)
+        } else {
+            u16::from_be_bytes(bytes)
+        })
+    };
+    let word_at = |at: usize, size: usize| -> Option<u64> {
+        let bytes = data.get(at..at + size)?;
+        Some(bytes.iter().enumerate().fold(0, |value, (index, &byte)| {
+            let shift = if little { index } else { size - 1 - index } * 8;
+            value | u64::from(byte) << shift
+        }))
+    };
+    let big = u16_at(2)? == 43;
+    let (offset, count_size, entry_size) = if big {
+        (usize::try_from(word_at(8, 8)?).ok()?, 8, 20)
+    } else {
+        (usize::try_from(word_at(4, 4)?).ok()?, 2, 12)
+    };
+    let count = usize::try_from(word_at(offset, count_size)?).ok()?;
+    let entries = offset + count_size;
+    let at = (0..count)
+        .map(|index| entries + index * entry_size)
+        .find(|&at| u16_at(at) == Some(262) && u16_at(at + 2) == Some(3))?;
+    // A SHORT value sits at the start of the entry's value field.
+    let value = at + if big { 12 } else { 8 };
+    (u16_at(value)? == 3).then_some(())?;
+    let mut copy = data.to_vec();
+    copy[value..value + 2].copy_from_slice(&if little {
+        1u16.to_le_bytes()
+    } else {
+        1u16.to_be_bytes()
+    });
+    Some(copy)
+}
+
+/// Returns the resolution that a TIFF states, in dots per inch.
+fn resolution<R: io::Read + io::Seek>(
+    decoder: &mut tiff::decoder::Decoder<R>,
+) -> Option<(u32, u32)> {
+    use tiff::decoder::ifd::Value;
+    use tiff::tags::Tag;
+
+    let per_unit = match decoder.find_tag_unsigned::<u16>(Tag::ResolutionUnit).ok()? {
+        Some(1) => return None,
+        Some(3) => 2.54,
+        _ => 1.0,
+    };
+    let mut dpi = |tag| match decoder.find_tag(tag).ok()?? {
+        Value::Rational(numerator, denominator) if denominator > 0 => {
+            let dpi = (f64::from(numerator) / f64::from(denominator) * per_unit).round();
+            (dpi >= 1.0).then(|| dpi.min(65535.0) as u32)
+        }
+        _ => None,
+    };
+    Some((dpi(Tag::XResolution)?, dpi(Tag::YResolution)?))
+}
+
+/// Returns whether `data` begins as JPEG 2000: a JP2 file or a codestream.
+pub fn is_jpx(data: &[u8]) -> bool {
+    data.starts_with(b"\0\0\0\x0cjP  \r\n\x87\n") || data.starts_with(b"\xff\x4f\xff\x51")
+}
+
+/// Decodes JPEG 2000 with the decoder that hayro reads PDF images with:
+/// gray or RGB, with or without alpha, palettes resolved, every bit depth
+/// scaled to 8 bits.
+pub fn decode_jpx(data: &[u8]) -> Result<Decoded, String> {
+    use hayro_jpeg2000::{ColorSpace, DecodeSettings, DecoderContext, Image};
+
+    let invalid = |error| format!("not a JPEG 2000 image the decoder reads: {error:?}");
+    let image = Image::new(data, &DecodeSettings::default()).map_err(invalid)?;
+    let (width, height) = (image.width(), image.height());
+    pixel_ops::check_size(width, height)?;
+    let gray = match image.color_space() {
+        ColorSpace::Gray
+        | ColorSpace::Icc {
+            num_channels: 1, ..
+        } => true,
+        ColorSpace::RGB
+        | ColorSpace::Icc {
+            num_channels: 3, ..
+        } => false,
+        ColorSpace::CMYK
+        | ColorSpace::Icc {
+            num_channels: 4, ..
+        } => {
+            return Err("CMYK JPEG 2000 is not supported".to_owned());
+        }
+        other => {
+            return Err(format!(
+                "JPEG 2000 of {} channels without a gray or RGB color space is not supported",
+                other.num_channels()
+            ));
+        }
+    };
+    let alpha = image.has_alpha();
+    let mut context = DecoderContext::default();
+    let samples = image.decode(&mut context).map_err(invalid)?.data_u8();
+    let layout = Layout {
+        width,
+        height,
+        gray,
+        alpha,
+    };
+    if samples.len() != width as usize * height as usize * layout.channels() {
+        return Err("the JPEG 2000 image decodes to an unexpected number of samples".to_owned());
+    }
+    Ok(Decoded {
+        layout,
+        data: samples,
+        resolution: DEFAULT_RESOLUTION,
+    })
+}
+
+/// Returns whether `data` begins as JPEG XR, which no maintained Rust
+/// decoder reads, so that decoding refuses it by name.
+pub fn is_jxr(data: &[u8]) -> bool {
+    data.starts_with(b"II\xbc")
 }
 
 /// Writes PAM: the samples as they are, with their alpha.

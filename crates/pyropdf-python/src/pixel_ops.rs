@@ -553,8 +553,8 @@ pub struct Decoded {
     pub resolution: (u32, u32),
 }
 
-/// Decodes PNG, JPEG, portable anymap, PAM, or BMP `data`, refusing more
-/// than [`MAX_PIXELS`] pixels.
+/// Decodes PNG, JPEG, portable anymap, PAM, BMP, GIF, TIFF, or JPEG 2000
+/// `data`, refusing more than [`MAX_PIXELS`] pixels.
 pub fn decode(data: &[u8]) -> Result<Decoded, String> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(data)
@@ -564,8 +564,19 @@ pub fn decode(data: &[u8]) -> Result<Decoded, String> {
         codecs::decode_pnm(data)
     } else if data.starts_with(b"BM") {
         codecs::decode_bmp(data)
+    } else if codecs::is_gif(data) {
+        codecs::decode_gif(data)
+    } else if codecs::is_tiff(data) {
+        codecs::decode_tiff(data)
+    } else if codecs::is_jpx(data) {
+        codecs::decode_jpx(data)
+    } else if codecs::is_jxr(data) {
+        Err("JPEG XR is not supported: no maintained Rust decoder reads it".to_owned())
     } else {
-        Err("the data is not PNG, JPEG, a portable anymap, PAM, or BMP".to_owned())
+        Err(
+            "the data is not PNG, JPEG, a portable anymap, PAM, BMP, GIF, TIFF, or JPEG 2000"
+                .to_owned(),
+        )
     }
 }
 
