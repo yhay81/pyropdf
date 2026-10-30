@@ -28,7 +28,7 @@ rendering accuracy need independent comparisons (#430).
 | Open, repair and probe | `open`, `repair`, `is_repaired` | Available: `open`, `probe`, `is_repaired`; recovery coverage has not been shown equal | #252 |
 | Insert, move, delete and select pages | `insert_pdf`, `move_page`, `delete_pages`, `select` | Available: `doc.pages` with identity and referential rules | |
 | Rotate and flatten | `set_rotation`, `bake` | Available: `page.rotation`, `page.flatten`, `doc.flatten` | |
-| Normalize rotation without changing appearance | `remove_rotation` | Missing: setting `rotation` alone changes the displayed page | #429 |
+| Normalize rotation without changing appearance | `remove_rotation` | Available: `page.remove_rotation()` keeps content, boxes, annotations, links, and widgets as displayed | #429 |
 | Page boxes and labels | `set_mediabox`, `get_page_labels`, `set_page_labels` | Available: five page boxes, `doc.page_labels`, `page.label`; labels checked against PyMuPDF on the corpus | #357, #358 |
 | Metadata and outline | `metadata`, `set_xml_metadata`, `get_toc`, `set_toc` | Available: `doc.metadata`, `doc.xmp`, `doc.outline` | #356 |
 | Layers and visibility | `get_layers`, `set_layer`, `set_oc` | Partial: `doc.layers` reads and changes configuration; rendering and extraction do not yet honor OCMD `/VE` or annotation `/OC` | #360, #372, #373 |

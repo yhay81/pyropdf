@@ -28,6 +28,7 @@ mod security;
 mod sign;
 mod source;
 mod text;
+mod unrotate;
 #[cfg(windows)]
 mod windows_permissions;
 
@@ -117,6 +118,8 @@ mod _core {
     use super::text::{
         document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,
     };
+    #[pymodule_export]
+    use super::unrotate::remove_page_rotation;
 
     #[cfg(windows)]
     #[pymodule_export]

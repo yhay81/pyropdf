@@ -127,6 +127,29 @@ transaction; another value raises `ValueError`.
 
 Settable.
 
+### `Page.remove_rotation`
+
+```python
+Page.remove_rotation()
+```
+
+Set the rotation to 0 while keeping what the page displays, in one transaction.
+
+The page's user space turns with it: the content draws through one
+more matrix, and the page boxes and the geometry of the annotations,
+links, and widgets move with it. Annotation appearances turn through
+copies of their streams, so other pages that share a stream keep it as
+it was; an annotation with the NoRotate flag stays upright, its
+rectangle's upper-left corner where it was displayed. Display space is
+the same before and after, so every display coordinate stays valid.
+A widget's `/MK /R` turns too, so that a regenerated appearance is as
+upright as the present one.
+
+An annotation or `/Annots` array that another page also lists raises
+`ValueError` and changes nothing. Explicit destinations that name the
+page keep their user-space coordinates. A page without rotation is left
+as it is.
+
 ### `Page.rect`
 
 ```python
