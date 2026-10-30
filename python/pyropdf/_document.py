@@ -21,7 +21,7 @@ from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
-from pyropdf._fonts import SubsetFont, subset_fonts
+from pyropdf._fonts import FontInfo, FontProgram, SubsetFont, font_program, subset_fonts
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, remove_image, replace_image, rewrite_images
@@ -849,6 +849,18 @@ class Document:
         """
         self._ensure_open()
         return subset_fonts(self)
+
+    def font_program(self, font: int | FontInfo) -> FontProgram | None:
+        """Return the embedded program of a font, by its object number or a :class:`FontInfo` from ``page.fonts()``.
+
+        The program is the decoded ``FontFile``, ``FontFile2``, or
+        ``FontFile3`` stream of the font's descriptor, or of a ``Type0``
+        font's descendant font; ``None`` when the font embeds none, as Type 3
+        fonts and the standard 14 fonts do. A value that is not a font
+        dictionary raises :class:`ValueError`.
+        """
+        self._ensure_open()
+        return font_program(self, font)
 
     def close(self) -> None:
         """Close the document and release its data; later operations raise :class:`DocumentClosedError`."""

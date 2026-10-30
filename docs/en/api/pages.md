@@ -90,6 +90,20 @@ Each `PageImage` decodes its pixels with `pixmap()` and
 returns its data as stored with `stored()`; `annotations` counts
 the images of annotation appearances, as in `content`.
 
+### `Page.fonts`
+
+```python
+Page.fonts() -> list[FontInfo]
+```
+
+Return the fonts that the page's resources and its Form XObjects' resources name, one per font dictionary.
+
+The resources are the page's own or those it inherits from the page
+tree; Form XObjects are followed through their `/Resources` to any
+depth, each once. Fonts that only annotation appearances or Type 3
+glyph procedures name are not listed. `Document.font_program`
+returns a font's embedded program.
+
 ### `Page.label`
 
 ```python

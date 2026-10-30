@@ -1,4 +1,9 @@
-"""Font subsetting: keep only the glyphs that the document draws.
+"""Page fonts, embedded font programs, and font subsetting.
+
+``page.fonts()`` lists the fonts that a page's resources and the resources
+of its Form XObjects name, and ``doc.font_program()`` returns a font's
+embedded program (ISO 32000-2 sections 9.6 to 9.9).
+
 
 ``doc.subset_fonts()`` replaces each embedded TrueType, OpenType, and CFF
 program with a subset of the glyphs that its pages draw, as hayro resolves
@@ -20,7 +25,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import re
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from pyropdf import _core
@@ -31,17 +37,57 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pyropdf._document import Document
+    from pyropdf._page import Page
 
 #: The font program keys of a font descriptor (ISO 32000-2 table 124).
 _PROGRAMS = ("FontFile", "FontFile2", "FontFile3")
 #: The ``FontFile3`` subtypes that are bare CFF programs (ISO 32000-2 table 125).
 _CFF = frozenset({"Type1C", "CIDFontType0C"})
+#: The subtypes of font dictionaries (ISO 32000-2 table 109).
+_FONT_SUBTYPES = frozenset({"Type0", "Type1", "MMType1", "Type3", "TrueType"})
 #: A subset tag: six uppercase letters and a plus sign (ISO 32000-2 9.9.2).
 _TAG = re.compile(r"[A-Z]{6}\+")
 #: Form XObjects of appearance resources that a walk visits.
 _MAX_APPEARANCE_FORMS = 4096
 #: Nesting of direct values that the walk for direct font dictionaries follows.
 _MAX_DEPTH = 32
+#: Form XObjects that ``page.fonts()`` visits.
+_MAX_PAGE_FORMS = 4096
+#: Parents that a page's inherited ``/Resources`` lookup follows.
+_MAX_TREE_DEPTH = 64
+
+
+@dataclass(frozen=True, slots=True)
+class FontInfo:
+    """One font dictionary that a page's resources name, from :meth:`Page.fonts`."""
+
+    xref: int | None
+    """The object number of the font dictionary, or ``None`` for a direct one."""
+    names: tuple[str, ...]
+    """The resource names of the font, in the page's and then its forms' resources."""
+    base_font: str
+    """The ``BaseFont``, or ``""`` when absent, as for most Type 3 fonts."""
+    subtype: str
+    """The font ``Subtype``: ``Type1``, ``MMType1``, ``TrueType``, ``Type3``, or ``Type0``."""
+    encoding: str
+    """The ``Encoding`` name, the ``BaseEncoding`` of an encoding dictionary, or ``""``."""
+    program: str | None
+    """The embedded program's type: ``ttf``, ``otf``, ``cff``, or ``pfa``; ``None`` when not embedded."""
+    subset: bool
+    """Whether ``base_font`` carries a subset tag (ISO 32000-2 9.9.2)."""
+    forms: tuple[int, ...]
+    """The object numbers of the Form XObjects whose resources name the font; empty when only the page's do."""
+    _font: Dictionary = field(repr=False, compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class FontProgram:
+    """An embedded font program, from :meth:`Document.font_program`."""
+
+    type: str
+    """``ttf``, ``otf``, ``cff``, ``pfa``, or ``pfb``, from the descriptor key and the program's header."""
+    data: bytes
+    """The decoded program."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +120,127 @@ class _Program:
     format: str
     descriptors: list[Dictionary]
     fonts: list[Dictionary]
+
+
+def _name(value: object) -> str:
+    return str(value) if isinstance(value, str) else ""
+
+
+def _encoding(font: Dictionary) -> str:
+    encoding = font.get("Encoding")
+    if isinstance(encoding, Dictionary) and not isinstance(encoding, Stream):
+        encoding = encoding.get("BaseEncoding")
+    return _name(encoding)
+
+
+def _embedded(font: Dictionary) -> tuple[Stream, str] | None:
+    """Return the embedded program of ``font`` and its type, as the descriptor key and subtype name it."""
+    for descriptor in _descriptors(font):
+        stream = descriptor.get("FontFile2")
+        if isinstance(stream, Stream):
+            return stream, "ttf"
+        stream = descriptor.get("FontFile3")
+        if isinstance(stream, Stream):
+            subtype = stream.get("Subtype")
+            if subtype == "OpenType":
+                return stream, "otf"
+            return (stream, "cff") if subtype in _CFF else None
+        stream = descriptor.get("FontFile")
+        if isinstance(stream, Stream):
+            return stream, "pfa"
+    return None
+
+
+def _page_resources(page: Page) -> object:
+    node: object = page.obj
+    for _ in range(_MAX_TREE_DEPTH):
+        if not isinstance(node, Dictionary):
+            return None
+        if "Resources" in node:
+            return node["Resources"]
+        node = node.get("Parent")
+    return None
+
+
+#: The fonts that a page walk found, by identity: the dictionary, its resource names, and its forms.
+_Found = dict[object, tuple[Dictionary, list[str], list[int]]]
+
+
+def _collect(found: _Found, fonts: object, form: int) -> None:
+    """Record the fonts of the ``/Font`` resources ``fonts`` of ``form``, 0 for the page."""
+    if not isinstance(fonts, Dictionary):
+        return
+    for key in fonts:
+        font = fonts[key]
+        if not isinstance(font, Dictionary):
+            continue
+        # A direct font dictionary is its own entry.
+        identity = font.xref if font.xref is not None else ("direct", form, key)
+        _, names, forms = found.setdefault(identity, (font, [], []))
+        names.append(str(key))
+        if form and form not in forms:
+            forms.append(form)
+
+
+def _info(font: Dictionary, names: list[str], forms: list[int]) -> FontInfo:
+    base = _name(font.get("BaseFont"))
+    embedded = _embedded(font)
+    return FontInfo(
+        xref=font.xref,
+        names=tuple(names),
+        base_font=base,
+        subtype=_name(font.get("Subtype")),
+        encoding=_encoding(font),
+        program=embedded[1] if embedded is not None else None,
+        subset=_TAG.match(base) is not None,
+        forms=tuple(forms),
+        _font=font,
+    )
+
+
+def page_fonts(page: Page) -> list[FontInfo]:
+    """Return the fonts that the resources of ``page`` and of its Form XObjects name."""
+    found: _Found = {}
+    pending: deque[tuple[object, int]] = deque([(_page_resources(page), 0)])
+    seen: set[int] = set()
+    while pending:
+        resources, form = pending.popleft()
+        if not isinstance(resources, Dictionary):
+            continue
+        _collect(found, resources.get("Font"), form)
+        xobjects = resources.get("XObject")
+        forms = [xobjects[key] for key in xobjects] if isinstance(xobjects, Dictionary) else []
+        for xobject in forms:
+            if not isinstance(xobject, Stream) or xobject.get("Subtype") != "Form" or xobject.xref is None:
+                continue
+            if xobject.xref in seen:
+                continue
+            seen.add(xobject.xref)
+            if len(seen) > _MAX_PAGE_FORMS:
+                msg = f"the page reaches more than {_MAX_PAGE_FORMS} form XObjects"
+                code = "page_fonts_forms"
+                raise LimitError(code, msg)
+            pending.append((xobject.get("Resources"), xobject.xref))
+    return [_info(*entry) for entry in found.values()]
+
+
+def font_program(document: Document, font: int | FontInfo) -> FontProgram | None:
+    """Return the decoded embedded program of ``font``, or ``None`` when it embeds none."""
+    if isinstance(font, FontInfo):
+        dictionary: object = font._font  # noqa: SLF001 - the module's own record.
+    else:
+        dictionary = document.objects.get(font)
+    if not isinstance(dictionary, Dictionary) or dictionary.get("Subtype") not in _FONT_SUBTYPES:
+        msg = f"object {font!r} is not a font dictionary"
+        raise ValueError(msg)
+    embedded = _embedded(dictionary)
+    if embedded is None:
+        return None
+    stream, kind = embedded
+    data = stream.read()
+    if kind == "pfa" and data[:2] == b"\x80\x01":
+        kind = "pfb"
+    return FontProgram(kind, data)
 
 
 def _xref(value: object) -> int | None:
@@ -262,5 +429,6 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     return tuple(report)
 
 
-# The package re-exports this name; reprs, pickles, and documentation name it.
-SubsetFont.__module__ = "pyropdf"
+# The package re-exports these names; reprs, pickles, and documentation name them.
+for _public in (FontInfo, FontProgram, SubsetFont):
+    _public.__module__ = "pyropdf"

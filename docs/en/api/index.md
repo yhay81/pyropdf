@@ -48,6 +48,8 @@ method and property of its classes with its full description.
 
 ## [Fonts](fonts.md)
 
+- [`FontInfo`](fonts.md#fontinfo): One font dictionary that a page's resources name, from `Page.fonts`.
+- [`FontProgram`](fonts.md#fontprogram): An embedded font program, from `Document.font_program`.
 - [`SubsetFont`](fonts.md#subsetfont): One font program that `Document.subset_fonts` subset.
 
 ## [Pages](pages.md)
