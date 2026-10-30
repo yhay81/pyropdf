@@ -378,7 +378,8 @@ def _image_frames(
         x_dpi, y_dpi = source.resolution
         return [(source.to_bytes("png", max_size=None), (float(x_dpi), float(y_dpi)))]
     if isinstance(source, (bytes, bytearray, memoryview)):
-        if len(source) > _MAX_IMAGE_INPUT:
+        size = source.nbytes if isinstance(source, memoryview) else len(source)
+        if size > _MAX_IMAGE_INPUT:
             raise _image_input_error()
         data = bytes(source)
     elif isinstance(source, (str, os.PathLike)):

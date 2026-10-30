@@ -169,7 +169,9 @@ def test_image_data_is_limited_in_size(tmp_path: Path, monkeypatch: pytest.Monke
     path = tmp_path / "image.png"
     path.write_bytes(data)
     pages = pyropdf.Document().pages
-    for source in (data, path):
+    padded = data + b"\0" * (-len(data) % 4)
+    wide_view = memoryview(padded).cast("I")
+    for source in (data, path, wide_view):
         with pytest.raises(pyropdf.LimitError) as raised:
             pages.new_from_image(source)
         assert raised.value.code == "image_input_size"
