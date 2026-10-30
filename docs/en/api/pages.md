@@ -240,6 +240,31 @@ Return a `Canvas` that draws on this page when its `with` block ends.
 The drawing is one transaction and one undo step, painted over the
 page's content or, with `underlay=True`, beneath it.
 
+### `Page.replace_text`
+
+```python
+Page.replace_text(old: str, new: str, *, count: int | None = None) -> int
+```
+
+Replace `old` with `new` where simple fonts draw it, and return the number of replacements.
+
+`old` is found in the strings of each text-showing operation of
+the page's content and of the Form XObjects that it draws, decoded
+through the operation's Type 1, TrueType, or Type 3 font as text
+extraction reads it, across the strings and kerning of a `TJ`
+array but not across operations. `new` is encoded through the
+same font, and a kerning number after it makes up the difference in
+advance, so the text that follows keeps its position. `count`
+bounds the replacements, in content order; `None` replaces all.
+
+A character of `new` that the font has no code for, and `old`
+drawn in a composite (Type 0) font of the page's content, raise
+`ValueError` and leave the document unchanged. A font subset
+is not extended, so a code without a glyph in the program shows as
+the program's missing glyph. A Form XObject that changes is copied
+and the page draws the copy, so the pages and Forms that share it
+keep the old text. The replacement is one transaction.
+
 ### `Page.flatten`
 
 ```python
