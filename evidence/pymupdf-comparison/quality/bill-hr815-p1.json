@@ -1,0 +1,112 @@
+{
+ "document": "bill-hr815.pdf",
+ "page": 1,
+ "checked": false,
+ "notes": "Agent-labeled from Ghostscript renderings at 60 to 150 dpi; awaiting the owner's check.",
+ "anchors": [
+  "H. R. 815",
+  "One Hundred Eighteenth Congress",
+  "AT THE SECOND SESSION",
+  "Begun and held at the City of Washington on Wednesday,",
+  "An Act",
+  "Making emergency supplemental appropriations for the fiscal year ending September",
+  "Be it enacted by the Senate and House of Representatives of",
+  "SECTION 1. ORGANIZATION OF ACT INTO DIVISIONS.",
+  "(1) DIVISION A.—Israel Security Supplemental Appropria-",
+  "(20) DIVISION T.—Budgetary Effects.",
+  "SEC. 2. REFERENCES.",
+  "referring only to the provisions of that division."
+ ],
+ "words": [
+  {
+   "text": "Hundred",
+   "seed": [
+    255.77,
+    116.2,
+    323.79,
+    140.3
+   ],
+   "ink": [
+    256.5,
+    117.75,
+    322.75,
+    136.25
+   ]
+  },
+  {
+   "text": "other",
+   "seed": [
+    358.28,
+    320.0,
+    378.83,
+    328.04
+   ],
+   "ink": [
+    359.0,
+    320.5,
+    378.25,
+    326.5
+   ]
+  },
+  {
+   "text": "D.—21st",
+   "seed": [
+    296.11,
+    458.7,
+    335.75,
+    468.75
+   ],
+   "ink": [
+    296.75,
+    459.75,
+    335.0,
+    467.0
+   ]
+  },
+  {
+   "text": "Adversaries",
+   "seed": [
+    215.7,
+    539.5,
+    271.88,
+    549.55
+   ],
+   "ink": [
+    216.25,
+    540.25,
+    271.0,
+    547.75
+   ]
+  },
+  {
+   "text": "Tools",
+   "seed": [
+    393.04,
+    610.2,
+    418.49,
+    620.25
+   ],
+   "ink": [
+    393.75,
+    611.0,
+    417.5,
+    618.5
+   ]
+  },
+  {
+   "text": "Energy",
+   "seed": [
+    373.49,
+    680.9,
+    408.0,
+    690.95
+   ],
+   "ink": [
+    374.25,
+    681.75,
+    407.25,
+    691.0
+   ]
+  }
+ ]
+}
