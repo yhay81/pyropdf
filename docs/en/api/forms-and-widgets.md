@@ -179,8 +179,8 @@ Field.is_signed: bool
 
 Whether this is a signature field whose value is a signature dictionary.
 
-pyropdf does not verify signatures; a signing tool such as pyHanko
-signs and validates them.
+`Document.signatures` lists the signatures, and
+`Signature.verify` checks one.
 
 ### `Field.widgets`
 

@@ -200,3 +200,153 @@ pub fn sign_document(
     document.replace(Document::new(Arc::new(base), limit));
     Ok(PyBytes::new(py, &signed).unbind())
 }
+
+/// A check of `sign::verify`: key, scheme, digest, signature, and message.
+type CheckData<'py> = (
+    Bound<'py, PyBytes>,
+    String,
+    String,
+    Bound<'py, PyBytes>,
+    Option<Bound<'py, PyBytes>>,
+);
+
+/// A SignedData of `sign::verify`: digest, message digest, signing time,
+/// certificates, the signer's index, its check, the signature value, and
+/// the time-stamp token as (signed data, TSTInfo, time, imprint matches).
+type SignedTuple<'py> = (
+    String,
+    Option<Bound<'py, PyBytes>>,
+    Option<u64>,
+    Vec<Bound<'py, PyBytes>>,
+    Option<usize>,
+    Option<CheckData<'py>>,
+    Bound<'py, PyBytes>,
+);
+
+type TimeStampTuple<'py> = (SignedTuple<'py>, Bound<'py, PyBytes>, u64, bool);
+
+fn check_data<'py>(py: Python<'py>, check: &sign::verify::Check) -> CheckData<'py> {
+    (
+        PyBytes::new(py, &check.key),
+        check.scheme.clone(),
+        check.digest.clone(),
+        PyBytes::new(py, &check.signature),
+        check
+            .message
+            .as_ref()
+            .map(|message| PyBytes::new(py, message)),
+    )
+}
+
+fn signed_tuple<'py>(py: Python<'py>, signed: &sign::verify::Signed) -> SignedTuple<'py> {
+    (
+        signed.digest.clone(),
+        signed
+            .message_digest
+            .as_ref()
+            .map(|digest| PyBytes::new(py, digest)),
+        signed.signing_time,
+        signed
+            .certificates
+            .iter()
+            .map(|certificate| PyBytes::new(py, certificate))
+            .collect(),
+        signed.signer,
+        signed.check.as_ref().map(|check| check_data(py, check)),
+        PyBytes::new(py, &signed.signature),
+    )
+}
+
+/// Reads the CMS SignedData of a signature's `/Contents` for verification:
+/// the SignedData, and its time-stamp token, if any.
+#[pyfunction]
+pub fn signature_read<'py>(
+    py: Python<'py>,
+    contents: &[u8],
+) -> PyResult<(SignedTuple<'py>, Option<TimeStampTuple<'py>>)> {
+    let signed = py
+        .detach(|| sign::verify::read(contents))
+        .map_err(|error| PdfError::new_err(error.to_string()))?;
+    let timestamp = signed.timestamp.as_ref().map(|token| {
+        (
+            signed_tuple(py, &token.signed),
+            PyBytes::new(py, &token.tst_info),
+            token.time,
+            token.imprint,
+        )
+    });
+    Ok((signed_tuple(py, &signed), timestamp))
+}
+
+/// Reads a DER certificate: subject, DER subject and issuer, validity, its
+/// check by the issuer (without the issuer's key), and its own key.
+#[pyfunction]
+#[expect(clippy::type_complexity, reason = "the parts of one certificate")]
+pub fn certificate_read<'py>(
+    py: Python<'py>,
+    data: &[u8],
+) -> PyResult<(
+    String,
+    Bound<'py, PyBytes>,
+    Bound<'py, PyBytes>,
+    (u64, u64),
+    CheckData<'py>,
+    Bound<'py, PyBytes>,
+)> {
+    let info = sign::verify::certificate(data).map_err(sign_error)?;
+    Ok((
+        info.subject.clone(),
+        PyBytes::new(py, &info.subject_der),
+        PyBytes::new(py, &info.issuer_der),
+        info.validity,
+        check_data(py, &info.check),
+        PyBytes::new(py, &info.key),
+    ))
+}
+
+/// Returns whether a DER ECDSA `signature` by the P-256 or P-384 key of the
+/// DER SubjectPublicKeyInfo `key` signs the digest `prehash`.
+#[pyfunction]
+pub fn verify_ecdsa(key: &[u8], prehash: &[u8], signature: &[u8]) -> PyResult<bool> {
+    sign::verify::verify_ecdsa(key, prehash, signature).map_err(sign_error)
+}
+
+/// The bytes of a file, its origin, and each revision's end and the
+/// objects that its cross-reference sections list.
+type FileData<'py> = (Bound<'py, PyBytes>, usize, Vec<(Option<usize>, Vec<u32>)>);
+
+/// Returns the bytes of the opened file, where its offsets count from, and
+/// where each of its revisions ends, with the objects that it lists, oldest
+/// first; `None` for a document not read from a file or one whose index
+/// was rebuilt.
+#[pyfunction]
+pub fn document_file<'py>(
+    py: Python<'py>,
+    document: &_Document,
+) -> PyResult<Option<FileData<'py>>> {
+    let version = document.reading()?;
+    let opened = version.opened();
+    let Some(index) = opened.base().file() else {
+        return Ok(None);
+    };
+    if index.is_repaired() {
+        return Ok(None);
+    }
+    let ends = index
+        .revisions()
+        .iter()
+        .map(|revision| {
+            let numbers = revision
+                .sections()
+                .iter()
+                .flat_map(|section| section.listings().iter().map(|(number, _)| *number))
+                .collect();
+            (revision.end(), numbers)
+        })
+        .collect();
+    Ok(Some((
+        PyBytes::new(py, index.bytes()),
+        index.origin(),
+        ends,
+    )))
+}

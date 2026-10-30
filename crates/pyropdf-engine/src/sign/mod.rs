@@ -14,13 +14,14 @@ mod pkcs12;
 mod signer_info;
 #[cfg(test)]
 mod tests;
+pub mod verify;
 
 use std::fmt;
 use std::ops::Range;
 
 use der::asn1::ObjectIdentifier;
 use der::{Decode, Encode};
-use sha2::{Digest, Sha256, Sha384};
+use sha2::{Digest, Sha256, Sha384, Sha512};
 use x509_cert::Certificate;
 
 pub use der;
@@ -130,6 +131,19 @@ impl DigestAlgorithm {
             Self::Sha256 => digest_parts::<Sha256>(parts),
             Self::Sha384 => digest_parts::<Sha384>(parts),
         }
+    }
+}
+
+/// Returns the digest of the concatenated `parts` with the algorithm that
+/// `hashlib` names `name`, or `None` for one other than SHA-256, -384, or
+/// -512.
+#[must_use]
+pub fn digest_named(name: &str, parts: &[&[u8]]) -> Option<Vec<u8>> {
+    match name {
+        "sha256" => Some(digest_parts::<Sha256>(parts)),
+        "sha384" => Some(digest_parts::<Sha384>(parts)),
+        "sha512" => Some(digest_parts::<Sha512>(parts)),
+        _ => None,
     }
 }
 
