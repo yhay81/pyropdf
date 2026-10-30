@@ -101,7 +101,7 @@ with pyropdf.open("input.pdf") as doc:
             image.pixmap().save(f"image-{image.index}.png")
 ```
 
-## オフライン OCR
+## オフライン OCR {#offline-ocr}
 
 `ocr` extra を入れると、`OcrEngine()` が PP-OCR モデルを読み込み、`page.ocr` が
 認識した単語を返します。`page.apply_ocr` はそれを見えないテキスト層として加えるので、
