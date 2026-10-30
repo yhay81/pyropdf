@@ -226,8 +226,9 @@ gray with ITU-R BT.601 luma weights.
 box under the matrix, rounded outward to whole pixels and
 intersected with the page, is all that is rasterized. A clip that
 leaves no pixel of the page raises `PdfError`, and the size
-limits of the whole page still apply. The GIL is released while
-hayro renders.
+limits of the whole page still apply: a raster is at most 65,408
+pixels wide, 65,532 high, and 64,000,000 in all, and a larger one
+raises `ValueError`. The GIL is released while hayro renders.
 
 ### `Page.draw`
 
