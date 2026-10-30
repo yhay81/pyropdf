@@ -8,6 +8,7 @@ mod buffers;
 mod cancel;
 mod changes;
 mod check;
+mod codecs;
 mod content;
 mod document;
 mod errors;

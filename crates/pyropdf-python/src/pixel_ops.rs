@@ -1,6 +1,7 @@
 //! The pixel operations of `Pixmap` (issue 398): new samples from old, on
 //! 8-bit gray or RGB pixels with or without straight alpha, and decoding
-//! PNG and JPEG data into them.
+//! PNG and JPEG data into them, and through `codecs`, portable anymap, PAM,
+//! and BMP data.
 
 use std::io::Cursor;
 
@@ -8,6 +9,8 @@ use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
+
+use crate::codecs;
 
 /// The most pixels of a decoded image or a scaled pixmap, as rendering
 /// bounds one raster.
@@ -550,18 +553,23 @@ pub struct Decoded {
     pub resolution: (u32, u32),
 }
 
-/// Decodes PNG or JPEG `data`, refusing more than [`MAX_PIXELS`] pixels.
+/// Decodes PNG, JPEG, portable anymap, PAM, or BMP `data`, refusing more
+/// than [`MAX_PIXELS`] pixels.
 pub fn decode(data: &[u8]) -> Result<Decoded, String> {
     if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(data)
     } else if data.starts_with(b"\xff\xd8") {
         decode_jpeg(data)
+    } else if codecs::is_pnm(data) {
+        codecs::decode_pnm(data)
+    } else if data.starts_with(b"BM") {
+        codecs::decode_bmp(data)
     } else {
-        Err("the data is neither PNG nor JPEG".to_owned())
+        Err("the data is not PNG, JPEG, a portable anymap, PAM, or BMP".to_owned())
     }
 }
 
-fn check_size(width: u32, height: u32) -> Result<(), String> {
+pub fn check_size(width: u32, height: u32) -> Result<(), String> {
     let pixels = u64::from(width) * u64::from(height);
     if pixels == 0 || pixels > MAX_PIXELS {
         return Err(format!(
