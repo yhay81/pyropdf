@@ -734,6 +734,10 @@ const NARROW_COLUMN_OVERLAP_TOLERANCE: f64 = 0.3;
 /// Follow small horizontal drift in a confirmed scan/OCR column boundary.
 const ESTABLISHED_COLUMN_DRIFT: f64 = 0.5;
 
+/// Extend a column region to lines that continue its gutter only within this
+/// many of its own line distances.
+const ESTABLISHED_COLUMN_LEADING: f64 = 1.5;
+
 /// Require column candidates to coexist vertically over this fraction.
 const MIN_COLUMN_VERTICAL_OVERLAP: f64 = 0.25;
 
@@ -1888,11 +1892,21 @@ fn narrow_column_boundary(
         }
     }
     established.sort_unstable_by(|left, right| left.center.total_cmp(&right.center));
+    let inside = established
+        .iter()
+        .position(|line| line.center >= first_center)
+        .unwrap_or(established.len());
+    let through = established
+        .iter()
+        .rposition(|line| line.center <= last_center)
+        .map_or(inside, |index| index + 1)
+        .max(inside);
+    let leading = typical_support_leading(&established[inside..through])?;
     for candidate in established.iter().rev() {
         if candidate.center >= first_center {
             continue;
         }
-        let maximum_leading = candidate.size.max(first_size).max(1.0) * MAX_NARROW_COLUMN_LEADING;
+        let maximum_leading = established_leading(candidate.size.max(first_size), leading);
         if first_center - candidate.center > maximum_leading {
             break;
         }
@@ -1903,7 +1917,7 @@ fn narrow_column_boundary(
         if candidate.center <= last_center {
             continue;
         }
-        let maximum_leading = candidate.size.max(last_size).max(1.0) * MAX_NARROW_COLUMN_LEADING;
+        let maximum_leading = established_leading(candidate.size.max(last_size), leading);
         if candidate.center - last_center > maximum_leading {
             break;
         }
@@ -1987,6 +2001,33 @@ fn split_owned_line_at(
         }
     }
     Ok((first, second))
+}
+
+/// Returns the median distance between neighboring lines of a column
+/// region, `None` when it has no two lines apart.
+fn typical_support_leading(supports: &[NarrowColumnSupport]) -> Result<Option<f64>, Error> {
+    let mut distances = Vec::new();
+    for pair in supports.windows(2) {
+        let distance = pair[1].center - pair[0].center;
+        if distance > 0.0 {
+            try_push_text(&mut distances, distance, "narrow-column line distances")?;
+        }
+    }
+    if distances.is_empty() {
+        return Ok(None);
+    }
+    distances.sort_unstable_by(f64::total_cmp);
+    Ok(Some(distances[distances.len() / 2]))
+}
+
+/// Returns how far a line that continues the column gutter may sit from the
+/// column region: a few lines of the region's own leading, so that headings
+/// above it, whose word gaps may fall on the gutter, stay whole.
+fn established_leading(size: f64, leading: Option<f64>) -> f64 {
+    let by_size = size.max(1.0) * MAX_NARROW_COLUMN_LEADING;
+    leading.map_or(by_size, |leading| {
+        by_size.min(leading * ESTABLISHED_COLUMN_LEADING)
+    })
 }
 
 fn order_narrow_column_regions(
