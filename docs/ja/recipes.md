@@ -164,7 +164,7 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("locked.pdf", encryption=pyropdf.Encryption(user_password="reader", owner_password="owner"))
 ```
 
-## アップロードを仕事量の上限つきで読む
+## 仕事量の上限つきで文書を開く
 
 ```python
 import pyropdf

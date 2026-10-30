@@ -27,8 +27,8 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
   and stamp annotations.
 - Digital signatures: pyropdf keeps existing signatures valid, but does
   not sign yet.
-- Safety for untrusted input is not claimed yet; see
-  [Status and safety](status.md).
+- No pyropdf release claims safety for untrusted input before hayro's
+  bounded construction is released; see [Status and safety](status.md).
 - Rendering is slower than MuPDF's (below).
 - The API is alpha and may change between minor versions.
 

@@ -167,7 +167,7 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("locked.pdf", encryption=pyropdf.Encryption(user_password="reader", owner_password="owner"))
 ```
 
-## Read uploads with bounded work
+## Open a document with bounded work
 
 ```python
 import pyropdf
