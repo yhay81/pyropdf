@@ -419,3 +419,34 @@ def test_replace_text_refuses_forms_beyond_its_limits(monkeypatch: pytest.Monkey
         doc.pages[0].replace_text("PDF", "Cat")
     assert raised.value.code == "text_edit_forms"
     assert lines(doc.pages[0]) == ["Form PDF here", "Form PDF here"]
+
+
+def test_replace_text_reads_a_font_that_a_graphics_state_sets() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [4 0 R] /Count 1 /MediaBox [0 0 612 792] "
+                "/Resources << /ExtGState << /G1 << /Font [3 0 R 20] >> >> /XObject << /X1 6 0 R >> >> >>",
+                3: HELVETICA,
+                4: "<< /Type /Page /Parent 2 0 R /Contents 5 0 R >>",
+                5: stream("/G1 gs q 1 0 0 1 72 700 cm /X1 Do Q BT 72 600 Td (Page PDF) Tj ET"),
+                6: stream("BT 0 0 Td (Form PDF here) Tj ET", FORM + "/Resources << >> "),
+            }
+        )
+    )
+    assert lines(doc.pages[0]) == ["Form PDF here", "Page PDF"]
+
+    assert doc.pages[0].replace_text("PDF", "Cat") == 2
+    assert lines(doc.pages[0]) == ["Form Cat here", "Page Cat"]
+
+
+def test_replace_text_names_a_copy_apart_from_undefined_names() -> None:
+    # /X1_1 is drawn but not defined, so it draws nothing.
+    doc = form_pdf(
+        "q 1 0 0 1 72 700 cm /X1 Do Q q 1 0 0 1 72 600 cm /X1_1 Do Q", "BT /F1 20 Tf 0 0 Td (Form PDF here) Tj ET"
+    )
+
+    assert doc.pages[0].replace_text("PDF", "Cat") == 1
+    assert lines(doc.pages[0]) == ["Form Cat here"]
+    assert "/X1_1 Do" in doc.pages[0].operations.to_bytes().decode()

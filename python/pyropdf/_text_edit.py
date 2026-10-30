@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from pyropdf._errors import LimitError
 from pyropdf._limits import _validate_optional_positive_int
-from pyropdf._objects import Dictionary, Name, Real, Stream, String
+from pyropdf._objects import Array, Dictionary, Name, Real, Stream, String
 from pyropdf._operations import InlineImage, Operation, Operations
 
 if TYPE_CHECKING:
@@ -86,12 +86,12 @@ class _State:
     def copy(self) -> _State:
         return _State(self.font, self.size, self.char_spacing, self.word_spacing)
 
-    def apply(self, operation: Operation, fonts: Dictionary | None, font_of: Any) -> None:  # noqa: ANN401 - _Editor._font.
-        """Set what a text state operator sets."""
+    def apply(self, operation: Operation, resources: Dictionary | None, font_of: Any) -> None:  # noqa: ANN401 - _Editor._font_of.
+        """Set what a text state operator, or a graphics state that sets the font, sets."""
         operator, operands = operation.operator, operation.operands
-        if operator == "Tf" and len(operands) == 2 and isinstance(operands[0], Name):  # noqa: PLR2004 - name and size.
-            self.font = font_of(fonts, operands[0])
-            self.size = _number(operands[1])
+        found = font_of(resources, operation)
+        if found is not None:
+            self.font, self.size = found
         elif operator == "Tc" and operands:
             self.char_spacing = _number(operands[0])
         elif operator == "Tw" and operands:
@@ -186,13 +186,12 @@ class _Editor:
 
     def _collect(self, scope: _Scope) -> None:
         """Add the drawings of the Form XObjects that ``scope`` draws, and the fonts they use."""
-        fonts = _sub(scope.resources, "Font")
         xobjects = _sub(scope.resources, "XObject")
         for index, operation in enumerate(scope.operations):
             if not isinstance(operation, Operation):
                 continue
-            if operation.operator == "Tf" and operation.operands and isinstance(operation.operands[0], Name):
-                self._font(fonts, operation.operands[0])
+            if operation.operator in ("Tf", "gs"):
+                self._font_of(scope.resources, operation)
             elif operation.operator == "Do" and operation.operands and isinstance(operation.operands[0], Name):
                 form = xobjects.get(operation.operands[0]) if xobjects is not None else None
                 if not isinstance(form, Stream) or form.get("Subtype") != "Form":
@@ -216,9 +215,23 @@ class _Editor:
                 scope.forms[index] = child
                 self._collect(child)
 
-    def _font(self, fonts: Dictionary | None, name: str) -> _Font | None:
-        """Return the font of ``name`` in a scope's fonts, recording it on first use."""
-        dictionary = fonts.get(name) if fonts is not None else None
+    def _font_of(self, resources: Dictionary | None, operation: Operation) -> tuple[_Font | None, float] | None:
+        """Return the font and size that a ``Tf``, or a ``gs`` whose graphics state has a ``Font``, sets."""
+        operator, operands = operation.operator, operation.operands
+        if operator == "Tf" and len(operands) == 2 and isinstance(operands[0], Name):  # noqa: PLR2004 - name and size.
+            fonts = _sub(resources, "Font")
+            return self._font(fonts.get(operands[0]) if fonts is not None else None), _number(operands[1])
+        if operator == "gs" and operands and isinstance(operands[0], Name):
+            states = _sub(resources, "ExtGState")
+            state = states.get(operands[0]) if states is not None else None
+            entry = state.get("Font") if isinstance(state, Dictionary) else None
+            # A font and a size (ISO 32000-2 8.4.5).
+            if isinstance(entry, Array) and len(entry) == 2:  # noqa: PLR2004
+                return self._font(entry[0]), _number(entry[1])
+        return None
+
+    def _font(self, dictionary: object) -> _Font | None:
+        """Return the font of a font dictionary, recording it on first use."""
         if not isinstance(dictionary, Dictionary):
             return None
         key = _key(dictionary)
@@ -235,7 +248,7 @@ class _Editor:
 
     def _refuse_composite(self) -> None:
         """Refuse when ``old`` is in the text of a composite font of the page's content."""
-        composite = {index for index, font in _shown(self.root, self._font) if font is not None and not font.simple}
+        composite = {index for index, font in _shown(self.root, self._font_of) if font is not None and not font.simple}
         if not composite:
             return
         texts: dict[int, list[str]] = {}
@@ -254,8 +267,8 @@ class _Editor:
         8.10.1). A drawing of one that changes draws its copy under a new
         name, so the other drawings keep the Form.
         """
-        fonts = _sub(scope.resources, "Font")
-        xobjects = _sub(scope.resources, "XObject")
+        # The names that a copy must not take, when the drawing draws Forms.
+        taken = _taken_names(scope) if scope.forms else set()
         states: list[_State] = []
         out: list[Operation | InlineImage] = []
         drawn: dict[str, int] = {}
@@ -274,7 +287,7 @@ class _Editor:
                 if states:
                     state = states.pop()
             else:
-                state.apply(operation, fonts, self._font)
+                state.apply(operation, scope.resources, self._font_of)
             if operator in _SHOWS_TEXT and state.font is not None and state.font.simple:
                 replacement = self._replace(operation, state)
                 if replacement is not None:
@@ -282,16 +295,26 @@ class _Editor:
                     changed = True
                     continue
             form = scope.forms.get(index)
-            edited = None if form is None else self._edit(form, state.copy())
-            if form is not None and edited is not None:
-                name = _fresh(str(operation.operands[0]), xobjects, drawn)
-                drawn[name] = len(self.copies)
-                self.copies.append(_Copy(form, *edited))
-                out.append(Operation("Do", (Name(name),)))
+            copy = None if form is None else self._copy(form, operation, state, taken, drawn)
+            if copy is not None:
+                out.append(copy)
                 changed = True
                 continue
             out.append(operation)
         return (out, drawn) if changed else None
+
+    def _copy(
+        self, form: _Scope, operation: Operation, state: _State, taken: set[str], drawn: dict[str, int]
+    ) -> Operation | None:
+        """Return the ``Do`` that draws a copy of the drawing ``form`` with its replacements, or ``None``."""
+        edited = self._edit(form, state.copy())
+        if edited is None:
+            return None
+        name = _fresh(str(operation.operands[0]), taken)
+        taken.add(name)
+        drawn[name] = len(self.copies)
+        self.copies.append(_Copy(form, *edited))
+        return Operation("Do", (Name(name),))
 
     def _replace(self, operation: Operation, state: _State) -> list[Operation] | None:
         """Return the operations that replace ``operation``, or ``None`` when ``old`` is not in it."""
@@ -386,10 +409,26 @@ class _Editor:
         return own
 
 
-def _fresh(name: str, xobjects: Dictionary | None, taken: dict[str, int]) -> str:
-    """Return a name for a copy of the Form ``name`` that neither ``xobjects`` nor ``taken`` holds."""
+def _taken_names(scope: _Scope) -> set[str]:
+    """Return the names of the scope's XObjects and the names that its ``Do`` operations draw, defined or not.
+
+    A name that the content draws without defining it draws nothing, and
+    must keep drawing nothing, so a copy does not take it.
+    """
+    xobjects = _sub(scope.resources, "XObject")
+    names = set(xobjects) if xobjects is not None else set()
+    names.update(
+        str(operation.operands[0])
+        for operation in scope.operations
+        if isinstance(operation, Operation) and operation.operator == "Do" and operation.operands
+    )
+    return names
+
+
+def _fresh(name: str, taken: set[str]) -> str:
+    """Return a name for a copy of the Form ``name`` that ``taken`` lacks."""
     number = 1
-    while f"{name}_{number}" in taken or (xobjects is not None and f"{name}_{number}" in xobjects):
+    while f"{name}_{number}" in taken:
         number += 1
     return f"{name}_{number}"
 
@@ -440,9 +479,8 @@ def _number(value: object) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
 
 
-def _shown(scope: _Scope, font_of: Any) -> Iterator[tuple[int, _Font | None]]:  # noqa: ANN401 - _Editor._font.
+def _shown(scope: _Scope, font_of: Any) -> Iterator[tuple[int, _Font | None]]:  # noqa: ANN401 - _Editor._font_of.
     """Yield the index and the font of each text-showing operation of ``scope``."""
-    fonts = _sub(scope.resources, "Font")
     states: list[_Font | None] = []
     font: _Font | None = None
     for index, operation in enumerate(scope.operations):
@@ -451,8 +489,10 @@ def _shown(scope: _Scope, font_of: Any) -> Iterator[tuple[int, _Font | None]]:  
             states.append(font)
         elif operator == "Q" and states:
             font = states.pop()
-        elif operator == "Tf" and operation.operands and isinstance(operation.operands[0], Name):
-            font = font_of(fonts, operation.operands[0])
+        elif operator in ("Tf", "gs"):
+            found = font_of(scope.resources, operation)
+            if found is not None:
+                font = found[0]
         elif operator in _SHOWS_TEXT:
             yield index, font
 
