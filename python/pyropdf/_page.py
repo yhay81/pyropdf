@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, overload
 from pyropdf import _core, _markdown
 from pyropdf._annotations import Annotations
 from pyropdf._canvas import Canvas
+from pyropdf._clean import clean_page
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._fonts import FontInfo, page_fonts
@@ -430,6 +431,33 @@ class Page:
         left as it was.
         """
         return recolor(self._document, target, [self.index])
+
+    def clean_contents(self, *, annotations: bool = True) -> None:
+        """Normalize the page's content and drop the resources that it never names, in one transaction.
+
+        The content becomes one new stream written from the values of its
+        operations, one per line, without comments; a ``Q`` without its
+        ``q`` is dropped, an open ``q`` is closed at the end, and empty
+        ``q Q`` and ``BT ET`` pairs go, so what renders and the text stay as
+        they were. (hayro draws annotation appearances in the graphics state
+        that an open ``q`` leaves; after cleaning it draws them from the
+        initial state, as Ghostscript does before and after.) The page gets its own ``/Resources``, so a dictionary
+        that other pages share or that the page inherits stays theirs,
+        holding only the fonts, XObjects, graphics states, color spaces,
+        patterns, shadings, and property lists that the content names, the
+        default color spaces, and every other entry. Resources stay whole
+        when the content draws a Form XObject or a Type 3 font that has no
+        resources of its own, since it draws with the page's. With
+        ``annotations``, every annotation and widget appearance stream is
+        cleaned in place the same way, with its own resources.
+
+        Content with bytes that hayro stops reading at raises
+        :class:`ValueError`, and content past the reading limits of
+        :attr:`operations` raises :class:`LimitError`; either leaves the
+        document unchanged.
+        """
+        _validate_bool("annotations", annotations)
+        clean_page(self, annotations=annotations)
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
         """Draw this page's annotation and widget appearances into its content and take them off.

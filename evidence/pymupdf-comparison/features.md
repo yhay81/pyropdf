@@ -87,7 +87,7 @@ rendering accuracy need independent comparisons (#430).
 | Encryption | standard handler including AES and RC4 | Available: standard handler; exact algorithm and permission behavior is not asserted identical | |
 | Redaction | `add_redact_annot`, `apply_redactions` | Missing permanent content removal | #362, #104 |
 | Remove content outside a rectangle | `clip_to_rect` removes non-intersecting items; intersecting paths and images remain whole | Missing; crop boxes and rendering clips hide rather than remove content. #420 proposes stronger outside removal | #250, #420 |
-| Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Missing a high-level content-cleaning operation | #250, #434 |
+| Clean content streams and resources | `Page.clean_contents`, `save(clean=True)` | Available: `page.clean_contents()` normalizes page content and appearance streams and prunes unnamed resources; no `save(clean=True)` | #250, #434 |
 | Sanitizing | `scrub` | Available: `doc.sanitize`, with a report | #363 |
 | Font subsetting | `subset_fonts` | Available: `doc.subset_fonts`; format coverage is not asserted identical | #364 |
 | Bulk image rewriting | `rewrite_images` | Partial: `doc.rewrite_images` skips inline, masked and CMYK images, has fewer output choices, and `set_to_gray` changes eligible images only, unlike PyMuPDF's whole-page recoloring | #401, #432; whole-page recoloring #400; [probe](results/text-main.md) |

@@ -325,6 +325,35 @@ converts its images and the color arrays of its annotations; see
 `Document.recolor`. Returns what it converted and what it
 left as it was.
 
+### `Page.clean_contents`
+
+```python
+Page.clean_contents(*, annotations: bool = True)
+```
+
+Normalize the page's content and drop the resources that it never names, in one transaction.
+
+The content becomes one new stream written from the values of its
+operations, one per line, without comments; a `Q` without its
+`q` is dropped, an open `q` is closed at the end, and empty
+`q Q` and `BT ET` pairs go, so what renders and the text stay as
+they were. (hayro draws annotation appearances in the graphics state
+that an open `q` leaves; after cleaning it draws them from the
+initial state, as Ghostscript does before and after.) The page gets its own `/Resources`, so a dictionary
+that other pages share or that the page inherits stays theirs,
+holding only the fonts, XObjects, graphics states, color spaces,
+patterns, shadings, and property lists that the content names, the
+default color spaces, and every other entry. Resources stay whole
+when the content draws a Form XObject or a Type 3 font that has no
+resources of its own, since it draws with the page's. With
+`annotations`, every annotation and widget appearance stream is
+cleaned in place the same way, with its own resources.
+
+Content with bytes that hayro stops reading at raises
+`ValueError`, and content past the reading limits of
+`operations` raises `LimitError`; either leaves the
+document unchanged.
+
 ### `Page.flatten`
 
 ```python
