@@ -12,10 +12,16 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
   first page.
 - `content`: content streams split into contiguous operations whose bytes
   and tail are the input.
+- `interpret`: rendering, SVG conversion, text extraction, and content
+  items of the first four pages, of a whole file or of a content stream
+  that a one-page template with varied resources holds.
 
-The store turns a panic of hayro-syntax into an error, so the targets keep
-Rust's default panic hook instead of libFuzzer's, which aborts on any panic:
-only a panic that escapes a target is a crash. Panics that the store catches
+The store turns a panic of hayro-syntax into an error, so the targets other
+than `interpret` keep Rust's default panic hook instead of libFuzzer's, which
+aborts on any panic: only a panic that escapes a target is a crash.
+`interpret` keeps libFuzzer's hook, so any panic is a crash, even one that
+the store catches (I3, #19). It stays out of CI until the adoption of a
+hayro release after 0.8.0 (#7), whose known panics it would find. Panics that the store catches
 still print their message, and are the material of hayro's I3 (#19); the
 `value` target's first run found `[ 2 + R ]` in an array.
 

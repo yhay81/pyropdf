@@ -54,6 +54,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "interpret"
+path = "fuzz_targets/interpret.rs"
+test = false
+doc = false
+bench = false
+
 # Debug assertions and overflow checks find more, as cargo-fuzz builds them.
 [profile.release]
 debug = 1
