@@ -17,7 +17,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `content_operation_count` | 1,048,576 operations | Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576. |
 | `content_stream_size` | 64 MiB | A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them. |
 | `content_input_size` | 64 MiB | The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an assignment to `Page.operations` writes is larger than 64 MiB. |
-| `content_element_count` | 262,144 elements | `Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`. |
+| `content_element_count` | 262,144 elements | `Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image. |
 | `text_glyph_count` | 262,144 glyphs | `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`. |
 | `text_size` | 64 MiB | The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`. |
 | `search_input_size` | 4 KiB | The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8. |

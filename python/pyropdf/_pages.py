@@ -6,7 +6,7 @@ import io
 import math
 import os
 from collections.abc import Iterable, Iterator, Sequence
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core
 from pyropdf._errors import LimitError
@@ -15,6 +15,8 @@ from pyropdf._page import Page
 from pyropdf._page_labels import _label, _read_page_labels
 
 if TYPE_CHECKING:
+    from PIL.Image import Image as PillowImage
+
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
 
@@ -29,6 +31,11 @@ _CM_PER_INCH = 2.54
 _METRES_PER_INCH = 0.0254
 #: The most frames that one call reads from a multi-frame image.
 _MAX_FRAMES = 4096
+#: The most pixels, over all its frames, that one call reads from a multi-frame image.
+_MAX_FRAME_PIXELS = 256_000_000
+#: The Exif tags of a resolution and its unit, and the units that the unit tag names.
+_EXIF_X_RESOLUTION, _EXIF_Y_RESOLUTION, _EXIF_RESOLUTION_UNIT = 0x011A, 0x011B, 0x0128
+_EXIF_UNITS = {2: 1.0, 3: _CM_PER_INCH}
 
 
 def _is_int(value: object) -> bool:
@@ -190,15 +197,22 @@ class Pages(Sequence[Page]):
         JPEG 2000 data is embedded as it is, without recompression, and PNG
         keeps its alpha as a soft mask; each is one frame. Other formats,
         such as multi-page TIFF, GIF, or WebP, are read through Pillow when
-        it is installed, one frame per page, up to 4,096. A frame's
-        resolution comes from its JFIF density, PNG ``pHYs``, or Pillow's
-        ``dpi``, else 96 dpi, and ``dpi``, one number or ``(x, y)``,
+        it is installed, one frame per page, up to 4,096 frames and 256
+        million pixels in all. A frame's resolution comes from its JFIF
+        density or Exif resolution, PNG ``pHYs``, or Pillow's ``dpi``, else
+        96 dpi, and ``dpi``, one number or ``(x, y)``,
         overrides it. The pages go where :meth:`new` puts one, in order, and
         are returned.
         """
         frames = _image_frames(source)
         override = _dpi_pair(dpi) if dpi is not None else None
         document = self._document
+        if index is not None:
+            if not _is_int(index):
+                msg = f"page indexes must be integers, not {type(index).__name__}"
+                raise TypeError(msg)
+            # Resolve a negative index once, so later frames follow earlier ones.
+            index = max(0, index + len(self)) if index < 0 else index
         pages: list[Page] = []
         with document.transaction("new_from_image"):
             for offset, (data, found) in enumerate(frames):
@@ -209,8 +223,7 @@ class Pages(Sequence[Page]):
                     stream["Width"] * _POINTS_PER_INCH / x_dpi,
                     stream["Height"] * _POINTS_PER_INCH / y_dpi,
                 )
-                at = None if index is None else _offset_index(index, offset)
-                page = self.new(size, index=at)
+                page = self.new(size, index=None if index is None else index + offset)
                 with page.draw() as canvas:
                     canvas.image((0, 0, *size), xref, keep_aspect=False)
                 pages.append(page)
@@ -339,14 +352,6 @@ def _validate_size(size: object) -> tuple[float, float]:
 __all__ = ["Pages"]
 
 
-def _offset_index(index: int, offset: int) -> int:
-    """Return where the frame ``offset`` past the first goes, for the first at ``index``."""
-    if not _is_int(index):
-        msg = f"page indexes must be integers, not {type(index).__name__}"
-        raise TypeError(msg)
-    return index + offset if index >= 0 else index
-
-
 def _dpi_pair(dpi: float | tuple[float, float]) -> tuple[float, float]:
     """Return a positive, finite ``(x, y)`` resolution."""
     values = [dpi, dpi] if isinstance(dpi, (int, float)) else list(dpi)
@@ -363,7 +368,7 @@ def _dpi_pair(dpi: float | tuple[float, float]) -> tuple[float, float]:
 
 def _image_frames(
     source: str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap,
-) -> list[tuple[bytes, tuple[float, float] | None]]:
+) -> Iterable[tuple[bytes, tuple[float, float] | None]]:
     """Return each frame of ``source`` as JPEG, JPEG 2000, or PNG data with the resolution it records."""
     from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
 
@@ -379,7 +384,7 @@ def _image_frames(
         msg = f"source must be a path, bytes, or a Pixmap, not {type(source).__name__}"
         raise TypeError(msg)
     if data.startswith(b"\xff\xd8\xff"):
-        return [(data, _jfif_dpi(data))]
+        return [(data, _jpeg_dpi(data))]
     if data.startswith(_PNG_SIGNATURE):
         return [(data, _png_dpi(data))]
     if data.startswith((_JP2_SIGNATURE, _J2K_SIGNATURE)):
@@ -387,16 +392,50 @@ def _image_frames(
     return _pillow_frames(data)
 
 
-def _jfif_dpi(data: bytes) -> tuple[float, float] | None:
-    """Return the density of a JPEG's JFIF segment, when it records one in inches or centimetres."""
-    if data[2:4] != b"\xff\xe0" or data[6:11] != b"JFIF\x00" or len(data) < 18:  # noqa: PLR2004 - the segment's end
+def _jpeg_dpi(data: bytes) -> tuple[float, float] | None:
+    """Return the resolution of a JPEG's JFIF density, else of its Exif segment, in inches or centimetres."""
+    exif = None
+    at = 2
+    # Each segment before the scan is a marker, a length, and a body.
+    while at + 4 <= len(data) and data[at] == 0xFF and data[at + 1] not in (0xDA, 0xD9):  # noqa: PLR2004 - SOS, EOI
+        marker, length = data[at + 1], int.from_bytes(data[at + 2 : at + 4])
+        body = data[at + 4 : at + 2 + length]
+        if marker == 0xE0 and body[:5] == b"JFIF\x00" and len(body) >= 12:  # noqa: PLR2004 - APP0 to its densities
+            unit, x, y = body[7], int.from_bytes(body[8:10]), int.from_bytes(body[10:12])
+            if x and y and unit in (1, 2):
+                scale = 1.0 if unit == 1 else _CM_PER_INCH
+                return (x * scale, y * scale)
+        elif marker == 0xE1 and body[:6] == b"Exif\x00\x00" and exif is None:  # noqa: PLR2004 - APP1
+            exif = _exif_dpi(body[6:])
+        at += 2 + length
+    return exif
+
+
+def _exif_dpi(tiff: bytes) -> tuple[float, float] | None:
+    """Return the resolution in the first image directory of Exif data, when it records one in inches or centimetres."""
+    orders: dict[bytes, Literal["little", "big"]] = {b"II": "little", b"MM": "big"}
+    order = orders.get(tiff[:2])
+    if order is None:
         return None
-    unit = data[13]
-    x, y = int.from_bytes(data[14:16]), int.from_bytes(data[16:18])
-    if not (x and y) or unit not in (1, 2):
-        return None
-    scale = 1.0 if unit == 1 else _CM_PER_INCH
-    return (x * scale, y * scale)
+
+    def number(at: int, size: int) -> int:
+        field = tiff[at : at + size]
+        return int.from_bytes(field, order) if len(field) == size else 0
+
+    directory = number(4, 4)
+    found: dict[int, float] = {}
+    entries = range(directory + 2, directory + 2 + 12 * number(directory, 2), 12)
+    for entry in entries:
+        tag, kind = number(entry, 2), number(entry + 2, 2)
+        if tag in (_EXIF_X_RESOLUTION, _EXIF_Y_RESOLUTION) and kind == 5:  # noqa: PLR2004 - RATIONAL
+            at = number(entry + 8, 4)
+            numerator, denominator = number(at, 4), number(at + 4, 4)
+            found[tag] = numerator / denominator if denominator else 0.0
+        elif tag == _EXIF_RESOLUTION_UNIT and kind == 3:  # noqa: PLR2004 - SHORT
+            found[tag] = number(entry + 8, 2)
+    x, y = found.get(_EXIF_X_RESOLUTION), found.get(_EXIF_Y_RESOLUTION)
+    scale = _EXIF_UNITS.get(int(found.get(_EXIF_RESOLUTION_UNIT, 2)))
+    return (x * scale, y * scale) if x and y and scale else None
 
 
 def _png_dpi(data: bytes) -> tuple[float, float] | None:
@@ -408,17 +447,25 @@ def _png_dpi(data: bytes) -> tuple[float, float] | None:
         body = data[at + 8 : at + 8 + length]
         if kind == b"pHYs" and len(body) == 9 and body[8] == 1:  # noqa: PLR2004 - two sizes and a unit
             x, y = int.from_bytes(body[:4]), int.from_bytes(body[4:8])
-            # Whole pixels per metre miss most resolutions in inches by a
-            # little: 72 dpi is stored as 2835, 72.009 dpi.
-            return (round(x * _METRES_PER_INCH, 1), round(y * _METRES_PER_INCH, 1)) if x and y else None
+            return (_png_resolution(x), _png_resolution(y)) if x and y else None
         if kind in (b"IDAT", b"IEND"):
             return None
         at += 12 + length
     return None
 
 
-def _pillow_frames(data: bytes) -> list[tuple[bytes, tuple[float, float] | None]]:
-    """Return each frame of an image that Pillow reads, as PNG data with its resolution."""
+def _png_resolution(pixels_per_metre: int) -> float:
+    """Return the resolution in inches of ``pixels_per_metre``, rounded to one decimal unless that leaves none.
+
+    Whole pixels per metre miss most resolutions in inches by a little: 72
+    dpi is stored as 2835, 72.009 dpi.
+    """
+    exact = pixels_per_metre * _METRES_PER_INCH
+    return round(exact, 1) or exact
+
+
+def _pillow_frames(data: bytes) -> Iterator[tuple[bytes, tuple[float, float] | None]]:
+    """Return each frame of an image that Pillow reads, as PNG data with its resolution, one at a time."""
     try:
         from PIL import Image, ImageSequence  # noqa: PLC0415 - Pillow is optional.
     except ImportError:
@@ -429,12 +476,25 @@ def _pillow_frames(data: bytes) -> list[tuple[bytes, tuple[float, float] | None]
     except Exception as exc:  # Pillow raises its own errors for each format.
         msg = f"the image data is not in a format that Pillow reads: {exc}"
         raise ValueError(msg) from exc
-    frames: list[tuple[bytes, tuple[float, float] | None]] = []
+    return _converted_frames(image, ImageSequence.Iterator(image))
+
+
+def _converted_frames(
+    image: PillowImage, sequence: Iterable[PillowImage]
+) -> Iterator[tuple[bytes, tuple[float, float] | None]]:
+    """Yield each frame of ``sequence`` as PNG data with its resolution, within the frame and pixel limits."""
+    pixels = 0
     with image:
-        for number, frame in enumerate(ImageSequence.Iterator(image)):
+        for number, frame in enumerate(sequence):
             if number >= _MAX_FRAMES:
                 code = "content_element_count"
                 msg = f"the image has more than {_MAX_FRAMES} frames"
+                raise LimitError(code, msg)
+            width, height = frame.size
+            pixels += width * height
+            if pixels > _MAX_FRAME_PIXELS:
+                code = "content_element_count"
+                msg = f"the frames of the image have more than {_MAX_FRAME_PIXELS} pixels in all"
                 raise LimitError(code, msg)
             alpha = frame.mode in ("RGBA", "LA", "PA") or "transparency" in frame.info
             gray = frame.mode in ("1", "L", "LA", "I", "I;16", "F")
@@ -443,5 +503,4 @@ def _pillow_frames(data: bytes) -> list[tuple[bytes, tuple[float, float] | None]
             frame.convert(mode).save(out, "PNG")
             found = frame.info.get("dpi")
             dpi = (float(found[0]), float(found[1])) if found and found[0] and found[1] else None
-            frames.append((out.getvalue(), dpi))
-    return frames
+            yield out.getvalue(), dpi

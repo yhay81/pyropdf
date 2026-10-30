@@ -114,7 +114,8 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "content_element_count": (
             "`Page.content` reads more glyphs, path and clip segments, dash lengths, and items than the call's "
-            "`max_elements`."
+            "`max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one "
+            "image."
         ),
         "text_glyph_count": (
             "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the "

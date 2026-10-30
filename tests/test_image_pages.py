@@ -124,6 +124,45 @@ def test_a_multi_page_tiff_adds_one_page_per_frame(tmp_path: Path) -> None:
     assert _close(pages[1].pixmap(dpi=72), second, TOLERANCE)
 
 
+def test_frames_at_a_negative_index_keep_their_order(tmp_path: Path) -> None:
+    path = tmp_path / "pages.tiff"
+    _image().save(path, save_all=True, append_images=[_image("L", (10, 30))], dpi=(72, 72))
+    for index, expected in ((-100, [0, 1]), (-1, [0, 1]), (100, [1, 2])):
+        doc = pyropdf.Document()
+        doc.pages.new()
+        pages = doc.pages.new_from_image(path, index=index)
+        assert [tuple(page.rect) for page in pages] == [(0, 0, 40, 20), (0, 0, 10, 30)]
+        assert [doc.pages.index(page) for page in pages] == expected
+
+
+def test_a_jpeg_exif_resolution_is_read() -> None:
+    exif = Image.Exif()
+    exif[0x011A], exif[0x011B], exif[0x0128] = 300.0, 150.0, 2
+    doc = pyropdf.Document()
+    (page,) = doc.pages.new_from_image(_encoded(_image(), "JPEG", exif=exif.tobytes()))
+    assert tuple(page.rect) == pytest.approx((0, 0, 40 * 72 / 300, 20 * 72 / 150))
+    # A JFIF density in inches comes first.
+    (page,) = doc.pages.new_from_image(_encoded(_image(), "JPEG", exif=exif.tobytes(), dpi=(72, 72)))
+    assert tuple(page.rect) == pytest.approx((0, 0, 40, 20))
+
+
+def test_a_png_below_a_tenth_of_a_dpi() -> None:
+    # One pixel per metre, 0.0254 dpi.
+    (page,) = pyropdf.Document().pages.new_from_image(_encoded(_image(), "PNG", dpi=(0.0254, 0.0254)))
+    assert tuple(page.rect) == pytest.approx((0, 0, 40 * 72 / 0.0254, 20 * 72 / 0.0254))
+
+
+def test_the_frames_of_one_call_are_limited_in_pixels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("pyropdf._pages._MAX_FRAME_PIXELS", 1000)
+    path = tmp_path / "pages.tiff"
+    _image().save(path, save_all=True, append_images=[_image()])
+    doc = pyropdf.Document()
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.pages.new_from_image(path)
+    assert raised.value.code == "content_element_count"
+    assert len(doc.pages) == 0
+
+
 def test_pixmaps_and_files(tmp_path: Path) -> None:
     doc = pyropdf.Document()
     (source,) = doc.pages.new_from_image(_encoded(_image(), "PNG", dpi=(72, 72)))
