@@ -171,6 +171,45 @@ Document.remove_image(xref: int)
 
 Make image object `xref` one transparent pixel, so that no placement shows it, in one transaction.
 
+### `Document.rewrite_images`
+
+```python
+Document.rewrite_images(
+    *,
+    dpi_threshold: float | None = None,
+    dpi_target: float | None = None,
+    quality: int | None = None,
+    lossy: bool = True,
+    lossless: bool = True,
+    bitonal: bool = True,
+    color: bool = True,
+    gray: bool = True,
+    set_to_gray: bool = False,
+) -> ImageRewriteReport
+```
+
+Downsample and recompress the images that the pages place, each image object once, in one transaction.
+
+An image whose resolution at its largest placement exceeds
+`dpi_threshold` on either axis is resampled to `dpi_target` on
+both, never gaining pixels, so an image placed on several pages
+keeps the pixels that its largest placement needs. `quality` (1 through 100) re-encodes every
+selected image even when it keeps its size. Lossy images (JPEG and
+JPEG 2000) are written as JPEG at `quality`, or 75 when it is
+`None`; lossless and bitonal ones as 8-bit Flate.
+`set_to_gray` converts color images to DeviceGray.
+
+`lossy`, `lossless`, `bitonal`, `color`, and `gray` select
+the kinds of image to rewrite. Only unmasked DeviceGray and
+DeviceRGB images with 8 bits per component, or 1 for bitonal ones,
+qualify, and inline images are not considered. A rewrite is kept
+only when it saves at least 5% of the stored data, so repeating a
+call does not re-encode a JPEG again. With none of
+`dpi_threshold`, `quality`, and `set_to_gray` there is nothing
+to do, and the call returns zero counts. A decoding
+failure raises and leaves the document as it was;
+`history` can undo the step.
+
 ### `Document.layers`
 
 ```python

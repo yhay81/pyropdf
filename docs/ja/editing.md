@@ -36,6 +36,20 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
     doc.pages.select([0, 1])        # この 2 ページだけを、この順で残す
 ```
 
+`doc.pages.new_from_image(source)` は画像のフレームごとに、その解像度に合わせた大きさのページを
+加えます。JPEG と JPEG 2000 は再圧縮せずに埋め込み、TIFF や GIF などは Pillow があれば
+Pillow を通して読みます：
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    pixmap = doc.pages[0].pixmap(dpi=72)
+    scan = pyropdf.Document()
+    scan.pages.new_from_image(pixmap)       # パスや JPEG/PNG のバイト列も渡せます
+    scan.save("scan.pdf")
+```
+
 `page.media_box`・`crop_box`・`bleed_box`・`trim_box`・`art_box` はページボックスを、
 継承して MediaBox に収めたうえで、テキストや描画と同じ表示座標で返します。`(0, 0)` は
 見えるページの左上です。`Rect` を代入するとそのページだけにボックスを設定し、MediaBox

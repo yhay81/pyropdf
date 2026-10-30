@@ -206,8 +206,30 @@ def test_a_clip_outside_the_page_raises() -> None:
 
 
 def test_a_clip_keeps_the_limits_of_the_whole_page() -> None:
-    with pytest.raises(ValueError, match="65535-pixel limit per side"):
+    with pytest.raises(ValueError, match="limit of 65408 pixels wide and 65532 pixels high"):
         _page().pixmap(dpi=72 * 400, clip=(0, 0, 1, 1))
+
+
+def _strip(width: float, height: float) -> pyropdf.Page:
+    doc = pyropdf.Document()
+    page = doc.pages.new((10, 10))
+    page.obj["MediaBox"] = [0, 0, width, height]
+    page.obj["Contents"] = doc.objects[doc.objects.add_stream(f"1 0 0 rg 0 0 {width} {height} re f".encode())]
+    return page
+
+
+@pytest.mark.parametrize(("width", "height"), [(65409, 1), (65533, 1), (1, 65533)])
+def test_rasters_that_vello_cannot_render_are_refused(width: int, height: int) -> None:
+    # vello_cpu 0.3 panics on these sizes (issue 392).
+    with pytest.raises(ValueError, match="limit of 65408 pixels wide and 65532 pixels high"):
+        _strip(width, height).pixmap(dpi=72)
+
+
+@pytest.mark.parametrize(("width", "height"), [(65408, 1), (1, 65532)])
+def test_the_largest_rasters_render(width: int, height: int) -> None:
+    pixmap = _strip(width, height).pixmap(dpi=72)
+    assert (pixmap.width, pixmap.height) == (width, height)
+    assert bytes(memoryview(pixmap).cast("B")[:3]) == b"\xff\x00\x00"
 
 
 def test_old_names_are_removed() -> None:

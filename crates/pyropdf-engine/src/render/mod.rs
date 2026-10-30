@@ -68,6 +68,16 @@ pub type Matrix = (f64, f64, f64, f64);
 /// The most pixels of one raster, as pylopdf bounds it.
 pub const MAX_PIXELS: u64 = 64_000_000;
 
+/// The widest raster vello_cpu 0.3 renders: a wider one overflows `u16`
+/// when a filled span is rounded up to 128 pixels
+/// (`TileAlignedSpan::from_tiles`). Raise it to 65,535 when a vello_cpu
+/// release checks that overflow (issue 392).
+pub const MAX_WIDTH: u16 = 65_408;
+
+/// The tallest raster vello_cpu 0.3 renders: a taller one overflows `u16`
+/// when `RenderContext::new` rounds it up to a whole tile of 4 pixels.
+pub const MAX_HEIGHT: u16 = 65_532;
+
 /// How far a page edge may fall short of a pixel boundary through
 /// floating-point error and still cover that pixel, as MuPDF's
 /// `fz_round_rect` allows.
@@ -131,7 +141,7 @@ pub enum RasterError {
     /// The document has no such page.
     NoPage(usize),
     /// The matrix or the page size gives no raster, or one above the
-    /// limits: 65,535 pixels a side and [`MAX_PIXELS`] in all; or the
+    /// limits: [`MAX_WIDTH`], [`MAX_HEIGHT`], and [`MAX_PIXELS`]; or the
     /// options are inconsistent.
     Geometry(String),
     /// The clip leaves no pixel of the page.
@@ -291,9 +301,10 @@ fn extent(
             "scale is too small, or the PDF page size is invalid".to_owned(),
         ));
     }
-    if pixel_width > f64::from(u16::MAX) || pixel_height > f64::from(u16::MAX) {
+    if pixel_width > f64::from(MAX_WIDTH) || pixel_height > f64::from(MAX_HEIGHT) {
         return Err(RasterError::Geometry(format!(
-            "render size {pixel_width:.0}x{pixel_height:.0} exceeds the 65535-pixel limit per side"
+            "render size {pixel_width:.0}x{pixel_height:.0} exceeds the limit of \
+             {MAX_WIDTH} pixels wide and {MAX_HEIGHT} pixels high"
         )));
     }
     let pixels = (pixel_width as u64) * (pixel_height as u64);

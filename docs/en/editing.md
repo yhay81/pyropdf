@@ -37,6 +37,21 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
     doc.pages.select([0, 1])        # keep only these, in this order
 ```
 
+`doc.pages.new_from_image(source)` adds a page per image frame, sized by
+the image's resolution. JPEG and JPEG 2000 are embedded without
+recompression; TIFF, GIF, and other formats go through Pillow when it is
+installed:
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    pixmap = doc.pages[0].pixmap(dpi=72)
+    scan = pyropdf.Document()
+    scan.pages.new_from_image(pixmap)       # or a path, or JPEG/PNG bytes
+    scan.save("scan.pdf")
+```
+
 `page.media_box`, `crop_box`, `bleed_box`, `trim_box`, and `art_box` read
 the page boxes, inherited and clipped to the MediaBox, in the same display
 space as text and rendering: `(0, 0)` is the top-left of the visible page.

@@ -226,8 +226,9 @@ gray with ITU-R BT.601 luma weights.
 box under the matrix, rounded outward to whole pixels and
 intersected with the page, is all that is rasterized. A clip that
 leaves no pixel of the page raises `PdfError`, and the size
-limits of the whole page still apply. The GIL is released while
-hayro renders.
+limits of the whole page still apply: a raster is at most 65,408
+pixels wide, 65,532 high, and 64,000,000 in all, and a larger one
+raises `ValueError`. The GIL is released while hayro renders.
 
 ### `Page.draw`
 
@@ -239,6 +240,31 @@ Return a `Canvas` that draws on this page when its `with` block ends.
 
 The drawing is one transaction and one undo step, painted over the
 page's content or, with `underlay=True`, beneath it.
+
+### `Page.replace_text`
+
+```python
+Page.replace_text(old: str, new: str, *, count: int | None = None) -> int
+```
+
+Replace `old` with `new` where simple fonts draw it, and return the number of replacements.
+
+`old` is found in the strings of each text-showing operation of
+the page's content and of the Form XObjects that it draws, decoded
+through the operation's Type 1, TrueType, or Type 3 font as text
+extraction reads it, across the strings and kerning of a `TJ`
+array but not across operations. `new` is encoded through the
+same font, and a kerning number after it makes up the difference in
+advance, so the text that follows keeps its position. `count`
+bounds the replacements, in content order; `None` replaces all.
+
+A character of `new` that the font has no code for, and `old`
+drawn in a composite (Type 0) font of the page's content, raise
+`ValueError` and leave the document unchanged. A font subset
+is not extended, so a code without a glyph in the program shows as
+the program's missing glyph. A Form XObject that changes is copied
+and the page draws the copy, so the pages and Forms that share it
+keep the old text. The replacement is one transaction.
 
 ### `Page.flatten`
 
@@ -707,6 +733,29 @@ Add a blank page of `size` points, A4 by default, where `list.insert` would put 
 
 Without `index` the page goes last. The page has its own MediaBox,
 and no rotation or crop of the page tree's root carries over to it.
+
+### `Pages.new_from_image`
+
+```python
+Pages.new_from_image(
+    source: str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap,
+    *,
+    dpi: float | tuple[float, float] | None = None,
+    index: int | None = None,
+) -> list[Page]
+```
+
+Add one page per frame of an image, each the size of its frame at its resolution, in one transaction.
+
+`source` is a path, encoded bytes, or a `Pixmap`. JPEG and
+JPEG 2000 data is embedded as it is, without recompression, and PNG
+keeps its alpha as a soft mask; each is one frame. Other formats,
+such as multi-page TIFF, GIF, or WebP, are read through Pillow when
+it is installed, one frame per page, up to 4,096. A frame's
+resolution comes from its JFIF density, PNG `pHYs`, or Pillow's
+`dpi`, else 96 dpi, and `dpi`, one number or `(x, y)`,
+overrides it. The pages go where `new` puts one, in order, and
+are returned.
 
 ### `Pages.insert`
 

@@ -8,6 +8,33 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Images
 
+## `ImageRewriteReport`
+
+```python
+ImageRewriteReport(considered: int, rewritten: int, bytes_before: int, bytes_after: int)
+```
+
+What `Document.rewrite_images` did.
+
+The byte counts compare the stored data of the rewritten images before
+and after, not the size of the saved document.
+
+### `ImageRewriteReport.skipped`
+
+```python
+ImageRewriteReport.skipped: int
+```
+
+The image objects left as they were: `considered - rewritten`.
+
+### `ImageRewriteReport.bytes_saved`
+
+```python
+ImageRewriteReport.bytes_saved: int
+```
+
+Return `bytes_before - bytes_after`.
+
 ## `PageImage`
 
 ```python
