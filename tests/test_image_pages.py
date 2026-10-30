@@ -146,10 +146,35 @@ def test_a_jpeg_exif_resolution_is_read() -> None:
     assert tuple(page.rect) == pytest.approx((0, 0, 40, 20))
 
 
-def test_a_png_below_a_tenth_of_a_dpi() -> None:
-    # One pixel per metre, 0.0254 dpi.
-    (page,) = pyropdf.Document().pages.new_from_image(_encoded(_image(), "PNG", dpi=(0.0254, 0.0254)))
-    assert tuple(page.rect) == pytest.approx((0, 0, 40 * 72 / 0.0254, 20 * 72 / 0.0254))
+@pytest.mark.parametrize("dpi", [0.0254, 0.0508, 0.0762])
+def test_a_png_below_a_tenth_of_a_dpi(dpi: float) -> None:
+    # One, two, and three pixels per metre.
+    (page,) = pyropdf.Document().pages.new_from_image(_encoded(_image(), "PNG", dpi=(dpi, dpi)))
+    assert tuple(page.rect) == pytest.approx((0, 0, 40 * 72 / dpi, 20 * 72 / dpi))
+
+
+def test_a_jpeg_exif_resolution_after_fill_bytes() -> None:
+    exif = Image.Exif()
+    exif[0x011A], exif[0x011B], exif[0x0128] = 300.0, 150.0, 2
+    data = _encoded(_image(), "JPEG", exif=exif.tobytes())
+    # Fill bytes may come before any marker; the JFIF segment ends at 20.
+    assert data[20:22] == b"\xff\xe1"
+    (page,) = pyropdf.Document().pages.new_from_image(data[:20] + b"\xff\xff" + data[20:])
+    assert tuple(page.rect) == pytest.approx((0, 0, 40 * 72 / 300, 20 * 72 / 150))
+
+
+def test_image_data_is_limited_in_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("pyropdf._pages._MAX_IMAGE_INPUT", 100)
+    data = _encoded(_image(), "PNG")
+    assert len(data) > 100
+    path = tmp_path / "image.png"
+    path.write_bytes(data)
+    pages = pyropdf.Document().pages
+    for source in (data, path):
+        with pytest.raises(pyropdf.LimitError) as raised:
+            pages.new_from_image(source)
+        assert raised.value.code == "image_input_size"
+    assert len(pages) == 0
 
 
 def test_the_frames_of_one_call_are_limited_in_pixels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

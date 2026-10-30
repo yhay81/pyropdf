@@ -326,6 +326,12 @@ unit = "drawings"
 default = 4_096
 reached = "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
 
+[codes.image_input_size]
+message = "the image data is too large"
+unit = "bytes"
+default = 268_435_456
+reached = "The encoded image that `Pages.new_from_image` reads is larger than 256 MiB."
+
 [codes.text_line_count]
 message = "the text has too many lines"
 unit = "lines"

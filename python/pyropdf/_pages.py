@@ -33,6 +33,8 @@ _METRES_PER_INCH = 0.0254
 _MAX_FRAMES = 4096
 #: The most pixels, over all its frames, that one call reads from a multi-frame image.
 _MAX_FRAME_PIXELS = 256_000_000
+#: The most bytes of encoded image data that one call reads.
+_MAX_IMAGE_INPUT = 268_435_456
 #: The Exif tags of a resolution and its unit, and the units that the unit tag names.
 _EXIF_X_RESOLUTION, _EXIF_Y_RESOLUTION, _EXIF_RESOLUTION_UNIT = 0x011A, 0x011B, 0x0128
 _EXIF_UNITS = {2: 1.0, 3: _CM_PER_INCH}
@@ -198,7 +200,7 @@ class Pages(Sequence[Page]):
         keeps its alpha as a soft mask; each is one frame. Other formats,
         such as multi-page TIFF, GIF, or WebP, are read through Pillow when
         it is installed, one frame per page, up to 4,096 frames and 256
-        million pixels in all. A frame's resolution comes from its JFIF
+        million pixels in all, from up to 256 MiB of data. A frame's resolution comes from its JFIF
         density or Exif resolution, PNG ``pHYs``, or Pillow's ``dpi``, else
         96 dpi, and ``dpi``, one number or ``(x, y)``,
         overrides it. The pages go where :meth:`new` puts one, in order, and
@@ -376,10 +378,14 @@ def _image_frames(
         x_dpi, y_dpi = source.resolution
         return [(source.to_bytes("png", max_size=None), (float(x_dpi), float(y_dpi)))]
     if isinstance(source, (bytes, bytearray, memoryview)):
+        if len(source) > _MAX_IMAGE_INPUT:
+            raise _image_input_error()
         data = bytes(source)
     elif isinstance(source, (str, os.PathLike)):
         with open(source, "rb") as file:  # noqa: PTH123 - os.PathLike and str alike.
-            data = file.read()
+            data = file.read(_MAX_IMAGE_INPUT + 1)
+        if len(data) > _MAX_IMAGE_INPUT:
+            raise _image_input_error()
     else:
         msg = f"source must be a path, bytes, or a Pixmap, not {type(source).__name__}"
         raise TypeError(msg)
@@ -392,14 +398,29 @@ def _image_frames(
     return _pillow_frames(data)
 
 
+def _image_input_error() -> LimitError:
+    """Return the error for encoded image data larger than one call reads."""
+    msg = f"the image data is larger than {_MAX_IMAGE_INPUT} bytes"
+    return LimitError("image_input_size", msg)
+
+
 def _jpeg_dpi(data: bytes) -> tuple[float, float] | None:
     """Return the resolution of a JPEG's JFIF density, else of its Exif segment, in inches or centimetres."""
     exif = None
     at = 2
-    # Each segment before the scan is a marker, a length, and a body.
-    while at + 4 <= len(data) and data[at] == 0xFF and data[at + 1] not in (0xDA, 0xD9):  # noqa: PLR2004 - SOS, EOI
-        marker, length = data[at + 1], int.from_bytes(data[at + 2 : at + 4])
-        body = data[at + 4 : at + 2 + length]
+    # Each segment before the scan is fill bytes, a marker, a length, and a
+    # body; the markers of RST and TEM have neither (ISO/IEC 10918-1 B.1.1).
+    while at < len(data) and data[at] == 0xFF:  # noqa: PLR2004 - a marker's prefix
+        while at < len(data) and data[at] == 0xFF:  # noqa: PLR2004 - fill bytes
+            at += 1
+        if at >= len(data) or data[at] in (0xDA, 0xD9):
+            break
+        marker = data[at]
+        at += 1
+        if marker == 0x01 or 0xD0 <= marker <= 0xD7:  # noqa: PLR2004 - TEM, RST
+            continue
+        length = int.from_bytes(data[at : at + 2])
+        body = data[at + 2 : at + length]
         if marker == 0xE0 and body[:5] == b"JFIF\x00" and len(body) >= 12:  # noqa: PLR2004 - APP0 to its densities
             unit, x, y = body[7], int.from_bytes(body[8:10]), int.from_bytes(body[10:12])
             if x and y and unit in (1, 2):
@@ -407,7 +428,7 @@ def _jpeg_dpi(data: bytes) -> tuple[float, float] | None:
                 return (x * scale, y * scale)
         elif marker == 0xE1 and body[:6] == b"Exif\x00\x00" and exif is None:  # noqa: PLR2004 - APP1
             exif = _exif_dpi(body[6:])
-        at += 2 + length
+        at += length
     return exif
 
 
@@ -455,13 +476,15 @@ def _png_dpi(data: bytes) -> tuple[float, float] | None:
 
 
 def _png_resolution(pixels_per_metre: int) -> float:
-    """Return the resolution in inches of ``pixels_per_metre``, rounded to one decimal unless that leaves none.
+    """Return the resolution in inches of ``pixels_per_metre``, rounded to one decimal when that stores the same.
 
     Whole pixels per metre miss most resolutions in inches by a little: 72
-    dpi is stored as 2835, 72.009 dpi.
+    dpi is stored as 2835, 72.009 dpi. A low resolution keeps its exact
+    value, since its nearest tenth stores another number.
     """
     exact = pixels_per_metre * _METRES_PER_INCH
-    return round(exact, 1) or exact
+    rounded = round(exact, 1)
+    return rounded if round(rounded / _METRES_PER_INCH) == pixels_per_metre else exact
 
 
 def _pillow_frames(data: bytes) -> Iterator[tuple[bytes, tuple[float, float] | None]]:

@@ -756,7 +756,7 @@ JPEG 2000 data is embedded as it is, without recompression, and PNG
 keeps its alpha as a soft mask; each is one frame. Other formats,
 such as multi-page TIFF, GIF, or WebP, are read through Pillow when
 it is installed, one frame per page, up to 4,096 frames and 256
-million pixels in all. A frame's resolution comes from its JFIF
+million pixels in all, from up to 256 MiB of data. A frame's resolution comes from its JFIF
 density or Exif resolution, PNG `pHYs`, or Pillow's `dpi`, else
 96 dpi, and `dpi`, one number or `(x, y)`,
 overrides it. The pages go where `new` puts one, in order, and
