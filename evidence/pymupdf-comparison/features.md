@@ -51,7 +51,7 @@ rendering accuracy need independent comparisons (#430).
 | Vector paths and painted items | `get_drawings`, `get_texttrace` | Available: `page.content`; provenance for all nested content remains | #104 |
 | Image placements and data | `get_image_info`, `get_images`, `extract_image` | Available: `page.content`, `page.images`, image records | #359 |
 | Page fonts and font programs | `get_fonts`, `extract_font` | Available: `page.fonts`, `doc.font_program`; page font listings are compared with PyMuPDF on the corpus | #399, #418 |
-| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Partial: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; no sound accessors | #423 |
+| Annotation appearance and sound | `Annot.get_pixmap`, `get_text`, `get_sound` | Available: `annotation.pixmap()` and `annotation.text()` render and read one appearance alone; `annotation.sound()` reads a sound annotation's audio and format | #422, #423 |
 
 ## Rendering and pixmaps
 
@@ -72,7 +72,7 @@ rendering accuracy need independent comparisons (#430).
 | Shapes, paths, images and placed pages | `Shape`, `insert_image`, `show_pdf_page` | Available: `page.draw()` canvas, with paths, images and `page` placement | #396 |
 | Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Missing from canvas; text and fonts wait on krilla | #153, #323 |
 | Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image`; supported formats and optional Pillow are documented in its API | #361, #412 |
-| Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`; individual appearance and sound access are separate gaps | #160, #422, #423 |
+| Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`, with each annotation's appearance and sound | #160, #422, #423 |
 | Create markup annotations | `add_*_annot` | Partial: text markup, notes, shapes, lines, polygons and ink have settled appearances; free text, stamps, attachments and carets remain | #161, #168, #162, #421 |
 | Links | `insert_link`, `update_link` | Available: `page.links` | #163 |
 | Form fields | `widgets`, `add_widget`, `Widget.update` | Partial: create, read, fill and flatten exist; embedded Unicode form fonts and widget font API remain | #194, #212 |

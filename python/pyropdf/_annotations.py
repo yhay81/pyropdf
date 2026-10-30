@@ -17,9 +17,10 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core
 from pyropdf._content import BlendMode, Color
-from pyropdf._errors import LimitError, StaleObjectError, StalePageError
+from pyropdf._errors import LimitError, MalformedPdfError, StaleObjectError, StalePageError
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
-from pyropdf._objects import Dictionary, String
+from pyropdf._limits import _validate_optional_positive_int
+from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
@@ -277,6 +278,53 @@ class AttachmentIcon(enum.StrEnum):
     PUSH_PIN = "push_pin"
     PAPERCLIP = "paperclip"
     TAG = "tag"
+
+
+class SoundEncoding(enum.StrEnum):
+    """How a sound's samples encode amplitudes, ``/E`` (ISO 32000-2 Table 208)."""
+
+    RAW = "Raw"
+    """Unsigned values from 0 through 2**bits - 1."""
+    SIGNED = "Signed"
+    """Two's-complement values."""
+    MU_LAW = "muLaw"
+    """μ-law encoded samples."""
+    A_LAW = "ALaw"
+    """A-law encoded samples."""
+
+
+@dataclass(frozen=True, slots=True)
+class Sound:
+    """The sound of a sound annotation, ``/Sound``, as :meth:`Annotation.sound` reads it.
+
+    ``data`` holds the samples as the stream stores them after its filters,
+    or the stream's bytes before them when read with ``decode=False``; the
+    samples stay in ``encoding`` and, for a compressed sound, in the format
+    that ``compression`` names.
+    """
+
+    data: bytes
+    """The sample data."""
+    rate: float
+    """Samples per second per channel, ``/R``."""
+    channels: int
+    """The sound channels, ``/C``: 1 when absent."""
+    bits: int
+    """The bits per sample value per channel, ``/B``: 8 when absent."""
+    encoding: SoundEncoding
+    """The encoding of the sample values, ``/E``: :attr:`SoundEncoding.RAW` when absent."""
+    compression: str | None
+    """The sound compression format, ``/CO``, or ``None`` for uncompressed samples."""
+
+
+def _sound_number(value: object, name: str, *, integer: bool) -> float:
+    """Return a positive, finite ``/R``, ``/C``, or ``/B``, or raise :class:`MalformedPdfError`."""
+    kind = int if integer else (int, float)
+    if isinstance(value, bool) or not isinstance(value, kind) or not math.isfinite(value) or value <= 0:
+        expected = "a positive integer" if integer else "a positive number"
+        msg = f"the sound's /{name} must be {expected}: {value!r}"
+        raise MalformedPdfError(msg)
+    return value
 
 
 def _pdf_name(member: enum.StrEnum) -> str:
@@ -859,6 +907,45 @@ class Annotation:
         text, skipped = result
         _warn_skipped(skipped)
         return text
+
+    def sound(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> Sound | None:
+        """Return the sound that a sound annotation plays, or ``None`` for another kind of annotation.
+
+        ``decode`` and ``max_size`` read the ``/Sound`` stream as
+        :meth:`Stream.read` reads it, with :class:`LimitError` code
+        ``stream_data_size`` past ``max_size``. A sound annotation without a
+        ``/Sound`` stream, and a sound whose ``/R``, ``/C``, ``/B``, ``/E``,
+        or ``/CO`` is malformed, raise :class:`MalformedPdfError`.
+        """
+        _validate_optional_positive_int("max_size", max_size)
+        if not isinstance(decode, bool):
+            msg = f"decode must be a bool: {decode!r}"
+            raise TypeError(msg)
+        if self.type is not AnnotationType.SOUND:
+            return None
+        stream = self.obj.get("Sound")
+        if not isinstance(stream, Stream):
+            msg = f"the sound annotation's /Sound must be a stream: {stream!r}"
+            raise MalformedPdfError(msg)
+        rate = _sound_number(stream.get("R"), "R", integer=False)
+        channels = int(_sound_number(stream.get("C", 1), "C", integer=True))
+        bits = int(_sound_number(stream.get("B", 8), "B", integer=True))
+        encoding = stream.get("E", Name("Raw"))
+        if not isinstance(encoding, Name) or encoding not in SoundEncoding._value2member_map_:
+            msg = f"the sound's /E must be Raw, Signed, muLaw, or ALaw: {encoding!r}"
+            raise MalformedPdfError(msg)
+        compression = stream.get("CO")
+        if compression is not None and not isinstance(compression, Name):
+            msg = f"the sound's /CO must be a name: {compression!r}"
+            raise MalformedPdfError(msg)
+        return Sound(
+            data=stream.read(decode=decode, max_size=max_size),
+            rate=float(rate),
+            channels=channels,
+            bits=bits,
+            encoding=SoundEncoding(encoding),
+            compression=None if compression is None else str(compression),
+        )
 
     def __eq__(self, other: object) -> bool:
         """Compare the page and the annotation: its object, or its position for a direct dictionary."""
