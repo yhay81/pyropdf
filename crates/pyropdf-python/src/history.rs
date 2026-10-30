@@ -130,7 +130,7 @@ impl _Document {
         py: Python<'_>,
         write: impl FnOnce(&mut Transaction, &Budget) -> PyResult<T>,
     ) -> PyResult<T> {
-        let store = self.document()?;
+        self.document()?;
         let budget = self.budget();
         {
             let mut open = lock(&self.history.open);
@@ -139,7 +139,7 @@ impl _Document {
                 return write(&mut open.transaction, &budget);
             }
         }
-        let mut transaction = py.detach(|| store.begin());
+        let (store, mut transaction) = self.on_current(py, Document::begin)?;
         let value = write(&mut transaction, &budget)?;
         self.commit(&store, transaction, String::new(), &budget)?;
         Ok(value)
@@ -154,7 +154,7 @@ impl _Document {
         py: Python<'_>,
         write: impl FnOnce(&mut Transaction, &Budget) -> PyResult<T>,
     ) -> PyResult<T> {
-        let store = self.document()?;
+        self.document()?;
         let budget = self.budget();
         {
             let mut open = lock(&self.history.open);
@@ -166,8 +166,32 @@ impl _Document {
                 return result;
             }
         }
-        let mut transaction = py.detach(|| store.begin());
+        let (_, mut transaction) = self.on_current(py, Document::begin)?;
         write(&mut transaction, &budget)
+    }
+
+    /// Runs `act` on the store's document with the GIL released, and returns
+    /// the document it ran on. While `act` waits for the writer lock, signing
+    /// may replace the document; `act` then runs again on the new one, so
+    /// that what it writes is not lost with the old one.
+    pub(crate) fn on_current<T: Send>(
+        &self,
+        py: Python<'_>,
+        act: impl Fn(&Document) -> T + Sync,
+    ) -> PyResult<(Arc<Document>, T)> {
+        loop {
+            let store = self.document()?;
+            let value = py.detach(|| act(&store));
+            if Arc::ptr_eq(&store, &self.document()?) {
+                return Ok((store, value));
+            }
+        }
+    }
+
+    /// Returns whether this thread's open transaction is an outermost one,
+    /// without nested transactions.
+    pub(crate) fn in_outermost_transaction(&self) -> bool {
+        owned(&mut lock(&self.history.open)).is_some_and(|open| open.savepoints.is_empty())
     }
 
     /// Commits `transaction`, and names the step it records.
@@ -218,14 +242,14 @@ fn sync(steps: &mut Steps, store: &Document) {
 /// released, as the store's writer lock waits.
 #[pyfunction]
 pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> PyResult<()> {
-    let store = document.document()?;
+    document.document()?;
     let mut open = lock(&document.history.open);
     if let Some(open) = owned(&mut open) {
         open.savepoints.push(open.transaction.savepoint());
         return Ok(());
     }
     drop(open);
-    let transaction = py.detach(|| store.begin());
+    let (_, transaction) = document.on_current(py, Document::begin)?;
     // Holding the writer lock, this thread is the only one with an open
     // transaction: another thread's ended before its lock was released.
     *lock(&document.history.open) = Some(Open {
@@ -279,7 +303,7 @@ pub fn history_state(document: &_Document) -> PyResult<(Vec<String>, usize, Opti
     ))
 }
 
-fn outside_transaction(document: &_Document, what: &str) -> PyResult<()> {
+pub(crate) fn outside_transaction(document: &_Document, what: &str) -> PyResult<()> {
     if document.in_transaction() {
         return Err(PdfError::new_err(format!(
             "cannot {what} inside a transaction"
@@ -292,8 +316,8 @@ fn outside_transaction(document: &_Document, what: &str) -> PyResult<()> {
 #[pyfunction]
 pub fn history_undo(py: Python<'_>, document: &_Document) -> PyResult<()> {
     outside_transaction(document, "undo")?;
-    let store = document.document()?;
-    if py.detach(|| store.undo()).is_none() {
+    let (store, step) = document.on_current(py, Document::undo)?;
+    if step.is_none() {
         return Err(PdfError::new_err("nothing to undo"));
     }
     let mut steps = lock(&document.history.steps);
@@ -306,8 +330,8 @@ pub fn history_undo(py: Python<'_>, document: &_Document) -> PyResult<()> {
 #[pyfunction]
 pub fn history_redo(py: Python<'_>, document: &_Document) -> PyResult<()> {
     outside_transaction(document, "redo")?;
-    let store = document.document()?;
-    if py.detach(|| store.redo()).is_none() {
+    let (store, step) = document.on_current(py, Document::redo)?;
+    if step.is_none() {
         return Err(PdfError::new_err("nothing to redo"));
     }
     let mut steps = lock(&document.history.steps);

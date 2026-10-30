@@ -82,6 +82,7 @@ nav:
       - Attachments: api/attachments.md
       - History and changes: api/history-and-changes.md
       - Encryption: api/encryption.md
+      - Signing: api/signing.md
       - Limits and errors: api/limits-and-errors.md
       - Content operations: api/content-operations.md
       - Objects: api/objects.md

@@ -50,6 +50,9 @@ dev = [
     # pikepdf reads saved documents through its own parser in the consistency
     # harness.
     "pikepdf>=10.17.0",
+    # pyHanko validates the signatures of doc.sign, with keys and
+    # certificates from its dependency cryptography (tests/test_signing.py).
+    "pyhanko>=0.38.0",
     "pytest>=9.1.1",
     "ruff>=0.17.2",
     # ty is pre-1.0 and its diagnostics change between releases; uv.lock pins

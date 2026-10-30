@@ -25,6 +25,20 @@ unicode-segmentation = "1.13.3"
 # PP-OCR inference in pure Rust, with pylopdf's pins (DESIGN.md section 14).
 rten = { version = "0.27.0", default-features = false, features = ["rten_format"] }
 rten-tensor = "0.27.0"
+# PAdES signatures (issue #397; evidence/signing): the CMS and X.509
+# structures of the RustCrypto next line, without cms's builder feature,
+# which pulls in the rsa crate and RUSTSEC-2023-0071. RSA keys sign through
+# a callback outside pyropdf.
+cms = { version = "0.3.0-rc.0", default-features = false }
+der = { version = "0.8.3", features = ["alloc", "derive", "oid", "pem"] }
+x509-cert = { version = "0.3.0", default-features = false, features = ["pem"] }
+p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem"] }
+p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem"] }
+# Encrypted PKCS#8 keys and the PBES2 bags of PKCS#12, and the HMAC of a
+# PKCS#12 file's MAC.
+pkcs8 = { version = "0.11.0", features = ["encryption", "pem"] }
+sha2 = "0.11.1"
+hmac = "0.13.0"
 
 [dev-dependencies]
 # Property tests of the bridge (DESIGN.md F9).

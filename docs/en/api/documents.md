@@ -478,6 +478,48 @@ Return the document as PDF bytes, as `save` writes them with the same options.
 write that would pass it with `LimitError` code
 `pdf_output_size`; `None` leaves it unbounded for trusted input.
 
+### `Document.sign`
+
+```python
+Document.sign(
+    field: str,
+    signer: Signer,
+    *,
+    timestamper: Timestamper | None = None,
+    reason: str | None = None,
+    location: str | None = None,
+    contact: str | None = None,
+    reserve: int = 16384,
+) -> bytes
+```
+
+Sign the document as PAdES B-B, or B-T with `timestamper`, in a new revision, and return its bytes.
+
+`field` names an unsigned signature field, or a new invisible one
+on the first page. The signature dictionary, the field, and any
+unsaved edits are saved incrementally after the opened file's bytes,
+so earlier signatures stay intact, and the CMS signature of
+`signer` covers every byte but its own (ETSI EN 319 142-1). The
+signature dictionary's `/M` is the current time, and `reason`,
+`location`, and `contact` become `/Reason`, `/Location`, and
+`/ContactInfo`.
+
+`timestamper` receives the digest of the signature value and the
+name of its hash algorithm, and returns an RFC 3161 time-stamp token
+over that digest; pyropdf makes no network access. A token that
+does not stamp the signature raises `ValueError`.
+
+`reserve` is the bytes kept for the CMS signature, 16 KiB by
+default; a signature that needs more raises `ValueError`.
+Afterwards the document reads the signed revision, so that
+`save(path, incremental=True)` writes the returned bytes, and its
+undo history starts anew. A failure leaves the document as it was.
+
+Signing runs as one transaction, which other threads' edits wait
+for. Signing inside a transaction raises `PdfError`, as does
+a callback that edits the document. An encrypted document raises
+`ValueError`.
+
 ### `Document.render`
 
 ```python

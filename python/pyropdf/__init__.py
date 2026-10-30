@@ -114,6 +114,7 @@ from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._sanitize import SanitizeReport
+from pyropdf._signing import Signer
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
@@ -131,6 +132,7 @@ for _public in (
     String,
     Document,
     Probe,
+    Signer,
     DocumentLimits,
     CancellationToken,
     ChangeReport,
@@ -278,6 +280,7 @@ __all__ = [
     "SignatureChange",
     "SignatureField",
     "SignatureFlags",
+    "Signer",
     "SoftMask",
     "SoftMaskType",
     "Span",

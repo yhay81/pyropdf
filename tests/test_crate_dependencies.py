@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CRATES = ("pyropdf-store", "pyropdf-schema", "pyropdf-engine", "pyropdf-python")
 
 # Third-party crates, and the first crate of section 11 that may reach them:
-# the engine's interpreter, writer, and model runtime, and PyO3, whose pyo3-*
+# the engine's interpreter, writer, model runtime, and signing stack, and PyO3, whose pyo3-*
 # crates count as pyo3.
 FIRST_ALLOWED = {
     "hayro": "pyropdf-engine",
@@ -34,6 +34,12 @@ FIRST_ALLOWED = {
     "krilla": "pyropdf-engine",
     "krilla-svg": "pyropdf-engine",
     "rten": "pyropdf-engine",
+    # The signing stack of section 11.
+    "cms": "pyropdf-engine",
+    "x509-cert": "pyropdf-engine",
+    "p256": "pyropdf-engine",
+    "p384": "pyropdf-engine",
+    "pkcs8": "pyropdf-engine",
     "pyo3": "pyropdf-python",
 }
 

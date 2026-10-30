@@ -197,6 +197,10 @@ method and property of its classes with its full description.
 - [`Encryption`](encryption.md#encryption_1): How `Document.save` and `Document.to_bytes` encrypt a full save.
 - [`Permissions`](encryption.md#permissions): What an encrypted document permits the user password, combined with `|`.
 
+## [Signing](signing.md)
+
+- [`Signer`](signing.md#signer): A signing key or callback, with its certificate chain, which `Document.sign` signs with.
+
 ## [Limits and errors](limits-and-errors.md)
 
 - [`CancellationToken`](limits-and-errors.md#cancellationtoken): A flag that stops the operations of every document whose limits carry it.
