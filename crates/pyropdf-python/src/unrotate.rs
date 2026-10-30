@@ -10,8 +10,9 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::PageIndex;
+use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -325,7 +326,8 @@ impl Turn<'_> {
 /// Sets the rotation of page object `(number, generation)` to 0 while
 /// keeping what it displays, in one transaction: the content, the page
 /// boxes, and the geometry and appearances of its annotations, links, and
-/// widgets move to the turned user space. Appearance streams are copied, so
+/// widgets, and the explicit destinations that name the page, move to the
+/// turned user space. Appearance streams are copied, so
 /// objects that other pages share keep their meaning. An annotation or
 /// `/Annots` array that another page lists too raises `ValueError` and
 /// changes nothing. Returns `false` for a stale page.
@@ -481,13 +483,149 @@ pub fn remove_page_rotation(
             dict.insert(Name::from("Contents"), Value::Array(array));
         }
         dict.insert(Name::from("Rotate"), Value::Integer(0));
+        // Destinations in the page's own direct annotations, then in every
+        // other object that names the page.
+        let page = Reference::new(number, generation);
+        state.retarget(dict.iter_mut().map(|(_, value)| value), page)?;
         transaction
             .write(number, &Value::Dict(dict), budget)
             .map_err(|e| store_error(&e))?;
+        let current = transaction.snapshot();
+        for &referrer in references.referrers(number) {
+            if referrer == number {
+                continue;
+            }
+            let Some(object) = current.get(referrer, budget).map_err(|e| store_error(&e))? else {
+                continue;
+            };
+            let mut value =
+                refs::copy_for_edit(object.value(), budget).map_err(|e| store_error(&e))?;
+            if state.retarget(std::iter::once(&mut value), page)? {
+                transaction
+                    .write(referrer, &value, budget)
+                    .map_err(|e| store_error(&e))?;
+            }
+        }
         let unused = std::mem::take(&mut state.unused);
         free(document, transaction, &unused, budget)?;
         Ok(true)
     })
+}
+
+impl Turn<'_> {
+    /// Moves the explicit destinations under `roots` that name `page` to
+    /// the turned user space, and returns whether one moved. A walk over
+    /// one object's value, bounded by the budget.
+    fn retarget<'v>(
+        &self,
+        roots: impl Iterator<Item = &'v mut Value>,
+        page: Reference,
+    ) -> PyResult<bool> {
+        let mut pending = BudgetVec::new(self.budget);
+        for root in roots {
+            pending.try_push(root).map_err(|e| limit_error(&e))?;
+        }
+        let mut moved = false;
+        while let Some(value) = pending.pop() {
+            self.budget.poll().map_err(|e| limit_error(&e))?;
+            match value {
+                Value::Array(array) if names(array, page) => {
+                    moved |= self.destination(array);
+                }
+                Value::Array(array) => {
+                    for item in array.iter_mut() {
+                        pending.try_push(item).map_err(|e| limit_error(&e))?;
+                    }
+                }
+                Value::Dict(dict) => {
+                    for (_, item) in dict.iter_mut() {
+                        pending.try_push(item).map_err(|e| limit_error(&e))?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(moved)
+    }
+
+    /// Moves destination `array`, whose page is the turned one. Each new
+    /// coordinate depends on one old one, so a null stays null; on a
+    /// quarter turn a horizontal fit becomes a vertical one.
+    fn destination(&self, array: &mut Array) -> bool {
+        let m = self.matrix;
+        let quarter = self.turn % 180 == 90;
+        let operand = |at: usize| array.get(at).and_then(as_number);
+        let x_of = |x: Option<f64>, y: Option<f64>| {
+            if quarter {
+                y.map(|y| m[2] * y + m[4])
+            } else {
+                x.map(|x| m[0] * x + m[4])
+            }
+        };
+        let y_of = |x: Option<f64>, y: Option<f64>| {
+            if quarter {
+                x.map(|x| m[1] * x + m[5])
+            } else {
+                y.map(|y| m[3] * y + m[5])
+            }
+        };
+        let Some(Value::Name(fit)) = array.get(1) else {
+            return false;
+        };
+        let (fit, operands): (&str, Vec<Option<f64>>) = match fit.as_bytes() {
+            b"XYZ" => {
+                let (left, top) = (operand(2), operand(3));
+                ("XYZ", vec![x_of(left, top), y_of(left, top), operand(4)])
+            }
+            name @ (b"FitH" | b"FitBH") => {
+                let top = operand(2);
+                let bounded = name == b"FitBH";
+                match (quarter, bounded) {
+                    (true, false) => ("FitV", vec![x_of(None, top)]),
+                    (true, true) => ("FitBV", vec![x_of(None, top)]),
+                    (false, false) => ("FitH", vec![y_of(None, top)]),
+                    (false, true) => ("FitBH", vec![y_of(None, top)]),
+                }
+            }
+            name @ (b"FitV" | b"FitBV") => {
+                let left = operand(2);
+                let bounded = name == b"FitBV";
+                match (quarter, bounded) {
+                    (true, false) => ("FitH", vec![y_of(left, None)]),
+                    (true, true) => ("FitBH", vec![y_of(left, None)]),
+                    (false, false) => ("FitV", vec![x_of(left, None)]),
+                    (false, true) => ("FitBV", vec![x_of(left, None)]),
+                }
+            }
+            b"FitR" => {
+                let [Some(x0), Some(y0), Some(x1), Some(y1)] = [2, 3, 4, 5].map(operand) else {
+                    return false;
+                };
+                let (a, b, c, d) = mapped_rect(&m, (x0, y0, x1, y1));
+                ("FitR", vec![Some(a), Some(b), Some(c), Some(d)])
+            }
+            _ => return false,
+        };
+        let mut turned = Array::from(vec![
+            Value::Reference(match array.get(0) {
+                Some(Value::Reference(page)) => *page,
+                _ => return false,
+            }),
+            Value::Name(Name::from(fit)),
+        ]);
+        for value in operands {
+            turned.push(value.map_or(Value::Null, number));
+        }
+        *array = turned;
+        true
+    }
+}
+
+/// Returns whether `array` is an explicit destination of `page`.
+fn names(array: &Array, page: Reference) -> bool {
+    matches!(array.get(0), Some(Value::Reference(first)) if *first == page)
+        && matches!(array.get(1), Some(Value::Name(fit))
+            if matches!(fit.as_bytes(), b"XYZ" | b"FitH" | b"FitBH" | b"FitV" | b"FitBV" | b"FitR"))
 }
 
 /// Writes a content stream of `data` and returns its reference.

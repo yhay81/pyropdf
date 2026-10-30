@@ -233,8 +233,10 @@ class Page:
 
         An annotation or ``/Annots`` array that another page also lists raises
         ``ValueError`` and changes nothing. Explicit destinations that name the
-        page keep their user-space coordinates. A page without rotation is left
-        as it is.
+        page, in links, actions, the outline, named destinations, or anywhere
+        else in the document, move with it; a horizontal fit becomes a vertical
+        one on a quarter turn, and a null coordinate stays null. A page without
+        rotation is left as it is.
         """
         if not _core.remove_page_rotation(self._document._core(), self._number, self._generation):  # noqa: SLF001
             raise self._stale()
