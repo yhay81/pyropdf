@@ -140,7 +140,7 @@ except where noted below.
 
 | Difference | Kind |
 | --- | --- |
-| The patent page: pyropdf splits the headings above the two columns at the gutter (`UNITED STATES` … `PATENT OFFICE.` after the left column) | pyropdf engine error, #460 |
+| The patent page: pyropdf split the headings above the two columns at the gutter (`UNITED STATES` … `PATENT OFFICE.` after the left column) | pyropdf engine error, fixed by #460; the table shows the fixed scores |
 | The patent page: PyMuPDF reads the right column before the left one ends, with or without `sort=True` | PyMuPDF engine error on a scanned page |
 | The nics table: PyMuPDF's `find_tables()` finds 17 rows, with the states merged into a few cells; pyropdf finds every labeled row and cell | PyMuPDF engine error |
 | mhlw-doc and nics: PyMuPDF's default puts the header box after the body and the first rows before the title | API choice: `get_text()` follows the content stream unless `sort=True`, which reads both pages in order |
