@@ -196,8 +196,21 @@ def _write_samples(  # noqa: PLR0913 - the parts of one decoded image
 
 def replace_image(document: Document, xref: int, data: bytes) -> None:
     """Replace image object ``xref`` with JPEG, JPEG 2000, or PNG ``data`` in one transaction."""
-    data = bytes(data)
     stream = _image_stream(document, xref)
+    with document.transaction("replace image"):
+        _store_image(document, stream, bytes(data))
+
+
+def add_image(document: Document, data: bytes) -> int:
+    """Add JPEG, JPEG 2000, or PNG ``data`` as a new image object, in the current transaction, and return its number."""
+    data = bytes(data)
+    xref = document.objects.add_stream(b"", {"Type": Name("XObject"), "Subtype": Name("Image")}, filter=None)
+    _store_image(document, document.objects[xref], data)
+    return xref
+
+
+def _store_image(document: Document, stream: Stream, data: bytes) -> None:
+    """Write encoded ``data`` into image ``stream``, storing JPEG and JPEG 2000 as they are."""
     if data.startswith(b"\xff\xd8\xff"):
         width, height, components, adobe = _jpeg_frame(data)
         if components not in _DEVICE_SPACES:
@@ -218,17 +231,15 @@ def replace_image(document: Document, xref: int, data: bytes) -> None:
         entries = {"Width": width, "Height": height, "Filter": Name("JPXDecode")}
     elif data.startswith(_PNG_SIGNATURE):
         width, height, gray, color, alpha = _core.decode_png(document._core(), data)  # noqa: SLF001
-        with document.transaction("replace image"):
-            _clear(stream)
-            _write_samples(document, stream, width, height, gray=gray, color=color, alpha=alpha)
+        _clear(stream)
+        _write_samples(document, stream, width, height, gray=gray, color=color, alpha=alpha)
         return
     else:
         msg = "the image data is not JPEG, JPEG 2000, or PNG"
         raise ValueError(msg)
-    with document.transaction("replace image"):
-        _clear(stream)
-        stream.write(data, filter=None)
-        stream.update(entries)
+    _clear(stream)
+    stream.write(data, filter=None)
+    stream.update(entries)
 
 
 def _clear(stream: Stream) -> None:

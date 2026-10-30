@@ -229,6 +229,17 @@ leaves no pixel of the page raises `PdfError`, and the size
 limits of the whole page still apply. The GIL is released while
 hayro renders.
 
+### `Page.draw`
+
+```python
+Page.draw(*, underlay: bool = False) -> Canvas
+```
+
+Return a `Canvas` that draws on this page when its `with` block ends.
+
+The drawing is one transaction and one undo step, painted over the
+page's content or, with `underlay=True`, beneath it.
+
 ### `Page.flatten`
 
 ```python

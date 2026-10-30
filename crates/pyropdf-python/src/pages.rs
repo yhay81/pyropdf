@@ -135,6 +135,83 @@ pub fn page_geometry(
     Ok(Some((rotation, width, height)))
 }
 
+/// Returns the normalized rotation of a page and its display box in
+/// unrotated user space, the box whose size [`page_geometry`] reports.
+/// `None` for a stale page.
+#[pyfunction]
+pub fn page_space(
+    document: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<(i64, Box4)>> {
+    let (_, index, _) = index(document)?;
+    let Some(at) = index.index_of(Reference::new(number, generation)) else {
+        return Ok(None);
+    };
+    let page = &index.pages()[at];
+    let [x0, y0, x1, y1] = display_box(page);
+    Ok(Some((rotation(page.rotate()), (x0, y0, x1, y1))))
+}
+
+/// Writes the resources that a page of `source` uses, inherited or its
+/// own, as a new dictionary object of `document`, in one transaction, and
+/// returns its number. From another document the objects they reach are
+/// copied too; within one document they are shared. `None` when `source`
+/// no longer lists the page.
+#[pyfunction]
+pub fn copy_page_resources(
+    py: Python<'_>,
+    document: &_Document,
+    source: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<u32>> {
+    let page = Reference::new(number, generation);
+    let same = std::ptr::eq(document, source);
+    let (version, source_parent) = source.reading_parent()?;
+    let budget = source.budget();
+    let source_index = match &source_parent {
+        Some(parent) => PageIndex::memoized(&source.pages, parent, &budget),
+        None if source.in_transaction() => {
+            PageIndex::memoized(&source.draft_pages, &version, &budget)
+        }
+        None => PageIndex::memoized(&source.pages, &version, &budget),
+    }
+    .map_err(|e| store_error(&e))?;
+    let Some(entry) = source_index
+        .index_of(page)
+        .and_then(|at| source_index.get(at))
+    else {
+        return Ok(None);
+    };
+    let resources = entry
+        .inherited("Resources")
+        .cloned()
+        .unwrap_or_else(|| Value::Dict(Dict::new()));
+    let written = document.edit(py, |transaction, budget| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let value = if same {
+            refs::copy_for_edit(&resources, budget).map_err(store)?
+        } else {
+            let (root, _) = root(&transaction.snapshot(), budget)?;
+            let along = import::Along {
+                values: std::slice::from_ref(&resources),
+                ..import::Along::default()
+            };
+            let imported =
+                import::import(transaction, &version, Vec::new(), &[], along, root, budget)
+                    .map_err(store)?;
+            imported.values.into_iter().next().unwrap_or(Value::Null)
+        };
+        let new = transaction.allocate().map_err(store)?;
+        transaction
+            .write(new.number(), &value, budget)
+            .map_err(store)?;
+        Ok(new.number())
+    })?;
+    Ok(Some(written))
+}
+
 /// Sets the `/Rotate` of a page, a multiple of 90 that the caller
 /// normalized, in one transaction. Returns `false` for a stale page.
 #[pyfunction]

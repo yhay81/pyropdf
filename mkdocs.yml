@@ -71,6 +71,7 @@ nav:
       - Sanitizing: api/sanitizing.md
       - Fonts: api/fonts.md
       - Pages: api/pages.md
+      - Drawing: api/drawing.md
       - Text and content: api/text-and-content.md
       - OCR: api/ocr.md
       - Rendering: api/rendering.md

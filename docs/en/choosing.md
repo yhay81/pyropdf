@@ -23,8 +23,8 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
 
 ## What it does not do yet
 
-- Drawing new content on a page (`page.draw`), creating fonts, and free text
-  and stamp annotations.
+- Drawing text on a page (`page.draw` draws paths, images, and pages),
+  creating fonts, and free text and stamp annotations.
 - Digital signatures: pyropdf keeps existing signatures valid, but does
   not sign yet.
 - No pyropdf release claims safety for untrusted input before hayro's

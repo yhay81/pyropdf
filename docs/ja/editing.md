@@ -52,6 +52,32 @@ with pyropdf.open("input.pdf") as doc:
 
 `page.flatten()` は注釈とウィジェットの外観をページの内容に描き込み、ページから取り除きます。
 
+## 作図
+
+`page.draw()` が返す `Canvas` は、パス、画像、他のページを表示空間で描きます。
+ページの内容の上に描き、`underlay=True` なら下に描きます。`with` ブロックが一つの
+トランザクションで一つの取り消し単位になり、中で例外が起きると作図は捨てられます。
+キャンバスへの文字の描画は krilla を待っています。
+
+```python
+import pyropdf
+from pyropdf import Color, PathBuilder, Stroke
+
+with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
+    page = doc.pages[0]
+    with page.draw() as canvas:
+        canvas.rect((36, 36, 236, 136), fill=Color(1, 1, 0, 0.4))
+        canvas.circle((300, 100), 40, stroke=Stroke(paint=Color(0, 0, 1), width=2))
+        with canvas.clip(PathBuilder().rect((36, 200, 236, 300), radius=12)), canvas.opacity(0.5):
+            canvas.page((36, 200, 236, 300), other.pages[0])
+        canvas.image((300, 200, 400, 300), page.pixmap(dpi=36))
+```
+
+`canvas.image` は JPEG、PNG、JPEG 2000 のデータ、パス、`Pixmap`、文書内の画像を
+受け取ります。`canvas.page` は開いている任意の文書のページを、切り抜きや回転を付けて
+配置します。何度も描いた画像やページは一度だけ保存されます。`clip`、`transform`、
+`opacity`、`blend` は、その中で描くもの全体に効くスコープです。
+
 ## 注釈
 
 `page.annotations.add` は仕様を受け取り、`Annotation` ハンドルを返します。注釈は

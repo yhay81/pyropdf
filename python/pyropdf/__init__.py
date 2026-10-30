@@ -28,6 +28,7 @@ from pyropdf._annotations import (
     Underline,
 )
 from pyropdf._attachments import Attachment, Attachments
+from pyropdf._canvas import Canvas, PathBuilder
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._check import StructuralDefect, StructuralReport
 from pyropdf._content import (
@@ -167,6 +168,7 @@ __all__ = [
     "Border",
     "BorderStyle",
     "CancellationToken",
+    "Canvas",
     "ChangeReport",
     "Char",
     "Chars",
@@ -250,6 +252,7 @@ __all__ = [
     "Paint",
     "PasswordError",
     "Path",
+    "PathBuilder",
     "PdfError",
     "Permissions",
     "Pixmap",

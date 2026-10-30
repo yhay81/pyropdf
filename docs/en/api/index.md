@@ -54,6 +54,11 @@ method and property of its classes with its full description.
 - [`Page`](pages.md#page): A page of a document, named by its page object.
 - [`Pages`](pages.md#pages_1): The pages of a document, in order.
 
+## [Drawing](drawing.md)
+
+- [`Canvas`](drawing.md#canvas): Drawing on one page in paint order, written as one content stream.
+- [`PathBuilder`](drawing.md#pathbuilder): Geometry for `Canvas.path` and `Canvas.clip`, built from segments.
+
 ## [Text and content](text-and-content.md)
 
 - [`BlendMode`](text-and-content.md#blendmode): A blend mode of ISO 32000-2 §11.3.5.

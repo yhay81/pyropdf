@@ -55,6 +55,33 @@ with pyropdf.open("input.pdf") as doc:
 `page.flatten()` draws annotation and widget appearances into the page
 content and removes them from the page.
 
+## Drawing
+
+`page.draw()` returns a `Canvas` that draws paths, images, and other pages
+in display space, over the page's content or, with `underlay=True`, below
+it. The `with` block is one transaction and one undo step; an exception
+inside it discards the drawing. Text on the canvas waits for krilla.
+
+```python
+import pyropdf
+from pyropdf import Color, PathBuilder, Stroke
+
+with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
+    page = doc.pages[0]
+    with page.draw() as canvas:
+        canvas.rect((36, 36, 236, 136), fill=Color(1, 1, 0, 0.4))
+        canvas.circle((300, 100), 40, stroke=Stroke(paint=Color(0, 0, 1), width=2))
+        with canvas.clip(PathBuilder().rect((36, 200, 236, 300), radius=12)), canvas.opacity(0.5):
+            canvas.page((36, 200, 236, 300), other.pages[0])
+        canvas.image((300, 200, 400, 300), page.pixmap(dpi=36))
+```
+
+`canvas.image` takes JPEG, PNG, or JPEG 2000 data, a path, a `Pixmap`, or
+an image of the document; `canvas.page` places a page of any open document,
+optionally clipped and turned. An image or a page drawn several times is
+stored once. `clip`, `transform`, `opacity`, and `blend` are scopes for
+everything drawn inside them.
+
 ## Annotations
 
 `page.annotations.add` takes a specification and returns an `Annotation`

@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self
 
+    from pyropdf._canvas import _Images
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
     from pyropdf._profiles import Profiles
@@ -76,7 +77,7 @@ class Document:
     empty one. Documents are context managers that close on exit.
     """
 
-    __slots__ = ("_access", "_closed", "_doc", "_limits")
+    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_limits")
 
     def __init__(self, *, limits: DocumentLimits | None = None) -> None:
         """Create an empty document without pages; :func:`open` opens an existing one."""
@@ -88,6 +89,8 @@ class Document:
         self._limits = limits
         self._closed = False
         self._access: Access | None = None
+        # What canvases stored, so that drawing the same image or page again reuses it.
+        self._drawn: _Images | None = None
 
     @property
     def limits(self) -> DocumentLimits:
