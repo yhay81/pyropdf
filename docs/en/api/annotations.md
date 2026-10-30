@@ -391,7 +391,7 @@ read in the transaction, so that every viewer draws it alike.
 
 ## `AnnotationSpecification`
 
-`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink`
+`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret`
 
 ## `AnnotationType`
 
@@ -428,6 +428,26 @@ no border.
 The style of an annotation's border, `/BS /S` (ISO 32000-2 Table 168).
 
 Members: `SOLID`, `DASHED`, `BEVELED`, `INSET`, `UNDERLINE`.
+
+## `Caret`
+
+```python
+Caret(
+    rect: Sequence[float],
+    *,
+    color: Color = Color(red=0.0, green=0.0, blue=1.0, alpha=1.0),
+    opacity: float = 1.0,
+    contents: str | None = None,
+)
+```
+
+A caret that marks where text goes, as `page.annotations.add` takes it.
+
+`rect` is in display coordinates, and the caret fills it pointing up
+on the display, on a turned page too: its `/Rotate` takes the page's
+rotation. `color` fills the caret, `opacity` applies to it, and
+`contents` is the text of the annotation's note. Turn it later with
+`Annotation.rotation`.
 
 ## `Circle`
 

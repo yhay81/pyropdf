@@ -73,7 +73,7 @@ rendering accuracy need independent comparisons (#430).
 | Draw text and use fonts | `insert_text`, `insert_textbox`, `Font`, `insert_font` | Missing from canvas; text and fonts wait on krilla | #153, #323 |
 | Images to PDF | `open(image).convert_to_pdf()` | Available: `doc.pages.new_from_image`; supported formats and optional Pillow are documented in its API | #361, #412 |
 | Read and edit annotations | `annots`, `Annot` | Available: `page.annotations`; individual appearance and sound access are separate gaps | #160, #422, #423 |
-| Create markup annotations | `add_*_annot` | Partial: text markup, notes, shapes, lines, polygons and ink have settled appearances; free text, stamps, attachments and carets remain | #161, #168, #162, #421 |
+| Create markup annotations | `add_*_annot` | Partial: text markup, notes, shapes, lines, polygons, ink and carets have settled appearances; free text, stamps and attachments remain | #161, #168, #162, #421 |
 | Links | `insert_link`, `update_link` | Available: `page.links` | #163 |
 | Form fields | `widgets`, `add_widget`, `Widget.update` | Partial: create, read, fill and flatten exist; embedded Unicode form fonts and widget font API remain | #194, #212 |
 | HTML layout | `insert_htmlbox`, `Story` | Excluded by #355 | |

@@ -1159,6 +1159,49 @@ class Note:
         }
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class Caret:
+    """A caret that marks where text goes, as ``page.annotations.add`` takes it.
+
+    ``rect`` is in display coordinates, and the caret fills it pointing up
+    on the display, on a turned page too: its ``/Rotate`` takes the page's
+    rotation. ``color`` fills the caret, ``opacity`` applies to it, and
+    ``contents`` is the text of the annotation's note. Turn it later with
+    :attr:`Annotation.rotation`.
+    """
+
+    rect: Rect
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(
+        self,
+        rect: Sequence[float],
+        *,
+        color: Color = Color(0.0, 0.0, 1.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification."""
+        contents = _contents(contents)
+        _bound_input("Caret", contents)
+        object.__setattr__(self, "rect", Rect(*_rect(rect)))
+        object.__setattr__(self, "color", _opaque_color(color))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "contents", contents)
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "subtype": "Caret",
+            "rect": tuple(self.rect),
+            "color": (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "contents": self.contents,
+            "created": _now(),
+        }
+
+
 #: The most points that one annotation's geometry holds (``annotation_point_count``).
 _MAX_ANNOTATION_POINTS = 65_536
 
@@ -1494,7 +1537,18 @@ class Ink(_Shape):
 
 #: The specifications that ``page.annotations.add`` takes.
 AnnotationSpecification: TypeAlias = (
-    Highlight | Underline | StrikeOut | Squiggly | Note | Square | Circle | LineAnnotation | Polygon | PolyLine | Ink
+    Highlight
+    | Underline
+    | StrikeOut
+    | Squiggly
+    | Note
+    | Square
+    | Circle
+    | LineAnnotation
+    | Polygon
+    | PolyLine
+    | Ink
+    | Caret
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -1508,6 +1562,7 @@ _SPECIFICATIONS = (
     Polygon,
     PolyLine,
     Ink,
+    Caret,
 )
 
 
@@ -1595,6 +1650,7 @@ for _public in (
     AttachmentIcon,
     Border,
     BorderStyle,
+    Caret,
     Circle,
     Highlight,
     Ink,
