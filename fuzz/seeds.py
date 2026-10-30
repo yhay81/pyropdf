@@ -21,11 +21,11 @@ sys.path.insert(0, str(ROOT / "tests"))
 from corpus import DAMAGE, NAMES, damaged  # noqa: E402
 
 ASSETS = ROOT / "tests" / "assets"
-TARGETS = ("index", "save", "bridge")
+TARGETS = ("index", "save", "bridge", "interpret")
 #: The values of uncompressed objects, as the ``value`` target reads them.
 OBJECT = re.compile(rb"\d+\s+\d+\s+obj\b(.*?)\bendobj", re.DOTALL)
 MAX_VALUE_SEED = 4096
-#: The data of streams, and an operator that marks one as content, for ``content``.
+#: The data of streams, and an operator that marks one as content, for ``content`` and ``interpret``.
 STREAM = re.compile(rb"stream\r?\n(.*?)endstream", re.DOTALL)
 CONTENT_OPERATOR = re.compile(rb"(?<![^\s\]\)>])(?:BT|cm|re|Do)\s")
 MAX_CONTENT_SEED = 65536
@@ -59,6 +59,7 @@ def main() -> None:
                 content = zlib.decompress(content)
             if len(content) <= MAX_CONTENT_SEED and CONTENT_OPERATOR.search(content):
                 write("content", content)
+                write("interpret", content)
 
 
 if __name__ == "__main__":

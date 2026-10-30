@@ -37,6 +37,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # `interpret` joins after the adoption of a hayro release after 0.8.0
+        # (#7), whose known panics it finds (#19).
         target: [index, value, save, bridge, content]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
