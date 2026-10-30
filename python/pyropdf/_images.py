@@ -19,9 +19,21 @@ from pyropdf import _core
 from pyropdf._errors import PdfError
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
-from pyropdf._recolor import _MAX_INLINE_PIXELS, _inline_data
+from pyropdf._recolor import (
+    _MAX_FORM_DEPTH,
+    _MAX_FORMS,
+    _MAX_INLINE_PIXELS,
+    _STREAM_KEYS,
+    _inline_data,
+    _repoint_page,
+    _resources,
+    _set_appearance,
+    _sub,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pyropdf._content import Image
     from pyropdf._document import Document
     from pyropdf._page import Page
@@ -297,6 +309,8 @@ _MIN_DPI, _MAX_DPI = 36, 2400
 _DEFAULT_QUALITY = 75
 #: The share of its stored data that a rewrite must save to be kept, so a repeated call leaves a JPEG alone.
 _MIN_SAVING = 0.05
+#: Nesting of a mask's entries that a scratch document copies, as /DecodeParms over /JBIG2Globals.
+_MAX_TRANSFER_DEPTH = 4
 #: Sources above this many pixels are skipped before they are decoded.
 _MAX_SOURCE_PIXELS = 64_000_000
 _POINTS_PER_INCH = 72
@@ -450,18 +464,27 @@ def _family(value: object) -> str:
 
 
 def _mask_reason(stream: Stream, item: Image) -> str | None:
-    """Return why an image's mask cannot become a soft mask of its own size, or ``None`` when it can."""
+    """Return why a rewrite cannot keep an image's mask, or ``None`` when it can."""
     if stream.get("SMaskInData"):
         return "JPEG 2000 data with its own alpha"
+    mask = stream.get("SMask")
+    if isinstance(mask, Stream) and "Matte" in mask:
+        matte = mask["Matte"]
+        if (mask.get("Width"), mask.get("Height")) != (item.width, item.height):
+            return "a soft mask with /Matte of another size"
+        if not isinstance(matte, Array) or len(matte) != item.components:
+            return "a soft mask whose /Matte does not match the image's components"
     for key, what in (("SMask", "soft mask"), ("Mask", "stencil mask")):
         mask = stream.get(key)
-        if not isinstance(mask, Stream):
-            continue
-        if key == "SMask" and "Matte" in mask:
-            return "a soft mask with /Matte"
-        if (mask.get("Width"), mask.get("Height")) != (item.width, item.height):
-            return f"a {what} of another size"
+        if isinstance(mask, Stream) and _other_size(mask, item):
+            width, height = mask.get("Width"), mask.get("Height")
+            if not (isinstance(width, int) and isinstance(height, int) and 0 < width * height <= _MAX_SOURCE_PIXELS):
+                return f"a {what} of another size that a rewrite does not decode"
     return None
+
+
+def _other_size(mask: Stream, item: Image) -> bool:
+    return (mask.get("Width"), mask.get("Height")) != (item.width, item.height)
 
 
 def _classify(stream: Stream, item: Image, selected: dict[str, bool]) -> tuple[str, bool, bool] | str | None:
@@ -641,6 +664,7 @@ def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
         pixmap = pixmap.to_gray()
     painted = _from_pixmap(pixmap)
     if not candidate.samples:
+        # hayro paints a /Matte image's colors un-premultiplied.
         return painted
     if (painted.width, painted.height) != (item.width, item.height):
         msg = f"image object {item.xref} decodes to another size"
@@ -654,17 +678,60 @@ def _source(candidate: _Candidate, stream: Stream) -> _Pixels:
     if len(color) != item.width * item.height * item.components:
         msg = f"image object {item.xref} holds fewer samples than its size needs"
         raise PdfError(msg)
+    mask = stream.get("SMask")
+    if isinstance(mask, Stream) and isinstance(mask.get("Matte"), Array) and painted.alpha is not None:
+        color = _unmatte(color, painted.alpha, mask["Matte"], item.components)
     return _Pixels(item.width, item.height, item.components, color, painted.alpha)
+
+
+def _unmatte(color: bytes, alpha: bytes, matte: Array, components: int) -> bytes:
+    """Return samples premultiplied with a /Matte color as straight ones: c = m + (c' - m) / a (ISO 32000-2 11.6.5.3).
+
+    A pixel whose alpha is 0 keeps its sample, which nothing shows.
+    """
+    mattes = [
+        round(255 * min(1.0, max(0.0, float(value)))) if isinstance(value, (int, float)) else 0 for value in matte
+    ]
+    out = bytearray(color)
+    for channel, value in enumerate(mattes):
+        # One table per alpha, built as alphas appear: at most 256 of 256 entries.
+        tables: dict[int, bytes] = {}
+        for at in range(channel, len(out), components):
+            opacity = alpha[at // components]
+            if opacity in (0, 255):
+                continue
+            table = tables.get(opacity)
+            if table is None:
+                table = bytes(
+                    min(255, max(0, round(value + (sample - value) * 255 / opacity))) for sample in range(256)
+                )
+                tables[opacity] = table
+            out[at] = table[out[at]]
+    return bytes(out)
 
 
 def _rewrite(
     document: Document, xref: int, candidate: _Candidate, size: tuple[int, int], options: _Options
 ) -> int | None:
-    """Re-encode one image at ``size`` and store it when it is smaller enough; return its new stored length."""
+    """Re-encode one image at ``size`` and store it when it is smaller enough; return its new stored length.
+
+    A mask of another size than the image is resampled at its own
+    resolution and stays a stencil ``/Mask`` or a soft mask; one that keeps
+    its pixels stays as stored.
+    """
     item = candidate.image.item
     stream = document.objects[xref]
+    lengths = (candidate.width, candidate.height)
+    masks = [
+        (key, mask, _mask_size(mask, lengths, options))
+        for key in ("SMask", "Mask")
+        if isinstance(mask := stream.get(key), Stream) and _other_size(mask, item)
+    ]
+    kept = {key for key, mask, mask_size in masks if mask_size == (mask["Width"], mask["Height"])}
     before = item.encoded_size + sum(
-        len(mask.read(decode=False)) for key in ("SMask", "Mask") if isinstance(mask := stream.get(key), Stream)
+        len(mask.read(decode=False))
+        for key in ("SMask", "Mask")
+        if isinstance(mask := stream.get(key), Stream) and key not in kept
     )
     limit = int(before * (1 - _MIN_SAVING))
     pixels = _resized(_source(candidate, stream), size)
@@ -672,11 +739,19 @@ def _rewrite(
     quality = _DEFAULT_QUALITY if options.quality is None else options.quality
     data = _encode(pixels, form, quality, limit)
     alpha = None if pixels.alpha is None else zlib.compress(pixels.alpha, 9)
-    if data is None or len(data) + len(alpha or b"") > limit:
+    resampled = [
+        (key, mask_size, _encode_mask(mask, mask_size, options, limit, stencil=key == "Mask"))
+        for key, mask, mask_size in masks
+        if key not in kept
+    ]
+    after = None if data is None else len(data) + len(alpha or b"")
+    for _, _, encoded in resampled:
+        after = None if after is None or encoded is None else after + len(encoded[0])
+    if after is None or after > limit:
         return None
     # Resampled stored samples keep the color space, which stays in place.
     for key in _DATA_KEYS:
-        if key in stream and not (candidate.samples and key == "ColorSpace"):
+        if key in stream and key not in kept and not (candidate.samples and key == "ColorSpace"):
             del stream[key]
     stream.write(data, filter=None)
     entries: dict[str, object] = {
@@ -691,20 +766,114 @@ def _rewrite(
         entries["DecodeParms"] = {"K": -1, "Columns": size[0], "Rows": size[1]}
     stream.update(entries)
     if alpha is not None:
-        mask = {
-            "Type": Name("XObject"),
-            "Subtype": Name("Image"),
-            "Width": size[0],
-            "Height": size[1],
-            "BitsPerComponent": 8,
-            "ColorSpace": Name("DeviceGray"),
-            "Filter": Name("FlateDecode"),
+        stream["SMask"] = _add_mask(document, size, (alpha, "FlateDecode", None), stencil=False)
+    for key, mask_size, encoded in resampled:
+        if encoded is not None:
+            stream[key] = _add_mask(document, mask_size, encoded, stencil=key == "Mask")
+    return after
+
+
+def _mask_size(mask: Stream, lengths: tuple[float, float], options: _Options) -> tuple[int, int]:
+    """Return the pixels that a mask of another size keeps, at the image's largest placement."""
+    return _target_size((mask["Width"], mask["Height"]), lengths, options.threshold, options.target)
+
+
+def _encode_mask(
+    mask: Stream, size: tuple[int, int], options: _Options, limit: int, *, stencil: bool
+) -> tuple[bytes, str, dict[str, object] | None] | None:
+    """Return a mask resampled to ``size``: its data, filter, and parameters, or ``None`` when larger than ``limit``."""
+    pixels = _resized(_mask_pixels(mask, stencil=stencil), size)
+    if not stencil:
+        return zlib.compress(pixels.color, 9), "FlateDecode", None
+    form = "fax" if options.bitonal_format == "fax" else "flate1"
+    data = _encode(pixels, form, 0, limit)
+    if data is None:
+        return None
+    if form == "fax":
+        return data, "CCITTFaxDecode", {"K": -1, "Columns": size[0], "Rows": size[1]}
+    return data, "FlateDecode", None
+
+
+def _add_mask(
+    document: Document,
+    size: tuple[int, int],
+    encoded: tuple[bytes, str, dict[str, object] | None],
+    *,
+    stencil: bool,
+) -> Stream:
+    """Add a mask object: a 1-bit stencil, or an 8-bit DeviceGray soft mask."""
+    data, filter_name, parameters = encoded
+    mask: dict[str, object] = {"Type": Name("XObject"), "Subtype": Name("Image"), "Width": size[0], "Height": size[1]}
+    if stencil:
+        mask.update({"ImageMask": True, "BitsPerComponent": 1})
+    else:
+        mask.update({"BitsPerComponent": 8, "ColorSpace": Name("DeviceGray")})
+    number = document.objects.add_stream(b"", mask, filter=None)
+    added = document.objects[number]
+    added.write(data, filter=None)
+    added["Filter"] = Name(filter_name)
+    if parameters is not None:
+        added["DecodeParms"] = parameters
+    return added
+
+
+def _mask_pixels(mask: Stream, *, stencil: bool) -> _Pixels:
+    """Return a mask's pixels at its own size, black where a stencil paints, as hayro decodes it alone.
+
+    hayro decodes a mask of another size than its image only to paint it,
+    so a scratch document paints the mask, its data copied as stored.
+    """
+    scratch = _new_document()
+    entries = {str(key): _transfer(scratch, value, 0) for key, value in mask.items() if key not in _STREAM_KEYS}
+    entries.setdefault("Subtype", Name("Image"))
+    number = scratch.objects.add_stream(b"", entries, filter=None)
+    copy = scratch.objects[number]
+    copy.write(mask.read(decode=False), filter=None)
+    for key in ("Filter", "DecodeParms"):
+        if key in mask:
+            copy[key] = _transfer(scratch, mask[key], 0)
+    scratch.pages.new((1, 1))
+    page = scratch.pages[0]
+    page.obj["Resources"] = {"XObject": {"M": copy}}
+    page.operations = Operations([Operation("Do", (Name("M"),))])
+    (image,) = page.images()
+    painted = _from_pixmap(image.pixmap())
+    if stencil:
+        size = painted.width * painted.height
+        color = b"\x00" * size if painted.alpha is None else painted.alpha.translate(_INVERT)
+        return _Pixels(painted.width, painted.height, 1, color, None)
+    if painted.components != 1:
+        painted = _from_pixmap(_pixmap(painted.width, painted.height, 3, painted.color).to_gray())
+    return _Pixels(painted.width, painted.height, 1, painted.color, None)
+
+
+def _new_document() -> Document:
+    from pyropdf._document import Document  # noqa: PLC0415 - the document module imports this one.
+
+    return Document()
+
+
+def _transfer(scratch: Document, value: object, depth: int) -> object:
+    """Return ``value`` for the scratch document: its arrays, dictionaries, and streams copied as stored."""
+    if depth > _MAX_TRANSFER_DEPTH:
+        msg = f"a mask's entries nest deeper than {_MAX_TRANSFER_DEPTH}"
+        raise PdfError(msg)
+    if isinstance(value, Stream):
+        entries = {
+            str(key): _transfer(scratch, entry, depth + 1) for key, entry in value.items() if key not in _STREAM_KEYS
         }
-        number = document.objects.add_stream(b"", mask, filter=None)
-        document.objects[number].write(alpha, filter=None)
-        document.objects[number]["Filter"] = Name("FlateDecode")
-        stream["SMask"] = document.objects[number]
-    return len(data) + len(alpha or b"")
+        number = scratch.objects.add_stream(b"", entries, filter=None)
+        copy = scratch.objects[number]
+        copy.write(value.read(decode=False), filter=None)
+        for key in ("Filter", "DecodeParms"):
+            if key in value:
+                copy[key] = _transfer(scratch, value[key], depth + 1)
+        return copy
+    if isinstance(value, Dictionary):
+        return {str(key): _transfer(scratch, entry, depth + 1) for key, entry in value.items()}
+    if isinstance(value, Array):
+        return [_transfer(scratch, entry, depth + 1) for entry in value]
+    return value
 
 
 def _inline_pixels(image: InlineImage, selected: dict[str, bool]) -> tuple[str, _Pixels] | str | None:
@@ -715,6 +884,8 @@ def _inline_pixels(image: InlineImage, selected: dict[str, bool]) -> tuple[str, 
     space = entries.get("CS", entries.get("ColorSpace"))
     names = _filters(entries.get("F", entries.get("Filter")))
     stencil = entries.get("IM", entries.get("ImageMask")) is True
+    if stencil and bits is None:
+        bits = 1
     bitonal = stencil or bits == 1
     lossy = bool(names) and names[-1] in _INLINE_DCT
     kind = "bitonal" if bitonal else "lossy" if lossy else "lossless"
@@ -723,9 +894,8 @@ def _inline_pixels(image: InlineImage, selected: dict[str, bool]) -> tuple[str, 
     if not selected[kind] or not (bitonal or selected["gray" if gray else "color"]):
         return None
     checks = (
-        (stencil, "an inline stencil mask"),
         (
-            components is None or (bitonal and components != 1),
+            not stencil and (components is None or (bitonal and components != 1)),
             f"an inline image in {_family(space) or 'no color space'}",
         ),
         (
@@ -741,6 +911,8 @@ def _inline_pixels(image: InlineImage, selected: dict[str, bool]) -> tuple[str, 
     reason = next((reason for failed, reason in checks if failed), None)
     if reason is not None:
         return reason
+    if stencil:
+        components = 1
     if not isinstance(width, int) or not isinstance(height, int) or components is None:
         return "an inline image of another size"
     pixels = _inline_decode(image, (width, height, components), lossy=lossy, bitonal=bitonal)
@@ -767,8 +939,8 @@ def _inline_decode(image: InlineImage, shape: tuple[int, int, int], *, lossy: bo
     return _Pixels(width, height, components, data, None)
 
 
-def _rewrite_inline(image: InlineImage, matrix: tuple[float, ...], options: _Options, tally: _Tally) -> InlineImage:
-    """Return an inline image rewritten as its placement and the options say, or ``image`` when it stays."""
+def _rewrite_inline(image: InlineImage, lengths: tuple[float, float], options: _Options, tally: _Tally) -> InlineImage:
+    """Return an inline image rewritten as its largest placement and the options say, or ``image`` when it stays."""
     found = _inline_pixels(image, options.selected)
     if found is None:
         return image
@@ -777,10 +949,11 @@ def _rewrite_inline(image: InlineImage, matrix: tuple[float, ...], options: _Opt
         tally.report(found)
         return image
     kind, pixels = found
+    entries = image.dictionary
+    stencil = entries.get("IM", entries.get("ImageMask")) is True
     recolor = options.set_to_gray and pixels.components != 1
     if recolor:
         pixels = _from_pixmap(_pixmap(pixels.width, pixels.height, 3, pixels.color).to_gray())
-    lengths = (math.hypot(matrix[0], matrix[1]), math.hypot(matrix[2], matrix[3]))
     size = _target_size((pixels.width, pixels.height), lengths, options.threshold, options.target)
     if size == (pixels.width, pixels.height) and not recolor and options.quality is None:
         return image
@@ -791,14 +964,12 @@ def _rewrite_inline(image: InlineImage, matrix: tuple[float, ...], options: _Opt
     data = _encode(pixels, form, quality, limit)
     if data is None or len(data) > limit:
         return image
-    entries = image.dictionary
-    dictionary: dict[str, object] = {
-        "W": size[0],
-        "H": size[1],
-        "BPC": 1 if kind == "bitonal" else 8,
-        "CS": Name("G" if pixels.components == 1 else "RGB"),
-        "F": Name({"jpeg": "DCT", "fax": "CCF"}.get(form, "Fl")),
-    }
+    dictionary: dict[str, object] = {"W": size[0], "H": size[1], "BPC": 1 if kind == "bitonal" else 8}
+    if stencil:
+        dictionary["IM"] = True
+    else:
+        dictionary["CS"] = Name("G" if pixels.components == 1 else "RGB")
+    dictionary["F"] = Name({"jpeg": "DCT", "fax": "CCF"}.get(form, "Fl"))
     if form == "fax":
         dictionary["DP"] = {"K": -1, "Columns": size[0], "Rows": size[1]}
     dictionary.update({key: value for key, value in entries.items() if key in ("I", "Interpolate", "Intent")})
@@ -806,36 +977,37 @@ def _rewrite_inline(image: InlineImage, matrix: tuple[float, ...], options: _Opt
     return InlineImage(dictionary, data)
 
 
-def _rewrite_page_inline(page: Page, options: _Options, tally: _Tally) -> int:
+def _lengths(matrix: tuple[float, ...]) -> tuple[float, float]:
+    """Return the lengths, in points, that ``matrix`` gives the unit square's sides."""
+    return math.hypot(matrix[0], matrix[1]), math.hypot(matrix[2], matrix[3])
+
+
+def _rewrite_page_inline(page: Page, options: _Options, tally: _Tally, nested: _Nested) -> int:
     """Rewrite the inline images of a page's own content, which the page then writes as one new stream.
 
-    Return how many inline images the page's own content holds.
+    ``nested`` reads the Form XObjects and appearances that the page draws.
+    Return how many inline images the page paints that a rewrite reaches.
     """
-    found = 0
     operations = page.operations
-    matrix: tuple[float, ...] = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
-    saved: list[tuple[float, ...]] = []
     out: list[Operation | InlineImage] = []
-    changed = False
-    for operation in operations:
-        if isinstance(operation, InlineImage):
-            found += 1
-            image = _rewrite_inline(operation, matrix, options, tally)
-            changed = changed or image is not operation
-            out.append(image)
-            continue
-        if operation.operator == "q":
-            saved.append(matrix)
-        elif operation.operator == "Q" and saved:
-            matrix = saved.pop()
-        elif operation.operator == "cm" and len(operation.operands) == 6:  # noqa: PLR2004 - a matrix.
-            values = operation.operands
-            if all(isinstance(value, (int, float)) and not isinstance(value, bool) for value in values):
-                matrix = _concat(tuple(float(value) for value in values), matrix)
-        out.append(operation)
-    if changed:
+    drawn: dict[str, int] = {}
+    found = 0
+
+    def visit(image: InlineImage, matrix: tuple[float, ...]) -> None:
+        nonlocal found
+        found += 1
+        rewritten = _rewrite_inline(image, _lengths(matrix), options, tally)
+        out[-1] = rewritten
+
+    reached = nested.walk(operations, (_resources(page), drawn), _IDENTITY, 0, (visit, out.append))
+    if any(a is not b for a, b in zip(out, operations, strict=True)):
         page.operations = Operations(out, tail=operations.tail)
-    return found
+    if drawn:
+        nested.pages.append((page, drawn))
+    return found + reached + nested.annotations(page)
+
+
+_IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 
 def _concat(first: tuple[float, ...], second: tuple[float, ...]) -> tuple[float, ...]:
@@ -843,6 +1015,283 @@ def _concat(first: tuple[float, ...], second: tuple[float, ...]) -> tuple[float,
     a, b, c, d, e, f = first
     p, q, r, s, t, u = second
     return (a * p + b * r, a * q + b * s, c * p + d * r, c * q + d * s, e * p + f * r + t, e * q + f * s + u)
+
+
+def _matrix(value: object) -> tuple[float, ...] | None:
+    """Return six numbers as a matrix, or ``None`` for another value."""
+    if not isinstance(value, (Array, tuple, list)) or len(value) != 6:  # noqa: PLR2004 - a matrix.
+        return None
+    if not all(isinstance(number, (int, float)) and not isinstance(number, bool) for number in value):
+        return None
+    return tuple(float(number) for number in value)
+
+
+@dataclass(slots=True)
+class _NestedForm:
+    """A Form XObject or appearance that holds inline images, or draws one that does."""
+
+    stream: Stream
+    operations: Operations
+    resources: Dictionary | None
+    """Its own resources, through which its drawings are named, or ``None`` when it uses its drawer's."""
+    lengths: list[tuple[float, float]]
+    """The longest lengths that the drawings give each of its inline images, in paint order."""
+    drawn: dict[str, int]
+    """The forms that its own resources name and that hold inline images, by name."""
+
+
+class _Nested:
+    """The inline images of the Form XObjects and annotation appearances that the pages draw.
+
+    Every drawing is followed, to find each inline image's largest
+    placement, and each form is rewritten once. A form that changes, or
+    that draws one that changes, becomes a new object that the pages and
+    appearances draw, so whatever else draws the original keeps it.
+    """
+
+    def __init__(self, tally: _Tally) -> None:
+        self.tally = tally
+        self.forms: dict[int, _NestedForm] = {}
+        #: The forms in an order that puts each after the forms it draws.
+        self.order: list[int] = []
+        self.parsed: dict[int, Operations | None] = {}
+        self.active: set[int] = set()
+        self.drawings = 0
+        self.pages: list[tuple[Page, dict[str, int]]] = []
+        self.appearances: list[tuple[Dictionary, str, str | None, int]] = []
+        self.copies: dict[int, Stream] = {}
+        #: The stencil mask images drawn, by object, with their longest lengths.
+        self.stencils: dict[int, tuple[Stream, float, float]] = {}
+
+    def stencil(self, stream: Stream, matrix: tuple[float, ...]) -> None:
+        width, height = _lengths(matrix)
+        _, longest_width, longest_height = self.stencils.get(stream.xref or 0, (stream, 0.0, 0.0))
+        self.stencils[stream.xref or 0] = (stream, max(width, longest_width), max(height, longest_height))
+
+    def walk(
+        self,
+        operations: Operations,
+        scope: tuple[Dictionary | None, dict[str, int]],
+        matrix: tuple[float, ...],
+        depth: int,
+        sinks: tuple[Callable[[InlineImage, tuple[float, ...]], None], Callable[[Operation | InlineImage], None]],
+    ) -> int:
+        """Follow one drawing: report each inline image to ``sinks`` and each form it draws to ``scope``.
+
+        ``scope`` holds the resources that name its drawings and the forms
+        drawn through them that hold inline images. ``sinks`` take each
+        inline image with its matrix, and each operation. Return how many
+        inline images the forms that it draws hold, counted per drawing.
+        """
+        resources, drawn = scope
+        visit, emit = sinks
+        xobjects = _sub(resources, "XObject")
+        saved: list[tuple[float, ...]] = []
+        reached = 0
+        for operation in operations:
+            emit(operation)
+            if isinstance(operation, InlineImage):
+                visit(operation, matrix)
+                continue
+            operator = operation.operator
+            if operator == "q":
+                saved.append(matrix)
+            elif operator == "Q" and saved:
+                matrix = saved.pop()
+            elif operator == "cm":
+                values = _matrix(operation.operands)
+                if values is not None:
+                    matrix = _concat(values, matrix)
+            elif operator == "Do" and xobjects is not None and operation.operands:
+                reached += self.draw(operation.operands[0], xobjects, (resources, drawn), matrix, depth)
+        return reached
+
+    def draw(
+        self,
+        name: object,
+        xobjects: Dictionary,
+        scope: tuple[Dictionary | None, dict[str, int]],
+        matrix: tuple[float, ...],
+        depth: int,
+    ) -> int:
+        """Follow a ``Do``; return how many images that hayro lists as inline it paints."""
+        xobject = xobjects.get(str(name)) if isinstance(name, Name) else None
+        if not isinstance(xobject, Stream):
+            return 0
+        if xobject.get("Subtype") == "Image" and xobject.get("ImageMask") is True:
+            # hayro lists a stencil mask image without its object, as an inline image.
+            self.stencil(xobject, matrix)
+            return 1
+        if xobject.get("Subtype") != "Form":
+            return 0
+        placed = _concat(_matrix(xobject.get("Matrix")) or _IDENTITY, matrix)
+        number, count = self.form(xobject, scope, placed, depth + 1)
+        if number is not None:
+            scope[1][str(name)] = number
+        return count
+
+    def form(
+        self, form: Stream, scope: tuple[Dictionary | None, dict[str, int]], matrix: tuple[float, ...], depth: int
+    ) -> tuple[int | None, int]:
+        """Follow one drawing of ``form``; return its object when it holds inline images, and how many it paints."""
+        number = form.xref or 0
+        if depth > _MAX_FORM_DEPTH:
+            self.tally.report(f"inline images in Form XObjects nested deeper than {_MAX_FORM_DEPTH}")
+            return None, 0
+        if number in self.active:
+            return None, 0
+        if self.drawings >= _MAX_FORMS:
+            self.tally.report(f"inline images past {_MAX_FORMS} drawings of Form XObjects")
+            return None, 0
+        self.drawings += 1
+        operations = self.parse(form, number)
+        if operations is None:
+            return None, 0
+        own = form.get("Resources")
+        own = own if isinstance(own, Dictionary) else None
+        record = self.forms.get(number) or _NestedForm(form, operations, own, [], {})
+        index = 0
+
+        def visit(_: InlineImage, placed: tuple[float, ...]) -> None:
+            nonlocal index
+            lengths = _lengths(placed)
+            if index == len(record.lengths):
+                record.lengths.append(lengths)
+            else:
+                width, height = record.lengths[index]
+                record.lengths[index] = (max(width, lengths[0]), max(height, lengths[1]))
+            index += 1
+
+        # A form without resources of its own draws through its drawer's.
+        inner = (own, record.drawn) if own is not None else scope
+        self.active.add(number)
+        try:
+            reached = self.walk(operations, inner, matrix, depth, (visit, _ignore))
+        finally:
+            self.active.discard(number)
+        if not (record.lengths or record.drawn):
+            return None, reached
+        if number not in self.forms:
+            self.forms[number] = record
+            self.order.append(number)
+        return number, reached + index
+
+    def parse(self, form: Stream, number: int) -> Operations | None:
+        if number not in self.parsed:
+            try:
+                self.parsed[number] = Operations.parse(form.read())
+            except (PdfError, ValueError):
+                self.tally.report(f"object {number}: a Form XObject that cannot be read")
+                self.parsed[number] = None
+        return self.parsed[number]
+
+    def annotations(self, page: Page) -> int:
+        """Follow the normal appearances of a page's annotations; return how many inline images they paint."""
+        annotations = page.obj.get("Annots")
+        reached = 0
+        for annotation in annotations if isinstance(annotations, Array) else ():
+            appearances = annotation.get("AP") if isinstance(annotation, Dictionary) else None
+            entry = appearances.get("N") if isinstance(appearances, Dictionary) else None
+            states = [(None, entry)] if isinstance(entry, Stream) else []
+            if isinstance(entry, Dictionary) and not isinstance(entry, Stream):
+                states = [(str(state), value) for state, value in entry.items() if isinstance(value, Stream)]
+            for state, stream in states:
+                matrix = _appearance_matrix(annotation, stream)
+                if matrix is None:
+                    continue
+                number, count = self.form(stream, (None, {}), matrix, 1)
+                reached += count
+                if number is not None:
+                    self.appearances.append((annotation, "N", state, number))
+        return reached
+
+    def write(self, document: Document, options: _Options) -> None:
+        """Rewrite each stencil mask image, and each form's inline images once; draw the forms that change anew."""
+        if options.selected["bitonal"]:
+            for stream, width, height in self.stencils.values():
+                _rewrite_stencil(stream, (width, height), options, self.tally)
+        for number in self.order:
+            self.copy(document, number, options)
+        for page, drawn in self.pages:
+            repointed = {name: self.copies[number] for name, number in drawn.items() if number in self.copies}
+            if repointed:
+                _repoint_page(page, repointed)
+        for annotation, key, state, number in self.appearances:
+            if number in self.copies:
+                _set_appearance(annotation, key, state, self.copies[number])
+
+    def copy(self, document: Document, number: int, options: _Options) -> None:
+        """Add a copy of a form whose inline images, or whose drawn forms, change."""
+        record = self.forms[number]
+        lengths = iter(record.lengths)
+        out: list[Operation | InlineImage] = []
+        changed = False
+        for operation in record.operations:
+            if isinstance(operation, InlineImage):
+                image = _rewrite_inline(operation, next(lengths), options, self.tally)
+                changed = changed or image is not operation
+                operation = image  # noqa: PLW2901 - the rewritten image.
+            out.append(operation)
+        children = {name: self.copies[child] for name, child in record.drawn.items() if child in self.copies}
+        if not (changed or children):
+            return
+        dictionary = {key: value for key, value in record.stream.items() if key not in _STREAM_KEYS}
+        if children and record.resources is not None:
+            own = dict(record.resources.items())
+            xobjects = own.get("XObject")
+            own["XObject"] = {**(dict(xobjects.items()) if isinstance(xobjects, Dictionary) else {}), **children}
+            dictionary["Resources"] = own
+        data = Operations(out, tail=record.operations.tail).to_bytes()
+        self.copies[number] = document.objects[document.objects.add_stream(data, dictionary)]
+
+
+def _rewrite_stencil(stream: Stream, lengths: tuple[float, float], options: _Options, tally: _Tally) -> None:
+    """Resample a stencil mask image in place as its largest placement and the options say."""
+    tally.considered += 1
+    width, height = stream.get("Width"), stream.get("Height")
+    if not (isinstance(width, int) and isinstance(height, int) and 0 < width * height <= _MAX_SOURCE_PIXELS):
+        tally.report(f"object {stream.xref}: a stencil mask of another size that a rewrite does not decode")
+        return
+    size = _target_size((width, height), lengths, options.threshold, options.target)
+    if size == (width, height) and options.quality is None:
+        return
+    before = len(stream.read(decode=False))
+    limit = int(before * (1 - _MIN_SAVING))
+    encoded = _encode_mask(stream, size, options, limit, stencil=True)
+    if encoded is None or len(encoded[0]) > limit:
+        return
+    data, filter_name, parameters = encoded
+    for key in _DATA_KEYS:
+        if key in stream:
+            del stream[key]
+    stream.write(data, filter=None)
+    stream.update(
+        {"Width": size[0], "Height": size[1], "ImageMask": True, "BitsPerComponent": 1, "Filter": Name(filter_name)}
+    )
+    if parameters is not None:
+        stream["DecodeParms"] = parameters
+    tally.kept(before, len(data))
+
+
+def _ignore(_: object) -> None:
+    pass
+
+
+def _appearance_matrix(annotation: Dictionary, appearance: Stream) -> tuple[float, ...] | None:
+    """Return the matrix that places an appearance's form in its annotation's rectangle (ISO 32000-2 12.5.5)."""
+    rect, box = _matrix([*annotation.get("Rect", ()), 0, 0]), _matrix([*appearance.get("BBox", ()), 0, 0])
+    if rect is None or box is None:
+        return None
+    matrix = _matrix(appearance.get("Matrix")) or _IDENTITY
+    a, b, c, d, e, f = matrix
+    corners = [(x * a + y * c + e, x * b + y * d + f) for x in (box[0], box[2]) for y in (box[1], box[3])]
+    xs, ys = [x for x, _ in corners], [y for _, y in corners]
+    left, right = min(rect[0], rect[2]), max(rect[0], rect[2])
+    bottom, top = min(rect[1], rect[3]), max(rect[1], rect[3])
+    if max(xs) == min(xs) or max(ys) == min(ys):
+        return None
+    sx, sy = (right - left) / (max(xs) - min(xs)), (top - bottom) / (max(ys) - min(ys))
+    return _concat(matrix, (sx, 0.0, 0.0, sy, left - min(xs) * sx, bottom - min(ys) * sy))
 
 
 def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf's output choices
@@ -878,10 +1327,12 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
             if recolor:
                 candidate.gray, candidate.samples = True, False
             tally.kept(item.encoded_size, _rewrite(document, xref, candidate, size, options))
+        nested = _Nested(tally)
         for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
-            nested = count - (_rewrite_page_inline(page, options, tally) if count else 0)
-            if nested > 0:
-                tally.report(f"page {index}: {nested} inline images in Form XObjects or annotation appearances")
+            missed = count - (_rewrite_page_inline(page, options, tally, nested) if count else 0)
+            if missed > 0:
+                tally.report(f"page {index}: {missed} inline images that a rewrite does not reach, as in patterns")
+        nested.write(document, options)
     return ImageRewriteReport(
         tally.considered, tally.rewritten, tally.before, tally.after, tuple(tally.unsupported or ())
     )

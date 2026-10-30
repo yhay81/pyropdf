@@ -2,7 +2,7 @@
 """Measure what doc.rewrite_images() saves on every corpus document that places images.
 
 Run from the repository root: ``uv run python evidence/rewrite-images/measure.py``.
-It prints the Markdown table of ``README.md``: each document's full save
+It prints the Markdown table of ``README.md``: each document's pruned full save
 before and after ``rewrite_images(dpi_threshold=150, dpi_target=100,
 quality=65)``, and how far its pages rendered at the target 100 dpi move:
 the mean and the largest absolute difference of one 8-bit sample.
@@ -32,12 +32,12 @@ def main() -> None:
         doc = pyropdf.open(path.read_bytes())
         if not any(image.item.xref for page in doc.pages for image in page.images(annotations=True)):
             continue
-        before = len(doc.to_bytes())
+        before = len(doc.to_bytes(prune=True))
         pixels = renders(doc)
         start = time.perf_counter()
         report = doc.rewrite_images(dpi_threshold=THRESHOLD, dpi_target=TARGET, quality=QUALITY)
         seconds = time.perf_counter() - start
-        after = len(doc.to_bytes())
+        after = len(doc.to_bytes(prune=True))
         total = largest = count = 0
         for old, new in zip(pixels, renders(doc), strict=True):
             differences = [abs(a - b) for a, b in zip(old, new, strict=True)]

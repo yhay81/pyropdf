@@ -260,23 +260,31 @@ class Document:
         resampled bitonal pixels below half gray become black. A soft mask,
         a stencil ``/Mask`` of the image's size, or a color-key mask
         becomes a new 8-bit soft mask resampled with the image, so a mask
-        that other images share stays as it is.
+        that other images share stays as it is. A mask of another size is
+        resampled at its own resolution by the image's placement and stays
+        a stencil ``/Mask`` (written as the bitonal format says) or a soft
+        mask; one that keeps its pixels stays as stored. A soft mask with
+        ``/Matte`` is un-premultiplied, and stencil mask images
+        (``/ImageMask``) are resampled as bitonal stencils.
 
         DeviceGray and DeviceRGB images are rewritten from the colors that
         hayro paints, with their ``/Decode`` arrays applied. 8-bit
         DeviceCMYK, ICCBased, CalGray, and CalRGB images keep their color
         space: their stored samples are resampled channel by channel, and
-        CMYK is written as Flate in every case. Inline images of a page's
-        own content are rewritten too, by the placement that its ``cm``
-        operators give, and the page's content becomes one new stream.
+        CMYK is written as Flate in every case. Inline images are rewritten
+        too, by the placement that the ``cm`` operators give: those of a
+        page's own content make it one new stream, and a Form XObject or
+        annotation appearance that holds them is rewritten once, at their
+        largest drawing, as a new object that the pages draw, so whatever
+        else draws the original keeps it.
 
         ``lossy``, ``lossless``, ``bitonal``, ``color``, and ``gray`` select
         the kinds of image to rewrite. A selected image that a rewrite would
         not keep stays as it is and is named in
-        :attr:`ImageRewriteReport.unsupported`: stencil masks, soft masks
-        with ``/Matte`` or of another size, CMYK JPEGs, JPEG 2000 outside
-        DeviceGray and DeviceRGB, other bit depths and color spaces, and
-        inline images inside Form XObjects or annotation appearances.
+        :attr:`ImageRewriteReport.unsupported`: soft masks with ``/Matte``
+        of another size, CMYK JPEGs, JPEG 2000 outside DeviceGray and
+        DeviceRGB, other bit depths and color spaces, and inline images
+        that the walk of content does not reach, as in patterns.
 
         ``set_to_gray`` converts the selected color images to DeviceGray,
         and only images, where PyMuPDF's option of the same name converts
