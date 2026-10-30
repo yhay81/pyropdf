@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
 from pyropdf._annotations import Annotations
+from pyropdf._canvas import Canvas
 from pyropdf._content import Content, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Quad, Rect
@@ -344,6 +345,14 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
+
+    def draw(self, *, underlay: bool = False) -> Canvas:
+        """Return a :class:`Canvas` that draws on this page when its ``with`` block ends.
+
+        The drawing is one transaction and one undo step, painted over the
+        page's content or, with ``underlay=True``, beneath it.
+        """
+        return Canvas(self, underlay=underlay)
 
     def flatten(self, *, annotations: bool = True, widgets: bool = True) -> None:
         """Draw this page's annotation and widget appearances into its content and take them off.

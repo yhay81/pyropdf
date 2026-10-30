@@ -97,8 +97,9 @@ mod _core {
     };
     #[pymodule_export]
     use super::pages::{
-        import_pages, new_page, page_boxes, page_count, page_geometry, page_index, page_object,
-        page_objects, set_page_box, set_page_rotation, set_pages,
+        copy_page_resources, import_pages, new_page, page_boxes, page_count, page_geometry,
+        page_index, page_object, page_objects, page_space, set_page_box, set_page_rotation,
+        set_pages,
     };
     #[pymodule_export]
     use super::pixmap::{Pixmap, render_page, render_pages};
