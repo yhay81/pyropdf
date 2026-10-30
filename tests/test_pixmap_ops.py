@@ -221,7 +221,7 @@ def test_jpeg_and_files(tmp_path: Path) -> None:
     path = tmp_path / "image.png"
     path.write_bytes(_png(image))
     assert bytes(Pixmap.open(path)) == bytes(Pixmap.open(str(path))) == bytes(_pixmap("RGB"))
-    with pytest.raises(ValueError, match="neither PNG nor JPEG"):
+    with pytest.raises(ValueError, match="not PNG, JPEG"):
         Pixmap.from_bytes(b"GIF89a")
     with pytest.raises(ValueError, match="not a PNG"):
         Pixmap.from_bytes(b"\x89PNG\r\n\x1a\nbroken")

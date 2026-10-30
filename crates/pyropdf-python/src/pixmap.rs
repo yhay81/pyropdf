@@ -1,5 +1,6 @@
 //! `Pixmap`, pylopdf's immutable raster with the buffer protocol and PNG
 //! and JPEG output (pylopdf rust/src/pixmap.rs at 884af0db and 036be111),
+//! the formats of `codecs` beyond them,
 //! and `page.pixmap` and `doc.render` through the hayro bridge, with the
 //! GIL released while rendering.
 
@@ -23,6 +24,7 @@ use pyropdf_engine::ocr;
 use pyropdf_engine::render::{self, Raster, RasterError};
 use pyropdf_store::value::Reference;
 
+use crate::codecs;
 use crate::document::_Document;
 use crate::errors::{EncryptedDocumentError, LimitError, PdfError, StaleObjectError, store_error};
 use crate::pixel_ops::{self, Area, Layout};
@@ -214,6 +216,19 @@ impl Pixmap {
                     .encode(&self.data, side(self.width)?, side(self.height)?, color)
                     .map_err(|e| e.to_string())
             }
+            Encoding::Pam => {
+                codecs::write_pam(out, self.layout(), &self.data).map_err(|e| e.to_string())
+            }
+            Encoding::Pbm => {
+                codecs::write_pbm(out, self.layout(), &self.data).map_err(|e| e.to_string())
+            }
+            Encoding::Pnm => {
+                codecs::write_pnm(out, self.layout(), &self.data).map_err(|e| e.to_string())
+            }
+            Encoding::Psd => codecs::write_psd(out, self.layout(), &self.data, self.resolution)
+                .map_err(|e| e.to_string()),
+            Encoding::Ps => codecs::write_ps(out, self.layout(), &self.data, self.resolution)
+                .map_err(|e| e.to_string()),
         }
     }
 }
@@ -237,28 +252,68 @@ enum Encoding {
     Png,
     /// JPEG at a quality from 1 through 100.
     Jpeg(u8),
+    Pam,
+    /// PBM, gray thresholded at 128.
+    Pbm,
+    /// PGM for gray or PPM for RGB, as `"pgm"`, `"ppm"`, or `"pnm"` asks.
+    Pnm,
+    Psd,
+    /// PostScript.
+    Ps,
 }
 
+/// The formats that `Encoding::parse` reads.
+const FORMATS: &str = "'png', 'jpeg', 'pam', 'pbm', 'pgm', 'ppm', 'pnm', 'psd', or 'ps'";
+
 impl Encoding {
-    /// Reads `format`, `"png"` or `"jpeg"` at `quality`, for samples with
-    /// or without `alpha`, which JPEG cannot hold.
-    fn parse(format: &str, quality: u8, alpha: bool) -> PyResult<Self> {
-        match format {
-            "png" => Ok(Self::Png),
-            "jpeg" if alpha => Err(PyValueError::new_err(
-                "JPEG has no alpha channel; render without alpha or write PNG",
-            )),
-            "jpeg" => Ok(Self::Jpeg(quality)),
-            _ => Err(PyValueError::new_err(format!(
-                "format must be 'png' or 'jpeg': {format:?}"
-            ))),
+    /// Reads `format` at `quality` for samples in gray or RGB, with or
+    /// without alpha: PNG, PAM, and PSD hold every kind; JPEG, PNM, and
+    /// PostScript hold no alpha; PBM and PGM hold only gray, and PPM only
+    /// RGB.
+    fn parse(format: &str, quality: u8, gray: bool, alpha: bool) -> PyResult<Self> {
+        let encoding = match format {
+            "png" => Self::Png,
+            "jpeg" => Self::Jpeg(quality),
+            "pam" => Self::Pam,
+            "pbm" => Self::Pbm,
+            "pgm" | "ppm" | "pnm" => Self::Pnm,
+            "psd" => Self::Psd,
+            "ps" => Self::Ps,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "format must be {FORMATS}: {format:?}"
+                )));
+            }
+        };
+        let name = format.to_ascii_uppercase();
+        if alpha && !matches!(encoding, Self::Png | Self::Pam | Self::Psd) {
+            return Err(PyValueError::new_err(format!(
+                "{} has no alpha channel; drop alpha or write PNG, PAM, or PSD",
+                encoding.name()
+            )));
         }
+        if !gray && matches!(format, "pbm" | "pgm") {
+            return Err(PyValueError::new_err(format!(
+                "{name} holds gray samples; convert the pixmap to gray or write PPM"
+            )));
+        }
+        if gray && format == "ppm" {
+            return Err(PyValueError::new_err(
+                "PPM holds RGB samples; convert the pixmap to RGB or write PGM",
+            ));
+        }
+        Ok(encoding)
     }
 
     const fn name(self) -> &'static str {
         match self {
             Self::Png => "PNG",
             Self::Jpeg(_) => "JPEG",
+            Self::Pam => "PAM",
+            Self::Pbm => "PBM",
+            Self::Pnm => "PNM",
+            Self::Psd => "PSD",
+            Self::Ps => "PostScript",
         }
     }
 }
@@ -719,9 +774,12 @@ impl Pixmap {
             .transpose()
     }
 
-    /// Decodes PNG or JPEG `data`, any bytes-like object, into a pixmap:
-    /// PNG keeps its alpha and resolution, and JPEG decodes to gray or RGB
-    /// at 96 dpi. At most 64,000,000 pixels.
+    /// Decodes PNG, JPEG, PBM, PGM, PPM (plain or raw), PAM, or
+    /// uncompressed BMP `data`, any bytes-like object, into a pixmap: PNG
+    /// keeps its alpha and resolution, BMP its resolution and bit-field
+    /// alpha, and PAM its alpha; JPEG and the portable anymaps decode at
+    /// 96 dpi. Samples of more than 8 bits scale to 8, and palettes of only
+    /// gray decode to gray. CMYK is refused. At most 64,000,000 pixels.
     #[staticmethod]
     fn from_bytes(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Self> {
         let bytes = PyBuffer::<u8>::get(data)?.to_vec(py)?;
@@ -739,7 +797,7 @@ impl Pixmap {
         })
     }
 
-    /// Reads a PNG or JPEG file into a pixmap, as `from_bytes` decodes it.
+    /// Reads an image file into a pixmap, as `from_bytes` decodes it.
     #[staticmethod]
     fn open(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
         let bytes = py.detach(|| fs::read(&path))?;
@@ -785,8 +843,12 @@ impl Pixmap {
         Ok(image)
     }
 
-    /// Returns the pixels encoded as `format`, `"png"` or `"jpeg"` at
-    /// `quality`, 1 through 100. JPEG has no alpha.
+    /// Returns the pixels encoded as `format` (`"png"`, `"jpeg"` at
+    /// `quality`, 1 through 100, `"pam"`, `"pbm"`, `"pgm"`, `"ppm"`,
+    /// `"pnm"`, `"psd"`, or `"ps"`). PNG, PAM, and PSD keep alpha; the
+    /// others refuse it. PBM and PGM take gray, thresholding PBM at 128;
+    /// PPM takes RGB; PNM writes PGM or PPM. PSD sides end at 30,000
+    /// pixels, and PostScript is one Level 2 page at the resolution.
     ///
     /// `max_size` bounds the output, 64 MiB by default, and refuses the
     /// write that would pass it with `LimitError` code
@@ -799,7 +861,7 @@ impl Pixmap {
         #[pyo3(from_py_with = extract_quality)] quality: u8,
         #[pyo3(from_py_with = extract_max_size)] max_size: Option<usize>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let encoding = Encoding::parse(format, quality, self.alpha)?;
+        let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
         let written = AtomicUsize::new(0);
         let mut out = Bounded::new(&written, max_size);
         let result = py.detach(|| self.encode(&mut out, encoding));
@@ -818,7 +880,7 @@ impl Pixmap {
         Ok(PyBytes::new(py, &out.bytes))
     }
 
-    /// Writes the pixels as `format`, `"png"` or `"jpeg"` at `quality`, or
+    /// Writes the pixels as `format`, as `to_bytes` encodes it, or
     /// else the format that the extension of `path` names, and replaces
     /// `path` atomically after a complete write, keeping an existing file's
     /// permissions and a final symlink. A failed save leaves `path` as it
@@ -835,12 +897,12 @@ impl Pixmap {
             Some(format) => format,
             None => format_of(&path).ok_or_else(|| {
                 PyValueError::new_err(format!(
-                    "cannot tell the image format of {}; pass format='png' or format='jpeg'",
+                    "cannot tell the image format of {}; pass format as {FORMATS}",
                     path.display()
                 ))
             })?,
         };
-        let encoding = Encoding::parse(format, quality, self.alpha)?;
+        let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
         py.detach(|| {
             let error = |e: &dyn std::fmt::Display| {
                 PdfError::new_err(format!(
@@ -975,6 +1037,13 @@ fn format_of(path: &Path) -> Option<&'static str> {
     match extension.as_str() {
         "png" => Some("png"),
         "jpg" | "jpeg" => Some("jpeg"),
+        "pam" => Some("pam"),
+        "pbm" => Some("pbm"),
+        "pgm" => Some("pgm"),
+        "ppm" => Some("ppm"),
+        "pnm" => Some("pnm"),
+        "psd" => Some("psd"),
+        "ps" => Some("ps"),
         _ => None,
     }
 }
@@ -1181,7 +1250,7 @@ pub fn render_pages(
     workers: usize,
     max_size: Option<usize>,
 ) -> PyResult<Vec<Py<PyBytes>>> {
-    let encoding = Encoding::parse(format, quality, alpha)?;
+    let encoding = Encoding::parse(format, quality, gray, alpha)?;
     let (version, index, budget) = crate::pages::index(document)?;
     let indexes = crate::pages::entries(pages, index.len())?;
     let (red, green, blue, opacity) = background;

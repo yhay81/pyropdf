@@ -62,7 +62,7 @@ rendering accuracy need independent comparisons (#430).
 | CMYK raster output | `get_pixmap(colorspace=csCMYK)` | Missing; engine support is tracked separately | #248, #425, #433 |
 | Pixmap conversion and basic operations | invert, gamma, tint, crop, scale, Pillow | Available: `Pixmap.invert`, `gamma`, `tint`, `crop`, `scale`, `to_gray`, `to_rgb`, alpha and Pillow conversion | #398 |
 | Pixmap transforms, inspection and editing | `flip_rotate`, `warp`, `color_count`, `color_topusage`, `pixel`, `set_pixel`, `set_rect` | Available: `Pixmap.rotate`, `flip`, `warp`, `color_count`, `colors`, `top_color`, `pixel`, `with_pixel`, `fill`; edits return new pixmaps | |
-| Pixmap image formats | PNG, JPEG, PAM, PNM family, PS, PSD output; additional input formats | Partial: direct Pixmap input and output support PNG and JPEG; Pillow interop covers some other cases | #431 |
+| Pixmap image formats | PNG, JPEG, PAM, PNM family, PS, PSD output; additional input formats | Partial: Pixmap reads PNG, JPEG, PBM, PGM, PPM, PAM, and uncompressed BMP and writes PNG, JPEG, PAM, PBM, PGM, PPM, PNM, PSD, and PostScript; GIF, TIFF, JPEG 2000, JPEG XR, and run-length BMP input remain | #431, #446 |
 | Rendering speed | MuPDF | Not established for this main. The published 0.1.0 corpus comparison reports 2.03× and 2.34× the time at 72 and 144 dpi respectively, on one machine | #365; [method and limitations](README.md) |
 
 ## Writing, annotations and forms
