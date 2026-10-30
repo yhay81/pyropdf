@@ -67,6 +67,7 @@ nav:
       - Metadata: api/metadata.md
       - Page labels: api/page-labels.md
       - Images: api/images.md
+      - Recoloring: api/recoloring.md
       - Layers: api/layers.md
       - Sanitizing: api/sanitizing.md
       - Fonts: api/fonts.md

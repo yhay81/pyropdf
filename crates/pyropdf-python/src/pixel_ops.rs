@@ -120,6 +120,32 @@ pub fn convert(data: &[u8], layout: Layout, gray: bool) -> Vec<u8> {
     out
 }
 
+/// Returns the colors of the pixels without alpha, in gray, RGB, or CMYK
+/// by `components`. Gray and RGB are as `convert` makes them; CMYK takes
+/// the gray of each pixel into black, the conversion of ISO 32000-2
+/// 10.4.2.3 with full black generation and undercolor removal.
+pub fn device_samples(data: &[u8], layout: Layout, components: usize) -> Vec<u8> {
+    let channels = layout.channels();
+    let mut out = Vec::with_capacity(layout.width as usize * layout.height as usize * components);
+    for pixel in data.chunks_exact(channels) {
+        let rgb = if layout.gray {
+            [pixel[0]; 3]
+        } else {
+            [pixel[0], pixel[1], pixel[2]]
+        };
+        match components {
+            1 => out.push(if layout.gray { pixel[0] } else { luma(rgb) }),
+            3 => out.extend_from_slice(&rgb),
+            _ => {
+                let [c, m, y] = rgb.map(|value| 255 - value);
+                let k = c.min(m).min(y);
+                out.extend_from_slice(&[c - k, m - k, y - k, k]);
+            }
+        }
+    }
+    out
+}
+
 /// Returns the samples with an opaque alpha byte after each pixel.
 pub fn add_alpha(data: &[u8], layout: Layout) -> Vec<u8> {
     let colors = layout.colors();

@@ -104,7 +104,7 @@ mod _core {
         set_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, render_page, render_pages};
+    use super::pixmap::{Pixmap, recolor_samples, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
     #[pymodule_export]

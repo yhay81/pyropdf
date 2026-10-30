@@ -37,6 +37,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Metadata", ("_metadata",)),
     ("Page labels", ("_page_labels",)),
     ("Images", ("_images",)),
+    ("Recoloring", ("_recolor",)),
     ("Layers", ("_layers",)),
     ("Sanitizing", ("_sanitize",)),
     ("Fonts", ("_fonts",)),

@@ -33,10 +33,11 @@ from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
-from pyropdf._pages import Pages, _page_entries
+from pyropdf._pages import Pages, _page_entries, _resolve
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
+from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
 from pyropdf._sanitize import SanitizeReport, sanitize
 from pyropdf._signing import DEFAULT_RESERVE
 from pyropdf._signing import sign as _sign
@@ -269,6 +270,36 @@ class Document:
             selected={"lossy": lossy, "lossless": lossless, "bitonal": bitonal, "color": color, "gray": gray},
             set_to_gray=set_to_gray,
         )
+
+    def recolor(self, target: RecolorTarget, pages: Iterable[int] | None = None) -> RecolorReport:
+        """Convert the colors that ``pages`` paint to ``target``, ``"gray"``, ``"rgb"``, or ``"cmyk"``, as one step.
+
+        Every color operator of each page's content, of the Form XObjects
+        that it draws, and of its annotations' appearances becomes ``g``,
+        ``rg``, or ``k`` (and ``G``, ``RG``, ``K``) in the target. Device,
+        CIE-based gray and RGB, and ICC-based spaces convert by their
+        component count, Indexed through its base, and Separation through
+        its alternate space when its tint transform is exponential, with
+        the conversions of ISO 32000-2 10.4.2: BT.601 luma for gray, and
+        full black generation for CMYK. Image objects and 8-bit inline
+        images convert too: a JPEG to a JPEG at the quality that its
+        quantization tables show, or Flate for CMYK, and others to 8-bit
+        Flate; their masks stay. The color arrays of annotations (``/C``,
+        ``/IC``, and ``/MK``'s ``/BC`` and ``/BG``) convert as well.
+
+        Nothing is edited in place: a Form XObject, appearance, or image
+        that changes becomes a new object, so pages left out keep their
+        colors. Shadings, patterns, Lab, DeviceN, other tint transforms,
+        images whose masks read their samples, and Form XObjects nested
+        deeper than 16 or past 4,096 drawings are left as they are and
+        listed in :attr:`RecolorReport.unconverted`. ``pages`` holds page
+        indexes, negative ones from the end; it defaults to every page.
+        """
+        self._ensure_open()
+        count = len(self.pages)
+        if pages is None:
+            return recolor(self, target, range(count))
+        return recolor(self, target, dict.fromkeys(_resolve(index, count) for index in _page_entries(pages, count)))
 
     @property
     def layers(self) -> Layers:
