@@ -1,0 +1,15 @@
+# The route C prototype of issue #466: text shaped by harfrust and written
+# with pdf-writer, one font resource per document. Not a workspace member.
+[package]
+name = "embedded-text-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+harfrust = "0.15.0"
+read-fonts = "0.46.0"
+pdf-writer = "0.15.0"
+miniz_oxide = "0.8.9"
+
+[workspace]
