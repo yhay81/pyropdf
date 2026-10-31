@@ -646,3 +646,100 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
         kept,
     })
 }
+
+/// The first string ID past the standard strings (5176, appendix A).
+const FIRST_STRING: i32 = 391;
+const CID_COUNT: u16 = 1234;
+const DEFAULT_WIDTH: u16 = 20;
+
+/// Appends a DICT entry of `op` with `operands`, each in the five-byte
+/// integer form, so that an offset's length does not depend on its value.
+fn push_entry(out: &mut Vec<u8>, op: u16, operands: &[i32]) {
+    for operand in operands {
+        out.push(29);
+        out.extend_from_slice(&operand.to_be_bytes());
+    }
+    if op >= 1200 {
+        out.extend_from_slice(&[12, u8::try_from(op - 1200).unwrap_or(0)]);
+    } else {
+        out.push(u8::try_from(op).unwrap_or(0));
+    }
+}
+
+/// Writes a CID-keyed CFF named `name` whose glyphs are `charstrings`, in
+/// the order of `cids`, their CIDs (5176): one Font DICT, no
+/// subroutines, and a Private DICT whose default width is zero, since the
+/// PDF's `W` array gives the widths.
+pub(super) fn cid_keyed(name: &str, charstrings: &[Vec<u8>], cids: &[u16]) -> Option<Vec<u8>> {
+    if charstrings.len() != cids.len() || cids.first() != Some(&0) {
+        return None;
+    }
+    let glyphs = u16::try_from(cids.len()).ok()?;
+    let cid_count = i32::from(*cids.iter().max()?) + 1;
+    let private: Vec<u8> = {
+        let mut out = Vec::new();
+        push_entry(&mut out, DEFAULT_WIDTH, &[0]);
+        out
+    };
+    let top = |charset: i32, fd_select: i32, charstrings: i32, fd_array: i32| {
+        let mut out = Vec::new();
+        push_entry(&mut out, ROS, &[FIRST_STRING, FIRST_STRING + 1, 0]);
+        push_entry(&mut out, CID_COUNT, &[cid_count]);
+        push_entry(&mut out, CHARSET, &[charset]);
+        push_entry(&mut out, FD_SELECT, &[fd_select]);
+        push_entry(&mut out, CHARSTRINGS, &[charstrings]);
+        push_entry(&mut out, FD_ARRAY, &[fd_array]);
+        out
+    };
+    let mut charset = vec![0u8];
+    charset.try_reserve(2 * cids.len()).ok()?;
+    for cid in &cids[1..] {
+        charset.extend_from_slice(&cid.to_be_bytes());
+    }
+    let mut fd_select = vec![3, 0, 1, 0, 0, 0];
+    fd_select.extend_from_slice(&glyphs.to_be_bytes());
+    let items: Vec<&[u8]> = charstrings.iter().map(Vec::as_slice).collect();
+    let charstrings = write_index(&items)?;
+
+    let header = [1, 0, 4, 4];
+    let names = write_index(&[name.as_bytes()])?;
+    let strings = write_index(&[b"Adobe", b"Identity"])?;
+    let global = write_index(&[])?;
+    let top_len = write_index(&[&top(0, 0, 0, 0)])?.len();
+    let charset_at = header.len() + names.len() + top_len + strings.len() + global.len();
+    let fd_select_at = charset_at + charset.len();
+    let charstrings_at = fd_select_at + fd_select.len();
+    let fd_array_at = charstrings_at + charstrings.len();
+    let font_dict = |private_at: i32| {
+        let mut out = Vec::new();
+        push_entry(
+            &mut out,
+            PRIVATE,
+            &[i32::try_from(private.len()).unwrap_or(0), private_at],
+        );
+        out
+    };
+    let fd_array_len = write_index(&[&font_dict(0)])?.len();
+    let private_at = i32::try_from(fd_array_at + fd_array_len).ok()?;
+    let at = |offset: usize| i32::try_from(offset).ok();
+
+    let mut out = Vec::new();
+    out.try_reserve(usize::try_from(private_at).ok()? + private.len())
+        .ok()?;
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&names);
+    out.extend_from_slice(&write_index(&[&top(
+        at(charset_at)?,
+        at(fd_select_at)?,
+        at(charstrings_at)?,
+        at(fd_array_at)?,
+    )])?);
+    out.extend_from_slice(&strings);
+    out.extend_from_slice(&global);
+    out.extend_from_slice(&charset);
+    out.extend_from_slice(&fd_select);
+    out.extend_from_slice(&charstrings);
+    out.extend_from_slice(&write_index(&[&font_dict(private_at)])?);
+    out.extend_from_slice(&private);
+    Some(out)
+}

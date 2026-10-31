@@ -1,5 +1,5 @@
 # ruff: noqa: INP001, T201 - a script that prints its table.
-"""Stamp one embedded face on 100 pages with pyropdf's canvas (issue #481).
+"""Stamp one embedded face on 100 pages with pyropdf's canvas (issues #481, #482).
 
 Usage: uv run python evidence/font-subsets/stamp.py HEBREW LATIN JAPANESE
 
@@ -7,7 +7,9 @@ The faces are those of evidence/embedded-text: pylopdf-fonts-he's
 NotoSansHebrew-Variable.ttf, NotoSans-Regular.ttf, and NotoSansJP-Regular.otf.
 Fonts are not committed. Each page is one ``page.draw()``. The script counts
 the font programs and Type0 fonts of the saved file, checks every page's
-text, and records the sizes before subsetting, which is issue #482.
+text, and records the saved sizes, which the save's subsetting (#482)
+decides: by default, with ``prune=True, dedupe=True`` as krilla's baseline saved, and
+compressed with object streams. It also records the saved program.
 """
 
 import json
@@ -34,18 +36,21 @@ def texts(face: str, *, varying: bool) -> list[str]:
     return [letters[i % len(letters)] + letters[(i * 7) % len(letters)] for i in range(PAGES)]
 
 
-def counts(document: pyropdf.Document) -> tuple[int, int]:
-    """Count the font programs and the Type0 fonts."""
-    programs = fonts = 0
+def counts(document: pyropdf.Document) -> tuple[int, int, int]:
+    """Count the font programs and the Type0 fonts, and sum the programs' bytes."""
+    programs = fonts = size = 0
     for xref in document.objects:
         value = document.objects[xref]
         if not isinstance(value, pyropdf.Dictionary):
             continue
-        if any(key in value for key in ("FontFile", "FontFile2", "FontFile3")):
-            programs += 1
+        for key in ("FontFile", "FontFile2", "FontFile3"):
+            program = value.get(key)
+            if isinstance(program, pyropdf.Stream):
+                programs += 1
+                size += len(program.read())
         if value.get("Subtype") == "Type0":
             fonts += 1
-    return programs, fonts
+    return programs, fonts, size
 
 
 def run(face: str, path: str, *, varying: bool) -> dict[str, object]:
@@ -61,7 +66,9 @@ def run(face: str, path: str, *, varying: bool) -> dict[str, object]:
     drawn = time.perf_counter() - started
     data = document.to_bytes()
     reopened = pyropdf.open(data)
-    programs, fonts = counts(reopened)
+    deduped = document.to_bytes(prune=True, dedupe=True)
+    compact = document.to_bytes(prune=True, dedupe=True, compress=True, object_streams=True)
+    programs, fonts, saved_program = counts(reopened)
     text_ok = all(page.text().strip() == text for page, text in zip(reopened.pages, page_texts, strict=True))
     return {
         "face": face,
@@ -71,7 +78,10 @@ def run(face: str, path: str, *, varying: bool) -> dict[str, object]:
         "programs": programs,
         "type0_fonts": fonts,
         "saved_bytes": len(data),
+        "saved_dedupe_bytes": len(deduped),
+        "saved_compressed_bytes": len(compact),
         "program_bytes": len(font.program() or b""),
+        "saved_program_bytes": saved_program,
         "text_ok": text_ok,
     }
 
@@ -84,12 +94,17 @@ def main() -> None:
         for varying in (False, True)
     ]
     (HERE / "results.json").write_text(json.dumps(results, indent=1, ensure_ascii=False) + "\n")
-    print("| Face | Text | Programs | Type0 fonts | Saved KiB | Program KiB | Draw s | Text |")
-    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+    print(
+        "| Face | Text | Programs | Type0 fonts | Saved KiB | dedupe=True KiB | Compressed KiB "
+        "| Face KiB | Saved program KiB | Draw s | Text |"
+    )
+    print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
     for row in results:
+        sizes = [row[key] for key in ("saved_bytes", "saved_dedupe_bytes", "saved_compressed_bytes", "program_bytes")]
         print(
             f"| {row['face']} | {'varying' if row['varying'] else 'same'} | {row['programs']} | "
-            f"{row['type0_fonts']} | {row['saved_bytes'] / 1024:.1f} | {row['program_bytes'] / 1024:.1f} | "
+            f"{row['type0_fonts']} | {' | '.join(f'{size / 1024:.1f}' for size in sizes)} | "
+            f"{row['saved_program_bytes'] / 1024:.2f} | "
             f"{row['draw_seconds']:.3f} | {'ok' if row['text_ok'] else 'WRONG'} |"
         )
 

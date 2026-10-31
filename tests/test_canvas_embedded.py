@@ -5,11 +5,14 @@ and ``tests/test_font_objects.py`` (the Type0 case), with the subset faces
 of ``crates/pyropdf-engine/src/fonts/testdata``. Intended differences: the
 texts fit the subset faces; pyropdf writes one Type0 font per face per
 document instead of one per drawing; and the program stays whole until
-subsetting at save (#482).
+subsetting at save (#482), which compacts it to the drawn glyphs.
 """
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -147,7 +150,10 @@ def test_the_font_is_a_type0_font_with_identity_h(hebrew: pyropdf.Font) -> None:
     assert (font.subtype, font.encoding, font.program) == ("Type0", "Identity-H", "ttf")
     program = document.font_program(font)
     assert program is not None
-    assert program.data == hebrew.program()
+    # The save subsets the program to the drawn glyphs and tags its name.
+    assert len(program.data) < len(hebrew.program() or b"")
+    assert font.subset
+    assert font.base_font == f"{font.base_font[:6]}+{hebrew._font.postscript_name}"  # noqa: SLF001
 
 
 def test_one_face_on_100_pages_embeds_one_program(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:
@@ -248,3 +254,67 @@ def test_hayro_renders_the_glyphs(hebrew: pyropdf.Font) -> None:
     with page.draw() as canvas:
         canvas.text("שלום", (20, 40), font=hebrew, size=24)
     assert page.pixmap(dpi=72).color_count((20, 15, 90, 45)) > 1
+
+
+def _ink_box(gray: bytes, width: int) -> tuple[int, int, int, int]:
+    """Return the box of the samples darker than mid-gray, in pixels."""
+    dark = [at for at, sample in enumerate(gray) if sample < 128]
+    xs = [at % width for at in dark]
+    ys = [at // width for at in dark]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _poppler_gray(data: bytes) -> tuple[bytes, int]:
+    """Return poppler's 72 dpi gray render of the first page, and its width."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "page.pdf"
+        path.write_bytes(data)
+        pgm = subprocess.run(  # noqa: S603 - a fixed tool on a file of the test's own.
+            [shutil.which("pdftoppm") or "pdftoppm", "-gray", "-r", "72", "-singlefile", str(path)],
+            check=True,
+            capture_output=True,
+        ).stdout
+    # A binary PGM: "P5", the width and height, the maximum, then the samples.
+    header = pgm.split(maxsplit=4)
+    width, height = int(header[1]), int(header[2])
+    return pgm[len(pgm) - width * height :], width
+
+
+def test_a_non_identity_cid_keyed_cff_draws_the_same_before_and_after_a_save(japanese: pyropdf.Font) -> None:
+    # The fixture's CFF keeps the source's CIDs, which are not its glyph IDs;
+    # loading makes them the identity, and the save's compacted program maps
+    # its new glyphs back to those CIDs through its charset.
+    document, page = _new_page(300, 120)
+    with page.draw() as canvas:
+        canvas.text("日本語、かな。", (20, 40), font=japanese, size=24)
+    before = bytes(page.pixmap(dpi=72))
+    first = document.to_bytes()
+
+    saved = pyropdf.open(first)
+    (font,) = saved.pages[0].fonts()
+    assert font.program == "cff"
+    assert saved.pages[0].text().strip() == "日本語、かな。"
+    assert bytes(saved.pages[0].pixmap(dpi=72)) == before
+
+    with page.draw() as canvas:
+        canvas.text("AVA 123", (20, 90), font=japanese, size=24)
+    again = pyropdf.open(document.to_bytes())
+    assert again.pages[0].text().split() == ["日本語、かな。", "AVA", "123"]
+    assert bytes(again.pages[0].pixmap(dpi=72)) == bytes(page.pixmap(dpi=72))
+    assert bytes(pyropdf.open(first).pages[0].pixmap(dpi=72)) == before
+
+
+@pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
+@pytest.mark.parametrize(("font", "text"), [("japanese", "日本語、かな。"), ("hebrew", "שָׁלוֹם עולם")])
+def test_poppler_draws_the_saved_subset_where_hayro_does(font: str, text: str, request: pytest.FixtureRequest) -> None:
+    document, page = _new_page(300, 80)
+    with page.draw() as canvas:
+        canvas.text(text, (20, 40), font=request.getfixturevalue(font), size=24)
+    data = document.to_bytes()
+
+    poppler, width = _poppler_gray(data)
+    hayro = pyropdf.open(data).pages[0].pixmap(dpi=72).to_gray()
+    assert hayro.width == width
+    poppler_box = _ink_box(poppler, width)
+    hayro_box = _ink_box(bytes(hayro), width)
+    assert all(abs(a - b) <= 2 for a, b in zip(poppler_box, hayro_box, strict=True)), (poppler_box, hayro_box)

@@ -1,12 +1,16 @@
 //! Subsetting embedded font programs (ISO 32000-2 9.9): a subset keeps
 //! every glyph ID and empties the outlines of the glyphs that no page
 //! draws, so the content strings, encodings, `cmap`, CIDToGIDMap, widths,
-//! and ToUnicode that address the font stay valid unchanged.
+//! and ToUnicode that address the font stay valid unchanged. The faces
+//! that pyropdf embeds itself are compacted at save instead ([`compact`],
+//! [`settle`]).
 
 use std::collections::BTreeSet;
 
 mod cff;
+pub mod compact;
 pub mod embed;
+pub mod settle;
 mod sfnt;
 pub mod shape;
 #[cfg(test)]
