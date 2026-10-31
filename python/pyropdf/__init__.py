@@ -31,7 +31,7 @@ from pyropdf._annotations import (
     Underline,
 )
 from pyropdf._attachments import Attachment, Attachments
-from pyropdf._canvas import Canvas, PathBuilder
+from pyropdf._canvas import Canvas, PathBuilder, TextFit
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._check import StructuralDefect, StructuralReport
 from pyropdf._chunks import Chunk, Element
@@ -82,7 +82,7 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
-from pyropdf._fonts import FontInfo, FontProgram, SubsetFont
+from pyropdf._fonts import Font, FontInfo, FontProgram, StandardFontName, SubsetFont
 from pyropdf._form import (
     CheckBox,
     ComboBox,
@@ -209,6 +209,7 @@ __all__ = [
     "FieldSpecification",
     "FieldType",
     "FillRule",
+    "Font",
     "FontInfo",
     "FontProgram",
     "FontRef",
@@ -306,6 +307,7 @@ __all__ = [
     "StaleObjectError",
     "StalePageError",
     "StampIcon",
+    "StandardFontName",
     "StoredImage",
     "Stream",
     "StrikeOut",
@@ -318,6 +320,7 @@ __all__ = [
     "TableDiagnostics",
     "Target",
     "TextField",
+    "TextFit",
     "TextRenderMode",
     "TextRun",
     "TilingPattern",

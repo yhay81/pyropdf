@@ -233,10 +233,18 @@ pub fn layout<'t>(
     })
 }
 
-/// Appends a line, or refuses it as the line after [`MAX_LINES`].
+/// Appends a line, or refuses it as the line after the budget's
+/// `text_line_count`, [`MAX_LINES`] unless the caller lifts it.
 fn push<'t>(lines: &mut BudgetVec<'_, Line<'t>>, line: Line<'t>) -> Result<(), LayoutError> {
-    if lines.len() >= MAX_LINES {
-        return Err(LayoutError::Lines);
+    let count = u64::try_from(lines.len())
+        .unwrap_or(u64::MAX)
+        .saturating_add(1);
+    match lines.budget().check(LimitCode::TextLineCount, count) {
+        Err(refusal) if refusal.code() == LimitCode::TextLineCount => {
+            return Err(LayoutError::Lines);
+        }
+        Err(refusal) => return Err(refusal.into()),
+        Ok(()) => {}
     }
     Ok(lines.try_push(line)?)
 }
