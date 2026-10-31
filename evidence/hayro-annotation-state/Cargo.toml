@@ -1,0 +1,16 @@
+# The reproduction behind issue #448: hayro alone, without pyropdf, renders the
+# annotation appearance of a page whose content ends with an unclosed `q`. The
+# empty table below makes this directory a workspace of its own, so it is no
+# member of the repository's workspace and the root Cargo.toml and Cargo.lock
+# stay unchanged.
+[workspace]
+
+[package]
+name = "hayro-annotation-state"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+hayro = "0.8.0"
