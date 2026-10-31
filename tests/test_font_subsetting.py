@@ -14,11 +14,14 @@ save (``tests/test_canvas_embedded.py``). The cases that
 from __future__ import annotations
 
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import pytest
 from corpus import ASSETS
 
 import pyropdf
+from pyropdf import _fonts
 
 # In mhlw-doc.pdf one full YuMincho program (object 152, 733,908 bytes)
 # serves a Type0 font (object 5, `/F1`) and a simple TrueType font (object 12,
@@ -171,3 +174,73 @@ def test_content_decode_limit_refuses_instead_of_subsetting() -> None:
         doc.subset_fonts()
     assert error.value.code == "page_content_size"
     assert doc.objects[PROGRAM].read() == source.objects[PROGRAM].read()
+
+
+@pytest.mark.filterwarnings("ignore::pyropdf.PyropdfWarning")
+def test_undecodable_appearance_inherits_page_resources() -> None:
+    doc = _exclusive_program()
+    broken = doc.objects.add_stream(
+        b"BT /F1 12 Tf <1000> Tj ET",
+        {"Type": pyropdf.Name("XObject"), "Subtype": pyropdf.Name("Form"), "BBox": [0, 0, 10, 10]},
+        filter=None,
+    )
+    doc.objects[broken]["Filter"] = pyropdf.Name("JBIG2Decode")
+    page = doc.pages[0].obj
+    page["Annots"] = [
+        {
+            "Type": pyropdf.Name("Annot"),
+            "Subtype": pyropdf.Name("Stamp"),
+            "Rect": [0, 0, 10, 10],
+            "AP": {"N": doc.objects[broken]},
+        }
+    ]
+    before = hashlib.sha256(doc.objects[PROGRAM].read()).digest()
+
+    doc.subset_fonts()
+
+    assert hashlib.sha256(doc.objects[PROGRAM].read()).digest() == before
+
+
+@pytest.mark.filterwarnings("ignore::pyropdf.PyropdfWarning")
+def test_subset_font_scan_and_write_exclude_concurrent_edits(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = _exclusive_program()
+    scanned, release, writer_started, writer_entered = (Event() for _ in range(4))
+    original = _fonts._glyphs  # noqa: SLF001 - pause collection to exercise the writer lock.
+
+    def paused_glyphs(document: pyropdf.Document, fonts: list[pyropdf.Dictionary]) -> list[list[int]]:
+        result = original(document, fonts)
+        scanned.set()
+        if not release.wait(30):
+            msg = "the concurrent writer was not released"
+            raise TimeoutError(msg)
+        return result
+
+    def writer() -> None:
+        writer_started.set()
+        with doc.transaction("concurrent edit"):
+            writer_entered.set()
+            doc.pages[0].obj["Rotate"] = 90
+
+    monkeypatch.setattr(_fonts, "_glyphs", paused_glyphs)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        subset = pool.submit(doc.subset_fonts)
+        try:
+            assert scanned.wait(30)
+            other = pool.submit(writer)
+            assert writer_started.wait(30)
+            assert not writer_entered.wait(1), "a concurrent edit entered before glyph collection committed"
+        finally:
+            release.set()
+        subset.result(timeout=60)
+        other.result(timeout=60)
+    assert writer_entered.is_set()
+    assert doc.pages[0].obj["Rotate"] == 90
+
+
+def test_subset_fonts_rolls_back_temporary_optional_content_edits() -> None:
+    doc = _exclusive_program()
+    doc.catalog["OCProperties"] = {"D": {"BaseState": pyropdf.Name("OFF")}}
+
+    doc.subset_fonts()
+
+    assert doc.catalog["OCProperties"]["D"]["BaseState"] == "OFF"

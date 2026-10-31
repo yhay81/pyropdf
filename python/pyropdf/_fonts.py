@@ -448,11 +448,11 @@ def _kept_glyphs(programs: dict[int, _Program], used: Iterator[list[int]]) -> di
 
 def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     """Subset each embedded program to the glyphs drawn, in one transaction, and report what changed."""
-    programs = _programs(document)
-    fonts = [font for program in programs.values() for font in program.fonts]
-    keep = _kept_glyphs(programs, iter(_glyphs(document, fonts)))
     report: list[SubsetFont] = []
     with document.transaction("subset fonts"):
+        programs = _programs(document)
+        fonts = [font for program in programs.values() for font in program.fonts]
+        keep = _kept_glyphs(programs, iter(_glyphs(document, fonts)))
         for xref, program in programs.items():
             if xref not in keep:
                 continue
