@@ -13,6 +13,7 @@ save (``tests/test_canvas_embedded.py``). The cases that
 
 from __future__ import annotations
 
+import hashlib
 import io
 
 import pytest
@@ -146,11 +147,13 @@ def test_a_stream_that_does_not_decode_keeps_its_fonts_whole() -> None:
     doc.objects[broken]["Filter"] = pyropdf.Name("JBIG2Decode")
     doc.pages[0].obj["Resources"]["XObject"] = {"Broken": doc.objects[broken]}
     _add_text_stream(doc, b"q /F1 12 Tf /Broken Do Q")
-    before = doc.objects[PROGRAM].read()
+    before = hashlib.sha256(doc.objects[PROGRAM].read()).hexdigest()
 
     doc.subset_fonts()
 
-    assert doc.objects[PROGRAM].read() == before
+    # Digests, not the program's bytes: pytest diffs two unequal byte
+    # strings of 733,908 bytes for minutes before it reports the failure.
+    assert hashlib.sha256(doc.objects[PROGRAM].read()).hexdigest() == before
 
 
 def test_an_explicit_cid_to_gid_map_keeps_its_glyph_ids() -> None:
