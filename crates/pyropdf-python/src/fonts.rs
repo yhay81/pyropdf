@@ -27,7 +27,7 @@ pub fn used_glyphs(
             .bridge
             .get(&version, &index, &budget)
             .map_err(|e| bridge_error(&e))?;
-        extract::used_glyphs(&bridged, &fonts, &budget).map_err(|e| match e {
+        extract::used_glyphs(&bridged, &version, &index, &fonts, &budget).map_err(|e| match e {
             Error::Limit(refusal) => limit_error(&refusal),
             Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
         })

@@ -9,6 +9,10 @@ use hayro::hayro_interpret::hayro_syntax::object::{Dict, ObjectIdentifier};
 use hayro::hayro_interpret::{CacheKey, DrawMode, InterpreterCache, InterpreterSettings};
 use hayro::kurbo::{Affine, BezPath, Rect};
 use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::BudgetVec;
+use pyropdf_store::pages::PageIndex;
+use pyropdf_store::value::Value;
+use pyropdf_store::version::Version;
 
 use super::Error;
 use super::model::{self, ContentSink, GlyphStyle, ItemKinds};
@@ -45,6 +49,8 @@ impl ContentSink for Uses {
 /// `budget`, as text extraction does.
 pub fn used_glyphs(
     bridged: &Bridged,
+    version: &Version,
+    pages: &PageIndex,
     fonts: &[(u32, u16)],
     budget: &Budget,
 ) -> Result<Vec<Vec<u32>>, Error> {
@@ -57,7 +63,26 @@ pub fn used_glyphs(
     let mut uses = Uses {
         glyphs: HashMap::new(),
     };
-    for page in pdf.pages().iter() {
+    let mut protected = BudgetVec::new(budget);
+    let mut targets = BudgetVec::new(budget);
+    for (index, &(number, generation)) in fonts.iter().enumerate() {
+        protected.try_push(false)?;
+        targets.try_push((number, generation, index))?;
+    }
+    targets.sort_unstable();
+    for (index, page) in pdf.pages().iter().enumerate() {
+        // A missing/unreadable font or XObject dictionary in the inherited
+        // page resources hides the fonts it could name. Keep all programs in
+        // that case; empty valid dictionaries are also conservatively kept.
+        let unknown = match pages.get(index).and_then(|page| page.resources()) {
+            Some(Value::Dict(dict)) => {
+                (dict.get("Font").is_some() && page.resources().fonts.is_empty())
+                    || (dict.get("XObject").is_some() && page.resources().x_objects.is_empty())
+            }
+            None => false,
+            Some(_) => true,
+        };
+        super::font_guard::protect(page, version, &targets, &mut protected, unknown, budget)?;
         let (_, sink) = model::collect_page_content(
             pdf,
             page,
@@ -73,7 +98,11 @@ pub fn used_glyphs(
     let xref = pdf.xref();
     Ok(fonts
         .iter()
-        .map(|&(number, generation)| {
+        .enumerate()
+        .map(|(index, &(number, generation))| {
+            if protected[index] {
+                return vec![super::font_guard::KEEP_WHOLE];
+            }
             let id = ObjectIdentifier::new(
                 i32::try_from(number).unwrap_or(i32::MAX),
                 i32::from(generation),
