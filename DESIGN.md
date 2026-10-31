@@ -372,16 +372,18 @@ its own character, or to its whole cluster when the shaper merged
 characters into it; a glyph that the CMap already maps to other text is
 drawn inside a marked-content sequence with `/ActualText`.
 
-Until a save, a face in use is a provisional object with its complete
-program, so rendering and extraction see the right glyphs. The save subsets
-it: it keeps the glyphs that the document draws and only the tables that
+Until a save, a face in use is a provisional object with all its glyphs, so
+rendering and extraction see the right glyphs. For a CID-keyed CFF program,
+the provisional charset maps each CID to the glyph with that original glyph
+ID, even if the source charset did not. The save subsets the program: it
+keeps the glyphs that the document draws and only the tables that
 ISO 32000-2 section 9.9 reads from an embedded program, renumbers the kept
 glyphs, and maps the CIDs that content uses to them through a `CIDToGIDMap`
 for a TrueType program or through the charset of a CID-keyed CFF program.
 Content codes therefore stay the face's glyph IDs: content written earlier
-needs no rewrite, and a drawing after a save restores the complete program
-until the next save. Stamping one face on 100 pages embeds one program
-(`evidence/embedded-text`).
+needs no rewrite, and a drawing after a save restores the provisional program
+with all its glyphs until the next save. Stamping one face on 100 pages embeds
+one program (`evidence/embedded-text`).
 
 Dependent structures are settled rather than rebuilt by every call. A
 transaction marks what its writes make stale: appearance streams, outline
