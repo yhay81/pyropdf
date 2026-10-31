@@ -50,6 +50,7 @@ _CFF = frozenset({"Type1C", "CIDFontType0C"})
 _FONT_SUBTYPES = frozenset({"Type0", "Type1", "MMType1", "Type3", "TrueType"})
 #: A subset tag: six uppercase letters and a plus sign (ISO 32000-2 9.9.2).
 _TAG = re.compile(r"[A-Z]{6}\+")
+_UNKNOWN_GLYPHS = 0xFFFFFFFF
 #: Form XObjects of appearance resources that a walk visits.
 _MAX_APPEARANCE_FORMS = 4096
 #: Nesting of direct values that the walk for direct font dictionaries follows.
@@ -435,15 +436,29 @@ def _rename(dictionary: Dictionary, key: str, tag: str) -> None:
         dictionary[key] = Name(tag + name)
 
 
+def _kept_glyphs(programs: dict[int, _Program], used: Iterator[list[int]]) -> dict[int, list[int]]:
+    """Keep shared programs whole if any font's glyph use is unknown."""
+    keep: dict[int, list[int]] = {}
+    for xref, program in programs.items():
+        glyphs = [next(used) for _ in program.fonts]
+        # The core reports an undecodable content stream with a value outside
+        # the font's 16-bit glyph ID range. Keep every shared program whole.
+        if any(_UNKNOWN_GLYPHS in items for items in glyphs):
+            continue
+        keep[xref] = sorted({glyph for items in glyphs for glyph in items})
+    return keep
+
+
 def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     """Subset each embedded program to the glyphs drawn, in one transaction, and report what changed."""
-    programs = _programs(document)
-    fonts = [font for program in programs.values() for font in program.fonts]
-    used = iter(_glyphs(document, fonts))
-    keep = {xref: sorted({glyph for _ in program.fonts for glyph in next(used)}) for xref, program in programs.items()}
     report: list[SubsetFont] = []
     with document.transaction("subset fonts"):
+        programs = _programs(document)
+        fonts = [font for program in programs.values() for font in program.fonts]
+        keep = _kept_glyphs(programs, iter(_glyphs(document, fonts)))
         for xref, program in programs.items():
+            if xref not in keep:
+                continue
             data = program.stream.read()
             subset = _core.subset_font_program(data, program.format, keep[xref])
             if subset is None or len(subset[0]) >= len(data):

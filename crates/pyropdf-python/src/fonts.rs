@@ -29,7 +29,7 @@ pub fn used_glyphs(
             .bridge
             .get(&version, &index, &budget)
             .map_err(|e| bridge_error(&e))?;
-        extract::used_glyphs(&bridged, &fonts, &budget).map_err(|e| match e {
+        extract::used_glyphs(&bridged, &version, &index, &fonts, &budget).map_err(|e| match e {
             Error::Limit(refusal) => limit_error(&refusal),
             Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
         })
@@ -56,6 +56,11 @@ pub fn subset_font_program<'py>(
             )));
         }
     };
+    // An unknown glyph use means the program must stay whole, even when a
+    // caller invokes this internal helper directly instead of subset_fonts.
+    if keep.contains(&u32::MAX) {
+        return Ok(None);
+    }
     let subset = py.detach(|| fonts::subset(data, format, &keep));
     Ok(subset.map(|subset| (PyBytes::new(py, &subset.data), subset.glyphs, subset.kept)))
 }
