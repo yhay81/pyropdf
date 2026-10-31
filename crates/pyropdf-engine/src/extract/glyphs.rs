@@ -26,23 +26,30 @@ struct Uses<'a> {
     refusal: Option<pyropdf_store::LimitExceeded>,
 }
 
+impl Uses<'_> {
+    fn next_page(&mut self) {
+        self.page_glyphs = 0;
+    }
+
+    fn record(&mut self, font: u128, glyph: u32) {
+        let next = self.page_glyphs.saturating_add(1);
+        let result = self
+            .budget
+            .check(LimitCode::TextGlyphCount, next)
+            .and_then(|()| self.glyphs.try_push((font, glyph)));
+        if let Err(error) = result {
+            self.refusal = Some(error);
+        } else {
+            self.page_glyphs = next;
+        }
+    }
+}
+
 impl ContentSink for Uses<'_> {
     fn glyph_run(&mut self, _: &GlyphStyle) {}
     fn glyph(&mut self, glyph: &Glyph<'_>, _: Affine, _: Option<Rect>) {
         if let Glyph::Outline(outline) = glyph {
-            let next = self.page_glyphs.saturating_add(1);
-            let result = self
-                .budget
-                .check(LimitCode::TextGlyphCount, next)
-                .and_then(|()| {
-                    self.glyphs
-                        .try_push((outline.font_cache_key(), outline.glyph_id().to_u32()))
-                });
-            if let Err(error) = result {
-                self.refusal = Some(error);
-            } else {
-                self.page_glyphs = next;
-            }
+            self.record(outline.font_cache_key(), outline.glyph_id().to_u32());
         }
     }
     fn stroke_completes_fill(&mut self) {}
@@ -124,7 +131,7 @@ pub fn used_glyphs(
     }
     sort_budgeted(&mut targets, budget)?;
     for (index, page) in pdf.pages().iter().enumerate() {
-        uses.page_glyphs = 0;
+        uses.next_page();
         // A missing/unreadable font or XObject dictionary in the inherited
         // page resources hides the fonts it could name. Keep all programs in
         // that case; empty valid dictionaries are also conservatively kept.
@@ -212,5 +219,27 @@ mod tests {
             sort_budgeted(&mut items, &cancelled),
             Err(Error::Limit(_))
         ));
+    }
+
+    #[test]
+    fn glyph_limit_is_per_page_and_refusal_keeps_no_extra_glyph() {
+        let budget = Budget::default().with_limit(LimitCode::TextGlyphCount, Some(2));
+        let mut uses = Uses {
+            glyphs: BudgetVec::new(&budget),
+            budget: &budget,
+            page_glyphs: 0,
+            refusal: None,
+        };
+        uses.record(1, 1);
+        uses.record(1, 2);
+        assert!(!uses.stopped());
+        uses.next_page();
+        uses.record(1, 3);
+        uses.record(2, 1);
+        assert!(!uses.stopped());
+        uses.record(2, 2);
+        assert!(uses.stopped());
+        assert_eq!(uses.glyphs.as_slice(), &[(1, 1), (1, 2), (1, 3), (2, 1)]);
+        assert_eq!(uses.refusal.unwrap().code(), LimitCode::TextGlyphCount);
     }
 }
