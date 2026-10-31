@@ -24,13 +24,16 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import math
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast, get_args
 
 from pyropdf import _core
-from pyropdf._errors import LimitError
+from pyropdf._errors import LimitError, PdfError
+from pyropdf._geometry import Rect
+from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Array, Dictionary, Name, Stream
 
 if TYPE_CHECKING:
@@ -464,6 +467,309 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     return tuple(report)
 
 
+#: The PostScript names of the Standard 14 fonts (ISO 32000-2 section 9.6.2.2).
+StandardFontName = Literal[
+    "Courier",
+    "Courier-Oblique",
+    "Courier-Bold",
+    "Courier-BoldOblique",
+    "Helvetica",
+    "Helvetica-Oblique",
+    "Helvetica-Bold",
+    "Helvetica-BoldOblique",
+    "Times-Roman",
+    "Times-Italic",
+    "Times-Bold",
+    "Times-BoldItalic",
+    "Symbol",
+    "ZapfDingbats",
+]
+StandardFontName.__doc__ = "The PostScript names of the Standard 14 fonts, which :meth:`Font.standard` takes."
+_STANDARD_FONT_NAMES: tuple[str, ...] = get_args(StandardFontName)
+#: The UTF-8 bytes of text that a measurement or a drawing takes by default.
+_DEFAULT_MAX_GENERATED_TEXT_SIZE = 1024 * 1024
+#: The lines that one text box or text drawing lays out by default.
+_MAX_GENERATED_TEXT_LINES = 4096
+_CONSTRUCTOR_MESSAGE = (
+    'Font has no public constructor: Font.standard(name) takes a Standard 14 PostScript name such as "Helvetica-Bold"'
+)
+
+
+def _measure_size(value: object, name: str) -> float:
+    """Return a positive finite measure, such as a font size or a box width."""
+    if isinstance(value, (bool, str, bytes)) or not hasattr(value, "__float__"):
+        msg = f"{name} must be a positive number: {value!r}"
+        raise TypeError(msg)
+    number = float(cast("float", value))
+    if not (math.isfinite(number) and number > 0):
+        msg = f"{name} must be a positive number: {value!r}"
+        raise ValueError(msg)
+    return number
+
+
+def _text_input(text: object, max_text_size: int | None) -> str:
+    """Return ``text`` when it is a string within ``max_text_size`` bytes of UTF-8."""
+    if not isinstance(text, str):
+        msg = f"text must be a string: {text!r}"
+        raise TypeError(msg)
+    _validate_optional_positive_int("max_text_size", max_text_size)
+    # Count without encoding an input-sized copy, and stop at the limit.
+    if max_text_size is not None and len(text) * 4 > max_text_size:
+        size = 0
+        for char in text:
+            size += len(char.encode("utf-8", "surrogatepass"))
+            if size > max_text_size:
+                code = "text_input_size"
+                msg = f"the text exceeds the {max_text_size}-byte UTF-8 limit"
+                raise LimitError(code, msg)
+    return text
+
+
+def _max_lines(max_text_size: int | None) -> int | None:
+    """Return the lines that a layout may take: none past the default unless the text is trusted."""
+    return None if max_text_size is None else _MAX_GENERATED_TEXT_LINES
+
+
+def _textbox_text(text: object, max_text_size: int | None) -> str:
+    """Return text as a textbox lays it out, with every line break a newline and every tab one space."""
+    checked = _text_input(text, max_text_size)
+    return checked.replace("\r\n", "\n").replace("\r", "\n").expandtabs(1)
+
+
+def _one_char(char: object) -> str:
+    """Return ``char`` when it is a one-character string."""
+    if not isinstance(char, str):
+        msg = f"char must be a one-character string: {char!r}"
+        raise TypeError(msg)
+    if len(char) != 1:
+        msg = f"char must be a one-character string: {char!r}"
+        raise ValueError(msg)
+    return char
+
+
+class Font:
+    """A font face that draws and measures text.
+
+    Get one from :meth:`standard`; pyropdf has no default font and keeps no
+    font registry, so output depends only on the fonts passed in. Pass it as
+    ``font`` to :meth:`Canvas.text` and :meth:`Canvas.textbox` on any
+    document, and share it between threads. :meth:`text_width` measures one
+    line and :meth:`text_height` wrapped text exactly as the canvas draws
+    them; :meth:`char_widths` and :meth:`char_bbox` give the metrics of
+    single characters drawn alone.
+
+    A Standard 14 font is drawn without embedding, so it prints WinAnsi
+    (roughly Latin-1) text only, and measures with Adobe's AFM widths.
+    """
+
+    __slots__ = ("_font",)
+
+    _font: _core._Font
+
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        """Refuse direct construction; the class methods create fonts."""
+        raise TypeError(_CONSTRUCTOR_MESSAGE)
+
+    @classmethod
+    def _wrap(cls, face: _core._Font) -> Font:
+        font = cls.__new__(cls)
+        font._font = face  # noqa: SLF001 - the class sets its own slot.
+        return font
+
+    @classmethod
+    def standard(cls, name: StandardFontName) -> Font:
+        """Return a Standard 14 font by its PostScript name, such as ``"Helvetica-Bold"``.
+
+        The 14 names are those of :data:`StandardFontName`. A Standard 14 font
+        is drawn without embedding, so it prints WinAnsi (roughly Latin-1)
+        text only.
+        """
+        if not isinstance(name, str):
+            msg = f"name must be a string: {name!r}"
+            raise TypeError(msg)
+        if name not in _STANDARD_FONT_NAMES:
+            names = ", ".join(_STANDARD_FONT_NAMES)
+            msg = f"name must be the PostScript name of a Standard 14 font ({names}): {name!r}"
+            raise ValueError(msg)
+        return cls._wrap(_core._Font.standard(name))  # noqa: SLF001 - the core's face.
+
+    @property
+    def name(self) -> str | None:
+        """The PostScript name of a Standard 14 font."""
+        return self._font.name
+
+    @property
+    def family(self) -> str | None:
+        """The family name, such as ``"Times"`` for ``"Times-Bold"``."""
+        return self._font.family
+
+    @property
+    def weight(self) -> int:
+        """The weight: 400 for regular and 700 for bold faces."""
+        return self._font.weight
+
+    @property
+    def is_bold(self) -> bool:
+        """Whether the face is bold."""
+        return self._font.bold
+
+    @property
+    def is_italic(self) -> bool:
+        """Whether the face is italic or oblique."""
+        return self._font.italic
+
+    @property
+    def is_serif(self) -> bool:
+        """Whether the face has serifs."""
+        return self._font.serif
+
+    @property
+    def units_per_em(self) -> int:
+        """The design units per em of the face; 1000 for Standard 14 fonts."""
+        return self._font.units_per_em
+
+    @property
+    def ascender(self) -> float:
+        """The ascent above the baseline as a fraction of the font size.
+
+        A Standard 14 font reports the bounding box of the URW font that
+        renderers commonly substitute for it, such as 1.075 for Helvetica.
+        The canvas places lines of text with :attr:`ascender` and
+        :attr:`descender`.
+        """
+        return self._font.ascender
+
+    @property
+    def descender(self) -> float:
+        """The descent below the baseline as a negative fraction of the font size."""
+        return self._font.descender
+
+    @property
+    def bbox(self) -> Rect:
+        """The font bounding box in fractions of the em, y upward from the baseline.
+
+        A Standard 14 font reports the box of the URW font that renderers
+        commonly substitute for it, whose top and bottom are its
+        :attr:`ascender` and :attr:`descender`, such as
+        ``Rect(-0.21, -0.299, 1.032, 1.075)`` for Helvetica.
+        """
+        return Rect(*self._font.bbox)
+
+    @property
+    def glyph_count(self) -> int:
+        """The number of glyphs: those of a Standard 14 font's AFM metrics."""
+        return self._font.glyph_count
+
+    @property
+    def is_monospaced(self) -> bool:
+        """Whether every glyph has the same advance, as Adobe's AFM metrics declare for the Courier fonts."""
+        return self._font.monospaced
+
+    def chars(self) -> str:
+        """Return every character that :meth:`has_glyph` accepts, in code point order.
+
+        A Standard 14 text font has the WinAnsi characters (roughly
+        Latin-1), and Symbol and ZapfDingbats the characters whose WinAnsi
+        byte their built-in encoding maps to a glyph.
+        """
+        return self._font.chars()
+
+    def char_widths(
+        self, text: str, size: float, *, max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE
+    ) -> tuple[float, ...]:
+        """Return the advance of each character of ``text`` drawn alone at ``size`` points.
+
+        A character the font has no glyph for raises :class:`PdfError`. Text
+        is limited to 1 MiB of UTF-8 by default (``max_text_size``, ``None``
+        for trusted input), refused with :class:`LimitError` code
+        ``text_input_size``.
+        """
+        checked = _text_input(text, max_text_size)
+        return tuple(self._font.char_widths(checked, _measure_size(size, "size")))
+
+    def char_bbox(self, char: str) -> Rect:
+        """Return the ink box of the glyph for the one-character string ``char``.
+
+        The box is in fractions of the em, y upward from the glyph's origin
+        on the baseline: Adobe's AFM box for a Standard 14 font. A glyph
+        without ink, such as a space, has an empty box at its origin. A
+        character the font has no glyph for raises :class:`PdfError`.
+        """
+        return Rect(*self._font.char_bbox(ord(_one_char(char))))
+
+    def program(self) -> bytes | None:
+        """Return the bytes that the face was loaded from, or ``None`` for a Standard 14 font."""
+        return None
+
+    def text_width(
+        self, text: str, size: float, *, max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE
+    ) -> float:
+        """Return the width of one line of ``text`` at ``size`` points.
+
+        Standard 14 text sums the AFM widths of its WinAnsi characters.
+        Measure each line separately: a line break raises :class:`PdfError`,
+        as does a character the font has no glyph for. Text is limited to
+        1 MiB of UTF-8 by default (``max_text_size``, ``None`` for trusted
+        input), refused with :class:`LimitError` code ``text_input_size``.
+        """
+        checked = _text_input(text, max_text_size)
+        if "\n" in checked or "\r" in checked:
+            msg = "text_width measures one line; split text at line breaks first"
+            raise PdfError(msg)
+        return self._font.text_width(checked, _measure_size(size, "size"))
+
+    def text_height(
+        self,
+        text: str,
+        size: float,
+        *,
+        width: float,
+        line_height: float | None = None,
+        max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    ) -> float:
+        """Return the height that :meth:`Canvas.textbox` needs for ``text`` wrapped ``width`` points wide.
+
+        The text wraps and its lines are placed exactly as the textbox
+        places them at ``size`` and ``line_height``: the first baseline one
+        :attr:`ascender` below the top, later ones ``line_height`` times
+        ``size`` apart (by default the font's line height), and the height
+        ends at the :attr:`descender` of the last line. Empty text needs no
+        height. A word that cannot fit ``width`` even one grapheme at a time
+        raises :class:`PdfError`. Text is limited to 1 MiB of UTF-8 and 4,096
+        lines by default (``max_text_size``, ``None`` for trusted input),
+        refused with :class:`LimitError` code ``text_input_size`` or
+        ``text_line_count``.
+        """
+        normalized = _textbox_text(text, max_text_size)
+        font_size = _measure_size(size, "size")
+        box_width = _measure_size(width, "width")
+        spacing = None if line_height is None else _measure_size(line_height, "line_height")
+        if not normalized:
+            return 0.0
+        _lines, height, _spare, _ascent, _leading = self._font.layout(
+            normalized,
+            box_width,
+            0.0,
+            font_size,
+            spacing,
+            False,  # noqa: FBT003 - the core's flag
+            _max_lines(max_text_size),
+        )
+        return height
+
+    def has_glyph(self, char: str) -> bool:
+        """Return whether the face has a glyph for the one-character string ``char``.
+
+        A Standard 14 font has one when its encoding, WinAnsi for the text
+        fonts, maps the character to a glyph of the font.
+        """
+        return self._font.has_glyph(ord(_one_char(char)))
+
+    def __repr__(self) -> str:
+        """Return the font's name."""
+        return f"Font({self.name!r})"
+
+
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (FontInfo, FontProgram, SubsetFont):
+for _public in (FontInfo, FontProgram, SubsetFont, Font):
     _public.__module__ = "pyropdf"
