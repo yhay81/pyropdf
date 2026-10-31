@@ -87,9 +87,6 @@ cache-keys = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# A test that runs this long prints every thread's traceback, so a hang in
-# CI names its test before the job's timeout cancels it.
-faulthandler_timeout = 180
 markers = [
     "spec(feature, *dimensions): the test proves the feature in those dimensions of the specification map (tools/spec_map)",
 ]
