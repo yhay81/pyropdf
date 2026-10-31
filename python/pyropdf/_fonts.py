@@ -685,7 +685,7 @@ class Font:
         ``text_input_size``.
         """
         checked = _text_input(text, max_text_size)
-        return tuple(self._font.char_widths(checked, _measure_size(size, "size")))
+        return tuple(self._font.char_widths(checked, _measure_size(size, "size"), max_text_size))
 
     def char_bbox(self, char: str) -> Rect:
         """Return the ink box of the glyph for the one-character string ``char``.
@@ -716,7 +716,7 @@ class Font:
         if "\n" in checked or "\r" in checked:
             msg = "text_width measures one line; split text at line breaks first"
             raise PdfError(msg)
-        return self._font.text_width(checked, _measure_size(size, "size"))
+        return self._font.text_width(checked, _measure_size(size, "size"), max_text_size)
 
     def text_height(
         self,
@@ -754,6 +754,7 @@ class Font:
             spacing,
             False,  # noqa: FBT003 - the core's flag
             _max_lines(max_text_size),
+            max_text_size,
         )
         return height
 

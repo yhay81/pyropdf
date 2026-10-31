@@ -8,7 +8,7 @@ use pyo3::types::PyBytes;
 use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::{self, Format};
 use pyropdf_engine::standard::{self, Base14Font, LayoutError, Placement};
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
 use crate::document::_Document;
 use crate::errors::{LimitError, PdfError, limit_error};
@@ -168,12 +168,17 @@ impl _Font {
     }
 
     /// Returns the advance of each character drawn alone, at `size`.
-    fn char_widths(&self, text: &str, size: f64) -> PyResult<Vec<f64>> {
-        text.chars()
-            .map(|character| {
-                Ok(f64::from(self.metric(u32::from(character))?.width_x) * size / 1000.0)
-            })
-            .collect()
+    #[pyo3(signature = (text, size, max_text_size=Some(1_048_576)))]
+    fn char_widths(&self, text: &str, size: f64, max_text_size: Option<u64>) -> PyResult<Vec<f64>> {
+        let budget = text_budget(text, max_text_size)?;
+        let mut widths = BudgetVec::new(&budget);
+        for character in text.chars() {
+            let width = f64::from(self.metric(u32::from(character))?.width_x) * size / 1000.0;
+            widths
+                .try_push(width)
+                .map_err(|error| limit_error(&error))?;
+        }
+        Ok(widths.into_vec())
     }
 
     /// Returns the AFM ink box of a character's glyph in fractions of the em.
@@ -190,7 +195,9 @@ impl _Font {
     }
 
     /// Returns the width of one line of `text` at `size`.
-    fn text_width(&self, text: &str, size: f64) -> PyResult<f64> {
+    #[pyo3(signature = (text, size, max_text_size=Some(1_048_576)))]
+    fn text_width(&self, text: &str, size: f64, max_text_size: Option<u64>) -> PyResult<f64> {
+        let _budget = text_budget(text, max_text_size)?;
         if let Some(character) = text
             .chars()
             .find(|character| standard::glyph_code(self.font, *character).is_none())
@@ -211,12 +218,24 @@ impl _Font {
     }
 
     /// Returns the WinAnsi bytes that draw `text`.
-    fn encode<'py>(&self, py: Python<'py>, text: &str) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = text
-            .chars()
-            .map(standard::winansi_byte)
-            .collect::<Option<Vec<u8>>>()
-            .ok_or_else(|| PdfError::new_err(LayoutError::NotWinAnsi.to_string()))?;
+    #[pyo3(signature = (text, max_text_size=Some(1_048_576)))]
+    fn encode<'py>(
+        &self,
+        py: Python<'py>,
+        text: &str,
+        max_text_size: Option<u64>,
+    ) -> PyResult<Bound<'py, PyBytes>> {
+        let budget = text_budget(text, max_text_size)?;
+        let mut bytes = BudgetVec::new(&budget);
+        for character in text.chars() {
+            let byte = standard::winansi_byte(character)
+                .ok_or_else(|| PdfError::new_err(LayoutError::NotWinAnsi.to_string()))?;
+            bytes.try_push(byte).map_err(|error| limit_error(&error))?;
+        }
+        let output_size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        budget
+            .charge(LimitCode::MemorySize, output_size)
+            .map_err(|error| limit_error(&error))?;
         Ok(PyBytes::new(py, &bytes))
     }
 
@@ -225,7 +244,7 @@ impl _Font {
     /// and whether each justifies, the height that they need, the spare
     /// height, the first baseline's depth in em, and the leading. At most
     /// `max_lines` lines, or any number for `None`.
-    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines))]
+    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576)))]
     #[expect(clippy::too_many_arguments, reason = "the options of a text box")]
     #[expect(clippy::type_complexity, reason = "a tuple that Python unpacks")]
     fn layout(
@@ -238,10 +257,12 @@ impl _Font {
         line_height: Option<f64>,
         justify: bool,
         max_lines: Option<u64>,
+        max_text_size: Option<u64>,
     ) -> PyResult<(Vec<(String, f64, bool)>, f64, f64, f64, f64)> {
         let font = self.font;
         py.detach(|| {
-            let budget = Budget::default().with_limit(LimitCode::TextLineCount, max_lines);
+            let budget =
+                text_budget(text, max_text_size)?.with_limit(LimitCode::TextLineCount, max_lines);
             let placement = Placement::lines(standard::line_metrics(font), line_height);
             let layout = standard::textbox_layout(
                 text,
@@ -253,13 +274,21 @@ impl _Font {
                 &budget,
             )
             .map_err(|error| layout_error(&error, max_lines))?;
-            let lines = layout
-                .lines
-                .iter()
-                .map(|line| (line.text.to_owned(), line.width, line.justify))
-                .collect();
+            let mut lines = BudgetVec::new(&budget);
+            for line in &layout.lines {
+                let mut bytes = BudgetVec::new(&budget);
+                bytes
+                    .try_extend_from_slice(line.text.as_bytes())
+                    .map_err(|error| limit_error(&error))?;
+                // A line is a slice of the valid UTF-8 input.
+                let line_text = String::from_utf8(bytes.into_vec())
+                    .expect("a layout line contains valid UTF-8");
+                lines
+                    .try_push((line_text, line.width, line.justify))
+                    .map_err(|error| limit_error(&error))?;
+            }
             Ok((
-                lines,
+                lines.into_vec(),
                 layout.height,
                 layout.spare_height,
                 layout.ascent,
@@ -271,6 +300,16 @@ impl _Font {
     fn __repr__(&self) -> String {
         format!("_Font({:?})", self.name())
     }
+}
+
+/// Bounds a text operation before input-derived collections grow.
+fn text_budget(text: &str, max_text_size: Option<u64>) -> PyResult<Budget> {
+    let budget = Budget::default().with_limit(LimitCode::TextInputSize, max_text_size);
+    let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+    budget
+        .check(LimitCode::TextInputSize, len)
+        .map_err(|error| limit_error(&error))?;
+    Ok(budget)
 }
 
 /// Refuses a character that the font has no glyph for, naming it.

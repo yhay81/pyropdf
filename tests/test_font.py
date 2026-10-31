@@ -248,3 +248,28 @@ def test_text_limit_counts_utf8_bytes() -> None:
     with pytest.raises(pyropdf.LimitError) as caught:
         font.text_width("a" * 100_000, 10, max_text_size=1)
     assert caught.value.code == "text_input_size"
+
+
+@pytest.mark.parametrize("operation", ["widths", "width", "encode", "layout"])
+def test_core_font_operations_refuse_text_over_their_budget(operation: str) -> None:
+    face = pyropdf._core._Font.standard("Helvetica")  # noqa: SLF001 - exercise the binding directly
+
+    def call() -> None:
+        if operation == "widths":
+            face.char_widths("abc", 10, 2)
+        elif operation == "width":
+            face.text_width("abc", 10, 2)
+        elif operation == "encode":
+            face.encode("abc", 2)
+        else:
+            face.layout("abc", 100, 100, 10, None, False, 100, 2)  # noqa: FBT003 - the core flag
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        call()
+    assert caught.value.code == "text_input_size"
+
+
+def test_core_font_operations_can_lift_the_text_limit() -> None:
+    face = pyropdf._core._Font.standard("Helvetica")  # noqa: SLF001 - exercise the binding directly
+    assert face.char_widths("abc", 10, None) == list(pyropdf.Font.standard("Helvetica").char_widths("abc", 10))
+    assert face.encode("abc", None) == b"abc"
