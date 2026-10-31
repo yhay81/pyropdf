@@ -89,6 +89,30 @@ krilla through pylopdf 0.16.0, saved by pylopdf:
 | japanese | 100 | same | 100 | 359.3 | 29.9 |
 | japanese | 100 | varying | 100 | 266.4 | 68.3 |
 
+pyropdf after #482, the same stamps through `page.draw()`
+(`pyropdf_stamps.py`, same faces), with the save's subsetting:
+
+```bash
+uv run python evidence/embedded-text/pyropdf_stamps.py HEBREW LATIN JAPANESE
+```
+
+| Face | Pages | Text | Saved KiB | dedupe=True KiB | + object streams KiB |
+| --- | ---: | --- | ---: | ---: | ---: |
+| hebrew | 1 | same | 2.8 | 2.7 | 2.4 |
+| hebrew | 100 | same | 36.9 | 19.7 | 3.8 |
+| hebrew | 100 | varying | 36.5 | 24.6 | 8.6 |
+| latin | 1 | same | 6.0 | 6.0 | 5.6 |
+| latin | 100 | same | 40.7 | 22.9 | 7.0 |
+| latin | 100 | varying | 36.7 | 25.5 | 9.6 |
+| japanese | 1 | same | 3.2 | 3.2 | 2.8 |
+| japanese | 100 | same | 38.8 | 20.1 | 4.2 |
+| japanese | 100 | varying | 37.0 | 24.6 | 8.6 |
+
+With `dedupe=True` on both sides, every row is smaller than krilla's:
+100 stamps of the same text save to 19.7 to 22.9 KiB against krilla's
+29.6 to 32.3, and varying text to 24.6 to 25.5 KiB against 68.3 to 154.5.
+Without `dedupe`, the 100 identical content streams stay separate objects.
+
 Route C's 100-page rows carry about 0.37 KiB per page of page objects and
 uncompressed content streams that neither writer's font changes; the probe
 does not compress content.
