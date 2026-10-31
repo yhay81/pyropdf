@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 
 mod cff;
 mod sfnt;
+pub mod shape;
 #[cfg(test)]
 mod tests;
 
