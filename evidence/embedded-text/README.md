@@ -131,12 +131,13 @@ Other checks:
    therefore holds for CIDs, not program glyph IDs.
 4. **Shaping is the caller's either way.** krilla 0.8.2 shapes with
    rustybuzz inside `Surface::draw_text` (`src/text/shape.rs`, 102 lines);
-   `draw_glyphs` takes glyphs shaped elsewhere. Route C uses harfrust. It is
-   about 43,000 lines and depends on read-fonts 0.46, the version skrifa 0.49
-   uses; pyropdf's skrifa 0.46.2 uses read-fonts 0.43.3 and hayro's skrifa
-   0.44 uses 0.41, so moving the engine's skrifa to 0.49 keeps the tree at
-   two read-fonts versions instead of three. harfrust bounds its own work
-   (`budget.rs`); pyropdf polls its budget per text run.
+   `draw_glyphs` takes glyphs shaped elsewhere. The probe uses harfrust 0.15,
+   which depends on read-fonts 0.46. The engine and hayro-interpret both use
+   skrifa 0.46.2 and read-fonts 0.43.3, so updating the engine's skrifa alone
+   would not remove that older dependency. harfrust 0.13.3 uses read-fonts
+   0.43.3 and can share it; the production version should follow hayro's
+   read-fonts version. harfrust bounds its own work (`budget.rs`); pyropdf
+   polls its budget per text run.
 5. **pdf-writer is not needed.** The canvas is written in Python and adds
    its content and objects through the store (`python/pyropdf/_canvas.py`),
    and the font dictionaries are store values (F1). What pdf-writer would
@@ -165,8 +166,9 @@ which route C leaves out at first):
 | Subset at save: table pruning, compaction with `CIDToGIDMap` or CFF charset | `fonts/sfnt.rs`, `fonts/cff.rs` | 250 to 350 |
 | Python `Font` from a file, canvas text with it | `_fonts.py`, `_canvas.py`, binding | 250 to 350 (Python) |
 
-New dependency: harfrust (and read-fonts 0.46 through skrifa 0.49). No
-pdf-writer, rustybuzz, or subsetter.
+New dependency: harfrust, using a release compatible with hayro's read-fonts.
+The probe used harfrust 0.15; 0.13.3 shares hayro's current read-fonts 0.43.3.
+No pdf-writer, rustybuzz, or subsetter.
 
 Fuzzing is needed, because a user's font file is untrusted input to code
 that pyropdf owns: the table walk of pruning and compaction, the CFF
