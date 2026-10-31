@@ -143,6 +143,34 @@ fn layouts_refuse_more_than_the_line_limit() {
 }
 
 #[test]
+fn the_budget_sets_the_line_limit() {
+    let more = "\n".repeat(MAX_LINES);
+    let lifted = Budget::default().with_limit(LimitCode::TextLineCount, None);
+    let layout = layout(
+        &more,
+        (100.0, 1000.0),
+        10.0,
+        PLACEMENT,
+        false,
+        &lifted,
+        |_: &str| 0.0,
+    )
+    .unwrap();
+    assert_eq!(layout.lines.len(), MAX_LINES + 1);
+    let lowered = Budget::default().with_limit(LimitCode::TextLineCount, Some(2));
+    let refusal = super::layout(
+        "a\nb\nc",
+        (100.0, 1000.0),
+        10.0,
+        PLACEMENT,
+        false,
+        &lowered,
+        |_: &str| 0.0,
+    );
+    assert_eq!(refusal.unwrap_err(), LayoutError::Lines);
+}
+
+#[test]
 fn layouts_charge_their_collections_to_the_budget() {
     let limits = DocumentLimits::default();
     let budget = Budget::new(&limits).with_limit(LimitCode::MemorySize, Some(64));
