@@ -122,9 +122,10 @@ label holds:
 - **Table**: three rows of the nics table (Alabama, Wyoming, and Totals),
   checked against a 150 dpi rendering, and its 25 columns.
 
-The labels were made by an agent and are marked `"checked": false`. The
-owner checks them by eye with `python quality.py crops DIR`, then sets
-`checked`. `tests/test_text_quality.py` holds pyropdf to the labels.
+The labels were made by an agent from the renderings, and the owner
+checked them by eye against the crops of `python quality.py crops DIR`
+(`"checked": true`). A changed label is checked again the same way.
+`tests/test_text_quality.py` holds pyropdf to the labels.
 
 ```bash
 python evidence/pymupdf-comparison/quality.py collect pyropdf /tmp/pyropdf.json

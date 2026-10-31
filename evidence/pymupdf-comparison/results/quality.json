@@ -7,7 +7,7 @@
  ],
  "pages": {
   "bill-hr815-p1": {
-   "checked": false,
+   "checked": true,
    "PyMuPDF 2.0": {
     "anchors": {
      "anchors": 12,
@@ -58,7 +58,7 @@
    }
   },
   "f1040-p1": {
-   "checked": false,
+   "checked": true,
    "PyMuPDF 2.0": {
     "anchors": {
      "anchors": 18,
@@ -109,7 +109,7 @@
    }
   },
   "mhlw-doc-p1": {
-   "checked": false,
+   "checked": true,
    "PyMuPDF 2.0": {
     "anchors": {
      "anchors": 11,
@@ -165,7 +165,7 @@
    }
   },
   "nics-background-checks-2015-11-p1": {
-   "checked": false,
+   "checked": true,
    "PyMuPDF 2.0": {
     "anchors": {
      "anchors": 11,
@@ -245,7 +245,7 @@
    }
   },
   "patent-us223898-p2": {
-   "checked": false,
+   "checked": true,
    "PyMuPDF 2.0": {
     "anchors": {
      "anchors": 9,
@@ -306,7 +306,7 @@
    }
   },
   "usrguide-p2": {
-   "checked": false,
+   "checked": true,
    "PyMuPDF 2.0": {
     "anchors": {
      "anchors": 12,
