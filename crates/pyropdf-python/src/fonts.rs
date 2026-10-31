@@ -285,7 +285,6 @@ impl _Font {
     /// `max_lines` lines, or any number for `None`.
     #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of a text box")]
-    #[expect(clippy::type_complexity, reason = "a tuple that Python unpacks")]
     fn layout(
         &self,
         py: Python<'_>,
