@@ -21,18 +21,28 @@ use crate::bridge::Bridged;
 struct Uses<'a> {
     /// Font cache key and glyph ID, sorted after collecting the pages.
     glyphs: BudgetVec<'a, (u128, u32)>,
+    budget: &'a Budget,
+    page_glyphs: u64,
     refusal: Option<pyropdf_store::LimitExceeded>,
 }
 
 impl ContentSink for Uses<'_> {
     fn glyph_run(&mut self, _: &GlyphStyle) {}
     fn glyph(&mut self, glyph: &Glyph<'_>, _: Affine, _: Option<Rect>) {
-        if let Glyph::Outline(outline) = glyph
-            && let Err(error) = self
-                .glyphs
-                .try_push((outline.font_cache_key(), outline.glyph_id().to_u32()))
-        {
-            self.refusal = Some(error);
+        if let Glyph::Outline(outline) = glyph {
+            let next = self.page_glyphs.saturating_add(1);
+            let result = self
+                .budget
+                .check(LimitCode::TextGlyphCount, next)
+                .and_then(|()| {
+                    self.glyphs
+                        .try_push((outline.font_cache_key(), outline.glyph_id().to_u32()))
+                });
+            if let Err(error) = result {
+                self.refusal = Some(error);
+            } else {
+                self.page_glyphs = next;
+            }
         }
     }
     fn stroke_completes_fill(&mut self) {}
@@ -100,7 +110,9 @@ pub fn used_glyphs(
     };
     let cache = InterpreterCache::new();
     let mut uses = Uses {
-        glyphs: BudgetVec::counting(budget, LimitCode::TextGlyphCount),
+        glyphs: BudgetVec::new(budget),
+        budget,
+        page_glyphs: 0,
         refusal: None,
     };
     let mut protected = BudgetVec::new(budget);
@@ -112,6 +124,7 @@ pub fn used_glyphs(
     }
     sort_budgeted(&mut targets, budget)?;
     for (index, page) in pdf.pages().iter().enumerate() {
+        uses.page_glyphs = 0;
         // A missing/unreadable font or XObject dictionary in the inherited
         // page resources hides the fonts it could name. Keep all programs in
         // that case; empty valid dictionaries are also conservatively kept.
@@ -140,6 +153,15 @@ pub fn used_glyphs(
         uses = sink;
     }
     sort_budgeted(&mut uses.glyphs, budget)?;
+    let mut kept = 0;
+    for at in 0..uses.glyphs.len() {
+        budget.poll()?;
+        if kept == 0 || uses.glyphs[at] != uses.glyphs[kept - 1] {
+            uses.glyphs[kept] = uses.glyphs[at];
+            kept += 1;
+        }
+    }
+    uses.glyphs.truncate(kept);
     let xref = pdf.xref();
     let mut results = BudgetVec::new(budget);
     for (index, &(number, generation)) in fonts.iter().enumerate() {
