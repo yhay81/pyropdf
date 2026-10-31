@@ -25,14 +25,13 @@ ROOT = Path(__file__).resolve().parent.parent
 CRATES = ("pyropdf-store", "pyropdf-schema", "pyropdf-engine", "pyropdf-python")
 
 # Third-party crates, and the first crate of section 11 that may reach them:
-# the engine's interpreter, writer, model runtime, and signing stack, and PyO3, whose pyo3-*
+# the engine's interpreter, text shaper, model runtime, and signing stack, and PyO3, whose pyo3-*
 # crates count as pyo3.
 FIRST_ALLOWED = {
     "hayro": "pyropdf-engine",
     "hayro-interpret": "pyropdf-engine",
     "hayro-svg": "pyropdf-engine",
-    "krilla": "pyropdf-engine",
-    "krilla-svg": "pyropdf-engine",
+    "harfrust": "pyropdf-engine",
     "rten": "pyropdf-engine",
     # The signing stack of section 11.
     "cms": "pyropdf-engine",
@@ -181,7 +180,7 @@ def test_dependencies_in_the_order_of_section_11_pass() -> None:
         ("pyropdf-engine", "hayro", None),
         ("hayro", "hayro-interpret", None),
         ("hayro-interpret", "hayro-syntax", None),
-        ("pyropdf-engine", "krilla", None),
+        ("pyropdf-engine", "harfrust", None),
         ("pyropdf-engine", "rten", None),
         ("pyropdf-python", "pyropdf-engine", None),
         ("pyropdf-python", "pyo3", None),
@@ -196,7 +195,7 @@ def test_dependencies_in_the_order_of_section_11_pass() -> None:
     [
         # The store reaches no interpreter, writer, or model runtime.
         ([("pyropdf-store", "hayro-interpret", None)], "pyropdf-store -> hayro-interpret"),
-        ([("pyropdf-store", "krilla", None)], "pyropdf-store -> krilla"),
+        ([("pyropdf-store", "harfrust", None)], "pyropdf-store -> harfrust"),
         ([("pyropdf-schema", "rten", None)], "pyropdf-schema -> rten"),
         # No crate but the binding reaches PyO3 or one of its crates.
         ([("pyropdf-store", "pyo3", None)], "pyropdf-store -> pyo3"),
@@ -217,8 +216,8 @@ def test_a_dependency_against_section_11_fails(edges: list[tuple[str, str, str |
 
 def test_development_dependencies_count_only_for_their_crate() -> None:
     # The schema reaches the store but not the store's development dependencies.
-    metadata = workspace(("pyropdf-schema", "pyropdf-store", None), ("pyropdf-store", "krilla", "dev"))
-    assert paths(violations(metadata)) == ["pyropdf-store -> krilla"]
+    metadata = workspace(("pyropdf-schema", "pyropdf-store", None), ("pyropdf-store", "harfrust", "dev"))
+    assert paths(violations(metadata)) == ["pyropdf-store -> harfrust"]
 
 
 def test_a_crate_outside_section_11_fails() -> None:

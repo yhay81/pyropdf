@@ -26,11 +26,11 @@ and changes its foundation.
   applied. pylopdf's API rules
   ([api/DESIGN.md](https://github.com/yhay81/pylopdf/blob/main/api/DESIGN.md),
   section 1) are pyropdf's starting rules.
-- **Engine-faithful.** hayro interprets and renders, krilla writes text and
-  fonts, and work that an engine owns lands upstream first. pyropdf builds
-  the store, the binding, the resource policy, the consistency of edits,
-  document understanding, and the content operators that need no engine
-  (section 7).
+- **Engine-faithful.** hayro interprets and renders, harfrust shapes text,
+  and work that an engine owns lands upstream first. pyropdf builds the
+  store, the binding, the resource policy, the consistency of edits,
+  document understanding, and what it writes: content operators, images,
+  and fonts (section 7).
 - **Trustworthy.** Hostile input meets typed, bounded refusal. Results carry
   their provenance, independent validators check what pyropdf writes, and
   benchmarks publish losses with wins.
@@ -351,28 +351,37 @@ workaround that links the upstream discussion.
 
 ## 7. Writing contract and settling
 
-The canvas has two writers. pyropdf writes paths, shapes, graphics state,
-clipping, transforms, opacity, blending, images, and placed pages itself:
-they are content operators, image XObjects, and Form XObjects that need
-nothing an engine owns, and an image is registered once per document so
-that drawing it again reuses its object. krilla writes text: shaping,
-font embedding, and subsetting are an engine's work. A text drawing
-becomes a Form XObject that krilla writes through the object sink, and the
-canvas paints it in order with its own operators, so one canvas still
-commits one content stream and one transaction. Drawing without text
-therefore waits on no upstream release; text waits on W1 and W2.
+pyropdf writes the canvas itself. Paths, shapes, graphics state, clipping,
+transforms, opacity, blending, images, placed pages, and text become content
+operators, image XObjects, Form XObjects, and fonts that pyropdf writes into
+the store, so one canvas commits one content stream and one transaction.
+Images and font faces are document resources: each is registered once per
+document, and drawing it again reuses its objects. krilla writes nothing:
+its public API returns a complete PDF per drawing, which pyropdf would have
+to parse and import (F1), and the object sink and document resources that
+would avoid this are outside krilla's scope (issue #466).
 
-| Item | Requirement |
-| --- | --- |
-| W1 Object sink | krilla writes content, fonts, images, and Form XObjects into a sink that the caller supplies, with object numbers that the sink allocates, instead of a complete PDF that pyropdf parses and imports. |
-| W2 Document resources | A long-lived resource context per document: a font or image is registered once, glyphs accumulate across drawings, and fonts are subset when the caller finalizes them, which pyropdf does at save. Glyph IDs stay stable across finalization, so content written earlier needs no rewrite. |
-| W3 Standard 14 | The Standard 14 fonts drawn without embedding. |
-| W4 Instance names | Subset fonts named after the variable-font instance they embed. |
+Text is drawn in a Standard 14 font, which is not embedded, or in an
+embedded face. harfrust shapes the text of an embedded face, and pyropdf
+writes the face as a Type0 font with the Identity-H encoding, whose CIDs are
+the face's glyph IDs. One font dictionary, with its descendant CIDFont,
+descriptor, program, and ToUnicode CMap, serves every drawing in the face.
+A drawing adds the glyphs it uses to the widths and to the ToUnicode CMap in
+its own transaction, so undoing the drawing removes them. A glyph maps to
+its own character, or to its whole cluster when the shaper merged
+characters into it; a glyph that the CMap already maps to other text is
+drawn inside a marked-content sequence with `/ActualText`.
 
-Until a save, a font in use is a provisional object with its complete
-program, so rendering and extraction see the right glyphs; the save replaces
-it with the subset. Stamping one face on 100 pages therefore embeds one
-program.
+Until a save, a face in use is a provisional object with its complete
+program, so rendering and extraction see the right glyphs. The save subsets
+it: it keeps the glyphs that the document draws and only the tables that
+ISO 32000-2 section 9.9 reads from an embedded program, renumbers the kept
+glyphs, and maps the CIDs that content uses to them through a `CIDToGIDMap`
+for a TrueType program or through the charset of a CID-keyed CFF program.
+Content codes therefore stay the face's glyph IDs: content written earlier
+needs no rewrite, and a drawing after a save restores the complete program
+until the next save. Stamping one face on 100 pages embeds one program
+(`evidence/embedded-text`).
 
 Dependent structures are settled rather than rebuilt by every call. A
 transaction marks what its writes make stale: appearance streams, outline
@@ -503,8 +512,8 @@ crates/
                    writer, security handler                        (hayro-syntax)
   pyropdf-schema   typed object descriptors generated from the Arlington PDF Model
   pyropdf-engine   content model and provenance, rendering, writing,
-                   understanding, signing, budgets                 (hayro, krilla, RTen,
-                                                                    RustCrypto)
+                   understanding, signing, budgets                 (hayro, harfrust,
+                                                                    RTen, RustCrypto)
   pyropdf-python   the PyO3 binding, the only crate that depends on PyO3
 python/pyropdf     the Python API
 tests              Python tests: the public contract
@@ -587,7 +596,8 @@ Exit:
 
 Scope:
 - the canvas without text, written by pyropdf (section 7);
-- text on the canvas through W1 and W2, and settling;
+- text on the canvas in the Standard 14 fonts and in embedded faces, and
+  settling;
 - appearances, annotations, links, and forms and widgets with identity
   handles;
 - page operations with referential rules.
@@ -663,10 +673,15 @@ Exit: pylopdf's v1.0 criteria.
 - **A second system.** A rebuild delays features and can stall both
   projects. Phase 0 is small and gated by measurable exits, and pylopdf
   remains the oracle and the fallback until the archive gate.
-- **Upstream dependence.** I1, I2, and W1 to W4 need the maintainers'
-  agreement. The bridge removes the need to wait for I1, and pylopdf's
-  guards are the fallback for I2. Only text waits on W1 and W2: the rest of
-  the canvas is pyropdf's own (section 7).
+- **Upstream dependence.** I1 and I2 need the maintainers' agreement. The
+  bridge removes the need to wait for I1, and pylopdf's guards are the
+  fallback for I2. The canvas, text included, waits on no engine
+  (section 7).
+- **Text is pyropdf's code.** harfrust shapes text, but the font writer and
+  the subset at save read font programs that users supply, so fuzz targets
+  cover them (F9). harfrust reads fonts through read-fonts, as hayro does,
+  and pyropdf takes the harfrust release that uses hayro's version, so that
+  harfrust adds no copy of it.
 - **Later failures.** Lazy opening moves some refusals from `open` to first
   use. `validate()` and the web profile keep rejection at open available.
 - **Overhead.** Persistent maps and read-set recording add constant costs,
@@ -683,3 +698,6 @@ Exit: pylopdf's v1.0 criteria.
 - Which Arlington predicates the structural check implements first.
 - What the change report is: a method, a value that `save` returns, or a
   refusal that an option turns into a report.
+- How text draws in an embedded variable face at an instance other than its
+  default, whose outlines the subset at save keeps, and in colour glyphs
+  (COLR, SVG, or bitmap), which a CIDFont does not draw (section 7).
