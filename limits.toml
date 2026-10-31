@@ -344,6 +344,12 @@ unit = "lines"
 default = 4_096
 reached = "The text that a form field's appearance draws lays out in more than 4,096 lines."
 
+[codes.shaped_glyph_count]
+message = "the text shapes into too many glyphs"
+unit = "glyphs"
+default = 1_048_576
+reached = "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
+
 [codes.named_destination_count]
 message = "the named destinations are too many"
 unit = "entries"
