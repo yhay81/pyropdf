@@ -514,9 +514,9 @@ def _text_input(text: object, max_text_size: int | None) -> str:
         raise TypeError(msg)
     _validate_optional_positive_int("max_text_size", max_text_size)
     # Count without encoding an input-sized copy, and stop at the limit.
-    if max_text_size is not None and len(text) * 4 > max_text_size:
+    if max_text_size is not None and str.__len__(text) * 4 > max_text_size:
         size = 0
-        for char in text:
+        for char in str.__iter__(text):
             size += len(char.encode("utf-8", "surrogatepass"))
             if size > max_text_size:
                 code = "text_input_size"
@@ -685,7 +685,7 @@ class Font:
         ``text_input_size``.
         """
         checked = _text_input(text, max_text_size)
-        return tuple(self._font.char_widths(checked, _measure_size(size, "size"), max_text_size))
+        return self._font.char_widths(checked, _measure_size(size, "size"), max_text_size)
 
     def char_bbox(self, char: str) -> Rect:
         """Return the ink box of the glyph for the one-character string ``char``.
@@ -740,14 +740,14 @@ class Font:
         refused with :class:`LimitError` code ``text_input_size`` or
         ``text_line_count``.
         """
-        normalized = _textbox_text(text, max_text_size)
+        checked = _text_input(text, max_text_size)
         font_size = _measure_size(size, "size")
         box_width = _measure_size(width, "width")
         spacing = None if line_height is None else _measure_size(line_height, "line_height")
-        if not normalized:
+        if not checked:
             return 0.0
         _lines, height, _spare, _ascent, _leading = self._font.layout(
-            normalized,
+            checked,
             box_width,
             0.0,
             font_size,
@@ -755,6 +755,7 @@ class Font:
             False,  # noqa: FBT003 - the core's flag
             _max_lines(max_text_size),
             max_text_size,
+            True,  # noqa: FBT003 - normalize the text within the core budget
         )
         return height
 

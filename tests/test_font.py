@@ -15,6 +15,7 @@ cases (issue 467). Intended differences:
 from __future__ import annotations
 
 import math
+import tracemalloc
 from typing import TYPE_CHECKING, Any, cast, get_args
 
 import pytest
@@ -22,6 +23,8 @@ import pytest
 import pyropdf
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from pyropdf import StandardFontName
 
 
@@ -271,5 +274,57 @@ def test_core_font_operations_refuse_text_over_their_budget(operation: str) -> N
 
 def test_core_font_operations_can_lift_the_text_limit() -> None:
     face = pyropdf._core._Font.standard("Helvetica")  # noqa: SLF001 - exercise the binding directly
-    assert face.char_widths("abc", 10, None) == list(pyropdf.Font.standard("Helvetica").char_widths("abc", 10))
+    assert face.char_widths("abc", 10, None) == pyropdf.Font.standard("Helvetica").char_widths("abc", 10)
     assert face.encode("abc", None) == b"abc"
+
+
+def test_core_text_limit_does_not_trust_a_string_subclasses_length() -> None:
+    class MisleadingLength(str):
+        __slots__ = ()
+
+        def __len__(self) -> int:
+            return 1
+
+    face = pyropdf._core._Font.standard("Helvetica")  # noqa: SLF001 - exercise the binding directly
+    with pytest.raises(pyropdf.LimitError) as caught:
+        face.text_width(MisleadingLength("x" * 100), 10, 2)
+    assert caught.value.code == "text_input_size"
+
+
+def test_core_rejects_large_unicode_before_creating_a_utf8_cache() -> None:
+    if tracemalloc.is_tracing():
+        pytest.skip("the test measures allocations in an isolated tracer")
+    face = pyropdf._core._Font.standard("Helvetica")  # noqa: SLF001 - exercise the binding directly
+    text = "é" * 2_000_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(pyropdf.LimitError):
+            face.text_width(text, 10, 1)
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 256_000
+
+
+def test_public_text_limit_uses_the_string_contents_not_overrides() -> None:
+    class MisleadingText(str):
+        __slots__ = ()
+
+        def __len__(self) -> int:
+            return 100
+
+        def __iter__(self) -> Iterator[str]:
+            msg = "the limit must not call overridden iteration"
+            raise AssertionError(msg)
+
+    font = pyropdf.Font.standard("Helvetica")
+    with pytest.raises(pyropdf.LimitError) as caught:
+        font.text_width(MisleadingText("abc"), 10, max_text_size=2)
+    assert caught.value.code == "text_input_size"
+
+
+def test_core_encoding_rejects_glyphs_missing_from_the_selected_font() -> None:
+    face = pyropdf._core._Font.standard("Symbol")  # noqa: SLF001 - exercise the binding directly
+    assert not face.has_glyph(ord("ð"))
+    with pytest.raises(pyropdf.PdfError, match="no glyph"):
+        face.encode("ð")

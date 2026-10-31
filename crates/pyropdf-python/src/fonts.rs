@@ -4,7 +4,7 @@
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyFloat, PyList, PyString, PyTuple};
 use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::{self, Format};
 use pyropdf_engine::standard::{self, Base14Font, LayoutError, Placement};
@@ -169,8 +169,14 @@ impl _Font {
 
     /// Returns the advance of each character drawn alone, at `size`.
     #[pyo3(signature = (text, size, max_text_size=Some(1_048_576)))]
-    fn char_widths(&self, text: &str, size: f64, max_text_size: Option<u64>) -> PyResult<Vec<f64>> {
-        let budget = text_budget(text, max_text_size)?;
+    fn char_widths<'py>(
+        &self,
+        py: Python<'py>,
+        text: &Bound<'_, PyString>,
+        size: f64,
+        max_text_size: Option<u64>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        let (budget, text) = text_budget(text, max_text_size)?;
         let mut widths = BudgetVec::new(&budget);
         for character in text.chars() {
             let width = f64::from(self.metric(u32::from(character))?.width_x) * size / 1000.0;
@@ -178,7 +184,22 @@ impl _Font {
                 .try_push(width)
                 .map_err(|error| limit_error(&error))?;
         }
-        Ok(widths.into_vec())
+        let count = u64::try_from(widths.len()).unwrap_or(u64::MAX);
+        let tuple_size = py
+            .get_type::<PyTuple>()
+            .getattr("__basicsize__")?
+            .extract::<u64>()?;
+        let float_size = py
+            .get_type::<PyFloat>()
+            .getattr("__basicsize__")?
+            .extract::<u64>()?;
+        let slot_size = u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX);
+        let output_size =
+            tuple_size.saturating_add(count.saturating_mul(float_size.saturating_add(slot_size)));
+        budget
+            .charge(LimitCode::MemorySize, output_size)
+            .map_err(|error| limit_error(&error))?;
+        PyTuple::new(py, widths.iter().copied())
     }
 
     /// Returns the AFM ink box of a character's glyph in fractions of the em.
@@ -196,8 +217,13 @@ impl _Font {
 
     /// Returns the width of one line of `text` at `size`.
     #[pyo3(signature = (text, size, max_text_size=Some(1_048_576)))]
-    fn text_width(&self, text: &str, size: f64, max_text_size: Option<u64>) -> PyResult<f64> {
-        let _budget = text_budget(text, max_text_size)?;
+    fn text_width(
+        &self,
+        text: &Bound<'_, PyString>,
+        size: f64,
+        max_text_size: Option<u64>,
+    ) -> PyResult<f64> {
+        let (_budget, text) = text_budget(text, max_text_size)?;
         if let Some(character) = text
             .chars()
             .find(|character| standard::glyph_code(self.font, *character).is_none())
@@ -222,21 +248,34 @@ impl _Font {
     fn encode<'py>(
         &self,
         py: Python<'py>,
-        text: &str,
+        text: &Bound<'_, PyString>,
         max_text_size: Option<u64>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let budget = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(text, max_text_size)?;
         let mut bytes = BudgetVec::new(&budget);
         for character in text.chars() {
+            if standard::glyph_code(self.font, character).is_none() {
+                return Err(missing_glyph(self.font, u32::from(character)));
+            }
             let byte = standard::winansi_byte(character)
                 .ok_or_else(|| PdfError::new_err(LayoutError::NotWinAnsi.to_string()))?;
             bytes.try_push(byte).map_err(|error| limit_error(&error))?;
         }
-        let output_size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let base_size = py
+            .get_type::<PyBytes>()
+            .getattr("__basicsize__")?
+            .extract::<u64>()?;
+        let output_size = u64::try_from(bytes.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(base_size)
+            .saturating_add(1);
         budget
             .charge(LimitCode::MemorySize, output_size)
             .map_err(|error| limit_error(&error))?;
-        Ok(PyBytes::new(py, &bytes))
+        PyBytes::new_with(py, bytes.len(), |output| {
+            output.copy_from_slice(&bytes);
+            Ok(())
+        })
     }
 
     /// Lays out `text` in a box `width` by `height`, its lines placed as
@@ -244,13 +283,13 @@ impl _Font {
     /// and whether each justifies, the height that they need, the spare
     /// height, the first baseline's depth in em, and the leading. At most
     /// `max_lines` lines, or any number for `None`.
-    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576)))]
+    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false))]
     #[expect(clippy::too_many_arguments, reason = "the options of a text box")]
     #[expect(clippy::type_complexity, reason = "a tuple that Python unpacks")]
     fn layout(
         &self,
         py: Python<'_>,
-        text: &str,
+        text: &Bound<'_, PyString>,
         width: f64,
         height: f64,
         size: f64,
@@ -258,11 +297,36 @@ impl _Font {
         justify: bool,
         max_lines: Option<u64>,
         max_text_size: Option<u64>,
-    ) -> PyResult<(Vec<(String, f64, bool)>, f64, f64, f64, f64)> {
+        normalize: bool,
+    ) -> PyResult<Py<PyTuple>> {
+        let (budget, text) = text_budget(text, max_text_size)?;
+        let budget = budget.with_limit(LimitCode::TextLineCount, max_lines);
         let font = self.font;
         py.detach(|| {
-            let budget =
-                text_budget(text, max_text_size)?.with_limit(LimitCode::TextLineCount, max_lines);
+            let normalized = if normalize {
+                let mut bytes = BudgetVec::new(&budget);
+                let mut chars = text.chars().peekable();
+                while let Some(char) = chars.next() {
+                    let char = match char {
+                        '\r' => {
+                            if chars.peek() == Some(&'\n') {
+                                chars.next();
+                            }
+                            '\n'
+                        }
+                        '\t' => ' ',
+                        char => char,
+                    };
+                    let mut encoded = [0; 4];
+                    bytes
+                        .try_extend_from_slice(char.encode_utf8(&mut encoded).as_bytes())
+                        .map_err(|error| limit_error(&error))?;
+                }
+                Some(String::from_utf8(bytes.into_vec()).expect("normalized text is UTF-8"))
+            } else {
+                None
+            };
+            let text = normalized.as_deref().unwrap_or(text);
             let placement = Placement::lines(standard::line_metrics(font), line_height);
             let layout = standard::textbox_layout(
                 text,
@@ -287,13 +351,50 @@ impl _Font {
                     .try_push((line_text, line.width, line.justify))
                     .map_err(|error| limit_error(&error))?;
             }
-            Ok((
-                lines.into_vec(),
-                layout.height,
-                layout.spare_height,
-                layout.ascent,
-                layout.leading,
-            ))
+            Python::attach(|py| {
+                let count = u64::try_from(lines.len()).unwrap_or(u64::MAX);
+                let tuple_size = py
+                    .get_type::<PyTuple>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let list_size = py
+                    .get_type::<PyList>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let string_size = py
+                    .get_type::<PyString>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let float_size = py
+                    .get_type::<PyFloat>()
+                    .getattr("__basicsize__")?
+                    .extract::<u64>()?;
+                let slot = u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX);
+                let mut output_size = list_size
+                    .saturating_add(count.saturating_mul(slot))
+                    .saturating_add(tuple_size)
+                    .saturating_add(5u64.saturating_mul(slot))
+                    .saturating_add(count.saturating_add(4).saturating_mul(float_size));
+                for (text, _, _) in &lines {
+                    let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
+                    output_size = output_size
+                        .saturating_add(tuple_size)
+                        .saturating_add(3u64.saturating_mul(slot))
+                        .saturating_add(string_size)
+                        .saturating_add(len.saturating_add(1).saturating_mul(4));
+                }
+                budget
+                    .charge(LimitCode::MemorySize, output_size)
+                    .map_err(|error| limit_error(&error))?;
+                let result = (
+                    lines.into_vec(),
+                    layout.height,
+                    layout.spare_height,
+                    layout.ascent,
+                    layout.leading,
+                );
+                Ok(result.into_pyobject(py)?.unbind())
+            })
         })
     }
 
@@ -303,13 +404,34 @@ impl _Font {
 }
 
 /// Bounds a text operation before input-derived collections grow.
-fn text_budget(text: &str, max_text_size: Option<u64>) -> PyResult<Budget> {
+fn text_budget<'a>(
+    text: &'a Bound<'_, PyString>,
+    max_text_size: Option<u64>,
+) -> PyResult<(Budget, &'a str)> {
     let budget = Budget::default().with_limit(LimitCode::TextInputSize, max_text_size);
+    // Call str's own length method: a subclass may override __len__.
+    let chars = text
+        .py()
+        .get_type::<PyString>()
+        .getattr("__len__")?
+        .call1((text,))?
+        .extract::<u64>()?;
+    budget
+        .check(LimitCode::TextInputSize, chars)
+        .map_err(|error| limit_error(&error))?;
+    // CPython may create a UTF-8 cache while converting a non-ASCII string.
+    budget
+        .charge(
+            LimitCode::MemorySize,
+            chars.saturating_mul(4).saturating_add(1),
+        )
+        .map_err(|error| limit_error(&error))?;
+    let text = text.to_str()?;
     let len = u64::try_from(text.len()).unwrap_or(u64::MAX);
     budget
         .check(LimitCode::TextInputSize, len)
         .map_err(|error| limit_error(&error))?;
-    Ok(budget)
+    Ok((budget, text))
 }
 
 /// Refuses a character that the font has no glyph for, naming it.
