@@ -87,7 +87,19 @@ fn store_error(error: &pyropdf_store::Error) -> Option<Error> {
 
 /// A failed decode is different from a budget refusal: the former protects
 /// fonts, while the latter aborts the operation without changing the document.
-fn readable(stream: &Stream<'_>, version: &Version, budget: &Budget) -> Result<bool, Error> {
+fn readable(
+    stream: &Stream<'_>,
+    version: &Version,
+    budget: &Budget,
+    page_content: bool,
+) -> Result<bool, Error> {
+    // A resource dictionary may name a Form that the page never invokes.
+    // Unlike page content, such a stream would not otherwise be decoded by
+    // the interpreter. Until #48 supplies a bounded decoder, do not decode
+    // its filtered bytes: conservatively keep the page's fonts whole.
+    if !page_content && stream.dict().contains_key("Filter") {
+        return Ok(false);
+    }
     let Some(id) = stream.dict().obj_id() else {
         return Ok(false);
     };
@@ -119,7 +131,7 @@ fn readable(stream: &Stream<'_>, version: &Version, budget: &Budget) -> Result<b
 
 fn check_content(value: Object<'_>, version: &Version, budget: &Budget) -> Result<bool, Error> {
     match value {
-        Object::Stream(stream) => readable(&stream, version, budget),
+        Object::Stream(stream) => readable(&stream, version, budget, true),
         Object::Array(array) => {
             let mut count = 0usize;
             let mut ok = true;
@@ -127,7 +139,7 @@ fn check_content(value: Object<'_>, version: &Version, budget: &Budget) -> Resul
                 budget.charge(LimitCode::ContentElementCount, 1)?;
                 count += 1;
                 if let Object::Stream(stream) = value {
-                    ok &= readable(&stream, version, budget)?;
+                    ok &= readable(&stream, version, budget, true)?;
                 } else {
                     ok = false;
                 }
@@ -179,7 +191,7 @@ fn appearances<'a, 'b>(
             budget.charge(LimitCode::ContentElementCount, 1)?;
             match value {
                 Object::Stream(stream) => {
-                    ok &= readable(&stream, version, budget)?;
+                    ok &= readable(&stream, version, budget, false)?;
                     if let Some(dict) = stream.dict().get::<Dict<'_>>("Resources") {
                         unknown |= missing_resources(&dict);
                         resources.try_push(Resources::new(dict))?;
@@ -295,7 +307,7 @@ pub(super) fn protect(
             if !seen.insert(id, budget)? {
                 continue;
             }
-            ok &= readable(&stream, version, budget)?;
+            ok &= readable(&stream, version, budget, false)?;
             if let Some(dict) = stream.dict().get::<Dict<'_>>("Resources") {
                 unknown |= missing_resources(&dict);
                 resources.try_push(Resources::new(dict))?;

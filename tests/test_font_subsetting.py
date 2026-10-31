@@ -14,6 +14,7 @@ save (``tests/test_canvas_embedded.py``). The cases that
 from __future__ import annotations
 
 import hashlib
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 
@@ -21,7 +22,7 @@ import pytest
 from corpus import ASSETS
 
 import pyropdf
-from pyropdf import _fonts
+from pyropdf import _core, _fonts
 
 # In mhlw-doc.pdf one full YuMincho program (object 152, 733,908 bytes)
 # serves a Type0 font (object 5, `/F1`) and a simple TrueType font (object 12,
@@ -174,6 +175,56 @@ def test_content_decode_limit_refuses_instead_of_subsetting() -> None:
         doc.subset_fonts()
     assert error.value.code == "page_content_size"
     assert doc.objects[PROGRAM].read() == source.objects[PROGRAM].read()
+
+
+@pytest.mark.filterwarnings("ignore::pyropdf.PyropdfWarning")
+def test_unused_compressed_form_is_not_decoded_by_font_preflight() -> None:
+    source = _exclusive_program()
+    form = source.objects.add_stream(
+        zlib.compress(b" " * 1_000_000),
+        {"Type": pyropdf.Name("XObject"), "Subtype": pyropdf.Name("Form"), "BBox": [0, 0, 10, 10]},
+        filter=None,
+    )
+    source.objects[form]["Filter"] = pyropdf.Name("FlateDecode")
+    resources = source.pages[0].obj["Resources"]
+    if "XObject" not in resources:
+        resources["XObject"] = {}
+    resources["XObject"]["NeverInvoked"] = source.objects[form]
+    before = hashlib.sha256(source.objects[PROGRAM].read()).digest()
+    doc = pyropdf.open(source.to_bytes(), limits=pyropdf.DocumentLimits(max_page_content_size=100_000))
+
+    doc.subset_fonts()
+
+    assert hashlib.sha256(doc.objects[PROGRAM].read()).digest() == before
+
+
+@pytest.mark.filterwarnings("ignore::pyropdf.PyropdfWarning")
+def test_unused_compressed_appearance_is_not_decoded_by_font_preflight() -> None:
+    source = _exclusive_program()
+    form_dict = {"Type": pyropdf.Name("XObject"), "Subtype": pyropdf.Name("Form"), "BBox": [0, 0, 10, 10]}
+    normal = source.objects.add_stream(b"q Q", form_dict, filter=None)
+    rollover = source.objects.add_stream(zlib.compress(b" " * 1_000_000), form_dict, filter=None)
+    source.objects[rollover]["Filter"] = pyropdf.Name("FlateDecode")
+    source.pages[0].obj["Annots"] = [
+        {
+            "Type": pyropdf.Name("Annot"),
+            "Subtype": pyropdf.Name("Stamp"),
+            "Rect": [0, 0, 10, 10],
+            "AP": {"N": source.objects[normal], "R": source.objects[rollover]},
+        }
+    ]
+    before = hashlib.sha256(source.objects[PROGRAM].read()).digest()
+    doc = pyropdf.open(source.to_bytes(), limits=pyropdf.DocumentLimits(max_page_content_size=100_000))
+
+    doc.subset_fonts()
+
+    assert hashlib.sha256(doc.objects[PROGRAM].read()).digest() == before
+
+
+def test_subset_helper_keeps_unknown_glyph_uses_whole() -> None:
+    doc = _exclusive_program()
+    data = doc.objects[PROGRAM].read()
+    assert _core.subset_font_program(data, "sfnt", [0xFFFFFFFF]) is None
 
 
 @pytest.mark.filterwarnings("ignore::pyropdf.PyropdfWarning")

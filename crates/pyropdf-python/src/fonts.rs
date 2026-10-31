@@ -54,6 +54,11 @@ pub fn subset_font_program<'py>(
             )));
         }
     };
+    // An unknown glyph use means the program must stay whole, even when a
+    // caller invokes this internal helper directly instead of subset_fonts.
+    if keep.contains(&u32::MAX) {
+        return Ok(None);
+    }
     let subset = py.detach(|| fonts::subset(data, format, &keep));
     Ok(subset.map(|subset| (PyBytes::new(py, &subset.data), subset.glyphs, subset.kept)))
 }
