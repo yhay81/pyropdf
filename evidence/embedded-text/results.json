@@ -1,0 +1,362 @@
+[
+ {
+  "face": "hebrew",
+  "pages": 1,
+  "varying": false,
+  "prune": false,
+  "glyphs": 6,
+  "write_seconds": 0.0042,
+  "written_bytes": 73417,
+  "programs": 1,
+  "subset_seconds": 0.0087,
+  "saved_bytes": 58943,
+  "kept": [
+   [
+    7,
+    470
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "hebrew",
+  "pages": 1,
+  "varying": false,
+  "prune": true,
+  "glyphs": 6,
+  "write_seconds": 0.0009,
+  "written_bytes": 18965,
+  "programs": 1,
+  "subset_seconds": 0.0007,
+  "saved_bytes": 3801,
+  "kept": [
+   [
+    7,
+    470
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "hebrew",
+  "pages": 100,
+  "varying": false,
+  "prune": false,
+  "glyphs": 6,
+  "write_seconds": 0.0039,
+  "written_bytes": 110961,
+  "programs": 1,
+  "subset_seconds": 0.0058,
+  "saved_bytes": 96288,
+  "kept": [
+   [
+    7,
+    470
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "hebrew",
+  "pages": 100,
+  "varying": false,
+  "prune": true,
+  "glyphs": 6,
+  "write_seconds": 0.0014,
+  "written_bytes": 56508,
+  "programs": 1,
+  "subset_seconds": 0.004,
+  "saved_bytes": 41147,
+  "kept": [
+   [
+    7,
+    470
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "hebrew",
+  "pages": 100,
+  "varying": true,
+  "prune": false,
+  "glyphs": 22,
+  "write_seconds": 0.0039,
+  "written_bytes": 104739,
+  "programs": 1,
+  "subset_seconds": 0.0062,
+  "saved_bytes": 91202,
+  "kept": [
+   [
+    23,
+    470
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "hebrew",
+  "pages": 100,
+  "varying": true,
+  "prune": true,
+  "glyphs": 22,
+  "write_seconds": 0.0013,
+  "written_bytes": 50286,
+  "programs": 1,
+  "subset_seconds": 0.0041,
+  "saved_bytes": 35993,
+  "kept": [
+   [
+    23,
+    470
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "latin",
+  "pages": 1,
+  "varying": false,
+  "prune": false,
+  "glyphs": 9,
+  "write_seconds": 0.0132,
+  "written_bytes": 243237,
+  "programs": 1,
+  "subset_seconds": 0.0046,
+  "saved_bytes": 64890,
+  "kept": [
+   [
+    10,
+    3246
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "latin",
+  "pages": 1,
+  "varying": false,
+  "prune": true,
+  "glyphs": 9,
+  "write_seconds": 0.0099,
+  "written_bytes": 190907,
+  "programs": 1,
+  "subset_seconds": 0.0025,
+  "saved_bytes": 12276,
+  "kept": [
+   [
+    10,
+    3246
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "latin",
+  "pages": 100,
+  "varying": false,
+  "prune": false,
+  "glyphs": 9,
+  "write_seconds": 0.0137,
+  "written_bytes": 287017,
+  "programs": 1,
+  "subset_seconds": 0.0082,
+  "saved_bytes": 108473,
+  "kept": [
+   [
+    10,
+    3246
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "latin",
+  "pages": 100,
+  "varying": false,
+  "prune": true,
+  "glyphs": 9,
+  "write_seconds": 0.0108,
+  "written_bytes": 234687,
+  "programs": 1,
+  "subset_seconds": 0.0061,
+  "saved_bytes": 55858,
+  "kept": [
+   [
+    10,
+    3246
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "latin",
+  "pages": 100,
+  "varying": true,
+  "prune": false,
+  "glyphs": 26,
+  "write_seconds": 0.0133,
+  "written_bytes": 274417,
+  "programs": 1,
+  "subset_seconds": 0.0081,
+  "saved_bytes": 98177,
+  "kept": [
+   [
+    27,
+    3246
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "latin",
+  "pages": 100,
+  "varying": true,
+  "prune": true,
+  "glyphs": 26,
+  "write_seconds": 0.0113,
+  "written_bytes": 222087,
+  "programs": 1,
+  "subset_seconds": 0.0062,
+  "saved_bytes": 45395,
+  "kept": [
+   [
+    27,
+    3246
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "japanese",
+  "pages": 1,
+  "varying": false,
+  "prune": false,
+  "glyphs": 9,
+  "write_seconds": 0.1053,
+  "written_bytes": 3853274,
+  "programs": 1,
+  "subset_seconds": 0.0449,
+  "saved_bytes": 421121,
+  "kept": [
+   [
+    10,
+    17850
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "japanese",
+  "pages": 1,
+  "varying": false,
+  "prune": true,
+  "glyphs": 9,
+  "write_seconds": 0.1006,
+  "written_bytes": 3722901,
+  "programs": 1,
+  "subset_seconds": 0.0689,
+  "saved_bytes": 295381,
+  "kept": [
+   [
+    10,
+    17850
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "japanese",
+  "pages": 100,
+  "varying": false,
+  "prune": false,
+  "glyphs": 9,
+  "write_seconds": 0.1333,
+  "written_bytes": 3890124,
+  "programs": 1,
+  "subset_seconds": 0.0438,
+  "saved_bytes": 457773,
+  "kept": [
+   [
+    10,
+    17850
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "japanese",
+  "pages": 100,
+  "varying": false,
+  "prune": true,
+  "glyphs": 9,
+  "write_seconds": 0.0953,
+  "written_bytes": 3759751,
+  "programs": 1,
+  "subset_seconds": 0.0388,
+  "saved_bytes": 332033,
+  "kept": [
+   [
+    10,
+    17850
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "japanese",
+  "pages": 100,
+  "varying": true,
+  "prune": false,
+  "glyphs": 17,
+  "write_seconds": 0.106,
+  "written_bytes": 3884124,
+  "programs": 1,
+  "subset_seconds": 0.0444,
+  "saved_bytes": 452834,
+  "kept": [
+   [
+    18,
+    17850
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ },
+ {
+  "face": "japanese",
+  "pages": 100,
+  "varying": true,
+  "prune": true,
+  "glyphs": 17,
+  "write_seconds": 0.1,
+  "written_bytes": 3753751,
+  "programs": 1,
+  "subset_seconds": 0.04,
+  "saved_bytes": 326903,
+  "kept": [
+   [
+    18,
+    17850
+   ]
+  ],
+  "text_ok": true,
+  "inked": true
+ }
+]
