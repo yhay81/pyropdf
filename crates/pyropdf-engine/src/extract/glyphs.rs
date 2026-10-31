@@ -27,13 +27,12 @@ struct Uses<'a> {
 impl ContentSink for Uses<'_> {
     fn glyph_run(&mut self, _: &GlyphStyle) {}
     fn glyph(&mut self, glyph: &Glyph<'_>, _: Affine, _: Option<Rect>) {
-        if let Glyph::Outline(outline) = glyph {
-            if let Err(error) = self
+        if let Glyph::Outline(outline) = glyph
+            && let Err(error) = self
                 .glyphs
                 .try_push((outline.font_cache_key(), outline.glyph_id().to_u32()))
-            {
-                self.refusal = Some(error);
-            }
+        {
+            self.refusal = Some(error);
         }
     }
     fn stroke_completes_fill(&mut self) {}
