@@ -22,7 +22,7 @@ def build(page_content: str) -> bytes:
     objects = {
         1: "<< /Type /Catalog /Pages 2 0 R >>",
         2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 200] >>",
-        3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Annots [5 0 R] >>",
+        3: "<< /Type /Page /Parent 2 0 R /Resources << >> /Contents 4 0 R /Annots [5 0 R] >>",
         4: stream(page_content),
         5: "<< /Type /Annot /Subtype /Square /Rect [20 40 60 60] /F 4 /AP << /N 6 0 R >> >>",
         7: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
@@ -37,7 +37,7 @@ def build(page_content: str) -> bytes:
         out += f"{number} 0 obj\n{body}\nendobj\n".encode()
     xref = len(out)
     out += f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode()
-    for number in objects:
+    for number in sorted(objects):
         out += f"{offsets[number]:010d} 00000 n \n".encode()
     out += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     return out
