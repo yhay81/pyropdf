@@ -342,7 +342,13 @@ reached = "The encoded image that `Pages.new_from_image` reads is larger than 25
 message = "the text has too many lines"
 unit = "lines"
 default = 4_096
-reached = "The text that a form field's appearance draws lays out in more than 4,096 lines."
+reached = "The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines."
+
+[codes.text_input_size]
+message = "the text is too large"
+unit = "bytes"
+default = 1_048_576
+reached = "The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8."
 
 [codes.named_destination_count]
 message = "the named destinations are too many"
