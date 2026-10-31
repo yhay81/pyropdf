@@ -3,9 +3,18 @@
 pylopdf's tests/test_acroform.py at ebb01d3c, the reading cases ported.
 Intended differences:
 
-- the cases of embedded form fonts wait for #194: a value outside
-  WinAnsiEncoding is left for the viewer to draw. The kid and intermediate
+- without ``Form.font`` a value outside WinAnsiEncoding is left for the
+  viewer to draw: pyropdf bundles no font extras, so the case that uses
+  an installed Japanese face is not ported. The kid and intermediate
   cases also read ``Field.widgets`` before they fill.
+- the embedded form font cases use the subset Noto faces of the engine's
+  test data, so their values are the subset's characters ("日本語のテキスト"
+  for "山田 太郎", "日A1" for "日Á"). ``Font.from_bytes`` refuses invalid
+  font data before a fill, and the core has no entry point that takes
+  font bytes, so the cases of the core's font input become ones on
+  ``Font`` and on ``form_field_draw_face``. New cases check one undo step
+  per fill, one font for every field, fills after a save, and
+  right-to-left values in logical order.
 - rendering reads the store and hands no serialized snapshot to the
   interpreter, so ``max_interpretation_size`` does not refuse rendering a
   filled button; the two ``test_state_appearance_*`` cases become one that
@@ -22,15 +31,17 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from typing import TYPE_CHECKING, TypeAlias
+from pathlib import Path
+from typing import TypeAlias
 
 import pytest
 
 import pyropdf
 from pyropdf import _core
 
-if TYPE_CHECKING:
-    from pathlib import Path
+FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
+NOTO_SANS_JP = FONTS / "NotoSansJP-subset.otf"
+NOTO_SANS_HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:
@@ -334,6 +345,221 @@ def test_fill_comb_field_centers_characters_and_enforces_maxlen() -> None:
     with pytest.raises(pyropdf.PdfError, match="exceeding MaxLen 6"):
         doc.form["code"].value = "1234567"
     assert _values(doc)["code"] == "A12"
+
+
+def _type0_fonts(data: bytes) -> int:
+    return len(re.findall(rb"/Subtype\s*/Type0", data))
+
+
+def test_fill_unicode_text_with_embedded_font_renders_and_roundtrips() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form["customer"].value = "日本語のテキスト"
+    assert _opaque_pixels(doc, (45, 67, 255, 97)) > 0
+    data = doc.to_bytes()
+    assert b"/FontFile3" in data
+    assert b"/NeedAppearances false" in data
+    reopened = pyropdf.open(data)
+    assert _values(reopened)["customer"] == "日本語のテキスト"
+    assert _opaque_pixels(reopened, (45, 67, 255, 97)) > 0
+    assert reopened.pages[0].text().split()[0] == "日本語のテキスト"
+
+
+def test_fill_comb_field_supports_unicode_graphemes() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form["code"].value = "日A1"
+    data = doc.to_bytes()
+    assert b"/NeedAppearances false" in data
+    reopened = pyropdf.open(data)
+    assert _values(reopened)["code"] == "日A1"
+    # Center alignment places three graphemes in slots 2 to 4 of six cells.
+    cell_width = 200 / 6
+    counts = [
+        _opaque_pixels(reopened, (300 + index * cell_width, 227, 300 + (index + 1) * cell_width, 252))
+        for index in range(6)
+    ]
+    assert counts[0] == 0
+    assert all(count > 0 for count in counts[1:4])
+    assert counts[4:] == [0, 0]
+
+
+def test_fill_multiline_text_with_embedded_font_wraps() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    value = "日本語のテキスト 日本語のテキスト 日本語のテキスト 日本語のテキスト\nAVA"
+    doc.form["notes"].value = value
+    reopened = pyropdf.open(doc.to_bytes())
+    assert _values(reopened)["notes"] == value
+    assert _opaque_pixels(reopened, (45, 187, 255, 257)) > 0
+    lines = [line for line in reopened.pages[0].text().split("\n") if line.strip()]
+    assert "AVA" in lines
+    assert len([line for line in lines if "日本語" in line]) >= 2
+
+
+def test_fill_right_to_left_text_reads_in_logical_order() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_HEBREW)
+    # The field has its line to itself: a line that mixes directions reads
+    # in visual order (#488).
+    doc.form["person.first"].value = "שלום עולם"
+    reopened = pyropdf.open(doc.to_bytes())
+    assert _opaque_pixels(reopened, (45, 147, 255, 177)) > 0
+    assert "שלום עולם" in reopened.pages[0].text().split("\n")
+
+
+def test_invalid_embedded_font_does_not_partially_update_field() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    with pytest.raises(pyropdf.PdfError, match="font"):
+        doc.form.font = pyropdf.Font.from_bytes(b"not a font")
+    assert doc.form.font is None
+    assert _values(doc)["customer"] == "initial"
+    assert _opaque_pixels(doc, (45, 67, 255, 97)) == 0
+
+
+def test_form_font_draws_the_same_bytes_as_font_input() -> None:
+    """A Font from a file and one from its bytes draw text and comb appearances alike."""
+    by_file, by_bytes = (pyropdf.open(_build_form_pdf()) for _ in range(2))
+    by_file.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    by_bytes.form.font = pyropdf.Font.from_bytes(NOTO_SANS_JP.read_bytes())
+
+    for name, value in (("customer", "日本語のテキスト"), ("code", "日A")):
+        by_file.form[name].value = value
+        by_bytes.form[name].value = value
+
+    saved = by_file.to_bytes()
+    assert saved == by_bytes.to_bytes()
+    assert b"/NeedAppearances false" in saved
+    assert _type0_fonts(saved) == 1
+    reopened = pyropdf.open(saved)
+    fields = _values(reopened)
+    assert (fields["customer"], fields["code"]) == ("日本語のテキスト", "日A")
+    assert _opaque_pixels(reopened, (45, 67, 255, 97)) > 0
+
+
+def test_form_font_fills_buttons_and_empty_values() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    face = pyropdf.Font.from_file(NOTO_SANS_JP)
+
+    doc.form.font = face
+    doc.form["agree"].value = True
+    doc.form["plan"].value = "Pro"
+    doc.form["customer"].value = ""
+
+    fields = _values(doc)
+    assert (fields["agree"], fields["plan"], fields["customer"]) == ("Yes", "Pro", "")
+    # Only drawn text embeds the face.
+    data = doc.to_bytes()
+    assert b"/FontFile" not in data
+    assert _type0_fonts(data) == 0
+
+
+def test_form_font_failures_leave_the_document_unchanged() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form["code"].value = "A12"
+    before = doc.to_bytes()
+    steps = doc.history.steps
+
+    with pytest.raises(pyropdf.PdfError, match="exceeding MaxLen 6"):
+        doc.form["code"].value = "1234567"
+    with pytest.raises(pyropdf.PdfError, match=r"no glyph for U\+1F980"):
+        doc.form["customer"].value = "\U0001f980"
+    with pytest.raises(pyropdf.PdfError, match=r"no glyph for U\+5C71"):
+        doc.form["customer"].value = "日本 山"
+
+    assert doc.to_bytes() == before
+    assert doc.history.steps == steps
+
+
+def test_form_font_takes_a_font_or_none() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    face = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form.font = face
+
+    with pytest.raises(TypeError, match="a form font is a Font or None"):
+        doc.form.font = "helv"  # ty: ignore[invalid-assignment]
+    assert doc.form.font is face
+    doc.form.font = None
+    assert doc.form.font is None
+
+
+def test_form_font_refuses_standard_14_fonts() -> None:
+    """Form appearances embed an OpenType face; WinAnsi text without a form font uses Helvetica."""
+    doc = pyropdf.open(_build_form_pdf())
+    before = doc.to_bytes()
+
+    with pytest.raises(pyropdf.PdfError, match="not the Standard 14 font 'Times-Roman'"):
+        doc.form.font = pyropdf.Font.standard("Times-Roman")
+    assert doc.form.font is None
+    # The core entry point refuses one as well.
+    field = doc.form["customer"]
+    with pytest.raises(pyropdf.PdfError, match="not a Standard 14 font"):
+        _core.form_field_draw_face(
+            doc._core(),  # noqa: SLF001
+            field._id,  # noqa: SLF001
+            pyropdf.Font.standard("Helvetica")._font,  # noqa: SLF001
+        )
+    assert doc.to_bytes() == before
+
+
+def test_one_form_font_fill_is_one_undo_step() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form["customer"].value = "日本語"
+    first = bytes(doc.pages[0].pixmap(alpha=True))
+    doc.form["person.first"].value = "かな"
+    assert doc.history.position == 2
+
+    doc.history.undo()
+    fields = _values(doc)
+    assert (fields["customer"], fields["person.first"]) == ("日本語", None)
+    assert bytes(doc.pages[0].pixmap(alpha=True)) == first
+    doc.history.undo()
+    assert _values(doc)["customer"] == "initial"
+    assert _opaque_pixels(doc, (45, 67, 255, 97)) == 0
+    assert _type0_fonts(doc.to_bytes()) == 0
+
+    doc.history.redo()
+    doc.history.redo()
+    reopened = pyropdf.open(doc.to_bytes())
+    assert reopened.pages[0].text().split()[0] == "日本語"
+    assert _opaque_pixels(reopened, (45, 147, 255, 177)) > 0
+
+
+def test_a_fill_inside_a_transaction_joins_it() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    with doc.transaction("both"):
+        doc.form["customer"].value = "日本語"
+        doc.form["code"].value = "日A1"
+    assert doc.history.steps[-1] == "both"
+    doc.history.undo()
+    fields = _values(doc)
+    assert (fields["customer"], fields["code"]) == ("initial", None)
+
+
+def test_filling_after_a_save_keeps_the_earlier_appearances() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form["customer"].value = "日本語"
+    first = doc.to_bytes()
+    doc.form["person.first"].value = "テキスト"
+    doc.form["code"].value = "日A1"
+    second = doc.to_bytes()
+
+    earlier = pyropdf.open(first)
+    assert _values(earlier)["person.first"] is None
+    assert _opaque_pixels(earlier, (45, 67, 255, 97)) > 0
+    later = pyropdf.open(second)
+    fields = _values(later)
+    assert (fields["customer"], fields["person.first"], fields["code"]) == ("日本語", "テキスト", "日A1")
+    for clip in ((45, 67, 255, 97), (45, 147, 255, 177), (300, 227, 500, 252)):
+        assert _opaque_pixels(later, clip) > 0
+    assert _type0_fonts(second) == 1
+    words = later.pages[0].text().split()
+    assert words[0] == "日本語"
+    assert "テキスト" in words
 
 
 @pytest.mark.parametrize(

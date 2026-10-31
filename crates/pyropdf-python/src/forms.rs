@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use pyo3::prelude::*;
 use pyropdf_engine::annotations::{Reader, synthesized};
+use pyropdf_engine::fonts::embed::Face;
 use pyropdf_engine::forms::defaults::{self, Joined, Renames, Slot};
+use pyropdf_engine::forms::face::{FaceFont, FaceText};
 use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::forms::{self as widgets, WidgetError};
 use pyropdf_engine::standard::{DA_FONTS, DefaultAppearance, winansi_byte};
@@ -34,6 +36,7 @@ use crate::document::{_Document, Failed, text_string};
 use crate::errors::{
     LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
 };
+use crate::fonts::_Font;
 use crate::pages::index;
 
 /// The most terminal fields that a walk returns.
@@ -1800,12 +1803,17 @@ pub enum FillValue {
 /// the form's `/NeedAppearances` when a widget is left without an
 /// appearance. Refuses what pylopdf refuses, leaving the document as it
 /// was.
+///
+/// Without `draw`, the field's own widgets are left as they are, for
+/// [`form_field_draw_face`] to draw.
 #[pyfunction]
+#[pyo3(signature = (document, id, value, draw=true))]
 pub fn form_field_fill(
     py: Python<'_>,
     document: &_Document,
     id: Id,
     value: FillValue,
+    draw: bool,
 ) -> PyResult<()> {
     if let FillValue::Text(text) = &value
         && text.len() > MAX_INPUT_BYTES
@@ -1823,7 +1831,7 @@ pub fn form_field_fill(
     };
     document.edit(py, |transaction, budget| {
         let savepoint = transaction.savepoint();
-        let result = fill(transaction, id, &value, budget, cache, draft);
+        let result = fill(transaction, id, &value, budget, cache, draft, draw);
         if result.is_err() {
             transaction.rollback(savepoint);
         }
@@ -1838,6 +1846,7 @@ fn fill(
     budget: &Budget,
     cache: &FillCache,
     draft: bool,
+    draw: bool,
 ) -> PyResult<()> {
     let before = base(transaction, draft);
     change(
@@ -1847,6 +1856,7 @@ fn fill(
         cache,
         before,
         |field, _, _| match field.kind {
+            kind if shows_text(kind) && !draw => Ok(After::Set(Cow::Borrowed(value))),
             kind if shows_text(kind) || is_button(kind) => Ok(After::Fill(Cow::Borrowed(value))),
             "pushbutton" => Err(PdfError::new_err(
                 "pushbutton fields do not have fillable values",
@@ -1857,6 +1867,107 @@ fn fill(
             _ => Err(PdfError::new_err("unsupported field type")),
         },
     )
+}
+
+/// Draws the widgets of text or choice field `id` in embedded `face`, as
+/// [`form_field_fill`] draws them in a Standard 14 font, and returns the
+/// glyphs that they show with their texts.
+///
+/// Without `font`, it only collects the glyphs and writes nothing. With
+/// `font`, the Type0 font of the face that the appearances name and the
+/// text that its ToUnicode CMap maps each glyph to, it writes the
+/// appearances and then sets the form's `/NeedAppearances` while a widget
+/// is left without an appearance. Refuses a character that the face has no
+/// glyph for and what the fill refuses, leaving the document as it was.
+#[pyfunction]
+#[pyo3(signature = (document, id, face, font=None))]
+pub fn form_field_draw_face(
+    py: Python<'_>,
+    document: &_Document,
+    id: Id,
+    face: &_Font,
+    font: Option<(u32, HashMap<u32, String>)>,
+) -> PyResult<Vec<(u32, String)>> {
+    let Some(face) = face.embedded() else {
+        return Err(PdfError::new_err(
+            "form appearances draw an OpenType face, not a Standard 14 font",
+        ));
+    };
+    let draft = document.in_transaction();
+    let cache = if draft {
+        &document.draft_fill_index
+    } else {
+        &document.fill_index
+    };
+    document.edit(py, |transaction, budget| {
+        let savepoint = transaction.savepoint();
+        let result = draw_face(transaction, id, face, font.as_ref(), budget, cache, draft);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result
+    })
+}
+
+fn draw_face(
+    transaction: &mut Transaction,
+    id: Id,
+    face: &Face,
+    font: Option<&(u32, HashMap<u32, String>)>,
+    budget: &Budget,
+    cache: &FillCache,
+    draft: bool,
+) -> PyResult<Vec<(u32, String)>> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let before = base(transaction, draft);
+    let index = cache.get(&before, budget)?;
+    let field = index.topology.form.field(id).ok_or_else(|| stale(id))?;
+    if !shows_text(field.kind) {
+        return Ok(Vec::new());
+    }
+    let font = match font {
+        Some((number, mapped)) => {
+            // Appearances that show no glyph name no font.
+            let generation = before
+                .get(*number, budget)
+                .map_err(store)?
+                .map_or(0, |object| object.generation());
+            Some(FaceFont {
+                font: Reference::new(*number, generation),
+                mapped,
+            })
+        }
+        None => None,
+    };
+    let writing = font.is_some();
+    let mut text = FaceText::new(face, font, budget).map_err(widget_error)?;
+    for &widget in &field.widgets {
+        let version = transaction.version();
+        let reader = Reader { version, budget };
+        let Some(dict) = widget_of(version, widget, budget)? else {
+            continue;
+        };
+        let Value::Dict(dict) = &*dict else {
+            continue;
+        };
+        let drawing = widgets::face_appearance(&reader, dict, &mut text).map_err(widget_error)?;
+        if writing && let Some(drawing) = drawing {
+            widgets::write(transaction, widget.0, dict, drawing, budget).map_err(store)?;
+        }
+    }
+    if writing {
+        let after = transaction.snapshot();
+        let changes = before
+            .changes(&after, budget)
+            .map_err(store)?
+            .ok_or_else(|| PdfError::new_err("form versions have different origins"))?;
+        let mut appearances = index.appearances.clone();
+        appearances.refresh(&after, changes.objects(), changes.trailer(), budget)?;
+        let complete = appearances.missing.iter().next().is_none();
+        set_need_appearances(transaction, !complete, budget)?;
+        transaction.retain_derived_version(Arc::clone(&before));
+    }
+    Ok(text.into_drawn())
 }
 
 /// Returns the version that a form edit starts from: the open
@@ -1878,6 +1989,8 @@ enum After<'v> {
     Draw,
     /// The value is set and the field's widgets are drawn again.
     Fill(Cow<'v, FillValue>),
+    /// The value is set and the field's widgets are left to the caller.
+    Set(Cow<'v, FillValue>),
 }
 
 /// Edits field `id` in one write: `edit` checks the field and changes a
@@ -1913,8 +2026,9 @@ fn change<'v>(
             return Ok(());
         }
         After::Draw => None,
-        After::Fill(value) => Some(&**value),
+        After::Fill(value) | After::Set(value) => Some(&**value),
     };
+    let own = !matches!(after, After::Set(_));
     let button = is_button(field.kind);
     let states = if button && value.is_some() {
         button_states(&before, field, budget)?
@@ -1960,7 +2074,7 @@ fn change<'v>(
     {
         let version = transaction.version();
         let reader = Reader { version, budget };
-        for &widget in &field.widgets {
+        for &widget in field.widgets.iter().filter(|_| own) {
             if let Some(dict) = widget_of(version, widget, budget)?
                 && let Value::Dict(dict) = &*dict
             {

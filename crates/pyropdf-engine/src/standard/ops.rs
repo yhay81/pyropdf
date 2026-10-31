@@ -78,6 +78,25 @@ pub fn text_ops(
     align: Align,
     style: Style<'_>,
 ) -> Result<(), LayoutError> {
+    text_ops_with(out, height, rect, layout, align, style, |out, line| {
+        push_string(out, line)?;
+        out.try_extend_from_slice(b" Tj\n")?;
+        Ok(())
+    })
+}
+
+/// Appends the operators that draw the lines of `layout` in `rect` as
+/// [`text_ops`] does, with `show` appending the operators that show each
+/// line's text, as an embedded face's glyphs draw it.
+pub fn text_ops_with(
+    out: &mut BudgetVec<'_, u8>,
+    height: f64,
+    rect: [f64; 4],
+    layout: &TextBox<'_>,
+    align: Align,
+    style: Style<'_>,
+    mut show: impl FnMut(&mut BudgetVec<'_, u8>, &str) -> Result<(), LayoutError>,
+) -> Result<(), LayoutError> {
     out.budget().poll()?;
     let channels = match style.color {
         DeviceColor::Gray(gray) => [gray, gray, gray],
@@ -156,8 +175,7 @@ pub fn text_ops(
             fmt(height - baseline),
         );
         out.try_extend_from_slice(positioning.as_bytes())?;
-        push_string(out, line.text)?;
-        out.try_extend_from_slice(b" Tj\n")?;
+        show(out, line.text)?;
     }
     out.try_extend_from_slice(b"ET\nQ\n")?;
     Ok(())
