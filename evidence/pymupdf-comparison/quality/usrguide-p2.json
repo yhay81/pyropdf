@@ -1,7 +1,7 @@
 {
  "document": "usrguide.pdf",
  "page": 2,
- "checked": true,
+ "checked": false,
  "notes": "Agent-labeled from Ghostscript renderings at 60 to 150 dpi; awaiting the owner's check.",
  "anchors": [
   "Expandable floating point (and other) calculations",
