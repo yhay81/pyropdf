@@ -1,0 +1,68 @@
+[
+ {
+  "face": "hebrew",
+  "pages": 100,
+  "varying": false,
+  "draw_seconds": 0.034,
+  "programs": 1,
+  "type0_fonts": 1,
+  "saved_bytes": 109168,
+  "program_bytes": 112640,
+  "text_ok": true
+ },
+ {
+  "face": "hebrew",
+  "pages": 100,
+  "varying": true,
+  "draw_seconds": 0.033,
+  "programs": 1,
+  "type0_fonts": 1,
+  "saved_bytes": 107280,
+  "program_bytes": 112640,
+  "text_ok": true
+ },
+ {
+  "face": "latin",
+  "pages": 100,
+  "varying": false,
+  "draw_seconds": 0.031,
+  "programs": 1,
+  "type0_fonts": 1,
+  "saved_bytes": 304782,
+  "program_bytes": 538060,
+  "text_ok": true
+ },
+ {
+  "face": "latin",
+  "pages": 100,
+  "varying": true,
+  "draw_seconds": 0.032,
+  "programs": 1,
+  "type0_fonts": 1,
+  "saved_bytes": 302265,
+  "program_bytes": 538060,
+  "text_ok": true
+ },
+ {
+  "face": "japanese",
+  "pages": 100,
+  "varying": false,
+  "draw_seconds": 0.102,
+  "programs": 1,
+  "type0_fonts": 1,
+  "saved_bytes": 3909763,
+  "program_bytes": 4499820,
+  "text_ok": true
+ },
+ {
+  "face": "japanese",
+  "pages": 100,
+  "varying": true,
+  "draw_seconds": 0.106,
+  "programs": 1,
+  "type0_fonts": 1,
+  "saved_bytes": 3906454,
+  "program_bytes": 4499820,
+  "text_ok": true
+ }
+]

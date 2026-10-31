@@ -17,7 +17,7 @@ mod ops;
 
 pub use appearance::{DA_FONTS, DefaultAppearance, MAX_DEFAULT_APPEARANCE, da_font};
 pub use font::{
-    char_metric, font, font_bbox, glyph_code, is_winansi, line_metrics, text_width,
+    char_metric, chars, font, font_bbox, glyph_code, is_winansi, line_metrics, text_width,
     vertical_metrics, winansi_byte,
 };
 pub use layout::{
@@ -25,7 +25,7 @@ pub use layout::{
     layout, single_line,
 };
 pub use ops::{Align, DeviceColor, Style, text_ops};
-pub use pdf_base14_metrics::Base14Font;
+pub use pdf_base14_metrics::{Base14Font, CharacterMetric};
 
 use pyropdf_store::budget::Budget;
 

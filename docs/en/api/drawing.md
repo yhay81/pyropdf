@@ -28,8 +28,9 @@ or a `Color` for a 1-point line; a path with neither is stroked
 with a 1-point black line. A color's alpha below 1 paints it
 translucent. The scopes `clip`, `transform`,
 `opacity`, and `blend` are context managers that apply to
-everything drawn inside them. Text comes with krilla's object sink
-(DESIGN.md section 7).
+everything drawn inside them. `text` and `textbox` draw
+text in a `Font`; embedded fonts come with issue 153 (DESIGN.md
+section 7).
 
 A canvas holds at most 1,048,576 path points, of paths and clips
 together, nests at most 16 scopes, and writes at most 64 MiB of
@@ -134,6 +135,71 @@ Canvas.bezier(
 ```
 
 Draw a cubic Bézier curve, with a 1-point black stroke by default.
+
+### `Canvas.text`
+
+```python
+Canvas.text(
+    text: str,
+    at: Sequence[float],
+    *,
+    font: Font | None = None,
+    size: float = 11,
+    fill: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | None = None,
+    line_height: float | None = None,
+    rotate: int = 0,
+    max_text_size: int | None = 1048576,
+)
+```
+
+Draw text whose first baseline starts at `at`.
+
+Lines are split with `str.splitlines` and placed `line_height`
+times `size` apart, by default at the font's own line height.
+`rotate` turns the text clockwise about `at` by 0, 90, 180, or
+270 degrees, so that at 90 the lines run down the page and stack
+leftward; `transform` turns it by any other angle. `font`
+defaults to Helvetica. Text is filled, stroked, or both; at least one
+is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
+default (`max_text_size`, `None` for trusted input), refused with
+`LimitError` code `text_input_size` or `text_line_count`.
+
+### `Canvas.textbox`
+
+```python
+Canvas.textbox(
+    rect: Sequence[float],
+    text: str,
+    *,
+    font: Font | None = None,
+    size: float = 11,
+    align: Literal['left', 'center', 'right', 'justify'] = 'left',
+    line_height: float | None = None,
+    fill: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | None = None,
+    rotate: int = 0,
+    max_text_size: int | None = 1048576,
+) -> TextFit
+```
+
+Wrap text inside `rect` and report how it fits.
+
+Lines break at Unicode line-break opportunities (UAX #14) and, for a
+word wider than the box, between grapheme clusters. They are placed
+as `text` places them: the first baseline one
+`Font.ascender` below the top of `rect` and later ones
+`line_height` times `size` apart, by default at the font's own
+line height, and the text fits when the descender of the last line
+does. When the text does not fit, nothing is drawn and
+`TextFit.spare_height` is the negative shortfall;
+`Font.text_height` measures the height that the text needs
+without drawing it. Tabs become single spaces. `rotate` turns the
+text clockwise inside `rect` by 0, 90, 180, or 270 degrees: at 90
+lines run down the box and stack from its right edge leftward, so
+they wrap at the box's height and fill its width, and at 270 they run
+up and stack from the left edge. The font, paint, and size options
+follow `text`.
 
 ### `Canvas.image`
 
@@ -371,3 +437,22 @@ PathBuilder.zigzag(
 ```
 
 Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
+
+## `TextFit`
+
+```python
+TextFit(spare_height: float)
+```
+
+How text fits a `Canvas.textbox`: the height left below its last line.
+
+A negative `spare_height` is the shortfall of text that did not
+fit, and was not drawn.
+
+### `TextFit.fits`
+
+```python
+TextFit.fits: bool
+```
+
+Whether the text fit its box and was drawn.

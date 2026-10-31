@@ -151,9 +151,19 @@ pub enum LimitCode {
     /// The encoded image that `Pages.new_from_image` reads is larger than 256
     /// MiB.
     ImageInputSize,
-    /// The text that a form field's appearance draws lays out in more than
-    /// 4,096 lines.
+    /// The text that a form field's appearance draws, or that `Canvas.text`,
+    /// `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096
+    /// lines.
     TextLineCount,
+    /// The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement
+    /// takes is larger than 1 MiB of UTF-8.
+    TextInputSize,
+    /// Shaping one string in an embedded face takes more characters, or gives
+    /// more glyphs, than the limit.
+    ShapedGlyphCount,
+    /// The font data that `Font.from_file` or `Font.from_bytes` loads is larger
+    /// than 64 MiB.
+    FontInputSize,
     /// The document's named destinations, its `/Names /Dests` tree and its
     /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
     NamedDestinationCount,
@@ -208,7 +218,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 70] = [
+    pub const ALL: [Self; 73] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -262,6 +272,9 @@ impl LimitCode {
         Self::TextEditForms,
         Self::ImageInputSize,
         Self::TextLineCount,
+        Self::TextInputSize,
+        Self::ShapedGlyphCount,
+        Self::FontInputSize,
         Self::NamedDestinationCount,
         Self::NamedDestinationEdgeCount,
         Self::NamedDestinationDepth,
@@ -338,6 +351,9 @@ impl LimitCode {
             Self::TextEditForms => "text_edit_forms",
             Self::ImageInputSize => "image_input_size",
             Self::TextLineCount => "text_line_count",
+            Self::TextInputSize => "text_input_size",
+            Self::ShapedGlyphCount => "shaped_glyph_count",
+            Self::FontInputSize => "font_input_size",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
             Self::NamedDestinationDepth => "named_destination_depth",
@@ -416,6 +432,9 @@ impl LimitCode {
             Self::TextEditForms => "the text edit reaches too many form XObjects",
             Self::ImageInputSize => "the image data is too large",
             Self::TextLineCount => "the text has too many lines",
+            Self::TextInputSize => "the text is too large",
+            Self::ShapedGlyphCount => "the text shapes into too many glyphs",
+            Self::FontInputSize => "the font file is too large",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
             Self::NamedDestinationDepth => "the named-destination tree is too deep",
@@ -496,6 +515,9 @@ impl LimitCode {
             Self::TextEditForms => Some("drawings"),
             Self::ImageInputSize => Some("bytes"),
             Self::TextLineCount => Some("lines"),
+            Self::TextInputSize => Some("bytes"),
+            Self::ShapedGlyphCount => Some("glyphs"),
+            Self::FontInputSize => Some("bytes"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationEdgeCount => Some("edges"),
             Self::NamedDestinationDepth => Some("levels"),
@@ -574,6 +596,9 @@ impl LimitCode {
             Self::TextEditForms => Some(4_096),
             Self::ImageInputSize => Some(268_435_456),
             Self::TextLineCount => Some(4_096),
+            Self::TextInputSize => Some(1_048_576),
+            Self::ShapedGlyphCount => Some(1_048_576),
+            Self::FontInputSize => Some(67_108_864),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationEdgeCount => Some(131_072),
             Self::NamedDestinationDepth => Some(32),
