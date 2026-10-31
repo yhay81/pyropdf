@@ -112,6 +112,48 @@ Font.family: str | None
 
 The family name, such as `"Times"` for `"Times-Bold"`.
 
+### `Font.from_bytes`
+
+```python
+Font.from_bytes(
+    data: bytes | bytearray | memoryview,
+    /,
+    *,
+    index: int = 0,
+    weight: int | None = None,
+    max_size: int | None = 67108864,
+) -> Font
+```
+
+Load an OpenType face from the bytes of a font file.
+
+`index`, `weight`, and `max_size` work as for `from_file`.
+
+### `Font.from_file`
+
+```python
+Font.from_file(
+    path: str | os.PathLike[str],
+    /,
+    *,
+    index: int = 0,
+    weight: int | None = None,
+    max_size: int | None = 67108864,
+) -> Font
+```
+
+Load an OpenType face (TrueType or CFF outlines) from a font file.
+
+`index` selects a face in a collection such as a `.ttc` file. A
+variable face is drawn at its default instance. `weight`, a weight
+class from 1 through 1000, must be the face's own weight: pyropdf
+never imitates a weight that the font does not define, and refuses
+other instances of a variable face. Invalid or unsupported font data
+raises `PdfError`; a missing file raises
+`FileNotFoundError`. The file is limited to 64 MiB by default
+(`max_size`, `None` for trusted input), refused with
+`LimitError` code `font_input_size`.
+
 ### `Font.glyph_count`
 
 ```python
@@ -169,7 +211,7 @@ Whether the face has serifs.
 Font.name: str | None
 ```
 
-The PostScript name of a Standard 14 font.
+The PostScript name of a Standard 14 font, or the full name of an embedded face.
 
 ### `Font.program`
 
@@ -177,7 +219,11 @@ The PostScript name of a Standard 14 font.
 Font.program() -> bytes | None
 ```
 
-Return the bytes that the face was loaded from, or `None` for a Standard 14 font.
+Return the program that a document embeds, or `None` for a Standard 14 font.
+
+The program is the face alone with all its glyphs, as an OpenType
+file, even when it was loaded from a collection; a save subsets it
+to the glyphs that the document draws.
 
 ### `Font.standard`
 

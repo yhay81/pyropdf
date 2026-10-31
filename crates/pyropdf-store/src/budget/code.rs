@@ -161,6 +161,9 @@ pub enum LimitCode {
     /// Shaping one string in an embedded face takes more characters, or gives
     /// more glyphs, than the limit.
     ShapedGlyphCount,
+    /// The font data that `Font.from_file` or `Font.from_bytes` loads is larger
+    /// than 64 MiB.
+    FontInputSize,
     /// The document's named destinations, its `/Names /Dests` tree and its
     /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
     NamedDestinationCount,
@@ -215,7 +218,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 72] = [
+    pub const ALL: [Self; 73] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -271,6 +274,7 @@ impl LimitCode {
         Self::TextLineCount,
         Self::TextInputSize,
         Self::ShapedGlyphCount,
+        Self::FontInputSize,
         Self::NamedDestinationCount,
         Self::NamedDestinationEdgeCount,
         Self::NamedDestinationDepth,
@@ -349,6 +353,7 @@ impl LimitCode {
             Self::TextLineCount => "text_line_count",
             Self::TextInputSize => "text_input_size",
             Self::ShapedGlyphCount => "shaped_glyph_count",
+            Self::FontInputSize => "font_input_size",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
             Self::NamedDestinationDepth => "named_destination_depth",
@@ -429,6 +434,7 @@ impl LimitCode {
             Self::TextLineCount => "the text has too many lines",
             Self::TextInputSize => "the text is too large",
             Self::ShapedGlyphCount => "the text shapes into too many glyphs",
+            Self::FontInputSize => "the font file is too large",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
             Self::NamedDestinationDepth => "the named-destination tree is too deep",
@@ -511,6 +517,7 @@ impl LimitCode {
             Self::TextLineCount => Some("lines"),
             Self::TextInputSize => Some("bytes"),
             Self::ShapedGlyphCount => Some("glyphs"),
+            Self::FontInputSize => Some("bytes"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationEdgeCount => Some("edges"),
             Self::NamedDestinationDepth => Some("levels"),
@@ -591,6 +598,7 @@ impl LimitCode {
             Self::TextLineCount => Some(4_096),
             Self::TextInputSize => Some(1_048_576),
             Self::ShapedGlyphCount => Some(1_048_576),
+            Self::FontInputSize => Some(67_108_864),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationEdgeCount => Some(131_072),
             Self::NamedDestinationDepth => Some(32),

@@ -65,6 +65,7 @@ LimitCode: TypeAlias = Literal[
     "text_line_count",
     "text_input_size",
     "shaped_glyph_count",
+    "font_input_size",
     "named_destination_count",
     "named_destination_edge_count",
     "named_destination_depth",
@@ -209,6 +210,7 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "shaped_glyph_count": (
             "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
         ),
+        "font_input_size": "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB.",
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
             "than 65,536 entries or tree nodes."

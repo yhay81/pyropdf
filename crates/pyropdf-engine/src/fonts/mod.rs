@@ -6,6 +6,7 @@
 use std::collections::BTreeSet;
 
 mod cff;
+pub mod embed;
 mod sfnt;
 pub mod shape;
 #[cfg(test)]

@@ -356,6 +356,12 @@ unit = "glyphs"
 default = 1_048_576
 reached = "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
 
+[codes.font_input_size]
+message = "the font file is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB."
+
 [codes.named_destination_count]
 message = "the named destinations are too many"
 unit = "entries"
