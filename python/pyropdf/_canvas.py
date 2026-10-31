@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import sys
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from dataclasses import dataclass, replace
+from functools import wraps
+from itertools import islice
+from typing import TYPE_CHECKING, Concatenate, ParamSpec, TypeVar, cast
 
 from pyropdf import _core
 from pyropdf._content import (
@@ -28,13 +31,12 @@ from pyropdf._content import (
 from pyropdf._errors import LimitError, PdfError
 from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
-from pyropdf._objects import Name, Stream
-from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE
+from pyropdf._objects import Array, Name, Stream
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from types import TracebackType
-    from typing import Self, TypeAlias
+    from typing import NoReturn, Self, TypeAlias
 
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
@@ -54,8 +56,14 @@ _KAPPA_CURVE = 0.55228474983
 _FLOAT32_MAX = 3.4028234663852886e38
 #: The deepest nesting of clip, transform, opacity, and blend scopes.
 _MAX_SCOPES = 16
-#: The most path and clip points that one canvas holds.
-_MAX_POINTS = 1_048_576
+# Conservative charges for CPython's list slots and small per-segment
+# formatting temporaries. They stay charged until the canvas operation ends.
+_LIST_SLOT_BYTES = 2 * max(8, sys.getsizeof([None]) - sys.getsizeof([]))
+_BYTES_HEADER = sys.getsizeof(b"")
+_SEGMENT_TEMP_BYTES = 2048
+_MISSING = object()
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
 _BLACK = Color(0.0, 0.0, 0.0)
 _CAPS = {LineCap.BUTT: 0, LineCap.ROUND: 1, LineCap.SQUARE: 2}
 _JOINS = {LineJoin.MITER: 0, LineJoin.ROUND: 1, LineJoin.BEVEL: 2}
@@ -84,11 +92,11 @@ _STATE_OPERATORS = frozenset({"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "r
 def _number(value: object, name: str) -> float:
     """Return a finite number within PDF real range."""
     if isinstance(value, (bool, str, bytes)) or not hasattr(value, "__float__"):
-        msg = f"{name} must be a number: {value!r}"
+        msg = f"{name} must be a number"
         raise TypeError(msg)
     number = float(cast("float", value))
     if not (math.isfinite(number) and abs(number) <= _FLOAT32_MAX):
-        msg = f"{name} must be a finite number within PDF real range: {value!r}"
+        msg = f"{name} must be a finite number within PDF real range"
         raise ValueError(msg)
     return number
 
@@ -96,9 +104,9 @@ def _number(value: object, name: str) -> float:
 def _point(value: Sequence[float], name: str) -> Point:
     """Return a point from a :class:`Point` or a pair of numbers."""
     try:
-        point = Point(*value)
+        point = Point(*islice(iter(value), 3))
     except (TypeError, ValueError) as exc:
-        msg = f"{name} must be a point (x, y): {value!r}"
+        msg = f"{name} must be a point (x, y)"
         raise ValueError(msg) from exc
     _number(point.x, name)
     _number(point.y, name)
@@ -108,14 +116,14 @@ def _point(value: Sequence[float], name: str) -> Point:
 def _rect(value: Sequence[float], name: str) -> Rect:
     """Return a rectangle with a positive size."""
     try:
-        rect = Rect(*value)
+        rect = Rect(*islice(iter(value), 5))
     except (TypeError, ValueError) as exc:
-        msg = f"{name} must be a rectangle (x0, y0, x1, y1): {value!r}"
+        msg = f"{name} must be a rectangle (x0, y0, x1, y1)"
         raise ValueError(msg) from exc
     for coordinate in rect:
         _number(coordinate, name)
     if not (rect.x1 > rect.x0 and rect.y1 > rect.y0):
-        msg = f"{name} must have x0 < x1 and y0 < y1: {value!r}"
+        msg = f"{name} must have x0 < x1 and y0 < y1"
         raise ValueError(msg)
     return rect
 
@@ -124,7 +132,7 @@ def _unit(value: object, name: str) -> float:
     """Return a number from 0 to 1."""
     number = _number(value, name)
     if not 0 <= number <= 1:
-        msg = f"{name} must be a number from 0 to 1: {value!r}"
+        msg = f"{name} must be a number from 0 to 1"
         raise ValueError(msg)
     return number
 
@@ -132,14 +140,39 @@ def _unit(value: object, name: str) -> float:
 def _quarter_turn(rotate: object) -> int:
     """Return a clockwise right-angle turn normalized to 0 through 270 degrees."""
     if isinstance(rotate, bool) or not isinstance(rotate, int) or rotate % 90 != 0:
-        msg = f"rotate must be a multiple of 90: {rotate!r}"
+        msg = "rotate must be a multiple of 90"
         raise ValueError(msg)
     return rotate % 360
 
 
+def _budget_guard(method: Callable[Concatenate[Canvas, _P], _R]) -> Callable[Concatenate[Canvas, _P], _R]:
+    """Discard a canvas even if its caller catches an operation's refusal."""
+
+    @wraps(method)
+    def guarded(canvas: Canvas, /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return method(canvas, *args, **kwargs)
+        except LimitError:
+            canvas._failed = True  # noqa: SLF001 - the guard belongs to Canvas.
+            raise
+        except MemoryError as error:
+            _memory_refusal(canvas, error)
+
+    return guarded
+
+
+def _memory_refusal(canvas: Canvas, error: MemoryError) -> NoReturn:
+    canvas._failed = True  # noqa: SLF001 - the guard belongs to Canvas.
+    code = "memory_size"
+    raise LimitError(code, "the canvas could not allocate memory") from error
+
+
 def _fmt(value: float) -> bytes:
     """Return a number as the shortest content-stream real that keeps four decimals."""
-    text = f"{value:.4f}".rstrip("0").rstrip(".")
+    # Validation may accept float-convertible Python objects. Never invoke a
+    # caller-defined __format__, which can allocate arbitrary output.
+    number = _number(value, "number")
+    text = f"{number:.4f}".rstrip("0").rstrip(".")
     return b"0" if text in ("", "-0") else text.encode("ascii")
 
 
@@ -151,12 +184,13 @@ def _color(value: object, name: str) -> Color:
     if not isinstance(value, Color):
         msg = f"{name} must be a pyropdf.Color, not {type(value).__name__}"
         raise TypeError(msg)
-    for component in ("red", "green", "blue", "alpha"):
-        _unit(getattr(value, component), f"{name}.{component}")
-    return value
+    red, green, blue, alpha = (
+        _unit(getattr(value, part), f"{name}.{part}") for part in ("red", "green", "blue", "alpha")
+    )
+    return Color(red, green, blue, alpha)
 
 
-def _stroke(value: Stroke | Color | None) -> Stroke | None:
+def _stroke(value: Stroke | Color | None, canvas: Canvas) -> Stroke | None:
     """Return a stroke from a :class:`Stroke` or a :class:`Color`, checked."""
     if value is None:
         return None
@@ -167,22 +201,31 @@ def _stroke(value: Stroke | Color | None) -> Stroke | None:
     if not isinstance(stroke.paint, Color):
         msg = "a canvas strokes with a Color; pattern paints cannot be drawn yet"
         raise TypeError(msg)
-    _color(stroke.paint, "stroke.paint")
+    paint = _color(stroke.paint, "stroke.paint")
     # A width of 0 draws the thinnest line that the device can show.
-    if _number(stroke.width, "stroke.width") < 0:
-        msg = f"stroke.width must be non-negative: {stroke.width!r}"
+    width = _number(stroke.width, "stroke.width")
+    if width < 0:
+        msg = f"stroke.width must be non-negative: {width}"
         raise ValueError(msg)
-    if _number(stroke.miter_limit, "stroke.miter_limit") < 1:
-        msg = f"stroke.miter_limit must be at least 1: {stroke.miter_limit!r}"
+    miter_limit = _number(stroke.miter_limit, "stroke.miter_limit")
+    if miter_limit < 1:
+        msg = f"stroke.miter_limit must be at least 1: {miter_limit}"
         raise ValueError(msg)
-    dashes = [_number(length, "stroke.dashes") for length in stroke.dashes]
+    dashes: list[float] = []
+    for length in stroke.dashes:
+        canvas._charge("content_element_count", 1)  # noqa: SLF001
+        canvas._charge("memory_size", _LIST_SLOT_BYTES + 64)  # noqa: SLF001
+        dashes.append(_number(length, "stroke.dashes"))
     if any(length < 0 for length in dashes) or (dashes and not any(dashes)):
-        msg = f"stroke.dashes must be non-negative lengths, not all zero: {stroke.dashes!r}"
+        msg = "stroke.dashes must be non-negative lengths, not all zero"
         raise ValueError(msg)
-    _number(stroke.dash_offset, "stroke.dash_offset")
+    dash_offset = _number(stroke.dash_offset, "stroke.dash_offset")
     LineCap(stroke.cap)
     LineJoin(stroke.join)
-    return stroke
+    canvas._charge("memory_size", _LIST_SLOT_BYTES * len(dashes))  # noqa: SLF001
+    return replace(
+        stroke, paint=paint, width=width, miter_limit=miter_limit, dashes=tuple(dashes), dash_offset=dash_offset
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,10 +244,13 @@ class TextFit:
         return self.spare_height >= 0
 
 
-def _segments(path: object) -> list[Segment]:
+def _segments(path: object, canvas: Canvas) -> list[Segment]:
     """Return the segments of a path, a builder, or an iterable of segments, checked."""
-    if isinstance(path, (PathBuilder, Path)):
-        segments: Iterable[object] = path.segments
+    if isinstance(path, PathBuilder):
+        # The public property constructs a tuple of the entire path.
+        segments: Iterable[object] = path._segments  # noqa: SLF001 - the canvas's own builder.
+    elif isinstance(path, Path):
+        segments = path.segments
     elif isinstance(path, Iterable) and not isinstance(path, (str, bytes)):
         segments = path
     else:
@@ -212,9 +258,20 @@ def _segments(path: object) -> list[Segment]:
         raise TypeError(msg)
     checked: list[Segment] = []
     for segment in segments:
+        canvas._poll()  # noqa: SLF001 - shared operation budget.
         if not isinstance(segment, (MoveTo, LineTo, CurveTo, ClosePath)):
             msg = f"a path segment must be MoveTo, LineTo, CurveTo, or ClosePath, not {type(segment).__name__}"
             raise TypeError(msg)
+        if isinstance(segment, ClosePath):
+            # ClosePath has no control point. Bound repeated close operators
+            # separately, without lowering the existing point limit.
+            canvas._close_segments += 1  # noqa: SLF001
+            canvas._check("content_element_count", canvas._close_segments)  # noqa: SLF001
+            points = 0
+        else:
+            points = 3 if isinstance(segment, CurveTo) else 1
+        canvas._charge("content_element_count", points)  # noqa: SLF001 - before growing the list.
+        canvas._charge("memory_size", _LIST_SLOT_BYTES)  # noqa: SLF001
         checked.append(segment)
     if not checked:
         msg = "the path has no segments"
@@ -225,24 +282,31 @@ def _segments(path: object) -> list[Segment]:
     return checked
 
 
-def _path_bytes(segments: list[Segment]) -> tuple[bytes, int]:
+def _path_bytes(segments: list[Segment], canvas: Canvas) -> tuple[bytes, int]:
     """Return the path construction operators of ``segments`` and their point count."""
     parts: list[bytes] = []
     points = 0
+    size = 0
     for segment in segments:
+        # Point and PDF-real formatting make only bounded small temporaries.
+        # Charge before any of them or the parts list can grow.
+        canvas._charge("memory_size", _SEGMENT_TEMP_BYTES + _LIST_SLOT_BYTES)  # noqa: SLF001
         if isinstance(segment, MoveTo):
-            parts.append(_numbers(*_point(segment.to, "point")) + b" m")
+            part = _numbers(*_point(segment.to, "point")) + b" m"
             points += 1
         elif isinstance(segment, LineTo):
-            parts.append(_numbers(*_point(segment.to, "point")) + b" l")
+            part = _numbers(*_point(segment.to, "point")) + b" l"
             points += 1
         elif isinstance(segment, CurveTo):
             c1, c2, to = _point(segment.c1, "c1"), _point(segment.c2, "c2"), _point(segment.to, "to")
-            parts.append(_numbers(*c1, *c2, *to) + b" c")
+            part = _numbers(*c1, *c2, *to) + b" c"
             points += 3
         else:
-            parts.append(b"h")
-    return b"\n".join(parts), points
+            part = b"h"
+        size += len(part) + bool(parts)
+        canvas._check("content_input_size", size)  # noqa: SLF001
+        parts.append(part)
+    return canvas._join(parts), points  # noqa: SLF001 - precharge the joined output.
 
 
 def _affine(function: Callable[[float, float], tuple[float, float]]) -> _Affine:
@@ -398,7 +462,7 @@ class PathBuilder:
         r = _rect(rect, "rect")
         rounding = _number(radius, "radius")
         if rounding < 0:
-            msg = f"radius must not be negative: {radius!r}"
+            msg = f"radius must not be negative: {rounding}"
             raise ValueError(msg)
         rounding = min(rounding, (r.x1 - r.x0) / 2, (r.y1 - r.y0) / 2)
         if rounding == 0:
@@ -434,7 +498,7 @@ class PathBuilder:
         c = _point(center, "center")
         size = _number(radius, "radius")
         if not size > 0:
-            msg = f"radius must be positive: {radius!r}"
+            msg = f"radius must be positive: {size}"
             raise ValueError(msg)
         return self.ellipse((c.x - size, c.y - size, c.x + size, c.y + size))
 
@@ -466,7 +530,7 @@ class PathBuilder:
         c = _point(center, "center")
         size = _number(radius, "radius")
         if not size > 0:
-            msg = f"radius must be positive: {radius!r}"
+            msg = f"radius must be positive: {size}"
             raise ValueError(msg)
         first = math.radians(_number(start, "start"))
         total = math.radians(_number(sweep, "sweep"))
@@ -500,7 +564,7 @@ class PathBuilder:
     def _turns(start: Point, end: Point, breadth: float, height: float, *, on_line: bool) -> list[Point]:
         """Return the turning points of a wave from ``start`` to ``end``."""
         if not breadth > 0:
-            msg = f"breadth must be positive: {breadth!r}"
+            msg = f"breadth must be positive: {breadth}"
             raise ValueError(msg)
         length = math.dist(start, end)
         count = 4 * round(length / (4 * breadth))
@@ -577,7 +641,7 @@ class _Images:
 
     def __init__(self) -> None:
         self.images: dict[bytes, int] = {}
-        self.forms: dict[tuple[int, int, int, bytes], int] = {}
+        self.forms: dict[tuple[int, int, int, bytes, object], int] = {}
 
 
 class Canvas:
@@ -605,7 +669,21 @@ class Canvas:
     ``ValueError`` for the nesting.
     """
 
-    __slots__ = ("_closed", "_depth", "_entered", "_gstates", "_layers", "_page", "_points", "_underlay", "_xobjects")
+    __slots__ = (
+        "_budget",
+        "_close_segments",
+        "_closed",
+        "_depth",
+        "_entered",
+        "_failed",
+        "_gstates",
+        "_layer_sizes",
+        "_layers",
+        "_page",
+        "_underlay",
+        "_xobject_names",
+        "_xobjects",
+    )
 
     def __init__(self, page: Page, *, underlay: bool = False) -> None:
         """Start an empty canvas on ``page``; :meth:`Page.draw` is the usual way."""
@@ -618,12 +696,16 @@ class Canvas:
         self._underlay = bool(underlay)
         # One buffer per open opacity group; the first is the page's content.
         self._layers: list[tuple[list[bytes], float | None]] = [([], None)]
+        self._layer_sizes = [0]
+        self._close_segments = 0
         self._depth = 0
-        self._points = 0
         self._xobjects: dict[str, int] = {}
+        self._xobject_names: dict[int, str] = {}
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
         self._closed = False
         self._entered = False
+        self._failed = False
+        self._budget: _core._OperationBudget | None = None
 
     # Writing.
 
@@ -632,7 +714,10 @@ class Canvas:
         if self._closed or self._entered:
             msg = "a canvas is used in one with block; start another with page.draw()"
             raise ValueError(msg)
-        _core.begin_transaction(self._page.document._core(), "draw")  # noqa: SLF001
+        try:
+            self._budget = _core.begin_canvas(self._page.document._core())  # noqa: SLF001
+        except MemoryError as error:
+            _memory_refusal(self, error)
         self._entered = True
         return self
 
@@ -647,35 +732,81 @@ class Canvas:
             return
         self._closed = True
         core = self._page.document._core()  # noqa: SLF001
-        keep = exc_type is None and bool(self._layers[0][0])
-        if keep and self._depth:
-            _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
-            msg = "a canvas scope is still open"
-            raise RuntimeError(msg)
+        keep = exc_type is None and not self._failed and bool(self._layers[0][0])
         try:
+            if keep and self._depth:
+                msg = "a canvas scope is still open"
+                raise RuntimeError(msg)  # noqa: TRY301 - abort the current canvas below.
             if keep:
                 self._commit()
+            _core.end_transaction(core, keep)
+        except MemoryError as error:
+            _core.abort_canvas(core, self._operation())
+            _memory_refusal(self, error)
         except BaseException:
-            _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
+            _core.abort_canvas(core, self._operation())
             raise
-        _core.end_transaction(core, keep)
 
     def _check_open(self) -> None:
         if self._closed or not self._entered:
             msg = "draw inside the canvas's with block: with page.draw() as canvas: ..."
             raise ValueError(msg)
 
+    def _operation(self) -> _core._OperationBudget:
+        if self._budget is None:
+            msg = "the canvas operation is not open"
+            raise RuntimeError(msg)
+        return self._budget
+
+    def _charge(self, code: str, amount: int) -> None:
+        try:
+            self._operation().charge(code, amount)
+        except LimitError:
+            self._failed = True
+            raise
+        except MemoryError as error:
+            _memory_refusal(self, error)
+
+    def _check(self, code: str, value: int) -> None:
+        try:
+            self._operation().check(code, value)
+        except LimitError:
+            self._failed = True
+            raise
+        except MemoryError as error:
+            _memory_refusal(self, error)
+
+    def _poll(self) -> None:
+        try:
+            self._operation().poll()
+        except LimitError:
+            self._failed = True
+            raise
+        except MemoryError as error:
+            _memory_refusal(self, error)
+
+    @_budget_guard
+    def _join(self, parts: list[bytes], *, extra: int = 0) -> bytes:
+        """Check and charge the whole output before allocating a join."""
+        size = extra + max(0, len(parts) - 1)
+        for part in parts:
+            self._poll()
+            size += len(part)
+            self._check("content_input_size", size)
+        self._check("content_input_size", size)
+        self._charge("memory_size", size + _BYTES_HEADER)
+        return b"\n".join(parts)
+
     def _emit(self, data: bytes) -> None:
         self._check_open()
+        parts = self._layers[-1][0]
+        size = self._layer_sizes[-1] + len(data) + bool(parts)
+        self._check("content_input_size", size)
+        self._charge("memory_size", len(data) + _BYTES_HEADER + _LIST_SLOT_BYTES)
         self._layers[-1][0].append(data)
+        self._layer_sizes[-1] = size
 
-    def _count(self, points: int) -> None:
-        self._points += points
-        if self._points > _MAX_POINTS:
-            code = "content_element_count"
-            msg = f"the canvas holds more than {_MAX_POINTS} path points"
-            raise LimitError(code, msg)
-
+    @_budget_guard
     def _push(self, opening: bytes, *, group: float | None) -> None:
         self._check_open()
         if self._depth >= _MAX_SCOPES:
@@ -683,20 +814,34 @@ class Canvas:
             raise ValueError(msg)
         self._depth += 1
         if group is not None:
+            self._charge("memory_size", _LIST_SLOT_BYTES * 4)
             self._layers.append(([], group))
+            self._layer_sizes.append(0)
         else:
+            size = 2 + len(opening)
+            self._check("content_input_size", self._layer_sizes[-1] + size + bool(self._layers[-1][0]))
+            self._charge("memory_size", size + _BYTES_HEADER)
             self._emit(b"q\n" + opening)
 
+    @_budget_guard
     def _pop(self) -> None:
         self._depth -= 1
         parts, group = self._layers[-1]
+        if self._failed:
+            # Nothing in a refused canvas can be committed. In particular,
+            # do not try to allocate a Form while unwinding an opacity scope.
+            if group is not None and len(self._layers) > 1:
+                self._layers.pop()
+                self._layer_sizes.pop()
+            return
         if group is None or len(self._layers) == 1:
-            self._layers[-1][0].append(b"Q")
+            self._emit(b"Q")
             return
         self._layers.pop()
+        self._layer_sizes.pop()
         if not parts:
             return
-        name = self._add_xobject(self._group_form(b"\n".join(parts)))
+        name = self._add_xobject(self._group_form(self._join(parts)))
         gstate = self._gstate(fill_alpha=group, stroke_alpha=group)
         self._emit(b"q\n/" + gstate.encode() + b" gs\n/" + name.encode() + b" Do\nQ")
 
@@ -718,6 +863,7 @@ class Canvas:
     def _resources_value(self) -> dict[str, object]:
         objects = self._page.document.objects
         resources: dict[str, object] = {}
+        self._charge("memory_size", 512 * (len(self._xobjects) + len(self._gstates)))
         if self._xobjects:
             resources["XObject"] = {name: objects[xref] for name, xref in self._xobjects.items()}
         if self._gstates:
@@ -725,11 +871,14 @@ class Canvas:
         return resources
 
     def _add_xobject(self, xref: int) -> str:
-        for name, known in self._xobjects.items():
-            if known == xref:
-                return name
+        self._poll()
+        known = self._xobject_names.get(xref)
+        if known is not None:
+            return known
+        self._charge("memory_size", 512)
         name = f"PyroX{len(self._xobjects) + 1}"
         self._xobjects[name] = xref
+        self._xobject_names[xref] = name
         return name
 
     def _gstate(
@@ -738,6 +887,7 @@ class Canvas:
         key = (fill_alpha, stroke_alpha, blend)
         name = self._gstates.get(key)
         if name is None:
+            self._charge("memory_size", 512)
             name = f"PyroG{len(self._gstates) + 1}"
             self._gstates[key] = name
         return name
@@ -745,24 +895,31 @@ class Canvas:
     def _commit(self) -> None:
         page = self._page
         document = page.document
-        content = b"\n".join(self._layers[0][0])
         rotation, box = _page_space(page)
         matrix = _user_from_display(rotation, box)
-        names = _merge_resources(page, self._xobjects, self._gstates)
+        names = _merge_resources(page, self._xobjects, self._gstates, self)
+        prefix = b"q\n" + _numbers(*matrix) + b" cm\n"
+        suffix = b"\nQ\n"
+        overhead = len(prefix) + len(suffix)
+        content = self._join(self._layers[0][0], extra=overhead)
         if names:
             for old, new in names.items():
-                content = content.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
-        data = b"q\n" + _numbers(*matrix) + b" cm\n" + content + b"\nQ\n"
-        if len(data) > _DEFAULT_MAX_CONTENT_SIZE:
-            code = "content_input_size"
-            msg = f"the canvas writes {len(data)} bytes of content, over the {_DEFAULT_MAX_CONTENT_SIZE}-byte limit"
-            raise LimitError(code, msg)
+                self._poll()
+                previous = b"/" + old.encode() + b" "
+                replacement = b"/" + new.encode() + b" "
+                size = len(content) + content.count(previous) * (len(replacement) - len(previous))
+                self._check("content_input_size", size + overhead)
+                self._charge("memory_size", size + _BYTES_HEADER)
+                content = content.replace(previous, replacement)
+        self._charge("memory_size", len(content) + overhead + 2 * _BYTES_HEADER)
+        data = prefix + content + suffix
+        self._check("content_input_size", len(data))
         objects = document.objects
         drawn = objects[objects.add_stream(data)]
-        existing = _contents(page)
+        existing = _contents(page, self)
         if self._underlay:
             streams = [drawn, *existing]
-        elif existing and not _isolated(page):
+        elif existing and not _isolated(page, self):
             opening = objects[objects.add_stream(b"q\n", filter=None)]
             closing = objects[objects.add_stream(b"\nQ\n", filter=None)]
             streams = [opening, *existing, closing, drawn]
@@ -772,6 +929,7 @@ class Canvas:
 
     # Paths.
 
+    @_budget_guard
     def path(
         self,
         path: PathLike,
@@ -782,14 +940,13 @@ class Canvas:
     ) -> None:
         """Draw a path: a :class:`PathBuilder`, a :class:`Path` item's geometry, or segments."""
         self._check_open()
-        segments = _segments(path)
+        segments = _segments(path, self)
         if fill is None and stroke is None:
             stroke = _BLACK
         painted_fill = None if fill is None else _color(fill, "fill")
-        painted_stroke = _stroke(stroke)
+        painted_stroke = _stroke(stroke, self)
         even_odd = FillRule(fill_rule) is FillRule.EVEN_ODD
-        construction, points = _path_bytes(segments)
-        self._count(points)
+        construction, _points = _path_bytes(segments, self)
         parts = [b"q"]
         fill_alpha = None if painted_fill is None or painted_fill.alpha >= 1 else painted_fill.alpha
         stroke_paint = None if painted_stroke is None else cast("Color", painted_stroke.paint)
@@ -812,12 +969,14 @@ class Canvas:
         else:
             parts.append(b"S")
         parts.append(b"Q")
-        self._emit(b"\n".join(parts))
+        self._emit(self._join(parts))
 
+    @_budget_guard
     def line(self, start: Sequence[float], end: Sequence[float], *, stroke: Stroke | Color | None = None) -> None:
         """Draw a straight line, with a 1-point black stroke by default."""
         self.path(PathBuilder().move_to(start).line_to(end), stroke=_BLACK if stroke is None else stroke)
 
+    @_budget_guard
     def rect(
         self,
         rect: Sequence[float],
@@ -829,6 +988,7 @@ class Canvas:
         """Draw a rectangle, with corners rounded by ``radius`` points."""
         self.path(PathBuilder().rect(rect, radius=radius), fill=fill, stroke=stroke)
 
+    @_budget_guard
     def circle(
         self,
         center: Sequence[float],
@@ -840,6 +1000,7 @@ class Canvas:
         """Draw a circle."""
         self.path(PathBuilder().circle(center, radius), fill=fill, stroke=stroke)
 
+    @_budget_guard
     def ellipse(
         self,
         rect: Sequence[float],
@@ -850,6 +1011,7 @@ class Canvas:
         """Draw the ellipse inside ``rect``."""
         self.path(PathBuilder().ellipse(rect), fill=fill, stroke=stroke)
 
+    @_budget_guard
     def polygon(
         self,
         points: Iterable[Sequence[float]],
@@ -860,8 +1022,24 @@ class Canvas:
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw straight segments through ``points``, closed unless ``close`` is false."""
-        self.path(PathBuilder().polygon(points, close=close), fill=fill, stroke=stroke, fill_rule=fill_rule)
 
+        def segments() -> Iterable[Segment]:
+            iterator = iter(points)
+            try:
+                first, second = next(iterator), next(iterator)
+            except StopIteration as exc:
+                msg = "points must contain at least two points"
+                raise ValueError(msg) from exc
+            yield MoveTo(_point(first, "points"))
+            yield LineTo(_point(second, "points"))
+            for point in iterator:
+                yield LineTo(_point(point, "points"))
+            if close:
+                yield ClosePath()
+
+        self.path(segments(), fill=fill, stroke=stroke, fill_rule=fill_rule)
+
+    @_budget_guard
     def bezier(
         self,
         start: Sequence[float],
@@ -877,6 +1055,7 @@ class Canvas:
 
     # Images and pages.
 
+    @_budget_guard
     def image(
         self,
         rect: Sequence[float],
@@ -897,8 +1076,6 @@ class Canvas:
         same encoded image drawn several times, by any canvas of the
         document, is stored once.
         """
-        from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
-
         self._check_open()
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
@@ -916,19 +1093,7 @@ class Canvas:
             xref = source
             stream = _image_stream(document, xref)
         else:
-            if isinstance(source, Pixmap):
-                data = source.to_bytes("png")
-            elif isinstance(source, (bytes, bytearray, memoryview)):
-                data = bytes(source)
-            elif isinstance(source, (str, os.PathLike)):
-                with open(source, "rb") as file:  # noqa: PTH123 - os.PathLike and str alike.
-                    data = file.read()
-            else:
-                msg = (
-                    "source must be a path, bytes, a Pixmap, a PageImage, or an object number, "
-                    f"not {type(source).__name__}"
-                )
-                raise TypeError(msg)
+            data = self._image_bytes(source)
             xref = self._stored_image(data)
             stream = document.objects[xref]
         width, height = _number(stream.get("Width", 0), "Width"), _number(stream.get("Height", 0), "Height")
@@ -941,11 +1106,57 @@ class Canvas:
         name = self._add_xobject(xref)
         self._emit(b"q\n" + _numbers(*matrix) + b" cm\n/" + name.encode() + b" Do\nQ")
 
+    def _image_bytes(self, source: object) -> bytes:
+        from pyropdf._core import Pixmap  # noqa: PLC0415 - the stub names the extension's class.
+
+        if isinstance(source, Pixmap):
+            # PNG encoding holds image samples and output simultaneously.
+            raw = source.stride * source.height + source.height
+            encoded_bound = raw + (raw >> 12) + (raw >> 14) + (raw >> 25) + 1024
+            self._charge("memory_size", raw + 2 * encoded_bound)
+            data = source.to_bytes("png")
+        elif isinstance(source, (bytes, bytearray, memoryview)):
+            if isinstance(source, bytes):
+                size = bytes.__len__(source)
+            elif isinstance(source, bytearray):
+                size = bytearray.__len__(source)
+            else:
+                size = source.nbytes
+            self._check("image_input_size", size)
+            self._charge("memory_size", size + _BYTES_HEADER)
+            data = bytes(source)
+        elif isinstance(source, (str, os.PathLike)):
+            data = self._read_image(source)
+        else:
+            msg = (
+                f"source must be a path, bytes, a Pixmap, a PageImage, or an object number, not {type(source).__name__}"
+            )
+            raise TypeError(msg)
+        self._check("image_input_size", len(data))
+        return data
+
+    def _read_image(self, path: str | os.PathLike[str]) -> bytes:
+        """Read an image in bounded chunks under the canvas budget."""
+        data = bytearray()
+        with open(path, "rb") as file:  # noqa: PTH123 - os.PathLike and str alike.
+            while True:
+                self._poll()
+                # Read one bounded chunk at a time, reserving for the read
+                # and the bytearray's potential growth before either happens.
+                self._charge("memory_size", 2 * 65536 + _BYTES_HEADER)
+                chunk = file.read(65536)
+                if not chunk:
+                    break
+                self._check("image_input_size", len(data) + len(chunk))
+                data.extend(chunk)
+        self._charge("memory_size", len(data) + _BYTES_HEADER)
+        return bytes(data)
+
     def _stored_image(self, data: bytes) -> int:
         """Return the image object holding ``data``, written once per document."""
         document = self._page.document
         cache = _cache(document)
-        digest = hashlib.sha256(data).digest()
+        digest = self._digest(data)
         xref = cache.images.get(digest)
         if xref is not None and _still_image(document, xref, len(data)):
             return xref
@@ -953,6 +1164,20 @@ class Canvas:
         cache.images[digest] = xref
         return xref
 
+    def _digest(self, data: bytes) -> bytes:
+        """Hash in bounded chunks, polling the canvas between chunks."""
+        self._poll()
+        self._charge("memory_size", 512)
+        digest = hashlib.sha256()
+        view = memoryview(data)
+        for offset in range(0, len(view), 65536):
+            self._poll()
+            self._charge("memory_size", 128)
+            digest.update(view[offset : offset + 65536])
+        self._poll()
+        return digest.digest()
+
+    @_budget_guard
     def page(
         self,
         rect: Sequence[float],
@@ -984,8 +1209,15 @@ class Canvas:
             raise TypeError(msg)
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
-        source_rotation, source_box = _page_space(source)
-        _, width, height = source._geometry()  # noqa: SLF001
+        source_page = _core.canvas_source_page(
+            source.document._core(),  # noqa: SLF001 - the package's own core.
+            source.xref,
+            source._generation,  # noqa: SLF001 - the page's object identity.
+            self._operation(),
+        )
+        if source_page is None:
+            raise source._stale()  # noqa: SLF001
+        source_rotation, source_box, width, height, content, snapshot = source_page
         whole = Rect(0, 0, width, height)
         shown = whole if clip is None else _rect(clip, "clip")
         if not shown.intersects(whole):
@@ -1001,7 +1233,7 @@ class Canvas:
             return place(dx - shown.x0, dy - shown.y0)
 
         matrix = _affine(convert)
-        name = self._add_xobject(self._form(source, source_box))
+        name = self._add_xobject(self._form(source, source_box, content, snapshot))
         self._emit(
             b"q\n"
             + _numbers(covered.x0, covered.y0, covered.width, covered.height)
@@ -1012,12 +1244,19 @@ class Canvas:
             + b" Do\nQ"
         )
 
-    def _form(self, source: Page, box: tuple[float, float, float, float]) -> int:
+    def _form(
+        self,
+        source: Page,
+        box: tuple[float, float, float, float],
+        content: bytes,
+        snapshot: _core._CanvasSourceSnapshot,
+    ) -> int:
         """Return a Form XObject of this document that draws ``source`` in its user space."""
         document = self._page.document
-        content = source.operations.to_bytes()
         cache = _cache(document)
-        key = (id(source.document), source.xref, source._generation, hashlib.sha256(content).digest())  # noqa: SLF001
+        digest = self._digest(content)
+        self._charge("memory_size", 512)
+        key = (id(source.document), source.xref, source._generation, digest, snapshot.cache_key())  # noqa: SLF001
         xref = cache.forms.get(key)
         if xref is not None and _still_form(document, xref, box):
             return xref
@@ -1026,6 +1265,8 @@ class Canvas:
             source.document._core(),  # noqa: SLF001
             source.xref,
             source._generation,  # noqa: SLF001
+            operation=self._operation(),
+            snapshot=snapshot,
         )
         if resources is None:
             raise source._stale()  # noqa: SLF001
@@ -1043,37 +1284,44 @@ class Canvas:
 
     # Scopes.
 
+    @_budget_guard
     def clip(self, path: PathLike, *, fill_rule: FillRule = FillRule.NONZERO) -> AbstractContextManager[None]:
         """Clip what the block draws to a path."""
         self._check_open()
-        construction, points = _path_bytes(_segments(path))
-        self._count(points)
+        construction, _points = _path_bytes(_segments(path, self), self)
         operator = b"W* n" if FillRule(fill_rule) is FillRule.EVEN_ODD else b"W n"
+        partial_size = len(construction) + 1
+        size = partial_size + len(operator)
+        self._check("content_input_size", size)
+        self._charge("memory_size", partial_size + size + 2 * _BYTES_HEADER)
         return _Scope(self, construction + b"\n" + operator)
 
+    @_budget_guard
     def transform(self, matrix: Matrix | Sequence[float]) -> AbstractContextManager[None]:
         """Transform what the block draws by ``matrix``, applied before the enclosing transforms."""
         self._check_open()
         try:
-            m = Matrix(*matrix)
+            m = Matrix(*islice(iter(matrix), 7))
         except (TypeError, ValueError, PdfError) as exc:
-            msg = f"matrix must be a Matrix or six numbers: {matrix!r}"
+            msg = "matrix must be a Matrix or six numbers"
             raise ValueError(msg) from exc
         values = tuple(_number(value, "matrix") for value in m)
         return _Scope(self, _numbers(*values) + b" cm")
 
+    @_budget_guard
     def opacity(self, alpha: float) -> AbstractContextManager[None]:
         """Composite what the block draws as one group, then draw it at ``alpha``."""
         self._check_open()
         return _Scope(self, b"", group=_unit(alpha, "alpha"))
 
+    @_budget_guard
     def blend(self, mode: BlendMode | str) -> AbstractContextManager[None]:
         """Blend what the block draws with the content below it."""
         self._check_open()
         try:
             blend_mode = BlendMode(mode)
         except ValueError as exc:
-            msg = f"mode must be a BlendMode: {mode!r}"
+            msg = "mode must be a BlendMode"
             raise ValueError(msg) from exc
         name = self._gstate(blend=_BLEND_NAMES[blend_mode])
         return _Scope(self, b"/" + name.encode() + b" gs")
@@ -1116,7 +1364,7 @@ def _still_image(document: Document, xref: int, size: int) -> bool:
     if not isinstance(stream, Stream) or stream.get("Subtype") != "Image":
         return False
     if stream.get("Filter") in ("DCTDecode", "JPXDecode"):
-        return len(stream.read(decode=False)) == size
+        return _core.stream_raw_size(document._core(), stream._stream_root()) == size  # noqa: SLF001
     return True
 
 
@@ -1126,27 +1374,41 @@ def _still_form(document: Document, xref: int, box: tuple[float, float, float, f
     if not isinstance(stream, Stream) or stream.get("Subtype") != "Form":
         return False
     bbox = stream.get("BBox")
-    return bbox is not None and [float(value) for value in bbox] == [float(value) for value in box]
+    if not isinstance(bbox, Array) or len(bbox) != 4:  # noqa: PLR2004 - a PDF BBox has four coordinates.
+        return False
+    try:
+        return all(float(bbox[index]) == box[index] for index in range(4))
+    except (TypeError, ValueError):
+        return False
 
 
-def _contents(page: Page) -> list[Stream]:
+def _contents(page: Page, canvas: Canvas) -> list[Stream]:
     """Return the page's content streams, in order."""
     contents = page.obj.get("Contents")
     if contents is None:
         return []
     if isinstance(contents, Stream):
         return [contents]
-    return [item for item in contents if isinstance(item, Stream)]
+    result: list[Stream] = []
+    for item in contents:
+        canvas._charge("content_element_count", 1)  # noqa: SLF001
+        canvas._charge("memory_size", _LIST_SLOT_BYTES)  # noqa: SLF001
+        if isinstance(item, Stream):
+            result.append(item)
+    return result
 
 
-def _isolated(page: Page) -> bool:
+def _isolated(page: Page, canvas: Canvas) -> bool:
     """Return whether the page's content leaves the graphics state as it found it."""
     try:
         operations = page.operations
+    except (LimitError, MemoryError):
+        raise
     except Exception:  # noqa: BLE001 - content that cannot be read is wrapped.
         return False
     depth = 0
     for operation in operations:
+        canvas._poll()  # noqa: SLF001
         operator = getattr(operation, "operator", None)
         if operator == "q":
             depth += 1
@@ -1160,7 +1422,10 @@ def _isolated(page: Page) -> bool:
 
 
 def _merge_resources(
-    page: Page, xobjects: dict[str, int], gstates: dict[tuple[float | None, float | None, str | None], str]
+    page: Page,
+    xobjects: dict[str, int],
+    gstates: dict[tuple[float | None, float | None, str | None], str],
+    canvas: Canvas,
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
@@ -1173,31 +1438,43 @@ def _merge_resources(
     own = page.obj.get("Resources")
     if own is None or own.is_indirect:
         inherited = own if own is not None else _inherited_resources(page)
-        page.obj["Resources"] = {} if inherited is None else dict(cast("Dictionary", inherited).items())
+        # Copy through the store rather than materializing every key and value
+        # in Python before the operation can charge for them.
+        page.obj["Resources"] = {} if inherited is None else document.objects[document.objects.add(inherited)]
     resources = page.obj["Resources"]
     renamed: dict[str, str] = {}
+    canvas._charge("memory_size", 512 * (len(xobjects) + len(gstates)))  # noqa: SLF001
     for key, entries in (
         ("XObject", {name: document.objects[xref] for name, xref in xobjects.items()}),
         ("ExtGState", {name: _gstate_dict(state) for state, name in gstates.items()}),
     ):
-        if not entries:
-            continue
-        sub = resources.get(key)
-        if sub is None:
-            resources[key] = {}
-        elif sub.is_indirect:
-            resources[key] = dict(sub.items())
-        sub = resources[key]
-        for name, value in entries.items():
-            unique = name
-            serial = 0
-            while unique in sub:
-                serial += 1
-                unique = f"{name}_{serial}"
-            if unique != name:
-                renamed[name] = unique
-            sub[unique] = value
+        _merge_resource_entries(resources, key, entries, renamed, canvas)
     return renamed
+
+
+def _merge_resource_entries(
+    resources: Dictionary, key: str, entries: Mapping[str, object], renamed: dict[str, str], canvas: Canvas
+) -> None:
+    if not entries:
+        return
+    sub = resources.get(key)
+    if sub is None:
+        resources[key] = {}
+    elif sub.is_indirect:
+        document = resources._document  # noqa: SLF001 - the package's own handle.
+        resources[key] = document.objects[document.objects.add(sub)]
+    sub = resources[key]
+    for name, value in entries.items():
+        canvas._poll()  # noqa: SLF001
+        unique = name
+        serial = 0
+        while sub.get(unique, _MISSING) is not _MISSING:
+            canvas._charge("content_element_count", 1)  # noqa: SLF001
+            serial += 1
+            unique = f"{name}_{serial}"
+        if unique != name:
+            renamed[name] = unique
+        sub[unique] = value
 
 
 def _inherited_resources(page: Page) -> object | None:
@@ -1206,8 +1483,9 @@ def _inherited_resources(page: Page) -> object | None:
     for _ in range(64):
         if node is None:
             return None
-        if "Resources" in node:
-            return node["Resources"]
+        resource = node.get("Resources", _MISSING)
+        if resource is not _MISSING:
+            return resource
         node = node.get("Parent")
     return None
 

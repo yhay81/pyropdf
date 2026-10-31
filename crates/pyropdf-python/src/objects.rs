@@ -282,7 +282,8 @@ fn untagged(
             let root: Root = item(1)?.extract()?;
             let path: Vec<Step> = item(2)?.extract()?;
             let value = root_value(version, root, &path, budget)?;
-            Ok(walk(&value, root, &path)?.clone())
+            refs::copy_for_edit(walk(&value, root, &path)?, budget)
+                .map_err(|error| store_error(&error))
         }
         _ => Err(PyTypeError::new_err(format!("unknown value tag {tag:?}"))),
     }
@@ -597,6 +598,25 @@ pub fn object_add_stream(
         set_data(&mut stream, data, compress)?;
         add(transaction, &Value::Stream(Box::new(stream)), budget)
     })
+}
+
+/// Returns the stored size of a stream without copying or decoding its data.
+#[pyfunction]
+pub fn stream_raw_size(document: &_Document, root: (u32, u16)) -> PyResult<usize> {
+    let version = document.reading()?;
+    let budget = document.budget();
+    let value = root_value(&version, Some(root), &[], &budget)?;
+    let Value::Stream(stream) = &*value else {
+        return Err(stale(Some(root), &[]));
+    };
+    let size = stream.data().len();
+    budget
+        .check(
+            LimitCode::StreamDataSize,
+            u64::try_from(size).unwrap_or(u64::MAX),
+        )
+        .map_err(|error| limit_error(&error))?;
+    Ok(size)
 }
 
 /// Returns the data of the stream that `root` names, decoded through its

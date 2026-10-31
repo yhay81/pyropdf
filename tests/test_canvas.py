@@ -7,14 +7,19 @@ ebb01d3c, without text: krilla writes text on the canvas (issue 323).
 from __future__ import annotations
 
 import itertools
-from typing import TYPE_CHECKING
+import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
+from threading import Event
+from typing import TYPE_CHECKING, Self
 
 import pytest
 
 import pyropdf
-from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke
+from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke, _canvas, _core
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 RED = Color(1, 0, 0)
@@ -422,6 +427,34 @@ def test_pages_of_other_documents_are_stored_once() -> None:
     assert page.text().count("Source page") == 3
 
 
+def test_pages_of_the_same_document_are_stored_once() -> None:
+    doc = _text_page()
+    source = doc.pages[0]
+    target = doc.pages.new((400, 300))
+    with target.draw() as canvas:
+        canvas.page((0, 0, 200, 100), source)
+        canvas.page((200, 100, 400, 200), source)
+    with target.draw() as canvas:
+        canvas.page((0, 200, 200, 300), source)
+    xobjects = target.obj["Resources"]["XObject"]
+    forms = {xobjects[name].xref for name in xobjects if xobjects[name].get("Subtype") == "Form"}
+    assert len(forms) == 1
+    assert target.text().count("Source page") == 3
+
+
+def test_placed_page_resource_edits_invalidate_the_cached_form() -> None:
+    source = _text_page()
+    _doc, target = _new_page(400, 300)
+    with target.draw() as canvas:
+        canvas.page((0, 0, 200, 100), source.pages[0])
+    source.pages[0].obj["Resources"]["Font"]["F1"]["BaseFont"] = Name("Symbol")
+    with target.draw() as canvas:
+        canvas.page((200, 100, 400, 200), source.pages[0])
+    xobjects = target.obj["Resources"]["XObject"]
+    forms = {xobjects[name].xref for name in xobjects if xobjects[name].get("Subtype") == "Form"}
+    assert len(forms) == 2
+
+
 @pytest.mark.parametrize(
     ("rotate", "rect", "red"),
     [
@@ -635,6 +668,421 @@ def test_a_canvas_draws_in_one_with_block() -> None:
     with pytest.raises(ValueError, match="one with block"), canvas:
         pass
     assert len(page.content()) == 1
+
+
+def test_canvas_shares_its_budget_with_font_operations() -> None:
+    doc, page = _new_page()
+    font = _core._Font.standard("Helvetica")  # noqa: SLF001 - exercise the private shared budget.
+    with doc.transaction("outer"):
+        with page.draw() as canvas:
+            operation = canvas._operation()  # noqa: SLF001 - the canvas's budget handle.
+            before = operation.used("memory_size")
+            font.encode("first", operation=operation)
+            after_encode = operation.used("memory_size")
+            font.layout("second", 200, 200, 12, None, False, 20, operation=operation)  # noqa: FBT003
+            after_layout = operation.used("memory_size")
+            canvas.rect((0, 0, 10, 10), fill=RED)
+            assert before < after_encode < after_layout
+        with page.draw() as next_canvas:
+            next_operation = next_canvas._operation()  # noqa: SLF001 - fresh canvas budget.
+            assert next_operation is not operation
+            assert next_operation.used("memory_size") < after_layout
+            next_canvas.rect((10, 10, 20, 20), fill=RED)
+
+
+def test_closing_a_path_does_not_count_as_an_extra_point() -> None:
+    _doc, page = _new_page()
+    with page.draw() as canvas:
+        budget = canvas._operation()  # noqa: SLF001 - inspect this operation's point meter.
+        before = budget.used("content_element_count")
+        canvas.path(PathBuilder().move_to((0, 0)).line_to((10, 10)).close())
+        assert budget.used("content_element_count") - before == 2
+
+
+def test_numeric_formatting_never_calls_a_caller_defined_formatter() -> None:
+    class Number(float):
+        def __format__(self, _spec: str) -> str:
+            msg = "the caller's formatter must not run"
+            raise AssertionError(msg)
+
+    _doc, page = _new_page()
+    zero, one, ten = Number(0), Number(1), Number(10)
+    stroke = Stroke(paint=RED, width=one, miter_limit=ten, dashes=(one, ten), dash_offset=zero)
+    with page.draw() as canvas:
+        canvas.line((zero, zero), (ten, ten), stroke=stroke)
+        canvas.rect((zero, zero, ten, ten), stroke=stroke)
+    assert len(page.content().paths) == 2
+
+
+def test_canvas_uses_the_validated_color_and_stroke_numbers() -> None:
+    class Once(float):
+        calls: int
+
+        def __new__(cls, value: float) -> Self:
+            result = super().__new__(cls, value)
+            result.calls = 0
+            return result
+
+        def __float__(self) -> float:
+            self.calls += 1
+            if self.calls != 1:
+                msg = "a validated value must not be converted again"
+                raise AssertionError(msg)
+            return super().__float__()
+
+        def __format__(self, _spec: str) -> str:
+            msg = "the caller's formatter must not run"
+            raise AssertionError(msg)
+
+    paint = Color(Once(0.1), Once(0.2), Once(0.3), Once(0.4))
+    stroke = Stroke(paint=paint, width=Once(1), miter_limit=Once(10), dashes=(Once(2),), dash_offset=Once(0))
+    _doc, page = _new_page()
+    with page.draw() as canvas:
+        canvas.line((0, 0), (10, 10), stroke=stroke)
+    assert len(page.content().paths) == 1
+
+
+def test_invalid_canvas_inputs_do_not_format_input_repr() -> None:
+    class BadRepr:
+        def __repr__(self) -> str:
+            msg = "input repr must not run"
+            raise AssertionError(msg)
+
+    class Dashes:
+        def __iter__(self) -> Iterator[float]:
+            return itertools.repeat(0.0, 20_000)
+
+        def __repr__(self) -> str:
+            msg = "dash repr must not run"
+            raise AssertionError(msg)
+
+    _doc, page = _new_page()
+    with page.draw() as canvas:
+        with pytest.raises(ValueError, match="point"):
+            canvas.line((BadRepr(), 0), (1, 1))  # ty: ignore[invalid-argument-type]
+        with pytest.raises(ValueError, match=r"stroke\.dashes"):
+            canvas.line((0, 0), (1, 1), stroke=Stroke(paint=RED, dashes=Dashes()))  # ty: ignore[invalid-argument-type]
+
+
+def test_cancellation_during_polygon_iteration_rolls_back() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages.new((300, 200))
+    before_steps = doc.history.steps
+
+    def points() -> Iterator[tuple[int, int]]:
+        yield (0, 0)
+        yield (10, 0)
+        token.cancel()
+        yield (10, 10)
+
+    with pytest.raises(pyropdf.LimitError) as error, page.draw() as canvas:
+        canvas.polygon(points(), fill=RED)
+    assert error.value.code == "cancelled"
+    assert doc.history.steps == before_steps
+
+
+def test_cancelling_a_canvas_waiting_for_another_writer() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages.new((300, 200))
+    before_steps = doc.history.steps
+    holding, release, started, done = (Event() for _ in range(4))
+
+    class RollBackError(Exception):
+        pass
+
+    def hold_writer() -> None:
+        with suppress(RollBackError), doc.transaction("holding writer"):
+            holding.set()
+            if not release.wait(30):
+                msg = "the writer was not released"
+                raise TimeoutError(msg)
+            raise RollBackError
+
+    def draw() -> str:
+        started.set()
+        try:
+            with page.draw():
+                pass
+        except pyropdf.LimitError as error:
+            return error.code
+        finally:
+            done.set()
+        return "no error"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        owner = pool.submit(hold_writer)
+        try:
+            assert holding.wait(30)
+            blocked = pool.submit(draw)
+            assert started.wait(30)
+            assert not done.wait(0.05)
+            token.cancel()
+            assert done.wait(5), "the waiting canvas did not observe cancellation"
+        finally:
+            release.set()
+        owner.result(timeout=30)
+        assert blocked.result(timeout=30) == "cancelled"
+    assert doc.history.steps == before_steps
+
+
+def test_nested_canvas_observes_its_parent_deadline() -> None:
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(max_duration=0.5))
+    page = doc.pages.new((300, 200))
+    before_steps = doc.history.steps
+    with page.draw():
+        time.sleep(0.65)
+        with pytest.raises(pyropdf.LimitError) as error, page.draw():
+            pass
+        assert error.value.code == "deadline"
+    assert doc.history.steps == before_steps
+
+
+def test_nested_canvas_observes_cancellation() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages.new((300, 200))
+    before_steps = doc.history.steps
+    with page.draw():
+        token.cancel()
+        with pytest.raises(pyropdf.LimitError) as error, page.draw():
+            pass
+        assert error.value.code == "cancelled"
+    assert doc.history.steps == before_steps
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_caught_core_refusal_discards_the_whole_canvas(monkeypatch: pytest.MonkeyPatch, *, grouped: bool) -> None:
+    doc, page = _new_page()
+    before = doc.to_bytes()
+    before_steps = doc.history.steps
+
+    def refuse(_canvas: pyropdf.Canvas, _data: bytes) -> int:
+        code = "memory_size"
+        raise pyropdf.LimitError(code, "the operation needs too much memory")
+
+    monkeypatch.setattr(pyropdf.Canvas, "_stored_image", refuse)
+    with page.draw() as canvas:
+        canvas.rect((10, 10, 50, 50), fill=RED)
+        if grouped:
+            with canvas.opacity(0.5), pytest.raises(pyropdf.LimitError):
+                canvas.image((10, 10, 50, 30), _png())
+        else:
+            with pytest.raises(pyropdf.LimitError):
+                canvas.image((10, 10, 50, 30), _png())
+    assert doc.to_bytes() == before
+    assert doc.history.steps == before_steps
+
+
+def test_caught_memory_error_becomes_limit_error_and_discards_canvas(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc, page = _new_page()
+    before = doc.to_bytes()
+    before_steps = doc.history.steps
+
+    def refuse(_canvas: pyropdf.Canvas, _data: bytes) -> int:
+        raise MemoryError
+
+    monkeypatch.setattr(pyropdf.Canvas, "_stored_image", refuse)
+    with page.draw() as canvas:
+        canvas.rect((10, 10, 50, 50), fill=RED)
+        with pytest.raises(pyropdf.LimitError) as error:
+            canvas.image((10, 10, 50, 30), _png())
+        assert error.value.code == "memory_size"
+    assert doc.to_bytes() == before
+    assert doc.history.steps == before_steps
+
+
+def test_memory_error_during_commit_rolls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc, page = _new_page()
+    before = doc.to_bytes()
+    before_steps = doc.history.steps
+
+    def refuse(_canvas: pyropdf.Canvas) -> None:
+        raise MemoryError
+
+    monkeypatch.setattr(pyropdf.Canvas, "_commit", refuse)
+    with pytest.raises(pyropdf.LimitError) as error, page.draw() as canvas:
+        canvas.rect((10, 10, 50, 50), fill=RED)
+    assert error.value.code == "memory_size"
+    assert doc.to_bytes() == before
+    assert doc.history.steps == before_steps
+
+
+@pytest.mark.parametrize("already_ended", [False, True])
+def test_memory_error_ending_nested_canvas_preserves_parent(
+    monkeypatch: pytest.MonkeyPatch, *, already_ended: bool
+) -> None:
+    doc, page = _new_page()
+    before_steps = doc.history.steps
+    end_transaction = _core.end_transaction
+
+    def fail_end(core: object, keep: bool) -> None:  # noqa: FBT001 - mirrors the core API.
+        if already_ended:
+            end_transaction(core, keep)  # ty: ignore[invalid-argument-type]
+        raise MemoryError
+
+    with doc.transaction("parent"):
+        with monkeypatch.context() as patch:
+            patch.setattr(_core, "end_transaction", fail_end)
+            with pytest.raises(pyropdf.LimitError) as error, page.draw() as canvas:
+                canvas.rect((10, 10, 50, 50), fill=RED)
+            assert error.value.code == "memory_size"
+        page.rotation = 90
+    assert page.rotation == 90
+    assert doc.history.steps == (*before_steps, "parent")
+    assert len(page.content().paths) == int(already_ended)
+
+
+@pytest.mark.parametrize("scope", ["clip", "push"])
+def test_scope_opening_is_charged_before_concatenation(monkeypatch: pytest.MonkeyPatch, scope: str) -> None:
+    doc, page = _new_page()
+    before_steps = doc.history.steps
+
+    class UnallocatedBytes(bytes):
+        def __add__(self, _other: object) -> bytes:
+            msg = "concatenation ran before its memory charge"
+            raise AssertionError(msg)
+
+        def __radd__(self, _other: object) -> bytes:
+            msg = "concatenation ran before its memory charge"
+            raise AssertionError(msg)
+
+    def refuse(_canvas: pyropdf.Canvas, code: str, _amount: int) -> None:
+        raise pyropdf.LimitError(code, "memory budget exhausted")
+
+    monkeypatch.setattr(pyropdf.Canvas, "_charge", refuse)
+    monkeypatch.setattr(_canvas, "_path_bytes", lambda *_args: (UnallocatedBytes(b"path"), 0))
+    monkeypatch.setattr(_canvas, "_segments", lambda *_args: [])
+    with page.draw() as canvas:
+
+        def open_scope() -> None:
+            if scope == "clip":
+                canvas.clip(PathBuilder())
+            else:
+                canvas._push(UnallocatedBytes(b"opening"), group=None)  # noqa: SLF001
+
+        with pytest.raises(pyropdf.LimitError) as error:
+            open_scope()
+        assert error.value.code == "memory_size"
+    assert doc.history.steps == before_steps
+
+
+def test_memory_error_reading_existing_operations_rolls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc, page = _new_page()
+    page.obj["Contents"] = doc.objects[doc.objects.add_stream(b"q Q")]
+    before = doc.to_bytes()
+    before_steps = doc.history.steps
+
+    def refuse(_page: pyropdf.Page) -> object:
+        raise MemoryError
+
+    monkeypatch.setattr(pyropdf.Page, "operations", property(refuse))
+    with pytest.raises(pyropdf.LimitError) as error, page.draw() as canvas:
+        canvas.rect((10, 10, 50, 50), fill=RED)
+    assert error.value.code == "memory_size"
+    assert doc.to_bytes() == before
+    assert doc.history.steps == before_steps
+
+
+def test_image_from_file_is_read_in_bounded_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins  # noqa: PLC0415 - intercept this operation's file reads only.
+
+    path = tmp_path / "image.png"
+    path.write_bytes(_png())
+    requested: list[int] = []
+    original = builtins.open
+
+    class Reader:
+        def __init__(self) -> None:
+            self.file = original(path, "rb")
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            self.file.close()
+
+        def read(self, size: int) -> bytes:
+            requested.append(size)
+            return self.file.read(size)
+
+    monkeypatch.setattr(_canvas, "open", lambda *_args, **_kwargs: Reader(), raising=False)
+    _doc, page = _new_page()
+    with page.draw() as canvas:
+        canvas.image((10, 10, 50, 30), path)
+    assert requested
+    assert all(0 < size <= 65536 for size in requested)
+
+
+def test_cancellation_interrupts_image_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _png() + bytes(2 * 65536)
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages.new((300, 200))
+    before_steps = doc.history.steps
+
+    class Hash:
+        def update(self, _chunk: memoryview) -> None:
+            token.cancel()
+
+        def digest(self) -> bytes:
+            return bytes(32)
+
+    monkeypatch.setattr(_canvas.hashlib, "sha256", Hash)
+    with pytest.raises(pyropdf.LimitError) as error, page.draw() as canvas:
+        canvas.image((10, 10, 50, 30), data)
+    assert error.value.code == "cancelled"
+    assert doc.history.steps == before_steps
+
+
+def test_reusing_a_form_does_not_walk_an_oversized_bbox(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = pyropdf.Document()
+    xref = doc.objects.add_stream(b"", {"Subtype": Name("Form"), "BBox": list(range(4096))})
+
+    def refuse_iteration(_array: pyropdf.Array) -> Iterator[object]:
+        msg = "the oversized BBox must not be iterated"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(pyropdf.Array, "__iter__", refuse_iteration, raising=False)
+    assert not _canvas._still_form(doc, xref, (0, 0, 1, 1))  # noqa: SLF001 - exercise cache validation.
+
+
+def test_placed_page_uses_one_source_version_during_concurrent_edit(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _text_page("Snapshot", (200, 100))
+    source_page = source.pages[0]
+    before = source_page.text()
+    _target, page = _new_page(200, 100)
+    captured, updated = Event(), Event()
+    original = _core.canvas_source_page
+
+    def capture(document: _core._Document, number: int, generation: int, operation: _core._OperationBudget) -> object:
+        result = original(document, number, generation, operation)
+        captured.set()
+        if not updated.wait(30):
+            msg = "the source edit did not finish"
+            raise TimeoutError(msg)
+        return result
+
+    def edit_source() -> None:
+        if not captured.wait(30):
+            msg = "the source page was not captured"
+            raise TimeoutError(msg)
+        try:
+            source_page.obj["Resources"]["Font"]["F1"]["BaseFont"] = Name("Symbol")
+        finally:
+            updated.set()
+
+    monkeypatch.setattr(_core, "canvas_source_page", capture)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        editor = pool.submit(edit_source)
+        try:
+            with page.draw() as canvas:
+                canvas.page((0, 0, 200, 100), source_page)
+        finally:
+            captured.set()
+        editor.result(timeout=30)
+    assert page.text() == before
 
 
 def test_a_canvas_on_a_stale_page_cannot_write() -> None:

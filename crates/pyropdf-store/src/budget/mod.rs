@@ -22,6 +22,7 @@ mod vec;
 mod tests;
 
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
@@ -59,10 +60,10 @@ impl fmt::Display for LimitCode {
 /// [`Budget::release`] returns what a freed collection charged, and
 /// [`Budget::check`] compares one measurement, such as the depth of an
 /// object, with a limit without counting it.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Budget {
     limits: [Option<u64>; CODES],
-    used: [AtomicU64; CODES],
+    used: Arc<[AtomicU64; CODES]>,
     deadline: Option<Deadline>,
     cancellation: Vec<CancellationToken>,
 }
@@ -84,7 +85,7 @@ impl Budget {
     pub fn new(limits: &DocumentLimits) -> Self {
         let mut budget = Self {
             limits: LimitCode::ALL.map(LimitCode::default_limit),
-            used: std::array::from_fn(|_| AtomicU64::new(0)),
+            used: Arc::new(std::array::from_fn(|_| AtomicU64::new(0))),
             deadline: None,
             cancellation: Vec::new(),
         };
@@ -109,6 +110,50 @@ impl Budget {
     pub fn with_limit(mut self, code: LimitCode, limit: Option<u64>) -> Self {
         self.limits[code.index()] = limit;
         self
+    }
+
+    /// Returns a view of this operation with one call-specific limit.
+    ///
+    /// The returned view shares all meters, deadline, and cancellation with
+    /// this budget. A limit override affects only checks through that view;
+    /// allocations and work still accumulate against the same operation.
+    #[must_use]
+    pub fn shared_with_limit(&self, code: LimitCode, limit: Option<u64>) -> Self {
+        let mut limits = self.limits;
+        limits[code.index()] = limit;
+        Self {
+            limits,
+            used: Arc::clone(&self.used),
+            deadline: self.deadline,
+            cancellation: self.cancellation.clone(),
+        }
+    }
+
+    /// Returns a shared view constrained by another document's limits.
+    ///
+    /// The view charges this operation's meters while observing the more
+    /// restrictive limits and earliest deadline, and both cancellation sets.
+    #[must_use]
+    pub fn constrained_by(&self, other: &Self) -> Self {
+        let mut view = self.clone();
+        for (limit, other) in view.limits.iter_mut().zip(other.limits) {
+            *limit = match (*limit, other) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (Some(a), None) | (None, Some(a)) => Some(a),
+                (None, None) => None,
+            };
+        }
+        view.deadline = match (view.deadline, other.deadline) {
+            (Some(a), Some(b)) => Some(if a.end <= b.end { a } else { b }),
+            (Some(a), None) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "tokens are supplied by the two operation configurations, not by PDF input"
+        )]
+        view.cancellation.extend(other.cancellation.iter().cloned());
+        view
     }
 
     /// Adds a deadline. The earliest deadline of the budget applies.

@@ -144,8 +144,16 @@ impl _Document {
         self.history.clear();
     }
 
-    /// Returns a budget of one operation from the document's limits.
+    /// Returns the active canvas budget for its owning thread, or a fresh
+    /// budget for an independent operation.
     pub(crate) fn budget(&self) -> Budget {
+        self.history
+            .operation_budget()
+            .map_or_else(|| self.fresh_budget(), |budget| (*budget).clone())
+    }
+
+    /// Returns a new operation budget without consulting an open transaction.
+    pub(crate) fn fresh_budget(&self) -> Budget {
         Budget::new(&self.limits)
     }
 }

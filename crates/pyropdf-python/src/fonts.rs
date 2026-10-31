@@ -12,6 +12,7 @@ use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
 use crate::document::_Document;
 use crate::errors::{LimitError, PdfError, limit_error};
+use crate::history::OperationBudget;
 use crate::pixmap::bridge_error;
 
 /// Returns, for each font dictionary of `fonts`, by object number and
@@ -181,7 +182,7 @@ impl _Font {
         size: f64,
         max_text_size: Option<u64>,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let (budget, text) = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(text, max_text_size, None)?;
         let mut widths = BudgetVec::new(&budget);
         for character in text.chars() {
             let width = f64::from(self.metric(u32::from(character))?.width_x) * size / 1000.0;
@@ -228,7 +229,7 @@ impl _Font {
         size: f64,
         max_text_size: Option<u64>,
     ) -> PyResult<f64> {
-        let (_budget, text) = text_budget(text, max_text_size)?;
+        let (_budget, text) = text_budget(text, max_text_size, None)?;
         if let Some(character) = text
             .chars()
             .find(|character| standard::glyph_code(self.font, *character).is_none())
@@ -249,14 +250,15 @@ impl _Font {
     }
 
     /// Returns the WinAnsi bytes that draw `text`.
-    #[pyo3(signature = (text, max_text_size=Some(1_048_576)))]
+    #[pyo3(signature = (text, max_text_size=Some(1_048_576), *, operation=None))]
     fn encode<'py>(
         &self,
         py: Python<'py>,
         text: &Bound<'_, PyString>,
         max_text_size: Option<u64>,
+        operation: Option<PyRef<'_, OperationBudget>>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let (budget, text) = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(text, max_text_size, operation.as_deref())?;
         let mut bytes = BudgetVec::new(&budget);
         for character in text.chars() {
             if standard::glyph_code(self.font, character).is_none() {
@@ -288,7 +290,7 @@ impl _Font {
     /// and whether each justifies, the height that they need, the spare
     /// height, the first baseline's depth in em, and the leading. At most
     /// `max_lines` lines, or any number for `None`.
-    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false))]
+    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false, *, operation=None))]
     #[expect(clippy::too_many_arguments, reason = "the options of a text box")]
     fn layout(
         &self,
@@ -302,8 +304,9 @@ impl _Font {
         max_lines: Option<u64>,
         max_text_size: Option<u64>,
         normalize: bool,
+        operation: Option<PyRef<'_, OperationBudget>>,
     ) -> PyResult<Py<PyTuple>> {
-        let (budget, text) = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(text, max_text_size, operation.as_deref())?;
         let budget = budget.with_limit(LimitCode::TextLineCount, max_lines);
         let font = self.font;
         py.detach(|| {
@@ -411,8 +414,10 @@ impl _Font {
 fn text_budget<'a>(
     text: &'a Bound<'_, PyString>,
     max_text_size: Option<u64>,
+    operation: Option<&OperationBudget>,
 ) -> PyResult<(Budget, &'a str)> {
-    let budget = Budget::default().with_limit(LimitCode::TextInputSize, max_text_size);
+    let budget = operation.map_or_else(Budget::default, |operation| (*operation.budget).clone());
+    let budget = budget.with_limit(LimitCode::TextInputSize, max_text_size);
     // Call str's own length method: a subclass may override __len__.
     let chars = text
         .py()

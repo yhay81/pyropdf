@@ -13,16 +13,17 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, ThreadId};
+use std::time::Duration;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::settle::Scope;
 use pyropdf_store::version::{Document, RestoredHistory, Savepoint, Transaction, Version};
 
 use crate::document::_Document;
-use crate::errors::{PdfError, store_error};
+use crate::errors::{PdfError, limit_error, store_error};
 
 /// The default history budget of Python documents, 256 MiB (DESIGN.md
 /// section 4.1).
@@ -40,7 +41,9 @@ struct Open {
     /// The thread that opened it, the only one that writes into it.
     owner: ThreadId,
     transaction: Transaction,
-    savepoints: Vec<Savepoint>,
+    savepoints: Vec<(Savepoint, Option<Arc<Budget>>)>,
+    /// An operation budget active in the innermost canvas scope.
+    budget: Option<Arc<Budget>>,
     name: String,
     /// What the transaction wrote, as reads see it, until the next write.
     snapshot: Option<Arc<Version>>,
@@ -86,6 +89,64 @@ impl State {
         lock(&self.open).take();
         *lock(&self.steps) = Steps::default();
     }
+
+    /// The active canvas budget belongs only to the transaction's owner.
+    pub(crate) fn operation_budget(&self) -> Option<Arc<Budget>> {
+        owned(&mut lock(&self.open)).and_then(|open| open.budget.clone())
+    }
+}
+
+/// Private shared budget for a single canvas and its document edits.
+#[pyclass(frozen, name = "_OperationBudget", module = "pyropdf._core")]
+pub(crate) struct OperationBudget {
+    pub(crate) budget: Arc<Budget>,
+}
+
+impl OperationBudget {
+    /// Applies source-document restrictions without reapplying registry
+    /// defaults when the source already owns this canvas operation.
+    pub(crate) fn for_source(&self, source: &_Document) -> Budget {
+        if source
+            .history
+            .operation_budget()
+            .is_some_and(|active| Arc::ptr_eq(&active, &self.budget))
+        {
+            (*self.budget).clone()
+        } else {
+            self.budget.constrained_by(&source.fresh_budget())
+        }
+    }
+}
+
+fn budget_code(code: &str) -> PyResult<LimitCode> {
+    LimitCode::ALL
+        .iter()
+        .copied()
+        .find(|candidate| candidate.as_str() == code)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown budget code {code:?}")))
+}
+
+#[pymethods]
+impl OperationBudget {
+    fn charge(&self, code: &str, amount: u64) -> PyResult<()> {
+        self.budget
+            .charge(budget_code(code)?, amount)
+            .map_err(|error| limit_error(&error))
+    }
+
+    fn check(&self, code: &str, value: u64) -> PyResult<()> {
+        self.budget
+            .check(budget_code(code)?, value)
+            .map_err(|error| limit_error(&error))
+    }
+
+    fn used(&self, code: &str) -> PyResult<u64> {
+        Ok(self.budget.used(budget_code(code)?))
+    }
+
+    fn poll(&self) -> PyResult<()> {
+        self.budget.poll().map_err(|error| limit_error(&error))
+    }
 }
 
 impl _Document {
@@ -95,7 +156,14 @@ impl _Document {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
         Ok(match owned(&mut open) {
-            Some(open) => open.view(&self.budget())?,
+            Some(open) => {
+                let budget = open
+                    .budget
+                    .as_deref()
+                    .cloned()
+                    .unwrap_or_else(|| self.fresh_budget());
+                open.view(&budget)?
+            }
             None => store.current(),
         })
     }
@@ -104,16 +172,25 @@ impl _Document {
     /// and the open transaction's parent when the transaction has written
     /// nothing yet, so that a reader may use what it memoized for the parent.
     pub(crate) fn reading_parent(&self) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
+        let budget = self.budget();
+        self.reading_parent_with_budget(&budget)
+    }
+
+    /// Reads a transaction view using the caller's operation budget, including
+    /// when a canvas reads a page from a different document.
+    pub(crate) fn reading_parent_with_budget(
+        &self,
+        budget: &Budget,
+    ) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
         let Some(open) = owned(&mut open) else {
             return Ok((store.current(), None));
         };
-        let budget = self.budget();
-        let view = open.view(&budget)?;
+        let view = open.view(budget)?;
         let parent = Arc::clone(open.transaction.parent());
         let unchanged = parent
-            .changes(&view, &budget)
+            .changes(&view, budget)
             .map_err(|e| store_error(&e))?
             .is_some_and(|changes| changes.is_empty());
         Ok((view, unchanged.then_some(parent)))
@@ -247,7 +324,8 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
     document.document()?;
     let mut open = lock(&document.history.open);
     if let Some(open) = owned(&mut open) {
-        open.savepoints.push(open.transaction.savepoint());
+        open.savepoints
+            .push((open.transaction.savepoint(), open.budget.clone()));
         return Ok(());
     }
     drop(open);
@@ -258,10 +336,59 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
         owner: thread::current().id(),
         transaction,
         savepoints: Vec::new(),
+        budget: None,
         name,
         snapshot: None,
     });
     Ok(())
+}
+
+/// Starts a canvas transaction with one budget shared by all of its work.
+#[pyfunction]
+pub fn begin_canvas(py: Python<'_>, document: &_Document) -> PyResult<OperationBudget> {
+    let initial = document
+        .fresh_budget()
+        .with_limit(LimitCode::ContentElementCount, Some(1_048_576));
+    document.document()?;
+    {
+        let mut guard = lock(&document.history.open);
+        if let Some(open) = owned(&mut guard) {
+            // An inner canvas is an independent operation, but cannot outlive
+            // the parent's deadline or ignore its cancellation and limits.
+            let budget = Arc::new(match &open.budget {
+                Some(parent) => initial.constrained_by(parent),
+                None => initial,
+            });
+            budget.poll().map_err(|error| limit_error(&error))?;
+            open.savepoints
+                .push((open.transaction.savepoint(), open.budget.clone()));
+            open.budget = Some(Arc::clone(&budget));
+            return Ok(OperationBudget { budget });
+        }
+    }
+    let budget = Arc::new(initial);
+    // `Document::begin` waits on a condition variable without a deadline or
+    // cancellation hook. Poll a non-blocking attempt while the GIL is
+    // released, so waiting for another writer is part of this operation.
+    let (_, transaction) = document.on_current(py, |store| {
+        loop {
+            budget.poll()?;
+            if let Some(transaction) = store.try_begin() {
+                break Ok(transaction);
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+    })?;
+    let transaction = transaction.map_err(|error| limit_error(&error))?;
+    *lock(&document.history.open) = Some(Open {
+        owner: thread::current().id(),
+        transaction,
+        savepoints: Vec::new(),
+        budget: Some(Arc::clone(&budget)),
+        name: "draw".into(),
+        snapshot: None,
+    });
+    Ok(OperationBudget { budget })
 }
 
 /// Ends the innermost transaction that this thread opened: with `commit`,
@@ -274,19 +401,71 @@ pub fn end_transaction(document: &_Document, commit: bool) -> PyResult<()> {
     let Some(open) = owned(&mut guard) else {
         return Err(PdfError::new_err("no transaction is open"));
     };
-    if let Some(savepoint) = open.savepoints.pop() {
-        if !commit {
+    if let Some((savepoint, prior_budget)) = open.savepoints.pop() {
+        let refusal = if commit {
+            open.budget
+                .as_deref()
+                .and_then(|budget| budget.poll().err())
+        } else {
+            None
+        };
+        if !commit || refusal.is_some() {
             open.transaction.rollback(savepoint);
             open.snapshot = None;
+        }
+        open.budget = prior_budget;
+        if let Some(error) = refusal {
+            return Err(limit_error(&error));
         }
         return Ok(());
     }
     let open = guard.take().expect("a transaction is open");
     drop(guard);
     if commit {
-        document.commit(&store, open.transaction, open.name, &document.budget())?;
+        let budget = open
+            .budget
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| document.fresh_budget());
+        budget.poll().map_err(|error| limit_error(&error))?;
+        document.commit(&store, open.transaction, open.name, &budget)?;
     }
     Ok(())
+}
+
+/// Discards this canvas if it is still the active operation of its owner.
+/// An already-ended canvas must not roll back its parent transaction.
+#[pyfunction]
+pub fn abort_canvas(document: &_Document, operation: &OperationBudget) {
+    let mut guard = lock(&document.history.open);
+    let Some(open) = owned(&mut guard) else {
+        return;
+    };
+    if !open
+        .budget
+        .as_ref()
+        .is_some_and(|budget| Arc::ptr_eq(budget, &operation.budget))
+    {
+        return;
+    }
+    // Regular nested transactions retain the canvas budget. Find the
+    // savepoint that actually entered this canvas, not a later savepoint.
+    let boundary = open.savepoints.iter().rposition(|(_, prior)| {
+        !prior
+            .as_ref()
+            .is_some_and(|budget| Arc::ptr_eq(budget, &operation.budget))
+    });
+    if let Some(boundary) = boundary {
+        open.savepoints.truncate(boundary + 1);
+        let (savepoint, prior_budget) = open.savepoints.pop().expect("boundary exists");
+        open.transaction.rollback(savepoint);
+        open.budget = prior_budget;
+        open.snapshot = None;
+    } else {
+        // Dropping the outer transaction discards its writes and releases the
+        // writer lock; no budget check is needed even after cancellation.
+        guard.take();
+    }
 }
 
 /// Returns the step names, how many undo can take, and the history's
@@ -408,5 +587,49 @@ pub fn history_restore(py: Python<'_>, document: &_Document, data: &[u8]) -> PyR
         RestoredHistory::Changed => Err(PdfError::new_err(
             "a history is restored only into a document as opened, before any edit",
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyropdf_store::budget::CancellationToken;
+
+    #[test]
+    fn operation_budget_shares_meters_with_clones_but_not_other_operations() {
+        Python::initialize();
+        Python::attach(|_| {
+            let operation = OperationBudget {
+                budget: Arc::new(
+                    Budget::default().with_limit(LimitCode::ContentElementCount, Some(2)),
+                ),
+            };
+            operation.charge("content_element_count", 1).unwrap();
+            let cloned = (*operation.budget).clone();
+            cloned.charge(LimitCode::ContentElementCount, 1).unwrap();
+            assert_eq!(operation.used("content_element_count").unwrap(), 2);
+            assert!(operation.charge("content_element_count", 1).is_err());
+            let other = OperationBudget {
+                budget: Arc::new(
+                    Budget::default().with_limit(LimitCode::ContentElementCount, Some(2)),
+                ),
+            };
+            assert_eq!(other.used("content_element_count").unwrap(), 0);
+            assert!(other.charge("content_element_count", 1).is_ok());
+        });
+    }
+
+    #[test]
+    fn operation_budget_propagates_cancellation() {
+        Python::initialize();
+        Python::attach(|_| {
+            let token = CancellationToken::new();
+            let operation = OperationBudget {
+                budget: Arc::new(Budget::default().with_cancellation(token.clone())),
+            };
+            assert!(operation.poll().is_ok());
+            token.cancel();
+            assert!(operation.poll().is_err());
+        });
     }
 }
