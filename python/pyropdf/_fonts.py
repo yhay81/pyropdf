@@ -630,7 +630,8 @@ def _one_char(char: object) -> str:
 class Font:
     """A font face that draws and measures text.
 
-    Get one from :meth:`standard`; pyropdf has no default font and keeps no
+    Get one from :meth:`standard`, :meth:`from_file`, or :meth:`from_bytes`;
+    pyropdf has no default font and keeps no
     font registry, so output depends only on the fonts passed in. Pass it as
     ``font`` to :meth:`Canvas.text` and :meth:`Canvas.textbox` on any
     document, and share it between threads. :meth:`text_width` measures one
@@ -639,7 +640,10 @@ class Font:
     single characters drawn alone.
 
     A Standard 14 font is drawn without embedding, so it prints WinAnsi
-    (roughly Latin-1) text only, and measures with Adobe's AFM widths.
+    (roughly Latin-1) text only, and measures with Adobe's AFM widths. An
+    OpenType face is shaped with harfrust, in bidirectional and script runs,
+    and a document embeds it once as a Type0 font whose program holds every
+    glyph until a save.
     """
 
     __slots__ = ("_digest", "_font")
@@ -1084,13 +1088,14 @@ def _cmap(mapped: dict[int, str]) -> bytes:
     return b"".join(lines)
 
 
-def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple[int, str]]) -> set[int]:
-    """Record the widths and texts of ``glyphs`` in the Type0 font ``xref`` and return those that need ActualText.
+def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple[int, str]]) -> dict[int, str]:
+    """Record the widths and texts of ``glyphs`` in the Type0 font ``xref`` and return the texts that the CMap maps.
 
     Each glyph maps to its text in the ToUnicode CMap unless the CMap
     already maps it to other text, or its text is empty or too long for a
-    CMap entry; the content draws those glyphs inside ``/ActualText``.
-    Writes only what changed, in the caller's transaction.
+    CMap entry. The result holds the CMap's text of each glyph that it
+    maps; the content draws an occurrence with other text inside
+    ``/ActualText``. Writes only what changed, in the caller's transaction.
     """
     parts = _type0_parts(document, xref)
     if parts is None:
@@ -1103,22 +1108,17 @@ def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple
     mapped = _mapped(stream, count)
     new = sorted({glyph for glyph, _ in glyphs if glyph not in widths})
     widths.update(zip(new, font.glyph_widths(new), strict=True))
-    actual: set[int] = set()
     added = False
     for glyph, text in glyphs:
-        known = mapped.get(glyph)
-        if known == text:
+        if glyph in mapped or not text or len(text.encode("utf-16-be", "surrogatepass")) > 2 * _MAX_MAPPED_UNITS:
             continue
-        if known is None and text and len(text.encode("utf-16-be", "surrogatepass")) <= 2 * _MAX_MAPPED_UNITS:
-            mapped[glyph] = text
-            added = True
-        else:
-            actual.add(glyph)
+        mapped[glyph] = text
+        added = True
     if new:
         descendant["W"] = _w_array(widths)
     if added:
         stream.write(_cmap(mapped))
-    return actual
+    return {glyph: mapped[glyph] for glyph, _ in glyphs if glyph in mapped}
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.

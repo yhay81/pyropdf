@@ -32,6 +32,8 @@ from pyropdf._fonts import (
     _max_lines,
     _text_input,
     _textbox_text,
+    add_glyphs,
+    embedded_font,
 )
 from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
@@ -45,7 +47,7 @@ if TYPE_CHECKING:
 
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
-    from pyropdf._objects import Dictionary
+    from pyropdf._objects import Dictionary, Objects
     from pyropdf._page import Page
 
     PathLike: TypeAlias = "PathBuilder | Path | Iterable[Segment]"
@@ -220,12 +222,14 @@ def _canvas_font(text: str, font: Font | None) -> Font:
     elif not isinstance(font, Font):
         msg = f"font must be a pyropdf.Font, not {type(font).__name__}"
         raise TypeError(msg)
+    if font._font.standard_name is None:  # noqa: SLF001 - an embedded face shapes any text it has glyphs for.
+        return font
     try:
         text.encode("cp1252")
     except UnicodeEncodeError as exc:
         msg = (
             "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters; "
-            "embedded fonts come with issue 153"
+            "load an OpenType face with Font.from_file() for other text"
         )
         raise ValueError(msg) from exc
     return font
@@ -647,9 +651,10 @@ class _Scope(AbstractContextManager[None]):
 class _Images:
     """The images and pages that a document's canvases wrote, keyed by their content."""
 
-    __slots__ = ("forms", "images")
+    __slots__ = ("fonts", "forms", "images")
 
     def __init__(self) -> None:
+        self.fonts: dict[bytes, int] = {}
         self.images: dict[bytes, int] = {}
         self.forms: dict[tuple[int, int, int, bytes], int] = {}
 
@@ -707,7 +712,8 @@ class Canvas:
         self._depth = 0
         self._points = 0
         self._xobjects: dict[str, int] = {}
-        self._fonts: dict[str, str] = {}
+        # A Standard 14 font's base name, or the object number of an embedded face's Type0 font.
+        self._fonts: dict[str, str | int] = {}
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
         self._closed = False
         self._entered = False
@@ -810,16 +816,18 @@ class Canvas:
         if self._gstates:
             resources["ExtGState"] = {name: _gstate_dict(key) for key, name in self._gstates.items()}
         if self._fonts:
-            resources["Font"] = {name: _font_dict(base) for name, base in self._fonts.items()}
+            resources["Font"] = {name: _font_value(objects, font) for name, font in self._fonts.items()}
         return resources
 
     def _add_font(self, font: Font) -> str:
-        base = cast("str", font.name)
+        return self._font_name(cast("str", font.name))
+
+    def _font_name(self, font: str | int) -> str:
         for name, known in self._fonts.items():
-            if known == base:
+            if known == font:
                 return name
         name = f"PyroF{len(self._fonts) + 1}"
-        self._fonts[name] = base
+        self._fonts[name] = font
         return name
 
     def _add_xobject(self, xref: int) -> str:
@@ -1116,19 +1124,22 @@ class Canvas:
             parts.append(_numbers(*fill.rgb) + b" rg")
         if stroke is not None:
             parts.extend(_stroke_ops(stroke))
-        name = self._add_font(font)
+        if font._font.standard_name is None:  # noqa: SLF001
+            document = self._page.document
+            xref = embedded_font(document, font, _cache(document).fonts)
+            name = self._font_name(xref)
+            shown = _shown_glyphs(document, xref, font, size, lines)
+        else:
+            name = self._add_font(font)
+            shown = _shown_winansi(font, lines)
         parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
         if stroke is not None:
             parts.append(b"2 Tr" if fill is not None else b"1 Tr")
         cos, sin = _TURNS[rotation]
-        word_space = 0.0
-        for line, x, y, spacing in lines:
-            if spacing != word_space:
-                parts.append(_fmt(spacing) + b" Tw")
-                word_space = spacing
+        for (_line, x, y, _spacing), operators in zip(lines, shown, strict=True):
             # Display space points down, so the text's own y axis is flipped up.
             parts.append(_numbers(cos, sin, sin, -cos, _number(x, "at"), _number(y, "at")) + b" Tm")
-            parts.append(b"<" + font._font.encode(line).hex().encode() + b"> Tj")  # noqa: SLF001
+            parts.append(operators)
         parts.append(b"ET\nQ")
         self._emit(b"\n".join(parts))
 
@@ -1351,6 +1362,106 @@ def _gstate_dict(key: tuple[float | None, float | None, str | None]) -> dict[str
     return entries
 
 
+def _shown_winansi(font: Font, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
+    """Return the operators that show each line in a Standard 14 font, with its word spacing."""
+    shown = []
+    word_space = 0.0
+    for line, _x, _y, spacing in lines:
+        operators = b"<" + font._font.encode(line).hex().encode() + b"> Tj"  # noqa: SLF001
+        if spacing != word_space:
+            operators = _fmt(spacing) + b" Tw\n" + operators
+            word_space = spacing
+        shown.append(operators)
+    return shown
+
+
+def _shown_glyphs(
+    document: Document, xref: int, font: Font, size: float, lines: list[tuple[str, float, float, float]]
+) -> list[bytes]:
+    """Return the operators that show each line in an embedded face.
+
+    The glyphs are shaped in visual order and shown as Identity-H codes,
+    their glyph IDs, after their widths and texts are added to the font.
+    """
+    face = font._font  # noqa: SLF001 - the package's own face.
+    shaped = [face.shape(line) for line, _x, _y, _spacing in lines]
+    drawn = [
+        (glyph[0], line[glyph[5] : glyph[6]])
+        for (line, *_), glyphs in zip(lines, shaped, strict=True)
+        for glyph in glyphs
+        if glyph[0]
+    ]
+    mapped = add_glyphs(document, xref, font, drawn)
+    ids = sorted({glyph for glyph, _ in drawn})
+    widths = dict(zip(ids, face.glyph_widths(ids), strict=True))
+    run = _GlyphRun(size, face.units_per_em, widths, mapped)
+    return [run.show(line, glyphs, spacing) for (line, _x, _y, spacing), glyphs in zip(lines, shaped, strict=True)]
+
+
+class _GlyphRun:
+    """Writes shaped glyphs as ``TJ`` arrays.
+
+    ``TJ`` adjustments move the pen from each glyph's width in ``W`` to its
+    shaped advance and by its offset, ``Ts`` raises it, and a line's word
+    spacing widens its spaces, since ``Tw`` applies to one-byte codes only.
+    A glyph whose text the ToUnicode CMap does not map is shown inside
+    ``/ActualText``.
+    """
+
+    def __init__(self, size: float, units_per_em: int, widths: dict[int, float], mapped: dict[int, str]) -> None:
+        self.size = size
+        self.units_per_em = units_per_em
+        self.scale = 1000 / units_per_em
+        self.widths = widths
+        self.mapped = mapped
+        self.ops: list[bytes] = []
+        self.items: list[bytes] = []
+
+    def flush(self) -> None:
+        if self.items:
+            self.ops.append(b"[" + b" ".join(self.items) + b"] TJ")
+            self.items.clear()
+
+    def show(self, line: str, glyphs: list[tuple[int, int, int, int, int, int, int, bool]], spacing: float) -> bytes:
+        self.ops = []
+        pending = 0.0  # In TJ units: positive moves left.
+        rise = 0
+        for glyph, advance, _y_advance, x_offset, y_offset, start, end, _rtl in glyphs:
+            text = line[start:end]
+            offset = x_offset * self.scale
+            if not glyph:
+                # A control character without a glyph only advances.
+                pending -= advance * self.scale
+                continue
+            if y_offset != rise:
+                self.flush()
+                rise = y_offset
+                self.ops.append(_fmt(rise * self.size / self.units_per_em) + b" Ts")
+            if pending - offset:
+                self.items.append(_fmt(pending - offset))
+            code = b"<%04X>" % glyph
+            # A glyph without text of its own, such as a dot that the face
+            # draws apart from its letter, maps to nothing.
+            if not text or self.mapped.get(glyph) == text:
+                self.items.append(code)
+            else:
+                self.flush()
+                actual = text.encode("utf-16-be", "surrogatepass").hex().upper().encode()
+                self.ops.append(b"/Span <</ActualText <FEFF" + actual + b">>> BDC\n[" + code + b"] TJ\nEMC")
+            pending = self.widths[glyph] - advance * self.scale + offset
+            if spacing and text == " ":
+                pending -= spacing * 1000 / self.size
+        self.flush()
+        if rise:
+            self.ops.append(b"0 Ts")
+        return b"\n".join(self.ops)
+
+
+def _font_value(objects: Objects, font: str | int) -> object:
+    """Return the resource value of a Standard 14 font's base name or an embedded face's Type0 font."""
+    return _font_dict(font) if isinstance(font, str) else objects[font]
+
+
 def _font_dict(base: str) -> dict[str, object]:
     """Return the font dictionary of a Standard 14 font, which needs no embedding."""
     font: dict[str, object] = {"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name(base)}
@@ -1426,7 +1537,7 @@ def _merge_resources(
     page: Page,
     xobjects: dict[str, int],
     gstates: dict[tuple[float | None, float | None, str | None], str],
-    fonts: dict[str, str],
+    fonts: dict[str, str | int],
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
@@ -1445,7 +1556,7 @@ def _merge_resources(
     for key, entries in (
         ("XObject", {name: document.objects[xref] for name, xref in xobjects.items()}),
         ("ExtGState", {name: _gstate_dict(state) for state, name in gstates.items()}),
-        ("Font", {name: _font_dict(base) for name, base in fonts.items()}),
+        ("Font", {name: _font_value(document.objects, font) for name, font in fonts.items()}),
     ):
         if not entries:
             continue
