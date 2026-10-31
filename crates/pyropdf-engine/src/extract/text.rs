@@ -330,6 +330,9 @@ struct GlyphRecord {
     size: f64,
     /// Device-space advance, estimated from size for unknown fonts.
     advance: f64,
+    /// Whether the font gives the glyph no advance, as it gives a combining
+    /// mark; `advance` then holds the estimate.
+    zero_advance: bool,
     /// Unit baseline direction in display space.
     direction: (f64, f64),
     /// PDF writing mode: 0 for horizontal, 1 for vertical.
@@ -590,6 +593,7 @@ impl TextCollector<'_> {
             }
             Glyph::Type3(_) => (None, 0, FontInfo::default()),
         };
+        let zero_advance = advance_width == Some(0.0);
         let advance = advance_width
             .map(|adv| {
                 let moved = combined * Point::new(adv, 0.0);
@@ -608,6 +612,7 @@ impl TextCollector<'_> {
             y: origin.y,
             size,
             advance,
+            zero_advance,
             direction,
             writing_mode: 0,
             font_key,
@@ -1113,12 +1118,63 @@ struct PaintLayer {
     intervals: Vec<(f64, f64, f64)>,
 }
 
-fn sort_line_inline(arena: &[GlyphRecord], line: &mut [usize]) {
+fn sort_line_inline(arena: &[GlyphRecord], line: &mut [usize]) -> Result<(), Error> {
     line.sort_unstable_by(|&left, &right| {
         glyph_progress(&arena[left])
             .total_cmp(&glyph_progress(&arena[right]))
             .then(left.cmp(&right))
     });
+    if !line
+        .iter()
+        .any(|&index| is_zero_advance_mark(&arena[index]))
+    {
+        return Ok(());
+    }
+    let mut bases = Vec::new();
+    for &index in line.iter() {
+        if !is_zero_advance_mark(&arena[index]) {
+            try_push_text(&mut bases, index, "text-line base glyphs")?;
+        }
+    }
+    line.sort_by(|&left, &right| {
+        let (left_key, left_rank) = inline_key(arena, &bases, left);
+        let (right_key, right_rank) = inline_key(arena, &bases, right);
+        left_key
+            .total_cmp(&right_key)
+            .then(left_rank.cmp(&right_rank))
+            .then(left.cmp(&right))
+    });
+    Ok(())
+}
+
+/// A nonspacing mark that its font gives no advance of its own.
+fn is_zero_advance_mark(glyph: &GlyphRecord) -> bool {
+    glyph.zero_advance && glyph_is_nonspacing_mark(glyph)
+}
+
+/// Order a zero-advance mark directly after the base glyph its ink sits over.
+///
+/// A shaper positions a mark by an offset from its own origin, which may lie
+/// beyond the base's origin, so sorting by origin alone can move the mark past
+/// the next letter. The mark's position is its ink centre when the exact boxes
+/// were collected, and its origin otherwise; an origin at the end of a base
+/// belongs to that base, as a mark drawn left of its origin does. `bases`
+/// holds the line's other glyphs in inline order; a mark outside every base
+/// advance keeps its origin.
+fn inline_key(arena: &[GlyphRecord], bases: &[usize], index: usize) -> (f64, u8) {
+    let glyph = &arena[index];
+    let progress = glyph_progress(glyph);
+    if !is_zero_advance_mark(glyph) {
+        return (progress, 0);
+    }
+    let centre = glyph.ink.map_or(progress, |(x0, y0, x1, y1)| {
+        (x0 + x1) / 2.0 * glyph.direction.0 + (y0 + y1) / 2.0 * glyph.direction.1
+    });
+    let after = bases.partition_point(|&base| glyph_progress(&arena[base]) < centre);
+    match after.checked_sub(1).map(|position| &arena[bases[position]]) {
+        Some(base) if centre <= glyph_end(base) => (glyph_progress(base), 1),
+        _ => (progress, 0),
+    }
 }
 
 /// Glyph bounding box over arena indexes without materializing the records.
@@ -1171,7 +1227,7 @@ fn split_overlapping_paint_layers(
     mut line: Vec<usize>,
 ) -> Result<Vec<Vec<usize>>, Error> {
     if line.len() < 2 {
-        sort_line_inline(arena, &mut line);
+        sort_line_inline(arena, &mut line)?;
         let mut lines = Vec::new();
         try_push_text(&mut lines, line, "text paint layers")?;
         return Ok(lines);
@@ -1180,6 +1236,7 @@ fn split_overlapping_paint_layers(
     line.sort_unstable();
 
     let mut runs: Vec<Vec<usize>> = Vec::new();
+    let mut spacing: Option<&GlyphRecord> = None;
     for index in line {
         let glyph = &arena[index];
         let progress = glyph_progress(glyph);
@@ -1192,9 +1249,12 @@ fn split_overlapping_paint_layers(
             previous.direction.0 * glyph.direction.0 + previous.direction.1 * glyph.direction.1
                 < 0.9
         });
-        let moved_backward = previous.is_some_and(|previous| {
-            progress < glyph_progress(previous) - scale * PAINT_RUN_RESET_TOLERANCE
-        });
+        // A zero-advance mark may be placed beyond the base that follows it,
+        // so a run moves backward only from its last spacing glyph.
+        let moved_backward = !is_zero_advance_mark(glyph)
+            && spacing.is_some_and(|previous: &GlyphRecord| {
+                progress < glyph_progress(previous) - scale * PAINT_RUN_RESET_TOLERANCE
+            });
         let repeated_at_same_origin = previous.is_some_and(|previous| {
             (glyph.x - previous.x).abs() <= scale * PAINT_RUN_SAME_ORIGIN_TOLERANCE
                 && (glyph.y - previous.y).abs() <= scale * PAINT_RUN_SAME_ORIGIN_TOLERANCE
@@ -1202,6 +1262,10 @@ fn split_overlapping_paint_layers(
         });
         if runs.is_empty() || moved_backward || repeated_at_same_origin || direction_changed {
             try_push_text(&mut runs, Vec::new(), "text paint runs")?;
+            spacing = None;
+        }
+        if !is_zero_advance_mark(glyph) {
+            spacing = Some(glyph);
         }
         try_push_text(
             runs.last_mut()
@@ -1213,7 +1277,7 @@ fn split_overlapping_paint_layers(
 
     if runs.len() == 1 {
         let mut line = runs.pop().expect("one paint run exists");
-        sort_line_inline(arena, &mut line);
+        sort_line_inline(arena, &mut line)?;
         try_push_text(&mut runs, line, "text paint layers")?;
         return Ok(runs);
     }
@@ -1249,7 +1313,7 @@ fn split_overlapping_paint_layers(
     }
     let mut split = Vec::new();
     for mut layer in layers {
-        sort_line_inline(arena, &mut layer.glyphs);
+        sort_line_inline(arena, &mut layer.glyphs)?;
         try_push_text(&mut split, layer.glyphs, "split text paint layers")?;
     }
     Ok(split)
@@ -2623,6 +2687,7 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
         y: glyph.y,
         size: glyph.size,
         advance: glyph.advance,
+        zero_advance: glyph.zero_advance,
         direction: glyph.direction,
         writing_mode: glyph.writing_mode,
         font_key: glyph.font_key,
