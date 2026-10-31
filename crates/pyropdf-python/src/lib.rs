@@ -73,7 +73,7 @@ mod _core {
     #[pymodule_export]
     use super::fax::encode_ccitt_g4;
     #[pymodule_export]
-    use super::fonts::{_Font, subset_font_program, used_glyphs};
+    use super::fonts::{_Font, mark_font_subset, subset_font_program, used_glyphs};
     #[pymodule_export]
     use super::forms::{
         flatten, form_field, form_field_choices, form_field_details, form_field_edit,

@@ -1116,6 +1116,8 @@ def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple
         added = True
     if new:
         descendant["W"] = _w_array(widths)
+        # A save subsets the program to the glyphs of ``W``.
+        _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
     if added:
         stream.write(_cmap(mapped))
     return {glyph: mapped[glyph] for glyph, _ in glyphs if glyph in mapped}

@@ -12,6 +12,9 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
   first page.
 - `content`: content streams split into contiguous operations whose bytes
   and tail are the input.
+- `fonts`: embedded faces that load from any bytes, shape a text, measure
+  its glyphs, and compact to them at save; bytes that do not load are a
+  typed error, and any bytes compact or refuse (#482).
 - `interpret`: rendering, SVG conversion, text extraction, and content
   items of the first four pages, of a whole file or of a content stream
   that a one-page template with varied resources holds.
@@ -36,7 +39,8 @@ cargo +nightly fuzz run index corpus/index -- -max_total_time=60
 `seeds.py` writes the corpus, its damaged inputs, and the encrypted
 fixtures as seeds of `index`, `save`, and `bridge`, their uncompressed
 objects as seeds of `value`, and their content streams, inflated where they
-are Flate data, as seeds of `content`, to `fuzz/corpus/`, which git ignores.
+are Flate data, as seeds of `content`, and the engine's subset test faces
+as seeds of `fonts`, to `fuzz/corpus/`, which git ignores.
 
 ## CI and Actions minutes
 
@@ -45,10 +49,10 @@ that change the store, the engine, or the targets, and for fifteen minutes on
 Mondays. Each job also installs cargo-fuzz and builds the target, about four
 minutes with a warm cache. Linux minutes count once:
 
-- weekly: 5 jobs × (15 + 4) minutes = about 95 minutes, or about 410 a month;
-- pull requests: 5 × (1 + 4) = about 25 minutes each, which Rust changes pay.
+- weekly: 6 jobs × (15 + 4) minutes = about 115 minutes, or about 490 a month;
+- pull requests: 6 × (1 + 4) = about 30 minutes each, which Rust changes pay.
 
 Against the 2,000 minutes a month of a private repository on GitHub Free
-(3,000 on Pro), the weekly run takes about a fifth (or a seventh). Lower
+(3,000 on Pro), the weekly run takes about a quarter (or a sixth). Lower
 `SECONDS_TO_RUN` or the `paths` of the pull-request trigger if the minutes
 run short.
