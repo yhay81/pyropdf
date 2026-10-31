@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
     from pyropdf._chunks import Chunk
+    from pyropdf._fonts import Font
     from pyropdf._profiles import Profiles
     from pyropdf._signing import Signature, Signer, Timestamper
 
@@ -83,7 +84,7 @@ class Document:
     empty one. Documents are context managers that close on exit.
     """
 
-    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_limits")
+    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_form_font", "_limits")
 
     def __init__(self, *, limits: DocumentLimits | None = None) -> None:
         """Create an empty document without pages; :func:`open` opens an existing one."""
@@ -97,6 +98,8 @@ class Document:
         self._access: Access | None = None
         # What canvases stored, so that drawing the same image or page again reuses it.
         self._drawn: _Images | None = None
+        # The face that form appearances draw field values in; not saved.
+        self._form_font: Font | None = None
 
     @property
     def limits(self) -> DocumentLimits:
