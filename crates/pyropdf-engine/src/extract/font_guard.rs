@@ -124,7 +124,7 @@ fn check_content(value: Object<'_>, version: &Version, budget: &Budget) -> Resul
             let mut count = 0usize;
             let mut ok = true;
             for value in array.iter::<Object<'_>>() {
-                budget.poll()?;
+                budget.charge(LimitCode::ContentElementCount, 1)?;
                 count += 1;
                 if let Object::Stream(stream) = value {
                     ok &= readable(&stream, version, budget)?;
@@ -135,7 +135,7 @@ fn check_content(value: Object<'_>, version: &Version, budget: &Budget) -> Resul
             // Unresolvable entries are skipped by hayro's resolved iterator.
             let mut raw = 0usize;
             for _ in array.raw_iter() {
-                budget.poll()?;
+                budget.charge(LimitCode::ContentElementCount, 1)?;
                 raw += 1;
             }
             Ok(ok && count == raw)
@@ -167,7 +167,7 @@ fn appearances<'a, 'b>(
             }
             continue;
         };
-        let mut pending = BudgetVec::counting(budget, LimitCode::ObjectDepth);
+        let mut pending = BudgetVec::new(budget);
         for key in ap.keys() {
             if let Some(value) = ap.get::<Object<'_>>(key.as_ref()) {
                 pending.try_push(value)?;
@@ -176,7 +176,7 @@ fn appearances<'a, 'b>(
             }
         }
         while let Some(value) = pending.pop() {
-            budget.poll()?;
+            budget.charge(LimitCode::ContentElementCount, 1)?;
             match value {
                 Object::Stream(stream) => {
                     ok &= readable(&stream, version, budget)?;
