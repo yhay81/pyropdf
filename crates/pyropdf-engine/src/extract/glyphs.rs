@@ -147,11 +147,10 @@ pub fn used_glyphs(
         if protected[index] {
             ids.try_push(super::font_guard::KEEP_WHOLE)?;
         } else {
-            let id = ObjectIdentifier::new(
-                i32::try_from(number).unwrap_or(i32::MAX),
-                i32::from(generation),
-            );
-            if let Some(dict) = xref.get::<Dict<'_>>(id) {
+            let dict = i32::try_from(number).ok().and_then(|number| {
+                xref.get::<Dict<'_>>(ObjectIdentifier::new(number, i32::from(generation)))
+            });
+            if let Some(dict) = dict {
                 let key = dict.cache_key();
                 let first = uses.glyphs.partition_point(|&(font, _)| font < key);
                 for &(font, glyph) in &uses.glyphs[first..] {
@@ -163,6 +162,10 @@ pub fn used_glyphs(
                         ids.try_push(glyph)?;
                     }
                 }
+            } else {
+                // A missing font dictionary must not be mistaken for a font
+                // that draws no glyphs: subsetting it could discard glyphs.
+                ids.try_push(super::font_guard::KEEP_WHOLE)?;
             }
         }
         results.try_push(ids.into_vec())?;
