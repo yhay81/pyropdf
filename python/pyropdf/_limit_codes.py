@@ -64,6 +64,7 @@ LimitCode: TypeAlias = Literal[
     "image_input_size",
     "text_line_count",
     "text_input_size",
+    "shaped_glyph_count",
     "named_destination_count",
     "named_destination_edge_count",
     "named_destination_depth",
@@ -204,6 +205,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "text_input_size": (
             "The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of "
             "UTF-8."
+        ),
+        "shaped_glyph_count": (
+            "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
         ),
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "

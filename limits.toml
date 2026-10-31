@@ -350,6 +350,12 @@ unit = "bytes"
 default = 1_048_576
 reached = "The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8."
 
+[codes.shaped_glyph_count]
+message = "the text shapes into too many glyphs"
+unit = "glyphs"
+default = 1_048_576
+reached = "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
+
 [codes.named_destination_count]
 message = "the named destinations are too many"
 unit = "entries"
