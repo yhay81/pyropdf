@@ -75,7 +75,7 @@ content and removes them from the page.
 `page.draw()` returns a `Canvas` that draws paths, images, and other pages
 in display space, over the page's content or, with `underlay=True`, below
 it. The `with` block is one transaction and one undo step; an exception
-inside it discards the drawing. Text on the canvas waits for krilla.
+inside it discards the drawing. Canvas text is planned.
 
 ```python
 import pyropdf
