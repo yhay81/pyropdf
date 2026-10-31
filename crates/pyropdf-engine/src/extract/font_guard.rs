@@ -12,7 +12,7 @@ use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, StreamKind};
 use pyropdf_store::value::Value;
 use pyropdf_store::version::Version;
 use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::BuildHasher;
 
 use super::Error;
 
@@ -44,9 +44,7 @@ impl<'b> Seen<'b> {
         id: ObjectIdentifier,
         budget: &Budget,
     ) -> Result<usize, Error> {
-        let mut state = hash.build_hasher();
-        id.hash(&mut state);
-        let mut pos = state.finish() as usize & (slots.len() - 1);
+        let mut pos = hash.hash_one(id) as usize & (slots.len() - 1);
         while slots[pos].is_some_and(|other| other != id) {
             budget.charge(LimitCode::ContentElementCount, 1)?;
             pos = (pos + 1) & (slots.len() - 1);
