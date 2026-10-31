@@ -138,7 +138,7 @@ fn rebuild(glyf: &[u8], offsets: &[usize], keep: &BTreeSet<u32>) -> Option<(Vec<
 }
 
 /// Writes an sfnt with `tables`, in their order, and its `head` adjustment.
-fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec<u8>> {
+pub(super) fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec<u8>> {
     let count = u16::try_from(tables.len()).ok()?;
     let power = if count == 0 {
         0

@@ -53,8 +53,10 @@ method and property of its classes with its full description.
 
 ## [Fonts](fonts.md)
 
+- [`Font`](fonts.md#font): A font face that draws and measures text.
 - [`FontInfo`](fonts.md#fontinfo): One font dictionary that a page's resources name, from `Page.fonts`.
-- [`FontProgram`](fonts.md#fontprogram): An embedded font program, from `Document.font_program`.
+- [`FontProgram`](fonts.md#fontprogram_1): An embedded font program, from `Document.font_program`.
+- [`StandardFontName`](fonts.md#standardfontname)
 - [`SubsetFont`](fonts.md#subsetfont): One font program that `Document.subset_fonts` subset.
 
 ## [Pages](pages.md)
@@ -66,6 +68,7 @@ method and property of its classes with its full description.
 
 - [`Canvas`](drawing.md#canvas): Drawing on one page in paint order, written as one content stream.
 - [`PathBuilder`](drawing.md#pathbuilder): Geometry for `Canvas.path` and `Canvas.clip`, built from segments.
+- [`TextFit`](drawing.md#textfit): How text fits a `Canvas.textbox`: the height left below its last line.
 
 ## [Text and content](text-and-content.md)
 
