@@ -71,7 +71,6 @@ with pyropdf.open("input.pdf") as doc:
 `page.draw()` が返す `Canvas` は、パス、画像、他のページを表示空間で描きます。
 ページの内容の上に描き、`underlay=True` なら下に描きます。`with` ブロックが一つの
 トランザクションで一つの取り消し単位になり、中で例外が起きると作図は捨てられます。
-キャンバスへの文字の描画は krilla を待っています。
 
 ```python
 import pyropdf

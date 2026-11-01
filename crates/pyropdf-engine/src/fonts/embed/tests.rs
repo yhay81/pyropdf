@@ -147,6 +147,54 @@ fn invalid_data_is_a_font_error() {
     assert!(matches!(Face::read(HEBREW, 1), Err(FaceError::Font(_))));
 }
 
+/// Extend a valid font directory with records that alias the entire input.
+fn with_aliases(extra: usize, alias_length: bool) -> Vec<u8> {
+    let count = usize::from(u16::from_be_bytes([HEBREW[4], HEBREW[5]]));
+    let end = 12 + 16 * count;
+    let shift = 16 * extra;
+    let mut data = HEBREW[..end].to_vec();
+    data.resize(end + shift, 0);
+    data.extend_from_slice(&HEBREW[end..]);
+    data[4..6].copy_from_slice(&u16::try_from(count + extra).unwrap().to_be_bytes());
+    for i in 0..count {
+        let at = 12 + 16 * i + 8;
+        let offset = u32::from_be_bytes(data[at..at + 4].try_into().unwrap());
+        data[at..at + 4].copy_from_slice(&(offset + u32::try_from(shift).unwrap()).to_be_bytes());
+    }
+    let length = if alias_length {
+        u32::try_from(data.len() - 1).unwrap()
+    } else {
+        0
+    };
+    for i in 0..extra {
+        let at = end + 16 * i;
+        let tag = 0x7a00_0000u32 + u32::try_from(i).unwrap();
+        data[at..at + 4].copy_from_slice(&tag.to_be_bytes());
+        data[at + 8..at + 12].copy_from_slice(&1u32.to_be_bytes());
+        data[at + 12..at + 16].copy_from_slice(&length.to_be_bytes());
+    }
+    data
+}
+
+#[test]
+fn overlapping_tables_cannot_amplify_the_input_size() {
+    let data = with_aliases(1, true);
+    assert_eq!(
+        Face::read(&data, 0).unwrap_err(),
+        FaceError::Font("the face's tables are too large".into())
+    );
+}
+
+#[test]
+fn excessive_table_count_is_a_font_error() {
+    let count = usize::from(u16::from_be_bytes([HEBREW[4], HEBREW[5]]));
+    let data = with_aliases(4096 - count, false);
+    assert_eq!(
+        Face::read(&data, 0).unwrap_err(),
+        FaceError::Font("the table directory is too large".into())
+    );
+}
+
 #[test]
 fn measure_maps_characters_to_advances_and_ink() {
     let face = Face::read(HEBREW, 0).unwrap();

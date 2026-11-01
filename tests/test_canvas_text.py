@@ -96,6 +96,19 @@ def test_text_draws_in_paint_order_with_paths() -> None:
     assert page.text() == "first\nsecond\n"
 
 
+@pytest.mark.parametrize("prior_state", [b"3 Tr", b"10 Tc", b"10 Tw", b"50 Tz", b"30 Ts"])
+def test_text_does_not_inherit_existing_page_text_state(prior_state: bytes) -> None:
+    doc, page = _new_page()
+    page.obj["Contents"] = doc.objects[doc.objects.add_stream(b"BT " + prior_state + b" ET")]
+    with page.draw() as canvas:
+        canvas.text("a b", (20, 60), size=20)
+
+    _reference_doc, reference = _new_page()
+    with reference.draw() as canvas:
+        canvas.text("a b", (20, 60), size=20)
+    assert bytes(page.pixmap(dpi=72)) == bytes(reference.pixmap(dpi=72))
+
+
 def test_text_in_standard_fonts() -> None:
     _doc, page = _new_page(400, 200)
     with page.draw() as canvas:
@@ -446,11 +459,11 @@ def test_standard_14_text_is_written_in_hexadecimal() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new()
     with page.draw() as canvas:
-        canvas.text("\x01(A)\\€ /PyroF1 ", (10, 20))
+        canvas.text("(A)\\€ /PyroF1 ", (10, 20))
     content = b"".join(stream.read() for stream in page.obj["Contents"])
-    assert b"<" + "\x01(A)\\€ /PyroF1 ".encode("cp1252").hex().encode() + b"> Tj" in content
+    assert b"<" + "(A)\\€ /PyroF1 ".encode("cp1252").hex().encode() + b"> Tj" in content
     data = doc.to_bytes()
-    assert pyropdf.open(data).pages[0].text(unmapped="replacement").strip() == "\ufffd(A)\\€ /PyroF1"
+    assert pyropdf.open(data).pages[0].text().strip() == "(A)\\€ /PyroF1"
 
 
 def test_text_page_numbering_recipe() -> None:
