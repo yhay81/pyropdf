@@ -2720,6 +2720,19 @@ impl FieldSpec {
             .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))
     }
 
+    /// Whether the widget draws text in the font of its `/DA`.
+    fn shows_font(&self) -> bool {
+        shows_text(&self.kind) || self.kind == "pushbutton"
+    }
+
+    /// Returns the `/DA` string that names font `resource`.
+    fn default_appearance(&self, resource: &str) -> Value {
+        let (red, green, blue) = self.text_color.unwrap_or((0.0, 0.0, 0.0));
+        let size = self.font_size.unwrap_or(0.0);
+        let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+        Value::String(PdfString::literal(appearance.into_bytes()))
+    }
+
     /// Returns the on state of a check box or radio button.
     fn on_state(&self) -> &str {
         self.on_state.as_deref().unwrap_or("Yes")
@@ -2844,15 +2857,8 @@ impl FieldSpec {
         let solid = (1.0, "S".to_owned(), Vec::new());
         let border = self.border.as_ref().unwrap_or(&solid);
         widget.insert(Name::from("BS"), border_style(border, budget)?);
-        if shows_text(&self.kind) || self.kind == "pushbutton" {
-            let (red, green, blue) = self.text_color.unwrap_or((0.0, 0.0, 0.0));
-            let size = self.font_size.unwrap_or(0.0);
-            let resource = self.font_resource()?;
-            let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
-            widget.insert(
-                Name::from("DA"),
-                Value::String(PdfString::literal(appearance.into_bytes())),
-            );
+        if self.shows_font() {
+            // `add_widget` sets `/DA` once the font has a name in `/DR`.
             if let Some(align) = self.align {
                 widget.insert(Name::from("Q"), Value::Integer(i64::from(align)));
             }
@@ -3017,6 +3023,10 @@ fn add_widget(
         None => None,
     };
     let holder = form_object(transaction, budget)?;
+    if spec.shows_font() {
+        let resource = register_font(transaction, holder, spec.font_resource()?, budget)?;
+        widget.insert(Name::from("DA"), spec.default_appearance(resource.as_str()));
+    }
     let reference = transaction.allocate().map_err(store)?;
     let buttons = is_button(&spec.kind);
     let field_id = match existing {
@@ -3173,6 +3183,90 @@ fn form_object(transaction: &mut Transaction, budget: &Budget) -> PyResult<Refer
         .write(root.number(), &Value::Dict(catalog), budget)
         .map_err(store)?;
     Ok(reference)
+}
+
+/// Returns the name under which form `holder`'s `/DR /Font` holds the
+/// Standard 14 font that `/DA` abbreviation `abbreviation` names, adding
+/// the font when no entry holds it. The abbreviation itself serves unless
+/// it names a different font; then the first of `abbreviation` followed by
+/// 1, 2, ... that is free or holds the same font. A `/DR` or `/Font` that
+/// is no dictionary is replaced by one.
+fn register_font(
+    transaction: &mut Transaction,
+    holder: Reference,
+    abbreviation: &str,
+    budget: &Budget,
+) -> PyResult<String> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let base_font = pyropdf_engine::standard::da_font(abbreviation);
+    let resources = Name::from("DR");
+    let font_key = Name::from("Font");
+    let mut found = None;
+    // Each pass adds what is missing: `/DR`, then its `/Font`.
+    for _ in 0..3 {
+        let version = transaction.snapshot();
+        let mut reads = Reads::new(&version, budget);
+        let Some(form) = dict_at(transaction, holder, budget)? else {
+            return Err(PdfError::new_err("the interactive form is no dictionary"));
+        };
+        let Slot::Found(_, Value::Dict(dr)) =
+            defaults::slot(&mut reads, &form, b"DR").map_err(store)?
+        else {
+            edit_dict(transaction, holder, &[], budget, |form| {
+                form.insert(resources.clone(), Value::Dict(Dict::new()));
+            })?;
+            continue;
+        };
+        match defaults::slot(&mut reads, &dr, b"Font").map_err(store)? {
+            Slot::Found(_, Value::Dict(fonts)) => {
+                found = Some(fonts);
+                break;
+            }
+            _ => edit_dict(transaction, holder, &[&resources], budget, |dr| {
+                dr.insert(font_key.clone(), Value::Dict(Dict::new()));
+            })?,
+        }
+    }
+    let Some(fonts) = found else {
+        return Err(PdfError::new_err("the form's /DR /Font cannot be edited"));
+    };
+    let version = transaction.snapshot();
+    let mut reads = Reads::new(&version, budget);
+    // At most one name per entry is taken, so one of the first
+    // `fonts.len() + 1` names is free.
+    for suffix in 0..=fonts.len() {
+        if suffix % 1024 == 0 {
+            budget.poll().map_err(|e| limit_error(&e))?;
+        }
+        let name = if suffix == 0 {
+            abbreviation.to_owned()
+        } else {
+            format!("{abbreviation}{suffix}")
+        };
+        match defaults::slot(&mut reads, &fonts, name.as_bytes()).map_err(store)? {
+            Slot::Absent => {
+                let font = widgets::standard_font(transaction, base_font, budget).map_err(store)?;
+                edit_dict(
+                    transaction,
+                    holder,
+                    &[&resources, &font_key],
+                    budget,
+                    |fonts| {
+                        fonts.insert(Name::from(name.as_str()), Value::Reference(font));
+                    },
+                )?;
+                return Ok(name);
+            }
+            Slot::Found(_, Value::Dict(font))
+                if matches!(font.get("BaseFont"),
+                    Some(Value::Name(known)) if known.as_bytes() == base_font.as_bytes()) =>
+            {
+                return Ok(name);
+            }
+            _ => {}
+        }
+    }
+    Err(PdfError::new_err("the form's /DR /Font has no free name"))
 }
 
 /// Returns a copy of the dictionary of object `reference` in the

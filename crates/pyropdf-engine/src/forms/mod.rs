@@ -30,7 +30,7 @@ use pyropdf_store::{Error, LimitExceeded, Result};
 
 use crate::annotations::{Reader, Resolved, numbers_array};
 use crate::standard::{
-    self, Align, Base14Font, DefaultAppearance, DeviceColor, FIT_STEP, FORM_LINE_HEIGHT,
+    self, Align, Base14Font, DA_FONTS, DefaultAppearance, DeviceColor, FIT_STEP, FORM_LINE_HEIGHT,
     LayoutError, MAX_DEFAULT_APPEARANCE, MAX_FIT_SIZE, MIN_FIT_SIZE, Style,
 };
 use face::FaceText;
@@ -186,7 +186,11 @@ impl WidgetAppearance {
 
 /// Writes the font dictionary of Standard 14 font `base_font` as a new
 /// object and returns its reference.
-fn standard_font(
+///
+/// # Errors
+///
+/// A failed write or an exceeded budget.
+pub fn standard_font(
     transaction: &mut Transaction,
     base_font: &str,
     budget: &Budget,
@@ -518,7 +522,12 @@ fn drawn(
     align: Align,
     face: Option<&mut FaceText<'_>>,
 ) -> Result<Drawing, WidgetError> {
-    let mut text = TextStyle::new(default_appearance(reader, widget, form)?);
+    let da = default_appearance(reader, widget, form)?;
+    let registered = match &da {
+        Some(da) => registered_font(reader, form, &da.font)?,
+        None => None,
+    };
+    let mut text = TextStyle::new(da, registered);
     let embedded = face.as_ref().map(|face| face.font());
     if face.is_some() {
         face::RESOURCE.clone_into(&mut text.resource);
@@ -720,6 +729,44 @@ pub fn text_appearance(
         _ => None,
     };
     default_appearance(reader, widget, form)
+}
+
+/// Returns the Standard 14 font that the interactive form's `/DR /Font`
+/// gives `resource`, for a name that is no Standard 14 abbreviation, such
+/// as one that a created field takes when its abbreviation names another
+/// font; `None` for an abbreviation, a font that is no Standard 14 font,
+/// or a name that `/DR` lacks.
+fn registered_font(
+    reader: &Reader<'_>,
+    form: Option<&Dict>,
+    resource: &str,
+) -> std::result::Result<Option<&'static str>, WidgetError> {
+    let Some(form) = form else {
+        return Ok(None);
+    };
+    if DA_FONTS.iter().any(|(known, _)| *known == resource) {
+        return Ok(None);
+    }
+    let resources = reader.entry(form, "DR")?;
+    let Some(Value::Dict(resources)) = resources.as_deref() else {
+        return Ok(None);
+    };
+    let fonts = reader.entry(resources, "Font")?;
+    let Some(Value::Dict(fonts)) = fonts.as_deref() else {
+        return Ok(None);
+    };
+    let font = reader.entry(fonts, resource)?;
+    let Some(Value::Dict(font)) = font.as_deref() else {
+        return Ok(None);
+    };
+    let base_font = reader.entry(font, "BaseFont")?;
+    let Some(Value::Name(base_font)) = base_font.as_deref() else {
+        return Ok(None);
+    };
+    Ok(DA_FONTS
+        .iter()
+        .map(|(_, font)| *font)
+        .find(|font| font.as_bytes() == base_font.as_bytes()))
 }
 
 /// Returns the `/DA` of a widget: its own, else the nearest of its
@@ -1036,16 +1083,17 @@ struct TextStyle {
 }
 
 impl TextStyle {
-    /// Returns the style of a `/DA`: Helvetica, as `Helv`, for a font that
-    /// is no Standard 14 abbreviation, and Helvetica fitted in black without
+    /// Returns the style of a `/DA`: the `registered` Standard 14 font that
+    /// `/DR` gives its font, else Helvetica, as `Helv`, for a font that is
+    /// no Standard 14 abbreviation, and Helvetica fitted in black without
     /// one.
-    fn new(da: Option<DefaultAppearance>) -> Self {
+    fn new(da: Option<DefaultAppearance>, registered: Option<&'static str>) -> Self {
         let (resource, size, color) = da.map_or_else(
             || ("Helv".to_owned(), 0.0, (0.0, 0.0, 0.0)),
             |da| (da.font, da.size, da.color),
         );
-        let base_font = standard::da_font(&resource);
-        let resource = if base_font == "Helvetica" && resource != "Helv" {
+        let base_font = registered.unwrap_or_else(|| standard::da_font(&resource));
+        let resource = if registered.is_none() && base_font == "Helvetica" && resource != "Helv" {
             "Helv".to_owned()
         } else {
             resource

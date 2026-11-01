@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from test_acroform import _build_form_pdf
@@ -34,6 +34,9 @@ from pyropdf import (
     SignatureField,
     TextField,
 )
+
+if TYPE_CHECKING:
+    from pyropdf import StandardFontName
 
 
 def _page(rotation: int = 0) -> pyropdf.Page:
@@ -86,6 +89,49 @@ def test_every_kind_of_field_is_created_with_its_widget() -> None:
     assert doc.form.need_appearances is False
     reopened = pyropdf.open(doc.to_bytes())
     assert {name: field.value for name, field in reopened.form.items()} == values
+
+
+STANDARD_14: tuple[StandardFontName, ...] = (
+    "Helvetica",
+    "Helvetica-Bold",
+    "Helvetica-Oblique",
+    "Helvetica-BoldOblique",
+    "Times-Roman",
+    "Times-Bold",
+    "Times-Italic",
+    "Times-BoldItalic",
+    "Courier",
+    "Courier-Bold",
+    "Courier-Oblique",
+    "Courier-BoldOblique",
+    "Symbol",
+    "ZapfDingbats",
+)
+
+
+def _da_font(widget: pyropdf.Widget) -> str:
+    return bytes(widget.obj["DA"]).split()[0].decode()[1:]
+
+
+def test_each_standard_font_is_registered_in_the_form_resources() -> None:
+    page = _page()
+    doc = page.document
+    for at, font in enumerate(STANDARD_14):
+        page.widgets.add(
+            TextField(f"f{at}", (20, 10 + 20 * at, 200, 28 + 20 * at), font=Font.standard(font), value="a")
+        )
+
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    names = [_da_font(widget) for widget in page.widgets]
+    assert len(set(names)) == len(STANDARD_14)
+    for widget, name, font in zip(page.widgets, names, STANDARD_14, strict=True):
+        assert fonts[name]["BaseFont"] == font
+        drawn = widget.obj["AP"]["N"]["Resources"]["Font"]
+        assert [entry["BaseFont"] for entry in drawn.values()] == [font]
+    # A second field in a registered font reuses its entry.
+    page.widgets.add(TextField("again", (220, 20, 280, 40), font=Font.standard("Courier")))
+    assert _da_font(page.widgets[-1]) == "Cour"
+    assert len(doc.catalog["AcroForm"]["DR"]["Font"]) == len(STANDARD_14)
 
 
 def test_created_fields_are_filled_by_pyropdf() -> None:

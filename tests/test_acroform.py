@@ -1949,3 +1949,52 @@ def test_cached_fill_observes_cancellation() -> None:
     with pytest.raises(pyropdf.LimitError) as caught:
         field.value = "cancelled"
     assert caught.value.code == "cancelled"
+
+
+def _font_collision_pdf() -> bytes:
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] >>",
+            3: "<< /Type /Page /Parent 2 0 R >>",
+            4: "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>",
+            5: "<< /Fields [] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Cour 4 0 R /Cour1 6 0 R >> >> >>",
+            6: "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >>",
+        }
+    )
+
+
+def test_a_created_field_font_does_not_overwrite_another_font_of_its_name() -> None:
+    doc = pyropdf.open(_font_collision_pdf())
+    page = doc.pages[0]
+    page.widgets.add(pyropdf.TextField("name", (20, 20, 200, 40), font=pyropdf.Font.standard("Courier"), value="Ada"))
+
+    widget = page.widgets[0]
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    assert bytes(widget.obj["DA"]).startswith(b"/Cour2 ")
+    assert fonts["Cour"]["BaseFont"] == "Times-Roman"
+    assert fonts["Cour1"]["BaseFont"] == "Times-Bold"
+    assert fonts["Cour2"]["BaseFont"] == "Courier"
+    drawn = widget.obj["AP"]["N"]
+    assert [font["BaseFont"] for font in drawn["Resources"]["Font"].values()] == ["Courier"]
+    assert b"/Cour2 " in drawn.read()
+    # The Helvetica that the document's form names is reused.
+    page.widgets.add(pyropdf.TextField("other", (20, 60, 200, 80)))
+    assert bytes(page.widgets[1].obj["DA"]).startswith(b"/Helv ")
+
+    reopened = pyropdf.open(doc.to_bytes())
+    assert reopened.form["name"].value == "Ada"
+    assert "Ada" in reopened.pages[0].text()
+    assert reopened.catalog["AcroForm"]["DR"]["Font"]["Cour2"]["BaseFont"] == "Courier"
+    reopened.form["name"].value = "Grace"
+    shown = reopened.pages[0].widgets[0].obj["AP"]["N"]["Resources"]["Font"]
+    assert [font["BaseFont"] for font in shown.values()] == ["Courier"]
+
+
+def test_a_form_without_font_resources_gains_them() -> None:
+    pdf = _font_collision_pdf().replace(b"/DR << /Font << /Cour 4 0 R /Cour1 6 0 R >> >>", b" " * 46)
+    doc = pyropdf.open(pdf)
+    doc.pages[0].widgets.add(pyropdf.TextField("name", (20, 20, 200, 40), font=pyropdf.Font.standard("Times-Bold")))
+
+    assert bytes(doc.pages[0].widgets[0].obj["DA"]).startswith(b"/TiBo ")
+    assert doc.catalog["AcroForm"]["DR"]["Font"]["TiBo"]["BaseFont"] == "Times-Bold"
