@@ -314,6 +314,7 @@ class _Font:
         /,
     ) -> tuple[list[tuple[str, float, bool]], float, float, float, float]: ...
 
+def mark_font_subset(document: _Document, xref: int, /) -> None: ...
 def subset_font_program(data: bytes, format: str, keep: list[int], /) -> tuple[bytes, int, int] | None: ...  # noqa: A002
 def page_boxes(
     document: _Document, number: int, generation: int, /

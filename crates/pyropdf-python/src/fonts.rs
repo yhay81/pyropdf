@@ -13,9 +13,10 @@ use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
 use pyropdf_engine::fonts::{self, Format};
 use pyropdf_engine::standard::{self, Base14Font, LayoutError, LineMetrics, Placement};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::settle::Structure;
 
 use crate::document::_Document;
-use crate::errors::{LimitError, PdfError, limit_error};
+use crate::errors::{LimitError, PdfError, limit_error, store_error};
 use crate::pixmap::bridge_error;
 
 /// Returns, for each font dictionary of `fonts`, by object number and
@@ -67,6 +68,18 @@ pub fn subset_font_program<'py>(
     }
     let subset = py.detach(|| fonts::subset(data, format, &keep));
     Ok(subset.map(|subset| (PyBytes::new(py, &subset.data), subset.glyphs, subset.kept)))
+}
+
+/// Marks the Type0 font `xref`, which `_fonts.py` wrote for an embedded
+/// face, to be subset at save, in this thread's open transaction or in one
+/// of its own (DESIGN.md section 7).
+#[pyfunction]
+pub fn mark_font_subset(py: Python<'_>, document: &_Document, xref: u32) -> PyResult<()> {
+    document.edit(py, |transaction, budget| {
+        transaction
+            .mark(Structure::FontSubset, xref, budget)
+            .map_err(|e| store_error(&e))
+    })
 }
 
 /// The face of a `_Font`.

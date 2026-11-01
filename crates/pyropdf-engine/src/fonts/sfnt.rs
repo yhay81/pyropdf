@@ -241,3 +241,135 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
         kept,
     })
 }
+
+const HHEA: [u8; 4] = *b"hhea";
+const HMTX: [u8; 4] = *b"hmtx";
+/// The tables that a TrueType program embedded for a CIDFont needs
+/// (ISO 32000-2 9.9): the outlines, their metrics, and the instructions.
+const EMBEDDED: [[u8; 4]; 9] = [
+    *b"cvt ", *b"fpgm", GLYF, HEAD, HHEA, HMTX, LOCA, MAXP, *b"prep",
+];
+/// The `hhea` table's `numberOfHMetrics`.
+const LONG_METRICS_AT: usize = 34;
+/// The `maxp` table's `numGlyphs`.
+const GLYPH_COUNT_AT: usize = 4;
+
+/// Returns the TrueType sfnt `data` with only the glyphs of `keep`, their
+/// components, and `.notdef`, renumbered in order, and the tables that
+/// a CIDFont needs; with the old ID of each new glyph. `None` when it is
+/// not a TrueType program that this reads.
+pub(super) fn compact(data: &[u8], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec<u16>)> {
+    let version = data.get(0..4)?;
+    if version != [0, 1, 0, 0] && version != b"true" {
+        return None;
+    }
+    let tables = tables(data)?;
+    let glyf = find(&tables, GLYF)?;
+    let head = find(&tables, HEAD)?;
+    let hmtx = find(&tables, HMTX)?;
+    let glyphs = usize::from(be16(find(&tables, MAXP)?, GLYPH_COUNT_AT)?);
+    let long_metrics = usize::from(be16(find(&tables, HHEA)?, LONG_METRICS_AT)?);
+    if glyphs == 0 || long_metrics == 0 || long_metrics > glyphs {
+        return None;
+    }
+    let long = be16(head, LOCA_FORMAT_AT)? == 1;
+    let offsets = offsets(find(&tables, LOCA)?, long, glyphs, glyf.len())?;
+    let mut keep: BTreeSet<u32> = keep
+        .iter()
+        .copied()
+        .filter(|&glyph| usize::try_from(glyph).is_ok_and(|glyph| glyph < glyphs))
+        .collect();
+    keep.insert(0);
+    add_components(glyf, &offsets, &mut keep);
+    keep.retain(|&glyph| usize::try_from(glyph).is_ok_and(|glyph| glyph < glyphs));
+    let old: Vec<u16> = keep
+        .iter()
+        .filter_map(|&glyph| u16::try_from(glyph).ok())
+        .collect();
+    let new_id = |glyph: u16| old.binary_search(&glyph).ok();
+
+    let mut new_glyf = Vec::new();
+    let mut new_loca = Vec::new();
+    let mut new_hmtx = Vec::new();
+    new_loca.try_reserve(4 * (old.len() + 1)).ok()?;
+    new_hmtx.try_reserve(4 * old.len()).ok()?;
+    for &glyph in &old {
+        let glyph = usize::from(glyph);
+        new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
+        let (start, end) = (offsets[glyph], offsets[glyph + 1]);
+        if end > start {
+            let at = new_glyf.len();
+            let outline = glyf.get(start..end)?;
+            new_glyf.try_reserve(outline.len() + 3).ok()?;
+            new_glyf.extend_from_slice(outline);
+            renumber_components(&mut new_glyf[at..], new_id)?;
+            new_glyf.resize(new_glyf.len().next_multiple_of(4), 0);
+        }
+        let metric = glyph.min(long_metrics - 1);
+        new_hmtx.extend_from_slice(hmtx.get(4 * metric..4 * metric + 2)?);
+        let bearing = if glyph < long_metrics {
+            4 * glyph + 2
+        } else {
+            4 * long_metrics + 2 * (glyph - long_metrics)
+        };
+        new_hmtx.extend_from_slice(hmtx.get(bearing..bearing + 2)?);
+    }
+    new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
+
+    let count = u16::try_from(old.len()).ok()?.to_be_bytes();
+    let mut written: Vec<([u8; 4], Vec<u8>)> = Vec::new();
+    for table in &tables {
+        if !EMBEDDED.contains(&table.tag) || written.iter().any(|(tag, _)| *tag == table.tag) {
+            continue;
+        }
+        let data = match table.tag {
+            GLYF => std::mem::take(&mut new_glyf),
+            LOCA => std::mem::take(&mut new_loca),
+            HMTX => std::mem::take(&mut new_hmtx),
+            tag => {
+                let mut data = table.data.to_vec();
+                let (at, value) = match tag {
+                    HEAD => (LOCA_FORMAT_AT, 1u16.to_be_bytes()),
+                    HHEA => (LONG_METRICS_AT, count),
+                    MAXP => (GLYPH_COUNT_AT, count),
+                    _ => (0, [0; 2]),
+                };
+                if tag == HEAD || tag == HHEA || tag == MAXP {
+                    data.get_mut(at..at + 2)?.copy_from_slice(&value);
+                }
+                data
+            }
+        };
+        written.push((table.tag, data));
+    }
+    written.sort_by_key(|(tag, _)| *tag);
+    Some((write(&[0, 1, 0, 0], &written)?, old))
+}
+
+/// Rewrites the component glyph IDs of the composite glyph `data` with
+/// `new_id`; a simple glyph stays as it is.
+fn renumber_components(data: &mut [u8], new_id: impl Fn(u16) -> Option<usize>) -> Option<()> {
+    if data.len() < 10 || be16(data, 0)? & 0x8000 == 0 {
+        return Some(());
+    }
+    let mut at = 10;
+    while let (Some(flags), Some(component)) = (be16(data, at), be16(data, at + 2)) {
+        let new = u16::try_from(new_id(component)?).ok()?;
+        data.get_mut(at + 2..at + 4)?
+            .copy_from_slice(&new.to_be_bytes());
+        at += 4 + if flags & ARGS_ARE_WORDS != 0 { 4 } else { 2 };
+        at += if flags & HAVE_SCALE != 0 {
+            2
+        } else if flags & HAVE_XY_SCALE != 0 {
+            4
+        } else if flags & HAVE_TWO_BY_TWO != 0 {
+            8
+        } else {
+            0
+        };
+        if flags & MORE_COMPONENTS == 0 {
+            break;
+        }
+    }
+    Some(())
+}

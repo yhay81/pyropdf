@@ -18,6 +18,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4.12"
 pyropdf-engine = { path = "../crates/pyropdf-engine" }
 pyropdf-store = { path = "../crates/pyropdf-store" }
+skrifa = "0.46.2"
 
 [[bin]]
 name = "index"
@@ -64,3 +65,10 @@ bench = false
 # Debug assertions and overflow checks find more, as cargo-fuzz builds them.
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "fonts"
+path = "fuzz_targets/fonts.rs"
+test = false
+doc = false
+bench = false
