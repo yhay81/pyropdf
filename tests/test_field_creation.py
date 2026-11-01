@@ -1,10 +1,11 @@
 """Creating and removing form fields with page.widgets.add, del page.widgets[i], and del doc.form[name].
 
 Ported from pylopdf's ``tests/test_field_creation.py`` at
-ebb01d3c4c742046e8ce7fd72957cd15a2933321. Intended differences: the
-specifications take no ``font``, which waits for #194, so the validation
-case of a ``font`` that is no Font and the check of the font that a widget
-reads back are left out; pyropdf's ``to_bytes`` has no ``prune``.
+ebb01d3c4c742046e8ce7fd72957cd15a2933321. Intended differences:
+
+- ``Widget.font`` waits for #212, so the case that creates a field in
+  Courier reads the font back from the widget's ``/DA``.
+- pyropdf's ``to_bytes`` has no ``prune``.
 """
 
 from __future__ import annotations
@@ -18,11 +19,14 @@ from test_acroform import _build_form_pdf
 
 import pyropdf
 from pyropdf import (
+    Border,
     CheckBox,
+    Color,
     ComboBox,
     FieldChoice,
     FieldFlags,
     FieldType,
+    Font,
     ListBox,
     PushButton,
     RadioButton,
@@ -87,7 +91,7 @@ def test_every_kind_of_field_is_created_with_its_widget() -> None:
 def test_created_fields_are_filled_by_pyropdf() -> None:
     page = _page(90)
     doc = page.document
-    page.widgets.add(TextField("name", (20, 20, 200, 40), font_size=10))
+    page.widgets.add(TextField("name", (20, 20, 200, 40), font=Font.standard("Courier"), font_size=10))
     page.widgets.add(CheckBox("agree", (20, 60, 35, 75)))
     page.widgets.add(RadioButton("plan", (20, 100, 35, 115), on_state="Basic"))
     page.widgets.add(RadioButton("plan", (60, 100, 75, 115), on_state="Pro"))
@@ -101,6 +105,7 @@ def test_created_fields_are_filled_by_pyropdf() -> None:
     assert "Grace" in page.text()
     name = page.widgets[0]
     assert name.obj["MK"]["R"] == 90
+    assert bytes(name.obj["DA"]).startswith(b"/Cour 10")
 
 
 def test_a_second_widget_joins_the_field_and_splits_a_merged_one() -> None:
@@ -126,6 +131,7 @@ def test_field_specifications_validate() -> None:
     for spec, error in [
         (lambda: TextField("", (0, 0, 10, 10)), None),
         (lambda: TextField("a", (0, 0, 10, 10), max_length=-1), ValueError),
+        (lambda: TextField("a", (0, 0, 10, 10), font=cast("Any", "Helvetica")), TypeError),
         (lambda: TextField("a", (0, 0, 10, 10), font_size=-1), ValueError),
         (lambda: TextField("a", (0, 0, 10, 10), align=cast("Any", "justify")), ValueError),
         (lambda: CheckBox("a", (0, 0, 10, 10), on_state="Off"), ValueError),
@@ -154,6 +160,37 @@ def test_field_specifications_validate() -> None:
         TextField("a", (0, 0, 10, 10), value="x" * (1024 * 1024 + 1))
     assert len(page.document.form) == 0
     assert "Annots" not in page.obj
+
+
+def test_styled_fields_draw_their_style() -> None:
+    page = _page()
+
+    widget = page.widgets.add(
+        TextField(
+            "name",
+            (20, 20, 200, 60),
+            value="Ada",
+            border=Border(2, dashes=(3, 1)),
+            border_color=Color(0, 0, 1),
+            background_color=Color(1, 1, 0),
+            text_color=Color(1, 0, 0),
+            align="center",
+        )
+    )
+
+    assert widget.border == Border(2, dashes=(3, 1))
+    assert widget.background_color == Color(1, 1, 0)
+    assert widget.text_color == Color(1, 0, 0)
+    assert widget.obj["Q"] == 1
+    pixmap = page.pixmap(dpi=72)
+    offset = 50 * pixmap.stride + 190 * pixmap.channels
+    assert tuple(bytes(pixmap)[offset : offset + 3]) == (255, 255, 0)
+
+
+def test_a_field_can_omit_its_border_color() -> None:
+    page = _page()
+    widget = page.widgets.add(TextField("name", (0, 0, 100, 20), border_color=None))
+    assert widget.border_color is None
 
 
 def test_added_buttons_synchronize_the_whole_field() -> None:

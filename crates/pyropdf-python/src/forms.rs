@@ -2640,7 +2640,8 @@ fn edit_field(
 /// A field to create with its first widget, or a widget to add to the
 /// field of that name and kind, as `page.widgets.add` passes a field
 /// specification. Colours are RGB from 0 to 1, the border is its width,
-/// `/S` style, and dash lengths, and `align` is a `/Q` code.
+/// `/S` style, and dash lengths, `font_name` is a Standard 14 font, and
+/// `align` is a `/Q` code.
 #[derive(FromPyObject)]
 #[pyo3(from_item_all)]
 pub struct FieldSpec {
@@ -2674,6 +2675,8 @@ pub struct FieldSpec {
     #[pyo3(default)]
     text_color: Option<(f64, f64, f64)>,
     #[pyo3(default)]
+    font_name: Option<String>,
+    #[pyo3(default)]
     font_size: Option<f64>,
     #[pyo3(default)]
     align: Option<u8>,
@@ -2704,6 +2707,19 @@ fn field_type(kind: &str) -> PyResult<(&'static str, i64)> {
 }
 
 impl FieldSpec {
+    /// Returns the `/DA` resource name of the specification's Standard 14
+    /// font, Helvetica by default.
+    fn font_resource(&self) -> PyResult<&'static str> {
+        let Some(name) = &self.font_name else {
+            return Ok("Helv");
+        };
+        DA_FONTS
+            .iter()
+            .find(|(_, font)| font == name)
+            .map(|(resource, _)| *resource)
+            .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))
+    }
+
     /// Returns the on state of a check box or radio button.
     fn on_state(&self) -> &str {
         self.on_state.as_deref().unwrap_or("Yes")
@@ -2777,6 +2793,7 @@ impl FieldSpec {
         }
         if shows_text(&self.kind) || self.kind == "pushbutton" {
             rgb(self.text_color.unwrap_or((0.0, 0.0, 0.0)), "text colour")?;
+            self.font_resource()?;
             let size = self.font_size.unwrap_or(0.0);
             if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
                 return Err(PdfError::new_err(
@@ -2830,7 +2847,8 @@ impl FieldSpec {
         if shows_text(&self.kind) || self.kind == "pushbutton" {
             let (red, green, blue) = self.text_color.unwrap_or((0.0, 0.0, 0.0));
             let size = self.font_size.unwrap_or(0.0);
-            let appearance = format!("/Helv {size} Tf {red} {green} {blue} rg");
+            let resource = self.font_resource()?;
+            let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
             widget.insert(
                 Name::from("DA"),
                 Value::String(PdfString::literal(appearance.into_bytes())),
