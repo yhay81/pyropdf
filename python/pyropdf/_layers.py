@@ -10,8 +10,10 @@ a group or membership dictionary, ``/VE`` visibility expressions included.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+import enum
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import KW_ONLY, dataclass, field
+from itertools import islice
 from typing import TYPE_CHECKING, overload
 
 from pyropdf._errors import LimitError
@@ -42,6 +44,27 @@ class Layer:
     """Whether the default configuration shows the group."""
     locked: bool
     """Whether the default configuration's ``/Locked`` asks viewers not to change it."""
+    _document: Document | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __copy__(self) -> Layer:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Layer:
+        return self
+
+    def __getstate__(self) -> list[object]:
+        return [self.xref, self.name, self.intent, self.on, self.locked]
+
+    def __setstate__(self, state: list[object]) -> None:
+        for name, value in zip(("xref", "name", "intent", "on", "locked"), state, strict=True):
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "_document", None)
+
+
+def _document_layer(document: Document, layer: Layer) -> Layer:
+    """Attach the source document to a layer value returned by the document."""
+    object.__setattr__(layer, "_document", document)
+    return layer
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +81,64 @@ class LayerConfig:
     locked: tuple[int, ...]
 
 
+class VisibilityPolicy(enum.StrEnum):
+    """How a membership's groups decide its visibility (``/P``, ISO 32000-2 Table 97)."""
+
+    ALL_ON = "AllOn"
+    """Visible when every group is shown."""
+    ANY_ON = "AnyOn"
+    """Visible when any group is shown; the default."""
+    ANY_OFF = "AnyOff"
+    """Visible when any group is hidden."""
+    ALL_OFF = "AllOff"
+    """Visible when every group is hidden."""
+
+
+@dataclass(frozen=True, slots=True)
+class LayerMembership:
+    """An optional content membership dictionary (``/OCMD``) as a value.
+
+    Content drawn in a :meth:`Canvas.layer` scope of a membership is visible
+    as ``policy`` decides from the visibility of ``layers``; a membership
+    without groups is visible.
+    """
+
+    layers: tuple[Layer, ...] = ()
+    _: KW_ONLY
+    policy: VisibilityPolicy = VisibilityPolicy.ANY_ON
+
+    def __post_init__(self) -> None:
+        """Validate the fields and keep ``layers`` as a tuple."""
+        if isinstance(self.layers, Layer) or not isinstance(self.layers, Iterable):
+            msg = f"LayerMembership takes an iterable of Layer values: {self.layers!r}"
+            raise TypeError(msg)
+        layers = tuple(islice(self.layers, _MAX_LAYERS + 1))
+        if len(layers) > _MAX_LAYERS:
+            msg = f"a membership names more than {_MAX_LAYERS} groups"
+            raise LimitError(_COUNT, msg)
+        for layer in layers:
+            if not isinstance(layer, Layer):
+                msg = f"LayerMembership takes Layer values: {layer!r}"
+                raise TypeError(msg)
+        try:
+            policy = VisibilityPolicy(self.policy)
+        except ValueError as exc:
+            msg = f"policy must be a VisibilityPolicy: {self.policy!r}"
+            raise ValueError(msg) from exc
+        object.__setattr__(self, "layers", layers)
+        object.__setattr__(self, "policy", policy)
+
+
 def _text(value: object) -> str:
     return value.text if isinstance(value, String) else ""
+
+
+def _append_group(array: Array, group: Dictionary) -> None:
+    """Add a group without making an optional-content array exceed its limit."""
+    if len(array) >= _MAX_LAYERS:
+        msg = f"an optional content array cannot hold more than {_MAX_LAYERS} entries"
+        raise LimitError(_COUNT, msg)
+    array.append(group)
 
 
 def _xrefs(value: object) -> tuple[int, ...]:
@@ -140,7 +219,12 @@ class Layers(Sequence[Layer]):
             xref = group.xref
             assert xref is not None  # noqa: S101 - _groups keeps indirect groups only
             layers.append(
-                Layer(xref, _text(group.get("Name")), _intents(group.get("Intent")), xref not in off, xref in locked)
+                _document_layer(
+                    self._document,
+                    Layer(
+                        xref, _text(group.get("Name")), _intents(group.get("Intent")), xref not in off, xref in locked
+                    ),
+                )
             )
         return layers
 
@@ -188,6 +272,54 @@ class Layers(Sequence[Layer]):
             properties["D"] = {}
             config = properties["D"]
         return properties, config
+
+    def add(self, name: str, /, *, visible: bool = True) -> Layer:
+        """Add a group named ``name`` and return it, in one transaction.
+
+        The group joins ``/OCGs`` and the default configuration's
+        ``/Order``, creating ``/OCProperties`` when the document has none,
+        and starts shown or hidden as ``visible`` says.
+        """
+        if not isinstance(name, str):
+            msg = f"name must be a str: {name!r}"
+            raise TypeError(msg)
+        if not isinstance(visible, bool):
+            msg = f"visible must be a bool: {visible!r}"
+            raise TypeError(msg)
+        document = self._document
+        with document.transaction("add layer"):
+            catalog = document.catalog
+            if self._properties() is None:
+                catalog["OCProperties"] = {}
+            properties = catalog["OCProperties"]
+            if not isinstance(properties.get("OCGs"), Array):
+                properties["OCGs"] = []
+            _, config = self._require()
+            xref = document.objects.add({"Type": Name("OCG"), "Name": name})
+            group = document.objects[xref]
+            _append_group(properties["OCGs"], group)
+            if not isinstance(config.get("Order"), Array):
+                config["Order"] = []
+            _append_group(config["Order"], group)
+            hidden_by_base = config.get("BaseState") == "OFF"
+            if visible == hidden_by_base:
+                key = "ON" if visible else "OFF"
+                if not isinstance(config.get(key), Array):
+                    config[key] = []
+                _append_group(config[key], group)
+        return _document_layer(document, Layer(xref, name, ("View",), visible, locked=False))
+
+    def _group(self, layer: Layer) -> int:
+        """Return the object number of ``layer``, refusing a group that this document does not have."""
+        if not isinstance(layer, Layer):
+            msg = f"a layer is a Layer or a LayerMembership: {layer!r}"
+            raise TypeError(msg)
+        if layer._document is self._document:  # noqa: SLF001 - layer provenance is internal.
+            for group in self._groups():
+                if group.xref == layer.xref and _text(group.get("Name")) == layer.name:
+                    return layer.xref
+        msg = f"layer {layer.name!r} (object {layer.xref}) is not an optional content group of this document"
+        raise ValueError(msg)
 
     def switch(self, xref: int, *, on: bool) -> None:
         """Show or hide group ``xref`` in the default configuration, in one transaction."""
@@ -321,5 +453,5 @@ def _evaluate(expression: Array, off: set[int]) -> bool:
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (Layer, LayerConfig, Layers):
+for _public in (Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy):
     _public.__module__ = "pyropdf"
