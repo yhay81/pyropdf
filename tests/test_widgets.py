@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from test_acroform import NOTO_SANS_HEBREW, _build_form_pdf
+from test_acroform import NOTO_SANS_HEBREW, _build_form_pdf, build_raw_pdf
 
 import pyropdf
 from pyropdf import AnnotationFlags, Border, BorderStyle, Color, FieldType, Font, Name, Rect, Widget, _core
@@ -274,6 +274,42 @@ def test_widget_font_falls_back_only_for_an_absent_resource() -> None:
     del fonts["Helv"]
     assert widget.font is not None
     assert widget.font.name == "Helvetica"
+
+
+def _widget_with_font_resource(resource: str) -> Widget:
+    data = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 3 0 R >>",
+            2: "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+            3: f"<< /Fields [5 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv {resource} >> >> >>",
+            4: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [5 0 R] >>",
+            5: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [10 10 200 30] >>",
+            7: "null",
+        }
+    )
+    return pyropdf.open(data).pages[0].widgets[0]
+
+
+@pytest.mark.parametrize("resource", ["null", "7 0 R"])
+def test_widget_font_treats_null_resources_as_absent(resource: str) -> None:
+    widget = _widget_with_font_resource(resource)
+    assert widget.font is not None
+    assert widget.font.name == "Helvetica"
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    ["null", "7 0 R"]
+    + [f"<< /{key} {value} >>" for key in ("FontFile", "FontFile2", "FontFile3") for value in ("null", "7 0 R")],
+)
+def test_widget_font_treats_null_descriptors_and_programs_as_absent(descriptor: str) -> None:
+    widget = _widget_with_font_resource(f"<< /Subtype /Type1 /BaseFont /Times-Bold /FontDescriptor {descriptor} >>")
+    assert widget.font is not None
+    assert widget.font.name == "Times-Bold"
+
+
+def test_widget_font_refuses_an_invalid_non_null_resource() -> None:
+    assert _widget_with_font_resource("42").font is None
 
 
 def test_widget_font_refuses_an_embedded_face() -> None:

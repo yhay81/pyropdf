@@ -6256,11 +6256,8 @@ fn widget_font_resource(
     let Value::Dict(fonts) = &*fonts else {
         return Ok(Some(None));
     };
-    let Some(entry) = fonts.get(resource) else {
+    let Some(font) = widget_font_value(reads, fonts.get(resource))? else {
         return Ok(None);
-    };
-    let Some(font) = widget_font_value(reads, Some(entry))? else {
-        return Ok(Some(None));
     };
     let Value::Dict(font) = &*font else {
         return Ok(Some(None));
@@ -6269,18 +6266,14 @@ fn widget_font_resource(
     {
         return Ok(Some(None));
     }
-    if font.get("FontDescriptor").is_some() {
-        let Some(descriptor) = widget_font_value(reads, font.get("FontDescriptor"))? else {
-            return Ok(Some(None));
-        };
+    if let Some(descriptor) = widget_font_value(reads, font.get("FontDescriptor"))? {
         let Value::Dict(descriptor) = &*descriptor else {
             return Ok(Some(None));
         };
-        if ["FontFile", "FontFile2", "FontFile3"]
-            .iter()
-            .any(|key| descriptor.get(key).is_some())
-        {
-            return Ok(Some(None));
+        for key in ["FontFile", "FontFile2", "FontFile3"] {
+            if widget_font_value(reads, descriptor.get(key))?.is_some() {
+                return Ok(Some(None));
+            }
         }
     }
     let Some(base) = widget_font_value(reads, font.get("BaseFont"))? else {
