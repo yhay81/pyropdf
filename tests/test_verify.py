@@ -18,6 +18,7 @@ if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     # As in tests/test_signing.py: pyHanko enables the GIL of a free-threaded build.
     pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
 
+from asn1crypto import cms
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -147,10 +148,23 @@ def test_a_changed_signature_value_fails(pki: Pki) -> None:
     signed = _document().sign("Signature1", _pem_signer(pki))
     [signature] = pyropdf.open(signed).signatures
     start = signature.byte_range[1] + 1
-    # The DER of a P-256 signature value sits near the end of the CMS bytes,
-    # before the zero padding; flip one of its hexadecimal digits.
-    end = signed.index(b"0000", start) - 2
-    tampered = signed[:end] + (b"1" if signed[end : end + 1] != b"1" else b"2") + signed[end + 1 :]
+    der = bytes.fromhex(signed[start : signature.byte_range[2] - 1].decode())
+    # Locate the signature value through the CMS structure rather than by a
+    # byte pattern, which random certificates and digests can also contain.
+    content = cms.ContentInfo.load(der, strict=False)
+    signer = content["content"]["signer_infos"][0]
+    value = signer["signature"].native
+    # Alter the low bit of s, preserving the ECDSA value's DER structure.
+    signer["signature"] = value[:-1] + bytes([value[-1] ^ 1])
+    encoded = content.dump()
+    # The CMS re-encoding must change exactly the signature byte and leave the
+    # reserved zero padding and every other byte untouched.
+    changed = [i for i, (before, after) in enumerate(zip(der, encoded, strict=False)) if before != after]
+    assert len(encoded) <= len(der)
+    assert len(changed) == 1
+    assert der[len(encoded) :] == bytes(len(der) - len(encoded))
+    offset = start + 2 * changed[0]
+    tampered = signed[:offset] + encoded[changed[0] : changed[0] + 1].hex().encode() + signed[offset + 2 :]
     [result] = _verified(tampered, pki)
     assert result.intact
     assert result.valid is False
