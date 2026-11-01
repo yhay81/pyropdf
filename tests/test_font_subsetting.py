@@ -14,6 +14,7 @@ save (``tests/test_canvas_embedded.py``). The cases that
 from __future__ import annotations
 
 import hashlib
+import io
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
