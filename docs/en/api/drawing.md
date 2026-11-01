@@ -27,8 +27,8 @@ Paths take a `fill` `Color` and a `stroke`, a `Stroke`
 or a `Color` for a 1-point line; a path with neither is stroked
 with a 1-point black line. A color's alpha below 1 paints it
 translucent. The scopes `clip`, `transform`,
-`opacity`, and `blend` are context managers that apply to
-everything drawn inside them. `text` and `textbox` draw
+`opacity`, `blend`, `layer`, and `tag` are
+context managers that apply to everything drawn inside them. `text` and `textbox` draw
 text in a `Font`; embedded fonts come with issue 153 (DESIGN.md
 section 7).
 
@@ -288,6 +288,63 @@ Canvas.blend(mode: BlendMode | str) -> AbstractContextManager[None]
 
 Blend what the block draws with the content below it.
 
+### `Canvas.layer`
+
+```python
+Canvas.layer(layer: Layer | LayerMembership) -> AbstractContextManager[None]
+```
+
+Draw the block as optional content of a `Layer` or a `LayerMembership`.
+
+What the block draws shows only while `layer`, a group of the
+page's document or a membership of its groups, is visible, in
+rendering, text extraction, and viewers. The block is written as
+`/OC` marked content; a membership is written as a new membership
+dictionary. A group that is no longer an optional
+content group when the canvas commits raises
+`StaleObjectError`.
+
+### `Canvas.tag`
+
+```python
+Canvas.tag(
+    role: TagRole | str,
+    *,
+    alt: str | None = None,
+    lang: str | None = None,
+    title: str | None = None,
+    actual_text: str | None = None,
+    scope: TableHeaderScope | str | None = None,
+    numbering: ListNumbering | str | None = None,
+) -> AbstractContextManager[None]
+```
+
+Make what the block draws a structure element of the document's structure tree.
+
+Scopes nest into the structure tree in the order of the calls.
+`TagRole.ARTIFACT` marks content outside the logical
+structure, as is everything drawn outside any tag scope of a
+document that already has a structure tree. `alt` is the
+alternate description that figures and formulas need, `title` the
+element's title, `lang` its BCP 47 language, and `actual_text`
+the text that replaces its content for extraction and assistive
+technology. `scope` says what a `TagRole.TABLE_HEADER` cell
+heads, and `numbering` how a `TagRole.LIST` numbers its
+items; other roles take neither.
+
+The elements join the document's structure tree, created when it
+has none, under its `Document` element when the root holds that
+one element only. The canvas's drawing is then written as a Form
+XObject with a `/StructParents` key of its own, in which each
+element names its marked content. A tag scope cannot start inside an
+`opacity` scope or an artifact.
+
+## `ListNumbering`
+
+How a list numbers its items (ISO 32000-1 section 14.8.5.5), by its PDF name.
+
+Members: `NONE`, `DISC`, `CIRCLE`, `SQUARE`, `DECIMAL`, `LOWER_ROMAN`, `UPPER_ROMAN`, `LOWER_ALPHA`, `UPPER_ALPHA`.
+
 ## `PathBuilder`
 
 ```python
@@ -437,6 +494,21 @@ PathBuilder.zigzag(
 ```
 
 Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
+
+## `TableHeaderScope`
+
+What a table header cell heads (ISO 32000-1 section 14.8.5.7), by its PDF name.
+
+Members: `ROW`, `COLUMN`, `BOTH`.
+
+## `TagRole`
+
+A structure type (ISO 32000-1 section 14.8.4), by its PDF name.
+
+`ARTIFACT` marks content that is not part of the document's
+logical structure, such as page headers, footers, and decoration.
+
+Members: `PART`, `ARTICLE`, `SECTION`, `DIV`, `BLOCK_QUOTE`, `CAPTION`, `TOC`, `TOC_ITEM`, `INDEX`, `NON_STRUCT`, `PARAGRAPH`, `HEADING_1`, `HEADING_2`, `HEADING_3`, `HEADING_4`, `HEADING_5`, `HEADING_6`, `LIST`, `LIST_ITEM`, `LABEL`, `LIST_BODY`, `TABLE`, `TABLE_ROW`, `TABLE_HEADER`, `TABLE_DATA`, `TABLE_HEAD`, `TABLE_BODY`, `TABLE_FOOT`, `SPAN`, `QUOTE`, `NOTE`, `REFERENCE`, `BIB_ENTRY`, `CODE`, `FIGURE`, `FORMULA`, `ARTIFACT`, `LINK`.
 
 ## `TextFit`
 

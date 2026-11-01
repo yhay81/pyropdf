@@ -10,8 +10,9 @@ a group or membership dictionary, ``/VE`` visibility expressions included.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+import enum
+from collections.abc import Iterable, Iterator, Sequence
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, overload
 
 from pyropdf._errors import LimitError
@@ -56,6 +57,54 @@ class LayerConfig:
     on: tuple[int, ...]
     off: tuple[int, ...]
     locked: tuple[int, ...]
+
+
+class VisibilityPolicy(enum.StrEnum):
+    """How a membership's groups decide its visibility (``/P``, ISO 32000-2 Table 97)."""
+
+    ALL_ON = "AllOn"
+    """Visible when every group is shown."""
+    ANY_ON = "AnyOn"
+    """Visible when any group is shown; the default."""
+    ANY_OFF = "AnyOff"
+    """Visible when any group is hidden."""
+    ALL_OFF = "AllOff"
+    """Visible when every group is hidden."""
+
+
+@dataclass(frozen=True, slots=True)
+class LayerMembership:
+    """An optional content membership dictionary (``/OCMD``) as a value.
+
+    Content drawn in a :meth:`Canvas.layer` scope of a membership is visible
+    as ``policy`` decides from the visibility of ``layers``; a membership
+    without groups is visible.
+    """
+
+    layers: tuple[Layer, ...] = ()
+    _: KW_ONLY
+    policy: VisibilityPolicy = VisibilityPolicy.ANY_ON
+
+    def __post_init__(self) -> None:
+        """Validate the fields and keep ``layers`` as a tuple."""
+        if isinstance(self.layers, Layer) or not isinstance(self.layers, Iterable):
+            msg = f"LayerMembership takes an iterable of Layer values: {self.layers!r}"
+            raise TypeError(msg)
+        layers = tuple(self.layers)
+        if len(layers) > _MAX_LAYERS:
+            msg = f"a membership names more than {_MAX_LAYERS} groups"
+            raise LimitError(_COUNT, msg)
+        for layer in layers:
+            if not isinstance(layer, Layer):
+                msg = f"LayerMembership takes Layer values: {layer!r}"
+                raise TypeError(msg)
+        try:
+            policy = VisibilityPolicy(self.policy)
+        except ValueError as exc:
+            msg = f"policy must be a VisibilityPolicy: {self.policy!r}"
+            raise ValueError(msg) from exc
+        object.__setattr__(self, "layers", layers)
+        object.__setattr__(self, "policy", policy)
 
 
 def _text(value: object) -> str:
@@ -189,6 +238,53 @@ class Layers(Sequence[Layer]):
             config = properties["D"]
         return properties, config
 
+    def add(self, name: str, /, *, visible: bool = True) -> Layer:
+        """Add a group named ``name`` and return it, in one transaction.
+
+        The group joins ``/OCGs`` and the default configuration's
+        ``/Order``, creating ``/OCProperties`` when the document has none,
+        and starts shown or hidden as ``visible`` says.
+        """
+        if not isinstance(name, str):
+            msg = f"name must be a str: {name!r}"
+            raise TypeError(msg)
+        if not isinstance(visible, bool):
+            msg = f"visible must be a bool: {visible!r}"
+            raise TypeError(msg)
+        document = self._document
+        with document.transaction("add layer"):
+            catalog = document.catalog
+            if self._properties() is None:
+                catalog["OCProperties"] = {}
+            properties = catalog["OCProperties"]
+            if not isinstance(properties.get("OCGs"), Array):
+                properties["OCGs"] = []
+            _, config = self._require()
+            xref = document.objects.add({"Type": Name("OCG"), "Name": name})
+            group = document.objects[xref]
+            properties["OCGs"].append(group)
+            if not isinstance(config.get("Order"), Array):
+                config["Order"] = []
+            config["Order"].append(group)
+            hidden_by_base = config.get("BaseState") == "OFF"
+            if visible == hidden_by_base:
+                key = "ON" if visible else "OFF"
+                if not isinstance(config.get(key), Array):
+                    config[key] = []
+                config[key].append(group)
+        return Layer(xref, name, ("View",), visible, locked=False)
+
+    def _group(self, layer: Layer) -> int:
+        """Return the object number of ``layer``, refusing a group that this document does not have."""
+        if not isinstance(layer, Layer):
+            msg = f"a layer is a Layer or a LayerMembership: {layer!r}"
+            raise TypeError(msg)
+        for group in self._groups():
+            if group.xref == layer.xref and _text(group.get("Name")) == layer.name:
+                return layer.xref
+        msg = f"layer {layer.name!r} (object {layer.xref}) is not an optional content group of this document"
+        raise ValueError(msg)
+
     def switch(self, xref: int, *, on: bool) -> None:
         """Show or hide group ``xref`` in the default configuration, in one transaction."""
         if isinstance(xref, bool) or not isinstance(xref, int):
@@ -321,5 +417,5 @@ def _evaluate(expression: Array, off: set[int]) -> bool:
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (Layer, LayerConfig, Layers):
+for _public in (Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy):
     _public.__module__ = "pyropdf"
