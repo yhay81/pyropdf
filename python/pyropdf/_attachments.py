@@ -47,7 +47,13 @@ def _validate_text_size(texts: list[str], label: str) -> None:
     """Refuse texts that are longer together in UTF-8 than 1 MiB."""
     size = 0
     for text in texts:
-        size += len(text.encode("utf-8", "surrogatepass"))
+        # Every character needs at least one UTF-8 byte. Reject an oversized
+        # input before allocating its encoded copy.
+        if str.__len__(text) > _MAX_INPUT_TEXT_SIZE - size:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
+        size += len(str.encode(text, "utf-8", "surrogatepass"))
         if size > _MAX_INPUT_TEXT_SIZE:
             code = "embedded_file_input_size"
             msg = f"the {label} is longer than the {_MAX_INPUT_TEXT_SIZE}-byte limit in UTF-8"
@@ -79,9 +85,9 @@ _FILE_FIELDS = ("filename", "description", "created", "modified")
 
 def _is_date(value: str) -> bool:
     """Return whether ``value`` is a PDF date string within its bound: ``D:``, then printable ASCII."""
-    if not len("D:") < len(value) <= _MAX_DATE_SIZE:
+    if not len("D:") < str.__len__(value) <= _MAX_DATE_SIZE:
         return False
-    return value.startswith("D:") and value.isascii() and value.isprintable()
+    return str.startswith(value, "D:") and str.isascii(value) and str.isprintable(value)
 
 
 def _validate_date(value: object, field: str) -> str:
@@ -90,7 +96,7 @@ def _validate_date(value: object, field: str) -> str:
         msg = f"{field} must be a PDF date string such as 'D:20260101120000Z': {type(value).__name__}"
         raise TypeError(msg)
     if not _is_date(value):
-        msg = f"{field} must be a PDF date string of up to {_MAX_DATE_SIZE} printable ASCII characters: {value!r}"
+        msg = f"{field} must be a PDF date string of up to {_MAX_DATE_SIZE} printable ASCII characters"
         raise ValueError(msg)
     return value
 
@@ -131,14 +137,16 @@ def _check_edit(edit: object) -> dict[str, str | None]:
             if not _is_date(value):
                 msg = f"{key} must be a PDF date string of up to {_MAX_DATE_SIZE} printable ASCII characters"
                 raise PdfError(msg)
-        elif key == "filename" and not value:
+        elif key == "filename" and str.__len__(value) == 0:
             msg = "a file name cannot be empty"
             raise PdfError(msg)
         else:
             texts.append(value)
         checked[key] = value
     _validate_text_size(texts, "file name and description")
-    return checked
+    # The object writer calls string methods while encoding.  Use exactly
+    # the contents just checked, without invoking subclass overrides.
+    return {key: str.__str__(value) if value is not None else None for key, value in checked.items()}
 
 
 def _now() -> str:
@@ -267,6 +275,8 @@ def _edit_dates(stream: Stream, edit: dict[str, str | None]) -> None:
         if field not in edit:
             continue
         if not isinstance(stream.get("Params"), Dictionary):
+            if edit[field] is None:
+                continue
             stream["Params"] = {}
         params = stream["Params"]
         if (date := edit[field]) is not None:
@@ -320,15 +330,15 @@ class Attachment:
         PDF 1.6, as :meth:`Attachments.add` does.
         """
         checked = _check_edit(edit)
-        filespec = self._filespec()
-        if not isinstance(filespec, Dictionary):
-            msg = f"the attachment {self._name!r} has a file specification that is not a dictionary"
-            raise PdfError(msg)
-        stream = _file(filespec)
-        if stream is None and ("created" in checked or "modified" in checked):
-            msg = f"the attachment {self._name!r} has no embedded file stream to hold its dates"
-            raise PdfError(msg)
         with self._document.transaction("attachment edit"):
+            filespec = self._filespec()
+            if not isinstance(filespec, Dictionary):
+                msg = f"the attachment {self._name!r} has a file specification that is not a dictionary"
+                raise PdfError(msg)
+            stream = _file(filespec)
+            if stream is None and ("created" in checked or "modified" in checked):
+                msg = f"the attachment {self._name!r} has no embedded file stream to hold its dates"
+                raise PdfError(msg)
             if (filename := checked.get("filename")) is not None:
                 filespec["F"] = filename
                 if "UF" in filespec or _version(self._document) >= _UF_VERSION:
@@ -353,7 +363,7 @@ class Attachment:
     @filename.setter
     def filename(self, filename: str) -> None:
         filename = _validate_text(filename, "filename")
-        if not filename:
+        if str.__len__(filename) == 0:
             msg = "a file name cannot be empty"
             raise ValueError(msg)
         self._edit_file({"filename": filename})

@@ -129,6 +129,125 @@ def test_values_are_validated() -> None:
     assert (attachment.filename, attachment.description) == ("data.csv", "Rows")
 
 
+@pytest.mark.parametrize("text", ["x" * (1024 * 1024 + 1), "漢" * 350_000], ids=["ascii", "multibyte"])
+def test_oversized_text_cannot_override_its_length_or_encoding(text: str) -> None:
+    class Misleading(str):
+        __slots__ = ()
+
+        def __len__(self) -> int:
+            return 0
+
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+            return b""
+
+    doc = pyropdf.open(_attachment_pdf(inline=False))
+    attachment = doc.attachments["data"]
+    before = doc.history.position
+    with pytest.raises(LimitError) as caught:
+        attachment.description = Misleading(text)
+    assert caught.value.code == "embedded_file_input_size"
+    assert doc.history.position == before
+    assert attachment.description == "Rows"
+
+
+def test_subclasses_cannot_spoof_dates_or_empty_names() -> None:
+    class SpoofDate(str):
+        __slots__ = ()
+
+        def __len__(self) -> int:
+            return 20
+
+        def startswith(self, *args: object, **kwargs: object) -> bool:  # noqa: ARG002
+            return True
+
+        def isascii(self) -> bool:
+            return True
+
+        def isprintable(self) -> bool:
+            return True
+
+    class SpoofEmpty(str):
+        __slots__ = ()
+
+        def __len__(self) -> int:
+            return 1
+
+    class InvalidDate(str):
+        __slots__ = ()
+
+        def __repr__(self) -> str:
+            msg = "invalid dates must not be formatted in an error"
+            raise AssertionError(msg)
+
+    doc = pyropdf.open(_attachment_pdf(inline=False))
+    attachment = doc.attachments["data"]
+    before = doc.history.position
+    with pytest.raises(ValueError, match="PDF date"):
+        attachment.created = SpoofDate("D:2026\n")
+    with pytest.raises(ValueError, match="empty"):
+        attachment.filename = SpoofEmpty("")
+    with pytest.raises(ValueError, match="PDF date"):
+        attachment.modified = InvalidDate("D:" + "9" * 1000)
+    assert doc.history.position == before
+
+
+@pytest.mark.parametrize("direct", [False, True], ids=["setters", "whole-edit"])
+def test_subclasses_cannot_change_text_when_it_is_encoded(*, direct: bool) -> None:
+    class Altered(str):
+        __slots__ = ()
+
+        def __str__(self) -> str:
+            msg = "the subclass must not change the checked text"
+            raise AssertionError(msg)
+
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+            msg = "the subclass must not change the encoded text"
+            raise AssertionError(msg)
+
+    doc = pyropdf.open(_attachment_pdf(inline=False))
+    attachment = doc.attachments["data"]
+    if direct:
+        cast("Any", attachment)._edit_file(  # noqa: SLF001 - exercise the whole-edit boundary.
+            {"filename": Altered("safe.txt"), "description": Altered("safe"), "created": Altered("D:20260101")}
+        )
+    else:
+        attachment.filename = Altered("safe.txt")
+        attachment.description = Altered("safe")
+        attachment.created = Altered("D:20260101")
+    for current in (doc, pyropdf.open(doc.to_bytes())):
+        edited = current.attachments["data"]
+        assert (edited.filename, edited.description, edited.created) == ("safe.txt", "safe", "D:20260101")
+
+
+def test_deleted_direct_attachment_is_rechecked_after_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pyropdf._history import Transaction  # noqa: PLC0415 - the test intercepts the transaction boundary.
+
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: (
+                    "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names "
+                    "[(a) << /Type /Filespec /F (a.txt) >> (b) << /Type /Filespec /F (b.txt) >>] >> >> >>"
+                ),
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+            }
+        )
+    )
+    attachment = doc.attachments["a"]
+    enter = Transaction.__enter__
+
+    def delete_before_enter(transaction: Transaction) -> Transaction:
+        if transaction._name == "attachment edit":  # noqa: SLF001 - intercept this edit only.
+            del doc.attachments["a"]
+        return enter(transaction)
+
+    monkeypatch.setattr(Transaction, "__enter__", delete_before_enter)
+    with pytest.raises(pyropdf.StaleObjectError):
+        attachment.description = "wrong recipient"
+    assert doc.attachments["b"].description is None
+
+
 def test_dates_need_an_embedded_file_stream() -> None:
     doc = pyropdf.open(
         build_raw_pdf(
@@ -148,6 +267,28 @@ def test_dates_need_an_embedded_file_stream() -> None:
     with pytest.raises(PdfError):
         attachment.created = "D:20200101000000Z"
     assert attachment.description == "No stream"
+
+
+def test_deleting_absent_dates_does_not_create_params_or_history() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: (
+                    "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles << /Names "
+                    "[(a) << /Type /Filespec /F (a.txt) /EF << /F 4 0 R >> >>] >> >> >>"
+                ),
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+                4: "<< /Type /EmbeddedFile /Length 3 >>\nstream\nabc\nendstream",
+            }
+        )
+    )
+    attachment = doc.attachments["a"]
+    before = doc.history.position
+    del attachment.created
+    del attachment.modified
+    assert doc.history.position == before
+    assert "Params" not in doc.objects[4]
 
 
 def test_the_file_name_follows_the_version() -> None:
