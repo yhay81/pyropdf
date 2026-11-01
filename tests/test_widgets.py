@@ -3,9 +3,9 @@
 Ported from pylopdf's tests/test_widgets.py at ebb01d3c. Intended
 differences:
 
-- ``Widget.font`` waits for pyropdf's ``Font`` (#153), so the styling case
-  sets the font through the core edit's ``font_name``, and the validation
-  case leaves out a font that is no Font.
+- setting ``Widget.font`` names the font in the form's ``/DR``, as
+  creating a field does, and a test checks that a name that another font
+  holds there is not reused.
 - a test checks that widget handles go stale with their page and that
   undo restores them, and another that a widget edit is one step.
 """
@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from test_acroform import _build_form_pdf
+from test_acroform import NOTO_SANS_HEBREW, _build_form_pdf
 
 import pyropdf
-from pyropdf import AnnotationFlags, Border, BorderStyle, Color, FieldType, Rect, Widget, _core
+from pyropdf import AnnotationFlags, Border, BorderStyle, Color, FieldType, Font, Name, Rect, Widget, _core
 
 ASSETS = Path(__file__).parent / "assets" / "real_world"
 
@@ -116,16 +116,20 @@ def test_text_styling_is_read_and_set_and_the_value_is_drawn_again() -> None:
     doc = _form()
     customer = doc.pages[0].widgets[0]
     # The AcroForm's /DA, which the widget inherits.
-    assert (customer.font_size, customer.text_color) == (0.0, Color(0, 0, 0))
+    font = customer.font
+    assert font is not None
+    assert (font.name, customer.font_size, customer.text_color) == ("Helvetica", 0.0, Color(0, 0, 0))
 
     customer.text_color = Color(1, 0, 0)
-    _edit(customer, {"font_name": "Courier-Bold"})
+    customer.font = Font.standard("Courier-Bold")
     customer.font_size = 14
     customer.background_color = Color(1, 1, 0)
     customer.border_color = Color(0, 0, 1)
     customer.border = Border(2, style=BorderStyle.DASHED, dashes=(3, 1))
 
     assert customer.text_color == Color(1, 0, 0)
+    assert customer.font is not None
+    assert customer.font.name == "Courier-Bold"
     assert customer.font_size == 14
     assert customer.background_color == Color(1, 1, 0)
     assert customer.border_color == Color(0, 0, 1)
@@ -173,6 +177,8 @@ def test_widget_edits_validate() -> None:
     doc = _form()
     customer = doc.pages[0].widgets[0]
 
+    with pytest.raises(TypeError, match="Standard 14"):
+        customer.font = cast("Any", "Helvetica")
     with pytest.raises(ValueError, match="font_size"):
         customer.font_size = -1
     with pytest.raises(TypeError, match="Color"):
@@ -192,6 +198,58 @@ def test_widget_edits_validate() -> None:
         with pytest.raises(pyropdf.PdfError, match=message):
             _edit(customer, edit)
     assert customer.rect == Rect(50, 72, 250, 92)
+
+
+def test_widget_font_is_named_in_the_form_resources() -> None:
+    doc = _form()
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    # Another font already holds Courier-Bold's abbreviation.
+    fonts["CoBo"] = {"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Times-Roman")}
+    customer = doc.pages[0].widgets[0]
+
+    customer.font = Font.standard("Courier-Bold")
+
+    assert bytes(customer.obj["DA"]).startswith(b"/CoBo_1 ")
+    assert customer.font is not None
+    assert customer.font.name == "Courier-Bold"
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    assert fonts["CoBo"]["BaseFont"] == Name("Times-Roman")
+    assert fonts["CoBo_1"]["BaseFont"] == Name("Courier-Bold")
+    assert customer.obj["AP"]["N"]["Resources"]["Font"]["CoBo_1"]["BaseFont"] == Name("Courier-Bold")
+    # Setting the font again reuses its resource.
+    customer.font = Font.standard("Courier-Bold")
+    assert "CoBo_2" not in doc.catalog["AcroForm"]["DR"]["Font"]
+
+    reopened = pyropdf.open(doc.to_bytes()).pages[0].widgets[0]
+    assert reopened.font is not None
+    assert reopened.font.name == "Courier-Bold"
+
+
+def test_widget_font_reads_the_resource_that_the_form_names() -> None:
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra="/DA (/F1 12 Tf 0 g)"))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    fonts["F1"] = {
+        "Type": Name("Font"),
+        "Subtype": Name("Type1"),
+        "BaseFont": Name("Times-Bold"),
+        "Encoding": Name("WinAnsiEncoding"),
+    }
+    customer = doc.pages[0].widgets[0]
+    assert customer.font is not None
+    assert customer.font.name == "Times-Bold"
+    # A resource that is no Standard 14 font has no Font.
+    del fonts["F1"]
+    assert customer.font is None
+
+
+def test_widget_font_refuses_an_embedded_face() -> None:
+    customer = _form().pages[0].widgets[0]
+    face = Font.from_file(NOTO_SANS_HEBREW)
+    with pytest.raises(TypeError, match="Standard 14"):
+        customer.font = face
+    font = customer.font
+    assert font is not None
+    assert font.name == "Helvetica"
 
 
 def test_pushbutton_captions_are_drawn() -> None:

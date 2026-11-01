@@ -3,8 +3,6 @@
 Ported from pylopdf's ``tests/test_field_creation.py`` at
 ebb01d3c4c742046e8ce7fd72957cd15a2933321. Intended differences:
 
-- ``Widget.font`` waits for #212, so the case that creates a field in
-  Courier reads the font back from the widget's ``/DA``.
 - pyropdf's ``to_bytes`` has no ``prune``.
 """
 
@@ -106,7 +104,9 @@ def test_created_fields_are_filled_by_pyropdf() -> None:
     assert "Grace" in page.text()
     name = page.widgets[0]
     assert name.obj["MK"]["R"] == 90
-    assert bytes(name.obj["DA"]).startswith(b"/Cour 10")
+    assert name.font is not None
+    assert name.font.name == "Courier"
+    assert name.font_size == 10
     assert doc.catalog["AcroForm"]["DR"]["Font"]["Cour"]["BaseFont"] == Name("Courier")
 
 

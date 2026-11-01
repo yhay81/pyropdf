@@ -426,7 +426,7 @@ _Widget: TypeAlias = tuple[int, _Id, _Id | None, tuple[float, float, float, floa
 _WidgetStyle: TypeAlias = tuple[
     tuple[list[float], list[float], str | None, int],
     tuple[float, str, list[float]] | None,
-    tuple[str, float, tuple[float, float, float]] | None,
+    tuple[str, float, tuple[float, float, float], str | None] | None,
 ]
 
 def form_fields(document: _Document, /) -> list[tuple[str, _Id]]: ...

@@ -667,6 +667,22 @@ Or set the color of the widget's text, from the `/DA` that it draws with.
 
 Settable.
 
+### `Widget.font`
+
+```python
+Widget.font: Font | None
+```
+
+Or set the font of the widget's text, from the `/DA` that it draws with.
+
+The `/DA` font resolves through the form's `/DR`, else as a
+Standard 14 abbreviation such as `/Cour`; a widget without a
+`/DA` draws in Helvetica. Returns `None` for a font that is no
+Standard 14 font. Setting takes a Standard 14 `Font` and
+names it in the form's `/DR`.
+
+Settable.
+
 ### `Widget.font_size`
 
 ```python
