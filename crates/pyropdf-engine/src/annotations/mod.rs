@@ -23,6 +23,7 @@
 mod icons;
 mod missing;
 mod shapes;
+mod text;
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -73,6 +74,7 @@ pub use missing::{
     MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
 };
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
+pub use text::{STAMPS, TextFit, default_appearance};
 
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`
 /// lists its corners.
@@ -89,7 +91,7 @@ pub fn draws(subtype: &[u8]) -> bool {
         || has_points(subtype)
         || matches!(
             subtype,
-            b"Text" | b"Square" | b"Circle" | b"Caret" | b"FileAttachment"
+            b"Text" | b"FreeText" | b"Square" | b"Circle" | b"Stamp" | b"Caret" | b"FileAttachment"
         )
 }
 
@@ -678,9 +680,22 @@ pub struct Appearance {
     blend: Option<&'static str>,
     /// The path points that the content draws.
     points: usize,
+    /// The matrix that maps the form's box onto the rectangle.
+    matrix: [f64; 6],
+    /// The Standard 14 font that the content's text names, by resource.
+    font: Option<text::FontResource>,
+    /// Whether the text of a free text fit.
+    fit: TextFit,
 }
 
 impl Appearance {
+    /// Returns whether the text of a free text fit its box and was drawn;
+    /// that of the other kinds always fits.
+    #[must_use]
+    pub const fn text_fit(&self) -> TextFit {
+        self.fit
+    }
+
     /// Returns the form XObject of the appearance, whose `/Matrix` maps its
     /// box onto the rectangle.
     #[must_use]
@@ -693,11 +708,23 @@ impl Appearance {
             Name::from("BBox"),
             numbers_array(&[0.0, 0.0, width, height]),
         );
-        dict.insert(
-            Name::from("Matrix"),
-            numbers_array(&[1.0, 0.0, 0.0, 1.0, self.rect[0], self.rect[1]]),
-        );
+        dict.insert(Name::from("Matrix"), numbers_array(&self.matrix));
         let mut resources = Dict::new();
+        if let Some((resource, base_font)) = self.font {
+            let mut font = Dict::new();
+            font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+            font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+            font.insert(Name::from("BaseFont"), Value::Name(Name::from(base_font)));
+            if !matches!(base_font, "Symbol" | "ZapfDingbats") {
+                font.insert(
+                    Name::from("Encoding"),
+                    Value::Name(Name::from("WinAnsiEncoding")),
+                );
+            }
+            let mut fonts = Dict::new();
+            fonts.insert(Name::from(resource), Value::Dict(font));
+            resources.insert(Name::from("Font"), Value::Dict(fonts));
+        }
         if self.alpha < 1.0 || self.blend.is_some() {
             let mut state = Dict::new();
             state.insert(Name::from("Type"), Value::Name(Name::from("ExtGState")));
@@ -841,7 +868,18 @@ fn appearance_with(
     if !(x1 >= x0 && y1 >= y0) {
         return Ok(None);
     }
-    let size = (x1 - x0, y1 - y0);
+    // A stamp turns counterclockwise by /Rotate inside its rectangle.
+    let turn = if &*subtype == b"Stamp" {
+        quarter_turn(reader, dict)?.rem_euclid(360)
+    } else {
+        0
+    };
+    let turn = if turn % 90 == 0 { turn } else { 0 };
+    let size = if turn % 180 == 0 {
+        (x1 - x0, y1 - y0)
+    } else {
+        (y1 - y0, x1 - x0)
+    };
     if !(size.0.is_finite() && size.1.is_finite()) {
         return Err(Error::malformed(
             "an annotation appearance has nonfinite dimensions",
@@ -871,7 +909,21 @@ fn appearance_with(
         canvas.out.push_str("/G0 gs\n");
     }
     let to_canvas = |(x, y): (f64, f64)| (x - x0, y1 - y);
+    let mut font = None;
+    let mut fit = TextFit::Fits;
     match (&*subtype, &geometry) {
+        (b"FreeText", _) => {
+            (fit, font) = text::free_text(&mut canvas, reader, dict, &paint, rect)?;
+        }
+        (b"Stamp", _) => {
+            let icon = reader.name(dict, "Name")?;
+            font = text::stamp(
+                &mut canvas,
+                &paint,
+                icon.as_deref().unwrap_or(b"Draft"),
+                size,
+            )?;
+        }
         (b"Text", _) => {
             let icon = reader.name(dict, "Name")?;
             icons::draw(
@@ -960,6 +1012,9 @@ fn appearance_with(
         alpha,
         blend,
         points: canvas.points,
+        matrix: text::turned_matrix(turn, size, [x0, y0]),
+        font,
+        fit,
     }))
 }
 

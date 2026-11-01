@@ -140,6 +140,7 @@ method and property of its classes with its full description.
 - [`Caret`](annotations.md#caret): A caret that marks where text goes, as `page.annotations.add` takes it.
 - [`Circle`](annotations.md#circle): An ellipse inscribed in a rectangle, as `page.annotations.add` takes it.
 - [`FileAttachment`](annotations.md#fileattachment): A file embedded in the page behind an icon, as `page.annotations.add` takes it.
+- [`FreeText`](annotations.md#freetext): Text written on the page in a box, as `page.annotations.add` takes it.
 - [`Highlight`](annotations.md#highlight): A highlight over text, as `page.annotations.add` takes it.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
@@ -153,6 +154,7 @@ method and property of its classes with its full description.
 - [`SoundEncoding`](annotations.md#soundencoding): How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).
 - [`Square`](annotations.md#square): A rectangle, as `page.annotations.add` takes it.
 - [`Squiggly`](annotations.md#squiggly): A wavy line under text, as `page.annotations.add` takes it.
+- [`Stamp`](annotations.md#stamp): A rubber stamp, as `page.annotations.add` takes it.
 - [`StampIcon`](annotations.md#stampicon): The stamps of ISO 32000-2 §12.5.6.12, `/Name`; pymupdf's `STAMP_*` codes in their order.
 - [`StrikeOut`](annotations.md#strikeout): A line through text, as `page.annotations.add` takes it.
 - [`Underline`](annotations.md#underline): A line under text, as `page.annotations.add` takes it.
