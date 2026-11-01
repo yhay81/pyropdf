@@ -8,7 +8,7 @@ import os
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pyropdf import _core
 from pyropdf._content import (
@@ -26,6 +26,13 @@ from pyropdf._content import (
     Stroke,
 )
 from pyropdf._errors import LimitError, PdfError
+from pyropdf._fonts import (
+    _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    Font,
+    _max_lines,
+    _text_input,
+    _textbox_text,
+)
 from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
 from pyropdf._objects import Name, Stream
@@ -77,8 +84,16 @@ _BLEND_NAMES = {
     BlendMode.COLOR: "Color",
     BlendMode.LUMINOSITY: "Luminosity",
 }
+#: The alignments of :meth:`Canvas.textbox`, in the order of the core's codes.
+_ALIGNMENTS = ("left", "center", "right", "justify")
+#: The cosine and sine of each clockwise quarter turn, in display space.
+_TURNS = {0: (1, 0), 90: (0, 1), 180: (-1, 0), 270: (0, -1)}
+#: The Standard 14 fonts that draw their own built-in encoding.
+_SYMBOLIC = frozenset({"Symbol", "ZapfDingbats"})
 #: Operators that change the graphics state that later content inherits.
-_STATE_OPERATORS = frozenset({"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "ri", "i"})
+_STATE_OPERATORS = frozenset(
+    {"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "ri", "i", "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts"}
+)
 
 
 def _number(value: object, name: str) -> float:
@@ -183,6 +198,67 @@ def _stroke(value: Stroke | Color | None) -> Stroke | None:
     LineCap(stroke.cap)
     LineJoin(stroke.join)
     return stroke
+
+
+def _stroke_ops(stroke: Stroke) -> list[bytes]:
+    """Return the operators that set a checked stroke's paint and line style."""
+    paint = cast("Color", stroke.paint)
+    return [
+        _numbers(*paint.rgb) + b" RG",
+        _numbers(stroke.width) + b" w",
+        f"{_CAPS[LineCap(stroke.cap)]} J {_JOINS[LineJoin(stroke.join)]} j".encode(),
+        _numbers(stroke.miter_limit) + b" M",
+        b"[" + _numbers(*stroke.dashes) + b"] " + _numbers(stroke.dash_offset) + b" d",
+    ]
+
+
+def _canvas_font(text: str, font: Font | None) -> Font:
+    """Return the font that draws ``text``: ``font``, else Helvetica.
+
+    A Standard 14 font draws WinAnsi text only.
+    """
+    if font is None:
+        font = Font.standard("Helvetica")
+    elif not isinstance(font, Font):
+        msg = f"font must be a pyropdf.Font, not {type(font).__name__}"
+        raise TypeError(msg)
+    try:
+        text.encode("cp1252")
+    except UnicodeEncodeError as exc:
+        msg = (
+            "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters; "
+            "embedded fonts come with issue 153"
+        )
+        raise ValueError(msg) from exc
+    return font
+
+
+def _size(value: object) -> float:
+    """Return a positive font size."""
+    size = _number(value, "size")
+    if not size > 0:
+        msg = f"size must be positive: {value!r}"
+        raise ValueError(msg)
+    return size
+
+
+def _line_height(value: object) -> float | None:
+    """Return a positive line-height multiplier, or ``None`` for the font's default."""
+    if value is None:
+        return None
+    line_height = _number(value, "line_height")
+    if not line_height > 0:
+        msg = f"line_height must be positive: {value!r}"
+        raise ValueError(msg)
+    return line_height
+
+
+def _text_paint(fill: Color | None, stroke: Stroke | Color | None) -> tuple[Color | None, Stroke | None]:
+    """Return the fill and stroke of text, which needs at least one."""
+    if fill is None and stroke is None:
+        msg = "text needs a fill or a stroke"
+        raise ValueError(msg)
+    return (None if fill is None else _color(fill, "fill")), _stroke(stroke)
 
 
 @dataclass(frozen=True, slots=True)
@@ -595,8 +671,9 @@ class Canvas:
     with a 1-point black line. A color's alpha below 1 paints it
     translucent. The scopes :meth:`clip`, :meth:`transform`,
     :meth:`opacity`, and :meth:`blend` are context managers that apply to
-    everything drawn inside them. Text comes with krilla's object sink
-    (DESIGN.md section 7).
+    everything drawn inside them. :meth:`text` and :meth:`textbox` draw
+    text in a :class:`Font`; embedded fonts come with issue 153 (DESIGN.md
+    section 7).
 
     A canvas holds at most 1,048,576 path points, of paths and clips
     together, nests at most 16 scopes, and writes at most 64 MiB of
@@ -605,7 +682,18 @@ class Canvas:
     ``ValueError`` for the nesting.
     """
 
-    __slots__ = ("_closed", "_depth", "_entered", "_gstates", "_layers", "_page", "_points", "_underlay", "_xobjects")
+    __slots__ = (
+        "_closed",
+        "_depth",
+        "_entered",
+        "_fonts",
+        "_gstates",
+        "_layers",
+        "_page",
+        "_points",
+        "_underlay",
+        "_xobjects",
+    )
 
     def __init__(self, page: Page, *, underlay: bool = False) -> None:
         """Start an empty canvas on ``page``; :meth:`Page.draw` is the usual way."""
@@ -621,6 +709,7 @@ class Canvas:
         self._depth = 0
         self._points = 0
         self._xobjects: dict[str, int] = {}
+        self._fonts: dict[str, str] = {}
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
         self._closed = False
         self._entered = False
@@ -722,7 +811,18 @@ class Canvas:
             resources["XObject"] = {name: objects[xref] for name, xref in self._xobjects.items()}
         if self._gstates:
             resources["ExtGState"] = {name: _gstate_dict(key) for key, name in self._gstates.items()}
+        if self._fonts:
+            resources["Font"] = {name: _font_dict(base) for name, base in self._fonts.items()}
         return resources
+
+    def _add_font(self, font: Font) -> str:
+        base = cast("str", font.name)
+        for name, known in self._fonts.items():
+            if known == base:
+                return name
+        name = f"PyroF{len(self._fonts) + 1}"
+        self._fonts[name] = base
+        return name
 
     def _add_xobject(self, xref: int) -> str:
         for name, known in self._xobjects.items():
@@ -748,7 +848,7 @@ class Canvas:
         content = b"\n".join(self._layers[0][0])
         rotation, box = _page_space(page)
         matrix = _user_from_display(rotation, box)
-        names = _merge_resources(page, self._xobjects, self._gstates)
+        names = _merge_resources(page, self._xobjects, self._gstates, self._fonts)
         if names:
             for old, new in names.items():
                 content = content.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
@@ -798,12 +898,8 @@ class Canvas:
             parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
         if painted_fill is not None:
             parts.append(_numbers(*painted_fill.rgb) + b" rg")
-        if painted_stroke is not None and stroke_paint is not None:
-            parts.append(_numbers(*stroke_paint.rgb) + b" RG")
-            parts.append(_numbers(painted_stroke.width) + b" w")
-            parts.append(f"{_CAPS[LineCap(painted_stroke.cap)]} J {_JOINS[LineJoin(painted_stroke.join)]} j".encode())
-            parts.append(_numbers(painted_stroke.miter_limit) + b" M")
-            parts.append(b"[" + _numbers(*painted_stroke.dashes) + b"] " + _numbers(painted_stroke.dash_offset) + b" d")
+        if painted_stroke is not None:
+            parts.extend(_stroke_ops(painted_stroke))
         parts.append(construction)
         if painted_fill is not None and painted_stroke is not None:
             parts.append(b"B*" if even_odd else b"B")
@@ -876,6 +972,167 @@ class Canvas:
         self.path(builder, stroke=_BLACK if stroke is None else stroke)
 
     # Images and pages.
+
+    # Text.
+
+    def text(  # noqa: PLR0913 - the text style options.
+        self,
+        text: str,
+        at: Sequence[float],
+        *,
+        font: Font | None = None,
+        size: float = 11,
+        fill: Color | None = _BLACK,
+        stroke: Stroke | Color | None = None,
+        line_height: float | None = None,
+        rotate: int = 0,
+        max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    ) -> None:
+        """Draw text whose first baseline starts at ``at``.
+
+        Lines are split with :meth:`str.splitlines` and placed ``line_height``
+        times ``size`` apart, by default at the font's own line height.
+        ``rotate`` turns the text clockwise about ``at`` by 0, 90, 180, or
+        270 degrees, so that at 90 the lines run down the page and stack
+        leftward; :meth:`transform` turns it by any other angle. ``font``
+        defaults to Helvetica. Text is filled, stroked, or both; at least one
+        is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
+        default (``max_text_size``, ``None`` for trusted input), refused with
+        :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
+        """
+        self._check_open()
+        checked = _text_input(text, max_text_size)
+        rotation = _quarter_turn(rotate)
+        lines = checked.splitlines()
+        most = _max_lines(max_text_size)
+        if most is not None and len(lines) > most:
+            code = "text_line_count"
+            msg = f"the text has {len(lines)} lines, over the limit of {most}"
+            raise LimitError(code, msg)
+        origin = _point(at, "at")
+        font_size = _size(size)
+        filled, stroked = _text_paint(fill, stroke)
+        spacing = _line_height(line_height)
+        if not any(lines):
+            return
+        face = _canvas_font("\n".join(lines), font)
+        leading = face._font.leading(font_size, spacing)  # noqa: SLF001
+        cos, sin = _TURNS[rotation]
+        placed = [
+            (line, origin.x - index * leading * sin, origin.y + index * leading * cos)
+            for index, line in enumerate(lines)
+            if line
+        ]
+        self._emit_text(face, font_size, (filled, stroked), rotation, [(line, x, y, 0.0) for line, x, y in placed])
+
+    def textbox(  # noqa: PLR0913 - the text style options.
+        self,
+        rect: Sequence[float],
+        text: str,
+        *,
+        font: Font | None = None,
+        size: float = 11,
+        align: Literal["left", "center", "right", "justify"] = "left",
+        line_height: float | None = None,
+        fill: Color | None = _BLACK,
+        stroke: Stroke | Color | None = None,
+        rotate: int = 0,
+        max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    ) -> TextFit:
+        """Wrap text inside ``rect`` and report how it fits.
+
+        Lines break at Unicode line-break opportunities (UAX #14) and, for a
+        word wider than the box, between grapheme clusters. They are placed
+        as :meth:`text` places them: the first baseline one
+        :attr:`Font.ascender` below the top of ``rect`` and later ones
+        ``line_height`` times ``size`` apart, by default at the font's own
+        line height, and the text fits when the descender of the last line
+        does. When the text does not fit, nothing is drawn and
+        :attr:`TextFit.spare_height` is the negative shortfall;
+        :meth:`Font.text_height` measures the height that the text needs
+        without drawing it. Tabs become single spaces. ``rotate`` turns the
+        text clockwise inside ``rect`` by 0, 90, 180, or 270 degrees: at 90
+        lines run down the box and stack from its right edge leftward, so
+        they wrap at the box's height and fill its width, and at 270 they run
+        up and stack from the left edge. The font, paint, and size options
+        follow :meth:`text`.
+        """
+        self._check_open()
+        box = _rect(rect, "rect")
+        rotation = _quarter_turn(rotate)
+        normalized = _textbox_text(text, max_text_size)
+        if align not in _ALIGNMENTS:
+            msg = f"align must be one of {', '.join(_ALIGNMENTS)}: {align!r}"
+            raise ValueError(msg)
+        upright = rotation in (0, 180)
+        width, height = (box.x1 - box.x0, box.y1 - box.y0) if upright else (box.y1 - box.y0, box.x1 - box.x0)
+        font_size = _size(size)
+        filled, stroked = _text_paint(fill, stroke)
+        spacing = _line_height(line_height)
+        if not normalized:
+            return TextFit(spare_height=height)
+        face = _canvas_font(normalized, font)
+        lines, _needed, spare, ascent, leading = face._font.layout(  # noqa: SLF001
+            normalized, width, height, font_size, spacing, align == "justify", _max_lines(max_text_size)
+        )
+        if spare < 0:
+            return TextFit(spare_height=spare)
+        cos, sin = _TURNS[rotation]
+        # The turned box's top-left corner, from which lines run along (cos, sin) and stack along (-sin, cos).
+        corner = {0: (box.x0, box.y0), 90: (box.x1, box.y0), 180: (box.x1, box.y1), 270: (box.x0, box.y1)}[rotation]
+        placed = []
+        for index, (line, line_width, justify) in enumerate(lines):
+            if not line:
+                continue
+            free = width - line_width
+            across = {"center": free / 2, "right": free}.get(align, 0.0)
+            spaces = line.count(" ")
+            word_space = max(free, 0.0) / spaces if justify and spaces else 0.0
+            along = max(across, 0.0)
+            down = ascent * font_size + index * leading
+            placed.append(
+                (line, corner[0] + along * cos - down * sin, corner[1] + along * sin + down * cos, word_space)
+            )
+        self._emit_text(face, font_size, (filled, stroked), rotation, placed)
+        return TextFit(spare_height=spare)
+
+    def _emit_text(
+        self,
+        font: Font,
+        size: float,
+        paint: tuple[Color | None, Stroke | None],
+        rotation: int,
+        lines: list[tuple[str, float, float, float]],
+    ) -> None:
+        """Draw lines of text, each at its origin in display space with its word spacing."""
+        if not lines:
+            return
+        fill, stroke = paint
+        parts = [b"q"]
+        fill_alpha = None if fill is None or fill.alpha >= 1 else fill.alpha
+        stroke_paint = None if stroke is None else cast("Color", stroke.paint)
+        stroke_alpha = None if stroke_paint is None or stroke_paint.alpha >= 1 else stroke_paint.alpha
+        if fill_alpha is not None or stroke_alpha is not None:
+            parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
+        if fill is not None:
+            parts.append(_numbers(*fill.rgb) + b" rg")
+        if stroke is not None:
+            parts.extend(_stroke_ops(stroke))
+        name = self._add_font(font)
+        parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
+        if stroke is not None:
+            parts.append(b"2 Tr" if fill is not None else b"1 Tr")
+        cos, sin = _TURNS[rotation]
+        word_space = 0.0
+        for line, x, y, spacing in lines:
+            if spacing != word_space:
+                parts.append(_fmt(spacing) + b" Tw")
+                word_space = spacing
+            # Display space points down, so the text's own y axis is flipped up.
+            parts.append(_numbers(cos, sin, sin, -cos, _number(x, "at"), _number(y, "at")) + b" Tm")
+            parts.append(b"<" + font._font.encode(line).hex().encode() + b"> Tj")  # noqa: SLF001
+        parts.append(b"ET\nQ")
+        self._emit(b"\n".join(parts))
 
     def image(
         self,
@@ -1096,6 +1353,14 @@ def _gstate_dict(key: tuple[float | None, float | None, str | None]) -> dict[str
     return entries
 
 
+def _font_dict(base: str) -> dict[str, object]:
+    """Return the font dictionary of a Standard 14 font, which needs no embedding."""
+    font: dict[str, object] = {"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name(base)}
+    if base not in _SYMBOLIC:
+        font["Encoding"] = Name("WinAnsiEncoding")
+    return font
+
+
 def _page_space(page: Page) -> tuple[int, tuple[float, float, float, float]]:
     space = _core.page_space(page.document._core(), page.xref, page._generation)  # noqa: SLF001
     if space is None:
@@ -1160,14 +1425,17 @@ def _isolated(page: Page) -> bool:
 
 
 def _merge_resources(
-    page: Page, xobjects: dict[str, int], gstates: dict[tuple[float | None, float | None, str | None], str]
+    page: Page,
+    xobjects: dict[str, int],
+    gstates: dict[tuple[float | None, float | None, str | None], str],
+    fonts: dict[str, str],
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
     The page gets its own direct ``/Resources`` when it inherits or shares
     them, so no other page changes. Returns the renamed names.
     """
-    if not xobjects and not gstates:
+    if not xobjects and not gstates and not fonts:
         return {}
     document = page.document
     own = page.obj.get("Resources")
@@ -1179,6 +1447,7 @@ def _merge_resources(
     for key, entries in (
         ("XObject", {name: document.objects[xref] for name, xref in xobjects.items()}),
         ("ExtGState", {name: _gstate_dict(state) for state, name in gstates.items()}),
+        ("Font", {name: _font_dict(base) for name, base in fonts.items()}),
     ):
         if not entries:
             continue
