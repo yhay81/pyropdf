@@ -11,6 +11,37 @@ fn parse(bytes: &'static [u8]) -> Value {
         .unwrap_or_else(|error| panic!("{}: {error}", bytes.escape_ascii()))
 }
 
+#[test]
+fn parsing_checks_a_cancelled_budget_before_reading_any_object() {
+    use hayro_syntax::object::{FromBytes, Object};
+
+    let token = CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    for input in [b"null".as_slice(), b"not an object".as_slice()] {
+        let source = Bytes::from(input.to_vec());
+        let error = Value::parse(&source, &budget).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
+        );
+    }
+    let source = Bytes::from(&b"null"[..]);
+    let object = Object::from_bytes(source.as_slice()).unwrap();
+    let error = Value::from_object(&object, &source, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+
+    let expired = Budget::default().with_timeout(std::time::Duration::ZERO);
+    let error = Value::parse(&source, &expired).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Deadline)
+    );
+}
+
 fn real(value: f64) -> Value {
     Value::Real(Real::new(value))
 }
