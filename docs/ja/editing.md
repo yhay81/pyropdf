@@ -97,8 +97,10 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 テキストを折り返します。どちらも `font` と `size` を指定しなければ Helvetica の
 11 ポイントで描きます。`Font.standard` は `"Times-Roman"` や `"Courier-Bold"` の
 ように名前で標準 14 フォントを返します。標準 14 フォントは埋め込まないので
-ファイルは小さく保てますが、WinAnsi（おおむね Latin-1）の文字しか印字できず、
-それ以外の文字は `PdfError` で拒否します。他の文字体系には `Font.from_file` で
+ファイルは小さく保てます。12 のテキスト用フォントは WinAnsi（おおむね Latin-1）の
+文字に対応し、それ以外の文字は `PdfError` で拒否します。Symbol と ZapfDingbats は
+内蔵の符号化を使うため、WinAnsi のバイトが選ぶ字形は入力文字と異なることがあります。
+他の文字体系には `Font.from_file` で
 OpenType フォントを読み込みます。文書はそれを一度だけ埋め込みます。
 
 ```python
@@ -124,13 +126,14 @@ for number, page in enumerate(doc.pages, start=1):
 かどうかを示し、その `spare_height` は最後の行の下に残る高さ、収まらなければ負の
 不足分です。`Font.text_height` と `Font.text_width` はキャンバスと同じ配置で
 テキストを測るので、描く前に箱の大きさを決められます。行は Unicode が許す位置で
-折り返し、箱より幅の広い単語は文字の間で分けます。`align` は `"left"`、
+折り返し、箱より幅の広い単語は書記素クラスタの間で分けます。一つのクラスタも
+幅に収まらないときは `PdfError` になります。`align` は `"left"`、
 `"center"`、`"right"`、`"justify"` のいずれかで、`line_height` は行の間隔を
 `size` の倍数で指定します。テキストは既定で黒く塗ります。`stroke` で輪郭を描き、
 `fill=None` で中を塗らずに残します。`rotate` は直角単位で、`canvas.transform` は
 任意の角度でテキストを回します。
 
-テキストは一回の呼び出しで UTF-8 で 1 MiB、4,096 行までで、超えると何も描く前に
+テキストは既定では一回の呼び出しで UTF-8 で 1 MiB、4,096 行までで、超えると何も描く前に
 `LimitError` で拒否します。信頼できる入力には `max_text_size=None` を渡します。
 [制限とエラー](limits.md)を参照してください。
 

@@ -103,9 +103,11 @@ everything drawn inside them.
 wraps text inside a rectangle. Both draw in Helvetica at 11 points unless
 `font` and `size` say otherwise. `Font.standard` returns one of the 14
 Standard 14 fonts by name, such as `"Times-Roman"` or `"Courier-Bold"`;
-these are not embedded, so the file stays small, but they print only
-WinAnsi (roughly Latin-1) text and refuse other characters with
-`PdfError`. For other scripts, load an OpenType face with
+these are not embedded, so the file stays small. The 12 text fonts accept
+WinAnsi (roughly Latin-1) characters and refuse other characters with
+`PdfError`. Symbol and ZapfDingbats use their built-in encodings: a
+WinAnsi byte selects a glyph, which may differ from the input character.
+For other scripts, load an OpenType face with
 `Font.from_file`, which the document embeds once.
 
 ```python
@@ -132,13 +134,14 @@ whether it fit, and its `spare_height` is the room left below the last
 line, or the negative shortfall. `Font.text_height` and
 `Font.text_width` measure text exactly as the canvas lays it out, so a
 caller can size a box before drawing. Lines break where Unicode allows,
-and a word wider than the box breaks between characters; `align` is
+and a word wider than the box breaks between grapheme clusters. If even
+one cluster is too wide, `PdfError` is raised. `align` is
 `"left"`, `"center"`, `"right"`, or `"justify"`, and `line_height`
 spaces lines in multiples of `size`. Text is filled black by default;
 pass `stroke` to outline it and `fill=None` to leave it hollow. `rotate`
 turns text by a right angle, and `canvas.transform` by any other.
 
-Text is limited to 1 MiB of UTF-8 and 4,096 lines per call, refused with
+Text is limited by default to 1 MiB of UTF-8 and 4,096 lines per call, refused with
 `LimitError` before anything is drawn; pass `max_text_size=None` for
 trusted input. See [Limits and errors](limits.md).
 
