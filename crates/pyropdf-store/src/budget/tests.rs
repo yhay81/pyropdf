@@ -129,6 +129,7 @@ fn document_limits_set_the_codes_that_they_name() {
         max_total_decompressed_size: Some(6),
         max_object_depth: Some(7),
         max_interpretation_size: Some(8),
+        max_memory_size: Some(9),
         ..DocumentLimits::default()
     };
     let budget = Budget::new(&limits);
@@ -141,6 +142,7 @@ fn document_limits_set_the_codes_that_they_name() {
         (LimitCode::TotalDecompressedSize, 6),
         (LimitCode::ObjectDepth, 7),
         (LimitCode::InterpretationSize, 8),
+        (LimitCode::MemorySize, 9),
     ];
     for code in LimitCode::ALL {
         let expected = set
@@ -176,6 +178,7 @@ fn the_web_profile_is_pylopdfs() {
             max_total_decompressed_size: None,
             max_object_depth: None,
             max_interpretation_size: None,
+            max_memory_size: None,
             max_duration: None,
             cancellation: None,
         }

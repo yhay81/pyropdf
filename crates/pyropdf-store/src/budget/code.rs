@@ -192,8 +192,8 @@ pub enum LimitCode {
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
-    /// The collections of one operation would hold more memory than it allows,
-    /// or the allocator refuses it.
+    /// The collections of one operation would hold more memory than
+    /// `DocumentLimits.max_memory_size` allows, or the allocator refuses it.
     MemorySize,
     /// The operation runs past its deadline, which
     /// `DocumentLimits.max_duration` or the call sets.

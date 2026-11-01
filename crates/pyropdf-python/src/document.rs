@@ -514,6 +514,7 @@ fn document_limits(limits: &Bound<'_, PyAny>) -> PyResult<DocumentLimits> {
         max_total_decompressed_size: field("max_total_decompressed_size")?,
         max_object_depth: field("max_object_depth")?,
         max_interpretation_size: field("max_interpretation_size")?,
+        max_memory_size: field("max_memory_size")?,
         max_duration: duration
             .map(Duration::try_from_secs_f64)
             .transpose()
@@ -547,6 +548,7 @@ pub fn web_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         ),
         ("max_object_depth", web.max_object_depth),
         ("max_interpretation_size", web.max_interpretation_size),
+        ("max_memory_size", web.max_memory_size),
     ] {
         fields.set_item(name, value)?;
     }

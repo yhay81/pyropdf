@@ -68,7 +68,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `toc_input_size` | 16 MiB | The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB together in UTF-8 or as PDF text strings, or leave the outline's text above that. |
 | `structure_tree_count` | 256 levels | A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
-| `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
+| `memory_size` | No limit | The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
 | `cancelled` | — | A cancellation token of the operation is cancelled. |
 | `annotation_quad_count` | 4,096 quadrilaterals | A text-markup annotation has more than 4,096 quadrilaterals. |

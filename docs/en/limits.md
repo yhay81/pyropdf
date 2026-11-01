@@ -9,7 +9,7 @@ description: Bound the work of every operation with DocumentLimits, cancel it, a
 
 `DocumentLimits` bounds the work that a document's operations may do: the
 file size, the page and object counts, decoded stream sizes, the input to
-the interpreter, and time. An operation that would pass a limit stops and
+the interpreter, the memory that one operation holds, and time. An operation that would pass a limit stops and
 raises `LimitError`, whose `code` names the limit.
 
 ```python

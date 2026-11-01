@@ -36,6 +36,9 @@ pub struct DocumentLimits {
     /// The size of the PDF data handed to the interpreter, in bytes
     /// (`interpretation_size`).
     pub max_interpretation_size: Option<u64>,
+    /// The memory that the collections of one operation may hold, in bytes
+    /// (`memory_size`).
+    pub max_memory_size: Option<u64>,
     /// The time that one operation may take (`deadline`).
     pub max_duration: Option<Duration>,
     /// A token that cancels every operation on the document (`cancelled`).
@@ -57,6 +60,8 @@ impl DocumentLimits {
             max_total_decompressed_size: Some(128 * MIB),
             max_object_depth: Some(64),
             max_interpretation_size: Some(64 * MIB),
+            // pylopdf's profile has no memory budget.
+            max_memory_size: None,
             // pylopdf's profile has no time budget.
             max_duration: None,
             cancellation: None,
@@ -65,7 +70,7 @@ impl DocumentLimits {
 
     /// Returns each counted limit of the document with the code that it
     /// sets.
-    pub(super) const fn code_limits(&self) -> [(LimitCode, Option<u64>); 8] {
+    pub(super) const fn code_limits(&self) -> [(LimitCode, Option<u64>); 9] {
         [
             (LimitCode::FileSize, self.max_file_size),
             (LimitCode::PageCount, self.max_pages),
@@ -78,6 +83,7 @@ impl DocumentLimits {
             ),
             (LimitCode::ObjectDepth, self.max_object_depth),
             (LimitCode::InterpretationSize, self.max_interpretation_size),
+            (LimitCode::MemorySize, self.max_memory_size),
         ]
     }
 }
