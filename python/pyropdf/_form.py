@@ -795,13 +795,17 @@ class _FieldSpecification:
             None if background_color is None else _opaque_color(background_color, "background_color"),
         )
 
-    def _text_style(self, font_size: object, text_color: object, align: object) -> None:
+    def _text_style(self, font: object, font_size: object, text_color: object, align: object) -> None:
+        if font is not None and (not isinstance(font, Font) or font._font.standard_name is None):  # noqa: SLF001 - the package's own face.
+            msg = f"a field names a Standard 14 Font, such as Font.standard('Courier'): {font!r}"
+            raise TypeError(msg)
         if isinstance(font_size, bool) or not isinstance(font_size, (int, float)) or not 0 <= font_size <= 10000:  # noqa: PLR2004
             msg = f"font_size is a number from 0, which fits the text, to 10000: {font_size!r}"
             raise ValueError(msg)
         if align not in _FIELD_ALIGNMENTS:
             msg = f"align must be one of {', '.join(_FIELD_ALIGNMENTS)}: {align!r}"
             raise ValueError(msg)
+        object.__setattr__(self, "font", font)
         object.__setattr__(self, "font_size", float(font_size))
         object.__setattr__(self, "text_color", _opaque_color(text_color, "text_color"))
         object.__setattr__(self, "align", align)
@@ -823,6 +827,9 @@ class _FieldSpecification:
             spec["text_color"] = text_color.rgb
             spec["font_size"] = getattr(self, "font_size")  # noqa: B009
             spec["align"] = _FIELD_ALIGNMENTS.index(getattr(self, "align"))  # noqa: B009
+            font: Font | None = getattr(self, "font")  # noqa: B009
+            if font is not None:
+                spec["font_name"] = font._font.standard_name  # noqa: SLF001 - the package's own face.
         return spec
 
 
@@ -831,8 +838,9 @@ class TextField(_FieldSpecification):
     """A text field, or another widget of the text field of that name, as ``page.widgets.add`` takes it.
 
     ``rect`` is in display coordinates. ``value`` and ``default_value`` are
-    the field's text, drawn in Helvetica at ``font_size`` (0 fits the text),
-    in ``text_color``, aligned by ``align``. ``flags`` adds
+    the field's text, drawn in ``font``, a Standard 14 font that is
+    Helvetica by default, at ``font_size`` (0 fits the text), in
+    ``text_color``, aligned by ``align``. ``flags`` adds
     :class:`FieldFlags` such as ``MULTILINE``, ``PASSWORD``, ``COMB``,
     ``REQUIRED``, or ``READ_ONLY``; ``max_length`` bounds the text.
     """
@@ -843,6 +851,7 @@ class TextField(_FieldSpecification):
     value: str | None
     default_value: str | None
     max_length: int | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -860,6 +869,7 @@ class TextField(_FieldSpecification):
         value: str | None = None,
         default_value: str | None = None,
         max_length: int | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         align: Literal["left", "center", "right"] = "left",
@@ -871,7 +881,7 @@ class TextField(_FieldSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, align)
+        self._text_style(font, font_size, text_color, align)
         for text, field in ((value, "value"), (default_value, "default_value")):
             if text is not None:
                 _field_text(text, field)
@@ -1038,6 +1048,7 @@ class ComboBox(_ChoiceSpecification):
     choices: tuple[FieldChoice, ...]
     value: str | None
     default_value: str | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -1055,6 +1066,7 @@ class ComboBox(_ChoiceSpecification):
         choices: Iterable[FieldChoice | str],
         value: str | None = None,
         default_value: str | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         align: Literal["left", "center", "right"] = "left",
@@ -1066,7 +1078,7 @@ class ComboBox(_ChoiceSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, align)
+        self._text_style(font, font_size, text_color, align)
         self._choices(choices, value, default_value)
 
 
@@ -1084,6 +1096,7 @@ class ListBox(_ChoiceSpecification):
     choices: tuple[FieldChoice, ...]
     value: str | None
     default_value: str | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -1101,6 +1114,7 @@ class ListBox(_ChoiceSpecification):
         choices: Iterable[FieldChoice | str],
         value: str | None = None,
         default_value: str | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         align: Literal["left", "center", "right"] = "left",
@@ -1112,7 +1126,7 @@ class ListBox(_ChoiceSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, align)
+        self._text_style(font, font_size, text_color, align)
         self._choices(choices, value, default_value)
 
 
@@ -1120,14 +1134,15 @@ class ListBox(_ChoiceSpecification):
 class PushButton(_FieldSpecification):
     """A pushbutton, which holds no value, as ``page.widgets.add`` takes it.
 
-    ``caption`` is drawn centred in Helvetica at ``font_size`` in
-    ``text_color``.
+    ``caption`` is drawn centred in ``font``, a Standard 14 font that is
+    Helvetica by default, at ``font_size`` in ``text_color``.
     """
 
     _kind: ClassVar[str] = "pushbutton"
     name: str
     rect: Rect
     caption: str | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -1143,6 +1158,7 @@ class PushButton(_FieldSpecification):
         rect: Sequence[float],
         *,
         caption: str | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         label: str | None = None,
@@ -1153,7 +1169,7 @@ class PushButton(_FieldSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, "center")
+        self._text_style(font, font_size, text_color, "center")
         if caption is not None:
             _field_text(caption, "caption")
         object.__setattr__(self, "caption", caption)
