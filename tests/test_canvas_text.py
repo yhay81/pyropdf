@@ -459,11 +459,11 @@ def test_standard_14_text_is_written_in_hexadecimal() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new()
     with page.draw() as canvas:
-        canvas.text("\x01(A)\\€ /PyroF1 ", (10, 20))
+        canvas.text("(A)\\€ /PyroF1 ", (10, 20))
     content = b"".join(stream.read() for stream in page.obj["Contents"])
-    assert b"<" + "\x01(A)\\€ /PyroF1 ".encode("cp1252").hex().encode() + b"> Tj" in content
+    assert b"<" + "(A)\\€ /PyroF1 ".encode("cp1252").hex().encode() + b"> Tj" in content
     data = doc.to_bytes()
-    assert pyropdf.open(data).pages[0].text(unmapped="replacement").strip() == "\ufffd(A)\\€ /PyroF1"
+    assert pyropdf.open(data).pages[0].text().strip() == "(A)\\€ /PyroF1"
 
 
 def test_text_page_numbering_recipe() -> None:

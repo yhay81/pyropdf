@@ -50,6 +50,7 @@ _CFF = frozenset({"Type1C", "CIDFontType0C"})
 _FONT_SUBTYPES = frozenset({"Type0", "Type1", "MMType1", "Type3", "TrueType"})
 #: A subset tag: six uppercase letters and a plus sign (ISO 32000-2 9.9.2).
 _TAG = re.compile(r"[A-Z]{6}\+")
+_UNKNOWN_GLYPHS = 0xFFFFFFFF
 #: Form XObjects of appearance resources that a walk visits.
 _MAX_APPEARANCE_FORMS = 4096
 #: Nesting of direct values that the walk for direct font dictionaries follows.
@@ -435,15 +436,29 @@ def _rename(dictionary: Dictionary, key: str, tag: str) -> None:
         dictionary[key] = Name(tag + name)
 
 
+def _kept_glyphs(programs: dict[int, _Program], used: Iterator[list[int]]) -> dict[int, list[int]]:
+    """Keep shared programs whole if any font's glyph use is unknown."""
+    keep: dict[int, list[int]] = {}
+    for xref, program in programs.items():
+        glyphs = [next(used) for _ in program.fonts]
+        # The core reports an undecodable content stream with a value outside
+        # the font's 16-bit glyph ID range. Keep every shared program whole.
+        if any(_UNKNOWN_GLYPHS in items for items in glyphs):
+            continue
+        keep[xref] = sorted({glyph for items in glyphs for glyph in items})
+    return keep
+
+
 def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
     """Subset each embedded program to the glyphs drawn, in one transaction, and report what changed."""
-    programs = _programs(document)
-    fonts = [font for program in programs.values() for font in program.fonts]
-    used = iter(_glyphs(document, fonts))
-    keep = {xref: sorted({glyph for _ in program.fonts for glyph in next(used)}) for xref, program in programs.items()}
     report: list[SubsetFont] = []
     with document.transaction("subset fonts"):
+        programs = _programs(document)
+        fonts = [font for program in programs.values() for font in program.fonts]
+        keep = _kept_glyphs(programs, iter(_glyphs(document, fonts)))
         for xref, program in programs.items():
+            if xref not in keep:
+                continue
             data = program.stream.read()
             subset = _core.subset_font_program(data, program.format, keep[xref])
             if subset is None or len(subset[0]) >= len(data):
@@ -513,13 +528,15 @@ def _text_input(text: object, max_text_size: int | None) -> str:
         msg = f"text must be a string: {text!r}"
         raise TypeError(msg)
     _validate_optional_positive_int("max_text_size", max_text_size)
-    # Each character takes one to four bytes, so only a long text is encoded.
-    if max_text_size is not None and len(text) * 4 > max_text_size:
-        size = len(text.encode("utf-8", "surrogatepass"))
-        if size > max_text_size:
-            code = "text_input_size"
-            msg = f"the text is {size} bytes of UTF-8, over the {max_text_size}-byte limit"
-            raise LimitError(code, msg)
+    # Count without encoding an input-sized copy, and stop at the limit.
+    if max_text_size is not None and str.__len__(text) * 4 > max_text_size:
+        size = 0
+        for char in str.__iter__(text):
+            size += len(char.encode("utf-8", "surrogatepass"))
+            if size > max_text_size:
+                code = "text_input_size"
+                msg = f"the text exceeds the {max_text_size}-byte UTF-8 limit"
+                raise LimitError(code, msg)
     return text
 
 
@@ -683,7 +700,7 @@ class Font:
         ``text_input_size``.
         """
         checked = _text_input(text, max_text_size)
-        return tuple(self._font.char_widths(checked, _measure_size(size, "size")))
+        return self._font.char_widths(checked, _measure_size(size, "size"), max_text_size)
 
     def char_bbox(self, char: str) -> Rect:
         """Return the ink box of the glyph for the one-character string ``char``.
@@ -714,7 +731,7 @@ class Font:
         if "\n" in checked or "\r" in checked:
             msg = "text_width measures one line; split text at line breaks first"
             raise PdfError(msg)
-        return self._font.text_width(checked, _measure_size(size, "size"))
+        return self._font.text_width(checked, _measure_size(size, "size"), max_text_size)
 
     def text_height(
         self,
@@ -738,20 +755,22 @@ class Font:
         refused with :class:`LimitError` code ``text_input_size`` or
         ``text_line_count``.
         """
-        normalized = _textbox_text(text, max_text_size)
+        checked = _text_input(text, max_text_size)
         font_size = _measure_size(size, "size")
         box_width = _measure_size(width, "width")
         spacing = None if line_height is None else _measure_size(line_height, "line_height")
-        if not normalized:
+        if not checked:
             return 0.0
         _lines, height, _spare, _ascent, _leading = self._font.layout(
-            normalized,
+            checked,
             box_width,
             0.0,
             font_size,
             spacing,
             False,  # noqa: FBT003 - the core's flag
             _max_lines(max_text_size),
+            max_text_size,
+            True,  # noqa: FBT003 - normalize the text within the core budget
         )
         return height
 

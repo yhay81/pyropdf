@@ -38,6 +38,29 @@ pub struct Transaction {
     derived_anchor: Option<Arc<Version>>,
 }
 
+/// Releases a pending allocation's charge if its write is refused.
+struct PendingCharge<'b> {
+    budget: &'b Budget,
+    amount: u64,
+}
+
+impl<'b> PendingCharge<'b> {
+    fn new(budget: &'b Budget, amount: u64) -> Result<Self> {
+        budget.charge(LimitCode::MemorySize, amount)?;
+        Ok(Self { budget, amount })
+    }
+
+    fn published(mut self) {
+        self.amount = 0;
+    }
+}
+
+impl Drop for PendingCharge<'_> {
+    fn drop(&mut self) {
+        self.budget.release(LimitCode::MemorySize, self.amount);
+    }
+}
+
 impl Transaction {
     /// Returns a transaction that holds `lock` and starts from `parent`.
     pub(super) fn new(lock: WriterLock, parent: Arc<Version>) -> Self {
@@ -129,12 +152,16 @@ impl Transaction {
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, value)
             .map_err(|error| error.context(format!("object {number} {generation}")))?;
-        budget.charge(LimitCode::MemorySize, Written::OVERHEAD)?;
-        let bytes = Bytes::new(out.into_vec().into_boxed_slice());
-        let object = Arc::new(Written::new(generation, bytes));
+        let overhead = PendingCharge::new(budget, Written::OVERHEAD)?;
+        let bytes = Bytes::written_copy(out.as_slice(), budget)?;
+        drop(out);
+        let object = Arc::new(Written::new(generation, bytes.bytes().clone()));
+        budget.poll()?;
         self.draft
             .table
             .insert(number, Slot::Written(object), budget)?;
+        bytes.published();
+        overhead.published();
         self.draft.next = self.draft.next.max(u64::from(number) + 1);
         self.lock.reserve_through(self.draft.next);
         Ok(Reference::new(number, generation))
@@ -166,12 +193,19 @@ impl Transaction {
     pub fn set_trailer(&mut self, trailer: Dict, budget: &Budget) -> Result<()> {
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, &Value::Dict(trailer))?;
-        budget.charge(LimitCode::MemorySize, Trailer::OVERHEAD)?;
-        let bytes = Bytes::new(out.into_vec().into_boxed_slice());
-        let Value::Dict(value) = Value::parse(&bytes, budget)? else {
+        let overhead = PendingCharge::new(budget, Trailer::OVERHEAD)?;
+        let bytes = Bytes::written_copy(out.as_slice(), budget)?;
+        drop(out);
+        let Value::Dict(value) = Value::parse(bytes.bytes(), budget)? else {
             return Err(Error::malformed("the written trailer is not a dictionary"));
         };
-        self.draft.trailer = Some(Arc::new(Trailer { value, bytes }));
+        budget.poll()?;
+        self.draft.trailer = Some(Arc::new(Trailer {
+            value,
+            bytes: bytes.bytes().clone(),
+        }));
+        bytes.published();
+        overhead.published();
         Ok(())
     }
 

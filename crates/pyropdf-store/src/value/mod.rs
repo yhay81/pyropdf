@@ -22,6 +22,7 @@
 //! nested deeper than 64 levels.
 
 mod bytes;
+mod copy;
 mod read;
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ mod tests;
 use std::fmt;
 
 pub use bytes::Bytes;
+pub(crate) use copy::{copy_dict_for_edit, copy_for_edit};
 #[cfg(test)]
 pub(crate) use read::PARSES;
 pub(crate) use read::is_integer;
