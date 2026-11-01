@@ -72,10 +72,10 @@ content and removes them from the page.
 
 ## Drawing
 
-`page.draw()` returns a `Canvas` that draws paths, images, and other pages
-in display space, over the page's content or, with `underlay=True`, below
+`page.draw()` returns a `Canvas` that draws paths, images, other pages, and
+text in display space, over the page's content or, with `underlay=True`, below
 it. The `with` block is one transaction and one undo step; an exception
-inside it discards the drawing. Canvas text is planned.
+inside it discards the drawing.
 
 ```python
 import pyropdf
@@ -96,6 +96,51 @@ an image of the document; `canvas.page` places a page of any open document,
 optionally clipped and turned. An image or a page drawn several times is
 stored once. `clip`, `transform`, `opacity`, and `blend` are scopes for
 everything drawn inside them.
+
+### Text
+
+`canvas.text` draws lines from a baseline point, and `canvas.textbox`
+wraps text inside a rectangle. Both draw in Helvetica at 11 points unless
+`font` and `size` say otherwise. `Font.standard` returns one of the 14
+Standard 14 fonts by name, such as `"Times-Roman"` or `"Courier-Bold"`;
+these are not embedded, so the file stays small, but they print only
+WinAnsi (roughly Latin-1) text and refuse other characters with
+`PdfError`. For other scripts, load an OpenType face with
+`Font.from_file`, which the document embeds once.
+
+```python
+import pyropdf
+from pyropdf import Color, Font
+
+doc = pyropdf.Document()
+for _ in range(2):
+    doc.pages.new((300, 200))
+note = "Totals include tax. Prices are in euros and valid until the end of the month."
+helvetica = Font.standard("Helvetica")
+for number, page in enumerate(doc.pages, start=1):
+    with page.draw() as canvas:
+        canvas.text("Invoice", (20, 40), font=Font.standard("Helvetica-Bold"), size=18)
+        box = (20, 60, 160, 80)
+        if not canvas.textbox(box, note, size=10, align="justify").fits:
+            height = helvetica.text_height(note, 10, width=140)
+            canvas.textbox((20, 60, 160, 60 + height), note, size=10, align="justify")
+        canvas.text(f"Page {number} of {len(doc.pages)}", (240, 190), size=8, fill=Color(0.4, 0.4, 0.4))
+```
+
+A textbox either fits or draws nothing: the returned `TextFit` says
+whether it fit, and its `spare_height` is the room left below the last
+line, or the negative shortfall. `Font.text_height` and
+`Font.text_width` measure text exactly as the canvas lays it out, so a
+caller can size a box before drawing. Lines break where Unicode allows,
+and a word wider than the box breaks between characters; `align` is
+`"left"`, `"center"`, `"right"`, or `"justify"`, and `line_height`
+spaces lines in multiples of `size`. Text is filled black by default;
+pass `stroke` to outline it and `fill=None` to leave it hollow. `rotate`
+turns text by a right angle, and `canvas.transform` by any other.
+
+Text is limited to 1 MiB of UTF-8 and 4,096 lines per call, refused with
+`LimitError` before anything is drawn; pass `max_text_size=None` for
+trusted input. See [Limits and errors](limits.md).
 
 ## Annotations
 

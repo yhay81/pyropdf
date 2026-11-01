@@ -68,7 +68,7 @@ with pyropdf.open("input.pdf") as doc:
 
 ## 作図
 
-`page.draw()` が返す `Canvas` は、パス、画像、他のページを表示空間で描きます。
+`page.draw()` が返す `Canvas` は、パス、画像、他のページ、テキストを表示空間で描きます。
 ページの内容の上に描き、`underlay=True` なら下に描きます。`with` ブロックが一つの
 トランザクションで一つの取り消し単位になり、中で例外が起きると作図は捨てられます。
 
@@ -90,6 +90,49 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 受け取ります。`canvas.page` は開いている任意の文書のページを、切り抜きや回転を付けて
 配置します。何度も描いた画像やページは一度だけ保存されます。`clip`、`transform`、
 `opacity`、`blend` は、その中で描くもの全体に効くスコープです。
+
+### テキスト
+
+`canvas.text` はベースラインの一点から行を描き、`canvas.textbox` は矩形の中で
+テキストを折り返します。どちらも `font` と `size` を指定しなければ Helvetica の
+11 ポイントで描きます。`Font.standard` は `"Times-Roman"` や `"Courier-Bold"` の
+ように名前で標準 14 フォントを返します。標準 14 フォントは埋め込まないので
+ファイルは小さく保てますが、WinAnsi（おおむね Latin-1）の文字しか印字できず、
+それ以外の文字は `PdfError` で拒否します。他の文字体系には `Font.from_file` で
+OpenType フォントを読み込みます。文書はそれを一度だけ埋め込みます。
+
+```python
+import pyropdf
+from pyropdf import Color, Font
+
+doc = pyropdf.Document()
+for _ in range(2):
+    doc.pages.new((300, 200))
+note = "Totals include tax. Prices are in euros and valid until the end of the month."
+helvetica = Font.standard("Helvetica")
+for number, page in enumerate(doc.pages, start=1):
+    with page.draw() as canvas:
+        canvas.text("Invoice", (20, 40), font=Font.standard("Helvetica-Bold"), size=18)
+        box = (20, 60, 160, 80)
+        if not canvas.textbox(box, note, size=10, align="justify").fits:
+            height = helvetica.text_height(note, 10, width=140)
+            canvas.textbox((20, 60, 160, 60 + height), note, size=10, align="justify")
+        canvas.text(f"Page {number} of {len(doc.pages)}", (240, 190), size=8, fill=Color(0.4, 0.4, 0.4))
+```
+
+テキストボックスは収まるか、何も描かないかのどちらかです。返る `TextFit` は収まった
+かどうかを示し、その `spare_height` は最後の行の下に残る高さ、収まらなければ負の
+不足分です。`Font.text_height` と `Font.text_width` はキャンバスと同じ配置で
+テキストを測るので、描く前に箱の大きさを決められます。行は Unicode が許す位置で
+折り返し、箱より幅の広い単語は文字の間で分けます。`align` は `"left"`、
+`"center"`、`"right"`、`"justify"` のいずれかで、`line_height` は行の間隔を
+`size` の倍数で指定します。テキストは既定で黒く塗ります。`stroke` で輪郭を描き、
+`fill=None` で中を塗らずに残します。`rotate` は直角単位で、`canvas.transform` は
+任意の角度でテキストを回します。
+
+テキストは一回の呼び出しで UTF-8 で 1 MiB、4,096 行までで、超えると何も描く前に
+`LimitError` で拒否します。信頼できる入力には `max_text_size=None` を渡します。
+[制限とエラー](limits.md)を参照してください。
 
 ## 注釈
 
