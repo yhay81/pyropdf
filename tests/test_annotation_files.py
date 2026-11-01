@@ -125,6 +125,19 @@ def test_attached_files_are_bounded() -> None:
     assert len(page.annotations) == 1
 
 
+def test_oversized_filename_is_refused_before_encoding() -> None:
+    class OversizedName(str):
+        __slots__ = ()
+
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+            msg = "oversized input must not be encoded"
+            raise AssertionError(msg)
+
+    with pytest.raises(pyropdf.LimitError) as raised:
+        FileAttachment((0, 0), b"", filename=OversizedName("x" * (1024 * 1024 + 1)))
+    assert raised.value.code == "embedded_file_input_size"
+
+
 def test_other_annotations_have_no_file() -> None:
     page = pyropdf.Document().pages.new((200, 200))
     note = page.annotations.add(pyropdf.Note((10, 10)))
@@ -159,6 +172,32 @@ def test_a_direct_filespec_is_read_and_replaced() -> None:
     assert annotation.obj["FS"]["F"] == b"a.txt"
     # Rendering draws the icon that the file attachment has no appearance for.
     assert bytes(doc.pages[0].pixmap(dpi=72)) != b"\xff" * (200 * 100 * 3)
+
+
+def test_failed_edit_keeps_direct_annotation_handle_usable() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: (
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Annots [<< /Type /Annot "
+                    "/Subtype /FileAttachment /Rect [10 10 30 30] /FS << /F (a.txt) >> >>] >>"
+                ),
+            }
+        )
+    )
+    annotation = doc.pages[0].annotations[0]
+    attached = annotation.file
+    assert attached is not None
+    before = doc.history.position
+
+    with pytest.raises(pyropdf.PdfError, match="no embedded file stream"):
+        attached.created = "D:20260101120000Z"
+
+    assert doc.history.position == before
+    assert annotation.xref == 0
+    assert attached.filename == "a.txt"
 
 
 def test_the_file_name_description_and_dates_are_edited() -> None:

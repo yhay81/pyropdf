@@ -351,6 +351,12 @@ def _file_texts(texts: Iterable[str], label: str) -> None:
     """Refuse texts that are longer together in UTF-8 than 1 MiB (``embedded_file_input_size``)."""
     size = 0
     for text in texts:
+        # Each character needs at least one UTF-8 byte. Reject oversized
+        # inputs before allocating an encoded copy of them.
+        if len(text) > _MAX_ANNOTATION_INPUT_TEXT_SIZE - size:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
         size += len(text.encode("utf-8", "surrogatepass"))
         if size > _MAX_ANNOTATION_INPUT_TEXT_SIZE:
             code = "embedded_file_input_size"
@@ -424,10 +430,16 @@ class AnnotationFile:
         """Apply ``edit`` to the file specification in one transaction that records the annotation's change."""
         self._filespec()
         annotation = self._annotation
-        with annotation._page._document.transaction(name):  # noqa: SLF001
-            # The edit stores a direct annotation as an object of its own.
-            annotation._set()  # noqa: SLF001
-            edit(self._filespec())
+        old_id, old_index = annotation._id, annotation._index  # noqa: SLF001
+        try:
+            with annotation._page._document.transaction(name):  # noqa: SLF001
+                # The edit stores a direct annotation as an object of its own.
+                annotation._set()  # noqa: SLF001
+                edit(self._filespec())
+        except BaseException:
+            # A failed edit (including a failed commit) discards the new object.
+            annotation._id, annotation._index = old_id, old_index  # noqa: SLF001
+            raise
 
     def _edit_params(self, key: str, value: str | None) -> None:
         def edit(filespec: Dictionary) -> None:
