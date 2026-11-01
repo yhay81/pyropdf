@@ -66,9 +66,10 @@ jobs:
         with:
           version: "0.13.5"
           cache-suffix: python-${{ matrix.python }}
-      - name: Install qpdf
-        # The consistency harness checks saved documents with qpdf.
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qpdf
+      - name: Install qpdf and poppler
+        # The consistency harness checks saved documents with qpdf, and the
+        # embedded font tests compare poppler's render with hayro's.
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends qpdf poppler-utils
       - name: Build and install
         # Install the wheel rather than an editable build, so that the tests
         # import what a release would ship.
@@ -85,7 +86,7 @@ jobs:
         # DESIGN.md section 11, which runs cargo metadata.
         env:
           PYROPDF_REQUIRE_QPDF: "1"
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest -rs
       - name: Validate the PDF/A and PDF/UA corpora and their saves with veraPDF
         # One Python suffices: the saved bytes do not depend on it. The
         # runner's Java runs the jars, pinned by their SHA-256; the Arlington
