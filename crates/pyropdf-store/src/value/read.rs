@@ -9,7 +9,10 @@ use std::fmt::{self, Write as _};
 use std::iter;
 use std::mem;
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
+use hayro_syntax::budget::{Exhausted, ParseBudget};
 use hayro_syntax::object::array::ArrayIter;
 use hayro_syntax::object::{self as syntax, FromBytes, MaybeRef, ObjRef, Object};
 
@@ -66,17 +69,20 @@ impl Value {
     ) -> Result<Self> {
         #[cfg(test)]
         PARSES.with(|parses| parses.set(parses.get() + 1));
-        // hayro-syntax 0.8 cannot poll or charge its internal parser (#509).
-        // Check either side so an already refused operation never starts it,
-        // and a refusal while it runs is returned before conversion.
+        // hayro-syntax polls the budget as it scans and charges what it
+        // allocates, also while the conversion reads entries lazily. Once it
+        // refuses, whatever the parser recovered is discarded.
         budget.poll()?;
+        let charge = ParseCharge::new(budget);
         let result = guard(|| {
-            let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice());
-            budget.poll()?;
-            let object = object
+            let object = MaybeRef::<Object<'_>>::from_bytes_with_budget(source.as_slice(), &charge)
+                .map_err(|_| charge.refusal())?
                 .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;
-            Converter::new(source, budget, fetch).convert(object)
+            let mut converter = Converter::new(source, budget, fetch);
+            converter.charge = Some(&charge);
+            converter.convert(object)
         });
+        charge.check()?;
         budget.poll()?;
         result
     }
@@ -181,6 +187,94 @@ fn guard<T>(conversion: impl FnOnce() -> Result<T>) -> Result<T> {
         .unwrap_or_else(|_| Err(Error::malformed("hayro-syntax panicked on the object")))
 }
 
+/// The budget of one parse as hayro-syntax charges it: it polls the
+/// operation's budget as hayro-syntax scans, and charges what hayro-syntax
+/// allocates to its memory.
+///
+/// hayro-syntax refuses once with `Exhausted`; the charge keeps the budget's
+/// refusal, and keeps refusing after it. It releases on drop what
+/// hayro-syntax allocated and did not release, such as the buffers of
+/// escaped names and strings.
+struct ParseCharge<'b> {
+    budget: &'b Budget,
+    refusal: OnceLock<LimitExceeded>,
+    /// The memory charged and not released.
+    held: AtomicU64,
+}
+
+impl<'b> ParseCharge<'b> {
+    const fn new(budget: &'b Budget) -> Self {
+        Self {
+            budget,
+            refusal: OnceLock::new(),
+            held: AtomicU64::new(0),
+        }
+    }
+
+    /// Returns the refusal, or a malformed input error if hayro-syntax
+    /// reported one without the budget refusing.
+    fn refusal(&self) -> Error {
+        self.refusal.get().map_or_else(
+            || Error::malformed("hayro-syntax refused without a budget refusal"),
+            |&refusal| refusal.into(),
+        )
+    }
+
+    /// Refuses with the budget's refusal, if it refused.
+    fn check(&self) -> Result<()> {
+        match self.refusal.get() {
+            Some(&refusal) => Err(refusal.into()),
+            None => Ok(()),
+        }
+    }
+
+    fn refuse(
+        &self,
+        result: std::result::Result<(), LimitExceeded>,
+    ) -> std::result::Result<(), Exhausted> {
+        if self.exhausted() {
+            return Err(Exhausted);
+        }
+        result.map_err(|refusal| {
+            let _ = self.refusal.set(refusal);
+            Exhausted
+        })
+    }
+}
+
+impl ParseBudget for ParseCharge<'_> {
+    fn work(&self, _bytes: usize) -> std::result::Result<(), Exhausted> {
+        // The work of a parse is linear in its input, which other limits
+        // bound; the deadline and the cancellation bound its time.
+        self.refuse(self.budget.poll())
+    }
+
+    fn allocate(&self, bytes: usize) -> std::result::Result<(), Exhausted> {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        self.refuse(self.budget.charge(LimitCode::MemorySize, bytes))?;
+        self.held.fetch_add(bytes, Relaxed);
+        Ok(())
+    }
+
+    fn release(&self, bytes: usize) {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        self.held
+            .update(Relaxed, Relaxed, |held| held.saturating_sub(bytes));
+        self.budget.release(LimitCode::MemorySize, bytes);
+    }
+
+    fn exhausted(&self) -> bool {
+        self.refusal.get().is_some()
+    }
+}
+
+impl Drop for ParseCharge<'_> {
+    fn drop(&mut self) {
+        self.budget
+            .release(LimitCode::MemorySize, *self.held.get_mut());
+    }
+}
+
 /// Converts the objects that hayro-syntax parsed from one source.
 struct Converter<'s, 'b> {
     /// The bytes that the objects borrow from, which lexemes and stream data
@@ -191,6 +285,9 @@ struct Converter<'s, 'b> {
     fetch: &'s dyn Fn(Reference) -> Result<Option<Bytes>>,
     /// How many values the conversion has converted, for polling the budget.
     steps: u32,
+    /// What hayro-syntax charges while it reads the objects, if it read them
+    /// with the budget.
+    charge: Option<&'b ParseCharge<'b>>,
 }
 
 /// An array or a dictionary whose values are being converted.
@@ -232,6 +329,7 @@ impl<'s, 'b> Converter<'s, 'b> {
             budget,
             fetch,
             steps: 0,
+            charge: None,
         }
     }
 
@@ -440,7 +538,10 @@ impl<'s, 'b> Converter<'s, 'b> {
         ranks.try_reserve_exact(keys.len())?;
         ranks.try_extend(iter::repeat_n(usize::MAX, keys.len()))?;
         let read = panic::catch_unwind(AssertUnwindSafe(|| {
-            let elements = syntax::Array::from_bytes(&array)?;
+            let elements = match self.charge {
+                Some(charge) => syntax::Array::from_bytes_with_budget(&array, charge).ok()??,
+                None => syntax::Array::from_bytes(&array)?,
+            };
             let mut rank = 0;
             let mut key_next = true;
             for element in elements.raw_iter() {
@@ -462,6 +563,10 @@ impl<'s, 'b> Converter<'s, 'b> {
             }
             key_next.then_some(())
         }));
+        // A refusal is the operation's, not a reading that failed.
+        if let Some(charge) = self.charge {
+            charge.check()?;
+        }
         if matches!(read, Ok(Some(()))) && ranks.iter().all(|&rank| rank != usize::MAX) {
             for ((place, _), &rank) in keys.iter_mut().zip(ranks.iter()) {
                 *place = rank;
@@ -500,7 +605,13 @@ impl<'s, 'b> Converter<'s, 'b> {
             Err(error) if error.limit().is_none() => None,
             Err(error) => return Err(error),
         };
-        let Some(length) = bytes.as_deref().and_then(length_object) else {
+        let length = bytes
+            .as_deref()
+            .and_then(|bytes| length_object(bytes, self.charge));
+        if let Some(charge) = self.charge {
+            charge.check()?;
+        }
+        let Some(length) = length else {
             return Ok(None);
         };
         let Some(start) = self.source.offset_of(&stream.raw_data()) else {
@@ -633,8 +744,12 @@ fn copy(bytes: &[u8], budget: &Budget) -> Result<Box<[u8]>, LimitExceeded> {
 ///
 /// A reference or any other value gives no length. hayro-syntax reads the
 /// bytes as one value, so it reads a stream there through no other object.
-fn length_object(bytes: &[u8]) -> Option<usize> {
-    let object = panic::catch_unwind(|| MaybeRef::<Object<'_>>::from_bytes(bytes)).ok()??;
+fn length_object(bytes: &[u8], charge: Option<&ParseCharge<'_>>) -> Option<usize> {
+    let object = panic::catch_unwind(AssertUnwindSafe(|| match charge {
+        Some(charge) => MaybeRef::<Object<'_>>::from_bytes_with_budget(bytes, charge).ok()?,
+        None => MaybeRef::<Object<'_>>::from_bytes(bytes),
+    }))
+    .ok()??;
     match object {
         MaybeRef::NotRef(Object::Number(number)) if is_integer(number) => {
             usize::try_from(number.as_i64()).ok()

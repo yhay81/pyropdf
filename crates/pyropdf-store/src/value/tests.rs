@@ -596,3 +596,43 @@ fn streams_decode_through_their_filters_within_the_budget() {
     let error = stream(&image).decoded(&Budget::default()).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
 }
+
+#[test]
+fn hayro_syntax_charges_a_large_dictionary_before_allocating_its_table() {
+    let mut input = b"<<".to_vec();
+    for i in 0..100_000 {
+        input.extend_from_slice(format!("/K{i} {i} ").as_bytes());
+    }
+    input.extend_from_slice(b">>");
+    let source = Bytes::from(input);
+    for limit in [0, 1 << 10, 1 << 20] {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(limit));
+        let error = Value::parse_with_lengths(&source, &budget, &|_| Ok(None)).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::MemorySize)
+        );
+        assert_eq!(budget.used(LimitCode::MemorySize), 0);
+    }
+}
+
+#[test]
+fn hayro_syntax_releases_what_it_charged_after_a_parse() {
+    for input in [
+        b"<< /A /B#20C /D (e\\nf) /G <4142434445464748494A4B4C4D4E4F505152535455565758595A> >>"
+            .as_slice(),
+        b"[/Long#20Name#20With#20Escapes#20Beyond#20Inline (a\\)b)]".as_slice(),
+    ] {
+        let source = Bytes::from(input.to_vec());
+        let budget = Budget::default();
+        let value = Value::parse_with_lengths(&source, &budget, &|_| Ok(None)).unwrap();
+        let held = budget.used(LimitCode::MemorySize);
+        drop(value);
+        assert!(budget.used(LimitCode::MemorySize) <= held);
+        let plain = Value::parse(&source, &Budget::default()).unwrap();
+        assert_eq!(
+            Value::parse_with_lengths(&source, &budget, &|_| Ok(None)).unwrap(),
+            plain
+        );
+    }
+}
