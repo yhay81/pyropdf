@@ -1,7 +1,7 @@
 corpus_bench.rs on tests/assets/real_world (15 files), 50 rounds per run,
 best time of each phase per document, summed. Release build, aarch64
 macOS, Rust 1.99.1. "base" is hayro-syntax-v0.8.0; "patch" is
-hayro-syntax-0.8.0.patch applied to it. The runs alternated.
+the first commit of hayro-syntax-0.8.0.patch applied to it. The runs alternated.
 
 base  total open 0.838 ms  walk 10.794 ms  content 8.284 ms  all 19.915 ms
 patch total open 0.898 ms  walk 11.727 ms  content 8.354 ms  all 20.980 ms
@@ -13,3 +13,16 @@ base  total open 0.833 ms  walk 10.860 ms  content 8.218 ms  all 19.912 ms
 patch total open 0.895 ms  walk 11.623 ms  content 8.310 ms  all 20.828 ms
 base  total open 0.835 ms  walk 10.817 ms  content 8.200 ms  all 19.851 ms
 patch total open 0.896 ms  walk 11.686 ms  content 8.336 ms  all 20.918 ms
+
+After the second commit of hayro-syntax-0.8.0.patch, which holds the
+budget by a thin reference and drops the reader's budget lookup on every
+read: each line is the median of five runs of 50 rounds, and the three
+pairs alternated. The machine ran slightly slower than for the runs above,
+so compare each block within itself.
+
+base  open 0.850 ms  walk 11.066 ms  content 8.389 ms  all 20.257 ms
+patch open 0.966 ms  walk 11.618 ms  content 8.545 ms  all 21.104 ms
+base  open 0.849 ms  walk 11.083 ms  content 8.379 ms  all 20.325 ms
+patch open 0.962 ms  walk 11.559 ms  content 8.519 ms  all 21.040 ms
+base  open 0.851 ms  walk 11.037 ms  content 8.357 ms  all 20.240 ms
+patch open 0.964 ms  walk 11.504 ms  content 8.463 ms  all 20.970 ms

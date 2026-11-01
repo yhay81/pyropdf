@@ -47,7 +47,7 @@ fn main() {
 
     // The best time of each phase of each document, summed over documents.
     let mut best = vec![[Duration::MAX; 3]; documents.len()];
-    let mut counts = vec![[0usize; 2]; documents.len()];
+    let mut counts = vec![[0_usize; 2]; documents.len()];
     for _ in 0..rounds {
         for (index, data) in documents.iter().enumerate() {
             let start = Instant::now();

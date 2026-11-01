@@ -10,7 +10,8 @@ approval.
 ## Files
 
 - `hayro-syntax-0.8.0.patch`: the prototype on the `hayro-syntax-v0.8.0`
-  tag, which the store builds against.
+  tag, which the store builds against, as two commits: the budget, then
+  holding it by a thin reference.
 - `hayro-syntax-main.patch`: the same change on hayro `main` at
   `8ac3a6dd`, the base an upstream pull request would use.
 - `parse_bench.rs`: the synthetic timing below, as an example of
@@ -58,17 +59,22 @@ times three phases without a budget: opening each document, walking every
 object it defines through lazy reads, and reading the typed operations of
 every page's content. Each run takes the best of 50 rounds per document
 and phase; the five runs of each build alternated (`corpus-results.txt`).
-Medians of the five runs, against `hayro-syntax-v0.8.0`:
+Against `hayro-syntax-v0.8.0`, the first commit alone (medians of five
+alternating runs) and both commits (medians of three alternating pairs,
+each a median of five runs) cost:
 
-| Phase | 0.8.0 | With the patch | Change |
-| --- | --- | --- | --- |
-| Open | 0.835 ms | 0.896 ms | +7.3% |
-| Walk objects | 10.817 ms | 11.686 ms | +8.0% |
-| Content operations | 8.209 ms | 8.334 ms | +1.5% |
-| All | 19.912 ms | 20.918 ms | +5.1% |
+| Phase | 0.8.0 | First commit | Change | 0.8.0 | Both commits | Change |
+| --- | --- | --- | --- | --- | --- | --- |
+| Open | 0.835 ms | 0.896 ms | +7.3% | 0.850 ms | 0.964 ms | +13.4% |
+| Walk objects | 10.817 ms | 11.686 ms | +8.0% | 11.066 ms | 11.559 ms | +4.5% |
+| Content operations | 8.209 ms | 8.334 ms | +1.5% | 8.379 ms | 8.519 ms | +1.7% |
+| All | 19.912 ms | 20.918 ms | +5.1% | 20.257 ms | 21.040 ms | +3.9% |
 
-The runs of each build agree within about 1.5%, below the gaps. Content
-parsing, the interpreter's hot path, barely changes. Object reading pays
-about 8%, most likely for the larger `Reader` and the budget lookups of
-lazy reads; reducing that is the first question for an upstream
-proposal.
+The runs of each build agree within about 1.5%, below the gaps except
+for content. Content parsing, the interpreter's hot path, barely changes.
+The second commit holds the budget by a thin `BudgetRef`, keeps it in the
+shared context data instead of every `Reader`'s context, and stops looking
+it up on every read; that halves the cost of walking objects. Opening a
+document costs 0.11 ms more across the corpus, which the second commit did
+not reduce; the remaining cost is the charge check on each byte the reader
+advances and the larger `Reader`.

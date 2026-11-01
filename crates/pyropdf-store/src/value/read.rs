@@ -12,7 +12,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
-use hayro_syntax::budget::{Exhausted, ParseBudget};
+use hayro_syntax::budget::{BudgetRef, Exhausted, ParseBudget};
 use hayro_syntax::object::array::ArrayIter;
 use hayro_syntax::object::{self as syntax, FromBytes, MaybeRef, ObjRef, Object};
 
@@ -74,10 +74,12 @@ impl Value {
         // refuses, whatever the parser recovered is discarded.
         budget.poll()?;
         let charge = ParseCharge::new(budget);
+        let budget_ref = BudgetRef::new(&charge);
         let result = guard(|| {
-            let object = MaybeRef::<Object<'_>>::from_bytes_with_budget(source.as_slice(), &charge)
-                .map_err(|_| charge.refusal())?
-                .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;
+            let object =
+                MaybeRef::<Object<'_>>::from_bytes_with_budget(source.as_slice(), &budget_ref)
+                    .map_err(|_| charge.refusal())?
+                    .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;
             let mut converter = Converter::new(source, budget, fetch);
             converter.charge = Some(&charge);
             converter.convert(object)
@@ -537,9 +539,12 @@ impl<'s, 'b> Converter<'s, 'b> {
         let mut ranks = BudgetVec::new(self.budget);
         ranks.try_reserve_exact(keys.len())?;
         ranks.try_extend(iter::repeat_n(usize::MAX, keys.len()))?;
+        let budget_ref = self.charge.map(|charge| BudgetRef::new(charge));
         let read = panic::catch_unwind(AssertUnwindSafe(|| {
-            let elements = match self.charge {
-                Some(charge) => syntax::Array::from_bytes_with_budget(&array, charge).ok()??,
+            let elements = match &budget_ref {
+                Some(budget_ref) => {
+                    syntax::Array::from_bytes_with_budget(&array, budget_ref).ok()??
+                }
                 None => syntax::Array::from_bytes(&array)?,
             };
             let mut rank = 0;
@@ -745,8 +750,11 @@ fn copy(bytes: &[u8], budget: &Budget) -> Result<Box<[u8]>, LimitExceeded> {
 /// A reference or any other value gives no length. hayro-syntax reads the
 /// bytes as one value, so it reads a stream there through no other object.
 fn length_object(bytes: &[u8], charge: Option<&ParseCharge<'_>>) -> Option<usize> {
-    let object = panic::catch_unwind(AssertUnwindSafe(|| match charge {
-        Some(charge) => MaybeRef::<Object<'_>>::from_bytes_with_budget(bytes, charge).ok()?,
+    let budget_ref = charge.map(|charge| BudgetRef::new(charge));
+    let object = panic::catch_unwind(AssertUnwindSafe(|| match &budget_ref {
+        Some(budget_ref) => {
+            MaybeRef::<Object<'_>>::from_bytes_with_budget(bytes, budget_ref).ok()?
+        }
         None => MaybeRef::<Object<'_>>::from_bytes(bytes),
     }))
     .ok()??;

@@ -1,7 +1,8 @@
 From a8ff3103049317564fa72f287a0392971498e10f Mon Sep 17 00:00:00 2001
 From: Yusuke Hayashi <yusuke8h@gmail.com>
 Date: Sun, 1 Nov 2026 21:05:41 +0900
-Subject: [PATCH] hayro-syntax: Let callers budget and cancel object parsing
+Subject: [PATCH 1/2] hayro-syntax: Let callers budget and cancel object
+ parsing
 
 Add `budget::ParseBudget`, which a caller passes to
 `FromBytes::from_bytes_with_budget`. The reader charges the bytes it
@@ -1034,6 +1035,343 @@ index 00000000..84a4e45c
 +    assert!(s.refused);
 +    assert!(s.work <= 1 << 20);
 +}
+-- 
+2.56.0
+
+
+From d43cf89d3ae9320c572d59d09f92c8b58c04e394 Mon Sep 17 00:00:00 2001
+From: Yusuke Hayashi <yusuke8h@gmail.com>
+Date: Sun, 1 Nov 2026 21:35:33 +0900
+Subject: [PATCH 2/2] hayro-syntax: Hold the parse budget by a thin reference
+
+Readers hold the budget through a BudgetRef, and take it only when they are
+created, so readers and lazy reads without a budget pay less.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ hayro-syntax/src/budget.rs      | 28 +++++++++++++++++++++++++-
+ hayro-syntax/src/byte_reader.rs | 15 +++++++++-----
+ hayro-syntax/src/object/mod.rs  |  6 +++---
+ hayro-syntax/src/reader.rs      | 14 +++++--------
+ hayro-syntax/tests/budget.rs    | 35 +++++++++++++++++++++------------
+ 5 files changed, 67 insertions(+), 31 deletions(-)
+
+diff --git a/hayro-syntax/src/budget.rs b/hayro-syntax/src/budget.rs
+index adb983e3..cffd073a 100644
+--- a/hayro-syntax/src/budget.rs
++++ b/hayro-syntax/src/budget.rs
+@@ -47,9 +47,35 @@ pub trait ParseBudget: Sync {
+     fn exhausted(&self) -> bool;
+ }
+ 
++/// A reference to a budget, which readers hold by a thin pointer so that a
++/// reader without a budget stays small.
++#[derive(Copy, Clone)]
++pub struct BudgetRef<'a>(&'a dyn ParseBudget);
++
++impl<'a> BudgetRef<'a> {
++    /// Refers to `budget`.
++    pub fn new(budget: &'a dyn ParseBudget) -> Self {
++        Self(budget)
++    }
++}
++
++impl<'a> core::ops::Deref for BudgetRef<'a> {
++    type Target = dyn ParseBudget + 'a;
++
++    fn deref(&self) -> &Self::Target {
++        self.0
++    }
++}
++
++impl core::fmt::Debug for BudgetRef<'_> {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        f.write_str("BudgetRef")
++    }
++}
++
+ /// Charges `bytes` to `budget`, if any, before an allocation.
+ #[inline]
+-pub(crate) fn allocate(budget: Option<&dyn ParseBudget>, bytes: usize) -> Option<()> {
++pub(crate) fn allocate(budget: Option<&BudgetRef<'_>>, bytes: usize) -> Option<()> {
+     match budget {
+         Some(budget) => budget.allocate(bytes).ok(),
+         None => Some(()),
+diff --git a/hayro-syntax/src/byte_reader.rs b/hayro-syntax/src/byte_reader.rs
+index 3c9af8b2..7ebd9300 100644
+--- a/hayro-syntax/src/byte_reader.rs
++++ b/hayro-syntax/src/byte_reader.rs
+@@ -1,6 +1,6 @@
+ //! A byte reader.
+ 
+-use crate::budget::{ParseBudget, WORK_WINDOW};
++use crate::budget::{BudgetRef, WORK_WINDOW};
+ use core::ops::Range;
+ 
+ /// A reader for reading bytes and PDF objects.
+@@ -13,7 +13,7 @@ pub struct Reader<'a> {
+     /// The offset up to which reading was charged to `budget`, or
+     /// `usize::MAX` without a budget.
+     charged_to: usize,
+-    budget: Option<&'a dyn ParseBudget>,
++    budget: Option<&'a BudgetRef<'a>>,
+ }
+ 
+ impl core::fmt::Debug for Reader<'_> {
+@@ -39,10 +39,13 @@ impl<'a> Reader<'a> {
+ 
+     /// Create a new reader that charges the bytes it reads to `budget`.
+     ///
++    /// A reader reads with the budget it was created with, not with the
++    /// budget of the context it reads in.
++    ///
+     /// When the budget refuses, the reader moves to the end of the data, so
+     /// that the read fails as if the data had ended.
+     #[inline]
+-    pub fn new_with_budget(data: &'a [u8], budget: Option<&'a dyn ParseBudget>) -> Self {
++    pub fn new_with_budget(data: &'a [u8], budget: Option<&'a BudgetRef<'a>>) -> Self {
+         let mut reader = Self::new(data);
+         reader.attach_budget(budget);
+         reader
+@@ -51,7 +54,7 @@ impl<'a> Reader<'a> {
+     /// Charges the bytes this reader reads from now on to `budget`, unless
+     /// it already charges a budget.
+     #[inline]
+-    pub(crate) fn attach_budget(&mut self, budget: Option<&'a dyn ParseBudget>) {
++    fn attach_budget(&mut self, budget: Option<&'a BudgetRef<'a>>) {
+         if self.budget.is_none() && budget.is_some() {
+             self.budget = budget;
+             self.charged_to = self.offset;
+@@ -60,7 +63,7 @@ impl<'a> Reader<'a> {
+ 
+     /// The budget this reader charges, if any.
+     #[inline]
+-    pub(crate) fn budget(&self) -> Option<&'a dyn ParseBudget> {
++    pub(crate) fn budget(&self) -> Option<&'a BudgetRef<'a>> {
+         self.budget
+     }
+ 
+@@ -207,6 +210,8 @@ impl<'a> Reader<'a> {
+     /// Advances the offset by one byte.
+     #[inline]
+     pub fn forward(&mut self) {
++        // After a refusal the reader is at the end of its data, where it
++        // stays: every read past the end fails.
+         if self.charge(self.offset + 1).is_some() {
+             self.offset += 1;
+         }
+diff --git a/hayro-syntax/src/object/mod.rs b/hayro-syntax/src/object/mod.rs
+index da38149f..d6f98833 100644
+--- a/hayro-syntax/src/object/mod.rs
++++ b/hayro-syntax/src/object/mod.rs
+@@ -1,6 +1,6 @@
+ //! Parsing and reading from PDF objects.
+ 
+-use crate::budget::{Exhausted, ParseBudget};
++use crate::budget::{BudgetRef, Exhausted};
+ pub use crate::object::array::Array;
+ pub use crate::object::date::DateTime;
+ pub use crate::object::dict::Dict;
+@@ -251,7 +251,7 @@ pub trait FromBytes<'a>: Sized {
+     /// parser recovered an object; see [`crate::budget`].
+     fn from_bytes_with_budget(
+         b: &'a [u8],
+-        budget: &'a dyn ParseBudget,
++        budget: &'a BudgetRef<'a>,
+     ) -> Result<Option<Self>, Exhausted>;
+ }
+ 
+@@ -262,7 +262,7 @@ impl<'a, T: Readable<'a>> FromBytes<'a> for T {
+ 
+     fn from_bytes_with_budget(
+         b: &'a [u8],
+-        budget: &'a dyn ParseBudget,
++        budget: &'a BudgetRef<'a>,
+     ) -> Result<Option<Self>, Exhausted> {
+         if budget.exhausted() {
+             return Err(Exhausted);
+diff --git a/hayro-syntax/src/reader.rs b/hayro-syntax/src/reader.rs
+index 880a19ef..f3467dc6 100644
+--- a/hayro-syntax/src/reader.rs
++++ b/hayro-syntax/src/reader.rs
+@@ -1,6 +1,6 @@
+ //! Reading bytes and PDF objects from data.
+ 
+-use crate::budget::ParseBudget;
++use crate::budget::BudgetRef;
+ use crate::object::ObjectIdentifier;
+ use crate::sync::Arc;
+ use crate::trivia::{Comment, is_eol_character, is_white_space_character};
+@@ -38,7 +38,6 @@ impl<'a> ReaderExt<'a> for Reader<'a> {
+     #[inline]
+     fn read<T: Readable<'a>>(&mut self, ctx: &ReaderContext<'a>) -> Option<T> {
+         let old_offset = self.offset;
+-        self.attach_budget(ctx.budget());
+ 
+         T::read(self, ctx).or_else(|| {
+             self.offset = old_offset;
+@@ -126,7 +125,7 @@ impl<'a> ReaderExt<'a> for Reader<'a> {
+ #[derive(Clone)]
+ struct ReaderContextData<'a> {
+     xref: &'a XRef,
+-    budget: Option<&'a dyn ParseBudget>,
++    budget: Option<&'a BudgetRef<'a>>,
+     in_content_stream: bool,
+     in_object_stream: bool,
+     obj_number: Option<ObjectIdentifier>,
+@@ -175,7 +174,7 @@ impl<'a> ReaderContext<'a> {
+     }
+ 
+     /// A context without a document, whose reads charge `budget`.
+-    pub fn with_budget(budget: Option<&'a dyn ParseBudget>) -> Self {
++    pub fn with_budget(budget: Option<&'a BudgetRef<'a>>) -> Self {
+         match budget {
+             None => Self::dummy(),
+             Some(budget) => Self(ReaderContextInner::Shared(Arc::new(ReaderContextData {
+@@ -197,7 +196,7 @@ impl<'a> ReaderContext<'a> {
+ 
+     /// The budget that reads in this context charge, if any.
+     #[inline]
+-    pub(crate) fn budget(&self) -> Option<&'a dyn ParseBudget> {
++    pub(crate) fn budget(&self) -> Option<&'a BudgetRef<'a>> {
+         match &self.0 {
+             ReaderContextInner::Shared(inner) => inner.budget,
+             ReaderContextInner::Dummy { .. } => None,
+@@ -282,10 +281,7 @@ pub trait Readable<'a>: Sized {
+     fn from_bytes_impl(b: &'a [u8]) -> Option<Self> {
+         Self::from_bytes_with_budget_impl(b, None)
+     }
+-    fn from_bytes_with_budget_impl(
+-        b: &'a [u8],
+-        budget: Option<&'a dyn ParseBudget>,
+-    ) -> Option<Self> {
++    fn from_bytes_with_budget_impl(b: &'a [u8], budget: Option<&'a BudgetRef<'a>>) -> Option<Self> {
+         let mut r = Reader::new_with_budget(b, budget);
+         Self::read(&mut r, &ReaderContext::with_budget(budget))
+     }
+diff --git a/hayro-syntax/tests/budget.rs b/hayro-syntax/tests/budget.rs
+index 84a4e45c..cd58241e 100644
+--- a/hayro-syntax/tests/budget.rs
++++ b/hayro-syntax/tests/budget.rs
+@@ -1,6 +1,6 @@
+ //! Reading objects with a `ParseBudget`.
+ 
+-use hayro_syntax::budget::{Exhausted, ParseBudget};
++use hayro_syntax::budget::{BudgetRef, Exhausted, ParseBudget};
+ use hayro_syntax::object::{Array, Dict, FromBytes, MaybeRef, Name, Object};
+ use std::sync::Mutex;
+ use std::time::Instant;
+@@ -112,7 +112,8 @@ fn valid_and_damaged_objects_read_the_same() {
+     for input in VALID {
+         let limits = Limits::default();
+         let plain = MaybeRef::<Object<'_>>::from_bytes(input);
+-        let budgeted = MaybeRef::<Object<'_>>::from_bytes_with_budget(input, &limits).unwrap();
++        let budget = BudgetRef::new(&limits);
++        let budgeted = MaybeRef::<Object<'_>>::from_bytes_with_budget(input, &budget).unwrap();
+         // Every scanned byte is charged, and bytes that a read scans again,
+         // such as a stream's /Length, are charged again.
+         assert!(limits.state().work <= 3 * input.len());
+@@ -130,7 +131,8 @@ fn valid_and_damaged_objects_read_the_same() {
+ fn lazy_reads_return_the_same_values() {
+     let input = b"<< /A << /B [1 (two) /Three] >> >>";
+     let limits = Limits::default();
+-    let dict = Dict::from_bytes_with_budget(input, &limits)
++    let budget = BudgetRef::new(&limits);
++    let dict = Dict::from_bytes_with_budget(input, &budget)
+         .unwrap()
+         .unwrap();
+     let inner = dict.get::<Dict<'_>>("A").unwrap();
+@@ -146,7 +148,7 @@ fn a_long_name_stops_at_the_work_limit() {
+     input.resize(10 << 20, b'a');
+     let limits = Limits::with(|s| s.work_limit = Some(64 << 10));
+     assert_eq!(
+-        Name::from_bytes_with_budget(&input, &limits),
++        Name::from_bytes_with_budget(&input, &BudgetRef::new(&limits)),
+         Err(Exhausted)
+     );
+     let s = limits.state();
+@@ -165,7 +167,7 @@ fn a_long_string_is_cancelled_while_it_is_read() {
+         // The token is cancelled during the read, after 10 windows.
+         let limits = Limits::with(|s| s.cancel_after_polls = Some(10));
+         assert_eq!(
+-            hayro_syntax::object::String::from_bytes_with_budget(&input, &limits),
++            hayro_syntax::object::String::from_bytes_with_budget(&input, &BudgetRef::new(&limits)),
+             Err(Exhausted)
+         );
+         let s = limits.state();
+@@ -180,7 +182,7 @@ fn a_long_string_is_cancelled_while_it_is_read() {
+ fn a_deadline_stops_a_large_object() {
+     let input = large_dict(200_000);
+     let limits = Limits::with(|s| s.deadline = Some(Instant::now()));
+-    assert!(Dict::from_bytes_with_budget(&input, &limits).is_err());
++    assert!(Dict::from_bytes_with_budget(&input, &BudgetRef::new(&limits)).is_err());
+     let s = limits.state();
+     assert!(s.refused);
+     assert_eq!(s.work, 0);
+@@ -191,7 +193,8 @@ fn a_large_dictionary_charges_its_table_before_allocating_it() {
+     let input = large_dict(100_000);
+ 
+     let unlimited = Limits::default();
+-    let dict = Dict::from_bytes_with_budget(&input, &unlimited)
++    let budget = BudgetRef::new(&unlimited);
++    let dict = Dict::from_bytes_with_budget(&input, &budget)
+         .unwrap()
+         .unwrap();
+     assert_eq!(dict.len(), 100_000);
+@@ -206,7 +209,7 @@ fn a_large_dictionary_charges_its_table_before_allocating_it() {
+ 
+     for limit in [0, 1 << 10, 1 << 20] {
+         let limits = Limits::with(|s| s.memory_limit = Some(limit));
+-        assert!(Dict::from_bytes_with_budget(&input, &limits).is_err());
++        assert!(Dict::from_bytes_with_budget(&input, &BudgetRef::new(&limits)).is_err());
+         let s = limits.state();
+         assert!(s.refused);
+         assert!(s.peak_memory <= limit);
+@@ -227,12 +230,15 @@ fn escaped_names_and_strings_charge_their_buffers() {
+ 
+     for input in [&name, &literal, &hex] {
+         let limits = Limits::with(|s| s.memory_limit = Some(1 << 10));
+-        assert!(MaybeRef::<Object<'_>>::from_bytes_with_budget(input, &limits).is_err());
++        assert!(
++            MaybeRef::<Object<'_>>::from_bytes_with_budget(input, &BudgetRef::new(&limits))
++                .is_err()
++        );
+         assert!(limits.state().refused);
+ 
+         let limits = Limits::default();
+         assert!(matches!(
+-            MaybeRef::<Object<'_>>::from_bytes_with_budget(input, &limits),
++            MaybeRef::<Object<'_>>::from_bytes_with_budget(input, &BudgetRef::new(&limits)),
+             Ok(Some(_))
+         ));
+         assert!(limits.state().memory >= input.len() / 2 - 2);
+@@ -245,7 +251,8 @@ fn lazy_reads_charge_the_budget_after_the_first_read() {
+     input.resize(1 << 20, b'x');
+     input.extend_from_slice(b") /B [1 2 3] >>");
+     let limits = Limits::default();
+-    let dict = Dict::from_bytes_with_budget(&input, &limits)
++    let budget = BudgetRef::new(&limits);
++    let dict = Dict::from_bytes_with_budget(&input, &budget)
+         .unwrap()
+         .unwrap();
+     let after_read = limits.state().work;
+@@ -270,12 +277,14 @@ fn a_stream_without_its_length_searches_for_endstream_within_the_budget() {
+ 
+     let limits = Limits::default();
+     assert!(matches!(
+-        MaybeRef::<Object<'_>>::from_bytes_with_budget(&input, &limits),
++        MaybeRef::<Object<'_>>::from_bytes_with_budget(&input, &BudgetRef::new(&limits)),
+         Ok(Some(_))
+     ));
+ 
+     let limits = Limits::with(|s| s.work_limit = Some(1 << 20));
+-    assert!(MaybeRef::<Object<'_>>::from_bytes_with_budget(&input, &limits).is_err());
++    assert!(
++        MaybeRef::<Object<'_>>::from_bytes_with_budget(&input, &BudgetRef::new(&limits)).is_err()
++    );
+     let s = limits.state();
+     assert!(s.refused);
+     assert!(s.work <= 1 << 20);
 -- 
 2.56.0
 
