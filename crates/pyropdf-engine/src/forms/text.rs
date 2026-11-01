@@ -30,15 +30,53 @@ pub(super) fn append_text(out: &mut BudgetVec<'_, u8>, bytes: &[u8]) -> Result<(
     Ok(())
 }
 
+/// The bytes that the UTF-8 decoder validates between two polls.
+const UTF8_STEP: usize = 4096;
+
+/// Appends `bytes` as UTF-8, each invalid sequence a U+FFFD as
+/// `String::from_utf8_lossy` writes it.
 pub(super) fn append_lossy(out: &mut BudgetVec<'_, u8>, bytes: &[u8]) -> Result<(), LimitExceeded> {
-    out.budget().poll()?;
-    for chunk in bytes.utf8_chunks() {
-        for part in chunk.valid().as_bytes().chunks(4096) {
-            out.budget().poll()?;
-            out.try_extend_from_slice(part)?;
-        }
-        if !chunk.invalid().is_empty() {
-            append_char(out, char::REPLACEMENT_CHARACTER)?;
+    let budget = out.budget();
+    append_lossy_with(out, bytes, UTF8_STEP, &mut || budget.poll())
+}
+
+/// Appends `bytes` as [`append_lossy`] does, validating `step` bytes, and
+/// polling, at a time: a single step of `utf8_chunks` validates up to the
+/// next invalid byte, which can be the whole input.
+pub(super) fn append_lossy_with(
+    out: &mut BudgetVec<'_, u8>,
+    bytes: &[u8],
+    step: usize,
+    poll: &mut dyn FnMut() -> Result<(), LimitExceeded>,
+) -> Result<(), LimitExceeded> {
+    poll()?;
+    let mut start = 0;
+    while start < bytes.len() {
+        poll()?;
+        let end = start.saturating_add(step.max(4)).min(bytes.len());
+        let error = match std::str::from_utf8(&bytes[start..end]) {
+            Ok(valid) => {
+                out.try_extend_from_slice(valid.as_bytes())?;
+                start = end;
+                continue;
+            }
+            Err(error) => error,
+        };
+        let valid = error.valid_up_to();
+        out.try_extend_from_slice(&bytes[start..start + valid])?;
+        match error.error_len() {
+            Some(invalid) => {
+                append_char(out, char::REPLACEMENT_CHARACTER)?;
+                start += valid + invalid;
+            }
+            None if end == bytes.len() => {
+                append_char(out, char::REPLACEMENT_CHARACTER)?;
+                start = end;
+            }
+            // A sequence that the step cut is read again with the next
+            // step. It starts in the step's last three bytes, and a step
+            // holds at least four, so `valid` is positive.
+            None => start += valid,
         }
     }
     Ok(())

@@ -14,6 +14,7 @@ mod appearance;
 mod font;
 mod layout;
 mod ops;
+mod scan;
 
 pub use appearance::{DA_FONTS, DefaultAppearance, MAX_DEFAULT_APPEARANCE, da_font};
 pub use font::{
@@ -26,6 +27,7 @@ pub use layout::{
 };
 pub use ops::{Align, DeviceColor, Style, text_ops, text_ops_with};
 pub use pdf_base14_metrics::{Base14Font, CharacterMetric};
+pub use scan::MAX_BREAK_CONTEXT;
 
 use pyropdf_store::budget::Budget;
 

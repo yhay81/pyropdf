@@ -285,6 +285,62 @@ fn appearance_values_decode_with_budgeted_memory() {
     assert_eq!(error.code(), LimitCode::MemorySize);
 }
 
+#[test]
+fn stepped_utf8_decoding_matches_from_utf8_lossy() {
+    let samples: &[&[u8]] = &[
+        b"plain",
+        "\u{e9}\u{4e00}\u{1f600}".as_bytes(),
+        b"a\xffb\xe4\xb8c\xf0\x9f\x98",
+        b"\xe0\x80\x80\xed\xa0\x80\xf4\x90\x80\x80",
+        b"\xf0\x9f\x98\x80\xf0\x9f",
+        b"\xc3",
+    ];
+    for &bytes in samples {
+        // Repeat each sample so that steps cut its sequences everywhere.
+        let bytes = bytes.repeat(5);
+        for step in 1..12 {
+            let budget = Budget::default();
+            let mut output = BudgetVec::new(&budget);
+            text::append_lossy_with(&mut output, &bytes, step, &mut || Ok(())).unwrap();
+            assert_eq!(
+                std::str::from_utf8(&output).unwrap(),
+                String::from_utf8_lossy(&bytes),
+                "{bytes:?} in steps of {step}"
+            );
+        }
+    }
+}
+
+#[test]
+fn utf8_decoding_stops_midway_for_cancellation_and_deadline() {
+    use std::time::Instant;
+
+    use pyropdf_store::budget::CancellationToken;
+
+    let bytes = "\u{e9}".repeat(64 * 4096).into_bytes();
+    let token = CancellationToken::new();
+    token.cancel();
+    let cancelled = Budget::default().with_cancellation(token);
+    let expired = Budget::default().with_deadline(Instant::now());
+    for (stopped, code) in [
+        (cancelled, LimitCode::Cancelled),
+        (expired, LimitCode::Deadline),
+    ] {
+        let budget = Budget::default();
+        let mut output = BudgetVec::new(&budget);
+        let mut polls = 0;
+        let error = text::append_lossy_with(&mut output, &bytes, 4096, &mut || {
+            polls += 1;
+            if polls >= 32 { stopped.poll() } else { Ok(()) }
+        })
+        .unwrap_err();
+        assert_eq!(error.code(), code);
+        assert_eq!(polls, 32);
+        // The polls came between steps, after part of the input.
+        assert!(!output.is_empty() && output.len() < bytes.len());
+    }
+}
+
 fn states(document: &Document) -> Vec<(String, String)> {
     match draw(document).unwrap() {
         Some(Drawing::States(states)) => states
