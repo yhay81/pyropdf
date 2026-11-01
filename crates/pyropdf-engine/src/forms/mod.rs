@@ -518,7 +518,23 @@ fn drawn(
     align: Align,
     face: Option<&mut FaceText<'_>>,
 ) -> Result<Drawing, WidgetError> {
-    let mut text = TextStyle::new(default_appearance(reader, widget, form)?);
+    let appearance = default_appearance(reader, widget, form)?;
+    let form_font = match (&appearance, form) {
+        (Some(appearance), Some(form)) => form_standard_font(reader, form, &appearance.font)?,
+        _ => FormFont::Absent,
+    };
+    let base_font = match form_font {
+        FormFont::Standard(base_font) => Some(base_font),
+        // Drawing in another font's encoding would show other glyphs.
+        FormFont::Unsupported if face.is_none() => {
+            return Err(malformed(
+                "the form font that the widget's /DA names has an /Encoding \
+                 that a Standard 14 appearance cannot reproduce",
+            ));
+        }
+        FormFont::Absent | FormFont::Unsupported => None,
+    };
+    let mut text = TextStyle::new(appearance, base_font);
     let embedded = face.as_ref().map(|face| face.font());
     if face.is_some() {
         face::RESOURCE.clone_into(&mut text.resource);
@@ -563,6 +579,123 @@ fn drawn(
         matrix: style.matrix,
         font,
     }))
+}
+
+/// What a form's `/DR /Font` holds under the font name of a `/DA`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormFont {
+    /// No unembedded Standard 14 Type1 font: the name falls back to its
+    /// Standard 14 abbreviation, else to Helvetica.
+    Absent,
+    /// A Standard 14 font whose glyphs the appearance's own font
+    /// dictionary reaches: WinAnsi for a text font, the built-in encoding
+    /// for Symbol and ZapfDingbats.
+    Standard(&'static str),
+    /// A Standard 14 font whose `/Encoding` selects glyphs that the
+    /// appearance's own font dictionary cannot reproduce.
+    Unsupported,
+}
+
+/// Resolves the font that the form's `/DR /Font` holds under `/DA` name
+/// `resource`: a collision-free name assigned when a widget is created, or
+/// an arbitrary alias such as `F1`. Entries beyond those that select the
+/// face and its encoding, such as `/Widths` or `/Name`, do not matter.
+///
+/// The appearance writes its own font dictionary, so a text font's
+/// `/Encoding` matters only for the glyphs that it selects: the built-in
+/// `StandardEncoding` of an omitted entry, `WinAnsiEncoding`,
+/// `MacRomanEncoding`, and a dictionary over one of these without
+/// `/Differences` all select Latin text glyphs that WinAnsi reaches, so the
+/// text is drawn in WinAnsi with the same glyphs. Omission is not read as
+/// WinAnsi: the appearance's dictionary names WinAnsi itself. Any other
+/// encoding, and any `/Encoding` on Symbol or ZapfDingbats, is
+/// [`FormFont::Unsupported`] rather than drawn with other glyphs.
+fn form_standard_font(reader: &Reader<'_>, form: &Dict, resource: &str) -> Result<FormFont> {
+    let Some(resources) = reader.entry(form, "DR")? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Dict(resources) = &*resources else {
+        return Ok(FormFont::Absent);
+    };
+    let Some(fonts) = reader.entry(resources, "Font")? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Dict(fonts) = &*fonts else {
+        return Ok(FormFont::Absent);
+    };
+    let Some(font) = reader.entry(fonts, resource)? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Dict(font) = &*font else {
+        return Ok(FormFont::Absent);
+    };
+    if !matches!(reader.entry(font, "Subtype")?.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"Type1")
+        || !match reader.entry(font, "Type")?.as_deref() {
+            None => true,
+            Some(Value::Name(name)) => name.as_bytes() == b"Font",
+            Some(_) => false,
+        }
+    {
+        return Ok(FormFont::Absent);
+    }
+    let Some(base) = reader.entry(font, "BaseFont")? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Name(base) = &*base else {
+        return Ok(FormFont::Absent);
+    };
+    let Some(base) = standard::DA_FONTS
+        .iter()
+        .map(|(_, base)| *base)
+        .find(|name| name.as_bytes() == base.as_bytes())
+    else {
+        return Ok(FormFont::Absent);
+    };
+    if let Some(descriptor) = reader.entry(font, "FontDescriptor")? {
+        let Value::Dict(descriptor) = &*descriptor else {
+            return Ok(FormFont::Absent);
+        };
+        for key in ["FontFile", "FontFile2", "FontFile3"] {
+            if reader.entry(descriptor, key)?.is_some() {
+                // An embedded program draws other outlines than the
+                // Standard 14 font that it is named after.
+                return Ok(FormFont::Absent);
+            }
+        }
+    }
+    let supported = match reader.entry(font, "Encoding")?.as_deref() {
+        None => true,
+        Some(_) if matches!(base, "Symbol" | "ZapfDingbats") => false,
+        Some(Value::Name(name)) => latin_encoding(name.as_bytes()),
+        Some(Value::Dict(encoding)) => {
+            let base_supported = match reader.entry(encoding, "BaseEncoding")?.as_deref() {
+                None => true,
+                Some(Value::Name(name)) => latin_encoding(name.as_bytes()),
+                Some(_) => false,
+            };
+            let differences = match reader.entry(encoding, "Differences")?.as_deref() {
+                None => false,
+                Some(Value::Array(differences)) => !differences.is_empty(),
+                Some(_) => true,
+            };
+            base_supported && !differences
+        }
+        Some(_) => false,
+    };
+    Ok(if supported {
+        FormFont::Standard(base)
+    } else {
+        FormFont::Unsupported
+    })
+}
+
+/// Returns whether a named encoding of a text font selects only the Latin
+/// text glyphs that WinAnsi reaches.
+fn latin_encoding(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"StandardEncoding" | b"WinAnsiEncoding" | b"MacRomanEncoding"
+    )
 }
 
 /// Draws the states that a check box or radio button widget lacks: `Off`,
@@ -1039,13 +1172,14 @@ impl TextStyle {
     /// Returns the style of a `/DA`: Helvetica, as `Helv`, for a font that
     /// is no Standard 14 abbreviation, and Helvetica fitted in black without
     /// one.
-    fn new(da: Option<DefaultAppearance>) -> Self {
+    fn new(da: Option<DefaultAppearance>, resolved_font: Option<&'static str>) -> Self {
         let (resource, size, color) = da.map_or_else(
             || ("Helv".to_owned(), 0.0, (0.0, 0.0, 0.0)),
             |da| (da.font, da.size, da.color),
         );
-        let base_font = standard::da_font(&resource);
-        let resource = if base_font == "Helvetica" && resource != "Helv" {
+        let base_font = resolved_font.unwrap_or_else(|| standard::da_font(&resource));
+        let resource = if resolved_font.is_none() && base_font == "Helvetica" && resource != "Helv"
+        {
             "Helv".to_owned()
         } else {
             resource

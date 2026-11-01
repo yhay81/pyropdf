@@ -35,7 +35,7 @@ from pyropdf._annotations import (
     Underline,
 )
 from pyropdf._attachments import Attachment, Attachments
-from pyropdf._canvas import Canvas, PathBuilder, TextFit
+from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, TableHeaderScope, TagRole, TextFit
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._check import StructuralDefect, StructuralReport
 from pyropdf._chunks import Chunk, Element
@@ -108,7 +108,7 @@ from pyropdf._form import (
 from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, PageImage, StoredImage
-from pyropdf._layers import Layer, LayerConfig, Layers
+from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
 from pyropdf._metadata import Metadata, parse_pdf_date, pdf_date
@@ -234,6 +234,7 @@ __all__ = [
     "Launch",
     "Layer",
     "LayerConfig",
+    "LayerMembership",
     "Layers",
     "Layout",
     "LimitError",
@@ -246,6 +247,7 @@ __all__ = [
     "Link",
     "Links",
     "ListBox",
+    "ListNumbering",
     "MalformedPdfError",
     "MarkedContent",
     "MarkupRects",
@@ -326,6 +328,8 @@ __all__ = [
     "SubsetFont",
     "Table",
     "TableDiagnostics",
+    "TableHeaderScope",
+    "TagRole",
     "Target",
     "TextField",
     "TextFit",
@@ -337,6 +341,7 @@ __all__ = [
     "Unconverted",
     "Underline",
     "Unmapped",
+    "VisibilityPolicy",
     "Widget",
     "Widgets",
     "Word",

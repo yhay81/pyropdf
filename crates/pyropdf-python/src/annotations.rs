@@ -12,11 +12,13 @@
 //! and the appearance settler draws it again once per transaction (section
 //! 7).
 
+mod input;
 pub mod links;
 
 use std::sync::Arc;
 
 use pyo3::Borrowed;
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyropdf_engine::annotations::{
@@ -843,49 +845,71 @@ pub fn annotation_read(
 /// `Annotation._set` passes them. Colors are RGB from 0 to 1, the border is
 /// its width, `/S` style, and dash lengths, and the blend mode and the icon
 /// are PDF names.
-#[derive(FromPyObject)]
-#[pyo3(from_item_all)]
 pub struct Edit {
-    #[pyo3(default)]
     rect: Option<Rect>,
-    #[pyo3(default)]
     contents: Option<String>,
-    #[pyo3(default)]
     author: Option<String>,
-    #[pyo3(default)]
     subject: Option<String>,
-    #[pyo3(default)]
     name: Option<String>,
-    #[pyo3(default)]
     language: Option<String>,
-    #[pyo3(default)]
     icon: Option<String>,
-    #[pyo3(default)]
     color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     interior_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     opacity: Option<f64>,
-    #[pyo3(default)]
     flags: Option<i64>,
-    #[pyo3(default)]
     border: Option<(f64, String, Vec<f64>)>,
-    #[pyo3(default)]
     clouds: Option<f64>,
-    #[pyo3(default)]
     blend_mode: Option<String>,
-    #[pyo3(default)]
     rotate: Option<i64>,
-    #[pyo3(default)]
     modified: Option<String>,
-    #[pyo3(default)]
     points: Option<Vec<Vec<(f64, f64)>>>,
-    #[pyo3(default)]
     line_endings: Option<(String, String)>,
     clear: Vec<String>,
 }
 
+/// The number of properties that an edit may remove.
+const CLEARABLE: usize = 10;
+
+/// Refuses a date that is longer than any PDF date string.
+fn long_date() -> PyErr {
+    PdfError::new_err("an annotation date is a PDF date string")
+}
+
+/// Refuses a name that is longer than any that `what` may be.
+fn long_name(what: &'static str) -> impl FnOnce() -> PyErr {
+    move || PdfError::new_err(format!("unknown {what}"))
+}
+
 impl Edit {
+    /// Reads an edit from the mapping that Python passes, checking each
+    /// input-derived size against `budget` before copying it.
+    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        let fields = input::Fields::new(map, budget);
+        let code = LimitCode::AnnotationInputSize;
+        let mut total = 0;
+        Ok(Self {
+            rect: fields.value("rect")?,
+            contents: fields.text("contents", code, &mut total)?,
+            author: fields.text("author", code, &mut total)?,
+            subject: fields.text("subject", code, &mut total)?,
+            name: fields.text("name", code, &mut total)?,
+            language: fields.text("language", code, &mut total)?,
+            icon: fields.short("icon", input::MAX_NAME, long_name("icon"))?,
+            color: fields.value("color")?,
+            interior_color: fields.value("interior_color")?,
+            opacity: fields.value("opacity")?,
+            flags: fields.value("flags")?,
+            border: fields.border("border")?,
+            clouds: fields.value("clouds")?,
+            blend_mode: fields.short("blend_mode", input::MAX_NAME, long_name("blend mode"))?,
+            rotate: fields.value("rotate")?,
+            modified: fields.short("modified", input::MAX_DATE, long_date)?,
+            points: fields.points("points")?,
+            line_endings: fields.line_endings("line_endings")?,
+            clear: fields.names("clear", CLEARABLE)?,
+        })
+    }
+
     /// Applies the edit to `dict`, an annotation of `subtype` on a page of
     /// `annots`, refusing an edit that does not fit the annotation.
     fn apply(&self, annots: &Annots, dict: &mut Dict, subtype: &str) -> PyResult<()> {
@@ -1290,14 +1314,15 @@ pub fn annotation_edit(
     generation: u16,
     index: u32,
     id: (u32, u16),
-    edit: Edit,
+    edit: &Bound<'_, PyAny>,
 ) -> PyResult<Option<(u32, u16)>> {
     editing(
         py,
         document,
         number,
         generation,
-        |annots, transaction, _budget| {
+        |annots, transaction, budget| {
+            let edit = Edit::read(edit, budget)?;
             let (position, mut dict) = annots.find(index, id)?;
             let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
             edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
@@ -1643,59 +1668,32 @@ impl std::ops::Deref for Callout {
 /// border, opacity, blend mode, contents, and creation date; a line's
 /// endings; a note's icon and open state; and a file attachment's icon,
 /// data, file name, description, and the bound of its data.
-#[derive(FromPyObject)]
-#[pyo3(from_item_all)]
 pub struct Spec {
     subtype: String,
-    #[pyo3(default)]
     rects: Option<Vec<Rect>>,
-    #[pyo3(default)]
     rect: Option<Rect>,
-    #[pyo3(default)]
     color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     opacity: Option<f64>,
-    #[pyo3(default)]
     contents: Option<String>,
-    #[pyo3(default)]
     created: Option<String>,
-    #[pyo3(default)]
     icon: Option<String>,
-    #[pyo3(default)]
     open: Option<bool>,
-    #[pyo3(default)]
     points: Option<Vec<Vec<(f64, f64)>>>,
-    #[pyo3(default)]
     line_endings: Option<(String, String)>,
-    #[pyo3(default)]
     interior_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     border: Option<(f64, String, Vec<f64>)>,
-    #[pyo3(default)]
     clouds: Option<f64>,
-    #[pyo3(default)]
     blend_mode: Option<String>,
-    #[pyo3(default)]
     data: Option<PyBackedBytes>,
-    #[pyo3(default)]
     filename: Option<String>,
-    #[pyo3(default)]
     description: Option<String>,
-    #[pyo3(default)]
     max_size: Option<u64>,
-    #[pyo3(default)]
     text_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     font_size: Option<f64>,
-    #[pyo3(default)]
     font_name: Option<String>,
-    #[pyo3(default)]
     align: Option<i64>,
-    #[pyo3(default)]
     rotate: Option<i64>,
-    #[pyo3(default)]
     callout: Option<Callout>,
-    #[pyo3(default)]
     callout_ending: Option<String>,
 }
 
@@ -1719,6 +1717,53 @@ const ADDED_SUBTYPES: [&str; 15] = [
 ];
 
 impl Spec {
+    /// Reads a specification from the mapping that Python passes, checking
+    /// each input-derived size against `budget` before copying it.
+    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        let fields = input::Fields::new(map, budget);
+        let subtype = fields
+            .short("subtype", input::MAX_NAME, || {
+                PdfError::new_err("pyropdf does not add annotations of this subtype")
+            })?
+            .ok_or_else(|| PyTypeError::new_err("an annotation specification names its subtype"))?;
+        let mut total = 0;
+        let mut file_texts = 0;
+        let file = LimitCode::EmbeddedFileInputSize;
+        let max_size = fields.value("max_size")?;
+        Ok(Self {
+            subtype,
+            rects: fields.rects("rects")?,
+            rect: fields.value("rect")?,
+            color: fields.value("color")?,
+            opacity: fields.value("opacity")?,
+            contents: fields.text("contents", LimitCode::AnnotationInputSize, &mut total)?,
+            created: fields.short("created", input::MAX_DATE, long_date)?,
+            icon: fields.short("icon", input::MAX_NAME, long_name("icon"))?,
+            open: fields.value("open")?,
+            points: fields.points("points")?,
+            line_endings: fields.line_endings("line_endings")?,
+            interior_color: fields.value("interior_color")?,
+            border: fields.border("border")?,
+            clouds: fields.value("clouds")?,
+            blend_mode: fields.short("blend_mode", input::MAX_NAME, long_name("blend mode"))?,
+            data: fields.data("data", max_size)?,
+            filename: fields.text("filename", file, &mut file_texts)?,
+            description: fields.text("description", file, &mut file_texts)?,
+            max_size,
+            text_color: fields.value("text_color")?,
+            font_size: fields.value("font_size")?,
+            font_name: fields.short("font_name", input::MAX_NAME, long_name("font name"))?,
+            align: fields.value("align")?,
+            rotate: fields.value("rotate")?,
+            callout: fields.value("callout")?,
+            callout_ending: fields.short(
+                "callout_ending",
+                input::MAX_NAME,
+                long_name("callout ending"),
+            )?,
+        })
+    }
+
     /// Returns the dictionary of the annotation, without its page.
     fn dictionary(&self, annots: &Annots) -> PyResult<Dict> {
         let subtype = self.subtype.as_str();
@@ -2207,7 +2252,7 @@ pub fn annotation_add(
     document: &_Document,
     number: u32,
     generation: u16,
-    spec: Spec,
+    spec: &Bound<'_, PyAny>,
 ) -> PyResult<Option<(u32, u16)>> {
     editing(
         py,
@@ -2215,6 +2260,7 @@ pub fn annotation_add(
         number,
         generation,
         |annots, transaction, budget| {
+            let spec = Spec::read(spec, budget)?;
             budget
                 .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
                 .map_err(|e| limit_error(&e))?;

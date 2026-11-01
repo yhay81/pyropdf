@@ -471,6 +471,15 @@ def test_form_font_failures_leave_the_document_unchanged() -> None:
     assert doc.history.steps == steps
 
 
+def test_form_font_belongs_to_the_document() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    face = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form.font = face
+
+    assert doc.form.font is face
+    assert pyropdf.open(_build_form_pdf()).form.font is None
+
+
 def test_form_font_takes_a_font_or_none() -> None:
     doc = pyropdf.open(_build_form_pdf())
     face = pyropdf.Font.from_file(NOTO_SANS_JP)
@@ -694,6 +703,26 @@ def _build_inherited_comb_pdf(child: str, extra: dict[int, str] | None = None) -
             **(extra or {}),
         }
     )
+
+
+def test_missing_field_entry_stays_a_reference_after_saving() -> None:
+    """Saving keeps number 7 free, so reloaded documents still read a missing object."""
+    saved = pyropdf.open(_build_inherited_comb_pdf("/V 7 0 R")).to_bytes()
+
+    assert re.search(rb"/V\s*7 0 R", saved)
+    assert not re.search(rb"(?m)^7 0 obj", saved)
+
+
+@null_equivalents
+def test_null_child_field_entries_inherit_parent_values(value: str) -> None:
+    """Null-equivalent child entries inherit like absent ones; `/V` read as no value."""
+    entries = " ".join(f"/{key} {value}" for key in INHERITABLE_FIELD_KEYS)
+
+    for current in _reloaded(pyropdf.open(_build_inherited_comb_pdf(entries))):
+        assert form_entries(current) == [
+            {"name": "code.inner", "type": "text", "value": "P42"},
+            {"name": "other", "type": "text", "value": None},
+        ]
 
 
 def _inner_comb_cells(doc: pyropdf.Document, count: int = 6) -> list[bool]:

@@ -2640,7 +2640,8 @@ fn edit_field(
 /// A field to create with its first widget, or a widget to add to the
 /// field of that name and kind, as `page.widgets.add` passes a field
 /// specification. Colours are RGB from 0 to 1, the border is its width,
-/// `/S` style, and dash lengths, and `align` is a `/Q` code.
+/// `/S` style, and dash lengths, `font_name` is a Standard 14 font, and
+/// `align` is a `/Q` code.
 #[derive(FromPyObject)]
 #[pyo3(from_item_all)]
 pub struct FieldSpec {
@@ -2674,6 +2675,8 @@ pub struct FieldSpec {
     #[pyo3(default)]
     text_color: Option<(f64, f64, f64)>,
     #[pyo3(default)]
+    font_name: Option<String>,
+    #[pyo3(default)]
     font_size: Option<f64>,
     #[pyo3(default)]
     align: Option<u8>,
@@ -2704,6 +2707,19 @@ fn field_type(kind: &str) -> PyResult<(&'static str, i64)> {
 }
 
 impl FieldSpec {
+    /// Returns the `/DA` resource name of the specification's Standard 14
+    /// font, Helvetica by default.
+    fn font_resource(&self) -> PyResult<&'static str> {
+        let Some(name) = &self.font_name else {
+            return Ok("Helv");
+        };
+        DA_FONTS
+            .iter()
+            .find(|(_, font)| font == name)
+            .map(|(resource, _)| *resource)
+            .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))
+    }
+
     /// Returns the on state of a check box or radio button.
     fn on_state(&self) -> &str {
         self.on_state.as_deref().unwrap_or("Yes")
@@ -2777,6 +2793,7 @@ impl FieldSpec {
         }
         if shows_text(&self.kind) || self.kind == "pushbutton" {
             rgb(self.text_color.unwrap_or((0.0, 0.0, 0.0)), "text colour")?;
+            self.font_resource()?;
             let size = self.font_size.unwrap_or(0.0);
             if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
                 return Err(PdfError::new_err(
@@ -2830,7 +2847,8 @@ impl FieldSpec {
         if shows_text(&self.kind) || self.kind == "pushbutton" {
             let (red, green, blue) = self.text_color.unwrap_or((0.0, 0.0, 0.0));
             let size = self.font_size.unwrap_or(0.0);
-            let appearance = format!("/Helv {size} Tf {red} {green} {blue} rg");
+            let resource = self.font_resource()?;
+            let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
             widget.insert(
                 Name::from("DA"),
                 Value::String(PdfString::literal(appearance.into_bytes())),
@@ -2999,6 +3017,22 @@ fn add_widget(
         None => None,
     };
     let holder = form_object(transaction, budget)?;
+    if shows_text(&spec.kind) || spec.kind == "pushbutton" {
+        let resource = register_standard_font(
+            transaction,
+            holder,
+            spec.font_resource()?,
+            spec.font_name.as_deref().unwrap_or("Helvetica"),
+            budget,
+        )?;
+        let (red, green, blue) = spec.text_color.unwrap_or((0.0, 0.0, 0.0));
+        let size = spec.font_size.unwrap_or(0.0);
+        let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+        widget.insert(
+            Name::from("DA"),
+            Value::String(PdfString::literal(appearance.into_bytes())),
+        );
+    }
     let reference = transaction.allocate().map_err(store)?;
     let buttons = is_button(&spec.kind);
     let field_id = match existing {
@@ -3079,6 +3113,124 @@ fn add_widget(
         Ok(value)
     })?;
     Ok(id(reference))
+}
+
+/// Makes Standard 14 font `base` resolvable in the `/DR` of form `holder`
+/// under `preferred`, its `/DA` abbreviation, or a free `preferred_N` when
+/// another font holds that name; returns the resource name. Existing
+/// resources are copied, not edited through shared references.
+fn register_standard_font(
+    transaction: &mut Transaction,
+    holder: Reference,
+    preferred: &str,
+    base: &str,
+    budget: &Budget,
+) -> PyResult<String> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let mut form = dict_at(transaction, holder, budget)?
+        .ok_or_else(|| PdfError::new_err("the interactive form is not a dictionary"))?;
+    let snapshot = transaction.snapshot();
+    let mut reads = Reads::new(&snapshot, budget);
+    let mut resources = match read(&mut reads, form.get("DR"))? {
+        Some(Value::Dict(dict)) => dict,
+        None => Dict::new(),
+        _ => return Err(PdfError::new_err("the form's /DR is not a dictionary")),
+    };
+    let mut fonts = match read(&mut reads, resources.get("Font"))? {
+        Some(Value::Dict(dict)) => dict,
+        None => Dict::new(),
+        _ => {
+            return Err(PdfError::new_err(
+                "the form's /DR /Font is not a dictionary",
+            ));
+        }
+    };
+    if standard_font_matches(read(&mut reads, fonts.get(preferred))?.as_ref(), base) {
+        return Ok(preferred.to_owned());
+    }
+    let resource = if fonts.get(preferred).is_none() {
+        preferred.to_owned()
+    } else {
+        // Track suffixes in one pass: Dict lookup is linear, so repeatedly
+        // searching it for candidate names would take quadratic work.
+        let mut occupied = BudgetVec::new(budget);
+        occupied
+            .try_reserve_exact(fonts.len().saturating_add(1))
+            .map_err(|e| limit_error(&e))?;
+        for _ in 0..=fonts.len() {
+            occupied.try_push(false).map_err(|e| limit_error(&e))?;
+        }
+        let prefix = format!("{preferred}_");
+        for (name, value) in fonts.iter() {
+            budget.poll().map_err(|e| limit_error(&e))?;
+            let Some(suffix) = name.as_bytes().strip_prefix(prefix.as_bytes()) else {
+                continue;
+            };
+            // A usize decimal representation is at most 20 ASCII bytes.
+            if suffix.len() > 20 {
+                continue;
+            }
+            let Ok(suffix) = std::str::from_utf8(suffix) else {
+                continue;
+            };
+            let Ok(number) = suffix.parse::<usize>() else {
+                continue;
+            };
+            if number == 0 || number.to_string() != suffix {
+                continue;
+            }
+            if standard_font_matches(read(&mut reads, Some(value))?.as_ref(), base) {
+                return Ok(format!("{prefix}{suffix}"));
+            }
+            if number <= fonts.len() {
+                occupied[number] = true;
+            }
+        }
+        let suffix = occupied
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, used)| !**used)
+            .map_or(fonts.len().saturating_add(1), |(index, _)| index);
+        format!("{preferred}_{suffix}")
+    };
+    let mut font = Dict::new();
+    font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+    font.insert(Name::from("BaseFont"), Value::Name(Name::from(base)));
+    if !matches!(base, "Symbol" | "ZapfDingbats") {
+        font.insert(
+            Name::from("Encoding"),
+            Value::Name(Name::from("WinAnsiEncoding")),
+        );
+    }
+    let reference = transaction.allocate().map_err(store)?;
+    transaction
+        .write(reference.number(), &Value::Dict(font), budget)
+        .map_err(store)?;
+    fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
+    resources.insert(Name::from("Font"), Value::Dict(fonts));
+    form.insert(Name::from("DR"), Value::Dict(resources));
+    transaction
+        .write(holder.number(), &Value::Dict(form), budget)
+        .map_err(store)?;
+    Ok(resource)
+}
+
+fn standard_font_matches(value: Option<&Value>, base: &str) -> bool {
+    let Some(Value::Dict(font)) = value else {
+        return false;
+    };
+    let symbolic = matches!(base, "Symbol" | "ZapfDingbats");
+    font.len() == if symbolic { 3 } else { 4 }
+        && font.get("Type") == Some(&Value::Name(Name::from("Font")))
+        && font.get("Subtype") == Some(&Value::Name(Name::from("Type1")))
+        && font.get("BaseFont") == Some(&Value::Name(Name::from(base)))
+        && if symbolic {
+            font.get("Encoding").is_none()
+        } else {
+            font.get("Encoding") == Some(&Value::Name(Name::from("WinAnsiEncoding")))
+        }
 }
 
 /// Returns the form dictionary's object, after moving one that the catalog
@@ -5972,11 +6124,11 @@ mod appearance_tests {
 /// A widget's style: its `/MK` border color, background color, caption,
 /// and rotation; its border, from `/BS` else `/Border`; and the font resource,
 /// size, and RGB color of the `/DA` that it draws its text with, its own or
-/// inherited.
+/// inherited, with the Standard 14 font that the resource resolves to.
 type WidgetStyle = (
     (Vec<f64>, Vec<f64>, Option<String>, i64),
     Option<(f64, String, Vec<f64>)>,
-    Option<(String, f64, (f64, f64, f64))>,
+    Option<(String, f64, (f64, f64, f64), Option<&'static str>)>,
 );
 
 /// Reads the style of the widget that a handle names. Returns `None` for a
@@ -6028,11 +6180,131 @@ pub fn widget_style(
             caption,
             rotation,
         );
-        let appearance = widgets::text_appearance(&annots.reader(), &dict)
-            .map_err(widget_error)?
-            .map(|da| (da.font, da.size, da.color));
+        let reader = annots.reader();
+        let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
+            Some(da) => {
+                let font = widget_text_font(&annots, &da.font)?;
+                Some((da.font, da.size, da.color, font))
+            }
+            None => None,
+        };
         Ok(Some((colors, annots.border(&dict)?, appearance)))
     })
+}
+
+/// A value read without copying its input-sized contents.
+enum WidgetFontValue<'a> {
+    Direct(&'a Value),
+    Indirect(Arc<Value>),
+}
+
+impl std::ops::Deref for WidgetFontValue<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        match self {
+            Self::Direct(value) => value,
+            Self::Indirect(value) => value,
+        }
+    }
+}
+
+/// Resolves an optional resource value without cloning a dictionary. The
+/// reference chain is bounded and charged through the operation's reads.
+fn widget_font_value<'a>(
+    reads: &mut Reads<'_>,
+    value: Option<&'a Value>,
+) -> PyResult<Option<WidgetFontValue<'a>>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Reference(reference)) => {
+            Ok(object_location(reads, *reference)?
+                .map(|(_, value)| WidgetFontValue::Indirect(value)))
+        }
+        Some(value) => Ok(Some(WidgetFontValue::Direct(value))),
+    }
+}
+
+/// Returns `None` for a missing resource, `Some(None)` for an unsupported
+/// one, or `Some(Some(name))` for a Standard 14 font.
+fn widget_font_resource(
+    reads: &mut Reads<'_>,
+    root: Option<&Value>,
+    resource: &str,
+) -> PyResult<Option<Option<&'static str>>> {
+    let Some(catalog) = widget_font_value(reads, root)? else {
+        return Ok(None);
+    };
+    let Value::Dict(catalog) = &*catalog else {
+        return Ok(Some(None));
+    };
+    let Some(form) = widget_font_value(reads, catalog.get("AcroForm"))? else {
+        return Ok(None);
+    };
+    let Value::Dict(form) = &*form else {
+        return Ok(Some(None));
+    };
+    let Some(resources) = widget_font_value(reads, form.get("DR"))? else {
+        return Ok(None);
+    };
+    let Value::Dict(resources) = &*resources else {
+        return Ok(Some(None));
+    };
+    let Some(fonts) = widget_font_value(reads, resources.get("Font"))? else {
+        return Ok(None);
+    };
+    let Value::Dict(fonts) = &*fonts else {
+        return Ok(Some(None));
+    };
+    let Some(font) = widget_font_value(reads, fonts.get(resource))? else {
+        return Ok(None);
+    };
+    let Value::Dict(font) = &*font else {
+        return Ok(Some(None));
+    };
+    if !matches!(widget_font_value(reads, font.get("Subtype"))?.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"Type1")
+    {
+        return Ok(Some(None));
+    }
+    if let Some(descriptor) = widget_font_value(reads, font.get("FontDescriptor"))? {
+        let Value::Dict(descriptor) = &*descriptor else {
+            return Ok(Some(None));
+        };
+        for key in ["FontFile", "FontFile2", "FontFile3"] {
+            if widget_font_value(reads, descriptor.get(key))?.is_some() {
+                return Ok(Some(None));
+            }
+        }
+    }
+    let Some(base) = widget_font_value(reads, font.get("BaseFont"))? else {
+        return Ok(Some(None));
+    };
+    let Value::Name(base) = &*base else {
+        return Ok(Some(None));
+    };
+    Ok(Some(
+        DA_FONTS
+            .iter()
+            .map(|(_, font)| *font)
+            .find(|name| name.as_bytes() == base.as_bytes()),
+    ))
+}
+
+/// Resolves the font named by a widget's /DA through the form's /DR. A
+/// missing resource can use a conventional Standard 14 abbreviation; a
+/// present but unsupported font must not be confused with that abbreviation.
+fn widget_text_font(annots: &Annots<'_>, resource: &str) -> PyResult<Option<&'static str>> {
+    let reader = annots.reader();
+    let mut reads = Reads::new(reader.version, reader.budget);
+    if let Some(font) =
+        widget_font_resource(&mut reads, reader.version.trailer().get("Root"), resource)?
+    {
+        return Ok(font);
+    }
+    Ok(DA_FONTS
+        .iter()
+        .find(|(known, _)| *known == resource)
+        .map(|(_, font)| *font))
 }
 
 /// An edit of a widget's geometry and style, as the setters of `Widget`
@@ -6068,8 +6340,27 @@ pub struct WidgetEdit {
 }
 
 impl WidgetEdit {
-    /// Applies the edit to `dict`, a widget on a page of `annots`.
-    fn apply(&self, annots: &Annots, dict: &mut Dict, budget: &Budget) -> PyResult<()> {
+    /// Returns the `/DA` abbreviation of the edit's Standard 14 font.
+    fn font_resource(&self) -> PyResult<Option<(&'static str, &'static str)>> {
+        let Some(name) = &self.font_name else {
+            return Ok(None);
+        };
+        DA_FONTS
+            .iter()
+            .find(|(_, font)| font == name)
+            .map(|&(resource, font)| Some((resource, font)))
+            .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))
+    }
+
+    /// Applies the edit to `dict`, a widget on a page of `annots`;
+    /// `font_resource` is the `/DR` name of the edit's font.
+    fn apply(
+        &self,
+        annots: &Annots,
+        dict: &mut Dict,
+        font_resource: Option<String>,
+        budget: &Budget,
+    ) -> PyResult<()> {
         if self
             .caption
             .as_ref()
@@ -6151,16 +6442,7 @@ impl WidgetEdit {
                 };
             let color = self.text_color.unwrap_or(current.color);
             rgb(color, "text color")?;
-            let resource = match &self.font_name {
-                Some(name) => DA_FONTS
-                    .iter()
-                    .find(|(_, font)| font == name)
-                    .map(|(resource, _)| (*resource).to_owned())
-                    .ok_or_else(|| {
-                        PdfError::new_err(format!("unknown Standard 14 font {name:?}"))
-                    })?,
-                None => current.font,
-            };
+            let resource = font_resource.unwrap_or(current.font);
             let size = self.font_size.unwrap_or(current.size);
             if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
                 return Err(PdfError::new_err(
@@ -6214,7 +6496,23 @@ pub fn widget_edit(
                     id.0
                 )));
             }
-            edit.apply(annots, &mut dict, budget)?;
+            // The font resolves through the form's /DR, as a created
+            // field's does, so that a name that another font holds there
+            // is not drawn in that font.
+            let font_resource = match edit.font_resource()? {
+                Some((preferred, base)) => {
+                    let holder = form_object(transaction, budget)?;
+                    Some(register_standard_font(
+                        transaction,
+                        holder,
+                        preferred,
+                        base,
+                        budget,
+                    )?)
+                }
+                None => None,
+            };
+            edit.apply(annots, &mut dict, font_resource, budget)?;
             annots.write(
                 transaction,
                 position,

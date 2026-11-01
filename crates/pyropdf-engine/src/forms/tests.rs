@@ -366,3 +366,71 @@ fn a_pushbutton_shows_its_caption_and_a_signature_its_border() {
             .ends_with("re S\nQ\n")
     );
 }
+
+/// Draws `/DA (/F1 10 Tf 0 g)` with `/F1` as `font` in the form's `/DR`,
+/// and returns the resource and Standard 14 font of the appearance, or the
+/// refusal's message.
+fn form_font(font: &str) -> Result<(String, &'static str), String> {
+    let document = form(
+        &format!("/DA (/F1 10 Tf 0 g) /DR << /Font << /F1 {font} >> >>"),
+        "/FT /Tx /V (A'`)",
+        "/Rect [0 0 100 20]",
+    );
+    match draw(&document) {
+        Ok(Some(Drawing::Drawn(drawn))) => match drawn.font {
+            Some((resource, FontEntry::Standard(base_font))) => Ok((resource, base_font)),
+            _ => panic!("the appearance names a Standard 14 font"),
+        },
+        Ok(_) => panic!("the widget is drawn"),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+#[test]
+fn standard_form_fonts_resolve_by_alias_whatever_their_encoding_entry() {
+    for font in [
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>",
+        "<< /Subtype /Type1 /BaseFont /Courier /Name /F1 /FirstChar 32 /LastChar 32 /Widths [600] >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /MacRomanEncoding >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding null >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding << /BaseEncoding /WinAnsiEncoding >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding << /Differences [] >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /FontDescriptor << /FontName /Courier >> >>",
+    ] {
+        assert_eq!(form_font(font), Ok(("F1".to_owned(), "Courier")), "{font}");
+    }
+    let symbol = "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>";
+    assert_eq!(form_font(symbol), Ok(("F1".to_owned(), "ZapfDingbats")));
+}
+
+#[test]
+fn unsupported_form_font_encodings_refuse_the_drawing() {
+    for font in [
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /MacExpertEncoding >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /Identity-H >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding 3 >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding << /Differences [39 /quoteright] >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding << /BaseEncoding /MacExpertEncoding >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol /Encoding /WinAnsiEncoding >>",
+    ] {
+        let message = form_font(font).unwrap_err();
+        assert!(message.contains("/Encoding"), "{font}: {message}");
+    }
+}
+
+#[test]
+fn other_form_fonts_fall_back_to_helvetica() {
+    for font in [
+        "<< /Type /Font /Subtype /TrueType /BaseFont /Courier >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /OtherFont >>",
+        "<< /Type /Encoding /Subtype /Type1 /BaseFont /Courier >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /FontDescriptor << /FontFile 5 0 R >> >>",
+    ] {
+        assert_eq!(
+            form_font(font),
+            Ok(("Helv".to_owned(), "Helvetica")),
+            "{font}"
+        );
+    }
+}

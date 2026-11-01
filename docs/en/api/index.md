@@ -45,7 +45,9 @@ method and property of its classes with its full description.
 
 - [`Layer`](layers.md#layer): An optional content group (`/Type /OCG`) and its state in the default configuration.
 - [`LayerConfig`](layers.md#layerconfig): An optional content configuration: the default `/D` at index 0, then each of `/Configs`.
+- [`LayerMembership`](layers.md#layermembership): An optional content membership dictionary (`/OCMD`) as a value.
 - [`Layers`](layers.md#layers_1): The optional content groups of a document, in `/OCGs` order; empty without optional content.
+- [`VisibilityPolicy`](layers.md#visibilitypolicy): How a membership's groups decide its visibility (`/P`, ISO 32000-2 Table 97).
 
 ## [Sanitizing](sanitizing.md)
 
@@ -67,7 +69,10 @@ method and property of its classes with its full description.
 ## [Drawing](drawing.md)
 
 - [`Canvas`](drawing.md#canvas): Drawing on one page in paint order, written as one content stream.
+- [`ListNumbering`](drawing.md#listnumbering): How a list numbers its items (ISO 32000-1 section 14.8.5.5), by its PDF name.
 - [`PathBuilder`](drawing.md#pathbuilder): Geometry for `Canvas.path` and `Canvas.clip`, built from segments.
+- [`TableHeaderScope`](drawing.md#tableheaderscope): What a table header cell heads (ISO 32000-1 section 14.8.5.7), by its PDF name.
+- [`TagRole`](drawing.md#tagrole): A structure type (ISO 32000-1 section 14.8.4), by its PDF name.
 - [`TextFit`](drawing.md#textfit): How text fits a `Canvas.textbox`: the height left below its last line.
 
 ## [Text and content](text-and-content.md)
