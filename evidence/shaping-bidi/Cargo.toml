@@ -1,0 +1,11 @@
+[package]
+name = "pyropdf-bidi-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+unicode-bidi = "=0.3.18"
+
+# An independent experiment, not a workspace crate or release dependency.
+[workspace]
