@@ -916,13 +916,12 @@ fn appearance_with(
             (fit, font) = text::free_text(&mut canvas, reader, dict, &paint, rect)?;
         }
         (b"Stamp", _) => {
-            let icon = reader.name(dict, "Name")?;
-            font = text::stamp(
-                &mut canvas,
-                &paint,
-                icon.as_deref().unwrap_or(b"Draft"),
-                size,
-            )?;
+            let icon = reader.entry(dict, "Name")?;
+            let icon = match icon.as_deref() {
+                Some(Value::Name(name)) => name.as_bytes(),
+                _ => b"Draft",
+            };
+            font = text::stamp(&mut canvas, &paint, icon, size)?;
         }
         (b"Text", _) => {
             let icon = reader.name(dict, "Name")?;

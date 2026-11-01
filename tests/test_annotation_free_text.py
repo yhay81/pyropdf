@@ -11,14 +11,98 @@ only, so an embedded face and text outside WinAnsi raise ``ValueError``
 
 from __future__ import annotations
 
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 import pyropdf
 from pyropdf import Border, Color, Font, FreeText, LineEnding, Point, Rect, _core
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 WHITE = (255, 255, 255)
+
+
+def test_callout_stops_after_four_points_even_when_sequence_misreports_length() -> None:
+    class Endless(Sequence[tuple[int, int]]):
+        def __init__(self) -> None:
+            self.read = 0
+
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, index: int) -> tuple[int, int]:  # ty: ignore[invalid-method-override]
+            self.read += 1
+            return (10, 10)
+
+    callout = Endless()
+    with pytest.raises(ValueError, match="2 or 3 points"):
+        FreeText((10, 10, 100, 50), "Hello", callout=callout)
+    assert callout.read == 4
+
+
+def test_core_callout_stops_after_four_points() -> None:
+    class Endless:
+        def __init__(self) -> None:
+            self.read = 0
+
+        def __iter__(self) -> Iterator[tuple[float, float]]:
+            while True:
+                self.read += 1
+                if self.read > 4:
+                    msg = "the core continued past the fourth point"
+                    raise AssertionError(msg)
+                yield (10.0, 10.0)
+
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 100))
+    callout = Endless()
+    before = doc.history.position
+    with pytest.raises(pyropdf.PdfError, match="2 or 3 finite points"):
+        _core.annotation_add(
+            doc._core(),  # noqa: SLF001 - exercise the core's input boundary.
+            page._number,  # noqa: SLF001
+            page._generation,  # noqa: SLF001
+            {"subtype": "FreeText", "rect": (10.0, 10.0, 100.0, 50.0), "callout": callout},
+        )
+    assert callout.read == 4
+    assert doc.history.position == before
+    assert "Annots" not in page.obj
+
+
+@pytest.mark.parametrize("text", ["x" * (1024 * 1024 + 1), "漢" * 350_000], ids=["ascii", "multibyte"])
+def test_free_text_input_limit_uses_actual_string_contents(text: str) -> None:
+    class Misleading(str):
+        __slots__ = ()
+
+        def __len__(self) -> int:
+            return 0
+
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+            return b""
+
+    with pytest.raises(pyropdf.LimitError) as caught:
+        FreeText((10, 10, 100, 50), Misleading(text))
+    assert caught.value.code == "annotation_input_size"
+    with pytest.raises(pyropdf.LimitError) as caught:
+        pyropdf.Stamp((10, 10, 100, 50), contents=Misleading(text))
+    assert caught.value.code == "annotation_input_size"
+
+
+def test_free_text_encoding_checks_actual_string_contents() -> None:
+    class Misleading(str):
+        __slots__ = ()
+
+        def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+            return b""
+
+    page = pyropdf.Document().pages.new((200, 100))
+    with pytest.raises(ValueError, match="WinAnsi"):
+        page.annotations.add(FreeText((10, 10, 190, 90), Misleading("日本語")))
+    annotation = page.annotations.add(FreeText((10, 10, 190, 90), Misleading("Hello")))
+    assert annotation.contents == "Hello"
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:

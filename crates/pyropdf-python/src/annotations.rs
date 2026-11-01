@@ -16,6 +16,7 @@ pub mod links;
 
 use std::sync::Arc;
 
+use pyo3::Borrowed;
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyropdf_engine::annotations::{
@@ -1594,6 +1595,47 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
         .collect())
 }
 
+/// At most three callout points, extracted without collecting the input.
+struct Callout {
+    points: [(f64, f64); 3],
+    len: usize,
+    too_many: bool,
+}
+
+impl<'py> FromPyObject<'_, 'py> for Callout {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        let mut points = [(0.0, 0.0); 3];
+        let mut len = 0;
+        for point in value.try_iter()? {
+            let point = point?;
+            if len == points.len() {
+                return Ok(Self {
+                    points,
+                    len,
+                    too_many: true,
+                });
+            }
+            points[len] = point.extract()?;
+            len += 1;
+        }
+        Ok(Self {
+            points,
+            len,
+            too_many: false,
+        })
+    }
+}
+
+impl std::ops::Deref for Callout {
+    type Target = [(f64, f64)];
+
+    fn deref(&self) -> &Self::Target {
+        &self.points[..self.len]
+    }
+}
+
 /// The annotation that `page.annotations.add` adds, as a specification's
 /// `_payload` gives it: its subtype; the display rectangles of text markup,
 /// the display point lists of a line, polygon, polyline, or ink, or else
@@ -1652,7 +1694,7 @@ pub struct Spec {
     #[pyo3(default)]
     rotate: Option<i64>,
     #[pyo3(default)]
-    callout: Option<Vec<(f64, f64)>>,
+    callout: Option<Callout>,
     #[pyo3(default)]
     callout_ending: Option<String>,
 }
@@ -1991,7 +2033,8 @@ impl Spec {
             }
             return Ok(());
         };
-        if !(2..=3).contains(&points.len())
+        if points.too_many
+            || !(2..=3).contains(&points.len())
             || !points.iter().all(|(x, y)| x.is_finite() && y.is_finite())
         {
             return Err(PdfError::new_err(
@@ -2018,7 +2061,7 @@ impl Spec {
             };
         let mut outer = inner;
         let mut line = Vec::with_capacity(points.len() * 2);
-        for &(x, y) in points {
+        for &(x, y) in points.iter() {
             let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
             outer = [
                 outer[0].min(x - pad),

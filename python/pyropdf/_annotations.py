@@ -1276,11 +1276,11 @@ def _contents(value: object) -> str | None:
 
 def _bound_input(subtype: str, contents: str | None) -> None:
     """Bound the subtype, contents, and dates that an added annotation writes to 1 MiB of UTF-8."""
-    texts = (subtype, contents or "", _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
-    characters = sum(len(text) for text in texts)
+    texts = (subtype, "" if contents is None else contents, _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
+    characters = sum(str.__len__(text) for text in texts)
     if characters > _MAX_ANNOTATION_INPUT_TEXT_SIZE or (
         characters * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE
-        and sum(len(text.encode()) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+        and sum(len(str.encode(text)) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
     ):
         code = "annotation_input_size"
         msg = f"annotation subtype and contents input exceeds the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte UTF-8 limit"
@@ -1691,6 +1691,23 @@ _FREE_TEXT_ALIGNMENTS = ("left", "center", "right")
 _MAX_FREE_TEXT_SIZE = 10_000
 
 
+def _callout(value: object) -> tuple[Point, ...] | None:
+    """Return a callout's two or three points, stopping at a fourth."""
+    if value is None:
+        return None
+    msg = "callout must hold 2 or 3 points: the point it explains, an optional knee, and the box"
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(msg)  # noqa: TRY004 - preserve the specification's existing exception.
+    points: list[Point] = []
+    for point in value:
+        if len(points) == 3:  # noqa: PLR2004 - the fourth point exceeds the bound.
+            raise ValueError(msg)
+        points.append(_point(point))
+    if len(points) < 2:  # noqa: PLR2004 - a callout needs two endpoints.
+        raise ValueError(msg)
+    return tuple(points)
+
+
 @dataclass(frozen=True, slots=True, init=False)
 class FreeText:
     """Text written on the page in a box, as ``page.annotations.add`` takes it.
@@ -1758,12 +1775,7 @@ class FreeText:
         if align not in _FREE_TEXT_ALIGNMENTS:
             msg = f"align must be one of {', '.join(_FREE_TEXT_ALIGNMENTS)}: {align!r}"
             raise ValueError(msg)
-        points = None
-        if callout is not None:
-            if isinstance(callout, (str, bytes)) or not isinstance(callout, Sequence) or not 2 <= len(callout) <= 3:  # noqa: PLR2004
-                msg = "callout must hold 2 or 3 points: the point it explains, an optional knee, and the box"
-                raise ValueError(msg)
-            points = tuple(_point(point) for point in callout)
+        points = _callout(callout)
         object.__setattr__(self, "rect", Rect(*_rect(rect)))
         object.__setattr__(self, "text", text)
         object.__setattr__(self, "font", font)
@@ -1779,7 +1791,7 @@ class FreeText:
 
     def _payload(self) -> dict[str, Any]:
         try:
-            self.text.encode("cp1252")
+            str.encode(self.text, "cp1252")
         except UnicodeEncodeError as exc:
             msg = "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters"
             raise ValueError(msg) from exc

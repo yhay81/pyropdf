@@ -2,15 +2,16 @@
 //! text, as pylopdf's `draw_free_text` and `draw_stamp` draw them.
 
 use pyropdf_store::budget::{BudgetVec, LimitCode};
-use pyropdf_store::value::{Dict, Value};
-use pyropdf_store::{Error, Result};
+use pyropdf_store::value::{Dict, Name, Value};
+use pyropdf_store::{Error, LimitExceeded, Result};
 
 use super::shapes::{LINE_ENDINGS, draw_ending, polyline};
 use super::{Canvas, KAPPA, Paint, Reader, Stroke, quarter_turn};
 use crate::forms::text_string;
 use crate::standard::{
-    Align, Base14Font, DA_FONTS, DefaultAppearance, DeviceColor, LayoutError, Line, Placement,
-    Style, TextBox, da_font, font, line_metrics, text_ops, text_width, textbox_layout,
+    Align, Base14Font, DA_FONTS, DefaultAppearance, DeviceColor, LayoutError, Line,
+    MAX_DEFAULT_APPEARANCE, Placement, Style, TextBox, da_font, font, line_metrics, text_ops,
+    text_width, textbox_layout,
 };
 
 /// The space between a free text's border and its text.
@@ -34,10 +35,24 @@ pub(super) type FontResource = (&'static str, &'static str);
 
 /// Returns the `/DA` of a free text: its last `Tf` and colour operator;
 /// Helvetica, 12 points, and black for what it does not set, or for a
-/// string too long to read.
+/// malformed string. An oversized string is refused.
 pub fn default_appearance(reader: &Reader<'_>, dict: &Dict) -> Result<DefaultAppearance> {
     let parsed = match reader.entry(dict, "DA")?.as_deref() {
-        Some(Value::String(text)) => DefaultAppearance::parse(text.as_bytes()).ok(),
+        Some(Value::String(text)) => {
+            let size = u64::try_from(text.as_bytes().len()).unwrap_or(u64::MAX);
+            reader
+                .budget
+                .check(LimitCode::FormDefaultAppearanceSize, size)?;
+            if text.as_bytes().len() > MAX_DEFAULT_APPEARANCE {
+                return Err(LimitExceeded::over(
+                    LimitCode::FormDefaultAppearanceSize,
+                    MAX_DEFAULT_APPEARANCE as u64,
+                    size,
+                )
+                .into());
+            }
+            DefaultAppearance::parse(text.as_bytes()).ok()
+        }
         _ => None,
     };
     let mut result = parsed
@@ -116,7 +131,17 @@ pub(super) fn free_text(
         inner[2] - inset,
         inner[3] - inset,
     ];
-    if text.trim().is_empty() {
+    let mut has_text = false;
+    for (index, character) in text.chars().enumerate() {
+        if index % 1024 == 0 {
+            reader.budget.poll()?;
+        }
+        if !character.is_whitespace() {
+            has_text = true;
+            break;
+        }
+    }
+    if !has_text {
         return Ok((TextFit::Fits, None));
     }
     if area[2] <= area[0] || area[3] <= area[1] {
@@ -200,22 +225,22 @@ fn callout(
     let line_width = width.max(1.0);
     polyline(canvas, &points, to_canvas);
     canvas.stroke(da.color, line_width, 0, 0, &[]);
+    let ending_index = |name: &Name| {
+        LINE_ENDINGS
+            .iter()
+            .position(|known| known.as_bytes() == name.as_bytes())
+    };
     let ending = match reader.entry(dict, "LE")?.as_deref() {
-        Some(Value::Name(name)) => Some(name.as_bytes().to_vec()),
+        Some(Value::Name(name)) => ending_index(name),
         Some(Value::Array(items)) => match items.iter().next() {
             Some(item) => match &*reader.resolve(item)? {
-                Value::Name(name) => Some(name.as_bytes().to_vec()),
+                Value::Name(name) => ending_index(name),
                 _ => None,
             },
             None => None,
         },
         _ => None,
     }
-    .and_then(|name| {
-        LINE_ENDINGS
-            .iter()
-            .position(|known| known.as_bytes() == name)
-    })
     .unwrap_or(0);
     let paint = Paint {
         stroke: Some(da.color),
@@ -297,7 +322,8 @@ const GREEN: (f64, f64, f64) = (0.0, 0.5, 0.0);
 const RED: (f64, f64, f64) = (0.8, 0.0, 0.0);
 const BLUE: (f64, f64, f64) = (0.0, 0.0, 0.6);
 
-/// The longest unknown stamp name that is drawn as its own label.
+/// The longest unknown stamp name that is drawn as its own label; longer
+/// names are refused with `annotation_text_size`.
 const MAX_STAMP_LABEL: usize = 256;
 
 /// Draws a stamp on a canvas of `size`: its label in Helvetica-Bold, as
@@ -310,14 +336,41 @@ pub(super) fn stamp(
     icon: &[u8],
     size: (f64, f64),
 ) -> Result<Option<FontResource>> {
-    let name = String::from_utf8_lossy(&icon[..icon.len().min(MAX_STAMP_LABEL)]);
-    let (label, own) = STAMPS
-        .iter()
-        .find(|(known, _, _)| *known == name)
-        .map_or_else(
-            || (name.to_uppercase(), RED),
-            |(_, label, color)| ((*label).to_owned(), *color),
-        );
+    let size_in_bytes = u64::try_from(icon.len()).unwrap_or(u64::MAX);
+    canvas
+        .out
+        .bytes
+        .budget()
+        .check(LimitCode::AnnotationTextSize, size_in_bytes)?;
+    if icon.len() > MAX_STAMP_LABEL {
+        return Err(LimitExceeded::over(
+            LimitCode::AnnotationTextSize,
+            MAX_STAMP_LABEL as u64,
+            size_in_bytes,
+        )
+        .into());
+    }
+    let mut unknown = BudgetVec::new(canvas.out.bytes.budget());
+    let known = STAMPS.iter().find(|(known, _, _)| known.as_bytes() == icon);
+    let (label, own) = match known {
+        Some((_, label, color)) => (*label, *color),
+        None => {
+            for chunk in icon.utf8_chunks() {
+                for character in chunk.valid().chars().flat_map(char::to_uppercase) {
+                    let mut bytes = [0; 4];
+                    unknown.try_extend_from_slice(character.encode_utf8(&mut bytes).as_bytes())?;
+                }
+                if !chunk.invalid().is_empty() {
+                    unknown.try_extend_from_slice("\u{fffd}".as_bytes())?;
+                }
+            }
+            (
+                std::str::from_utf8(&unknown)
+                    .map_err(|_| Error::malformed("a stamp label is not UTF-8"))?,
+                RED,
+            )
+        }
+    };
     let color = paint.stroke.unwrap_or(own);
     let (w, h) = size;
     let frame = (w.min(h) / 12.0).max(0.5);
@@ -369,7 +422,7 @@ pub(super) fn stamp(
     let Some((face, font)) = resource("Helvetica-Bold") else {
         return Ok(None);
     };
-    let unit = text_width(&label, face, 1.0).unwrap_or(0.0);
+    let unit = text_width(label, face, 1.0).unwrap_or(0.0);
     let room = (w - 4.0 * frame, h - 4.0 * frame);
     if unit <= 0.0 || room.0 <= 0.0 || room.1 <= 0.0 {
         return Ok(None);
@@ -382,7 +435,7 @@ pub(super) fn stamp(
     // One centred line whose baseline lies 0.36 em below the middle.
     let layout = TextBox {
         lines: vec![Line {
-            text: &label,
+            text: label,
             width,
             justify: false,
         }],
