@@ -17,6 +17,7 @@ pub mod links;
 use std::sync::Arc;
 
 use pyo3::prelude::*;
+use pyo3::pybacked::PyBackedBytes;
 use pyropdf_engine::annotations::{
     LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points, is_text_markup,
     synthesized_for, valid_dashes, zigzag_points,
@@ -25,15 +26,17 @@ use pyropdf_engine::bridge::Bridged;
 use pyropdf_engine::extract;
 use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::render::{self, Raster};
+use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::settle::{Scope, Structure};
-use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
+use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::{_Document, text_string};
 use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
+use crate::objects::set_data;
 use crate::pages::{display_box, index as page_index, number, rect, rotation};
 use crate::pixmap::{Pixmap, bridge_error, raster_error};
 use crate::text::{OptionsTuple, text_error, text_options};
@@ -1566,7 +1569,8 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
 /// the display point lists of a line, polygon, polyline, or ink, or else
 /// its display rectangle; its colors as RGB from 0 to 1, border, cloudy
 /// border, opacity, blend mode, contents, and creation date; a line's
-/// endings; and a note's icon and open state.
+/// endings; a note's icon and open state; and a file attachment's icon,
+/// data, file name, description, and the bound of its data.
 #[derive(FromPyObject)]
 #[pyo3(from_item_all)]
 pub struct Spec {
@@ -1599,10 +1603,18 @@ pub struct Spec {
     clouds: Option<f64>,
     #[pyo3(default)]
     blend_mode: Option<String>,
+    #[pyo3(default)]
+    data: Option<PyBackedBytes>,
+    #[pyo3(default)]
+    filename: Option<String>,
+    #[pyo3(default)]
+    description: Option<String>,
+    #[pyo3(default)]
+    max_size: Option<u64>,
 }
 
 /// The subtypes that `page.annotations.add` adds.
-const ADDED_SUBTYPES: [&str; 12] = [
+const ADDED_SUBTYPES: [&str; 13] = [
     "Highlight",
     "Underline",
     "StrikeOut",
@@ -1615,6 +1627,7 @@ const ADDED_SUBTYPES: [&str; 12] = [
     "PolyLine",
     "Ink",
     "Caret",
+    "FileAttachment",
 ];
 
 impl Spec {
@@ -1650,6 +1663,7 @@ impl Spec {
                 "pyropdf does not add {subtype} annotations"
             )));
         }
+        self.check_file(annots.budget)?;
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
         dict.insert(Name::from("Subtype"), Value::Name(Name::from(subtype)));
@@ -1807,10 +1821,21 @@ impl Spec {
         if let Some(contents) = &self.contents {
             dict.insert(Name::from("Contents"), encode_text(contents));
         }
-        if self.open.is_some() && subtype != "Text" || self.icon.is_some() && subtype != "Text" {
+        if self.open.is_some() && subtype != "Text"
+            || self.icon.is_some() && !matches!(subtype, "Text" | "FileAttachment")
+        {
             return Err(PdfError::new_err(format!(
                 "an icon and an open state belong to a note, not a {subtype} annotation"
             )));
+        }
+        if subtype == "FileAttachment" {
+            let icon = self.icon.as_deref().unwrap_or("PushPin");
+            if !FILE_ICONS.contains(&icon) {
+                return Err(PdfError::new_err(format!(
+                    "unknown file attachment icon {icon:?}"
+                )));
+            }
+            dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
         }
         if subtype == "Text" {
             let icon = self.icon.as_deref().unwrap_or("Note");
@@ -1827,9 +1852,10 @@ impl Spec {
             // it upright.
             dict.insert(Name::from("F"), Value::Integer(4 | 8 | 16));
         }
-        // A caret points up on the display: its appearance turns with the
-        // page's rotation, as `/Rotate` says.
-        if subtype == "Caret" && annots.rotation != 0 {
+        // A caret points up on the display, and a file attachment's icon
+        // stands upright: the appearance turns with the page's rotation, as
+        // `/Rotate` says.
+        if matches!(subtype, "Caret" | "FileAttachment") && annots.rotation != 0 {
             dict.insert(Name::from("Rotate"), Value::Integer(annots.rotation));
         }
         if let Some(created) = &self.created {
@@ -1841,6 +1867,104 @@ impl Spec {
             dict.insert(Name::from("M"), date);
         }
         Ok(dict)
+    }
+
+    /// Refuses a file attachment without data and a file name, data and a
+    /// file name for another kind, data past `max_size`
+    /// (`embedded_file_size`), and a file name and description longer
+    /// together than the document allows (`embedded_file_input_size`).
+    fn check_file(&self, budget: &Budget) -> PyResult<()> {
+        let attachment = self.subtype == "FileAttachment";
+        let (Some(data), Some(filename)) = (&self.data, &self.filename) else {
+            if attachment || self.data.is_some() || self.filename.is_some() {
+                return Err(PdfError::new_err(
+                    "a file attachment, and only a file attachment, embeds data with a file name",
+                ));
+            }
+            if self.description.is_some() {
+                return Err(PdfError::new_err(
+                    "only a file attachment has a description",
+                ));
+            }
+            return Ok(());
+        };
+        if !attachment {
+            return Err(PdfError::new_err(
+                "a file attachment, and only a file attachment, embeds data with a file name",
+            ));
+        }
+        if let Some(limit) = self.max_size
+            && data.len() as u64 > limit
+        {
+            return Err(limit_error(&LimitExceeded::over(
+                LimitCode::EmbeddedFileSize,
+                limit,
+                data.len() as u64,
+            )));
+        }
+        let texts = filename
+            .len()
+            .saturating_add(self.description.as_deref().map_or(0, str::len));
+        budget
+            .check(LimitCode::EmbeddedFileInputSize, texts as u64)
+            .map_err(|e| limit_error(&e))?;
+        // The data's copy and its compression.
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                (data.len().saturating_mul(2)).saturating_add(texts.saturating_mul(3)) as u64,
+            )
+            .map_err(|e| limit_error(&e))
+    }
+
+    /// Writes the embedded file of a file attachment and its file
+    /// specification, which `/FS` of `dict` names: the data compressed, its
+    /// size and dates in `/Params`, and the file name as `/F` and `/UF`.
+    fn embed(
+        &self,
+        transaction: &mut Transaction,
+        dict: &mut Dict,
+        budget: &Budget,
+    ) -> PyResult<()> {
+        let (Some(data), Some(filename)) = (&self.data, &self.filename) else {
+            return Ok(());
+        };
+        let mut params = Dict::new();
+        params.insert(
+            Name::from("Size"),
+            Value::Integer(i64::try_from(data.len()).unwrap_or(i64::MAX)),
+        );
+        if let Some(created) = &self.created {
+            let date = Value::String(PdfString::literal(created.as_bytes().to_vec()));
+            params.insert(Name::from("CreationDate"), date.clone());
+            params.insert(Name::from("ModDate"), date);
+        }
+        let mut entries = Dict::new();
+        entries.insert(Name::from("Type"), Value::Name(Name::from("EmbeddedFile")));
+        entries.insert(Name::from("Params"), Value::Dict(params));
+        let mut stream = Stream::new(entries, Bytes::default());
+        set_data(&mut stream, data, true)?;
+        let file = transaction.allocate().map_err(|e| store_error(&e))?;
+        transaction
+            .write(file.number(), &Value::Stream(Box::new(stream)), budget)
+            .map_err(|e| store_error(&e))?;
+        let mut files = Dict::new();
+        files.insert(Name::from("F"), Value::Reference(file));
+        files.insert(Name::from("UF"), Value::Reference(file));
+        let mut filespec = Dict::new();
+        filespec.insert(Name::from("Type"), Value::Name(Name::from("Filespec")));
+        filespec.insert(Name::from("F"), encode_text(filename));
+        filespec.insert(Name::from("UF"), encode_text(filename));
+        if let Some(description) = &self.description {
+            filespec.insert(Name::from("Desc"), encode_text(description));
+        }
+        filespec.insert(Name::from("EF"), Value::Dict(files));
+        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+        transaction
+            .write(reference.number(), &Value::Dict(filespec), budget)
+            .map_err(|e| store_error(&e))?;
+        dict.insert(Name::from("FS"), Value::Reference(reference));
+        Ok(())
     }
 }
 
@@ -1874,6 +1998,7 @@ pub fn annotation_add(
             if let Some(page) = annots.page().object() {
                 dict.insert(Name::from("P"), Value::Reference(page));
             }
+            spec.embed(transaction, &mut dict, budget)?;
 
             let reference = transaction.allocate().map_err(|e| store_error(&e))?;
             transaction
