@@ -221,3 +221,30 @@ def test_edit_observes_its_deadline_without_changes() -> None:
         _core.annotation_edit(*location, edit)
     assert raised.value.code == "deadline"
     assert _state(doc) == before
+
+
+def test_add_refuses_a_spec_past_the_memory_budget_without_changes() -> None:
+    doc, page, location = _page(pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    before = _state(doc)
+    spec: dict[str, object] = {"subtype": "Square", "rect": (10, 10, 50, 50), "contents": "x" * (256 * 1024)}
+    with pytest.raises(pyropdf.LimitError) as raised:
+        _core.annotation_add(*location, spec)
+    assert raised.value.code == "memory_size"
+    assert _state(doc) == before
+    assert len(page.annotations) == 0
+
+
+def test_edit_refuses_a_text_past_the_memory_budget_without_changes() -> None:
+    doc, page, _ = _page(pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    location = _square(page)
+    before = _state(doc)
+    with pytest.raises(pyropdf.LimitError) as raised:
+        _core.annotation_edit(*location, {"contents": "x" * (256 * 1024)})
+    assert raised.value.code == "memory_size"
+    assert _state(doc) == before
+
+
+def test_a_spec_within_the_memory_budget_is_accepted() -> None:
+    _, page, _ = _page(pyropdf.DocumentLimits(max_memory_size=4 * MIB))
+    annotation = page.annotations.add(pyropdf.Square((10, 10, 50, 50), contents="x" * 1024))
+    assert annotation.contents == "x" * 1024

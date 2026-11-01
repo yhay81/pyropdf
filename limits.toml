@@ -420,7 +420,7 @@ reached = "A list of pages, such as the `pages` of `doc.render`, holds more entr
 [codes.memory_size]
 message = "the operation needs too much memory"
 unit = "bytes"
-reached = "The collections of one operation would hold more memory than it allows, or the allocator refuses it."
+reached = "The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or the allocator refuses it."
 
 [codes.deadline]
 message = "the operation ran past its deadline"

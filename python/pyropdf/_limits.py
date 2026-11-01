@@ -16,6 +16,7 @@ _COUNTED_FIELDS = (
     "max_total_decompressed_size",
     "max_object_depth",
     "max_interpretation_size",
+    "max_memory_size",
 )
 
 
@@ -58,6 +59,8 @@ class DocumentLimits:
     max_object_depth: int | None = None
     #: The size of the PDF data handed to the interpreter, in bytes (``interpretation_size``).
     max_interpretation_size: int | None = None
+    #: The memory that the collections of one operation may hold, in bytes (``memory_size``).
+    max_memory_size: int | None = None
     #: The time that one operation may take, in seconds (``deadline``).
     max_duration: float | None = None
     #: A token that cancels every operation of the documents whose limits
