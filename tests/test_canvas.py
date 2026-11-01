@@ -720,6 +720,23 @@ def test_png_alpha_is_kept() -> None:
     assert _pixel(page, 15, 5) == (0, 0, 255)
 
 
+@pytest.mark.parametrize("gray", [False, True])
+def test_larger_png_keeps_color_and_alpha_across_the_frame(*, gray: bool) -> None:
+    _source_doc, source = _new_page(100, 100)
+    with source.draw() as canvas:
+        canvas.rect((0, 0, 50, 100), fill=RED)
+        canvas.rect((50, 50, 100, 100), fill=BLUE)
+    original = source.pixmap(dpi=72, alpha=True)
+    if gray:
+        original = original.to_gray()
+    png = original.to_bytes("png")
+    _doc, page = _new_page(100, 100)
+    with page.draw() as canvas:
+        canvas.image((0, 0, 100, 100), png)
+    (image,) = page.images()
+    assert bytes(image.pixmap()) == bytes(original)
+
+
 def test_a_placed_page_shows_its_crop_box() -> None:
     source = _marked_source()
     source.pages[0].crop_box = (150, 50, 300, 200)
