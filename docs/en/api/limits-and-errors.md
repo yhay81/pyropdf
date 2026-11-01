@@ -51,6 +51,7 @@ DocumentLimits(
     max_total_decompressed_size: int | None = None,
     max_object_depth: int | None = None,
     max_interpretation_size: int | None = None,
+    max_memory_size: int | None = None,
     max_duration: float | None = None,
     cancellation: CancellationToken | None = None,
     check_at_open: bool = False,

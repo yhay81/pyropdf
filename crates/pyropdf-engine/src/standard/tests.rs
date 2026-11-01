@@ -1,6 +1,9 @@
 use std::borrow::Cow;
+use std::time::Instant;
 
-use pyropdf_store::budget::{Budget, BudgetVec, DocumentLimits, LimitCode};
+use proptest::prelude::*;
+use pyropdf_store::budget::{Budget, BudgetVec, CancellationToken, DocumentLimits, LimitCode};
+use unicode_segmentation::UnicodeSegmentation;
 
 use super::*;
 
@@ -418,11 +421,11 @@ fn default_appearances_read_their_last_font_and_colour() {
 #[test]
 fn comb_fields_count_graphemes() {
     let text = "e\u{301}👨\u{200d}👩\u{200d}👧ab";
-    assert_eq!(grapheme_count(text), 4);
     let budget = Budget::default();
+    assert_eq!(grapheme_count(text, &budget).unwrap(), 4);
     let cells = graphemes(text, &budget).unwrap();
     assert_eq!(&*cells, ["e\u{301}", "👨\u{200d}👩\u{200d}👧", "a", "b"]);
-    assert_eq!(grapheme_count(""), 0);
+    assert_eq!(grapheme_count("", &budget).unwrap(), 0);
 }
 
 #[test]
@@ -543,4 +546,295 @@ fn resource_names_are_charged_to_the_output_budget() {
     assert!(
         matches!(refusal, LayoutError::Limit(refusal) if refusal.code() == LimitCode::MemorySize)
     );
+}
+
+/// Characters of most line-breaking classes, among them each class that a
+/// run without a break or a safe pair can hold: CM, SP, ZWJ, BA, HY, RI.
+const BREAK_SAMPLES: &[char] = &[
+    'a',
+    ' ',
+    '\u{3000}',
+    '\u{300}',
+    '\u{20D0}',
+    '\u{200D}',
+    '-',
+    '\u{2010}',
+    '\u{AD}',
+    '\u{1680}',
+    '(',
+    ')',
+    '"',
+    '!',
+    ',',
+    '/',
+    '1',
+    '$',
+    '%',
+    '\u{4E00}',
+    '\u{3041}',
+    '\u{1F1E6}',
+    '\u{1F1E7}',
+    '\u{A0}',
+    '\u{2060}',
+    '\u{200B}',
+    '\u{2014}',
+    '\u{5D0}',
+    '\u{1100}',
+    '\u{1161}',
+    '\u{11A8}',
+    '\u{AC00}',
+    '\u{E01}',
+    '\u{1F466}',
+    '\u{1F3FB}',
+    '\u{FFFC}',
+    '\u{2024}',
+    '\u{F0B}',
+    '\u{B}',
+    '\r',
+    '\u{85}',
+    '\u{1F600}',
+    '\u{20A0}',
+    '\u{2E3A}',
+    '\u{FF01}',
+    '\u{F08}',
+];
+
+/// Text built of runs of sampled characters, some of them long.
+fn sampled_text() -> impl Strategy<Value = String> {
+    proptest::collection::vec(
+        (
+            proptest::sample::select(BREAK_SAMPLES),
+            proptest::sample::select(BREAK_SAMPLES),
+            1_usize..40,
+        ),
+        0..12,
+    )
+    .prop_map(|runs| {
+        runs.into_iter()
+            .flat_map(|(run, other, length)| {
+                (0..length).map(move |index| if index % 5 == 4 { other } else { run })
+            })
+            .collect()
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(512))]
+
+    #[test]
+    fn stepped_break_discovery_matches_linebreaks(text in sampled_text(), step in 1_usize..24) {
+        let budget = Budget::default();
+        let ends = scan::break_ends_with(&text, &budget, step, usize::MAX, &mut || Ok(()))
+            .unwrap();
+        let expected: Vec<usize> = unicode_linebreak::linebreaks(&text)
+            .map(|(end, _)| end)
+            .collect();
+        prop_assert_eq!(&*ends, &*expected);
+    }
+
+    #[test]
+    fn stepped_graphemes_match_the_iterator(text in sampled_text(), step in 1_usize..24) {
+        let mut ends = Vec::new();
+        scan::grapheme_ends_with(&text, step, &mut || Ok(()), &mut |end| {
+            ends.push(end);
+            Ok(())
+        })
+        .unwrap();
+        let expected: Vec<usize> = text
+            .grapheme_indices(true)
+            .map(|(offset, grapheme)| offset + grapheme.len())
+            .collect();
+        prop_assert_eq!(ends, expected);
+    }
+}
+
+/// A budget whose token is cancelled.
+fn cancelled() -> Budget {
+    let token = CancellationToken::new();
+    token.cancel();
+    Budget::default().with_cancellation(token)
+}
+
+/// A budget whose deadline has passed.
+fn expired() -> Budget {
+    Budget::default().with_deadline(Instant::now())
+}
+
+/// Runs `scan` with a poll that passes until its `at`th call and from then
+/// polls `stopped`, and returns the result with the number of polls.
+fn stop_at<T>(
+    at: usize,
+    stopped: &Budget,
+    scan: impl FnOnce(&mut scan::Poll<'_>) -> T,
+) -> (T, usize) {
+    let mut polls = 0;
+    let result = scan(&mut || {
+        polls += 1;
+        if polls >= at { stopped.poll() } else { Ok(()) }
+    });
+    (result, polls)
+}
+
+/// Checks that `scan` polls at least `min_polls` times over its input, and
+/// that a cancellation or a deadline seen at a poll in the middle stops it
+/// there with its typed refusal.
+fn assert_stops_midway<T: std::fmt::Debug>(
+    min_polls: usize,
+    scan: impl Fn(&mut scan::Poll<'_>) -> Result<T, LimitCode>,
+) {
+    let (complete, polls) = stop_at(usize::MAX, &Budget::default(), &scan);
+    assert!(complete.is_ok());
+    assert!(polls >= min_polls, "{polls} polls, expected {min_polls}");
+    let middle = polls / 2;
+    for (stopped, code) in [
+        (cancelled(), LimitCode::Cancelled),
+        (expired(), LimitCode::Deadline),
+    ] {
+        let (result, at) = stop_at(middle, &stopped, &scan);
+        assert_eq!(result.unwrap_err(), code);
+        assert_eq!(at, middle);
+    }
+}
+
+fn layout_code(error: LayoutError) -> LimitCode {
+    match error {
+        LayoutError::Limit(refusal) => refusal.code(),
+        other => panic!("expected a refusal by the budget, got {other:?}"),
+    }
+}
+
+/// Bytes long enough that each scan polls many times.
+const LONG: usize = 64 * scan::STEP;
+
+#[test]
+fn break_discovery_polls_inside_an_unbroken_word_and_a_whitespace_run() {
+    let budget = Budget::default();
+    for text in [
+        "a".repeat(LONG),
+        format!("a{}b", " ".repeat(LONG)),
+        format!("(a{}\u{300}", "\u{301}".repeat(LONG / 2)),
+    ] {
+        assert_stops_midway(LONG / scan::STEP / 2, |poll| {
+            scan::break_ends(&text, &budget, poll).map_err(layout_code)
+        });
+        let ends = scan::break_ends(&text, &budget, &mut || Ok(())).unwrap();
+        let expected: Vec<usize> = unicode_linebreak::linebreaks(&text)
+            .map(|(end, _)| end)
+            .collect();
+        assert_eq!(&*ends, &*expected);
+    }
+}
+
+#[test]
+fn whitespace_trimming_and_newline_search_poll() {
+    let text = format!("a{}", " ".repeat(LONG));
+    assert_stops_midway(LONG / scan::STEP / 2, |poll| {
+        scan::trim_end(&text, poll).map_err(|refusal| refusal.code())
+    });
+    assert_eq!(scan::trim_end(&text, &mut || Ok(())).unwrap(), "a");
+    let text = "a".repeat(LONG);
+    assert_stops_midway(LONG / scan::STEP / 2, |poll| {
+        scan::find_ascii(&text, 0, |byte| byte == b'\n', poll).map_err(|refusal| refusal.code())
+    });
+}
+
+#[test]
+fn grapheme_discovery_polls_inside_one_long_grapheme() {
+    let text = format!("a{}", "\u{301}".repeat(LONG / 2));
+    assert_stops_midway(LONG / scan::STEP / 2, |poll| {
+        scan::grapheme_ends(&text, poll, |_| Ok(())).map_err(|refusal| refusal.code())
+    });
+    let budget = Budget::default();
+    assert_eq!(grapheme_count(&text, &budget).unwrap(), 1);
+    let flags = "\u{1F1E6}".repeat(LONG / 4);
+    assert_stops_midway(LONG / scan::STEP / 2, |poll| {
+        scan::grapheme_ends(&flags, poll, |_| Ok(())).map_err(|refusal| refusal.code())
+    });
+    assert_eq!(grapheme_count(&flags, &budget).unwrap(), LONG / 8);
+}
+
+#[test]
+fn long_runs_lay_out_as_before() {
+    let text = format!("a{}b", " ".repeat(LONG));
+    assert_eq!(texts(&mono(&text, 50.0, false).unwrap()), ["a", "b"]);
+    let zalgo = format!("a{} b", "\u{301}".repeat(LONG / 2));
+    let layout = layout(
+        &zalgo,
+        (15.0, 1000.0),
+        10.0,
+        PLACEMENT,
+        false,
+        &Budget::default(),
+        |line| 10.0 * line.graphemes(true).count() as f64,
+    )
+    .unwrap();
+    assert_eq!(layout.lines.len(), 2);
+    assert_eq!(layout.lines[1].text, "b");
+}
+
+#[test]
+fn layout_stops_midway_for_cancellation_and_deadline() {
+    let text = format!("{} b", "a".repeat(LONG));
+    // The first measure takes the whole paragraph; break discovery follows.
+    let token = CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    let refusal = layout(
+        &text,
+        (50.0, 1000.0),
+        10.0,
+        PLACEMENT,
+        false,
+        &budget,
+        |line| {
+            token.cancel();
+            10.0 * line.len() as f64
+        },
+    )
+    .unwrap_err();
+    assert_eq!(layout_code(refusal), LimitCode::Cancelled);
+
+    let deadline = Instant::now() + std::time::Duration::from_millis(20);
+    let budget = Budget::default().with_deadline(deadline);
+    let refusal = layout(
+        &text,
+        (50.0, 1000.0),
+        10.0,
+        PLACEMENT,
+        false,
+        &budget,
+        |line| {
+            while Instant::now() < deadline {
+                std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
+            }
+            10.0 * line.len() as f64
+        },
+    )
+    .unwrap_err();
+    assert_eq!(layout_code(refusal), LimitCode::Deadline);
+}
+
+#[test]
+fn single_line_polls_while_it_copies() {
+    let text = format!("a\n{}", "b".repeat(LONG));
+    let token = CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    assert_eq!(single_line(&text, &budget).unwrap().len(), text.len());
+    token.cancel();
+    assert_eq!(
+        single_line(&text, &budget).unwrap_err().code(),
+        LimitCode::Cancelled
+    );
+}
+
+#[test]
+fn interdependent_break_runs_are_refused_past_the_context_limit() {
+    let budget = Budget::default();
+    let joined = format!("a{}", "\u{301}\u{200D}".repeat(MAX_BREAK_CONTEXT));
+    assert_eq!(
+        scan::break_ends(&joined, &budget, &mut || Ok(())).unwrap_err(),
+        LayoutError::BreakContext
+    );
+    let short = format!("a{}", "\u{301}\u{200D}".repeat(MAX_BREAK_CONTEXT / 4));
+    let ends = scan::break_ends(&short, &budget, &mut || Ok(())).unwrap();
+    assert_eq!(&*ends, [short.len()]);
 }

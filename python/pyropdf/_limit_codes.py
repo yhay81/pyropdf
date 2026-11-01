@@ -241,7 +241,8 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "count and 4,096."
         ),
         "memory_size": (
-            "The collections of one operation would hold more memory than it allows, or the allocator refuses it."
+            "The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or "
+            "the allocator refuses it."
         ),
         "deadline": "The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets.",
         "cancelled": "A cancellation token of the operation is cancelled.",

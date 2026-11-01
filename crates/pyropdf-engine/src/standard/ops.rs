@@ -146,7 +146,11 @@ pub fn text_ops_with(
             reason = "a layout holds at most MAX_LINES lines"
         )]
         let baseline = rect[1] + layout.ascent * style.size + number as f64 * layout.leading;
-        let spaces = line.text.bytes().filter(|&byte| byte == b' ').count();
+        let mut spaces = 0;
+        for chunk in line.text.as_bytes().chunks(super::scan::STEP) {
+            out.budget().poll()?;
+            spaces += chunk.iter().filter(|&&byte| byte == b' ').count();
+        }
         #[expect(
             clippy::cast_precision_loss,
             reason = "a line holds fewer spaces than f64 counts exactly"
@@ -185,7 +189,10 @@ pub fn text_ops_with(
 /// outside printable ASCII in octal.
 fn push_string(out: &mut BudgetVec<'_, u8>, text: &str) -> Result<(), LayoutError> {
     out.try_push(b'(')?;
-    for character in text.chars() {
+    for (index, character) in text.chars().enumerate() {
+        if index % super::scan::STEP == 0 {
+            out.budget().poll()?;
+        }
         let byte = winansi_byte(character).ok_or(LayoutError::NotWinAnsi)?;
         match byte {
             b'(' | b')' | b'\\' => out.try_extend_from_slice(&[b'\\', byte])?,

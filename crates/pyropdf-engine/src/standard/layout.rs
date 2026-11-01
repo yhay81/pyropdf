@@ -10,8 +10,8 @@ use std::fmt;
 
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use unicode_linebreak::linebreaks;
-use unicode_segmentation::UnicodeSegmentation;
+
+use super::scan::{self, Poll};
 
 /// How far a width or height may pass its box and still fit it.
 const FIT_TOLERANCE: f64 = 1.0e-6;
@@ -36,6 +36,12 @@ pub enum LayoutError {
     NotWinAnsi,
     /// The text does not fit its box at any size down to 0.01 points.
     Unfit,
+    /// A paragraph holds more than
+    /// [`MAX_BREAK_CONTEXT`](super::MAX_BREAK_CONTEXT) characters, past the
+    /// runs of one line-breaking class, whose break opportunities depend on
+    /// one another with no opportunity between them, such as combining
+    /// marks alternating with zero-width joiners.
+    BreakContext,
     /// The operation's budget refused the layout's memory.
     Limit(LimitExceeded),
 }
@@ -55,6 +61,9 @@ impl fmt::Display for LayoutError {
             Self::Narrow => "textbox is too narrow to fit one text grapheme",
             Self::NotWinAnsi => "Standard 14 text contains a character outside WinAnsi",
             Self::Unfit => "the text cannot fit inside its box",
+            Self::BreakContext => {
+                "text holds too long a run of characters whose line breaks depend on one another"
+            }
             Self::Limit(refusal) => return fmt::Display::fmt(refusal, formatter),
         })
     }
@@ -212,8 +221,16 @@ pub fn layout<'t>(
         return Err(LayoutError::InvalidGeometry);
     }
     let mut lines = BudgetVec::new(budget);
-    for paragraph in text.split('\n') {
-        wrap(paragraph, width, justify, &mut lines, &mut measure)?;
+    let poll = &mut || budget.poll();
+    let mut start = 0;
+    loop {
+        let end = scan::find_ascii(text, start, |byte| byte == b'\n', poll)?;
+        let paragraph = &text[start..end.unwrap_or(text.len())];
+        wrap(paragraph, width, justify, &mut lines, &mut measure, poll)?;
+        match end {
+            Some(end) => start = end + 1,
+            None => break,
+        }
     }
 
     let required = placement.required_height(lines.len(), font_size);
@@ -256,10 +273,11 @@ fn wrap<'t>(
     justify: bool,
     lines: &mut BudgetVec<'_, Line<'t>>,
     measure: &mut impl FnMut(&str) -> f64,
+    poll: &mut Poll<'_>,
 ) -> Result<(), LayoutError> {
     // A paragraph that fits whole is measured once, so that a wide box
     // stays linear rather than measuring growing prefixes.
-    let visible = paragraph.trim_end_matches(char::is_whitespace);
+    let visible = scan::trim_end(paragraph, poll)?;
     let paragraph_width = measure(visible);
     if paragraph.is_empty() || paragraph_width <= max_width + FIT_TOLERANCE {
         return push(
@@ -277,14 +295,9 @@ fn wrap<'t>(
     }
 
     let budget = lines.budget();
-    let mut break_ends = BudgetVec::new(budget);
-    break_ends.try_extend(linebreaks(paragraph).map(|(end, _)| end))?;
+    let break_ends = scan::break_ends(paragraph, budget, poll)?;
     let mut grapheme_ends = BudgetVec::new(budget);
-    grapheme_ends.try_extend(
-        paragraph
-            .grapheme_indices(true)
-            .map(|(offset, grapheme)| offset + grapheme.len()),
-    )?;
+    scan::grapheme_ends(paragraph, poll, |end| grapheme_ends.try_push(end))?;
     let mut start = 0;
     while start < paragraph.len() {
         let (consumed, visible_end, width) = greedy_break(
@@ -294,6 +307,7 @@ fn wrap<'t>(
             &break_ends,
             &grapheme_ends,
             measure,
+            poll,
         )?;
         let soft_break = start + consumed < paragraph.len();
         push(
@@ -318,9 +332,10 @@ fn measure_break(
     start: usize,
     end: usize,
     measure: &mut impl FnMut(&str) -> f64,
-) -> Break {
-    let visible = text[start..end].trim_end_matches(char::is_whitespace);
-    (end - start, visible.len(), measure(visible))
+    poll: &mut Poll<'_>,
+) -> Result<Break, LimitExceeded> {
+    let visible = scan::trim_end(&text[start..end], poll)?;
+    Ok((end - start, visible.len(), measure(visible)))
 }
 
 /// Returns the longest line from `start` that ends at a break opportunity
@@ -333,27 +348,30 @@ fn greedy_break(
     break_ends: &[usize],
     grapheme_ends: &[usize],
     measure: &mut impl FnMut(&str) -> f64,
+    poll: &mut Poll<'_>,
 ) -> Result<Break, LayoutError> {
     // The last break ends the text, so the first after `start` exists.
     let mut first = break_ends.partition_point(|end| *end <= start);
+    // Leading whitespace does not make a blank line of its own. The text
+    // from `start` is blank while each segment between opportunities is,
+    // so each segment is read once.
+    let mut segment_start = start;
     while first + 1 < break_ends.len() {
-        // Leading whitespace does not make a blank line of its own.
-        if !text[start..break_ends[first]]
-            .trim_end_matches(char::is_whitespace)
-            .is_empty()
-        {
+        poll()?;
+        if !scan::trim_end(&text[segment_start..break_ends[first]], poll)?.is_empty() {
             break;
         }
+        segment_start = break_ends[first];
         first += 1;
     }
 
     let first_end = break_ends[first];
-    let first_visible = text[start..first_end].trim_end_matches(char::is_whitespace);
+    let first_visible = scan::trim_end(&text[start..first_end], poll)?;
     let first_visible_end = start + first_visible.len();
     let first_candidate = if first_visible.is_empty() {
         (first_end - start, 0, measure(first_visible))
     } else if first_visible.len() <= DIRECT_BREAK_MEASURE_BYTES {
-        let candidate = measure_break(text, start, first_end, measure);
+        let candidate = measure_break(text, start, first_end, measure, poll)?;
         if candidate.2 > max_width + FIT_TOLERANCE {
             return emergency_break(
                 text,
@@ -392,7 +410,7 @@ fn greedy_break(
             return Ok(best);
         }
         let probe = first.saturating_add(offset).min(last);
-        let candidate = measure_break(text, start, break_ends[probe], measure);
+        let candidate = measure_break(text, start, break_ends[probe], measure, poll)?;
         if candidate.2 > max_width + FIT_TOLERANCE {
             break probe;
         }
@@ -404,7 +422,7 @@ fn greedy_break(
     let (mut low, mut high) = (best_index + 1, failed_index);
     while low < high {
         let middle = low + (high - low) / 2;
-        let candidate = measure_break(text, start, break_ends[middle], measure);
+        let candidate = measure_break(text, start, break_ends[middle], measure, poll)?;
         if candidate.2 <= max_width + FIT_TOLERANCE {
             best = candidate;
             low = middle + 1;
@@ -476,17 +494,40 @@ fn emergency_break(
 /// it. A copy is charged to `budget`.
 pub fn single_line<'t>(text: &'t str, budget: &Budget) -> Result<Cow<'t, str>, LimitExceeded> {
     budget.poll()?;
-    if !text.contains(['\r', '\n']) {
+    let poll = &mut || budget.poll();
+    let is_line_end = |byte| byte == b'\r' || byte == b'\n';
+    let Some(first) = scan::find_ascii(text, 0, is_line_end, poll)? else {
         return Ok(Cow::Borrowed(text));
-    }
+    };
     budget.charge(LimitCode::MemorySize, text.len() as u64)?;
-    Ok(Cow::Owned(text.replace(['\r', '\n'], " ")))
+    let mut line = String::with_capacity(text.len());
+    line.push_str(&text[..first]);
+    let mut start = first;
+    while start < text.len() {
+        poll()?;
+        let end = text.ceil_char_boundary(start.saturating_add(scan::STEP).min(text.len()));
+        line.extend(text[start..end].chars().map(|character| {
+            if matches!(character, '\r' | '\n') {
+                ' '
+            } else {
+                character
+            }
+        }));
+        start = end;
+    }
+    Ok(Cow::Owned(line))
 }
 
 /// Returns the number of extended graphemes of `text`, the characters that
 /// a comb field gives a cell each.
-pub fn grapheme_count(text: &str) -> usize {
-    text.graphemes(true).count()
+pub fn grapheme_count(text: &str, budget: &Budget) -> Result<usize, LimitExceeded> {
+    budget.poll()?;
+    let mut count = 0_usize;
+    scan::grapheme_ends(text, &mut || budget.poll(), |_| {
+        count += 1;
+        Ok(())
+    })?;
+    Ok(count)
 }
 
 /// Returns the extended graphemes of `text`.
@@ -494,7 +535,13 @@ pub fn graphemes<'t, 'b>(
     text: &'t str,
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, &'t str>, LimitExceeded> {
+    budget.poll()?;
     let mut graphemes = BudgetVec::new(budget);
-    graphemes.try_extend(text.graphemes(true))?;
+    let mut start = 0;
+    scan::grapheme_ends(text, &mut || budget.poll(), |end| {
+        graphemes.try_push(&text[start..end])?;
+        start = end;
+        Ok(())
+    })?;
     Ok(graphemes)
 }
