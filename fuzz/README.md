@@ -45,12 +45,13 @@ as seeds of `fonts`, to `fuzz/corpus/`, which git ignores.
 ## CI and Actions minutes
 
 `.github/workflows/fuzz.yml` runs each target for one minute on pull requests
-that change the store, the engine, or the targets, and for fifteen minutes on
+and pushes to main that change the store, the engine, or the targets, and for fifteen minutes on
 Mondays. Each job also installs cargo-fuzz and builds the target, about four
 minutes with a warm cache. Linux minutes count once:
 
 - weekly: 6 jobs × (15 + 4) minutes = about 115 minutes, or about 490 a month;
-- pull requests: 6 × (1 + 4) = about 30 minutes each, which Rust changes pay.
+- pull requests and pushes to main: 6 × (1 + 4) = about 30 minutes each,
+  which Rust changes pay twice: once on the pull request and once on main.
 
 Against the 2,000 minutes a month of a private repository on GitHub Free
 (3,000 on Pro), the weekly run takes about a quarter (or a sixth). Lower

@@ -1,11 +1,18 @@
 # The cargo-fuzz targets of fuzz/ (DESIGN.md section 12, F9): a short run on
-# pull requests that change the store, the engine, or the targets, and a
-# longer weekly run. A crash fails the job and uploads its input. Linux only:
+# pull requests and pushes to main that change the store, the engine, or the
+# targets, and a longer weekly run. A crash fails the job and uploads its input. Linux only:
 # Actions minutes are limited, and fuzz/README.md states the budget.
 name: Fuzz
 
 on:
   pull_request:
+    paths:
+      - "crates/pyropdf-store/**"
+      - "crates/pyropdf-engine/**"
+      - "fuzz/**"
+      - ".github/workflows/fuzz.yml"
+  push:
+    branches: [main]
     paths:
       - "crates/pyropdf-store/**"
       - "crates/pyropdf-engine/**"
@@ -21,7 +28,8 @@ permissions:
 
 concurrency:
   group: fuzz-${{ github.ref }}
-  cancel-in-progress: true
+  # A push to a pull request supersedes its earlier run; every run on main finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -57,7 +65,7 @@ jobs:
         working-directory: fuzz
         env:
           # Seconds: one minute on pull requests, fifteen weekly.
-          SECONDS_TO_RUN: ${{ github.event_name == 'pull_request' && 60 || 900 }}
+          SECONDS_TO_RUN: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && 60 || 900 }}
         run: >-
           cargo +"$NIGHTLY" fuzz run "${{ matrix.target }}" "corpus/${{ matrix.target }}"
           -- -max_total_time="$SECONDS_TO_RUN" -timeout=10 -rss_limit_mb=2048 -max_len=4194304
