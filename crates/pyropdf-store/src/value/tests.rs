@@ -325,6 +325,27 @@ fn a_stream_whose_length_is_wrong_or_missing_gets_the_length_of_its_data() {
 /// alone reads as `abc`.
 const INDIRECT: &[u8] = b"<< /Length 5 0 R >>\nstream\nabc\n\nendstream";
 
+#[test]
+fn cancellation_during_length_resolution_refuses_before_returning() {
+    for unreadable in [false, true] {
+        let token = CancellationToken::new();
+        let budget = Budget::default().with_cancellation(token.clone());
+        let fetch = |_| {
+            token.cancel();
+            if unreadable {
+                Err(Error::malformed("unreadable"))
+            } else {
+                Ok(Some(Bytes::from(&b"4"[..])))
+            }
+        };
+        let error = Value::parse_with_lengths(&Bytes::from(INDIRECT), &budget, &fetch).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
+        );
+    }
+}
+
 /// Parses `source`, whose length's object 5 begins with `length`.
 fn with_length(source: &'static [u8], length: &'static [u8]) -> Value {
     let fetch = |reference| Ok((reference == Reference::new(5, 0)).then(|| Bytes::from(length)));
