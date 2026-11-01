@@ -242,6 +242,40 @@ def test_widget_font_reads_the_resource_that_the_form_names() -> None:
     assert customer.font is None
 
 
+@pytest.mark.parametrize("resource", ["F1", "Helv"])
+def test_widget_font_resolves_standard_fonts_with_optional_entries(resource: str) -> None:
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra=f"/DA (/{resource} 12 Tf 0 g)"))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    fonts[resource] = {
+        "Type": Name("Font"),
+        "Subtype": Name("Type1"),
+        "BaseFont": Name("Times-Bold"),
+        "FontDescriptor": {"Type": Name("FontDescriptor"), "FontName": Name("Times-Bold")},
+    }
+    widget = doc.pages[0].widgets[0]
+    assert widget.font is not None
+    assert widget.font.name == "Times-Bold"
+
+
+def test_widget_font_falls_back_only_for_an_absent_resource() -> None:
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra="/DA (/Helv 12 Tf 0 g)"))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    widget = doc.pages[0].widgets[0]
+    fonts["Helv"] = {"Subtype": Name("Type1"), "BaseFont": Name("OtherFont")}
+    assert widget.font is None
+    # An embedded program can use a Standard 14 font's name.
+    program = doc.objects[doc.objects.add_stream(b"embedded program")]
+    fonts["Helv"] = {
+        "Subtype": Name("Type1"),
+        "BaseFont": Name("Helvetica"),
+        "FontDescriptor": {"FontFile": program},
+    }
+    assert widget.font is None
+    del fonts["Helv"]
+    assert widget.font is not None
+    assert widget.font.name == "Helvetica"
+
+
 def test_widget_font_refuses_an_embedded_face() -> None:
     customer = _form().pages[0].widgets[0]
     face = Font.from_file(NOTO_SANS_HEBREW)

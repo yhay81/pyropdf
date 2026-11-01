@@ -781,27 +781,6 @@ pub fn text_appearance(
     default_appearance(reader, widget, form)
 }
 
-/// Returns the Standard 14 font that text drawn with `/DA` font `resource`
-/// uses, as the appearance writer resolves it: the font that the form's
-/// `/DR /Font` holds under that name, else the font of a Standard 14
-/// abbreviation such as `Cour`. Returns `None` for a resource that names
-/// neither.
-pub fn text_font(
-    reader: &Reader<'_>,
-    resource: &str,
-) -> std::result::Result<Option<&'static str>, WidgetError> {
-    let form = interactive_form(reader)?;
-    if let Some(Value::Dict(form)) = form.as_deref()
-        && let Some(font) = form_standard_font(reader, form, resource)?
-    {
-        return Ok(Some(font));
-    }
-    Ok(standard::DA_FONTS
-        .iter()
-        .find(|(known, _)| *known == resource)
-        .map(|(_, font)| *font))
-}
-
 /// Returns the `/DA` of a widget: its own, else the nearest of its
 /// `/Parent` chain, else the interactive form's.
 fn default_appearance(
