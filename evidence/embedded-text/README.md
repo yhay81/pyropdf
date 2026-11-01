@@ -132,6 +132,29 @@ Other checks:
   also attaches the holam to the wrong letter; the per-glyph mapping above
   does not.
 
+## Intended differences from pylopdf
+
+pylopdf ebb01d3c's canvas, font, and form tests pass in pyropdf with these
+differences. Each test module's docstring repeats its rows.
+
+| Area | Difference | Tests |
+| --- | --- | --- |
+| Canvas | Text without a `font` draws in Helvetica. Text outside WinAnsi needs a font, because pyropdf installs no font extras. | `test_canvas_text.py` |
+| Canvas | Standard 14 strings are written in hexadecimal. | `test_canvas_text.py` |
+| Canvas | There is no `Document.complexity` and no `create()`. Atomicity is checked on `doc.objects` and with `doc.history.undo()`. | `test_canvas_text.py`, `test_canvas_embedded.py` |
+| Canvas | One Type0 font per face per document, not one per drawing. Saving subsets the program to its drawn glyphs. | `test_canvas_embedded.py` |
+| Font | `/BaseFont /Name` is written with a space, so the tests match the name with a pattern. | `test_font.py` |
+| Font | `glyph_name` and `glyph_text` are not ported. | `test_font.py` |
+| Font | A variable face draws at its default instance only. Any other weight is refused. | `test_font_embedded.py` |
+| Font, canvas, form | The tests use the subset Noto faces of `crates/pyropdf-engine/src/fonts/testdata`, so their texts are the subsets' characters. | `test_font_embedded.py`, `test_canvas_embedded.py`, `test_acroform.py` |
+| Form | pyropdf bundles no font extras, so the case that uses an installed Japanese face is not ported. Without `Form.font`, a value outside WinAnsi is left for the viewer to draw. | `test_acroform.py` |
+| Form | `Font.from_bytes` refuses invalid font data before a fill. The core cases that took font bytes become cases on `Font` and `form_field_draw_face`. | `test_acroform.py` |
+| Form | Rendering a filled button is not refused by `max_interpretation_size`. A stale handle comes back with undo, because there is no renumbering save. A refused read needs no `to_bytes` comparison. | `test_acroform.py` |
+
+CI checks the sizes against krilla's: `test_100_stamps_save_no_larger_than_krilla`
+in `tests/test_canvas_embedded.py` asserts each 100-stamp row of the table
+above, with `dedupe=True`, against krilla's recorded row.
+
 ## Findings
 
 1. **One program for 100 stamps holds.** One font resource per document,

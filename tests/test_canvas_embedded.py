@@ -171,6 +171,34 @@ def test_one_face_on_100_pages_embeds_one_program(japanese: pyropdf.Font, hebrew
     assert reopened.pages[99].text().split("\n")[0] == "AVA 1 日本語"
 
 
+# krilla's saved KiB with dedupe=True, for 100 stamps of the same and of
+# varying text: evidence/embedded-text/README.md, through pylopdf 0.16.0.
+KRILLA_100_STAMPS_KIB = {
+    "hebrew": (29.6, 82.8),
+    "latin": (32.3, 154.5),
+    "japanese": (29.9, 68.3),
+}
+STAMPS = {"hebrew": "שלום עולם", "latin": "Hello, office ffi", "japanese": "日本語のテキスト。"}
+
+
+@pytest.mark.parametrize("varying", [False, True], ids=["same", "varying"])
+@pytest.mark.parametrize("face", ["hebrew", "latin", "japanese"])
+def test_100_stamps_save_no_larger_than_krilla(face: str, *, varying: bool, request: pytest.FixtureRequest) -> None:
+    # The save subsets the face to its drawn glyphs, so the subset test faces
+    # stand in for the full faces that krilla embedded.
+    font = request.getfixturevalue("hebrew" if face == "hebrew" else "japanese")
+    letters = STAMPS[face].replace(" ", "")
+    document = pyropdf.Document()
+    for index in range(100):
+        text = letters[index % len(letters)] + letters[index * 7 % len(letters)] if varying else STAMPS[face]
+        with document.pages.new((612, 792)).draw() as canvas:
+            canvas.text(text, (72, 72), font=font, size=24)
+
+    saved = document.to_bytes(dedupe=True, prune=True)
+    assert len(saved) / 1024 <= KRILLA_100_STAMPS_KIB[face][varying]
+    assert len(_descriptor_programs(pyropdf.open(saved))) == 1
+
+
 def test_one_drawing_is_one_undo_step(japanese: pyropdf.Font) -> None:
     document, page = _new_page()
     with page.draw() as canvas:
