@@ -129,6 +129,7 @@ method and property of its classes with its full description.
 ## [Annotations](annotations.md)
 
 - [`Annotation`](annotations.md#annotation): A handle on one annotation of a page, as `page.annotations` lists it.
+- [`AnnotationFile`](annotations.md#annotationfile_1): The file that a file attachment annotation embeds, as `Annotation.file` returns it.
 - [`AnnotationFlags`](annotations.md#annotationflags_1): Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.
 - [`Annotations`](annotations.md#annotations_1): The annotations of a page other than links and form widgets, as `page.annotations` returns them.
 - [`AnnotationSpecification`](annotations.md#annotationspecification)
@@ -138,6 +139,7 @@ method and property of its classes with its full description.
 - [`BorderStyle`](annotations.md#borderstyle): The style of an annotation's border, `/BS /S` (ISO 32000-2 Table 168).
 - [`Caret`](annotations.md#caret): A caret that marks where text goes, as `page.annotations.add` takes it.
 - [`Circle`](annotations.md#circle): An ellipse inscribed in a rectangle, as `page.annotations.add` takes it.
+- [`FileAttachment`](annotations.md#fileattachment): A file embedded in the page behind an icon, as `page.annotations.add` takes it.
 - [`Highlight`](annotations.md#highlight): A highlight over text, as `page.annotations.add` takes it.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.

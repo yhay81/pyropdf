@@ -11,13 +11,13 @@ from __future__ import annotations
 import enum
 import math
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core
 from pyropdf._content import BlendMode, Color
-from pyropdf._errors import LimitError, MalformedPdfError, StaleObjectError, StalePageError
+from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
@@ -325,6 +325,276 @@ def _sound_number(value: object, name: str, *, integer: bool) -> float:
         msg = f"the sound's /{name} must be {expected}: {value!r}"
         raise MalformedPdfError(msg)
     return value
+
+
+#: Attached files stop at 64 MiB unless the caller passes another bound.
+_DEFAULT_MAX_FILE_SIZE = 64 * 1024 * 1024
+#: The longest date string that a file's ``created`` and ``modified`` take.
+_MAX_DATE_SIZE = 64
+
+
+def _attached_data(data: object, max_size: int | None) -> bytes:
+    """Check attached data against ``max_size`` before copying it (``embedded_file_size``)."""
+    _validate_optional_positive_int("max_size", max_size)
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        msg = f"data must be bytes: {type(data).__name__}"
+        raise TypeError(msg)
+    size = data.nbytes if isinstance(data, memoryview) else len(data)
+    if max_size is not None and size > max_size:
+        code = "embedded_file_size"
+        msg = f"attachment input is {size} bytes, exceeding the {max_size}-byte limit"
+        raise LimitError(code, msg)
+    return bytes(data)
+
+
+def _file_texts(texts: Iterable[str], label: str) -> None:
+    """Refuse texts that are longer together in UTF-8 than 1 MiB (``embedded_file_input_size``)."""
+    size = 0
+    for text in texts:
+        # Each character needs at least one UTF-8 byte. Reject oversized
+        # inputs before allocating an encoded copy of them.
+        if len(text) > _MAX_ANNOTATION_INPUT_TEXT_SIZE - size:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
+        size += len(text.encode("utf-8", "surrogatepass"))
+        if size > _MAX_ANNOTATION_INPUT_TEXT_SIZE:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
+
+
+def _file_text(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        msg = f"{name} must be a str: {type(value).__name__}"
+        raise TypeError(msg)
+    _file_texts([value], name)
+    return value
+
+
+def _file_date(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        msg = f"{name} must be a str: {type(value).__name__}"
+        raise TypeError(msg)
+    if not value.startswith("D:") or not value.isascii() or len(value) > _MAX_DATE_SIZE:
+        msg = f"{name} must be a PDF date string such as 'D:20260101120000Z': {value!r}"
+        raise ValueError(msg)
+    return value
+
+
+def _string_text(value: object) -> str | None:
+    return value.text if isinstance(value, String) else None
+
+
+def _embedded_stream(filespec: Dictionary) -> Stream | None:
+    """Return the embedded file stream that a file specification's ``/EF`` names, if any."""
+    files = filespec.get("EF")
+    if not isinstance(files, Dictionary):
+        return None
+    for key in ("F", "UF"):
+        stream = files.get(key)
+        if isinstance(stream, Stream):
+            return stream
+    return None
+
+
+class AnnotationFile:
+    """The file that a file attachment annotation embeds, as :attr:`Annotation.file` returns it.
+
+    It reads the document on every access and has the members of
+    :class:`Attachment`, which describes the document's own attachments:
+    assigning ``filename``, ``description``, ``created``, or ``modified``
+    edits the file specification at once. A handle raises
+    :class:`StaleObjectError` once its annotation no longer embeds a file.
+    """
+
+    __slots__ = ("_annotation",)
+
+    def __init__(self, annotation: Annotation) -> None:
+        """Wrap an annotation; :attr:`Annotation.file` does this."""
+        self._annotation = annotation
+
+    def _filespec(self) -> Dictionary:
+        filespec = self._annotation._filespec()  # noqa: SLF001
+        if filespec is None:
+            msg = "the annotation no longer embeds a file"
+            raise StaleObjectError(msg)
+        return filespec
+
+    def _params(self) -> Dictionary | None:
+        stream = _embedded_stream(self._filespec())
+        params = stream.get("Params") if stream is not None else None
+        return params if isinstance(params, Dictionary) else None
+
+    def _edit(self, name: str, edit: Callable[[Dictionary], None]) -> None:
+        """Apply ``edit`` to the file specification in one transaction that records the annotation's change."""
+        self._filespec()
+        annotation = self._annotation
+        old_id, old_index = annotation._id, annotation._index  # noqa: SLF001
+        try:
+            with annotation._page._document.transaction(name):  # noqa: SLF001
+                # The edit stores a direct annotation as an object of its own.
+                annotation._set()  # noqa: SLF001
+                edit(self._filespec())
+        except BaseException:
+            # A failed edit (including a failed commit) discards the new object.
+            annotation._id, annotation._index = old_id, old_index  # noqa: SLF001
+            raise
+
+    def _edit_params(self, key: str, value: str | None) -> None:
+        def edit(filespec: Dictionary) -> None:
+            stream = _embedded_stream(filespec)
+            if stream is None:
+                msg = "the attached file has no embedded file stream"
+                raise PdfError(msg)
+            if not isinstance(stream.get("Params"), Dictionary):
+                stream["Params"] = {}
+            params = stream["Params"]
+            if value is not None:
+                params[key] = value
+            elif key in params:
+                del params[key]
+
+        self._edit("annotation file edit", edit)
+
+    @property
+    def filename(self) -> str:
+        """Return the viewer-facing file name (``/UF``, else ``/F``), or ``""``; assignable."""
+        filespec = self._filespec()
+        return _string_text(filespec.get("UF")) or _string_text(filespec.get("F")) or ""
+
+    @filename.setter
+    def filename(self, filename: str) -> None:
+        filename = _file_text(filename, "filename")
+        if not filename:
+            msg = "a file name cannot be empty"
+            raise ValueError(msg)
+
+        def edit(filespec: Dictionary) -> None:
+            filespec["F"] = filename
+            filespec["UF"] = filename
+
+        self._edit("annotation file edit", edit)
+
+    @property
+    def description(self) -> str | None:
+        """Return the description (``/Desc``), or ``None``; assignable, and ``del`` removes it."""
+        return _string_text(self._filespec().get("Desc")) or None
+
+    @description.setter
+    def description(self, description: str) -> None:
+        description = _file_text(description, "description")
+
+        def edit(filespec: Dictionary) -> None:
+            filespec["Desc"] = description
+
+        self._edit("annotation file edit", edit)
+
+    @description.deleter
+    def description(self) -> None:
+        def edit(filespec: Dictionary) -> None:
+            if "Desc" in filespec:
+                del filespec["Desc"]
+
+        self._edit("annotation file edit", edit)
+
+    @property
+    def size(self) -> int:
+        """Return the uncompressed size that the file declares (``/Params /Size``), or -1, as pymupdf does."""
+        params = self._params()
+        size = params.get("Size") if params is not None else None
+        return size if isinstance(size, int) and not isinstance(size, bool) else -1
+
+    @property
+    def created(self) -> str | None:
+        """Return the creation date (``/Params /CreationDate``) as stored, or ``None``; assignable and deletable.
+
+        Dates are PDF date strings such as ``D:20260101120000Z``.
+        """
+        params = self._params()
+        return (_string_text(params.get("CreationDate")) or None) if params is not None else None
+
+    @created.setter
+    def created(self, date: str) -> None:
+        self._edit_params("CreationDate", _file_date(date, "created"))
+
+    @created.deleter
+    def created(self) -> None:
+        self._edit_params("CreationDate", None)
+
+    @property
+    def modified(self) -> str | None:
+        """Return the modification date (``/Params /ModDate``) as stored, or ``None``; assignable and deletable.
+
+        :meth:`write` sets it to the current time.
+        """
+        params = self._params()
+        return (_string_text(params.get("ModDate")) or None) if params is not None else None
+
+    @modified.setter
+    def modified(self, date: str) -> None:
+        self._edit_params("ModDate", _file_date(date, "modified"))
+
+    @modified.deleter
+    def modified(self) -> None:
+        self._edit_params("ModDate", None)
+
+    def read(self, *, max_size: int | None = _DEFAULT_MAX_FILE_SIZE) -> bytes:
+        """Return the file's contents; ``max_size`` bounds the decoded data (``embedded_file_size``).
+
+        The document's limits bound the decoding; ``None`` lifts ``max_size``
+        for trusted input.
+        """
+        _validate_optional_positive_int("max_size", max_size)
+        stream = _embedded_stream(self._filespec())
+        if stream is None:
+            msg = "the attached file has no embedded file stream"
+            raise PdfError(msg)
+        try:
+            return stream.read(max_size=max_size)
+        except LimitError as error:
+            if error.code != "stream_data_size":
+                raise
+            code = "embedded_file_size"
+            msg = f"the attached file is larger than the {max_size}-byte limit"
+            raise LimitError(code, msg) from error
+
+    def write(self, data: bytes | bytearray | memoryview, /, *, max_size: int | None = _DEFAULT_MAX_FILE_SIZE) -> None:
+        """Replace the file's contents, as pymupdf's ``embfile_upd`` does.
+
+        The file name, description, and creation date stay; ``size`` becomes
+        the new length, ``modified`` the current time, and a stale
+        ``/CheckSum`` is dropped. ``max_size`` bounds ``data`` before it is
+        copied and defaults to 64 MiB (``embedded_file_size``).
+        """
+        self._filespec()
+        payload = _attached_data(data, max_size)
+        document = self._annotation._page._document  # noqa: SLF001
+
+        def edit(filespec: Dictionary) -> None:
+            stream = _embedded_stream(filespec)
+            if stream is None:
+                objects = document.objects
+                stream = objects[objects.add_stream(payload, {"Type": Name("EmbeddedFile")})]
+                filespec["EF"] = {"F": stream, "UF": stream}
+            else:
+                stream.write(payload)
+            if not isinstance(stream.get("Params"), Dictionary):
+                stream["Params"] = {}
+            params = stream["Params"]
+            params["Size"] = len(payload)
+            params["ModDate"] = _now()
+            if "CheckSum" in params:
+                del params["CheckSum"]
+
+        self._edit("annotation file write", edit)
+
+    def __repr__(self) -> str:
+        """Return ``AnnotationFile('name')``."""
+        try:
+            return f"AnnotationFile({self.filename!r})"
+        except (StaleObjectError, StalePageError):
+            return "<stale AnnotationFile>"
 
 
 def _pdf_name(member: enum.StrEnum) -> str:
@@ -908,6 +1178,22 @@ class Annotation:
         _warn_skipped(skipped)
         return text
 
+    def _filespec(self) -> Dictionary | None:
+        """Return the file specification of a file attachment, ``/FS``, or ``None``."""
+        if self.type is not AnnotationType.FILE_ATTACHMENT:
+            return None
+        filespec = self.obj.get("FS")
+        return filespec if isinstance(filespec, Dictionary) else None
+
+    @property
+    def file(self) -> AnnotationFile | None:
+        """Return the file that a file attachment embeds, or ``None`` for another annotation.
+
+        A file attachment whose ``/FS`` is not a file specification
+        dictionary embeds no file either.
+        """
+        return None if self._filespec() is None else AnnotationFile(self)
+
     def sound(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> Sound | None:
         """Return the sound that a sound annotation plays, or ``None`` for another kind of annotation.
 
@@ -1270,6 +1556,76 @@ class Caret:
         }
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class FileAttachment:
+    """A file embedded in the page behind an icon, as ``page.annotations.add`` takes it.
+
+    ``at`` is the display point of the top-left corner of the 20-point
+    icon, which stands upright on a turned page too: its ``/Rotate`` takes
+    the page's rotation. ``data`` is the file and ``filename`` its name,
+    which with ``description`` stops at 1 MiB (``embedded_file_input_size``);
+    ``max_size`` bounds ``data`` before it is copied and defaults to 64 MiB
+    (``embedded_file_size``). ``color`` fills the icon. Read the file back
+    through :attr:`Annotation.file`; the document's own attachments, in
+    :attr:`Document.attachments`, do not list it.
+    """
+
+    at: Point
+    data: bytes
+    filename: str
+    description: str | None
+    icon: AttachmentIcon
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(  # noqa: PLR0913 - the attachment's options.
+        self,
+        at: Point | Sequence[float],
+        data: bytes | bytearray | memoryview,
+        *,
+        filename: str,
+        description: str | None = None,
+        icon: AttachmentIcon = AttachmentIcon.PUSH_PIN,
+        color: Color = Color(1.0, 1.0, 0.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        contents: str | None = None,
+        max_size: int | None = _DEFAULT_MAX_FILE_SIZE,
+    ) -> None:
+        """Validate the specification; texts and data are bounded before they are copied."""
+        contents = _contents(contents)
+        if not isinstance(filename, str) or (description is not None and not isinstance(description, str)):
+            msg = "filename must be a str and description a str or None"
+            raise TypeError(msg)
+        _file_texts((filename, description or ""), "attached file name and description")
+        _bound_input("FileAttachment", contents)
+        object.__setattr__(self, "at", _point(at))
+        object.__setattr__(self, "data", _attached_data(data, max_size))
+        object.__setattr__(self, "filename", filename)
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "icon", AttachmentIcon(icon))
+        object.__setattr__(self, "color", _opaque_color(color))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "contents", contents)
+
+    def _payload(self) -> dict[str, Any]:
+        x, y = self.at
+        return {
+            "subtype": "FileAttachment",
+            "rect": (x, y, x + _NOTE_SIZE, y + _NOTE_SIZE),
+            "data": self.data,
+            "filename": self.filename,
+            "description": self.description,
+            "icon": _ICON_NAMES[self.icon],
+            "color": (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "contents": self.contents,
+            "created": _now(),
+            # The data was bounded when the specification was made.
+            "max_size": None,
+        }
+
+
 #: The most points that one annotation's geometry holds (``annotation_point_count``).
 _MAX_ANNOTATION_POINTS = 65_536
 
@@ -1617,6 +1973,7 @@ AnnotationSpecification: TypeAlias = (
     | PolyLine
     | Ink
     | Caret
+    | FileAttachment
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -1631,6 +1988,7 @@ _SPECIFICATIONS = (
     PolyLine,
     Ink,
     Caret,
+    FileAttachment,
 )
 
 
@@ -1712,6 +2070,7 @@ class Annotations(Sequence[Annotation]):
 # The package re-exports these names; reprs, pickles, and documentation name them.
 for _public in (
     Annotation,
+    AnnotationFile,
     Annotations,
     AnnotationType,
     AnnotationFlags,
@@ -1720,6 +2079,7 @@ for _public in (
     BorderStyle,
     Caret,
     Circle,
+    FileAttachment,
     Highlight,
     Ink,
     LineAnnotation,

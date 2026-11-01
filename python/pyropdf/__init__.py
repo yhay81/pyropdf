@@ -4,6 +4,7 @@
 from pyropdf import typed
 from pyropdf._annotations import (
     Annotation,
+    AnnotationFile,
     AnnotationFlags,
     Annotations,
     AnnotationSpecification,
@@ -13,6 +14,7 @@ from pyropdf._annotations import (
     BorderStyle,
     Caret,
     Circle,
+    FileAttachment,
     Highlight,
     Ink,
     LineAnnotation,
@@ -164,6 +166,7 @@ for _public in (
 __all__ = [
     "Access",
     "Annotation",
+    "AnnotationFile",
     "AnnotationFlags",
     "AnnotationSpecification",
     "AnnotationType",
@@ -208,6 +211,7 @@ __all__ = [
     "FieldFlags",
     "FieldSpecification",
     "FieldType",
+    "FileAttachment",
     "FillRule",
     "Font",
     "FontInfo",

@@ -1,4 +1,5 @@
-//! The icons of notes, drawn in a 20-unit square, as pylopdf draws them.
+//! The icons of notes and file attachments, drawn in a 20-unit square, as
+//! pylopdf draws them.
 
 use super::{Canvas, Paint, ellipse};
 
@@ -138,4 +139,84 @@ pub(super) fn caret(
     }
     canvas.path("mcch", &coordinates);
     canvas.fill(color);
+}
+
+/// Maps a point of a unit square, top-down, a quarter turn `turn` degrees
+/// counterclockwise, as [`caret`] turns its point.
+fn turned((x, y): (f64, f64), turn: i64) -> (f64, f64) {
+    match turn.rem_euclid(360) {
+        90 => (y, 1.0 - x),
+        180 => (1.0 - x, 1.0 - y),
+        270 => (1.0 - y, x),
+        _ => (x, y),
+    }
+}
+
+/// Draws the icon `/Name` of a file attachment in a 20-unit square scaled
+/// to `size`, as a note's icon is drawn, turned `turn` degrees
+/// counterclockwise as `/Rotate` gives it: Graph, Paperclip, Tag, or
+/// PushPin for any other name.
+pub(super) fn file(canvas: &mut Canvas, paint: &Paint, icon: &[u8], size: (f64, f64), turn: i64) {
+    let (sx, sy) = (size.0 / 20.0, size.1 / 20.0);
+    let width = |width: f64| width * sx.min(sy);
+    let mut shape = |operators: &str,
+                     coordinates: &[f64],
+                     fill: Option<(f64, f64, f64)>,
+                     outline: Option<f64>| {
+        let scaled: Vec<f64> = coordinates
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|&[x, y]| {
+                let (x, y) = turned((x / 20.0, y / 20.0), turn);
+                [x * size.0, y * size.1]
+            })
+            .collect();
+        canvas.path(operators, &scaled);
+        match (fill, outline) {
+            (Some(fill), Some(line)) => canvas.fill_stroke(fill, BLACK, width(line)),
+            (Some(fill), None) => canvas.fill(fill),
+            (None, Some(line)) => canvas.stroke(BLACK, width(line), 1, 1, &[]),
+            (None, None) => canvas.out.push_str("n\n"),
+        }
+    };
+    let fill = paint.stroke;
+    match icon {
+        b"Graph" => {
+            for (x0, top) in [(3.0, 11.0), (8.5, 5.0), (14.0, 8.0)] {
+                shape(
+                    "mlllh",
+                    &[x0, 18.0, x0 + 3.5, 18.0, x0 + 3.5, top, x0, top],
+                    fill,
+                    Some(1.0),
+                );
+            }
+            shape("ml", &[1.5, 18.5, 18.5, 18.5], None, Some(1.0));
+        }
+        b"Paperclip" => shape(
+            "mlclclcl",
+            &[
+                7.0, 6.0, 7.0, 15.0, 7.0, 18.5, 13.0, 18.5, 13.0, 15.0, 13.0, 4.0, 13.0, 1.5, 9.5,
+                1.5, 9.5, 4.0, 9.5, 14.0, 9.5, 15.5, 10.5, 15.5, 10.5, 14.0, 10.5, 6.0,
+            ],
+            None,
+            Some(1.5),
+        ),
+        b"Tag" => {
+            shape(
+                "mlllllh",
+                &[
+                    2.0, 6.0, 12.0, 6.0, 18.0, 10.0, 12.0, 14.0, 2.0, 14.0, 2.0, 6.0,
+                ],
+                fill,
+                Some(1.0),
+            );
+            shape("mcccch", &ellipse(11.0, 9.0, 13.0, 11.0), Some(BLACK), None);
+        }
+        // PushPin, and any other name.
+        _ => {
+            shape("mcccch", &ellipse(7.0, 1.5, 17.0, 11.5), fill, Some(1.0));
+            shape("ml", &[10.0, 9.5, 2.5, 18.0], None, Some(1.5));
+        }
+    }
 }
