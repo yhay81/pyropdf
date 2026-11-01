@@ -151,12 +151,20 @@ def test_a_changed_signature_value_fails(pki: Pki) -> None:
     der = bytes.fromhex(signed[start : signature.byte_range[2] - 1].decode())
     # Locate the signature value through the CMS structure rather than by a
     # byte pattern, which random certificates and digests can also contain.
-    content = cms.ContentInfo.load(der, strict=False)["content"]
-    value = content["signer_infos"][0]["signature"].contents
-    # Flip the last hexadecimal digit of the value: the low half of the last
-    # byte of s, which keeps the DER of the ECDSA value well formed.
-    end = start + 2 * (der.index(value) + len(value)) - 1
-    tampered = signed[:end] + (b"1" if signed[end : end + 1] != b"1" else b"2") + signed[end + 1 :]
+    content = cms.ContentInfo.load(der, strict=False)
+    signer = content["content"]["signer_infos"][0]
+    value = signer["signature"].native
+    # Alter the low bit of s, preserving the ECDSA value's DER structure.
+    signer["signature"] = value[:-1] + bytes([value[-1] ^ 1])
+    encoded = content.dump()
+    # The CMS re-encoding must change exactly the signature byte and leave the
+    # reserved zero padding and every other byte untouched.
+    changed = [i for i, (before, after) in enumerate(zip(der, encoded, strict=False)) if before != after]
+    assert len(encoded) <= len(der)
+    assert len(changed) == 1
+    assert der[len(encoded) :] == bytes(len(der) - len(encoded))
+    offset = start + 2 * changed[0]
+    tampered = signed[:offset] + encoded[changed[0] : changed[0] + 1].hex().encode() + signed[offset + 2 :]
     [result] = _verified(tampered, pki)
     assert result.intact
     assert result.valid is False
