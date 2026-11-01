@@ -2614,9 +2614,32 @@ fn page_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Error> 
     let physical_lines = cluster_lines(glyphs)?;
     let mut lines = order_page_lines(physical_lines)?;
     for line in &mut lines {
-        logicalize_rtl_line(line);
+        logicalize_rtl_segments(line);
     }
     Ok(lines)
+}
+
+/// Restores each widely separated segment of `line` on its own: a gap of
+/// [`LINE_SEGMENT_GAP`] separates texts that do not share a paragraph, such
+/// as form fields or table cells, so the direction of one does not decide
+/// the order of another.
+fn logicalize_rtl_segments(line: &mut [GlyphRecord]) {
+    let mut start = 0usize;
+    let mut previous_end: Option<f64> = None;
+    let mut previous_size = 0.0_f64;
+    for index in 0..line.len() {
+        let glyph = &line[index];
+        let threshold = previous_size.max(glyph.size).max(1.0) * LINE_SEGMENT_GAP;
+        let starts_segment =
+            previous_end.is_some_and(|end| glyph_progress(glyph) - end > threshold);
+        previous_end = Some(glyph_end(glyph));
+        previous_size = glyph.size;
+        if starts_segment {
+            logicalize_rtl_line(&mut line[start..index]);
+            start = index;
+        }
+    }
+    logicalize_rtl_line(&mut line[start..]);
 }
 
 /// The lines as the view options make them: kept without options, else

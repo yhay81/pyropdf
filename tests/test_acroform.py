@@ -400,12 +400,11 @@ def test_fill_multiline_text_with_embedded_font_wraps() -> None:
 def test_fill_right_to_left_text_reads_in_logical_order() -> None:
     doc = pyropdf.open(_build_form_pdf())
     doc.form.font = pyropdf.Font.from_file(NOTO_SANS_HEBREW)
-    # The field has its line to itself: a line that mixes directions reads
-    # in visual order (#488).
-    doc.form["person.first"].value = "שלום עולם"
+    doc.form["customer"].value = "שלום עולם"
     reopened = pyropdf.open(doc.to_bytes())
-    assert _opaque_pixels(reopened, (45, 147, 255, 177)) > 0
-    assert "שלום עולם" in reopened.pages[0].text().split("\n")
+    assert _opaque_pixels(reopened, (45, 67, 255, 97)) > 0
+    # The choice field beside it reads "basic" on the same baseline (#488).
+    assert reopened.pages[0].text().split("\n")[0] == "שלום עולם basic"
 
 
 def test_invalid_embedded_font_does_not_partially_update_field() -> None:
