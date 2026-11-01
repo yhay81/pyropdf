@@ -1196,6 +1196,210 @@ fn edit_copies_preserve_lexemes_and_bound_recursive_cloning() {
     );
 }
 
+#[test]
+fn edit_copy_preserves_all_values_and_independent_owned_data() {
+    let value = array(vec![
+        Value::Null,
+        Value::Boolean(true),
+        Value::Integer(-42),
+        Value::from(-0.0),
+        Value::Name(Name::new(&b"Odd \xff"[..])),
+        Value::String(PdfString::new(&b"literal"[..], StringForm::Literal)),
+        Value::String(PdfString::new(&b"hex"[..], StringForm::Hexadecimal)),
+        Value::Reference(Reference::new(42, 17)),
+        dict(vec![
+            ("Second", Value::Integer(2)),
+            ("First", Value::Integer(1)),
+        ]),
+    ]);
+    let mut copied = copy_for_edit(&value, &Budget::default()).unwrap();
+    assert_eq!(copied, value);
+    let Value::Array(items) = &mut copied else {
+        panic!("expected array");
+    };
+    for (index, expected) in [(5, StringForm::Literal), (6, StringForm::Hexadecimal)] {
+        let Some(Value::String(string)) = items.get(index) else {
+            panic!("expected string");
+        };
+        assert_eq!(string.form(), expected);
+    }
+    let Some(Value::Dict(dict)) = items.get(8) else {
+        panic!("expected dictionary");
+    };
+    assert_eq!(
+        dict.keys().map(Name::as_bytes).collect::<Vec<_>>(),
+        [&b"Second"[..], &b"First"[..]]
+    );
+    *items.get_mut(2).unwrap() = Value::Integer(7);
+    let Value::Array(original) = &value else {
+        panic!("expected array");
+    };
+    assert_eq!(original.get(2), Some(&Value::Integer(-42)));
+}
+
+#[test]
+fn edit_copy_preserves_nested_lexemes_even_after_its_parent_changes() {
+    let source = Bytes::from(&b"<< /Outer [ << /Odd#20Key  2 >> ] >>"[..]);
+    let value = Value::parse(&source, &Budget::default()).unwrap();
+    let mut copied = copy_for_edit(&value, &Budget::default()).unwrap();
+    let Value::Dict(dict) = &mut copied else {
+        panic!("expected dictionary");
+    };
+    let Some(Value::Array(array)) = dict.get("Outer") else {
+        panic!("expected array");
+    };
+    assert_eq!(
+        array.lexeme().map(Bytes::as_slice),
+        Some(&b"[ << /Odd#20Key  2 >> ]"[..])
+    );
+    let Some(Value::Dict(inner)) = array.get(0) else {
+        panic!("expected inner dictionary");
+    };
+    assert_eq!(
+        inner.lexeme().map(Bytes::as_slice),
+        Some(&b"<< /Odd#20Key  2 >>"[..])
+    );
+    dict.insert(Name::from("New"), Value::Null);
+    let nested = b"<< /Odd#20Key  2 >>";
+    assert!(
+        bytes_of(&copied)
+            .windows(nested.len())
+            .any(|part| part == nested)
+    );
+}
+
+#[test]
+fn edit_copy_shares_stream_data_and_keeps_its_dictionary_lexeme() {
+    let source = Bytes::from(&b"<< /Length 3 /Filter /X >>\nstream\nabc\nendstream"[..]);
+    let value = Value::parse(&source, &Budget::default()).unwrap();
+    let copied = copy_for_edit(&value, &Budget::default()).unwrap();
+    let (Value::Stream(original), Value::Stream(copy)) = (&value, &copied) else {
+        panic!("expected streams");
+    };
+    assert_eq!(copy.dict(), original.dict());
+    assert_eq!(copy.dict().lexeme(), original.dict().lexeme());
+    assert_eq!(copy.data().as_slice(), b"abc");
+    assert_eq!(
+        copy.data().as_slice().as_ptr(),
+        original.data().as_slice().as_ptr()
+    );
+    assert_eq!(bytes_of(&copied), bytes_of(&value));
+}
+
+#[test]
+fn edit_copy_refuses_each_input_sized_allocation_under_a_small_budget() {
+    let values = [
+        (Value::Name(Name::new(vec![b'n'; 1024])), 512),
+        (Value::String(PdfString::literal(vec![b's'; 1024])), 512),
+        (array(vec![Value::Null; 128]), 512),
+        (
+            dict(vec![(
+                "LongValue",
+                Value::String(PdfString::literal(vec![b's'; 1024])),
+            )]),
+            512,
+        ),
+        (
+            Value::Stream(Box::new(Stream::new(
+                Dict::new(),
+                Bytes::from(&b"data"[..]),
+            ))),
+            0,
+        ),
+    ];
+    for (value, limit) in values {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(limit));
+        let error = copy_for_edit(&value, &budget).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::MemorySize)
+        );
+    }
+}
+
+#[test]
+fn edit_copy_charges_the_stream_box_in_addition_to_its_dictionary() {
+    let stream = Stream::new(Dict::new(), Bytes::from(&b"data"[..]));
+    let dictionary = Value::Dict(stream.dict().clone());
+    let budget = Budget::default();
+    copy_for_edit(&dictionary, &budget).unwrap();
+    let dictionary_bytes = budget.used(LimitCode::MemorySize);
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(dictionary_bytes));
+    let error = copy_for_edit(&Value::Stream(Box::new(stream)), &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+}
+
+#[test]
+fn edit_copy_does_not_copy_or_charge_shared_stream_data() {
+    let data = Bytes::new(vec![42; 1024 * 1024]);
+    let data_ptr = data.as_slice().as_ptr();
+    let value = Value::Stream(Box::new(Stream::new(Dict::new(), data)));
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(4096));
+    let Value::Stream(copy) = copy_for_edit(&value, &budget).unwrap() else {
+        panic!("expected stream");
+    };
+    assert_eq!(copy.data().as_slice().as_ptr(), data_ptr);
+    assert_eq!(copy.data().len(), 1024 * 1024);
+}
+
+#[test]
+fn edit_copy_does_not_normalize_a_streams_edited_length() {
+    for wrong_length in [Some(Value::Integer(99)), None] {
+        let mut stream = Stream::new(Dict::new(), Bytes::from(&b"data"[..]));
+        if let Some(length) = wrong_length.clone() {
+            stream.dict_mut().insert(Name::from("Length"), length);
+        } else {
+            stream.dict_mut().remove("Length");
+        }
+        let value = Value::Stream(Box::new(stream));
+        let Value::Stream(copy) = copy_for_edit(&value, &Budget::default()).unwrap() else {
+            panic!("expected stream");
+        };
+        assert_eq!(copy.dict().get("Length"), wrong_length.as_ref());
+        assert_eq!(copy.data().as_slice(), b"data");
+    }
+}
+
+#[test]
+fn edit_copy_obeys_depth_cancellation_and_deadline() {
+    let mut value = Value::Null;
+    for _ in 0..64 {
+        value = array(vec![value]);
+    }
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(63));
+    let error = copy_for_edit(&value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(64));
+    assert!(copy_for_edit(&value, &budget).is_ok());
+    value = array(vec![value]);
+    let error = copy_for_edit(&value, &Budget::default()).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let budget = Budget::default().with_cancellation(token);
+    let error = copy_for_edit(&Value::Null, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    let budget = Budget::default().with_deadline(std::time::Instant::now());
+    let error = copy_for_edit(&Value::Null, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Deadline)
+    );
+}
+
 proptest! {
     #[test]
     fn orphan_collection_matches_reachability(

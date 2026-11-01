@@ -55,7 +55,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `script_size` | 1 MiB | A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written. |
 | `text_edit_forms` | 4,096 drawings | `Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them. |
 | `image_input_size` | 256 MiB | The encoded image that `Pages.new_from_image` reads is larger than 256 MiB. |
-| `text_line_count` | 4,096 lines | The text that a form field's appearance draws lays out in more than 4,096 lines. |
+| `text_line_count` | 4,096 lines | The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines. |
+| `text_input_size` | 1 MiB | The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8. |
 | `shaped_glyph_count` | 1,048,576 glyphs | Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit. |
 | `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes. |
 | `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |

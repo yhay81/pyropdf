@@ -7,12 +7,14 @@ ebb01d3c, without text: krilla writes text on the canvas (issue 323).
 from __future__ import annotations
 
 import itertools
+import sys
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
 
 import pyropdf
-from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke
+from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke, _core
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -718,6 +720,62 @@ def test_png_alpha_is_kept() -> None:
         canvas.image((0, 0, 20, 10), png)
     assert _pixel(page, 5, 5) == (255, 0, 0)
     assert _pixel(page, 15, 5) == (0, 0, 255)
+
+
+@pytest.mark.parametrize("gray", [False, True])
+@pytest.mark.parametrize("alpha", [False, True])
+def test_larger_png_keeps_color_and_alpha_across_the_frame(*, gray: bool, alpha: bool) -> None:
+    _source_doc, source = _new_page(100, 100)
+    with source.draw() as canvas:
+        canvas.rect((0, 0, 50, 100), fill=RED)
+        canvas.rect((50, 50, 100, 100), fill=BLUE)
+    original = source.pixmap(dpi=72, alpha=alpha)
+    if gray:
+        original = original.to_gray()
+    png = original.to_bytes("png")
+    _doc, page = _new_page(100, 100)
+    with page.draw() as canvas:
+        canvas.image((0, 0, 100, 100), png)
+    (image,) = page.images()
+    assert bytes(image.pixmap()) == bytes(original)
+
+
+def test_another_thread_can_cancel_png_decoding() -> None:
+    _source_doc, source = _new_page(256, 256)
+    png = source.pixmap(dpi=72, alpha=True).to_bytes("png")
+    token = pyropdf.CancellationToken()
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    core = document._core()  # noqa: SLF001
+    started = threading.Event()
+    outcome: list[BaseException | None] = []
+
+    def decode_until_cancelled() -> None:
+        started.set()
+        try:
+            for _ in range(100):
+                _core.decode_png(core, png)
+        except pyropdf.LimitError as error:
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    # Keep Python from switching threads between the event and a decoder
+    # call, so progress depends on the decoder releasing the GIL.
+    previous_interval = sys.getswitchinterval()
+    try:
+        sys.setswitchinterval(5.0)
+        worker = threading.Thread(target=decode_until_cancelled)
+        worker.start()
+        assert started.wait(timeout=10)
+        token.cancel()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+    finally:
+        sys.setswitchinterval(previous_interval)
+    assert len(outcome) == 1
+    error = outcome[0]
+    assert isinstance(error, pyropdf.LimitError)
+    assert error.code == "cancelled"
 
 
 def test_a_placed_page_shows_its_crop_box() -> None:

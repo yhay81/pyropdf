@@ -53,6 +53,8 @@ def test_every_readable_program_subset_regardless_of_size_draws_the_same(name: s
     used = iter(_fonts._glyphs(doc, fonts))  # noqa: SLF001
     for program in programs.values():
         keep = sorted({glyph for _ in program.fonts for glyph in next(used)})
+        if _fonts._UNKNOWN_GLYPHS in keep:  # noqa: SLF001 - the subsetter's safety marker.
+            continue
         subset = _core.subset_font_program(program.stream.read(), program.format, keep)
         assert subset is not None
         program.stream.write(subset[0])

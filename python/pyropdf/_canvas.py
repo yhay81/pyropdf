@@ -7,6 +7,7 @@ import math
 import os
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from pyropdf import _core
@@ -182,6 +183,22 @@ def _stroke(value: Stroke | Color | None) -> Stroke | None:
     LineCap(stroke.cap)
     LineJoin(stroke.join)
     return stroke
+
+
+@dataclass(frozen=True, slots=True)
+class TextFit:
+    """How text fits a :meth:`Canvas.textbox`: the height left below its last line.
+
+    A negative :attr:`spare_height` is the shortfall of text that did not
+    fit, and was not drawn.
+    """
+
+    spare_height: float
+
+    @property
+    def fits(self) -> bool:
+        """Whether the text fit its box and was drawn."""
+        return self.spare_height >= 0
 
 
 def _segments(path: object) -> list[Segment]:
@@ -1196,5 +1213,5 @@ def _inherited_resources(page: Page) -> object | None:
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (Canvas, PathBuilder):
+for _public in (Canvas, PathBuilder, TextFit):
     _public.__module__ = "pyropdf"

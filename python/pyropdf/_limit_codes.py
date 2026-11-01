@@ -63,6 +63,7 @@ LimitCode: TypeAlias = Literal[
     "text_edit_forms",
     "image_input_size",
     "text_line_count",
+    "text_input_size",
     "shaped_glyph_count",
     "named_destination_count",
     "named_destination_edge_count",
@@ -197,7 +198,14 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
         ),
         "image_input_size": "The encoded image that `Pages.new_from_image` reads is larger than 256 MiB.",
-        "text_line_count": "The text that a form field's appearance draws lays out in more than 4,096 lines.",
+        "text_line_count": (
+            "The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or "
+            "`Font.text_height` lays out, takes more than 4,096 lines."
+        ),
+        "text_input_size": (
+            "The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of "
+            "UTF-8."
+        ),
         "shaped_glyph_count": (
             "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
         ),

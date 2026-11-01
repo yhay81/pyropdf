@@ -371,3 +371,22 @@ PathBuilder.zigzag(
 ```
 
 Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
+
+## `TextFit`
+
+```python
+TextFit(spare_height: float)
+```
+
+How text fits a `Canvas.textbox`: the height left below its last line.
+
+A negative `spare_height` is the shortfall of text that did not
+fit, and was not drawn.
+
+### `TextFit.fits`
+
+```python
+TextFit.fits: bool
+```
+
+Whether the text fit its box and was drawn.

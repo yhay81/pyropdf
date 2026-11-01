@@ -15,8 +15,8 @@ how much of ISO 32000-2 each part covers.
 
 Not yet in 0.2:
 
-- text on the canvas of `page.draw` and creating fonts, which wait for
-  changes in krilla; paths, images, and placed pages are on `main`;
+- text on the canvas of `page.draw` and creating fonts; paths, images,
+  and placed pages are on `main`;
 - free text and stamp annotations, which need text on the canvas;
 - creating digital signatures, which is being prototyped;
 - the content provenance and interpreter fuel that depend on hayro changes

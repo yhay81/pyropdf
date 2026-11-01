@@ -66,11 +66,19 @@ impl Value {
     ) -> Result<Self> {
         #[cfg(test)]
         PARSES.with(|parses| parses.set(parses.get() + 1));
-        guard(|| {
-            let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice())
+        // hayro-syntax 0.8 cannot poll or charge its internal parser (#509).
+        // Check either side so an already refused operation never starts it,
+        // and a refusal while it runs is returned before conversion.
+        budget.poll()?;
+        let result = guard(|| {
+            let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice());
+            budget.poll()?;
+            let object = object
                 .ok_or_else(|| Error::malformed("the bytes do not begin with a PDF value"))?;
             Converter::new(source, budget, fetch).convert(object)
-        })
+        });
+        budget.poll()?;
+        result
     }
 
     /// Converts `object`, which hayro-syntax parsed, keeping lexemes where it
@@ -81,9 +89,12 @@ impl Value {
     /// an encrypted document but borrows its containers from the encrypted
     /// bytes, so the lexemes of such an object would be encrypted.
     pub fn from_object(object: &Object<'_>, source: &Bytes, budget: &Budget) -> Result<Self> {
-        guard(|| {
+        budget.poll()?;
+        let result = guard(|| {
             Converter::new(source, budget, &|_| Ok(None)).convert(MaybeRef::NotRef(object.clone()))
-        })
+        });
+        budget.poll()?;
+        result
     }
 }
 

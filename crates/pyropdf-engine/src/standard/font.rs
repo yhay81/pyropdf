@@ -156,6 +156,13 @@ fn coded(font: Base14Font, byte: u8) -> Option<&'static CharacterMetric<'static>
         .find(|metric| metric.code == i32::from(byte))
 }
 
+/// Returns the characters that the font has a glyph for, in code point
+/// order: those of [`glyph_code`].
+pub fn chars(font: Base14Font) -> impl Iterator<Item = char> {
+    // U+2122, the trade mark sign, is the last character of WinAnsi.
+    ('\0'..='\u{2122}').filter(move |character| glyph_code(font, *character).is_some())
+}
+
 /// Returns whether every character of `text` has a WinAnsi byte.
 pub fn is_winansi(text: &str) -> bool {
     text.chars()
