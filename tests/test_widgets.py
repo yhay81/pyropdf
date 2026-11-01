@@ -400,3 +400,136 @@ def test_a_widget_edit_observes_cancellation() -> None:
     with pytest.raises(pyropdf.LimitError) as caught:
         customer.border_color = Color(1, 0, 0)
     assert caught.value.code == "cancelled"
+
+
+_COURIER_NO_ENCODING = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"
+_COURIER_WINANSI = "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"
+_HELVETICA_WINANSI = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
+# Quote, grave and e-acute are distinct codes in StandardEncoding and WinAnsi.
+_DISTINGUISHING = "A'`é"
+
+
+def _aliased_font_form(font: str, *, indirect_font: bool, indirect_resources: bool) -> pyropdf.Document:
+    """Return a form whose field passes `/DA (/F1 10 Tf 0 g)` to two widgets that share `/DR` font `/F1`."""
+    font_entry = "7 0 R" if indirect_font else font
+    fonts = f"<< /F1 {font_entry} /Helv {_HELVETICA_WINANSI} >>"
+    resources = "8 0 R" if indirect_resources else f"<< /Font {fonts} >>"
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 3 0 R >>",
+        2: "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+        3: f"<< /Fields [5 0 R] /DA (/Helv 0 Tf 0 g) /DR {resources} >>",
+        4: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [6 0 R 9 0 R] >>",
+        5: "<< /FT /Tx /T (name) /V (x) /DA (/F1 10 Tf 0 g) /Kids [6 0 R 9 0 R] >>",
+        6: "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /P 4 0 R /Rect [10 10 200 30] >>",
+        9: "<< /Type /Annot /Subtype /Widget /Parent 5 0 R /P 4 0 R /Rect [10 50 200 70] >>",
+    }
+    if indirect_font:
+        objects[7] = font
+    if indirect_resources:
+        objects[8] = f"<< /Font {fonts} >>"
+    return pyropdf.open(build_raw_pdf(objects))
+
+
+def _assert_courier_appearance(widget: Widget, size: bytes = b"10") -> None:
+    appearance = widget.obj["AP"]["N"]
+    font = appearance["Resources"]["Font"]["F1"]
+    assert font["BaseFont"] == Name("Courier")
+    # The appearance names its own encoding rather than assuming the
+    # omitted one of the form's font.
+    assert font["Encoding"] == Name("WinAnsiEncoding")
+    content = appearance.read()
+    assert b"/F1 " + size + b" Tf" in content
+    assert b"(A'`\\351) Tj" in content
+    assert b"/Helv" not in content
+
+
+@pytest.mark.parametrize("indirect_font", [False, True])
+@pytest.mark.parametrize("indirect_resources", [False, True])
+def test_an_aliased_standard_font_without_encoding_keeps_its_face(
+    *, indirect_font: bool, indirect_resources: bool
+) -> None:
+    doc = _aliased_font_form(_COURIER_NO_ENCODING, indirect_font=indirect_font, indirect_resources=indirect_resources)
+    widgets = doc.pages[0].widgets
+    first, second = widgets[0], widgets[1]
+    field = first.field
+    assert field is not None
+    assert first.font is not None
+    assert first.font.name == "Courier"
+
+    field.value = _DISTINGUISHING
+    _assert_courier_appearance(first)
+    _assert_courier_appearance(second)
+    first.text_color = Color(1, 0, 0)
+    _assert_courier_appearance(first)
+    first.font_size = 12
+    _assert_courier_appearance(first, b"12")
+
+    # The shared form font is preserved as it was.
+    font = doc.catalog["AcroForm"]["DR"]["Font"]["F1"]
+    assert "Encoding" not in font
+    assert font["BaseFont"] == Name("Courier")
+    if indirect_font:
+        assert font.xref == 7
+    reopened = pyropdf.open(doc.to_bytes())
+    widgets = reopened.pages[0].widgets
+    _assert_courier_appearance(widgets[0], b"12")
+    _assert_courier_appearance(widgets[1])
+    assert "Encoding" not in reopened.catalog["AcroForm"]["DR"]["Font"]["F1"]
+    field = widgets[1].field
+    assert field is not None
+    field.value = _DISTINGUISHING
+    _assert_courier_appearance(widgets[1])
+
+
+def _rendered(font: str) -> bytes:
+    doc = _aliased_font_form(font, indirect_font=False, indirect_resources=False)
+    field = doc.pages[0].widgets[0].field
+    assert field is not None
+    field.value = _DISTINGUISHING
+    return bytes(pyropdf.open(doc.to_bytes()).pages[0].pixmap(dpi=72))
+
+
+def test_an_aliased_standard_font_without_encoding_renders_as_its_face() -> None:
+    omitted = _rendered(_COURIER_NO_ENCODING)
+    assert omitted == _rendered(_COURIER_WINANSI)
+    assert omitted != _rendered(_HELVETICA_WINANSI)
+
+
+def test_an_aliased_winansi_and_symbolic_font_keep_their_encodings() -> None:
+    doc = _aliased_font_form(_COURIER_WINANSI, indirect_font=True, indirect_resources=False)
+    field = doc.pages[0].widgets[0].field
+    assert field is not None
+    field.value = _DISTINGUISHING
+    _assert_courier_appearance(doc.pages[0].widgets[0])
+
+    symbolic = "<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>"
+    doc = _aliased_font_form(symbolic, indirect_font=False, indirect_resources=True)
+    widget = doc.pages[0].widgets[0]
+    field = widget.field
+    assert field is not None
+    field.value = "abc"
+    font = widget.obj["AP"]["N"]["Resources"]["Font"]["F1"]
+    assert font["BaseFont"] == Name("ZapfDingbats")
+    assert "Encoding" not in font
+    assert b"/F1 10 Tf" in widget.obj["AP"]["N"].read()
+
+
+@pytest.mark.parametrize(
+    "font",
+    [
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding << /Differences [39 /quoteright] >> >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /MacExpertEncoding >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Symbol /Encoding /WinAnsiEncoding >>",
+    ],
+)
+def test_an_unsupported_form_font_encoding_is_refused_not_substituted(font: str) -> None:
+    doc = _aliased_font_form(font, indirect_font=True, indirect_resources=False)
+    widget = doc.pages[0].widgets[0]
+    field = widget.field
+    assert field is not None
+    with pytest.raises(pyropdf.PdfError, match="/Encoding"):
+        field.value = "abc"
+    assert field.value == "x"
+    with pytest.raises(pyropdf.PdfError, match="/Encoding"):
+        widget.text_color = Color(1, 0, 0)
+    assert "AP" not in widget.obj
