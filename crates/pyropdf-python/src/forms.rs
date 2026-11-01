@@ -3018,7 +3018,13 @@ fn add_widget(
     };
     let holder = form_object(transaction, budget)?;
     if shows_text(&spec.kind) || spec.kind == "pushbutton" {
-        let resource = register_standard_font(transaction, holder, spec, budget)?;
+        let resource = register_standard_font(
+            transaction,
+            holder,
+            spec.font_resource()?,
+            spec.font_name.as_deref().unwrap_or("Helvetica"),
+            budget,
+        )?;
         let (red, green, blue) = spec.text_color.unwrap_or((0.0, 0.0, 0.0));
         let size = spec.font_size.unwrap_or(0.0);
         let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
@@ -3109,17 +3115,18 @@ fn add_widget(
     Ok(id(reference))
 }
 
-/// Make the widget's default appearance font resolvable in the form's /DR.
-/// Existing resources are copied, not edited through shared references.
+/// Makes Standard 14 font `base` resolvable in the `/DR` of form `holder`
+/// under `preferred`, its `/DA` abbreviation, or a free `preferred_N` when
+/// another font holds that name; returns the resource name. Existing
+/// resources are copied, not edited through shared references.
 fn register_standard_font(
     transaction: &mut Transaction,
     holder: Reference,
-    spec: &FieldSpec,
+    preferred: &str,
+    base: &str,
     budget: &Budget,
 ) -> PyResult<String> {
     let store = |e: pyropdf_store::Error| store_error(&e);
-    let preferred = spec.font_resource()?;
-    let base = spec.font_name.as_deref().unwrap_or("Helvetica");
     let mut form = dict_at(transaction, holder, budget)?
         .ok_or_else(|| PdfError::new_err("the interactive form is not a dictionary"))?;
     let snapshot = transaction.snapshot();
@@ -6117,11 +6124,11 @@ mod appearance_tests {
 /// A widget's style: its `/MK` border color, background color, caption,
 /// and rotation; its border, from `/BS` else `/Border`; and the font resource,
 /// size, and RGB color of the `/DA` that it draws its text with, its own or
-/// inherited.
+/// inherited, with the Standard 14 font that the resource resolves to.
 type WidgetStyle = (
     (Vec<f64>, Vec<f64>, Option<String>, i64),
     Option<(f64, String, Vec<f64>)>,
-    Option<(String, f64, (f64, f64, f64))>,
+    Option<(String, f64, (f64, f64, f64), Option<&'static str>)>,
 );
 
 /// Reads the style of the widget that a handle names. Returns `None` for a
@@ -6173,9 +6180,14 @@ pub fn widget_style(
             caption,
             rotation,
         );
-        let appearance = widgets::text_appearance(&annots.reader(), &dict)
-            .map_err(widget_error)?
-            .map(|da| (da.font, da.size, da.color));
+        let reader = annots.reader();
+        let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
+            Some(da) => {
+                let font = widgets::text_font(&reader, &da.font).map_err(widget_error)?;
+                Some((da.font, da.size, da.color, font))
+            }
+            None => None,
+        };
         Ok(Some((colors, annots.border(&dict)?, appearance)))
     })
 }
@@ -6213,8 +6225,27 @@ pub struct WidgetEdit {
 }
 
 impl WidgetEdit {
-    /// Applies the edit to `dict`, a widget on a page of `annots`.
-    fn apply(&self, annots: &Annots, dict: &mut Dict, budget: &Budget) -> PyResult<()> {
+    /// Returns the `/DA` abbreviation of the edit's Standard 14 font.
+    fn font_resource(&self) -> PyResult<Option<(&'static str, &'static str)>> {
+        let Some(name) = &self.font_name else {
+            return Ok(None);
+        };
+        DA_FONTS
+            .iter()
+            .find(|(_, font)| font == name)
+            .map(|&(resource, font)| Some((resource, font)))
+            .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))
+    }
+
+    /// Applies the edit to `dict`, a widget on a page of `annots`;
+    /// `font_resource` is the `/DR` name of the edit's font.
+    fn apply(
+        &self,
+        annots: &Annots,
+        dict: &mut Dict,
+        font_resource: Option<String>,
+        budget: &Budget,
+    ) -> PyResult<()> {
         if self
             .caption
             .as_ref()
@@ -6296,16 +6327,7 @@ impl WidgetEdit {
                 };
             let color = self.text_color.unwrap_or(current.color);
             rgb(color, "text color")?;
-            let resource = match &self.font_name {
-                Some(name) => DA_FONTS
-                    .iter()
-                    .find(|(_, font)| font == name)
-                    .map(|(resource, _)| (*resource).to_owned())
-                    .ok_or_else(|| {
-                        PdfError::new_err(format!("unknown Standard 14 font {name:?}"))
-                    })?,
-                None => current.font,
-            };
+            let resource = font_resource.unwrap_or(current.font);
             let size = self.font_size.unwrap_or(current.size);
             if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
                 return Err(PdfError::new_err(
@@ -6359,7 +6381,23 @@ pub fn widget_edit(
                     id.0
                 )));
             }
-            edit.apply(annots, &mut dict, budget)?;
+            // The font resolves through the form's /DR, as a created
+            // field's does, so that a name that another font holds there
+            // is not drawn in that font.
+            let font_resource = match edit.font_resource()? {
+                Some((preferred, base)) => {
+                    let holder = form_object(transaction, budget)?;
+                    Some(register_standard_font(
+                        transaction,
+                        holder,
+                        preferred,
+                        base,
+                        budget,
+                    )?)
+                }
+                None => None,
+            };
+            edit.apply(annots, &mut dict, font_resource, budget)?;
             annots.write(
                 transaction,
                 position,
