@@ -143,6 +143,50 @@ pub fn import(
     })
 }
 
+/// Copy a value and the indirect objects it reaches from an immutable version.
+///
+/// Each live source reference is copied once, including cycles and shared
+/// references. References to missing objects or a stale generation read as
+/// null, as they do in the store. Unlike a page import, this keeps structure
+/// keys and copies Page, Pages and Catalog objects without grafting anything.
+/// All newly written objects are independent of subsequent source edits.
+/// A stream whose Length would be rewritten by the store writer is refused.
+/// On refusal the transaction is restored to its state before this call;
+/// reserved object numbers may still be consumed.
+pub fn copy_resource_graph(
+    transaction: &mut Transaction,
+    source: &Version,
+    value: &Value,
+    budget: &Budget,
+) -> Result<Value> {
+    let savepoint = transaction.savepoint();
+    let result = (|| {
+        let mut walk = Walk {
+            source,
+            overrides: &[],
+            edited: BudgetVec::new(budget),
+            keys: Keys::Preserve,
+            numbers: Charged::new(budget),
+            pending: BudgetVec::new(budget),
+            budget,
+        };
+        let mut result = copy_for_edit(value, budget)?;
+        walk.value(transaction, &mut result, 1)?;
+        while let Some((reference, new)) = walk.pending.pop() {
+            budget.poll()?;
+            let mut object = walk.object(reference)?.unwrap_or(Value::Null);
+            walk.value(transaction, &mut object, 1)?;
+            transaction.write(new.number(), &object, budget)?;
+        }
+        budget.poll()?;
+        Ok(result)
+    })();
+    if result.is_err() {
+        transaction.rollback(savepoint);
+    }
+    result
+}
+
 /// A fallible map that charges entries and their owned keys before growth.
 struct Charged<'b, K, V> {
     map: HashMap<K, V>,
@@ -189,6 +233,7 @@ impl<K, V> Drop for Charged<'_, K, V> {
 enum Keys {
     Strip,
     Shift(i64),
+    Preserve,
 }
 
 struct Walk<'s, 'b> {
@@ -239,18 +284,35 @@ impl Walk<'_, '_> {
         if let Some(new) = self.numbers.get(&reference).copied() {
             return Ok(Value::Reference(new));
         }
-        let Some(value) = self.object(reference)? else {
-            return Ok(Value::Null);
-        };
-        let dict = match &value {
-            Value::Dict(dict) => Some(dict),
-            Value::Stream(stream) => Some(stream.dict()),
-            _ => None,
-        };
-        if let Some(Value::Name(kind)) = dict.and_then(|dict| dict.get("Type"))
-            && matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog")
-        {
-            return Ok(Value::Null);
+        let preserving = matches!(self.keys, Keys::Preserve);
+        if preserving {
+            self.budget.charge(LimitCode::ObjectCount, 1)?;
+            let present = self.source.get(reference.number(), self.budget);
+            match present {
+                Ok(Some(object)) if object.generation() == reference.generation() => {}
+                Ok(_) => {
+                    self.budget.release(LimitCode::ObjectCount, 1);
+                    return Ok(Value::Null);
+                }
+                Err(error) => {
+                    self.budget.release(LimitCode::ObjectCount, 1);
+                    return Err(error);
+                }
+            }
+        } else {
+            let Some(value) = self.object(reference)? else {
+                return Ok(Value::Null);
+            };
+            let dict = match &value {
+                Value::Dict(dict) => Some(dict),
+                Value::Stream(stream) => Some(stream.dict()),
+                _ => None,
+            };
+            if let Some(Value::Name(kind)) = dict.and_then(|dict| dict.get("Type"))
+                && matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog")
+            {
+                return Ok(Value::Null);
+            }
         }
         let new = transaction.allocate()?;
         self.numbers.insert(reference, new, 0)?;
@@ -275,6 +337,7 @@ impl Walk<'_, '_> {
                             .ok_or_else(|| LimitExceeded::new(LimitCode::StructureTreeCount))?;
                     }
                 }
+                Keys::Preserve => {}
             }
         }
         for (_, value) in dict.iter_mut() {
@@ -294,7 +357,7 @@ impl Walk<'_, '_> {
         {
             return Err(LimitExceeded::new(LimitCode::ObjectDepth).into());
         }
-        if !needs_changes(value, self.budget)? {
+        if !needs_changes(value, self.budget, !matches!(self.keys, Keys::Preserve))? {
             return Ok(());
         }
         match value {
@@ -313,7 +376,7 @@ impl Walk<'_, '_> {
 }
 
 /// An iterative budgeted preflight lets unchanged subtrees retain their lexemes.
-fn needs_changes(value: &Value, budget: &Budget) -> Result<bool> {
+fn needs_changes(value: &Value, budget: &Budget, change_structure: bool) -> Result<bool> {
     let mut pending = BudgetVec::new(budget);
     pending.try_push((value, 1_usize))?;
     while let Some((value, depth)) = pending.pop() {
@@ -330,7 +393,7 @@ fn needs_changes(value: &Value, budget: &Budget) -> Result<bool> {
                 }
             }
             Value::Dict(dict) => {
-                if STRUCTURE_KEYS.iter().any(|key| dict.get(key).is_some()) {
+                if change_structure && STRUCTURE_KEYS.iter().any(|key| dict.get(key).is_some()) {
                     return Ok(true);
                 }
                 for (_, child) in dict.iter() {
@@ -338,9 +401,23 @@ fn needs_changes(value: &Value, budget: &Budget) -> Result<bool> {
                 }
             }
             Value::Stream(stream) => {
-                if STRUCTURE_KEYS
-                    .iter()
-                    .any(|key| stream.dict().get(key).is_some())
+                // The store writer replaces /Length with a direct integer.
+                // Refuse rather than silently rewriting the source graph.
+                if !change_structure
+                    && stream.dict().get("Length")
+                        != i64::try_from(stream.data().len())
+                            .ok()
+                            .map(Value::Integer)
+                            .as_ref()
+                {
+                    return Err(Error::malformed(
+                        "cannot faithfully copy a stream with a noncanonical Length",
+                    ));
+                }
+                if change_structure
+                    && STRUCTURE_KEYS
+                        .iter()
+                        .any(|key| stream.dict().get(key).is_some())
                 {
                     return Ok(true);
                 }
@@ -357,9 +434,11 @@ fn needs_changes(value: &Value, budget: &Budget) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyropdf_store::value::Bytes;
+    use pyropdf_store::budget::CancellationToken;
+    use pyropdf_store::value::{Array, Bytes, Stream};
     use pyropdf_store::version::{Document, MemoryBase};
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn importing_a_cached_value_charges_its_owned_buffers() {
@@ -390,5 +469,275 @@ mod tests {
             error.limit().map(pyropdf_store::LimitExceeded::code),
             Some(LimitCode::MemorySize)
         );
+    }
+
+    fn base_with(objects: &[(u32, u16, &[u8])]) -> Arc<MemoryBase> {
+        let mut base = MemoryBase::new(Dict::new());
+        for &(number, generation, bytes) in objects {
+            base.insert(
+                Reference::new(number, generation),
+                Bytes::new(bytes.to_vec()),
+            );
+        }
+        Arc::new(base)
+    }
+
+    fn object(version: &Version, reference: Reference) -> Value {
+        let object = version
+            .get(reference.number(), &Budget::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(object.generation(), reference.generation());
+        (**object.value()).clone()
+    }
+
+    fn reference(value: &Value) -> Reference {
+        let Value::Reference(reference) = value else {
+            panic!("expected reference: {value:?}")
+        };
+        *reference
+    }
+
+    fn dict(value: &Value) -> &Dict {
+        let Value::Dict(dict) = value else {
+            panic!("expected dictionary: {value:?}")
+        };
+        dict
+    }
+
+    #[test]
+    fn resource_graph_preserves_cycles_sharing_structure_and_old_version() {
+        let base = base_with(&[
+            (1, 0, b"<< /Type /Page /StructParents 9 /A 2 0 R /B 2 0 R /Catalog 3 0 R /Missing 99 0 R /Stale 2 1 R >>"),
+            (2, 0, b"<< /Owner 1 0 R /Stream 4 0 R /Marker 1 /StructParent 7 >>"),
+            (3, 0, b"<< /Type /Catalog /Pages 5 0 R >>"),
+            (4, 0, b"<< /Length 4 /Owner 2 0 R >>\nstream\ntest\nendstream"),
+            (5, 0, b"<< /Type /Pages /Count 1 /Kids [1 0 R] >>"),
+        ]);
+        let doc = Document::new(base, None);
+        let source = doc.current();
+        let budget = Budget::default();
+        let mut transaction = doc.begin();
+        // A write made after taking the source version must not alter the copy.
+        let mut changed = Dict::new();
+        changed.insert(Name::from("Marker"), Value::Integer(2));
+        transaction
+            .write(2, &Value::Dict(changed), &budget)
+            .unwrap();
+        let root = copy_resource_graph(
+            &mut transaction,
+            &source,
+            &Value::Reference(Reference::new(1, 0)),
+            &budget,
+        )
+        .unwrap();
+        let new_root = reference(&root);
+        let root_value = object(transaction.version(), new_root);
+        let root_dict = dict(&root_value);
+        assert_eq!(
+            root_dict.get("Type"),
+            Some(&Value::Name(Name::from("Page")))
+        );
+        assert_eq!(root_dict.get("StructParents"), Some(&Value::Integer(9)));
+        assert_eq!(root_dict.get("Missing"), Some(&Value::Null));
+        assert_eq!(root_dict.get("Stale"), Some(&Value::Null));
+        let font = reference(root_dict.get("A").unwrap());
+        assert_eq!(root_dict.get("A"), root_dict.get("B"));
+        let catalog = reference(root_dict.get("Catalog").unwrap());
+        let font_value = object(transaction.version(), font);
+        let font_dict = dict(&font_value);
+        assert_eq!(font_dict.get("Owner"), Some(&root));
+        assert_eq!(font_dict.get("StructParent"), Some(&Value::Integer(7)));
+        let stream_ref = reference(font_dict.get("Stream").unwrap());
+        let stream_value = object(transaction.version(), stream_ref);
+        let Value::Stream(stream) = stream_value else {
+            panic!("expected stream")
+        };
+        assert_eq!(&**stream.data(), b"test");
+        assert_eq!(stream.dict().get("Owner"), Some(&Value::Reference(font)));
+        let catalog_value = object(transaction.version(), catalog);
+        let pages = reference(dict(&catalog_value).get("Pages").unwrap());
+        let pages_value = object(transaction.version(), pages);
+        let Value::Array(kids) = dict(&pages_value).get("Kids").unwrap() else {
+            panic!("expected Kids")
+        };
+        assert_eq!(kids.as_slice(), &[root]);
+
+        // Modifying an original resource after copying must not change its copy.
+        let mut changed = Dict::new();
+        changed.insert(Name::from("Marker"), Value::Integer(3));
+        transaction
+            .write(2, &Value::Dict(changed), &budget)
+            .unwrap();
+        assert_eq!(
+            dict(&object(transaction.version(), font)).get("Marker"),
+            Some(&Value::Integer(1))
+        );
+        let committed = transaction.commit(&budget).unwrap();
+        assert_eq!(
+            dict(&object(&committed, font)).get("Marker"),
+            Some(&Value::Integer(1))
+        );
+    }
+
+    #[test]
+    fn resource_graph_failure_rolls_back_partial_writes_and_obeys_limits() {
+        let base = base_with(&[
+            (1, 0, b"<< /A 2 0 R /B 3 0 R >>"),
+            (2, 0, b"<< /Nested 4 0 R >>"),
+            (3, 0, b"<< /Leaf 42 >>"),
+            (4, 0, b"<< /Last 1 >>"),
+        ]);
+        let doc = Document::new(base, None);
+        let source = doc.current();
+        let mut transaction = doc.begin();
+        let unlimited = Budget::default();
+        transaction
+            .write(3, &Value::Integer(123), &unlimited)
+            .unwrap();
+        let value = Value::Reference(Reference::new(1, 0));
+        let budget = Budget::default().with_limit(LimitCode::ObjectCount, Some(3));
+        let error = copy_resource_graph(&mut transaction, &source, &value, &budget).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::ObjectCount)
+        );
+        assert_eq!(
+            object(transaction.version(), Reference::new(3, 0)),
+            Value::Integer(123)
+        );
+        assert!(transaction.version().slots().all(|(number, _)| number == 3));
+
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+        assert_eq!(
+            copy_resource_graph(&mut transaction, &source, &value, &budget)
+                .unwrap_err()
+                .limit()
+                .map(LimitExceeded::code),
+            Some(LimitCode::MemorySize)
+        );
+        let budget = Budget::default()
+            .with_limit(LimitCode::ObjectCount, Some(0))
+            .with_limit(LimitCode::MemorySize, Some(256));
+        assert_eq!(
+            copy_resource_graph(&mut transaction, &source, &value, &budget)
+                .unwrap_err()
+                .limit()
+                .map(LimitExceeded::code),
+            Some(LimitCode::ObjectCount)
+        );
+        let token = CancellationToken::default();
+        token.cancel();
+        let budget = Budget::default().with_cancellation(token);
+        assert_eq!(
+            copy_resource_graph(&mut transaction, &source, &value, &budget)
+                .unwrap_err()
+                .limit()
+                .map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
+        );
+        let budget = Budget::default().with_timeout(Duration::ZERO);
+        assert_eq!(
+            copy_resource_graph(&mut transaction, &source, &value, &budget)
+                .unwrap_err()
+                .limit()
+                .map(LimitExceeded::code),
+            Some(LimitCode::Deadline)
+        );
+        assert!(transaction.version().slots().all(|(number, _)| number == 3));
+    }
+
+    #[test]
+    fn resource_graph_isolates_same_number_in_different_documents() {
+        let source_doc = Document::new(base_with(&[(1, 0, b"<< /Marker 1 >>")]), None);
+        let target_doc = Document::new(base_with(&[(1, 0, b"<< /Marker 9 >>")]), None);
+        let source = source_doc.current();
+        let budget = Budget::default();
+        let mut target = target_doc.begin();
+        let result = copy_resource_graph(
+            &mut target,
+            &source,
+            &Value::Reference(Reference::new(1, 0)),
+            &budget,
+        )
+        .unwrap();
+        let copied = reference(&result);
+        assert_ne!(copied.number(), 1);
+        assert_eq!(
+            dict(&object(target.version(), Reference::new(1, 0))).get("Marker"),
+            Some(&Value::Integer(9))
+        );
+
+        let mut source_edit = source_doc.begin();
+        let mut changed = Dict::new();
+        changed.insert(Name::from("Marker"), Value::Integer(2));
+        source_edit
+            .write(1, &Value::Dict(changed), &budget)
+            .unwrap();
+        source_edit.commit(&budget).unwrap();
+        assert_eq!(
+            dict(&object(target.version(), copied)).get("Marker"),
+            Some(&Value::Integer(1))
+        );
+
+        let mut copied_edit = Dict::new();
+        copied_edit.insert(Name::from("Marker"), Value::Integer(3));
+        target
+            .write(copied.number(), &Value::Dict(copied_edit), &budget)
+            .unwrap();
+        assert_eq!(
+            dict(&object(&source_doc.current(), Reference::new(1, 0))).get("Marker"),
+            Some(&Value::Integer(2))
+        );
+        assert_eq!(
+            dict(&object(target.version(), Reference::new(1, 0))).get("Marker"),
+            Some(&Value::Integer(9))
+        );
+    }
+
+    #[test]
+    fn resource_graph_respects_direct_object_depth() {
+        let doc = Document::new(base_with(&[]), None);
+        let source = doc.current();
+        let mut transaction = doc.begin();
+        let value = Value::Array(Array::from(vec![Value::Array(Array::new())]));
+        let budget = Budget::default().with_limit(LimitCode::ObjectDepth, Some(1));
+        assert_eq!(
+            copy_resource_graph(&mut transaction, &source, &value, &budget)
+                .unwrap_err()
+                .limit()
+                .map(LimitExceeded::code),
+            Some(LimitCode::ObjectDepth)
+        );
+    }
+
+    #[test]
+    fn resource_graph_keeps_unmodified_structure_dictionary_lexemes() {
+        let doc = Document::new(base_with(&[]), None);
+        let source = doc.current();
+        let mut transaction = doc.begin();
+        let budget = Budget::default();
+        let bytes = Bytes::new(b"<< /StructParents  17 /Precision 3.1400 >>".to_vec());
+        let value = Value::parse(&bytes, &budget).unwrap();
+        let copied = copy_resource_graph(&mut transaction, &source, &value, &budget).unwrap();
+        assert_eq!(copied.lexeme(), value.lexeme());
+        assert!(copied.lexeme().is_some());
+    }
+
+    #[test]
+    fn resource_graph_refuses_a_stream_whose_length_would_be_rewritten() {
+        let doc = Document::new(base_with(&[]), None);
+        let source = doc.current();
+        let mut transaction = doc.begin();
+        let mut stream = Stream::new(Dict::new(), Bytes::new(b"abc".to_vec()));
+        stream
+            .dict_mut()
+            .insert(Name::from("Length"), Value::Reference(Reference::new(9, 0)));
+        // The preflight must also inspect a stream nested in a direct value.
+        let value = Value::Array(Array::from(vec![Value::Stream(Box::new(stream))]));
+        assert!(
+            copy_resource_graph(&mut transaction, &source, &value, &Budget::default()).is_err()
+        );
+        assert_eq!(transaction.version().slots().count(), 0);
     }
 }
