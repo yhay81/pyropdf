@@ -24,13 +24,13 @@ pub use layout::{
     LayoutError, Line, LineMetrics, MAX_LINES, Placement, TextBox, grapheme_count, graphemes,
     layout, single_line,
 };
-pub use ops::{Align, DeviceColor, Style, text_ops};
+pub use ops::{Align, DeviceColor, Style, text_ops, text_ops_with};
 pub use pdf_base14_metrics::{Base14Font, CharacterMetric};
 
 use pyropdf_store::budget::Budget;
 
 /// The distance between the baselines of a form field's lines, in em.
-const FORM_LINE_HEIGHT: f64 = 1.2;
+pub const FORM_LINE_HEIGHT: f64 = 1.2;
 /// The largest size at which a field without a size fits its text.
 pub(crate) const MAX_FIT_SIZE: f64 = 12.0;
 /// The smallest size at which a field without a size fits its text.
@@ -116,6 +116,26 @@ pub fn fit<'t>(
     multiline: bool,
     budget: &Budget,
 ) -> Result<(TextBox<'t>, f64), LayoutError> {
+    fit_with(
+        text,
+        box_size,
+        font_size,
+        multiline,
+        budget,
+        |text, box_size, size| form_layout(text, box_size, font, size, FORM_LINE_HEIGHT, budget),
+    )
+}
+
+/// Fits `text` in a box of `box_size` as [`fit`] does, with `lay` laying
+/// it out in a box at a size, its lines [`FORM_LINE_HEIGHT`] em apart.
+pub fn fit_with<'t>(
+    text: &'t str,
+    box_size: (f64, f64),
+    font_size: f64,
+    multiline: bool,
+    budget: &Budget,
+    mut lay: impl FnMut(&'t str, (f64, f64), f64) -> Result<TextBox<'t>, LayoutError>,
+) -> Result<(TextBox<'t>, f64), LayoutError> {
     budget.poll()?;
     if ![box_size.0, box_size.1, font_size]
         .iter()
@@ -125,15 +145,14 @@ pub fn fit<'t>(
     }
     if font_size > 0.0 {
         let unbounded = (box_size.0, f64::MAX / 4.0);
-        let layout = form_layout(text, unbounded, font, font_size, FORM_LINE_HEIGHT, budget)?;
-        return Ok((layout, font_size));
+        return Ok((lay(text, unbounded, font_size)?, font_size));
     }
     let mut size = box_size.1.min(MAX_FIT_SIZE);
     if size < MIN_FIT_SIZE {
         return Err(LayoutError::Unfit);
     }
     loop {
-        let layout = form_layout(text, box_size, font, size, FORM_LINE_HEIGHT, budget)?;
+        let layout = lay(text, box_size, size)?;
         if layout.fits() && (multiline || layout.lines.len() <= 1) {
             return Ok((layout, size));
         }

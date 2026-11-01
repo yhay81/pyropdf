@@ -432,7 +432,14 @@ _WidgetStyle: TypeAlias = tuple[
 def form_fields(document: _Document, /) -> list[tuple[str, _Id]]: ...
 def form_field(document: _Document, name: str, /) -> _Id | None: ...
 def form_field_read(document: _Document, id: _Id, /) -> tuple[str, str, int, str | None]: ...  # noqa: A002
-def form_field_fill(document: _Document, id: _Id, value: str | bool, /) -> None: ...  # noqa: A002
+def form_field_fill(document: _Document, id: _Id, value: str | bool, draw: bool = True, /) -> None: ...  # noqa: A002
+def form_field_draw_face(
+    document: _Document,
+    id: _Id,  # noqa: A002
+    face: _Font,
+    font: tuple[int, dict[int, str]] | None = None,
+    /,
+) -> list[tuple[int, str]]: ...
 def form_field_choices(document: _Document, id: _Id, /) -> list[tuple[str, str]]: ...  # noqa: A002
 def form_field_details(document: _Document, id: _Id, /) -> tuple[str | None, int | None, str | None]: ...  # noqa: A002
 def form_field_edit(document: _Document, id: _Id, edit: dict[str, object], /) -> None: ...  # noqa: A002

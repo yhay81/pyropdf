@@ -208,7 +208,8 @@ appearances of its widgets in a Standard 14 font, with those of the
 other text and choice fields that have none yet; the form's
 `/NeedAppearances` stays true while a widget is left without one.
 A value that WinAnsiEncoding cannot show leaves the widgets for the
-viewer to draw. Setting a check box or radio button to a state name
+viewer to draw, unless `Form.font` is set: then the field's
+widgets are drawn in that face, in one undo step. Setting a check box or radio button to a state name
 selects that state in each widget that has it, or else in the first
 widget, and turns the others `Off`; `True` names the first state
 that is not `Off`, or `"Yes"`, and `False` names `"Off"`. The
@@ -292,6 +293,23 @@ Form.signature_flags: SignatureFlags
 ```
 
 The AcroForm's `/SigFlags`, without undefined bits; a document without a form reads none.
+
+### `Form.font`
+
+```python
+Form.font: Font | None
+```
+
+Or set the OpenType face that text and choice values draw in, or `None`.
+
+Without one, Helvetica draws WinAnsi values and other values are
+left for the viewer to draw. With one, setting a text or choice
+field draws its widgets in the face, embedded once in the document
+as a Type0 font that a save subsets, and refuses a character that
+the face has no glyph for. The font belongs to this `Document`
+object and is not saved. A Standard 14 font raises `PdfError`.
+
+Settable.
 
 ### `Form.need_appearances`
 

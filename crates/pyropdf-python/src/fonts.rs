@@ -118,6 +118,14 @@ impl _Font {
         }
     }
 
+    /// Returns the embedded face, `None` for a Standard 14 font.
+    pub(crate) fn embedded(&self) -> Option<&Face> {
+        match &self.kind {
+            Kind::Standard(_) => None,
+            Kind::Embedded(face) => Some(face),
+        }
+    }
+
     fn line_metrics(&self) -> LineMetrics {
         match &self.kind {
             Kind::Standard(font) => standard::line_metrics(*font),
