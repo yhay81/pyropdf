@@ -723,12 +723,13 @@ def test_png_alpha_is_kept() -> None:
 
 
 @pytest.mark.parametrize("gray", [False, True])
-def test_larger_png_keeps_color_and_alpha_across_the_frame(*, gray: bool) -> None:
+@pytest.mark.parametrize("alpha", [False, True])
+def test_larger_png_keeps_color_and_alpha_across_the_frame(*, gray: bool, alpha: bool) -> None:
     _source_doc, source = _new_page(100, 100)
     with source.draw() as canvas:
         canvas.rect((0, 0, 50, 100), fill=RED)
         canvas.rect((50, 50, 100, 100), fill=BLUE)
-    original = source.pixmap(dpi=72, alpha=True)
+    original = source.pixmap(dpi=72, alpha=alpha)
     if gray:
         original = original.to_gray()
     png = original.to_bytes("png")
