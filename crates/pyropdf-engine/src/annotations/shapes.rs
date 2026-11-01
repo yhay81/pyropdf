@@ -37,7 +37,7 @@ pub fn cloud_radius(intensity: f64, width: f64) -> f64 {
 }
 
 /// Emits a polyline directly without an input-sized intermediate path.
-fn polyline(
+pub(super) fn polyline(
     canvas: &mut Canvas,
     points: &[(f64, f64)],
     to_canvas: impl Fn((f64, f64)) -> (f64, f64),
@@ -164,7 +164,7 @@ pub(super) fn lines(
 
 /// Draws the line ending `ending` at `tip` of the segment that comes from
 /// `from`, in user space.
-fn draw_ending(
+pub(super) fn draw_ending(
     canvas: &mut Canvas,
     paint: &Paint,
     ending: usize,

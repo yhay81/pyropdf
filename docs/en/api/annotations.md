@@ -544,7 +544,7 @@ read in the transaction, so that every viewer draws it alike.
 
 ## `AnnotationSpecification`
 
-`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret | pyropdf.FileAttachment`
+`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret | pyropdf.FileAttachment | pyropdf.FreeText | pyropdf.Stamp`
 
 ## `AnnotationType`
 
@@ -650,6 +650,40 @@ which with `description` stops at 1 MiB (`embedded_file_input_size`);
 (`embedded_file_size`). `color` fills the icon. Read the file back
 through `Annotation.file`; the document's own attachments, in
 `Document.attachments`, do not list it.
+
+## `FreeText`
+
+```python
+FreeText(
+    rect: Sequence[float],
+    text: str,
+    *,
+    font: Font | None = None,
+    size: float = 11.0,
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = None,
+    border: Border = Border(width=0.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    align: Literal['left', 'center', 'right'] = 'left',
+    rotate: int = 0,
+    callout: Sequence[Point | Sequence[float]] | None = None,
+    callout_ending: LineEnding = <LineEnding.NONE: 'none'>,
+    opacity: float = 1.0,
+)
+```
+
+Text written on the page in a box, as `page.annotations.add` takes it.
+
+`rect` is the box in display coordinates and `text` its text,
+wrapped as `Canvas.textbox` wraps it, `align`-ed, and in the
+Standard 14 `font`, Helvetica by default, at `size` points and
+`text_color`. The font is named in the annotation's `/DA`, so other
+viewers can redraw it; it prints WinAnsi characters only. `color`
+fills the box, `border` outlines it in the text color, and `rotate`
+turns the text clockwise by a multiple of 90 degrees as the page is
+displayed. `callout` draws a line from the display point that the
+text explains, through an optional knee, to the box, with
+`callout_ending` at the explained point. Text that does not fit
+raises `PdfError`.
 
 ## `Highlight`
 
@@ -867,6 +901,28 @@ A wavy line under text, as `page.annotations.add` takes it.
 The fields are those of `Highlight`; `color` draws a zigzag
 two points wide along the bottom of each rectangle, at most 65,536 points
 in all (`annotation_point_count`).
+
+## `Stamp`
+
+```python
+Stamp(
+    rect: Sequence[float],
+    *,
+    icon: StampIcon = <StampIcon.APPROVED: 'approved'>,
+    color: Color | None = None,
+    opacity: float = 1.0,
+    rotate: int = 0,
+    contents: str | None = None,
+)
+```
+
+A rubber stamp, as `page.annotations.add` takes it.
+
+`rect` is in display coordinates; the stamp's label is drawn as large
+as fits, centred in a rounded frame, in `color` or the stamp's own
+color (green for approval, red for restriction, blue for the rest), and
+`rotate` turns it clockwise by a multiple of 90 degrees as the page is
+displayed.
 
 ## `StampIcon`
 

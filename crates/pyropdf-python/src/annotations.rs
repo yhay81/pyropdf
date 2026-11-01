@@ -17,17 +17,19 @@ pub mod links;
 
 use std::sync::Arc;
 
+use pyo3::Borrowed;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyropdf_engine::annotations::{
-    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, has_points, is_text_markup,
-    synthesized_for, valid_dashes, zigzag_points,
+    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, TextFit, appearance, ending_size,
+    has_points, is_text_markup, synthesized_for, valid_dashes, zigzag_points,
 };
 use pyropdf_engine::bridge::Bridged;
 use pyropdf_engine::extract;
 use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::render::{self, Raster};
+use pyropdf_engine::standard::DA_FONTS;
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
@@ -1273,6 +1275,34 @@ pub(crate) fn editing<T>(
     })
 }
 
+/// Formats a number of a `/DA` string: an integer without a fraction, so
+/// that `13.0` reads `13`.
+fn fmt(value: f64) -> String {
+    if value == 0.0 {
+        "0".to_owned()
+    } else {
+        value.to_string()
+    }
+}
+
+/// Refuses a free text whose text the appearance cannot draw: text that
+/// does not fit its box, or that no Standard 14 font draws.
+fn check_text(annots: &Annots, dict: &Dict) -> PyResult<()> {
+    if !matches!(dict.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"FreeText") {
+        return Ok(());
+    }
+    let drawn = appearance(&annots.reader(), dict).map_err(|e| store_error(&e))?;
+    match drawn.map(|drawn| drawn.text_fit()) {
+        Some(TextFit::Unfit) => Err(PdfError::new_err(
+            "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
+        )),
+        Some(TextFit::NotWinAnsi) => Err(PdfError::new_err(
+            "free text draws in a Standard 14 font, which prints WinAnsi characters only",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Applies `edit` to the annotation that a handle names, marks its
 /// appearance stale, and returns its object, which a direct dictionary
 /// gains here.
@@ -1296,6 +1326,7 @@ pub fn annotation_edit(
             let (position, mut dict) = annots.find(index, id)?;
             let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
             edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
+            check_text(annots, &dict)?;
             annots.write(transaction, position, true, dict, |_, _, _, _, _| Ok(false))
         },
     )
@@ -1589,6 +1620,47 @@ pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
         .collect())
 }
 
+/// At most three callout points, extracted without collecting the input.
+struct Callout {
+    points: [(f64, f64); 3],
+    len: usize,
+    too_many: bool,
+}
+
+impl<'py> FromPyObject<'_, 'py> for Callout {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        let mut points = [(0.0, 0.0); 3];
+        let mut len = 0;
+        for point in value.try_iter()? {
+            let point = point?;
+            if len == points.len() {
+                return Ok(Self {
+                    points,
+                    len,
+                    too_many: true,
+                });
+            }
+            points[len] = point.extract()?;
+            len += 1;
+        }
+        Ok(Self {
+            points,
+            len,
+            too_many: false,
+        })
+    }
+}
+
+impl std::ops::Deref for Callout {
+    type Target = [(f64, f64)];
+
+    fn deref(&self) -> &Self::Target {
+        &self.points[..self.len]
+    }
+}
+
 /// The annotation that `page.annotations.add` adds, as a specification's
 /// `_payload` gives it: its subtype; the display rectangles of text markup,
 /// the display point lists of a line, polygon, polyline, or ink, or else
@@ -1616,15 +1688,24 @@ pub struct Spec {
     filename: Option<String>,
     description: Option<String>,
     max_size: Option<u64>,
+    text_color: Option<(f64, f64, f64)>,
+    font_size: Option<f64>,
+    font_name: Option<String>,
+    align: Option<i64>,
+    rotate: Option<i64>,
+    callout: Option<Callout>,
+    callout_ending: Option<String>,
 }
 
 /// The subtypes that `page.annotations.add` adds.
-const ADDED_SUBTYPES: [&str; 13] = [
+const ADDED_SUBTYPES: [&str; 15] = [
     "Highlight",
     "Underline",
     "StrikeOut",
     "Squiggly",
     "Text",
+    "FreeText",
+    "Stamp",
     "Square",
     "Circle",
     "Line",
@@ -1669,6 +1750,17 @@ impl Spec {
             filename: fields.text("filename", file, &mut file_texts)?,
             description: fields.text("description", file, &mut file_texts)?,
             max_size,
+            text_color: fields.value("text_color")?,
+            font_size: fields.value("font_size")?,
+            font_name: fields.short("font_name", input::MAX_NAME, long_name("font name"))?,
+            align: fields.value("align")?,
+            rotate: fields.value("rotate")?,
+            callout: fields.value("callout")?,
+            callout_ending: fields.short(
+                "callout_ending",
+                input::MAX_NAME,
+                long_name("callout ending"),
+            )?,
         })
     }
 
@@ -1863,10 +1955,28 @@ impl Spec {
             dict.insert(Name::from("Contents"), encode_text(contents));
         }
         if self.open.is_some() && subtype != "Text"
-            || self.icon.is_some() && !matches!(subtype, "Text" | "FileAttachment")
+            || self.icon.is_some() && !matches!(subtype, "Text" | "Stamp" | "FileAttachment")
         {
             return Err(PdfError::new_err(format!(
-                "an icon and an open state belong to a note, not a {subtype} annotation"
+                "an icon and an open state belong to a note, and an icon to a stamp or a file attachment, not a {subtype} annotation"
+            )));
+        }
+        if subtype == "Stamp" {
+            let icon = self.icon.as_deref().unwrap_or("Approved");
+            if !STAMP_ICONS.contains(&icon) {
+                return Err(PdfError::new_err(format!("unknown stamp {icon:?}")));
+            }
+            dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
+        }
+        let text_style = self.text_color.is_some()
+            || self.font_size.is_some()
+            || self.font_name.is_some()
+            || self.align.is_some()
+            || self.callout.is_some()
+            || self.callout_ending.is_some();
+        if text_style && subtype != "FreeText" {
+            return Err(PdfError::new_err(format!(
+                "text style and callouts belong to free text, not a {subtype} annotation"
             )));
         }
         if subtype == "FileAttachment" {
@@ -1893,11 +2003,27 @@ impl Spec {
             // it upright.
             dict.insert(Name::from("F"), Value::Integer(4 | 8 | 16));
         }
-        // A caret points up on the display, and a file attachment's icon
-        // stands upright: the appearance turns with the page's rotation, as
-        // `/Rotate` says.
-        if matches!(subtype, "Caret" | "FileAttachment") && annots.rotation != 0 {
-            dict.insert(Name::from("Rotate"), Value::Integer(annots.rotation));
+        if self.rotate.is_some() && !matches!(subtype, "FreeText" | "Stamp") {
+            return Err(PdfError::new_err(format!(
+                "a {subtype} annotation does not turn"
+            )));
+        }
+        let turn = self.rotate.unwrap_or(0);
+        if turn % 90 != 0 {
+            return Err(PdfError::new_err(
+                "an annotation turns by a multiple of 90 degrees",
+            ));
+        }
+        // Display turns are clockwise; /Rotate turns counterclockwise in
+        // user space, which the page then turns clockwise by its own
+        // rotation. A caret points up on the display, and a file
+        // attachment's icon stands upright.
+        let user_turn = (annots.rotation - turn).rem_euclid(360);
+        if matches!(subtype, "FreeText" | "Stamp" | "Caret" | "FileAttachment") && user_turn != 0 {
+            dict.insert(Name::from("Rotate"), Value::Integer(user_turn));
+        }
+        if subtype == "FreeText" {
+            self.free_text_entries(annots, &mut dict)?;
         }
         if let Some(created) = &self.created {
             if !created.starts_with("D:") || !created.is_ascii() || created.len() > 64 {
@@ -1908,6 +2034,114 @@ impl Spec {
             dict.insert(Name::from("M"), date);
         }
         Ok(dict)
+    }
+
+    /// Writes the entries of a free text: `/DA` and `/Q`, and with a callout
+    /// `/CL`, `/LE`, `/IT`, `/RD`, and a `/Rect` that holds the line and its
+    /// ending as well as the box.
+    fn free_text_entries(&self, annots: &Annots, dict: &mut Dict) -> PyResult<()> {
+        let color = self.text_color.unwrap_or((0.0, 0.0, 0.0));
+        rgb(color, "text color")?;
+        let size = self.font_size.unwrap_or(11.0);
+        if !(size.is_finite() && size > 0.0 && size <= 10_000.0) {
+            return Err(PdfError::new_err(
+                "a font size is greater than 0 and at most 10000",
+            ));
+        }
+        let name = self.font_name.as_deref().unwrap_or("Helvetica");
+        let resource = DA_FONTS
+            .iter()
+            .find(|(_, font)| *font == name)
+            .map(|(resource, _)| *resource)
+            .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))?;
+        let da = format!(
+            "/{resource} {} Tf {} {} {} rg",
+            fmt(size),
+            fmt(color.0),
+            fmt(color.1),
+            fmt(color.2),
+        );
+        dict.insert(
+            Name::from("DA"),
+            Value::String(PdfString::literal(da.into_bytes())),
+        );
+        let align = self.align.unwrap_or(0);
+        if !(0..=2).contains(&align) {
+            return Err(PdfError::new_err(
+                "free text aligns left (0), centre (1), or right (2)",
+            ));
+        }
+        dict.insert(Name::from("Q"), Value::Integer(align));
+        let Some(points) = &self.callout else {
+            if self.callout_ending.is_some() {
+                return Err(PdfError::new_err("a callout ending needs a callout line"));
+            }
+            return Ok(());
+        };
+        if points.too_many
+            || !(2..=3).contains(&points.len())
+            || !points.iter().all(|(x, y)| x.is_finite() && y.is_finite())
+        {
+            return Err(PdfError::new_err(
+                "a callout line has 2 or 3 finite points: the point it shows, an optional knee, and the box",
+            ));
+        }
+        let ending = self.callout_ending.as_deref().unwrap_or("None");
+        if !LINE_ENDINGS.contains(&ending) {
+            return Err(PdfError::new_err(format!("unknown line ending {ending:?}")));
+        }
+        let Some((x0, y0, x1, y1)) = self.rect else {
+            return Err(PdfError::new_err("a free text needs its rectangle"));
+        };
+        let (a, b) = to_pdf(annots.crop, annots.rotation, x0, y0);
+        let (c, d) = to_pdf(annots.crop, annots.rotation, x1, y1);
+        let inner = [a.min(c), b.min(d), a.max(c), b.max(d)];
+        let width = self.border.as_ref().map_or(0.0, |border| border.0).max(1.0);
+        let pad = width / 2.0
+            + 1.0
+            + if ending == "None" {
+                0.0
+            } else {
+                2.0 * ending_size(width)
+            };
+        let mut outer = inner;
+        let mut line = Vec::with_capacity(points.len() * 2);
+        for &(x, y) in points.iter() {
+            let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
+            outer = [
+                outer[0].min(x - pad),
+                outer[1].min(y - pad),
+                outer[2].max(x + pad),
+                outer[3].max(y + pad),
+            ];
+            line.push(number(x));
+            line.push(number(y));
+        }
+        if !outer.iter().all(|value| value.is_finite()) {
+            return Err(PdfError::new_err("a callout line has finite points"));
+        }
+        dict.insert(Name::from("CL"), Value::Array(Array::from(line)));
+        dict.insert(Name::from("IT"), Value::Name(Name::from("FreeTextCallout")));
+        if ending != "None" {
+            dict.insert(Name::from("LE"), Value::Name(Name::from(ending)));
+        }
+        dict.insert(
+            Name::from("Rect"),
+            Value::Array(Array::from(outer.map(number).to_vec())),
+        );
+        let differences = [
+            inner[0] - outer[0],
+            outer[3] - inner[3],
+            outer[2] - inner[2],
+            inner[1] - outer[1],
+        ];
+        dict.insert(
+            Name::from("RD"),
+            Value::Array(Array::from(
+                differences.map(|value| number(value.max(0.0))).to_vec(),
+            )),
+        );
+        Ok(())
     }
 
     /// Refuses a file attachment without data and a file name, data and a
@@ -2037,6 +2271,7 @@ pub fn annotation_add(
                 return Err(PdfError::new_err("the page's /Annots is not an array"));
             }
             let mut dict = spec.dictionary(annots)?;
+            check_text(annots, &dict)?;
             if let Some(page) = annots.page().object() {
                 dict.insert(Name::from("P"), Value::Reference(page));
             }
