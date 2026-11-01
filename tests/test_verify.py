@@ -18,6 +18,7 @@ if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
     # As in tests/test_signing.py: pyHanko enables the GIL of a free-threaded build.
     pytest.skip("pyHanko enables the GIL of a free-threaded build", allow_module_level=True)
 
+from asn1crypto import cms
 from asn1crypto import keys as asn1_keys
 from asn1crypto import x509 as asn1_x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -147,9 +148,14 @@ def test_a_changed_signature_value_fails(pki: Pki) -> None:
     signed = _document().sign("Signature1", _pem_signer(pki))
     [signature] = pyropdf.open(signed).signatures
     start = signature.byte_range[1] + 1
-    # The DER of a P-256 signature value sits near the end of the CMS bytes,
-    # before the zero padding; flip one of its hexadecimal digits.
-    end = signed.index(b"0000", start) - 2
+    der = bytes.fromhex(signed[start : signature.byte_range[2] - 1].decode())
+    # Locate the signature value through the CMS structure rather than by a
+    # byte pattern, which random certificates and digests can also contain.
+    content = cms.ContentInfo.load(der, strict=False)["content"]
+    value = content["signer_infos"][0]["signature"].contents
+    # Flip the last hexadecimal digit of the value: the low half of the last
+    # byte of s, which keeps the DER of the ECDSA value well formed.
+    end = start + 2 * (der.index(value) + len(value)) - 1
     tampered = signed[:end] + (b"1" if signed[end : end + 1] != b"1" else b"2") + signed[end + 1 :]
     [result] = _verified(tampered, pki)
     assert result.intact
