@@ -1279,6 +1279,103 @@ fn a_refused_trailer_change_preserves_the_draft() {
 }
 
 #[test]
+fn finalizing_large_written_bytes_refuses_atomically_and_keeps_exact_bytes() {
+    let document = document(None);
+    let original = document.current();
+    let mut transaction = document.begin();
+    let value = Value::from(Stream::new(Dict::new(), Bytes::from(vec![b'x'; 100_003])));
+    let expected = bytes_of(&value);
+    let measure = Budget::default();
+    let mut out = BudgetVec::new(&measure);
+    write::value(&mut out, &value).unwrap();
+    // Allow serialization and Written's overhead, but not the second live
+    // allocation required to finalize the exact-length, shared bytes.
+    let limit = measure.used(LimitCode::MemorySize) + Written::OVERHEAD + out.len() as u64 - 1;
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(limit));
+    let error = transaction.write(600, &value, &tight).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert!(transaction.version().slot(600).is_none());
+    assert!(Arc::ptr_eq(&document.current(), &original));
+    assert_eq!(transaction.version().next_number(), BASE_NEXT);
+    assert_eq!(tight.used(LimitCode::MemorySize), 0);
+
+    let budget = Budget::default();
+    transaction.write(600, &value, &budget).unwrap();
+    let Some(Slot::Written(written)) = transaction.version().slot(600) else {
+        panic!("missing object")
+    };
+    assert_eq!(written.bytes, expected);
+    assert_eq!(written.size(), Written::OVERHEAD + expected.len() as u64);
+    let shared = written.bytes.clone();
+    assert_eq!(shared.as_ptr(), written.bytes.as_ptr());
+    let version = transaction.commit(&budget).unwrap();
+    assert_eq!(
+        version.get(600, &budget).unwrap().unwrap().value().as_ref(),
+        &value
+    );
+}
+
+#[test]
+fn finalizing_large_trailer_refusal_does_not_change_the_draft() {
+    let document = document(None);
+    let mut transaction = document.begin();
+    let large = Dict::from_iter([(
+        Name::from("Large"),
+        Value::String(PdfString::literal(vec![b'x'; 100_003])),
+    )]);
+    let measure = Budget::default();
+    let mut out = BudgetVec::new(&measure);
+    write::value(&mut out, &Value::Dict(large.clone())).unwrap();
+    let limit = measure.used(LimitCode::MemorySize) + Trailer::OVERHEAD + out.len() as u64 - 1;
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(limit));
+    let error = transaction.set_trailer(large, &tight).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert_eq!(
+        transaction.version().trailer(),
+        document.current().trailer()
+    );
+    assert_eq!(document.history().undo, 0);
+    assert_eq!(tight.used(LimitCode::MemorySize), 0);
+}
+
+#[test]
+fn cancelling_during_finalization_leaves_object_and_trailer_unchanged() {
+    let document = document(None);
+    let original = document.current();
+    let mut transaction = document.begin();
+    let value = Value::String(PdfString::literal(vec![b'x'; 100_003]));
+    for is_trailer in [false, true] {
+        let token = CancellationToken::new();
+        let budget = Budget::default().with_cancellation(token.clone());
+        Bytes::cancel_written_copy_after_chunk(token);
+        let error = if is_trailer {
+            let trailer = Dict::from_iter([(Name::from("Large"), value.clone())]);
+            transaction.set_trailer(trailer, &budget).unwrap_err()
+        } else {
+            transaction.write(600, &value, &budget).unwrap_err()
+        };
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
+        );
+        assert_eq!(budget.used(LimitCode::MemorySize), 0);
+        assert!(transaction.version().slot(600).is_none());
+        assert_eq!(transaction.version().trailer(), original.trailer());
+        assert!(Arc::ptr_eq(&document.current(), &original));
+        assert_eq!(document.history().undo, 0);
+    }
+    transaction.commit(&Budget::default()).unwrap();
+    assert!(Arc::ptr_eq(&document.current(), &original));
+    assert_eq!(document.history().undo, 0);
+}
+
+#[test]
 fn cached_reads_honor_cancellation() {
     let document = document(None);
     let budget = Budget::default();
