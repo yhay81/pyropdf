@@ -7,7 +7,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::extract::{self, DecodedImage, Error};
-use pyropdf_store::budget::{BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::value::{Array, Stream, Value};
 
 use crate::document::_Document;
@@ -169,6 +169,23 @@ pub fn decode_png<'py>(
     document: &_Document,
     data: &[u8],
 ) -> PyResult<DecodedPng<'py>> {
+    let budget = document.budget();
+    // Decoding and splitting a frame can take long enough for another Python
+    // thread to cancel it. Keep Python allocation outside the detached work.
+    let (width, height, gray, color, alpha) = py.detach(|| decode_png_buffers(data, &budget))?;
+    budget.poll().map_err(|e| limit_error(&e))?;
+    Ok((
+        width,
+        height,
+        gray,
+        PyBytes::new(py, &color),
+        alpha.map(|samples| PyBytes::new(py, &samples)),
+    ))
+}
+
+type DecodedPngBuffers<'b> = (u32, u32, bool, BudgetVec<'b, u8>, Option<BudgetVec<'b, u8>>);
+
+fn decode_png_buffers<'b>(data: &[u8], budget: &'b Budget) -> PyResult<DecodedPngBuffers<'b>> {
     let invalid =
         |error: png::DecodingError| PyValueError::new_err(format!("not a PNG image: {error}"));
     let mut decoder = png::Decoder::new(Cursor::new(data));
@@ -180,7 +197,6 @@ pub fn decode_png<'py>(
             "the PNG image has {pixels} pixels, more than the {MAX_PNG_PIXELS}-pixel limit"
         )));
     }
-    let budget = document.budget();
     budget
         .charge(LimitCode::TotalDecompressedSize, pixels * 4)
         .map_err(|e| limit_error(&e))?;
@@ -188,7 +204,7 @@ pub fn decode_png<'py>(
     let size = reader
         .output_buffer_size()
         .ok_or_else(|| PyValueError::new_err("the PNG image is too large"))?;
-    let mut buffer = BudgetVec::new(&budget);
+    let mut buffer = BudgetVec::new(budget);
     buffer
         .try_reserve_exact(size)
         .map_err(|e| limit_error(&e))?;
@@ -211,18 +227,12 @@ pub fn decode_png<'py>(
         png::ColorType::Rgba => (false, true),
     };
     if !alpha {
-        return Ok((
-            info.width,
-            info.height,
-            gray,
-            PyBytes::new(py, &buffer),
-            None,
-        ));
+        return Ok((info.width, info.height, gray, buffer, None));
     }
     let channels = if gray { 1 } else { 3 };
     let pixels = buffer.len() / (channels + 1);
-    let mut color = BudgetVec::new(&budget);
-    let mut opacity = BudgetVec::new(&budget);
+    let mut color = BudgetVec::new(budget);
+    let mut opacity = BudgetVec::new(budget);
     color
         .try_reserve_exact(pixels * channels)
         .map_err(|e| limit_error(&e))?;
@@ -240,13 +250,7 @@ pub fn decode_png<'py>(
                 .map_err(|e| limit_error(&e))?;
         }
     }
-    Ok((
-        info.width,
-        info.height,
-        gray,
-        PyBytes::new(py, &color),
-        Some(PyBytes::new(py, &opacity)),
-    ))
+    Ok((info.width, info.height, gray, color, Some(opacity)))
 }
 
 /// Width, height, color components, 8-bit samples, and the alpha that

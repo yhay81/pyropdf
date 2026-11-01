@@ -7,12 +7,14 @@ ebb01d3c, without text: krilla writes text on the canvas (issue 323).
 from __future__ import annotations
 
 import itertools
+import sys
+import threading
 from typing import TYPE_CHECKING
 
 import pytest
 
 import pyropdf
-from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke
+from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke, _core
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -735,6 +737,44 @@ def test_larger_png_keeps_color_and_alpha_across_the_frame(*, gray: bool) -> Non
         canvas.image((0, 0, 100, 100), png)
     (image,) = page.images()
     assert bytes(image.pixmap()) == bytes(original)
+
+
+def test_another_thread_can_cancel_png_decoding() -> None:
+    _source_doc, source = _new_page(256, 256)
+    png = source.pixmap(dpi=72, alpha=True).to_bytes("png")
+    token = pyropdf.CancellationToken()
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    core = document._core()  # noqa: SLF001
+    started = threading.Event()
+    outcome: list[BaseException | None] = []
+
+    def decode_until_cancelled() -> None:
+        started.set()
+        try:
+            for _ in range(100):
+                _core.decode_png(core, png)
+        except pyropdf.LimitError as error:
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    # Keep Python from switching threads between the event and a decoder
+    # call, so progress depends on the decoder releasing the GIL.
+    previous_interval = sys.getswitchinterval()
+    try:
+        sys.setswitchinterval(5.0)
+        worker = threading.Thread(target=decode_until_cancelled)
+        worker.start()
+        assert started.wait(timeout=10)
+        token.cancel()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+    finally:
+        sys.setswitchinterval(previous_interval)
+    assert len(outcome) == 1
+    error = outcome[0]
+    assert isinstance(error, pyropdf.LimitError)
+    assert error.code == "cancelled"
 
 
 def test_a_placed_page_shows_its_crop_box() -> None:
