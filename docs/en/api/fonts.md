@@ -16,7 +16,8 @@ Font(*_args: object, **_kwargs: object)
 
 A font face that draws and measures text.
 
-Get one from `standard`; pyropdf has no default font and keeps no
+Get one from `standard`, `from_file`, or `from_bytes`;
+pyropdf has no default font and keeps no
 font registry, so output depends only on the fonts passed in. Pass it as
 `font` to `Canvas.text` and `Canvas.textbox` on any
 document, and share it between threads. `text_width` measures one
@@ -25,7 +26,10 @@ them; `char_widths` and `char_bbox` give the metrics of
 single characters drawn alone.
 
 A Standard 14 font is drawn without embedding, so it prints WinAnsi
-(roughly Latin-1) text only, and measures with Adobe's AFM widths.
+(roughly Latin-1) text only, and measures with Adobe's AFM widths. An
+OpenType face is shaped with harfrust, in bidirectional and script runs,
+and a document embeds it once as a Type0 font whose program holds every
+glyph until a save.
 
 ### `Font.ascender`
 

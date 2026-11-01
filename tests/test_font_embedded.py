@@ -262,7 +262,7 @@ def test_glyphs_add_widths_and_texts_and_undo_removes_them() -> None:
     glyphs = [(glyph, "AVA日本"[start:end]) for glyph, _x, _y, _dx, _dy, start, end, _rtl in shaped]
 
     with document.transaction("draw"):
-        assert _fonts.add_glyphs(document, xref, font, glyphs) == set()
+        assert _fonts.add_glyphs(document, xref, font, glyphs) == dict(glyphs)
     descendant = document.objects[xref]["DescendantFonts"][0]
     widths = _fonts._widths(descendant, font.glyph_count)  # noqa: SLF001
     assert set(widths) == {glyph for glyph, _ in glyphs}
@@ -270,9 +270,10 @@ def test_glyphs_add_widths_and_texts_and_undo_removes_them() -> None:
     to_unicode = document.objects[xref]["ToUnicode"]
     assert _fonts._mapped(to_unicode, font.glyph_count) == dict(glyphs)  # noqa: SLF001
 
-    # A glyph drawn for other text keeps its first mapping and needs ActualText.
+    # A glyph drawn for other text keeps its first mapping; the content gives that occurrence ActualText.
     with document.transaction("draw again"):
-        assert _fonts.add_glyphs(document, xref, font, [(glyphs[3][0], "X"), (glyphs[0][0], "A")]) == {glyphs[3][0]}
+        again = [(glyphs[3][0], "X"), (glyphs[0][0], "A")]
+        assert _fonts.add_glyphs(document, xref, font, again) == {glyphs[3][0]: "日", glyphs[0][0]: "A"}
     assert _fonts._mapped(to_unicode, font.glyph_count)[glyphs[3][0]] == "日"  # noqa: SLF001
 
     # The second drawing wrote nothing, so one undo takes back the first.
