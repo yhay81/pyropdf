@@ -8,10 +8,16 @@ difference: pyropdf writes no object streams, so the compressed save of
 from __future__ import annotations
 
 import zlib
+from concurrent.futures import Future, ThreadPoolExecutor
+from threading import Event
+from typing import TYPE_CHECKING
 
 import pytest
 
 import pyropdf
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def build_raw_pdf(objects: dict[int, str | bytes]) -> bytes:
@@ -657,3 +663,250 @@ def test_a_file_specification_that_an_annotation_refers_to_survives_a_delete() -
     assert {filespec.xref, stream} <= set(doc.objects)
     reopened = pyropdf.open(doc.to_bytes())
     assert reopened.pages[0].obj["Annots"][0]["FS"]["EF"]["F"].read() == b"data"
+
+
+def _shared_stream_pdf() -> bytes:
+    """Return a document whose attachments ``a`` and ``b`` share one embedded file stream."""
+    return build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 4 0 R >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+            4: "<< /Names [(a) 5 0 R (b) 6 0 R] >>",
+            5: "<< /Type /Filespec /F (a) /EF << /F 7 0 R >> >>",
+            6: "<< /Type /Filespec /F (b) /EF << /F 7 0 R >> >>",
+            7: "<< /Type /EmbeddedFile /Length 6 >>\nstream\nshared\nendstream",
+        }
+    )
+
+
+def _race(doc: pyropdf.Document, waiting: Callable[[], object], concurrent: Callable[[], object]) -> Future[object]:
+    """Run ``waiting`` on a thread while this thread's transaction runs ``concurrent``.
+
+    The other thread starts while the transaction is open, so it reads the
+    version before it, and then waits for the transaction's lock.
+    """
+    started = Event()
+
+    def run() -> object:
+        started.set()
+        return waiting()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with doc.transaction("concurrent edit"):
+            future = pool.submit(run)
+            assert started.wait(timeout=10)
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.1)
+            concurrent()
+        future.exception(timeout=10)
+    return future
+
+
+def test_concurrent_additions_are_all_kept() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+
+    future = _race(doc, lambda: doc.attachments.add("waiting", b"w"), lambda: doc.attachments.add("first", b"f"))
+
+    assert future.result() == doc.attachments["waiting"]
+    assert list(doc.attachments) == ["a", "first", "waiting"]
+    assert doc.attachments["first"].read() == b"f"
+    assert doc.history.steps == ("attachment add", "concurrent edit", "attachment add")
+
+
+def test_an_addition_keeps_a_concurrent_deletion() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+    doc.attachments.add("b", b"b")
+
+    def delete() -> None:
+        del doc.attachments["a"]
+
+    _race(doc, lambda: doc.attachments.add("waiting", b"w"), delete).result()
+
+    assert list(doc.attachments) == ["b", "waiting"]
+
+
+def test_a_deletion_keeps_a_concurrent_addition() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+    doc.attachments.add("b", b"b")
+
+    def delete() -> None:
+        del doc.attachments["a"]
+
+    _race(doc, delete, lambda: doc.attachments.add("first", b"f")).result()
+
+    assert list(doc.attachments) == ["b", "first"]
+    assert doc.attachments["first"].read() == b"f"
+
+
+def test_a_deletion_of_a_concurrently_deleted_attachment_raises_key_error() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+    doc.attachments.add("b", b"b")
+    steps = doc.history.steps
+
+    def delete() -> None:
+        del doc.attachments["a"]
+
+    future = _race(doc, delete, delete)
+
+    with pytest.raises(KeyError):
+        future.result()
+    assert list(doc.attachments) == ["b"]
+    assert doc.history.steps == (*steps, "concurrent edit")
+
+
+def test_an_addition_of_a_concurrently_added_name_raises() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+
+    future = _race(doc, lambda: doc.attachments.add("x", b"waiting"), lambda: doc.attachments.add("x", b"first"))
+
+    with pytest.raises(pyropdf.PdfError, match="already exists"):
+        future.result()
+    assert doc.attachments["x"].read() == b"first"
+    assert doc.history.steps == ("concurrent edit",)
+
+
+def test_a_write_to_a_concurrently_deleted_attachment_leaves_a_shared_stream() -> None:
+    doc = pyropdf.open(_shared_stream_pdf())
+    handle = doc.attachments["a"]
+
+    def delete() -> None:
+        del doc.attachments["a"]
+
+    future = _race(doc, lambda: handle.write(b"replaced"), delete)
+
+    with pytest.raises(pyropdf.StaleObjectError):
+        future.result()
+    assert list(doc.attachments) == ["b"]
+    assert doc.attachments["b"].read() == b"shared"
+    assert doc.attachments["b"].size == -1
+    assert doc.history.steps == ("concurrent edit",)
+
+
+def test_a_write_waits_for_and_follows_a_concurrent_replacement() -> None:
+    doc = pyropdf.open(_shared_stream_pdf())
+    handle = doc.attachments["a"]
+
+    def replace() -> None:
+        del doc.attachments["a"]
+        doc.attachments.add("a", b"new file")
+
+    _race(doc, lambda: handle.write(b"replaced"), replace).result()
+
+    assert doc.attachments["a"].read() == b"replaced"
+    assert doc.attachments["b"].read() == b"shared"
+
+
+class _Sneaky(str):
+    """A string whose overrides claim it is short while encoding to much more."""
+
+    __slots__ = ()
+
+    def __len__(self) -> int:
+        return 0
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+        return b"x" * (2 * 1024 * 1024)
+
+    def __str__(self) -> str:
+        return "x" * (2 * 1024 * 1024)
+
+    def __eq__(self, other: object) -> bool:
+        return True
+
+    def __hash__(self) -> int:
+        return 0
+
+
+def test_str_subclasses_write_their_validated_text() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+
+    added = doc.attachments.add(_Sneaky("b"), b"b", filename=_Sneaky("b.txt"), description=_Sneaky("about b"))
+
+    assert list(doc.attachments) == ["a", "b"]
+    assert type(added.name) is str
+    assert (added.filename, added.description) == ("b.txt", "about b")
+    filespec = doc.catalog["Names"]["EmbeddedFiles"]["Names"][3]
+    assert (filespec["F"].text, filespec["UF"].text, filespec["Desc"].text) == ("b.txt", "b.txt", "about b")
+    reopened = pyropdf.open(doc.to_bytes())
+    assert (reopened.attachments["b"].filename, reopened.attachments["b"].description) == ("b.txt", "about b")
+    added.filename = _Sneaky("c.txt")
+    added.description = _Sneaky("about c")
+    assert (added.filename, added.description) == ("c.txt", "about c")
+    del doc.attachments[_Sneaky("a")]
+    assert list(doc.attachments) == ["b"]
+
+
+@pytest.mark.parametrize("field", ["name", "filename", "description"])
+def test_large_unicode_text_is_refused_in_utf8_without_changes(field: str) -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    steps = doc.history.steps
+    large = _Sneaky("\u00e9" * (512 * 1024 + 1))  # 1 MiB + 2 bytes in UTF-8, whatever its overrides say
+    name = large if field == "name" else "a"
+    filename = large if field == "filename" else None
+    description = large if field == "description" else None
+
+    with pytest.raises(pyropdf.LimitError) as error:
+        doc.attachments.add(name, b"a", filename=filename, description=description)
+
+    assert error.value.code == "embedded_file_input_size"
+    assert list(doc.attachments) == []
+    assert doc.history.steps == steps
+
+
+class _Understated(bytes):
+    """Bytes whose ``__len__`` and ``__bytes__`` disagree with their buffer."""
+
+    __slots__ = ()
+
+    def __len__(self) -> int:
+        return 0
+
+    def __bytes__(self) -> bytes:
+        return bytes(64)
+
+
+def test_bytes_subclasses_cannot_exceed_max_size() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+    steps = doc.history.steps
+
+    with pytest.raises(pyropdf.LimitError) as error:
+        doc.attachments.add("b", _Understated(b"123456789"), max_size=8)
+    assert error.value.code == "embedded_file_size"
+    with pytest.raises(pyropdf.LimitError) as error:
+        doc.attachments["a"].write(_Understated(b"123456789"), max_size=8)
+    assert error.value.code == "embedded_file_size"
+
+    assert list(doc.attachments) == ["a"]
+    assert doc.attachments["a"].read() == b"a"
+    assert doc.history.steps == steps
+
+
+def test_bytes_subclasses_write_their_buffer() -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+
+    added = doc.attachments.add("a", _Understated(b"small"), max_size=8)
+    assert (added.read(), added.size) == (b"small", 5)
+    added.write(_Understated(b"other"), max_size=8)
+    assert (added.read(), added.size) == (b"other", 5)
+
+
+@pytest.mark.parametrize("data", [3, [1, 2, 3], "text"])
+def test_attachment_data_must_be_bytes_like(data: object) -> None:
+    doc = pyropdf.open(build_pdf(["Hello"]))
+    doc.attachments.add("a", b"a")
+    steps = doc.history.steps
+
+    with pytest.raises(TypeError, match="bytes-like"):
+        doc.attachments.add("b", data)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="bytes-like"):
+        doc.attachments["a"].write(data)  # ty: ignore[invalid-argument-type]
+
+    assert list(doc.attachments) == ["a"]
+    assert doc.history.steps == steps
