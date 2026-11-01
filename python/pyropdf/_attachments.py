@@ -66,17 +66,28 @@ def _validate_name(name: object) -> str:
         msg = f"name must be a string: {type(name).__name__}"
         raise TypeError(msg)
     _validate_text_size([name], "attachment lookup name")
-    return name
+    return str.__str__(name)
 
 
-def _validate_data(data: bytes, max_size: int | None) -> bytes:
-    """Check attachment data against ``max_size`` before copying it."""
+def _validate_data(data: object, max_size: int | None) -> bytes:
+    """Check attachment data against ``max_size`` before copying it.
+
+    The data is read through the buffer protocol, which a ``bytes`` subclass
+    cannot override: its ``__len__`` and ``__bytes__`` decide neither the
+    size checked nor the bytes written.
+    """
     _validate_optional_positive_int("max_size", max_size)
-    if max_size is not None and len(data) > max_size:
-        code = "embedded_file_size"
-        msg = f"attachment input is {len(data)} bytes, exceeding the {max_size}-byte limit"
-        raise LimitError(code, msg)
-    return bytes(data)
+    try:
+        view = memoryview(data)  # ty: ignore[invalid-argument-type]
+    except TypeError:
+        msg = f"data must be a bytes-like object: {type(data).__name__}"
+        raise TypeError(msg) from None
+    with view:
+        if max_size is not None and view.nbytes > max_size:
+            code = "embedded_file_size"
+            msg = f"attachment input is {view.nbytes} bytes, exceeding the {max_size}-byte limit"
+            raise LimitError(code, msg)
+        return view.tobytes()
 
 
 #: The file fields that :meth:`Attachment._edit_file` takes.
@@ -107,7 +118,7 @@ def _validate_text(value: object, field: str) -> str:
         msg = f"{field} must be a str: {type(value).__name__}"
         raise TypeError(msg)
     _validate_text_size([value], f"attachment {field}")
-    return value
+    return str.__str__(value)
 
 
 def _check_edit(edit: object) -> dict[str, str | None]:
@@ -464,12 +475,16 @@ class Attachment:
         ``/CheckSum`` is dropped. ``max_size`` bounds ``data`` and defaults to
         64 MiB, checked before the data is copied.
         """
-        stream = _file(self._filespec())
+        self._document._ensure_open()  # noqa: SLF001
         payload = _validate_data(data, max_size)
-        if stream is None:
-            msg = f"the attachment {self._name!r} has no embedded file stream"
-            raise PdfError(msg)
         with self._document.transaction("attachment write"):
+            # Resolve the stream under the transaction's lock, so that a
+            # concurrent delete cannot leave this write on a stream that
+            # another attachment shares.
+            stream = _file(self._filespec())
+            if stream is None:
+                msg = f"the attachment {self._name!r} has no embedded file stream"
+                raise PdfError(msg)
             stream.write(payload)
             if not isinstance(stream.get("Params"), Dictionary):
                 stream["Params"] = {}
@@ -636,12 +651,18 @@ class Attachments(Mapping[str, Attachment]):
 
     def __delitem__(self, name: str) -> None:
         """Delete the attachment called ``name``; raise :class:`KeyError` when absent."""
-        if name not in self:
+        if not isinstance(name, str):
             raise KeyError(name)
-        entries = _writable(self._document)
-        removed = [entry.filespec for entry in entries if entry.name == name]
-        candidates = sorted({number for filespec in removed for number in _objects(filespec)})
+        name = _validate_name(name)
+        self._document._ensure_open()  # noqa: SLF001
         with self._document.transaction("attachment delete"):
+            # Read the tree under the transaction's lock, so that a
+            # concurrent edit is not overwritten by a stale snapshot.
+            entries = _writable(self._document)
+            removed = [entry.filespec for entry in entries if entry.name == name]
+            if not removed:
+                raise KeyError(name)
+            candidates = sorted({number for filespec in removed for number in _objects(filespec)})
             _rewrite(self._document, [entry for entry in entries if entry.name != name])
             for filespec in removed:
                 _dissociate(self._document, filespec)
@@ -685,7 +706,7 @@ class Attachments(Mapping[str, Attachment]):
         if not isinstance(name, str):
             msg = f"name must be a string: {type(name).__name__}"
             raise TypeError(msg)
-        if not name:
+        if not str.__len__(name):
             msg = "name must be at least 1 character"
             raise ValueError(msg)
         for field, value in (("filename", filename), ("description", description)):
@@ -695,17 +716,25 @@ class Attachments(Mapping[str, Attachment]):
         filename = name if filename is None else filename
         texts = [name, filename] if description is None else [name, filename, description]
         _validate_text_size(texts, "attachment name, filename, and description")
+        # Write exactly the text just checked, without the overrides of a
+        # str subclass, which the object writer would otherwise call.
+        name = str.__str__(name)
+        filename = str.__str__(filename)
+        description = None if description is None else str.__str__(description)
         payload = _validate_data(data, max_size)
-        entries = _writable(self._document)
-        if any(entry.name == name for entry in entries):
-            msg = f"an attachment named {name!r} already exists"
-            raise PdfError(msg)
-        if len(entries) >= _MAX_TREE_ENTRIES:
-            msg = f"the EmbeddedFiles name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
-            raise PdfError(msg)
-        objects = self._document.objects
-        associated = _associated(self._document)
         with self._document.transaction("attachment add"):
+            # Read the tree under the transaction's lock, so that a
+            # concurrent addition or deletion is not overwritten by a stale
+            # snapshot.
+            entries = _writable(self._document)
+            if any(entry.name == name for entry in entries):
+                msg = f"an attachment named {name!r} already exists"
+                raise PdfError(msg)
+            if len(entries) >= _MAX_TREE_ENTRIES:
+                msg = f"the EmbeddedFiles name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
+                raise PdfError(msg)
+            objects = self._document.objects
+            associated = _associated(self._document)
             dictionary = {"Type": Name("EmbeddedFile"), "Params": {"Size": len(payload)}}
             stream = objects[objects.add_stream(payload, dictionary)]
             # /Desc needs 1.6, /UF needs 1.7, and the tree needs 1.4.
