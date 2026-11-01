@@ -8,6 +8,8 @@ words, search, layout dictionary, or Markdown yet, so these tests read
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from test_content import build_raw_pdf
 
@@ -219,6 +221,17 @@ def test_rtl_lines_read_in_logical_order() -> None:
 
     assert document.pages[0].text().splitlines() == expected
     assert document.text() == "".join(f"{line}\n" for line in expected)
+
+
+def test_shaped_rtl_marks_stay_on_one_line_with_their_letters() -> None:
+    # A shaper writes Hebrew in visual order and places each zero-advance
+    # point by an offset from an origin beyond its letter's (#469).
+    path = Path(__file__).parent / "assets" / "text" / "hebrew-niqqud.pdf"
+    page = pyropdf.open(path).pages[0]
+
+    assert page.text() == "שָׁלוֹם עולם\n"
+    lines = [line for block in page.layout().blocks for line in block.lines]
+    assert len(lines) == 1
 
 
 def test_an_rtl_edge_token_and_an_ltr_base_line_stay_in_drawing_order() -> None:
