@@ -11,6 +11,60 @@ use super::*;
 const MIB: u64 = 1024 * 1024;
 
 #[test]
+fn shared_views_count_the_same_operation_with_independent_overrides() {
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(10));
+    let view = budget.shared_with_limit(LimitCode::TextInputSize, Some(4));
+    view.charge(LimitCode::MemorySize, 6).unwrap();
+    assert_eq!(budget.used(LimitCode::MemorySize), 6);
+    assert!(budget.charge(LimitCode::MemorySize, 5).is_err());
+    let relaxed = budget.shared_with_limit(LimitCode::MemorySize, Some(20));
+    let unlimited = budget.shared_with_limit(LimitCode::MemorySize, None);
+    let cloned_relaxed = budget.clone().with_limit(LimitCode::MemorySize, Some(20));
+    let cloned_unlimited = budget.clone().with_limit(LimitCode::MemorySize, None);
+    assert!(relaxed.charge(LimitCode::MemorySize, 5).is_err());
+    assert!(unlimited.charge(LimitCode::MemorySize, 5).is_err());
+    assert!(cloned_relaxed.charge(LimitCode::MemorySize, 5).is_err());
+    assert!(cloned_unlimited.charge(LimitCode::MemorySize, 5).is_err());
+    assert_eq!(budget.used(LimitCode::MemorySize), 6);
+    assert!(view.check(LimitCode::TextInputSize, 5).is_err());
+    assert!(budget.check(LimitCode::TextInputSize, 5).is_ok());
+    budget.release(LimitCode::MemorySize, 6);
+    assert_eq!(view.used(LimitCode::MemorySize), 0);
+}
+
+#[test]
+fn a_shared_view_cannot_relax_the_limit_after_the_parent_is_dropped() {
+    let parent = Budget::default().with_limit(LimitCode::MemorySize, Some(10));
+    let view = parent.clone();
+    drop(parent);
+    let view = view.with_limit(LimitCode::MemorySize, None);
+    assert!(view.charge(LimitCode::MemorySize, 11).is_err());
+}
+
+#[test]
+fn constrained_view_shares_usage_and_observes_both_documents() {
+    let left = CancellationToken::new();
+    let right = CancellationToken::new();
+    let budget = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(20))
+        .with_cancellation(left);
+    let source = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(7))
+        .with_cancellation(right.clone());
+    let view = budget.constrained_by(&source);
+    view.charge(LimitCode::MemorySize, 5).unwrap();
+    assert_eq!(budget.used(LimitCode::MemorySize), 5);
+    assert!(view.charge(LimitCode::MemorySize, 3).is_err());
+    right.cancel();
+    assert!(view.poll().is_err());
+    assert!(budget.poll().is_ok());
+
+    let expired = Budget::default().with_timeout(Duration::ZERO);
+    assert!(budget.constrained_by(&expired).poll().is_err());
+    assert!(budget.poll().is_ok());
+}
+
+#[test]
 fn every_code_refuses_a_charge_beyond_its_limit_and_keeps_its_meter() {
     for code in LimitCode::ALL {
         let budget = Budget::default().with_limit(code, Some(10));

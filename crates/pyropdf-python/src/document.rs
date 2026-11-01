@@ -73,7 +73,7 @@ pub struct _Document {
     /// edit read.
     pub(crate) references: pyropdf_store::refs::Cache,
     /// The open transaction and the names of the history's steps.
-    pub(crate) history: crate::history::State,
+    pub(crate) history: Arc<crate::history::State>,
 }
 
 /// Registers the settlers that pyropdf's engines provide (DESIGN.md
@@ -104,7 +104,7 @@ impl _Document {
             draft_fill_index: FillCache::new(),
             bridge: pyropdf_engine::bridge::Cache::new(),
             references: pyropdf_store::refs::Cache::new(),
-            history: crate::history::State::default(),
+            history: Arc::new(crate::history::State::default()),
         }
     }
 
@@ -144,8 +144,16 @@ impl _Document {
         self.history.clear();
     }
 
-    /// Returns a budget of one operation from the document's limits.
+    /// Returns the active canvas budget for its owning thread, or a fresh
+    /// budget for an independent operation.
     pub(crate) fn budget(&self) -> Budget {
+        self.history
+            .operation_budget()
+            .map_or_else(|| self.fresh_budget(), |budget| (*budget).clone())
+    }
+
+    /// Returns a new operation budget without consulting an open transaction.
+    pub(crate) fn fresh_budget(&self) -> Budget {
         Budget::new(&self.limits)
     }
 }

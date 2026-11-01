@@ -7,10 +7,12 @@
 //! inherited attributes would change under the root, is rewritten with
 //! `/Parent` naming the root and its inherited attributes written out.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
+use pyropdf_engine::content::PageContent;
 use pyropdf_engine::pages::copy::Copies;
 use pyropdf_engine::pages::import;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -18,15 +20,16 @@ use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::refs::{self, Edits, Rule};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::version::{Document, Transaction, Version};
 
 use crate::annotations::links::{
     Destination, Lead, LeadReader, NamedDestinations, lead, named, read,
 };
 use crate::annotations::{CopyPart, charge_copy, to_display, to_pdf};
 use crate::document::_Document;
-use crate::errors::{MalformedPdfError, store_error};
+use crate::errors::{MalformedPdfError, PdfError, limit_error, store_error};
 use crate::forms;
+use crate::history::OperationBudget;
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
@@ -35,18 +38,27 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 const A4: (f64, f64) = (595.0, 842.0);
 
 pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
-    let (version, parent) = document.reading_parent()?;
     let budget = document.budget();
+    let (version, index) = index_with_budget(document, &budget)?;
+    Ok((version, index, budget))
+}
+
+/// Reads and indexes a document using an existing operation budget.
+fn index_with_budget(
+    document: &_Document,
+    budget: &Budget,
+) -> PyResult<(Arc<Version>, Arc<PageIndex>)> {
+    let (version, parent) = document.reading_parent_with_budget(budget)?;
     let index = match &parent {
         // An open transaction that has written nothing reads its parent.
-        Some(parent) => PageIndex::memoized(&document.pages, parent, &budget),
+        Some(parent) => PageIndex::memoized(&document.pages, parent, budget),
         None if document.in_transaction() => {
-            PageIndex::memoized(&document.draft_pages, &version, &budget)
+            PageIndex::memoized(&document.draft_pages, &version, budget)
         }
-        None => PageIndex::memoized(&document.pages, &version, &budget),
+        None => PageIndex::memoized(&document.pages, &version, budget),
     }
     .map_err(|e| store_error(&e))?;
-    Ok((version, index, budget))
+    Ok((version, index))
 }
 
 /// Resolves the page entries of a batch, such as the `pages` of
@@ -153,42 +165,181 @@ pub fn page_space(
     Ok(Some((rotation(page.rotate()), (x0, y0, x1, y1))))
 }
 
+/// Reads a source page's geometry and original content for a canvas. The
+/// target operation and the source document's limits both apply to the read.
+type CanvasSourcePage<'py> = (
+    i64,
+    Box4,
+    f64,
+    f64,
+    Bound<'py, PyBytes>,
+    Py<CanvasSourceSnapshot>,
+);
+
+/// A canvas reads content and resources from the same immutable version.
+#[pyclass(frozen, name = "_CanvasSourceSnapshot", module = "pyropdf._core")]
+pub(crate) struct CanvasSourceSnapshot {
+    version: Arc<Version>,
+    index: Arc<PageIndex>,
+    page: Reference,
+    source: Weak<Document>,
+    operation: Weak<Budget>,
+    budget: Budget,
+}
+
+#[pyfunction]
+pub fn canvas_source_page<'py>(
+    py: Python<'py>,
+    source: &_Document,
+    number: u32,
+    generation: u16,
+    operation: &OperationBudget,
+) -> PyResult<Option<CanvasSourcePage<'py>>> {
+    operation.ensure_active()?;
+    let source_document = source.document()?;
+    let budget = operation.for_source(source);
+    let (version, index) = index_with_budget(source, &budget)?;
+    let Some(page) = index
+        .index_of(Reference::new(number, generation))
+        .and_then(|at| index.get(at))
+    else {
+        return Ok(None);
+    };
+    let rotation = rotation(page.rotate());
+    let [x0, y0, x1, y1] = display_box(page);
+    let (mut width, mut height) = visible(page).map_or(A4, |(x0, y0, x1, y1)| {
+        ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
+    });
+    if rotation % 180 == 90 {
+        std::mem::swap(&mut width, &mut height);
+    }
+    let content = py
+        .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
+        .map_err(|error| store_error(&error))?;
+    operation.ensure_active()?;
+    let data = content.operations().data();
+    let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
+    let header = py
+        .get_type::<PyBytes>()
+        .getattr("__basicsize__")?
+        .extract::<u64>()?;
+    budget
+        .charge(
+            LimitCode::MemorySize,
+            size.saturating_add(header).saturating_add(1),
+        )
+        .map_err(|error| limit_error(&error))?;
+    let bytes = PyBytes::new_with(py, data.len(), |output| {
+        output.copy_from_slice(data);
+        Ok(())
+    })?;
+    if !Arc::ptr_eq(&source_document, &source.document()?) {
+        return Err(PdfError::new_err(
+            "the source document changed during the canvas read",
+        ));
+    }
+    let snapshot = Py::new(
+        py,
+        CanvasSourceSnapshot {
+            version,
+            index,
+            page: Reference::new(number, generation),
+            source: Arc::downgrade(&source_document),
+            operation: Arc::downgrade(&operation.budget),
+            budget,
+        },
+    )?;
+    operation.ensure_active()?;
+    Ok(Some((
+        rotation,
+        (x0, y0, x1, y1),
+        width,
+        height,
+        bytes,
+        snapshot,
+    )))
+}
+
 /// Writes the resources that a page of `source` uses, inherited or its
 /// own, as a new dictionary object of `document`, in one transaction, and
 /// returns its number. From another document the objects they reach are
 /// copied too; within one document they are shared. `None` when `source`
 /// no longer lists the page.
 #[pyfunction]
+#[pyo3(signature = (document, source, number, generation, *, operation=None, snapshot=None))]
 pub fn copy_page_resources(
     py: Python<'_>,
     document: &_Document,
     source: &_Document,
     number: u32,
     generation: u16,
+    operation: Option<&OperationBudget>,
+    snapshot: Option<&CanvasSourceSnapshot>,
 ) -> PyResult<Option<u32>> {
+    if operation.is_some() != snapshot.is_some() {
+        return Err(PyValueError::new_err(
+            "a canvas operation and its source snapshot must be used together",
+        ));
+    }
+    if let Some(operation) = operation
+        && !document
+            .history
+            .operation_budget()
+            .is_some_and(|active| Arc::ptr_eq(&active, &operation.budget))
+    {
+        return Err(PyValueError::new_err(
+            "the operation budget does not belong to this canvas",
+        ));
+    }
     let page = Reference::new(number, generation);
     let same = std::ptr::eq(document, source);
-    let (version, source_parent) = source.reading_parent()?;
-    let budget = source.budget();
-    let source_index = match &source_parent {
-        Some(parent) => PageIndex::memoized(&source.pages, parent, &budget),
-        None if source.in_transaction() => {
-            PageIndex::memoized(&source.draft_pages, &version, &budget)
+    let (version, source_index, budget) = if let Some(snapshot) = snapshot {
+        let source_document = source.document()?;
+        if snapshot.page != page
+            || !Weak::ptr_eq(&snapshot.source, &Arc::downgrade(&source_document))
+            || operation.is_none_or(|operation| {
+                !Weak::ptr_eq(&snapshot.operation, &Arc::downgrade(&operation.budget))
+            })
+        {
+            return Err(PyValueError::new_err(
+                "the source snapshot does not belong to this page or canvas",
+            ));
         }
-        None => PageIndex::memoized(&source.pages, &version, &budget),
-    }
-    .map_err(|e| store_error(&e))?;
+        if same {
+            // Sharing the captured page's indirect resources would let a
+            // later edit change them after this copy. A faithful budgeted
+            // graph copy is required before this case can be enabled.
+            return Err(PyValueError::new_err(
+                "same-document snapshots require a resource graph copy",
+            ));
+        }
+        (
+            Arc::clone(&snapshot.version),
+            Arc::clone(&snapshot.index),
+            snapshot.budget.clone(),
+        )
+    } else {
+        let budget =
+            operation.map_or_else(|| source.budget(), |operation| operation.for_source(source));
+        let (version, index) = index_with_budget(source, &budget)?;
+        (version, index, budget)
+    };
     let Some(entry) = source_index
         .index_of(page)
         .and_then(|at| source_index.get(at))
     else {
         return Ok(None);
     };
-    let resources = entry
-        .inherited("Resources")
-        .cloned()
-        .unwrap_or_else(|| Value::Dict(Dict::new()));
-    let written = document.edit(py, |transaction, budget| {
+    let resources = match entry.inherited("Resources") {
+        Some(value) => refs::copy_for_edit(value, &budget).map_err(|error| store_error(&error))?,
+        None => Value::Dict(Dict::new()),
+    };
+    let written = document.edit(py, |transaction, target_budget| {
+        let budget = if operation.is_some() {
+            &budget
+        } else {
+            target_budget
+        };
         let store = |e: pyropdf_store::Error| store_error(&e);
         let value = if same {
             refs::copy_for_edit(&resources, budget).map_err(store)?

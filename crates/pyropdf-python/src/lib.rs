@@ -83,8 +83,9 @@ mod _core {
     };
     #[pymodule_export]
     use super::history::{
-        begin_transaction, end_transaction, history_clear, history_redo, history_restore,
-        history_save, history_state, history_undo, set_history_limit,
+        OperationBudget, abort_canvas, begin_canvas, begin_transaction, end_transaction,
+        history_clear, history_redo, history_restore, history_save, history_state, history_undo,
+        set_history_limit,
     };
     #[pymodule_export]
     use super::images::{decode_png, encode_jpeg_samples, image_samples, image_stored, page_image};
@@ -105,9 +106,9 @@ mod _core {
     };
     #[pymodule_export]
     use super::pages::{
-        copy_page_resources, import_pages, new_page, page_boxes, page_count, page_geometry,
-        page_index, page_object, page_objects, page_space, set_page_box, set_page_rotation,
-        set_pages,
+        CanvasSourceSnapshot, canvas_source_page, copy_page_resources, import_pages, new_page,
+        page_boxes, page_count, page_geometry, page_index, page_object, page_objects, page_space,
+        set_page_box, set_page_rotation, set_pages,
     };
     #[pymodule_export]
     use super::pixmap::{Pixmap, recolor_samples, render_page, render_pages};
