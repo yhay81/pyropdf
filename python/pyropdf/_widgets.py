@@ -220,13 +220,13 @@ class Widget:
 
     @property
     def font(self) -> Font | None:
-        """Return or set the font of the widget's text, from the ``/DA`` that it draws with.
+        """Return or set the font named by the widget's ``/DA``.
 
-        The ``/DA`` font resolves through the form's ``/DR``, else as a
-        Standard 14 abbreviation such as ``/Cour``; a widget without a
-        ``/DA`` draws in Helvetica. Returns ``None`` for a font that is no
-        Standard 14 font. Setting takes a Standard 14 :class:`Font` and
-        names it in the form's ``/DR``.
+        The ``/DA`` font resolves through the form's ``/DR``. When its
+        resource is absent, a Standard 14 abbreviation such as ``/Cour``
+        names the font; a widget without a ``/DA`` defaults to Helvetica.
+        Returns ``None`` for an embedded or other non-Standard 14 font.
+        Setting takes a Standard 14 :class:`Font` and names it in the form's ``/DR``.
         """
         appearance = self._style()[2]
         if appearance is None:

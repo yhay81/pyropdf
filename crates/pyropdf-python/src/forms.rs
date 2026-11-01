@@ -6183,13 +6183,128 @@ pub fn widget_style(
         let reader = annots.reader();
         let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
             Some(da) => {
-                let font = widgets::text_font(&reader, &da.font).map_err(widget_error)?;
+                let font = widget_text_font(&annots, &da.font)?;
                 Some((da.font, da.size, da.color, font))
             }
             None => None,
         };
         Ok(Some((colors, annots.border(&dict)?, appearance)))
     })
+}
+
+/// A value read without copying its input-sized contents.
+enum WidgetFontValue<'a> {
+    Direct(&'a Value),
+    Indirect(Arc<Value>),
+}
+
+impl std::ops::Deref for WidgetFontValue<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        match self {
+            Self::Direct(value) => value,
+            Self::Indirect(value) => value,
+        }
+    }
+}
+
+/// Resolves an optional resource value without cloning a dictionary. The
+/// reference chain is bounded and charged through the operation's reads.
+fn widget_font_value<'a>(
+    reads: &mut Reads<'_>,
+    value: Option<&'a Value>,
+) -> PyResult<Option<WidgetFontValue<'a>>> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Reference(reference)) => {
+            Ok(object_location(reads, *reference)?
+                .map(|(_, value)| WidgetFontValue::Indirect(value)))
+        }
+        Some(value) => Ok(Some(WidgetFontValue::Direct(value))),
+    }
+}
+
+/// Returns `None` for a missing resource, `Some(None)` for an unsupported
+/// one, or `Some(Some(name))` for a Standard 14 font.
+fn widget_font_resource(
+    reads: &mut Reads<'_>,
+    root: Option<&Value>,
+    resource: &str,
+) -> PyResult<Option<Option<&'static str>>> {
+    let Some(catalog) = widget_font_value(reads, root)? else {
+        return Ok(None);
+    };
+    let Value::Dict(catalog) = &*catalog else {
+        return Ok(Some(None));
+    };
+    let Some(form) = widget_font_value(reads, catalog.get("AcroForm"))? else {
+        return Ok(None);
+    };
+    let Value::Dict(form) = &*form else {
+        return Ok(Some(None));
+    };
+    let Some(resources) = widget_font_value(reads, form.get("DR"))? else {
+        return Ok(None);
+    };
+    let Value::Dict(resources) = &*resources else {
+        return Ok(Some(None));
+    };
+    let Some(fonts) = widget_font_value(reads, resources.get("Font"))? else {
+        return Ok(None);
+    };
+    let Value::Dict(fonts) = &*fonts else {
+        return Ok(Some(None));
+    };
+    let Some(font) = widget_font_value(reads, fonts.get(resource))? else {
+        return Ok(None);
+    };
+    let Value::Dict(font) = &*font else {
+        return Ok(Some(None));
+    };
+    if !matches!(widget_font_value(reads, font.get("Subtype"))?.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"Type1")
+    {
+        return Ok(Some(None));
+    }
+    if let Some(descriptor) = widget_font_value(reads, font.get("FontDescriptor"))? {
+        let Value::Dict(descriptor) = &*descriptor else {
+            return Ok(Some(None));
+        };
+        for key in ["FontFile", "FontFile2", "FontFile3"] {
+            if widget_font_value(reads, descriptor.get(key))?.is_some() {
+                return Ok(Some(None));
+            }
+        }
+    }
+    let Some(base) = widget_font_value(reads, font.get("BaseFont"))? else {
+        return Ok(Some(None));
+    };
+    let Value::Name(base) = &*base else {
+        return Ok(Some(None));
+    };
+    Ok(Some(
+        DA_FONTS
+            .iter()
+            .map(|(_, font)| *font)
+            .find(|name| name.as_bytes() == base.as_bytes()),
+    ))
+}
+
+/// Resolves the font named by a widget's /DA through the form's /DR. A
+/// missing resource can use a conventional Standard 14 abbreviation; a
+/// present but unsupported font must not be confused with that abbreviation.
+fn widget_text_font(annots: &Annots<'_>, resource: &str) -> PyResult<Option<&'static str>> {
+    let reader = annots.reader();
+    let mut reads = Reads::new(reader.version, reader.budget);
+    if let Some(font) =
+        widget_font_resource(&mut reads, reader.version.trailer().get("Root"), resource)?
+    {
+        return Ok(font);
+    }
+    Ok(DA_FONTS
+        .iter()
+        .find(|(known, _)| *known == resource)
+        .map(|(_, font)| *font))
 }
 
 /// An edit of a widget's geometry and style, as the setters of `Widget`

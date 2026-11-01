@@ -673,13 +673,13 @@ Settable.
 Widget.font: Font | None
 ```
 
-Or set the font of the widget's text, from the `/DA` that it draws with.
+Or set the font named by the widget's `/DA`.
 
-The `/DA` font resolves through the form's `/DR`, else as a
-Standard 14 abbreviation such as `/Cour`; a widget without a
-`/DA` draws in Helvetica. Returns `None` for a font that is no
-Standard 14 font. Setting takes a Standard 14 `Font` and
-names it in the form's `/DR`.
+The `/DA` font resolves through the form's `/DR`. When its
+resource is absent, a Standard 14 abbreviation such as `/Cour`
+names the font; a widget without a `/DA` defaults to Helvetica.
+Returns `None` for an embedded or other non-Standard 14 font.
+Setting takes a Standard 14 `Font` and names it in the form's `/DR`.
 
 Settable.
 

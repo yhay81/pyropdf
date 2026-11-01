@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from test_acroform import NOTO_SANS_HEBREW, _build_form_pdf
+from test_acroform import NOTO_SANS_HEBREW, _build_form_pdf, build_raw_pdf
 
 import pyropdf
 from pyropdf import AnnotationFlags, Border, BorderStyle, Color, FieldType, Font, Name, Rect, Widget, _core
@@ -240,6 +240,76 @@ def test_widget_font_reads_the_resource_that_the_form_names() -> None:
     # A resource that is no Standard 14 font has no Font.
     del fonts["F1"]
     assert customer.font is None
+
+
+@pytest.mark.parametrize("resource", ["F1", "Helv"])
+def test_widget_font_resolves_standard_fonts_with_optional_entries(resource: str) -> None:
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra=f"/DA (/{resource} 12 Tf 0 g)"))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    fonts[resource] = {
+        "Type": Name("Font"),
+        "Subtype": Name("Type1"),
+        "BaseFont": Name("Times-Bold"),
+        "FontDescriptor": {"Type": Name("FontDescriptor"), "FontName": Name("Times-Bold")},
+    }
+    widget = doc.pages[0].widgets[0]
+    assert widget.font is not None
+    assert widget.font.name == "Times-Bold"
+
+
+def test_widget_font_falls_back_only_for_an_absent_resource() -> None:
+    doc = pyropdf.open(_build_form_pdf(text_widget_extra="/DA (/Helv 12 Tf 0 g)"))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    widget = doc.pages[0].widgets[0]
+    fonts["Helv"] = {"Subtype": Name("Type1"), "BaseFont": Name("OtherFont")}
+    assert widget.font is None
+    # An embedded program can use a Standard 14 font's name.
+    program = doc.objects[doc.objects.add_stream(b"embedded program")]
+    fonts["Helv"] = {
+        "Subtype": Name("Type1"),
+        "BaseFont": Name("Helvetica"),
+        "FontDescriptor": {"FontFile": program},
+    }
+    assert widget.font is None
+    del fonts["Helv"]
+    assert widget.font is not None
+    assert widget.font.name == "Helvetica"
+
+
+def _widget_with_font_resource(resource: str) -> Widget:
+    data = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /AcroForm 3 0 R >>",
+            2: "<< /Type /Pages /Kids [4 0 R] /Count 1 >>",
+            3: f"<< /Fields [5 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv {resource} >> >> >>",
+            4: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Annots [5 0 R] >>",
+            5: "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [10 10 200 30] >>",
+            7: "null",
+        }
+    )
+    return pyropdf.open(data).pages[0].widgets[0]
+
+
+@pytest.mark.parametrize("resource", ["null", "7 0 R"])
+def test_widget_font_treats_null_resources_as_absent(resource: str) -> None:
+    widget = _widget_with_font_resource(resource)
+    assert widget.font is not None
+    assert widget.font.name == "Helvetica"
+
+
+@pytest.mark.parametrize(
+    "descriptor",
+    ["null", "7 0 R"]
+    + [f"<< /{key} {value} >>" for key in ("FontFile", "FontFile2", "FontFile3") for value in ("null", "7 0 R")],
+)
+def test_widget_font_treats_null_descriptors_and_programs_as_absent(descriptor: str) -> None:
+    widget = _widget_with_font_resource(f"<< /Subtype /Type1 /BaseFont /Times-Bold /FontDescriptor {descriptor} >>")
+    assert widget.font is not None
+    assert widget.font.name == "Times-Bold"
+
+
+def test_widget_font_refuses_an_invalid_non_null_resource() -> None:
+    assert _widget_with_font_resource("42").font is None
 
 
 def test_widget_font_refuses_an_embedded_face() -> None:
