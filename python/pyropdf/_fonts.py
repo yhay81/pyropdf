@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import math
+import os
 import re
 from collections import deque
 from dataclasses import dataclass, field
@@ -37,7 +38,7 @@ from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Array, Dictionary, Name, Stream
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
 
     from pyropdf._document import Document
     from pyropdf._page import Page
@@ -506,8 +507,34 @@ _DEFAULT_MAX_GENERATED_TEXT_SIZE = 1024 * 1024
 #: The lines that one text box or text drawing lays out by default.
 _MAX_GENERATED_TEXT_LINES = 4096
 _CONSTRUCTOR_MESSAGE = (
-    'Font has no public constructor: Font.standard(name) takes a Standard 14 PostScript name such as "Helvetica-Bold"'
+    'Font has no public constructor: Font.standard(name) takes a Standard 14 PostScript name such as "Helvetica-Bold", '
+    "and Font.from_file(path) or Font.from_bytes(data) loads an OpenType face"
 )
+_DEFAULT_MAX_FONT_INPUT_SIZE = 64 * 1024 * 1024
+_MAX_FONT_WEIGHT = 1000
+_BOLD_FONT_WEIGHT = 700
+_UINT32_MAX = 2**32 - 1
+#: The ToUnicode destinations that one ``beginbfchar`` block holds (Adobe TN 5411).
+_BFCHAR_BLOCK = 100
+#: UTF-16 code units of the longest text that a ToUnicode entry maps a glyph to.
+_MAX_MAPPED_UNITS = 256
+_BFCHAR = re.compile(rb"<([0-9A-Fa-f]{4})>\s*<([0-9A-Fa-f]*)>")
+_BFCHAR_BLOCKS = re.compile(rb"beginbfchar(.*?)endbfchar", re.DOTALL)
+_CMAP_HEAD = b"""/CIDInit /ProcSet findresource begin
+12 dict begin
+begincmap
+/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def
+/CMapName /Adobe-Identity-UCS def
+/CMapType 2 def
+1 begincodespacerange
+<0000> <FFFF>
+endcodespacerange
+"""
+_CMAP_TAIL = b"""endcmap
+CMapName currentdict /CMap defineresource pop
+end
+end
+"""
 
 
 def _measure_size(value: object, name: str) -> float:
@@ -551,6 +578,61 @@ def _textbox_text(text: object, max_text_size: int | None) -> str:
     return checked.replace("\r\n", "\n").replace("\r", "\n").expandtabs(1)
 
 
+def _font_weight(weight: object) -> int | None:
+    """Return an optional OS/2 weight class."""
+    if weight is None:
+        return None
+    msg = f"weight must be an OS/2 weight class from 1 through {_MAX_FONT_WEIGHT} or None: {weight!r}"
+    if isinstance(weight, bool) or not isinstance(weight, int):
+        raise TypeError(msg)
+    if not 1 <= weight <= _MAX_FONT_WEIGHT:
+        raise ValueError(msg)
+    return weight
+
+
+def _font_index(index: object) -> int:
+    """Return the index of a face in a font collection."""
+    if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index <= _UINT32_MAX:
+        msg = f"index must be an integer from 0 through {_UINT32_MAX}: {index!r}"
+        raise ValueError(msg)
+    return index
+
+
+def _font_input_limit(size: int, max_size: int) -> LimitError:
+    msg = f"the font data is {size} bytes, over the {max_size}-byte limit"
+    return LimitError("font_input_size", msg)
+
+
+def _describe_weight(weight: int) -> str:
+    return {400: "regular", _BOLD_FONT_WEIGHT: "bold"}.get(weight, f"weight-{weight}")
+
+
+def _at_weight(face: _core._Font, weight: int | None) -> _core._Font:
+    """Return ``face`` when it is drawn at ``weight``.
+
+    pyropdf draws a face's default instance only, and never imitates a
+    weight that the font does not define.
+    """
+    if weight is None:
+        return face
+    axis = face.weight_axis
+    current = face.weight if axis is None else round(axis[1])
+    if weight == current:
+        return face
+    requested = _describe_weight(weight)
+    if axis is not None:
+        msg = (
+            f"the font's default instance has weight {current}, not {weight}; "
+            "pyropdf draws a variable font at its default instance only"
+        )
+        raise PdfError(msg)
+    msg = (
+        f"the font has no weight axis, and its only face is {_describe_weight(current)}, not {requested}; "
+        f"load the {requested} face's file instead"
+    )
+    raise PdfError(msg)
+
+
 def _one_char(char: object) -> str:
     """Return ``char`` when it is a one-character string."""
     if not isinstance(char, str):
@@ -577,9 +659,10 @@ class Font:
     (roughly Latin-1) text only, and measures with Adobe's AFM widths.
     """
 
-    __slots__ = ("_font",)
+    __slots__ = ("_digest", "_font")
 
     _font: _core._Font
+    _digest: bytes | None
 
     def __init__(self, *_args: object, **_kwargs: object) -> None:
         """Refuse direct construction; the class methods create fonts."""
@@ -589,7 +672,70 @@ class Font:
     def _wrap(cls, face: _core._Font) -> Font:
         font = cls.__new__(cls)
         font._font = face  # noqa: SLF001 - the class sets its own slot.
+        font._digest = None  # noqa: SLF001 - the class sets its own slot.
         return font
+
+    @classmethod
+    def from_file(
+        cls,
+        path: str | os.PathLike[str],
+        /,
+        *,
+        index: int = 0,
+        weight: int | None = None,
+        max_size: int | None = _DEFAULT_MAX_FONT_INPUT_SIZE,
+    ) -> Font:
+        """Load an OpenType face (TrueType or CFF outlines) from a font file.
+
+        ``index`` selects a face in a collection such as a ``.ttc`` file. A
+        variable face is drawn at its default instance. ``weight``, a weight
+        class from 1 through 1000, must be the face's own weight: pyropdf
+        never imitates a weight that the font does not define, and refuses
+        other instances of a variable face. Invalid or unsupported font data
+        raises :class:`PdfError`; a missing file raises
+        :class:`FileNotFoundError`. The file is limited to 64 MiB by default
+        (``max_size``, ``None`` for trusted input), refused with
+        :class:`LimitError` code ``font_input_size``.
+        """
+        _validate_optional_positive_int("max_size", max_size)
+        resolved = _font_weight(weight)
+        face_index = _font_index(index)
+        if not isinstance(path, (str, os.PathLike)):
+            msg = f"path must be a str or os.PathLike, not {type(path).__name__}"
+            raise TypeError(msg)
+        with open(path, "rb") as file:  # noqa: PTH123 - a str or PathLike path.
+            size = os.fstat(file.fileno()).st_size
+            if max_size is not None and size > max_size:
+                raise _font_input_limit(size, max_size)
+            data = file.read() if max_size is None else file.read(max_size + 1)
+        if max_size is not None and len(data) > max_size:
+            raise _font_input_limit(len(data), max_size)
+        return cls._wrap(_at_weight(_core._Font.from_bytes(data, face_index), resolved))  # noqa: SLF001
+
+    @classmethod
+    def from_bytes(
+        cls,
+        data: bytes | bytearray | memoryview,
+        /,
+        *,
+        index: int = 0,
+        weight: int | None = None,
+        max_size: int | None = _DEFAULT_MAX_FONT_INPUT_SIZE,
+    ) -> Font:
+        """Load an OpenType face from the bytes of a font file.
+
+        ``index``, ``weight``, and ``max_size`` work as for :meth:`from_file`.
+        """
+        _validate_optional_positive_int("max_size", max_size)
+        resolved = _font_weight(weight)
+        face_index = _font_index(index)
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            msg = f"data must be bytes, bytearray, or memoryview, not {type(data).__name__}"
+            raise TypeError(msg)
+        size = memoryview(data).nbytes
+        if max_size is not None and size > max_size:
+            raise _font_input_limit(size, max_size)
+        return cls._wrap(_at_weight(_core._Font.from_bytes(bytes(data), face_index), resolved))  # noqa: SLF001
 
     @classmethod
     def standard(cls, name: StandardFontName) -> Font:
@@ -610,7 +756,7 @@ class Font:
 
     @property
     def name(self) -> str | None:
-        """The PostScript name of a Standard 14 font."""
+        """The PostScript name of a Standard 14 font, or the full name of an embedded face."""
         return self._font.name
 
     @property
@@ -713,8 +859,19 @@ class Font:
         return Rect(*self._font.char_bbox(ord(_one_char(char))))
 
     def program(self) -> bytes | None:
-        """Return the bytes that the face was loaded from, or ``None`` for a Standard 14 font."""
-        return None
+        """Return the program that a document embeds, or ``None`` for a Standard 14 font.
+
+        The program is the face alone with all its glyphs, as an OpenType
+        file, even when it was loaded from a collection; a save subsets it
+        to the glyphs that the document draws.
+        """
+        return self._font.program()
+
+    def _key(self) -> bytes:
+        """Return the digest that identifies the embedded program in a document."""
+        if self._digest is None:
+            self._digest = hashlib.sha256(cast("bytes", self._font.program())).digest()
+        return self._digest
 
     def text_width(
         self, text: str, size: float, *, max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE
@@ -785,6 +942,202 @@ class Font:
     def __repr__(self) -> str:
         """Return the font's name."""
         return f"Font({self.name!r})"
+
+
+def _utf16(text: str) -> bytes:
+    return text.encode("utf-16-be", "surrogatepass").hex().upper().encode()
+
+
+def _flags(font: _core._Font) -> int:
+    """Return the font descriptor flags of an embedded face (ISO 32000-2 table 121)."""
+    flags = 4  # Symbolic: the glyphs are addressed by CID, not by a standard encoding.
+    if font.monospaced:
+        flags |= 1
+    if font.serif:
+        flags |= 2
+    if font.italic:
+        flags |= 64
+    return flags
+
+
+def _type0(document: Document, face: Font) -> int:
+    """Write the Type0 font of an embedded face, its program provisional with all its glyphs."""
+    font = face._font  # noqa: SLF001 - the package's own face.
+    objects = document.objects
+    program = cast("bytes", font.program())
+    cff = font.cff
+    file_key = "FontFile3" if cff else "FontFile2"
+    file_entries: dict[str, object] = {"Subtype": Name("OpenType")} if cff else {}
+    program_xref = objects.add_stream(program, file_entries)
+    x0, y0, x1, y1 = font.bbox
+    cap_height, italic_angle = font.descriptor_metrics
+    name = Name(font.postscript_name)
+    descriptor = objects.add(
+        {
+            "Type": Name("FontDescriptor"),
+            "FontName": name,
+            "Flags": _flags(font),
+            "FontBBox": [round(x0 * 1000), round(y0 * 1000), round(x1 * 1000), round(y1 * 1000)],
+            "ItalicAngle": italic_angle,
+            "Ascent": round(font.ascender * 1000),
+            "Descent": round(font.descender * 1000),
+            "CapHeight": round(cap_height),
+            "StemV": 80,
+            file_key: objects[program_xref],
+        }
+    )
+    cid_font: dict[str, object] = {
+        "Type": Name("Font"),
+        "Subtype": Name("CIDFontType0" if cff else "CIDFontType2"),
+        "BaseFont": name,
+        "CIDSystemInfo": {"Registry": "Adobe", "Ordering": "Identity", "Supplement": 0},
+        "FontDescriptor": objects[descriptor],
+        "W": [],
+    }
+    if not cff:
+        cid_font["CIDToGIDMap"] = Name("Identity")
+    descendant = objects.add(cid_font)
+    to_unicode = objects.add_stream(_CMAP_HEAD + _CMAP_TAIL)
+    return objects.add(
+        {
+            "Type": Name("Font"),
+            "Subtype": Name("Type0"),
+            "BaseFont": name,
+            "Encoding": Name("Identity-H"),
+            "DescendantFonts": [objects[descendant]],
+            "ToUnicode": objects[to_unicode],
+        }
+    )
+
+
+def _type0_parts(document: Document, xref: int) -> tuple[Dictionary, Stream] | None:
+    """Return the CIDFont and ToUnicode stream of the Type0 font ``xref``, if it still is one."""
+    objects = document.objects
+    font = objects.get(xref) if xref in objects else None
+    if not isinstance(font, Dictionary) or font.get("Subtype") != "Type0" or font.get("Encoding") != "Identity-H":
+        return None
+    descendants = font.get("DescendantFonts")
+    descendant = descendants[0] if isinstance(descendants, Array) and len(descendants) == 1 else None
+    to_unicode = font.get("ToUnicode")
+    if not isinstance(descendant, Dictionary) or not isinstance(to_unicode, Stream):
+        return None
+    return descendant, to_unicode
+
+
+def embedded_font(document: Document, face: Font, cache: dict[bytes, int]) -> int:
+    """Return the Type0 font of ``face`` in ``document``, written on first use.
+
+    ``cache`` maps the digests of programs to the fonts written for them; an
+    entry that an undo removed or another write replaced is written again.
+    """
+    key = face._key()  # noqa: SLF001 - the package's own face.
+    xref = cache.get(key)
+    if xref is not None and _type0_parts(document, xref) is not None:
+        base = document.objects[xref].get("BaseFont")
+        name = face._font.postscript_name  # noqa: SLF001
+        text = str(base) if isinstance(base, Name) else ""
+        # A save renames the font with a subset tag.
+        if text == name or (_TAG.match(text) is not None and text[7:] == name):
+            return xref
+    xref = _type0(document, face)
+    cache[key] = xref
+    return xref
+
+
+def _widths(descendant: Dictionary, glyph_count: int) -> dict[int, float]:
+    """Return the widths that a CIDFont's ``W`` array records, in its ``c [w1 w2 ...]`` form."""
+    widths: dict[int, float] = {}
+    entries = descendant.get("W")
+    if not isinstance(entries, Array):
+        return widths
+    items = list(entries)
+    for first, group in zip(items[::2], items[1::2], strict=False):
+        if not isinstance(first, int) or not isinstance(group, Array):
+            continue
+        for offset, width in enumerate(group):
+            glyph = first + offset
+            if 0 <= glyph < glyph_count and isinstance(width, (int, float)):
+                widths[glyph] = float(width)
+    return widths
+
+
+def _mapped(stream: Stream, glyph_count: int) -> dict[int, str]:
+    """Return the texts that a ToUnicode stream's ``bfchar`` entries map glyphs to."""
+    mapped: dict[int, str] = {}
+    data = stream.read()
+    for block in _BFCHAR_BLOCKS.findall(data):
+        for code, text in _BFCHAR.findall(block):
+            glyph = int(code, 16)
+            if glyph < glyph_count and len(text) % 4 == 0:
+                mapped[glyph] = bytes.fromhex(text.decode()).decode("utf-16-be", "surrogatepass")
+    return mapped
+
+
+def _w_array(widths: dict[int, float]) -> list[object]:
+    """Return ``W`` entries that give each run of consecutive glyphs one array."""
+    entries: list[object] = []
+    run: list[float] = []
+    start = previous = -2
+    for glyph in sorted(widths):
+        if glyph != previous + 1:
+            if run:
+                entries += [start, run]
+            start, run = glyph, []
+        width = widths[glyph]
+        run.append(int(width) if width == int(width) else round(width, 3))
+        previous = glyph
+    if run:
+        entries += [start, run]
+    return entries
+
+
+def _cmap(mapped: dict[int, str]) -> bytes:
+    lines = [_CMAP_HEAD]
+    codes = sorted(mapped)
+    for at in range(0, len(codes), _BFCHAR_BLOCK):
+        block = codes[at : at + _BFCHAR_BLOCK]
+        lines.append(b"%d beginbfchar\n" % len(block))
+        lines.extend(b"<%04X> <%s>\n" % (code, _utf16(mapped[code])) for code in block)
+        lines.append(b"endbfchar\n")
+    lines.append(_CMAP_TAIL)
+    return b"".join(lines)
+
+
+def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple[int, str]]) -> set[int]:
+    """Record the widths and texts of ``glyphs`` in the Type0 font ``xref`` and return those that need ActualText.
+
+    Each glyph maps to its text in the ToUnicode CMap unless the CMap
+    already maps it to other text, or its text is empty or too long for a
+    CMap entry; the content draws those glyphs inside ``/ActualText``.
+    Writes only what changed, in the caller's transaction.
+    """
+    parts = _type0_parts(document, xref)
+    if parts is None:
+        msg = f"object {xref} is no longer the font that pyropdf wrote"
+        raise PdfError(msg)
+    descendant, stream = parts
+    font = face._font  # noqa: SLF001 - the package's own face.
+    count = font.glyph_count
+    widths = _widths(descendant, count)
+    mapped = _mapped(stream, count)
+    new = sorted({glyph for glyph, _ in glyphs if glyph not in widths})
+    widths.update(zip(new, font.glyph_widths(new), strict=True))
+    actual: set[int] = set()
+    added = False
+    for glyph, text in glyphs:
+        known = mapped.get(glyph)
+        if known == text:
+            continue
+        if known is None and text and len(text.encode("utf-16-be", "surrogatepass")) <= 2 * _MAX_MAPPED_UNITS:
+            mapped[glyph] = text
+            added = True
+        else:
+            actual.add(glyph)
+    if new:
+        descendant["W"] = _w_array(widths)
+    if added:
+        stream.write(_cmap(mapped))
+    return actual
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
