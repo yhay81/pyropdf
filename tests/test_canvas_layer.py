@@ -16,10 +16,17 @@ differences:
 
 from __future__ import annotations
 
+import copy
+import pickle
+from typing import TYPE_CHECKING
+
 import pytest
 
 import pyropdf
 from pyropdf import Color, Dictionary, LayerMembership, Name, StaleObjectError, TagRole, VisibilityPolicy
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 RED = Color(1, 0, 0)
 
@@ -150,6 +157,38 @@ def test_memberships_validate_their_fields() -> None:
         LayerMembership((layer,), policy="Sometimes")  # ty: ignore[invalid-argument-type]
 
 
+def test_membership_stops_reading_at_its_limit() -> None:
+    doc = pyropdf.Document()
+    layer = doc.layers.add("Notes")
+    read = 0
+
+    def layers() -> Iterator[pyropdf.Layer]:
+        nonlocal read
+        while True:
+            read += 1
+            yield layer
+
+    with pytest.raises(pyropdf.LimitError, match="4096"):
+        LayerMembership(layers())  # ty: ignore[invalid-argument-type]
+    assert read == 4097
+
+
+@pytest.mark.parametrize("array_name", ["OCGs", "Order", "OFF"])
+def test_adding_a_layer_refuses_an_array_at_its_limit(array_name: str) -> None:
+    doc = pyropdf.Document()
+    first = doc.layers.add("First")
+    properties = doc.catalog["OCProperties"]
+    target = properties if array_name == "OCGs" else properties["D"]
+    target[array_name] = [doc.objects[first.xref]] * 4096
+    steps = doc.history.steps
+
+    with pytest.raises(pyropdf.LimitError, match="4096"):
+        doc.layers.add("Extra", visible=False)
+    assert len(doc.catalog["OCProperties"]["OCGs"]) == (4096 if array_name == "OCGs" else 1)
+    assert len(target[array_name]) == 4096
+    assert doc.history.steps == steps
+
+
 def test_layers_nest_with_other_scopes() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((200, 200))
@@ -185,6 +224,44 @@ def test_layers_of_other_documents_and_other_values_are_refused() -> None:
         with pytest.raises(TypeError):
             canvas.layer("Foreign")  # ty: ignore[invalid-argument-type]
     assert "Contents" not in page.obj
+
+
+def test_a_same_named_layer_from_another_document_is_refused() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    local = doc.layers.add("Notes")
+    other = pyropdf.Document()
+    other.pages.new((200, 200))
+    foreign = other.layers.add("Notes")
+    assert local.xref == foreign.xref
+
+    with page.draw() as canvas:
+        for layer in (foreign, other.layers[0]):
+            with pytest.raises(ValueError, match="this document"):
+                canvas.layer(layer)
+            with pytest.raises(ValueError, match="this document"):
+                canvas.layer(LayerMembership((layer,)))
+        with canvas.layer(doc.layers[0]):
+            canvas.text("Local", (10, 20))
+    assert page.text().strip() == "Local"
+
+
+def test_layer_copy_and_pickle_keep_value_behavior() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    layer = doc.layers.add("Notes")
+    restored = pickle.loads(pickle.dumps(layer))  # noqa: S301 - round trip of a value made in this test.
+    assert restored == layer
+    assert repr(restored) == repr(layer)
+
+    with page.draw() as canvas:
+        for saved in (restored, pyropdf.Layer(layer.xref, layer.name, layer.intent, layer.on, layer.locked)):
+            with pytest.raises(ValueError, match="this document"):
+                canvas.layer(saved)
+        for duplicate in (copy.copy(layer), copy.deepcopy(layer)):
+            with canvas.layer(duplicate):
+                canvas.text("Copy", (10, 20))
+    assert page.text().split() == ["Copy", "Copy"]
 
 
 def test_a_renumbering_save_keeps_the_drawing() -> None:

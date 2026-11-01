@@ -106,6 +106,31 @@ def test_tags_on_an_untagged_document_create_its_structure_tree() -> None:
     _check_consistency(reopened)
 
 
+def test_new_structure_tree_updates_existing_mark_info() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    doc.catalog["MarkInfo"] = {"Marked": False, "Suspects": True}
+    with page.draw() as canvas, canvas.tag(TagRole.PARAGRAPH):
+        canvas.text("Tagged", (10, 20))
+
+    info = doc.catalog["MarkInfo"]
+    assert info["Marked"] is True
+    assert info["Suspects"] is True
+
+
+@pytest.mark.parametrize("marked", [False, None])
+def test_existing_structure_tree_keeps_its_marked_state(marked: bool | None) -> None:  # noqa: FBT001
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    _with_document_element(doc, [])
+    doc.catalog["MarkInfo"] = {} if marked is None else {"Marked": marked}
+    with page.draw() as canvas, canvas.tag(TagRole.PARAGRAPH):
+        canvas.text("Tagged", (10, 20))
+
+    info = doc.catalog["MarkInfo"]
+    assert info.get("Marked") is marked
+
+
 def test_kids_keep_the_order_of_drawing_and_nesting() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((300, 300))

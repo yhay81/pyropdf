@@ -302,7 +302,9 @@ rendering, text extraction, and viewers. The block is written as
 `/OC` marked content; a membership is written as a new membership
 dictionary. A group that is no longer an optional
 content group when the canvas commits raises
-`StaleObjectError`.
+`StaleObjectError`. Use a `Layer` returned by this
+document's `Document.layers`: a manually constructed or
+unpickled value has no document of origin and cannot be drawn.
 
 ### `Canvas.tag`
 

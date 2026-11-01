@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
+from itertools import islice
 from typing import TYPE_CHECKING, overload
 
 from pyropdf._errors import LimitError
@@ -43,6 +44,27 @@ class Layer:
     """Whether the default configuration shows the group."""
     locked: bool
     """Whether the default configuration's ``/Locked`` asks viewers not to change it."""
+    _document: Document | None = field(default=None, init=False, repr=False, compare=False)
+
+    def __copy__(self) -> Layer:
+        return self
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Layer:
+        return self
+
+    def __getstate__(self) -> list[object]:
+        return [self.xref, self.name, self.intent, self.on, self.locked]
+
+    def __setstate__(self, state: list[object]) -> None:
+        for name, value in zip(("xref", "name", "intent", "on", "locked"), state, strict=True):
+            object.__setattr__(self, name, value)
+        object.__setattr__(self, "_document", None)
+
+
+def _document_layer(document: Document, layer: Layer) -> Layer:
+    """Attach the source document to a layer value returned by the document."""
+    object.__setattr__(layer, "_document", document)
+    return layer
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +112,7 @@ class LayerMembership:
         if isinstance(self.layers, Layer) or not isinstance(self.layers, Iterable):
             msg = f"LayerMembership takes an iterable of Layer values: {self.layers!r}"
             raise TypeError(msg)
-        layers = tuple(self.layers)
+        layers = tuple(islice(self.layers, _MAX_LAYERS + 1))
         if len(layers) > _MAX_LAYERS:
             msg = f"a membership names more than {_MAX_LAYERS} groups"
             raise LimitError(_COUNT, msg)
@@ -109,6 +131,14 @@ class LayerMembership:
 
 def _text(value: object) -> str:
     return value.text if isinstance(value, String) else ""
+
+
+def _append_group(array: Array, group: Dictionary) -> None:
+    """Add a group without making an optional-content array exceed its limit."""
+    if len(array) >= _MAX_LAYERS:
+        msg = f"an optional content array cannot hold more than {_MAX_LAYERS} entries"
+        raise LimitError(_COUNT, msg)
+    array.append(group)
 
 
 def _xrefs(value: object) -> tuple[int, ...]:
@@ -189,7 +219,12 @@ class Layers(Sequence[Layer]):
             xref = group.xref
             assert xref is not None  # noqa: S101 - _groups keeps indirect groups only
             layers.append(
-                Layer(xref, _text(group.get("Name")), _intents(group.get("Intent")), xref not in off, xref in locked)
+                _document_layer(
+                    self._document,
+                    Layer(
+                        xref, _text(group.get("Name")), _intents(group.get("Intent")), xref not in off, xref in locked
+                    ),
+                )
             )
         return layers
 
@@ -262,26 +297,27 @@ class Layers(Sequence[Layer]):
             _, config = self._require()
             xref = document.objects.add({"Type": Name("OCG"), "Name": name})
             group = document.objects[xref]
-            properties["OCGs"].append(group)
+            _append_group(properties["OCGs"], group)
             if not isinstance(config.get("Order"), Array):
                 config["Order"] = []
-            config["Order"].append(group)
+            _append_group(config["Order"], group)
             hidden_by_base = config.get("BaseState") == "OFF"
             if visible == hidden_by_base:
                 key = "ON" if visible else "OFF"
                 if not isinstance(config.get(key), Array):
                     config[key] = []
-                config[key].append(group)
-        return Layer(xref, name, ("View",), visible, locked=False)
+                _append_group(config[key], group)
+        return _document_layer(document, Layer(xref, name, ("View",), visible, locked=False))
 
     def _group(self, layer: Layer) -> int:
         """Return the object number of ``layer``, refusing a group that this document does not have."""
         if not isinstance(layer, Layer):
             msg = f"a layer is a Layer or a LayerMembership: {layer!r}"
             raise TypeError(msg)
-        for group in self._groups():
-            if group.xref == layer.xref and _text(group.get("Name")) == layer.name:
-                return layer.xref
+        if layer._document is self._document:  # noqa: SLF001 - layer provenance is internal.
+            for group in self._groups():
+                if group.xref == layer.xref and _text(group.get("Name")) == layer.name:
+                    return layer.xref
         msg = f"layer {layer.name!r} (object {layer.xref}) is not an optional content group of this document"
         raise ValueError(msg)
 

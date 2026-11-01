@@ -1122,7 +1122,8 @@ class Canvas:
             catalog["StructTreeRoot"] = objects[objects.add({"Type": Name("StructTreeRoot"), "K": []})]
             root = cast("Dictionary", catalog["StructTreeRoot"])
             if not isinstance(catalog.get("MarkInfo"), Dictionary):
-                catalog["MarkInfo"] = {"Marked": True}
+                catalog["MarkInfo"] = {}
+            catalog["MarkInfo"]["Marked"] = True
         holder = _top_element(root)
         form_ref = objects[form]
         # Write each element, parents first, then their kids: MCIDs as marked-content references.
@@ -1633,7 +1634,9 @@ class Canvas:
         ``/OC`` marked content; a membership is written as a new membership
         dictionary. A group that is no longer an optional
         content group when the canvas commits raises
-        :class:`StaleObjectError`.
+        :class:`StaleObjectError`. Use a :class:`Layer` returned by this
+        document's :attr:`Document.layers`: a manually constructed or
+        unpickled value has no document of origin and cannot be drawn.
         """
         self._check_open()
         layers = self._page.document.layers
