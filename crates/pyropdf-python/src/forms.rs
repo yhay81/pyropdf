@@ -3017,6 +3017,16 @@ fn add_widget(
         None => None,
     };
     let holder = form_object(transaction, budget)?;
+    if shows_text(&spec.kind) || spec.kind == "pushbutton" {
+        let resource = register_standard_font(transaction, holder, spec, budget)?;
+        let (red, green, blue) = spec.text_color.unwrap_or((0.0, 0.0, 0.0));
+        let size = spec.font_size.unwrap_or(0.0);
+        let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+        widget.insert(
+            Name::from("DA"),
+            Value::String(PdfString::literal(appearance.into_bytes())),
+        );
+    }
     let reference = transaction.allocate().map_err(store)?;
     let buttons = is_button(&spec.kind);
     let field_id = match existing {
@@ -3097,6 +3107,123 @@ fn add_widget(
         Ok(value)
     })?;
     Ok(id(reference))
+}
+
+/// Make the widget's default appearance font resolvable in the form's /DR.
+/// Existing resources are copied, not edited through shared references.
+fn register_standard_font(
+    transaction: &mut Transaction,
+    holder: Reference,
+    spec: &FieldSpec,
+    budget: &Budget,
+) -> PyResult<String> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let preferred = spec.font_resource()?;
+    let base = spec.font_name.as_deref().unwrap_or("Helvetica");
+    let mut form = dict_at(transaction, holder, budget)?
+        .ok_or_else(|| PdfError::new_err("the interactive form is not a dictionary"))?;
+    let snapshot = transaction.snapshot();
+    let mut reads = Reads::new(&snapshot, budget);
+    let mut resources = match read(&mut reads, form.get("DR"))? {
+        Some(Value::Dict(dict)) => dict,
+        None => Dict::new(),
+        _ => return Err(PdfError::new_err("the form's /DR is not a dictionary")),
+    };
+    let mut fonts = match read(&mut reads, resources.get("Font"))? {
+        Some(Value::Dict(dict)) => dict,
+        None => Dict::new(),
+        _ => {
+            return Err(PdfError::new_err(
+                "the form's /DR /Font is not a dictionary",
+            ));
+        }
+    };
+    if standard_font_matches(read(&mut reads, fonts.get(preferred))?.as_ref(), base) {
+        return Ok(preferred.to_owned());
+    }
+    let resource = if fonts.get(preferred).is_none() {
+        preferred.to_owned()
+    } else {
+        // Track suffixes in one pass: Dict lookup is linear, so repeatedly
+        // searching it for candidate names would take quadratic work.
+        let mut occupied = BudgetVec::new(budget);
+        occupied
+            .try_reserve_exact(fonts.len().saturating_add(1))
+            .map_err(|e| limit_error(&e))?;
+        for _ in 0..=fonts.len() {
+            occupied.try_push(false).map_err(|e| limit_error(&e))?;
+        }
+        let prefix = format!("{preferred}_");
+        for (name, value) in fonts.iter() {
+            budget.poll().map_err(|e| limit_error(&e))?;
+            let Some(suffix) = name.as_bytes().strip_prefix(prefix.as_bytes()) else {
+                continue;
+            };
+            // A usize decimal representation is at most 20 ASCII bytes.
+            if suffix.len() > 20 {
+                continue;
+            }
+            let Ok(suffix) = std::str::from_utf8(suffix) else {
+                continue;
+            };
+            let Ok(number) = suffix.parse::<usize>() else {
+                continue;
+            };
+            if number == 0 || number.to_string() != suffix {
+                continue;
+            }
+            if standard_font_matches(read(&mut reads, Some(value))?.as_ref(), base) {
+                return Ok(format!("{prefix}{suffix}"));
+            }
+            if number <= fonts.len() {
+                occupied[number] = true;
+            }
+        }
+        let suffix = occupied
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, used)| !**used)
+            .map_or(fonts.len().saturating_add(1), |(index, _)| index);
+        format!("{preferred}_{suffix}")
+    };
+    let mut font = Dict::new();
+    font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+    font.insert(Name::from("BaseFont"), Value::Name(Name::from(base)));
+    if !matches!(base, "Symbol" | "ZapfDingbats") {
+        font.insert(
+            Name::from("Encoding"),
+            Value::Name(Name::from("WinAnsiEncoding")),
+        );
+    }
+    let reference = transaction.allocate().map_err(store)?;
+    transaction
+        .write(reference.number(), &Value::Dict(font), budget)
+        .map_err(store)?;
+    fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
+    resources.insert(Name::from("Font"), Value::Dict(fonts));
+    form.insert(Name::from("DR"), Value::Dict(resources));
+    transaction
+        .write(holder.number(), &Value::Dict(form), budget)
+        .map_err(store)?;
+    Ok(resource)
+}
+
+fn standard_font_matches(value: Option<&Value>, base: &str) -> bool {
+    let Some(Value::Dict(font)) = value else {
+        return false;
+    };
+    let symbolic = matches!(base, "Symbol" | "ZapfDingbats");
+    font.len() == if symbolic { 3 } else { 4 }
+        && font.get("Type") == Some(&Value::Name(Name::from("Font")))
+        && font.get("Subtype") == Some(&Value::Name(Name::from("Type1")))
+        && font.get("BaseFont") == Some(&Value::Name(Name::from(base)))
+        && if symbolic {
+            font.get("Encoding").is_none()
+        } else {
+            font.get("Encoding") == Some(&Value::Name(Name::from("WinAnsiEncoding")))
+        }
 }
 
 /// Returns the form dictionary's object, after moving one that the catalog

@@ -518,7 +518,12 @@ fn drawn(
     align: Align,
     face: Option<&mut FaceText<'_>>,
 ) -> Result<Drawing, WidgetError> {
-    let mut text = TextStyle::new(default_appearance(reader, widget, form)?);
+    let appearance = default_appearance(reader, widget, form)?;
+    let base_font = match (&appearance, form) {
+        (Some(appearance), Some(form)) => form_standard_font(reader, form, &appearance.font)?,
+        _ => None,
+    };
+    let mut text = TextStyle::new(appearance, base_font);
     let embedded = face.as_ref().map(|face| face.font());
     if face.is_some() {
         face::RESOURCE.clone_into(&mut text.resource);
@@ -563,6 +568,60 @@ fn drawn(
         matrix: style.matrix,
         font,
     }))
+}
+
+/// Resolve a Standard 14 font by the form's resource name, including a
+/// collision-free name assigned when a widget is created.
+fn form_standard_font(
+    reader: &Reader<'_>,
+    form: &Dict,
+    resource: &str,
+) -> Result<Option<&'static str>> {
+    let Some(resources) = reader.entry(form, "DR")? else {
+        return Ok(None);
+    };
+    let Value::Dict(resources) = &*resources else {
+        return Ok(None);
+    };
+    let Some(fonts) = reader.entry(resources, "Font")? else {
+        return Ok(None);
+    };
+    let Value::Dict(fonts) = &*fonts else {
+        return Ok(None);
+    };
+    let Some(font) = reader.entry(fonts, resource)? else {
+        return Ok(None);
+    };
+    let Value::Dict(font) = &*font else {
+        return Ok(None);
+    };
+    if !matches!(reader.entry(font, "Subtype")?.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"Type1")
+    {
+        return Ok(None);
+    }
+    let Some(base) = reader.entry(font, "BaseFont")? else {
+        return Ok(None);
+    };
+    let Value::Name(base) = &*base else {
+        return Ok(None);
+    };
+    let base = standard::DA_FONTS
+        .iter()
+        .map(|(_, base)| *base)
+        .find(|name| name.as_bytes() == base.as_bytes());
+    let symbolic = matches!(base, Some("Symbol" | "ZapfDingbats"));
+    if font.len() != if symbolic { 3 } else { 4 }
+        || !matches!(reader.entry(font, "Type")?.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"Font")
+    {
+        return Ok(None);
+    }
+    let encoding = reader.entry(font, "Encoding")?;
+    let valid_encoding = if symbolic {
+        encoding.is_none()
+    } else {
+        matches!(encoding.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"WinAnsiEncoding")
+    };
+    Ok(base.filter(|_| valid_encoding))
 }
 
 /// Draws the states that a check box or radio button widget lacks: `Off`,
@@ -1039,13 +1098,14 @@ impl TextStyle {
     /// Returns the style of a `/DA`: Helvetica, as `Helv`, for a font that
     /// is no Standard 14 abbreviation, and Helvetica fitted in black without
     /// one.
-    fn new(da: Option<DefaultAppearance>) -> Self {
+    fn new(da: Option<DefaultAppearance>, resolved_font: Option<&'static str>) -> Self {
         let (resource, size, color) = da.map_or_else(
             || ("Helv".to_owned(), 0.0, (0.0, 0.0, 0.0)),
             |da| (da.font, da.size, da.color),
         );
-        let base_font = standard::da_font(&resource);
-        let resource = if base_font == "Helvetica" && resource != "Helv" {
+        let base_font = resolved_font.unwrap_or_else(|| standard::da_font(&resource));
+        let resource = if resolved_font.is_none() && base_font == "Helvetica" && resource != "Helv"
+        {
             "Helv".to_owned()
         } else {
             resource

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from test_acroform import _build_form_pdf
@@ -28,6 +28,7 @@ from pyropdf import (
     FieldType,
     Font,
     ListBox,
+    Name,
     PushButton,
     RadioButton,
     Rect,
@@ -106,6 +107,148 @@ def test_created_fields_are_filled_by_pyropdf() -> None:
     name = page.widgets[0]
     assert name.obj["MK"]["R"] == 90
     assert bytes(name.obj["DA"]).startswith(b"/Cour 10")
+    assert doc.catalog["AcroForm"]["DR"]["Font"]["Cour"]["BaseFont"] == Name("Courier")
+
+
+def test_field_font_is_registered_and_preserves_existing_resources() -> None:
+    page = _page()
+    doc = page.document
+    page.widgets.add(TextField("existing", (0, 0, 100, 20)))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    long_name = "Cour_" + "9" * 10_000
+    font_number = doc.objects.add(
+        {
+            "Helv": fonts["Helv"],
+            "Cour": {"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name("Times-Roman")},
+            long_name: {"Marker": 1},
+        }
+    )
+    resources_number = doc.objects.add({"Font": doc.objects[font_number]})
+    doc.catalog["AcroForm"]["DR"] = doc.objects[resources_number]
+
+    widget = page.widgets.add(
+        TextField("courier", (0, 30, 100, 50), value="Hello", font=Font.standard("Courier"), font_size=10)
+    )
+
+    assert bytes(widget.obj["DA"]).startswith(b"/Cour_1 10")
+    resources = doc.catalog["AcroForm"]["DR"]["Font"]
+    assert resources["Cour"]["BaseFont"] == Name("Times-Roman")
+    assert resources["Cour_1"]["BaseFont"] == Name("Courier")
+    assert resources[long_name]["Marker"] == 1
+    assert "Cour_1" not in doc.objects[font_number]
+    assert doc.objects[resources_number]["Font"].xref == font_number
+    assert widget.obj["AP"]["N"]["Resources"]["Font"]["Cour_1"]["BaseFont"] == Name("Courier")
+    second = page.widgets.add(
+        TextField("second", (0, 60, 100, 80), value="Again", font=Font.standard("Courier"), font_size=10)
+    )
+    assert bytes(second.obj["DA"]).startswith(b"/Cour_1 10")
+    assert "Cour_2" not in doc.catalog["AcroForm"]["DR"]["Font"]
+    widget.text_color = Color(1, 0, 0)
+    assert widget.obj["AP"]["N"]["Resources"]["Font"]["Cour_1"]["BaseFont"] == Name("Courier")
+
+    reopened = pyropdf.open(doc.to_bytes())
+    resources = reopened.catalog["AcroForm"]["DR"]["Font"]
+    assert resources["Cour"]["BaseFont"] == Name("Times-Roman")
+    assert resources["Cour_1"]["BaseFont"] == Name("Courier")
+
+
+@pytest.mark.parametrize("extra", ["Widths", "FontDescriptor", "ToUnicode"])
+def test_modified_standard_font_is_not_reused(extra: str) -> None:
+    page = _page()
+    doc = page.document
+    page.widgets.add(TextField("existing", (0, 0, 100, 20)))
+    existing: dict[str, Any] = {
+        "Type": Name("Font"),
+        "Subtype": Name("Type1"),
+        "BaseFont": Name("Courier"),
+        "Encoding": Name("WinAnsiEncoding"),
+    }
+    if extra == "Widths":
+        existing[extra] = [100, 100]
+    else:
+        stream = doc.objects[doc.objects.add_stream(b"font data")]
+        existing[extra] = {"Type": Name("FontDescriptor"), "FontFile": stream} if extra == "FontDescriptor" else stream
+    doc.catalog["AcroForm"]["DR"]["Font"]["Cour"] = existing
+
+    widget = page.widgets.add(
+        TextField("courier", (0, 30, 100, 50), value="Hello", font=Font.standard("Courier"), font_size=10)
+    )
+    assert bytes(widget.obj["DA"]).startswith(b"/Cour_1 10")
+    assert extra in doc.catalog["AcroForm"]["DR"]["Font"]["Cour"]
+    field = widget.field
+    assert field is not None
+    field.value = "Again"
+    assert widget.obj["AP"]["N"]["Resources"]["Font"]["Cour_1"]["BaseFont"] == Name("Courier")
+    reopened = pyropdf.open(doc.to_bytes())
+    assert extra in reopened.catalog["AcroForm"]["DR"]["Font"]["Cour"]
+    assert reopened.catalog["AcroForm"]["DR"]["Font"]["Cour_1"]["BaseFont"] == Name("Courier")
+
+
+@pytest.mark.parametrize("kind", ["combo", "list", "push"])
+def test_field_types_register_their_font(kind: str) -> None:
+    page = _page()
+    font = Font.standard("Courier")
+    spec: ComboBox | ListBox | PushButton
+    if kind == "combo":
+        spec = ComboBox("choice", (0, 0, 100, 20), choices=["a"], value="a", font=font)
+    elif kind == "list":
+        spec = ListBox("choice", (0, 0, 100, 20), choices=["a"], value="a", font=font)
+    else:
+        spec = PushButton("button", (0, 0, 100, 20), caption="Go", font=font)
+    widget = page.widgets.add(spec)
+    assert bytes(widget.obj["DA"]).startswith(b"/Cour ")
+    assert page.document.catalog["AcroForm"]["DR"]["Font"]["Cour"]["BaseFont"] == Name("Courier")
+
+
+@pytest.mark.parametrize(("font_name", "alias"), [("Symbol", "Symb"), ("ZapfDingbats", "ZaDb")])
+@pytest.mark.parametrize("collision", [False, True])
+def test_symbolic_field_font_registration_and_redraw(
+    font_name: Literal["Symbol", "ZapfDingbats"], alias: str, *, collision: bool
+) -> None:
+    page = _page()
+    doc = page.document
+    page.widgets.add(TextField("base", (0, 0, 100, 20)))
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    if collision:
+        fonts[alias] = {
+            "Type": Name("Font"),
+            "Subtype": Name("Type1"),
+            "BaseFont": Name("Courier"),
+            "Encoding": Name("WinAnsiEncoding"),
+        }
+    selected = f"{alias}_1" if collision else alias
+    for index in range(2):
+        widget = page.widgets.add(
+            TextField(
+                f"symbolic{index}",
+                (0, 25 + 25 * index, 100, 45 + 25 * index),
+                value="abc",
+                font=Font.standard(font_name),
+                font_size=10,
+            )
+        )
+        assert bytes(widget.obj["DA"]).startswith(f"/{selected} ".encode())
+        field = widget.field
+        assert field is not None
+        field.value = "bcd"
+        appearance = widget.obj["AP"]["N"]["Resources"]["Font"][selected]
+        assert appearance["BaseFont"] == Name(font_name)
+        assert "Encoding" not in appearance
+    fonts = doc.catalog["AcroForm"]["DR"]["Font"]
+    assert fonts[selected]["BaseFont"] == Name(font_name)
+    assert "Encoding" not in fonts[selected]
+    assert f"{alias}_2" not in fonts
+    reopened = pyropdf.open(doc.to_bytes())
+    fonts = reopened.catalog["AcroForm"]["DR"]["Font"]
+    assert fonts[selected]["BaseFont"] == Name(font_name)
+    assert "Encoding" not in fonts[selected]
+    widget = reopened.pages[0].widgets[1]
+    field = widget.field
+    assert field is not None
+    field.value = "abc"
+    appearance = widget.obj["AP"]["N"]["Resources"]["Font"][selected]
+    assert appearance["BaseFont"] == Name(font_name)
+    assert "Encoding" not in appearance
 
 
 def test_a_second_widget_joins_the_field_and_splits_a_merged_one() -> None:
