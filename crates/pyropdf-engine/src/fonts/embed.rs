@@ -197,7 +197,7 @@ impl Face {
             .iter()
             .find(|axis| axis.tag() == Tag::new(b"wght"))
             .map(|axis| [axis.min_value(), axis.default_value(), axis.max_value()]);
-        let program = standalone(&font, cff)?;
+        let program = standalone(&font, cff, data.len())?;
         Ok(Self {
             program,
             cff,
@@ -348,8 +348,26 @@ fn sanitized_name(name: &str) -> String {
 
 /// Writes the face's tables as one sfnt, rewriting a CID-keyed CFF's
 /// charset to identity.
-fn standalone(font: &FontRef<'_>, cff: bool) -> Result<Vec<u8>, FaceError> {
+fn standalone(font: &FontRef<'_>, cff: bool, input_len: usize) -> Result<Vec<u8>, FaceError> {
     let records = font.table_directory.table_records();
+    // The sfnt header stores the directory search fields as u16 values.
+    // More than 4095 records cannot be represented without overflowing them.
+    if records.len() > 4095 {
+        return Err(FaceError::Font("the table directory is too large".into()));
+    }
+    // Table records can overlap, including thousands of records pointing to
+    // the same bytes. Bound the total before copying any of them.
+    let mut total = 0usize;
+    for record in records {
+        let tag = record.tag();
+        let Some(data) = font.table_data(tag) else {
+            return Err(FaceError::Font(format!("the {tag} table is out of bounds")));
+        };
+        total = total
+            .checked_add(data.as_bytes().len())
+            .filter(|&size| size <= input_len)
+            .ok_or_else(|| FaceError::Font("the face's tables are too large".into()))?;
+    }
     let mut tables = Vec::new();
     tables
         .try_reserve(records.len())

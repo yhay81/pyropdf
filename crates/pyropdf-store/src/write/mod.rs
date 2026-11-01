@@ -33,6 +33,9 @@ use crate::{Error, LimitExceeded, Result};
 /// How many values the writer writes between two polls of the budget.
 const POLL_INTERVAL: u32 = 1024;
 
+/// The largest input slice scanned or copied without polling.
+const BYTE_POLL_INTERVAL: usize = 16 * 1024;
+
 /// Significant digits that make hayro-syntax read a real exactly: more than
 /// a `u64` holds, so that it reads them through Rust's parser.
 const EXACT_DIGITS: usize = 21;
@@ -68,6 +71,8 @@ struct Writer<'o, 'b> {
     lexemes: bool,
     /// How many values the writer has written, for polling the budget.
     steps: u32,
+    /// Bytes written since the last poll in `push`.
+    bytes_since_poll: usize,
 }
 
 /// An array or a dictionary whose values are being written.
@@ -92,11 +97,19 @@ impl<'o, 'b> Writer<'o, 'b> {
             out,
             lexemes,
             steps: 0,
+            bytes_since_poll: 0,
         }
     }
 
     /// Writes `root` and everything in it.
     fn write(&mut self, root: &Value) -> Result<()> {
+        self.out.budget().poll()?;
+        self.write_inner(root)?;
+        self.out.budget().poll()?;
+        Ok(())
+    }
+
+    fn write_inner(&mut self, root: &Value) -> Result<()> {
         let Some(mut current) = self.start(root, 1)? else {
             return Ok(());
         };
@@ -293,16 +306,27 @@ impl<'o, 'b> Writer<'o, 'b> {
     /// the byte 0 in a name, which is written as `#00`, as hayro-syntax
     /// reads it.
     fn name(&mut self, name: &Name) -> Result<()> {
+        self.reserve_encoded(
+            name.as_bytes(),
+            1,
+            |byte| {
+                if is_name_byte(byte) { 1 } else { 3 }
+            },
+        )?;
         self.push(b"/")?;
-        let mut rest = name.as_bytes();
-        while let Some(escape) = rest.iter().position(|&byte| !is_name_byte(byte)) {
-            let (raw, tail) = rest.split_at(escape);
-            self.push(raw)?;
-            let byte = tail[0];
-            self.push(&[b'#', hex_digit(byte >> 4), hex_digit(byte)])?;
-            rest = &tail[1..];
+        for chunk in name.as_bytes().chunks(BYTE_POLL_INTERVAL) {
+            self.out.budget().poll()?;
+            let mut rest = chunk;
+            while let Some(escape) = rest.iter().position(|&byte| !is_name_byte(byte)) {
+                let (raw, tail) = rest.split_at(escape);
+                self.push(raw)?;
+                let byte = tail[0];
+                self.push(&[b'#', hex_digit(byte >> 4), hex_digit(byte)])?;
+                rest = &tail[1..];
+            }
+            self.push(rest)?;
         }
-        self.push(rest)
+        Ok(())
     }
 
     /// Writes `string` in its form, as ISO 32000-2 section 7.3.4 requires.
@@ -316,22 +340,29 @@ impl<'o, 'b> Writer<'o, 'b> {
         let bytes = string.as_bytes();
         match string.form() {
             StringForm::Literal => {
+                self.reserve_encoded(bytes, 2, |byte| {
+                    literal_escape(byte).map_or(1, |escape| escape.len)
+                })?;
                 self.push(b"(")?;
-                let mut rest = bytes;
-                while let Some(escape) =
-                    rest.iter().position(|&byte| literal_escape(byte).is_some())
-                {
-                    let (raw, tail) = rest.split_at(escape);
-                    self.push(raw)?;
-                    if let Some(escaped) = literal_escape(tail[0]) {
-                        self.push(escaped.as_bytes())?;
+                for chunk in bytes.chunks(BYTE_POLL_INTERVAL) {
+                    self.out.budget().poll()?;
+                    let mut rest = chunk;
+                    while let Some(escape) =
+                        rest.iter().position(|&byte| literal_escape(byte).is_some())
+                    {
+                        let (raw, tail) = rest.split_at(escape);
+                        self.push(raw)?;
+                        if let Some(escaped) = literal_escape(tail[0]) {
+                            self.push(escaped.as_bytes())?;
+                        }
+                        rest = &tail[1..];
                     }
-                    rest = &tail[1..];
+                    self.push(rest)?;
                 }
-                self.push(rest)?;
                 self.push(b")")
             }
             StringForm::Hexadecimal => {
+                self.reserve_encoded(bytes, 2, |_| 2)?;
                 self.push(b"<")?;
                 let mut digits = [[0; 2]; 128];
                 for chunk in bytes.chunks(digits.len()) {
@@ -343,6 +374,28 @@ impl<'o, 'b> Writer<'o, 'b> {
                 self.push(b">")
             }
         }
+    }
+
+    /// Reserves the full encoded size once, so a tight budget cannot force
+    /// an input-sized reallocation for every small output chunk.
+    fn reserve_encoded(
+        &mut self,
+        bytes: &[u8],
+        delimiters: usize,
+        encoded_len: impl Fn(u8) -> usize,
+    ) -> Result<()> {
+        let mut size = delimiters;
+        for chunk in bytes.chunks(BYTE_POLL_INTERVAL) {
+            self.out.budget().poll()?;
+            for &byte in chunk {
+                size = size
+                    .checked_add(encoded_len(byte))
+                    .ok_or_else(|| LimitExceeded::new(LimitCode::MemorySize))?;
+            }
+        }
+        self.out.budget().poll()?;
+        self.out.try_reserve_polled(size)?;
+        Ok(())
     }
 
     /// Writes `value` as `Display` writes it.
@@ -363,7 +416,24 @@ impl<'o, 'b> Writer<'o, 'b> {
 
     /// Appends `bytes` to the output.
     fn push(&mut self, bytes: &[u8]) -> Result<()> {
-        Ok(self.out.try_extend_from_slice(bytes)?)
+        // Reserve the complete slice before copying it in chunks. Otherwise
+        // a tight memory budget can force a growing reallocation per chunk.
+        if bytes.len() >= BYTE_POLL_INTERVAL || self.bytes_since_poll >= BYTE_POLL_INTERVAL {
+            self.out.budget().poll()?;
+            self.bytes_since_poll = 0;
+        }
+        self.out.try_reserve_polled(bytes.len())?;
+        for chunk in bytes.chunks(BYTE_POLL_INTERVAL) {
+            if self.bytes_since_poll.saturating_add(chunk.len()) > BYTE_POLL_INTERVAL {
+                self.out.budget().poll()?;
+                self.bytes_since_poll = 0;
+            }
+            self.out.try_extend_from_slice(chunk)?;
+            self.bytes_since_poll = self.bytes_since_poll.saturating_add(chunk.len());
+            #[cfg(test)]
+            tests::after_write_chunk(self.out.len(), self.out.capacity());
+        }
+        Ok(())
     }
 
     /// Refuses with `object_value_depth` an array or a dictionary at
@@ -395,7 +465,8 @@ struct Sink<'s, 'b> {
 impl fmt::Write for Sink<'_, '_> {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         self.out
-            .try_extend_from_slice(text.as_bytes())
+            .try_reserve_polled(text.len())
+            .and_then(|()| self.out.try_extend_from_slice(text.as_bytes()))
             .map_err(|refusal| {
                 self.refusal = Some(refusal);
                 fmt::Error
