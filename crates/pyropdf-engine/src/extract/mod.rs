@@ -17,6 +17,7 @@ use pyropdf_store::budget::Budget;
 
 use crate::bridge::Bridged;
 
+mod font_guard;
 mod glyphs;
 mod images;
 mod model;

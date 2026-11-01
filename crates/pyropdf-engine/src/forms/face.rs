@@ -185,7 +185,8 @@ impl<'f> FaceText<'f> {
                         || font.mapped.get(&glyph.glyph).map(String::as_str) == Some(text)
                 }
                 None => {
-                    self.drawn.try_push((glyph.glyph, text.to_owned()))?;
+                    self.drawn
+                        .try_push((glyph.glyph, copy_text(text, self.budget)?))?;
                     true
                 }
             };
@@ -222,4 +223,32 @@ fn flush(out: &mut BudgetVec<'_, u8>, items: &mut BudgetVec<'_, u8>) -> Result<(
         items.clear();
     }
     Ok(())
+}
+
+/// Copies one glyph's text with its bytes charged for the operation.
+fn copy_text(text: &str, budget: &Budget) -> Result<String, pyropdf_store::LimitExceeded> {
+    let mut bytes = BudgetVec::new(budget);
+    bytes.try_reserve_exact(text.len())?;
+    bytes.try_extend_from_slice(text.as_bytes())?;
+    // The bytes came from a valid UTF-8 string and were copied unchanged.
+    Ok(String::from_utf8(bytes.into_vec()).expect("copied text is UTF-8"))
+}
+
+#[cfg(test)]
+mod tests {
+    use pyropdf_store::budget::{Budget, LimitCode};
+
+    use super::copy_text;
+
+    #[test]
+    fn glyph_text_copies_count_together_against_memory_limit() {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(11));
+        let first = copy_text("日本", &budget).unwrap();
+        assert_eq!(first, "日本");
+        assert_eq!(budget.used(LimitCode::MemorySize), 6);
+        let error = copy_text("日本", &budget).unwrap_err();
+        assert_eq!(error.code(), LimitCode::MemorySize);
+        assert_eq!(budget.used(LimitCode::MemorySize), 6);
+        assert_eq!(first, "日本");
+    }
 }

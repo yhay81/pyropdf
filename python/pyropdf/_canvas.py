@@ -93,7 +93,9 @@ _TURNS = {0: (1, 0), 90: (0, 1), 180: (-1, 0), 270: (0, -1)}
 #: The Standard 14 fonts that draw their own built-in encoding.
 _SYMBOLIC = frozenset({"Symbol", "ZapfDingbats"})
 #: Operators that change the graphics state that later content inherits.
-_STATE_OPERATORS = frozenset({"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "ri", "i"})
+_STATE_OPERATORS = frozenset(
+    {"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "ri", "i", "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts"}
+)
 
 
 def _number(value: object, name: str) -> float:
