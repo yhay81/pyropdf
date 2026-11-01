@@ -1,7 +1,8 @@
 """Drawing paths, images, and placed pages with Page.draw (DESIGN.md section 7).
 
 Ported from pylopdf's tests/test_canvas.py and tests/test_draw.py at
-ebb01d3c, without text: krilla writes text on the canvas (issue 323).
+ebb01d3c, without text: canvas text in Standard 14 fonts is tested in
+test_canvas_text.py and in embedded faces in test_canvas_embedded.py.
 """
 
 from __future__ import annotations
