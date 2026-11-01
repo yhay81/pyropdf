@@ -478,7 +478,10 @@ fn draw(
     let value = value_text(reader, value.as_deref())?;
     let style = WidgetStyle::read(reader, widget)?;
     if let TextLayout::Comb(max_len) = layout {
-        let count = standard::grapheme_count(&standard::single_line(&value, reader.budget)?);
+        let count = standard::grapheme_count(
+            &standard::single_line(&value, reader.budget)?,
+            reader.budget,
+        )?;
         if count > max_len {
             return Err(WidgetError::Malformed(
                 format!("comb field value has {count} characters, exceeding MaxLen {max_len}")
