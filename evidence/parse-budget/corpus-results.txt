@@ -1,0 +1,15 @@
+corpus_bench.rs on tests/assets/real_world (15 files), 50 rounds per run,
+best time of each phase per document, summed. Release build, aarch64
+macOS, Rust 1.99.1. "base" is hayro-syntax-v0.8.0; "patch" is
+hayro-syntax-0.8.0.patch applied to it. The runs alternated.
+
+base  total open 0.838 ms  walk 10.794 ms  content 8.284 ms  all 19.915 ms
+patch total open 0.898 ms  walk 11.727 ms  content 8.354 ms  all 20.980 ms
+base  total open 0.836 ms  walk 10.904 ms  content 8.209 ms  all 19.949 ms
+patch total open 0.893 ms  walk 11.671 ms  content 8.312 ms  all 20.877 ms
+base  total open 0.832 ms  walk 10.727 ms  content 8.167 ms  all 19.727 ms
+patch total open 0.897 ms  walk 11.844 ms  content 8.334 ms  all 21.075 ms
+base  total open 0.833 ms  walk 10.860 ms  content 8.218 ms  all 19.912 ms
+patch total open 0.895 ms  walk 11.623 ms  content 8.310 ms  all 20.828 ms
+base  total open 0.835 ms  walk 10.817 ms  content 8.200 ms  all 19.851 ms
+patch total open 0.896 ms  walk 11.686 ms  content 8.336 ms  all 20.918 ms

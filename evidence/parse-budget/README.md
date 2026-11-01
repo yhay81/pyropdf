@@ -13,7 +13,9 @@ approval.
   tag, which the store builds against.
 - `hayro-syntax-main.patch`: the same change on hayro `main` at
   `8ac3a6dd`, the base an upstream pull request would use.
-- `parse_bench.rs`: the timing below, as an example of hayro-syntax.
+- `parse_bench.rs`: the synthetic timing below, as an example of
+  hayro-syntax.
+- `corpus_bench.rs` and `corpus-results.txt`: the corpus timing below.
 
 ## Reproducing the store's tests
 
@@ -49,5 +51,24 @@ Rust 1.99.1, on hayro `main` at `8ac3a6dd`):
 | with the patch | 55.2 ms (three runs) |
 
 The spread between runs was about 3 ms, so the hooks cost roughly 5 to 10%
-on this dictionary-heavy synthetic input. A measurement on a corpus is
-still needed before an upstream proposal.
+on this dictionary-heavy synthetic input.
+
+On the corpus (`tests/assets/real_world`, 15 files), `corpus_bench.rs`
+times three phases without a budget: opening each document, walking every
+object it defines through lazy reads, and reading the typed operations of
+every page's content. Each run takes the best of 50 rounds per document
+and phase; the five runs of each build alternated (`corpus-results.txt`).
+Medians of the five runs, against `hayro-syntax-v0.8.0`:
+
+| Phase | 0.8.0 | With the patch | Change |
+| --- | --- | --- | --- |
+| Open | 0.835 ms | 0.896 ms | +7.3% |
+| Walk objects | 10.817 ms | 11.686 ms | +8.0% |
+| Content operations | 8.209 ms | 8.334 ms | +1.5% |
+| All | 19.912 ms | 20.918 ms | +5.1% |
+
+The runs of each build agree within about 1.5%, below the gaps. Content
+parsing, the interpreter's hot path, barely changes. Object reading pays
+about 8%, most likely for the larger `Reader` and the budget lookups of
+lazy reads; reducing that is the first question for an upstream
+proposal.
