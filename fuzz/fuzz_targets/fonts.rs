@@ -1,16 +1,17 @@
 //! Embedded faces: any bytes that load as a face shape a text, measure its
 //! glyphs, and compact to them; any bytes compact or refuse. A face that
-//! does not load is a typed error, never a panic.
+//! does not load is a typed error, never a panic: `Unsupported` only for
+//! data that reads as OpenType, and `Font` with its reason otherwise.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
 use pyropdf_engine::fonts::compact::compact;
-use pyropdf_engine::fonts::embed::{Face, GlyphId, Measure};
+use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::shape::ShapingFace;
 use pyropdf_store::budget::{Budget, DocumentLimits};
 use skrifa::FontRef;
-use skrifa::raw::TableProvider;
+use skrifa::raw::{FileRef, TableProvider};
 
 const TEXT: &str = "AVA office 日本語 שָׁלוֹם مرحبا 123";
 
@@ -36,8 +37,16 @@ fuzz_target!(
     |data: &[u8]| {
     let keep: Vec<u32> = data.iter().rev().take(16).map(|&byte| u32::from(byte)).collect();
     check(data, &keep);
-    let Ok(face) = Face::read(data, 0) else {
-        return;
+    let face = match Face::read(data, 0) {
+        Ok(face) => face,
+        Err(FaceError::Unsupported(_)) => {
+            assert!(FileRef::new(data).is_ok(), "an unsupported face reads as OpenType");
+            return;
+        }
+        Err(FaceError::Font(reason)) => {
+            assert!(!reason.is_empty(), "a font error names its reason");
+            return;
+        }
     };
     let budget = Budget::new(&DocumentLimits::web());
     let Ok(shaping) = ShapingFace::new(&face.program, 0) else {
