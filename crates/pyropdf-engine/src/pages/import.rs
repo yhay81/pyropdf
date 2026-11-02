@@ -17,7 +17,7 @@ use std::mem::size_of;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::refs::copy_for_edit;
-use pyropdf_store::value::{Dict, Name, Reference, Value};
+use pyropdf_store::value::{Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 use pyropdf_store::{Error, LimitExceeded, Result};
 
@@ -150,7 +150,8 @@ pub fn import(
 /// null, as they do in the store. Unlike a page import, this keeps structure
 /// keys and copies Page, Pages and Catalog objects without grafting anything.
 /// All newly written objects are independent of subsequent source edits.
-/// A stream whose Length would be rewritten by the store writer is refused.
+/// A stream's /Length becomes the length of its data, as the store writer
+/// writes it, so an indirect length is not copied.
 /// On refusal the transaction is restored to its state before this call;
 /// reserved object numbers may still be consumed.
 pub fn copy_resource_graph(
@@ -368,11 +369,26 @@ impl Walk<'_, '_> {
                 }
             }
             Value::Dict(dict) => self.dict(transaction, dict, depth)?,
-            Value::Stream(stream) => self.dict(transaction, stream.dict_mut(), depth)?,
+            Value::Stream(stream) => {
+                if matches!(self.keys, Keys::Preserve) && !has_direct_length(stream) {
+                    stream.set_data(stream.data().clone());
+                }
+                self.dict(transaction, stream.dict_mut(), depth)?;
+            }
             _ => {}
         }
         Ok(())
     }
+}
+
+/// Whether `stream`'s /Length is already the length of its data, as the
+/// store writer writes it.
+fn has_direct_length(stream: &Stream) -> bool {
+    stream.dict().get("Length")
+        == i64::try_from(stream.data().len())
+            .ok()
+            .map(Value::Integer)
+            .as_ref()
 }
 
 /// An iterative budgeted preflight lets unchanged subtrees retain their lexemes.
@@ -401,18 +417,10 @@ fn needs_changes(value: &Value, budget: &Budget, change_structure: bool) -> Resu
                 }
             }
             Value::Stream(stream) => {
-                // The store writer replaces /Length with a direct integer.
-                // Refuse rather than silently rewriting the source graph.
-                if !change_structure
-                    && stream.dict().get("Length")
-                        != i64::try_from(stream.data().len())
-                            .ok()
-                            .map(Value::Integer)
-                            .as_ref()
-                {
-                    return Err(Error::malformed(
-                        "cannot faithfully copy a stream with a noncanonical Length",
-                    ));
+                // The store writer writes the data's length as /Length, so a
+                // copy sets it first rather than copying what it refers to.
+                if !change_structure && !has_direct_length(stream) {
+                    return Ok(true);
                 }
                 if change_structure
                     && STRUCTURE_KEYS
@@ -435,7 +443,7 @@ fn needs_changes(value: &Value, budget: &Budget, change_structure: bool) -> Resu
 mod tests {
     use super::*;
     use pyropdf_store::budget::CancellationToken;
-    use pyropdf_store::value::{Array, Bytes, Stream};
+    use pyropdf_store::value::{Array, Bytes};
     use pyropdf_store::version::{Document, MemoryBase};
     use std::sync::Arc;
     use std::time::Duration;
@@ -725,8 +733,8 @@ mod tests {
     }
 
     #[test]
-    fn resource_graph_refuses_a_stream_whose_length_would_be_rewritten() {
-        let doc = Document::new(base_with(&[]), None);
+    fn resource_graph_writes_a_direct_length_instead_of_copying_its_object() {
+        let doc = Document::new(base_with(&[(9, 0, b"3")]), None);
         let source = doc.current();
         let mut transaction = doc.begin();
         let mut stream = Stream::new(Dict::new(), Bytes::new(b"abc".to_vec()));
@@ -735,9 +743,82 @@ mod tests {
             .insert(Name::from("Length"), Value::Reference(Reference::new(9, 0)));
         // The preflight must also inspect a stream nested in a direct value.
         let value = Value::Array(Array::from(vec![Value::Stream(Box::new(stream))]));
-        assert!(
-            copy_resource_graph(&mut transaction, &source, &value, &Budget::default()).is_err()
+        let copied =
+            copy_resource_graph(&mut transaction, &source, &value, &Budget::default()).unwrap();
+        let Value::Array(array) = copied else {
+            panic!("not an array")
+        };
+        let Some(Value::Stream(stream)) = array.iter().next() else {
+            panic!("not a stream")
+        };
+        assert_eq!(stream.dict().get("Length"), Some(&Value::Integer(3)));
+        assert_eq!(stream.data().as_slice(), b"abc");
+        assert_eq!(transaction.version().slots().count(), 0);
+    }
+
+    /// A base that cancels `token` when the walk reads object `at`.
+    #[derive(Debug)]
+    struct CancelAt {
+        inner: Arc<MemoryBase>,
+        at: u32,
+        token: CancellationToken,
+    }
+
+    impl pyropdf_store::version::Base for CancelAt {
+        fn generation(&self, number: u32) -> Option<u16> {
+            self.inner.generation(number)
+        }
+
+        fn free_generation(&self, number: u32) -> Option<u16> {
+            self.inner.free_generation(number)
+        }
+
+        fn object(&self, reference: Reference, budget: &Budget) -> Result<Option<Bytes>> {
+            if reference.number() == self.at {
+                self.token.cancel();
+            }
+            self.inner.object(reference, budget)
+        }
+
+        fn trailer(&self) -> &Dict {
+            self.inner.trailer()
+        }
+
+        fn next_number(&self) -> u64 {
+            self.inner.next_number()
+        }
+
+        fn numbers(&self, out: &mut BudgetVec<'_, u32>) -> Result<()> {
+            self.inner.numbers(out)
+        }
+    }
+
+    #[test]
+    fn resource_graph_cancelled_mid_walk_rolls_back_its_writes() {
+        let token = CancellationToken::new();
+        let base = CancelAt {
+            inner: base_with(&[
+                (1, 0, b"<< /Next 2 0 R >>"),
+                (2, 0, b"<< /Next 3 0 R >>"),
+                (3, 0, b"<< /Next 4 0 R >>"),
+                (4, 0, b"<< /Leaf 1 >>"),
+            ]),
+            at: 3,
+            token: token.clone(),
+        };
+        let doc = Document::new(Arc::new(base), None);
+        let original = doc.current();
+        let mut transaction = doc.begin();
+        let budget = Budget::default().with_cancellation(token.clone());
+        let value = Value::Reference(Reference::new(1, 0));
+        let error = copy_resource_graph(&mut transaction, &original, &value, &budget).unwrap_err();
+        assert!(token.is_cancelled());
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
         );
         assert_eq!(transaction.version().slots().count(), 0);
+        drop(transaction);
+        assert!(Arc::ptr_eq(&doc.current(), &original));
     }
 }
