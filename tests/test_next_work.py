@@ -198,3 +198,37 @@ def test_a_linked_pr_prevents_duplicate_work_without_a_claim(monkeypatch: pytest
     assert data["groups"]["with_pr"][0]["linked_prs"] == (56,)
     assert [item["number"] for item in data["groups"]["ready"]] == [26]
     assert "Resume inspection of #27" in data["next"]
+
+
+def test_upstream_work_is_ordered_and_shown_by_whose_move_it_waits_on() -> None:
+    items = [
+        issue(1, labels=("tracker",)),
+        issue(2, labels=("upstream",)),
+        issue(3, labels=("upstream", "upstream:merged")),
+        issue(4, labels=("upstream", "upstream:filed")),
+        issue(5, labels=("upstream", "upstream:draft")),
+        issue(6, labels=("upstream", "upstream:draft", "upstream:filed")),
+        issue(7, labels=("upstream", "upstream:todo")),
+    ]
+    data = work.report(items, work.CI("main", "a" * 40, "success", "url"), "main")
+    assert [item["number"] for item in data["groups"]["upstream"]] == [7, 5, 4, 3, 2, 6]
+    text = work.render(data)
+    assert "#5 Work 5 (state=draft," in text
+    assert "#2 Work 2 (state=unlabeled," in text
+    assert "#6 Work 6 (state=ambiguous," in text
+
+
+def test_upstream_state_is_shown_even_when_another_group_takes_precedence() -> None:
+    items = [
+        issue(1, labels=("tracker",)),
+        issue(2, labels=("upstream", "in-progress", "upstream:filed")),
+        issue(3, labels=("upstream", "upstream:merged"), blockers=1),
+        issue(4, labels=("scope-question",)),
+    ]
+    data = work.report(items, ci(), "main")
+    assert [item["number"] for item in data["groups"]["claimed"]] == [2]
+    assert [item["number"] for item in data["groups"]["blocked"]] == [3]
+    text = work.render(data)
+    assert "#2 Work 2 (state=filed," in text
+    assert "#3 Work 3 (state=merged," in text
+    assert "#4 Work 4 (blockers=" in text
