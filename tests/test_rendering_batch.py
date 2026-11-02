@@ -241,3 +241,10 @@ def test_render_refuses_a_closed_document() -> None:
 
     with pytest.raises(pyropdf.DocumentClosedError):
         doc.render()
+
+
+def test_render_refuses_png_encoding_past_the_memory_budget() -> None:
+    doc = pyropdf.open(_open().to_bytes(), limits=pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.render(pages=[0], format="png")
+    assert raised.value.code == "memory_size"

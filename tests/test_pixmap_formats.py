@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import io
+import random
 import re
 import shutil
 import struct
@@ -579,3 +580,21 @@ def test_output_stays_within_max_size() -> None:
     with pytest.raises(Exception, match="output limit") as raised:
         _pixmap("RGB").to_bytes("ps", max_size=100)
     assert getattr(raised.value, "code", None) == "pixmap_output_size"
+
+
+@pytest.mark.parametrize("mode", list(MODES))
+def test_png_output_round_trips_through_pillow_with_its_resolution(mode: str) -> None:
+    image = _image(mode)
+    decoded = Image.open(io.BytesIO(_pixmap(mode).to_bytes("png")))
+    assert decoded.mode == mode
+    assert decoded.tobytes() == image.tobytes()
+    assert tuple(round(v) for v in decoded.info["dpi"]) == (150, 150)
+
+
+def test_png_output_splits_large_image_data_into_several_chunks() -> None:
+    side = 1200
+    noise = random.Random(0).randbytes(side * side * 3)  # noqa: S311 - test data, not a secret
+    image = Image.frombytes("RGB", (side, side), noise)
+    data = Pixmap.from_bytes(_saved(image, "PNG")).to_bytes("png", max_size=None)
+    assert data.count(b"IDAT") > 1
+    assert Image.open(io.BytesIO(data)).tobytes() == noise
