@@ -11,17 +11,25 @@
 //! Collections that grow from input are [`BudgetVec`]s, whose growth is
 //! fallible and charged to the budget by default, and a stream's decoded
 //! bytes go through a [`DecodeMeter`].
+//!
+//! An operation whose calls each need the budget, such as a canvas and the
+//! edits and source reads it makes, freezes its budget with
+//! [`Budget::share`]. A [`SharedBudget`] cannot be configured again, so a
+//! limit, deadline or cancellation token that a call reads stays true for
+//! every clone and view of the operation.
 
 mod cancel;
 mod code;
 mod decode;
 mod limits;
+mod shared;
 mod vec;
 
 #[cfg(test)]
 mod tests;
 
 use std::fmt;
+use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
@@ -30,6 +38,7 @@ pub use cancel::CancellationToken;
 pub use code::LimitCode;
 pub use decode::{DecodeMeter, StreamKind};
 pub use limits::DocumentLimits;
+pub use shared::SharedBudget;
 pub use vec::BudgetVec;
 
 use crate::LimitExceeded;
@@ -59,12 +68,21 @@ impl fmt::Display for LimitCode {
 /// [`Budget::release`] returns what a freed collection charged, and
 /// [`Budget::check`] compares one measurement, such as the depth of an
 /// object, with a limit without counting it.
+///
+/// A budget is configured by value and is not `Clone`: an operation that
+/// hands its budget to several calls freezes it first with
+/// [`Budget::share`].
 #[derive(Debug)]
 pub struct Budget {
     limits: [Option<u64>; CODES],
-    used: [AtomicU64; CODES],
+    /// The meters, which the views of a [`SharedBudget`] share.
+    used: Arc<[AtomicU64; CODES]>,
     deadline: Option<Deadline>,
     cancellation: Vec<CancellationToken>,
+    /// The codes whose limit a view of a shared operation tightened below
+    /// the operation's own; [`Budget::poll`] refuses once their shared meter
+    /// is above the view's limit.
+    tightened: [bool; CODES],
 }
 
 /// When an operation's deadline was set and when it passes.
@@ -84,9 +102,10 @@ impl Budget {
     pub fn new(limits: &DocumentLimits) -> Self {
         let mut budget = Self {
             limits: LimitCode::ALL.map(LimitCode::default_limit),
-            used: std::array::from_fn(|_| AtomicU64::new(0)),
+            used: Arc::new(std::array::from_fn(|_| AtomicU64::new(0))),
             deadline: None,
             cancellation: Vec::new(),
+            tightened: [false; CODES],
         };
         for (code, limit) in limits.code_limits() {
             if limit.is_some() {
@@ -224,7 +243,9 @@ impl Budget {
     }
 
     /// Refuses with `cancelled` once a cancellation token of the budget is
-    /// cancelled, and then with `deadline` once the deadline has passed.
+    /// cancelled, and then with `deadline` once the deadline has passed. A
+    /// view of a shared operation then refuses with a code whose limit it
+    /// tightened once the operation's meter is above that limit.
     ///
     /// Every charge and check polls first. Work that runs long without
     /// charging anything polls on its own.
@@ -244,6 +265,23 @@ impl Budget {
                     floor_millis(end.saturating_duration_since(start)),
                     ceil_millis(now.saturating_duration_since(start)),
                 ));
+            }
+        }
+        if self.tightened.contains(&true) {
+            self.check_tightened()?;
+        }
+        Ok(())
+    }
+
+    /// Refuses with the first code whose limit this view tightened and whose
+    /// meter is above it.
+    fn check_tightened(&self) -> Result<(), LimitExceeded> {
+        for code in LimitCode::ALL {
+            if self.tightened[code.index()]
+                && let Some(limit) = self.limit(code)
+                && self.used(code) > limit
+            {
+                return Err(LimitExceeded::over(code, limit, self.used(code)));
             }
         }
         Ok(())

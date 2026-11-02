@@ -10,19 +10,25 @@
 //! 4.6). Their edits, transactions, undo, and redo wait for the store's
 //! writer lock, which the transaction holds. An edit outside a transaction
 //! commits at once, as one step without a name.
+//!
+//! A canvas is one operation (DESIGN.md F6 and section 9): `begin_canvas`
+//! opens a transaction, or nests one, with a [`SharedBudget`] that its
+//! edits, its reads, its source reads and its commit all charge. The budget
+//! belongs to the thread that opened it, and ends with its transaction.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::{self, ThreadId};
+use std::time::Duration;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, LimitCode, SharedBudget};
 use pyropdf_store::settle::Scope;
 use pyropdf_store::version::{Document, RestoredHistory, Savepoint, Transaction, Version};
 
 use crate::document::_Document;
-use crate::errors::{PdfError, store_error};
+use crate::errors::{PdfError, limit_error, store_error};
 
 /// The default history budget of Python documents, 256 MiB (DESIGN.md
 /// section 4.1).
@@ -40,13 +46,25 @@ struct Open {
     /// The thread that opened it, the only one that writes into it.
     owner: ThreadId,
     transaction: Transaction,
-    savepoints: Vec<Savepoint>,
+    /// The savepoint of each nested transaction, with the operation that
+    /// was active when it began.
+    savepoints: Vec<(Savepoint, Option<SharedBudget>)>,
+    /// The canvas operation of the innermost canvas, if one is open.
+    operation: Option<SharedBudget>,
     name: String,
     /// What the transaction wrote, as reads see it, until the next write.
     snapshot: Option<Arc<Version>>,
 }
 
 impl Open {
+    /// Returns the budget of what runs in this transaction: its canvas
+    /// operation, or a new operation of `document`.
+    fn budget(&self, document: &_Document) -> SharedBudget {
+        self.operation
+            .clone()
+            .unwrap_or_else(|| document.budget().share())
+    }
+
     /// Returns what the transaction wrote, as reads see it. A read may
     /// depend on any structure that a write left stale, so the transaction
     /// first settles every structure that a commit settles.
@@ -86,6 +104,109 @@ impl State {
         lock(&self.open).take();
         *lock(&self.steps) = Steps::default();
     }
+
+    /// Returns the canvas operation that this thread has open, if any.
+    pub(crate) fn operation(&self) -> Option<SharedBudget> {
+        owned(&mut lock(&self.open)).and_then(|open| open.operation.clone())
+    }
+}
+
+/// The private handle of one canvas operation, for the canvas code in
+/// Python and the calls it makes.
+///
+/// It refuses every use once its canvas has ended, or on another thread.
+#[pyclass(frozen, name = "_OperationBudget", module = "pyropdf._core")]
+pub(crate) struct OperationBudget {
+    pub(crate) operation: SharedBudget,
+    history: Weak<State>,
+}
+
+impl OperationBudget {
+    /// Refuses unless this is the innermost canvas operation of this
+    /// thread's open transaction.
+    pub(crate) fn ensure_active(&self) -> PyResult<()> {
+        let active = self
+            .history
+            .upgrade()
+            .and_then(|history| history.operation())
+            .is_some_and(|active| active.ptr_eq(&self.operation));
+        if active {
+            Ok(())
+        } else {
+            Err(PyValueError::new_err(
+                "the canvas operation is not active on this thread",
+            ))
+        }
+    }
+
+    /// Returns whether this operation is the innermost canvas of `document`.
+    pub(crate) fn is_active_on(&self, document: &_Document) -> bool {
+        self.history
+            .upgrade()
+            .is_some_and(|history| Arc::ptr_eq(&history, &document.history))
+            && self.ensure_active().is_ok()
+    }
+
+    /// Returns a view of the operation that also observes the limits,
+    /// deadline and cancellation of `source`, for reading it.
+    pub(crate) fn for_source(&self, source: &_Document) -> PyResult<SharedBudget> {
+        self.operation
+            .constrained_by(&source.budget())
+            .map_err(|error| limit_error(&error))
+    }
+}
+
+/// Returns the limit code named `code`.
+fn budget_code(code: &str) -> PyResult<LimitCode> {
+    LimitCode::ALL
+        .iter()
+        .copied()
+        .find(|candidate| candidate.as_str() == code)
+        .ok_or_else(|| PyValueError::new_err(format!("unknown limit code {code:?}")))
+}
+
+#[pymethods]
+impl OperationBudget {
+    /// Charges `amount` to the meter of `code`.
+    fn charge(&self, code: &str, amount: u64) -> PyResult<()> {
+        self.ensure_active()?;
+        self.operation
+            .charge(budget_code(code)?, amount)
+            .map_err(|error| limit_error(&error))
+    }
+
+    /// Returns `amount` to the meter of `code`.
+    fn release(&self, code: &str, amount: u64) -> PyResult<()> {
+        self.ensure_active()?;
+        self.operation.release(budget_code(code)?, amount);
+        Ok(())
+    }
+
+    /// Checks one measurement against the limit of `code`.
+    fn check(&self, code: &str, value: u64) -> PyResult<()> {
+        self.ensure_active()?;
+        self.operation
+            .check(budget_code(code)?, value)
+            .map_err(|error| limit_error(&error))
+    }
+
+    /// Returns what has been charged to `code` and not released.
+    fn used(&self, code: &str) -> PyResult<u64> {
+        self.ensure_active()?;
+        Ok(self.operation.used(budget_code(code)?))
+    }
+
+    /// Returns the limit of `code`, or `None`.
+    fn limit(&self, code: &str) -> PyResult<Option<u64>> {
+        self.ensure_active()?;
+        Ok(self.operation.limit(budget_code(code)?))
+    }
+
+    /// Refuses once the operation is cancelled or past its deadline.
+    fn poll(&self) -> PyResult<()> {
+        self.ensure_active()?;
+        self.operation.poll().map_err(|error| limit_error(&error))
+    }
 }
 
 impl _Document {
@@ -95,7 +216,10 @@ impl _Document {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
         Ok(match owned(&mut open) {
-            Some(open) => open.view(&self.budget())?,
+            Some(open) => {
+                let budget = open.budget(self);
+                open.view(&budget)?
+            }
             None => store.current(),
         })
     }
@@ -104,16 +228,27 @@ impl _Document {
     /// and the open transaction's parent when the transaction has written
     /// nothing yet, so that a reader may use what it memoized for the parent.
     pub(crate) fn reading_parent(&self) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
+        self.reading_parent_with(None)
+    }
+
+    /// Returns what [`_Document::reading_parent`] does, charging `budget`
+    /// instead of this document's operation, as a canvas reading its source
+    /// does.
+    pub(crate) fn reading_parent_with(
+        &self,
+        budget: Option<&Budget>,
+    ) -> PyResult<(Arc<Version>, Option<Arc<Version>>)> {
         let store = self.document()?;
         let mut open = lock(&self.history.open);
         let Some(open) = owned(&mut open) else {
             return Ok((store.current(), None));
         };
-        let budget = self.budget();
-        let view = open.view(&budget)?;
+        let own = open.budget(self);
+        let budget = budget.unwrap_or(&own);
+        let view = open.view(budget)?;
         let parent = Arc::clone(open.transaction.parent());
         let unchanged = parent
-            .changes(&view, &budget)
+            .changes(&view, budget)
             .map_err(|e| store_error(&e))?
             .is_some_and(|changes| changes.is_empty());
         Ok((view, unchanged.then_some(parent)))
@@ -133,14 +268,15 @@ impl _Document {
         write: impl FnOnce(&mut Transaction, &Budget) -> PyResult<T>,
     ) -> PyResult<T> {
         self.document()?;
-        let budget = self.budget();
         {
             let mut open = lock(&self.history.open);
             if let Some(open) = owned(&mut open) {
                 open.snapshot = None;
+                let budget = open.budget(self);
                 return write(&mut open.transaction, &budget);
             }
         }
+        let budget = self.budget();
         let (store, mut transaction) = self.on_current(py, Document::begin)?;
         let value = write(&mut transaction, &budget)?;
         self.commit(&store, transaction, String::new(), &budget)?;
@@ -157,10 +293,10 @@ impl _Document {
         write: impl FnOnce(&mut Transaction, &Budget) -> PyResult<T>,
     ) -> PyResult<T> {
         self.document()?;
-        let budget = self.budget();
         {
             let mut open = lock(&self.history.open);
             if let Some(open) = owned(&mut open) {
+                let budget = open.budget(self);
                 let savepoint = open.transaction.savepoint();
                 let result = write(&mut open.transaction, &budget);
                 open.transaction.rollback(savepoint);
@@ -168,6 +304,7 @@ impl _Document {
                 return result;
             }
         }
+        let budget = self.budget();
         let (_, mut transaction) = self.on_current(py, Document::begin)?;
         write(&mut transaction, &budget)
     }
@@ -247,7 +384,8 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
     document.document()?;
     let mut open = lock(&document.history.open);
     if let Some(open) = owned(&mut open) {
-        open.savepoints.push(open.transaction.savepoint());
+        let savepoint = open.transaction.savepoint();
+        open.savepoints.push((savepoint, open.operation.clone()));
         return Ok(());
     }
     drop(open);
@@ -258,10 +396,63 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
         owner: thread::current().id(),
         transaction,
         savepoints: Vec::new(),
+        operation: None,
         name,
         snapshot: None,
     });
     Ok(())
+}
+
+/// Opens a canvas operation: a transaction named `draw`, or one nested in
+/// this thread's open transaction, whose work charges one budget from the
+/// document's limits. A canvas nested in another canvas is a view of the
+/// outer operation, which it charges. Waiting for another thread's
+/// transaction is part of the operation, so its deadline and cancellation
+/// apply to the wait.
+#[pyfunction]
+pub fn begin_canvas(py: Python<'_>, document: &_Document) -> PyResult<OperationBudget> {
+    document.document()?;
+    let handle = |operation: SharedBudget| OperationBudget {
+        operation,
+        history: Arc::downgrade(&document.history),
+    };
+    {
+        let mut guard = lock(&document.history.open);
+        if let Some(open) = owned(&mut guard) {
+            let operation = match &open.operation {
+                Some(outer) => outer.constrained_by(&document.budget()),
+                None => {
+                    let operation = document.budget().share();
+                    operation.poll().map(|()| operation)
+                }
+            }
+            .map_err(|error| limit_error(&error))?;
+            let savepoint = open.transaction.savepoint();
+            open.savepoints.push((savepoint, open.operation.clone()));
+            open.operation = Some(operation.clone());
+            return Ok(handle(operation));
+        }
+    }
+    let operation = document.budget().share();
+    let (_, transaction) = document.on_current(py, |store| {
+        loop {
+            operation.poll()?;
+            if let Some(transaction) = store.try_begin() {
+                break Ok(transaction);
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    })?;
+    let transaction = transaction.map_err(|error| limit_error(&error))?;
+    *lock(&document.history.open) = Some(Open {
+        owner: thread::current().id(),
+        transaction,
+        savepoints: Vec::new(),
+        operation: Some(operation.clone()),
+        name: "draw".into(),
+        snapshot: None,
+    });
+    Ok(handle(operation))
 }
 
 /// Ends the innermost transaction that this thread opened: with `commit`,
@@ -274,19 +465,65 @@ pub fn end_transaction(document: &_Document, commit: bool) -> PyResult<()> {
     let Some(open) = owned(&mut guard) else {
         return Err(PdfError::new_err("no transaction is open"));
     };
-    if let Some(savepoint) = open.savepoints.pop() {
-        if !commit {
+    // A cancelled or expired operation commits nothing.
+    let refusal = if commit {
+        open.operation
+            .as_ref()
+            .and_then(|operation| operation.poll().err())
+    } else {
+        None
+    };
+    if let Some((savepoint, outer)) = open.savepoints.pop() {
+        if !commit || refusal.is_some() {
             open.transaction.rollback(savepoint);
             open.snapshot = None;
         }
-        return Ok(());
+        open.operation = outer;
+        return refusal.map_or(Ok(()), |error| Err(limit_error(&error)));
     }
     let open = guard.take().expect("a transaction is open");
     drop(guard);
+    if let Some(error) = refusal {
+        return Err(limit_error(&error));
+    }
     if commit {
-        document.commit(&store, open.transaction, open.name, &document.budget())?;
+        let budget = open.budget(document);
+        document.commit(&store, open.transaction, open.name, &budget)?;
     }
     Ok(())
+}
+
+/// Discards the canvas of `operation` and what nested in it, if it is still
+/// open on this thread. A canvas that already ended leaves its outer
+/// transaction alone.
+#[pyfunction]
+pub fn abort_canvas(document: &_Document, operation: &OperationBudget) {
+    let mut guard = lock(&document.history.open);
+    let Some(open) = owned(&mut guard) else {
+        return;
+    };
+    let ours = |active: &Option<SharedBudget>| {
+        active
+            .as_ref()
+            .is_some_and(|active| active.ptr_eq(&operation.operation))
+    };
+    if !ours(&open.operation) {
+        return;
+    }
+    // A transaction nested in the canvas keeps the canvas as its outer
+    // operation; the canvas began at the savepoint after the last one
+    // whose outer operation is not the canvas.
+    let Some(boundary) = open.savepoints.iter().rposition(|(_, outer)| !ours(outer)) else {
+        // The canvas is the outermost transaction: dropping it discards its
+        // writes and releases the writer lock.
+        guard.take();
+        return;
+    };
+    open.savepoints.truncate(boundary + 1);
+    let (savepoint, outer) = open.savepoints.pop().expect("the boundary is a savepoint");
+    open.transaction.rollback(savepoint);
+    open.operation = outer;
+    open.snapshot = None;
 }
 
 /// Returns the step names, how many undo can take, and the history's
