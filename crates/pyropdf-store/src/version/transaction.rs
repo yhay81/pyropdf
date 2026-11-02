@@ -193,6 +193,9 @@ impl Transaction {
     pub fn set_trailer(&mut self, trailer: Dict, budget: &Budget) -> Result<()> {
         let mut out = BudgetVec::new(budget);
         write::value(&mut out, &Value::Dict(trailer))?;
+        // hayro-syntax parses the written trailer in one call that cannot
+        // be cancelled (#573), so its bytes are checked first.
+        budget.check(LimitCode::ObjectParseSize, out.len() as u64)?;
         let overhead = PendingCharge::new(budget, Trailer::OVERHEAD)?;
         let bytes = Bytes::written_copy(out.as_slice(), budget)?;
         drop(out);
