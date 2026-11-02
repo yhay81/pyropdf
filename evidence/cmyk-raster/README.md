@@ -7,7 +7,8 @@ upstream change (DESIGN.md sections 1, 3, and 6: pyropdf renders through
 hayro and does not simulate a different output). This directory records the
 upstream status, the design proposed to hayro's maintainer, and the
 measurements behind it. [upstream-draft.md](upstream-draft.md) is the draft
-issue for LaurenzV/hayro; nothing is published.
+issue, published as
+[LaurenzV/hayro#1725](https://github.com/LaurenzV/hayro/issues/1725).
 
 ## Upstream status (2026-11-02)
 
@@ -113,4 +114,4 @@ design B is acceptable, and proposes three bounded pull requests in order:
 colour conversion to an output CMYK space in hayro-interpret, images and
 shadings in that space, and `hayro::render_cmyk`. No patch is written before
 that answer, because the split between hayro-interpret and hayro is the
-maintainer's choice. Publishing the draft waits on pyropdf's owner.
+maintainer's choice.

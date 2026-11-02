@@ -1,7 +1,8 @@
-# Draft: issue for LaurenzV/hayro (not published)
+# Issue for LaurenzV/hayro
 
-Draft for yhay81/pyropdf#433. Publishing waits on pyropdf's owner. The links
-to `evidence/cmyk-raster` point at pyropdf's repository once the PR merges.
+Draft for yhay81/pyropdf#433, published with the owner's approval on
+2026-11-02 as https://github.com/LaurenzV/hayro/issues/1725. The published
+text links the probe at commit `0ccc96b9` and ends with the model and harness.
 
 ---
 
