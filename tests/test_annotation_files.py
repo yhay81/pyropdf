@@ -256,3 +256,111 @@ def test_attaching_and_writing_past_the_memory_budget_change_nothing() -> None:
     assert raised.value.code == "memory_size"
     assert (doc.to_bytes(), doc.history.steps) == before
     assert attached.read() == b"small"
+
+
+# Ported from pylopdf ebb01d3c tests/test_file_fields.py, the annotation cases.
+
+
+def test_annotation_file_fields_are_assignable() -> None:
+    page = pyropdf.Document().pages.new((200, 200))
+    annotation = page.annotations.add(FileAttachment((20, 30), b"payload", filename="data.bin", description="Raw"))
+    attached = annotation.file
+    assert attached is not None
+    created = attached.created
+    assert created is not None
+
+    attached.filename = "renamed.bin"
+    attached.modified = "D:20270101000000Z"
+    del attached.description
+
+    reopened = pyropdf.open(page.document.to_bytes()).pages[0].annotations[0].file
+    assert reopened is not None
+    assert (reopened.filename, reopened.description) == ("renamed.bin", None)
+    assert (reopened.created, reopened.modified) == (created, "D:20270101000000Z")
+    assert reopened.read() == b"payload"
+
+    reopened.write(b"other")
+    assert reopened.modified != "D:20270101000000Z"
+
+
+def test_a_direct_file_specification_of_an_annotation_is_edited() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: (
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] "
+                    "/Annots [<< /Type /Annot /Subtype /FileAttachment /Rect [10 10 30 30] "
+                    "/FS << /Type /Filespec /F (a.txt) /EF << /F 4 0 R >> >> >>] >>"
+                ),
+                4: "<< /Type /EmbeddedFile /Length 1 >>\nstream\nA\nendstream",
+            }
+        )
+    )
+    annotation = doc.pages[0].annotations[0]
+    attached = annotation.file
+    assert attached is not None
+
+    attached.created = "D:20200101000000Z"
+    attached.filename = "b.txt"
+
+    assert annotation.xref != 0
+    assert (attached.filename, attached.created) == ("b.txt", "D:20200101000000Z")
+
+
+class _Shrinking(str):
+    """A str that reports a small length and encodes to nothing."""
+
+    __slots__ = ()
+
+    def __len__(self) -> int:
+        return 1
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+        return b""
+
+
+class _Changing(str):
+    """A str whose text changes when it is converted or encoded again."""
+
+    __slots__ = ()
+
+    def __str__(self) -> str:
+        return "changed.txt"
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:  # noqa: ARG002
+        return b"changed.txt"
+
+
+def test_str_subclasses_cannot_bypass_the_file_text_bound() -> None:
+    page = pyropdf.Document().pages.new((200, 200))
+    attached = page.annotations.add(FileAttachment((20, 30), b"x", filename="a.txt")).file
+    assert attached is not None
+    oversized = _Shrinking("x" * (1024 * 1024 + 1))
+    with pytest.raises(pyropdf.LimitError) as raised:
+        FileAttachment((20, 30), b"x", filename=oversized)
+    assert raised.value.code == "embedded_file_input_size"
+    with pytest.raises(pyropdf.LimitError) as raised:
+        attached.description = oversized
+    assert raised.value.code == "embedded_file_input_size"
+    with pytest.raises(pyropdf.LimitError) as raised:
+        attached.filename = _Shrinking("é" * (512 * 1024 + 1))
+    assert raised.value.code == "embedded_file_input_size"
+    assert attached.description is None
+
+
+def test_str_subclasses_write_their_validated_text() -> None:
+    page = pyropdf.Document().pages.new((200, 200))
+    annotation = page.annotations.add(FileAttachment((20, 30), b"x", filename=_Changing("first.txt")))
+    attached = annotation.file
+    assert attached is not None
+    assert attached.filename == "first.txt"
+    attached.filename = _Changing("second.txt")
+    attached.description = _Changing("notes")
+    attached.created = _Changing("D:20260101000000Z")
+    assert (attached.filename, attached.description, attached.created) == (
+        "second.txt",
+        "notes",
+        "D:20260101000000Z",
+    )
