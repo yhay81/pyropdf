@@ -354,11 +354,12 @@ def _file_texts(texts: Iterable[str], label: str) -> None:
     for text in texts:
         # Each character needs at least one UTF-8 byte. Reject oversized
         # inputs before allocating an encoded copy of them.
-        if len(text) > _MAX_ANNOTATION_INPUT_TEXT_SIZE - size:
+        # The built-in methods, so that a str subclass cannot report less.
+        if str.__len__(text) > _MAX_ANNOTATION_INPUT_TEXT_SIZE - size:
             code = "embedded_file_input_size"
             msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
             raise LimitError(code, msg)
-        size += len(text.encode("utf-8", "surrogatepass"))
+        size += len(str.encode(text, "utf-8", "surrogatepass"))
         if size > _MAX_ANNOTATION_INPUT_TEXT_SIZE:
             code = "embedded_file_input_size"
             msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
@@ -369,6 +370,9 @@ def _file_text(value: object, name: str) -> str:
     if not isinstance(value, str):
         msg = f"{name} must be a str: {type(value).__name__}"
         raise TypeError(msg)
+    # A built-in copy, so that writing does not call a subclass's methods
+    # again after validation.
+    value = str.__str__(value)
     _file_texts([value], name)
     return value
 
@@ -377,6 +381,7 @@ def _file_date(value: object, name: str) -> str:
     if not isinstance(value, str):
         msg = f"{name} must be a str: {type(value).__name__}"
         raise TypeError(msg)
+    value = str.__str__(value)
     if not value.startswith("D:") or not value.isascii() or len(value) > _MAX_DATE_SIZE:
         msg = f"{name} must be a PDF date string such as 'D:20260101120000Z': {value!r}"
         raise ValueError(msg)
@@ -1598,6 +1603,8 @@ class FileAttachment:
         if not isinstance(filename, str) or (description is not None and not isinstance(description, str)):
             msg = "filename must be a str and description a str or None"
             raise TypeError(msg)
+        filename = str.__str__(filename)
+        description = str.__str__(description) if description is not None else None
         _file_texts((filename, description or ""), "attached file name and description")
         _bound_input("FileAttachment", contents)
         object.__setattr__(self, "at", _point(at))
