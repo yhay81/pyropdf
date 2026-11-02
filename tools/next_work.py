@@ -273,7 +273,7 @@ def render(data: dict[str, Any]) -> str:
         lines.append(f"\n{group.replace('_', ' ').title()}:")
         for item in entries:
             counts = f"blockers={item['blockers']}, open dependents={item['dependents']}"
-            if group == "upstream":
+            if "upstream" in item["labels"]:
                 counts = f"state={upstream_state(item['labels'])}, " + counts
             if item["linked_prs"]:
                 counts += ", PRs=" + ",".join(f"#{number}" for number in item["linked_prs"])
