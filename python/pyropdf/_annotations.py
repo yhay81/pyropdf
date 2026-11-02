@@ -16,9 +16,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core
+from pyropdf._canvas import _cache
 from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
-from pyropdf._fonts import Font
+from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
@@ -684,6 +685,28 @@ def _now() -> str:
     return time.strftime("D:%Y%m%d%H%M%SZ", time.gmtime())
 
 
+def _draw_face(page: Page, index: int, id: tuple[int, int], font: Font) -> None:  # noqa: A002 - an object's id.
+    """Draw free text ``id`` in embedded ``font``, in the caller's transaction.
+
+    A first pass collects the glyphs that the text shows, the font records
+    their widths and texts, and a second pass writes the appearance, whose
+    resources name the font: that is where the free text keeps its face.
+    """
+    document = page._document  # noqa: SLF001
+    location = (document._core(), page._number, page._generation, index, id)  # noqa: SLF001
+    face = font._font  # noqa: SLF001 - the package's own face.
+    drawn = _core.annotation_draw_face(*location, face)
+    if drawn is None:
+        raise page._stale()  # noqa: SLF001
+    cache = _cache(document)
+    # The appearance names the font even without glyphs, so that an edit finds the face.
+    xref = embedded_font(document, font, cache.fonts)
+    cache.faces[xref] = font
+    mapped = add_glyphs(document, xref, font, drawn) if drawn else {}
+    if _core.annotation_draw_face(*location, face, (xref, mapped)) is None:
+        raise page._stale()  # noqa: SLF001
+
+
 class Annotation:
     """A handle on one annotation of a page, as ``page.annotations`` lists it.
 
@@ -720,9 +743,27 @@ class Annotation:
         self._id = result
 
     def _set(self, *, clear: list[str] | None = None, **entries: object) -> None:
-        """Change properties, recording the time of the edit; the appearance settles later."""
+        """Change properties, recording the time of the edit; the appearance settles later.
+
+        A free text drawn in an embedded face this session is drawn again in
+        that face, in the same undo step as the edit.
+        """
         edit: dict[str, object] = {"clear": clear or [], "modified": _now(), **entries}
-        self._changed(_core.annotation_edit(*self._location(), edit))
+        font = self._face()
+        if font is None:
+            self._changed(_core.annotation_edit(*self._location(), edit))
+            return
+        with self._page._document.transaction():  # noqa: SLF001
+            self._changed(_core.annotation_edit(*self._location(), edit, face=True))
+            _draw_face(self._page, self._index, self._id, font)
+
+    def _face(self) -> Font | None:
+        """Return the embedded face that this session drew the free text in, if its appearance still names it."""
+        cache = self._page._document._drawn  # noqa: SLF001
+        if cache is None or not cache.faces:
+            return None
+        xref = _core.annotation_face(*self._location())
+        return None if xref is None else cache.faces.get(xref)
 
     def _text(self, slot: int) -> str | None:
         return self._read()[5][slot]
@@ -1720,10 +1761,14 @@ class FreeText:
     """Text written on the page in a box, as ``page.annotations.add`` takes it.
 
     ``rect`` is the box in display coordinates and ``text`` its text,
-    wrapped as :meth:`Canvas.textbox` wraps it, ``align``-ed, and in the
-    Standard 14 ``font``, Helvetica by default, at ``size`` points and
-    ``text_color``. The font is named in the annotation's ``/DA``, so other
-    viewers can redraw it; it prints WinAnsi characters only. ``color``
+    wrapped as :meth:`Canvas.textbox` wraps it, ``align``-ed, and in
+    ``font``, Helvetica by default, at ``size`` points and ``text_color``.
+    A Standard 14 font is named in the annotation's ``/DA``, so other
+    viewers can redraw it; it prints WinAnsi characters only. An embedded
+    :class:`Font` shapes any text that it has glyphs for; the appearance
+    names its font, and edits in the same session draw the text in it
+    again. A later session knows no face and redraws the text in the
+    ``/DA`` font, Helvetica, refusing text outside WinAnsi. ``color``
     fills the box, ``border`` outlines it in the text color, and ``rotate``
     turns the text clockwise by a multiple of 90 degrees as the page is
     displayed. ``callout`` draws a line from the display point that the
@@ -1769,9 +1814,6 @@ class FreeText:
         if font is not None and not isinstance(font, Font):
             msg = f"font must be a pyropdf.Font or None, not {type(font).__name__}"
             raise TypeError(msg)
-        if font is not None and font._font.standard_name is None:  # noqa: SLF001 - the package's own face.
-            msg = "free text draws in a Standard 14 font; an embedded face is not supported"
-            raise ValueError(msg)
         size = _number(size, "size")
         if not 0 < size <= _MAX_FREE_TEXT_SIZE:
             msg = f"size must be greater than 0 and at most {_MAX_FREE_TEXT_SIZE}: {size!r}"
@@ -1796,12 +1838,19 @@ class FreeText:
         object.__setattr__(self, "callout_ending", LineEnding(callout_ending))
         object.__setattr__(self, "opacity", _opacity(opacity))
 
+    def _face(self) -> Font | None:
+        """Return the embedded face that draws the text, or ``None`` for a Standard 14 font."""
+        font = self.font
+        return None if font is None or font._font.standard_name is not None else font  # noqa: SLF001
+
     def _payload(self) -> dict[str, Any]:
-        try:
-            str.encode(self.text, "cp1252")
-        except UnicodeEncodeError as exc:
-            msg = "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters"
-            raise ValueError(msg) from exc
+        face = self._face()
+        if face is None:
+            try:
+                str.encode(self.text, "cp1252")
+            except UnicodeEncodeError as exc:
+                msg = "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters"
+                raise ValueError(msg) from exc
         border = self.border
         color = self.color
         text_color = self.text_color
@@ -1815,7 +1864,8 @@ class FreeText:
             "opacity": self.opacity,
             "text_color": (text_color.red, text_color.green, text_color.blue),
             "font_size": self.size,
-            "font_name": "Helvetica" if self.font is None else self.font._font.standard_name,  # noqa: SLF001
+            # An embedded face's text falls back to Helvetica in viewers that redraw it.
+            "font_name": "Helvetica" if self.font is None or face is not None else self.font._font.standard_name,  # noqa: SLF001
             "align": _FREE_TEXT_ALIGNMENTS.index(self.align),
             "rotate": self.rotate,
         }
@@ -2259,9 +2309,19 @@ class Annotations(Sequence[Annotation]):
             raise TypeError(msg)
         page = self._page
         payload = cast("dict[str, object]", specification._payload())  # noqa: SLF001
-        result = _core.annotation_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
-        if result is None:
-            raise page._stale()  # noqa: SLF001
+        face = specification._face() if isinstance(specification, FreeText) else None  # noqa: SLF001
+        document = page._document  # noqa: SLF001
+        if face is None:
+            result = _core.annotation_add(document._core(), page._number, page._generation, payload)  # noqa: SLF001
+            if result is None:
+                raise page._stale()  # noqa: SLF001
+        else:
+            # One undo step: the annotation, the face's glyphs, and its appearance.
+            with document.transaction():
+                result = _core.annotation_add(document._core(), page._number, page._generation, payload, face=True)  # noqa: SLF001
+                if result is None:
+                    raise page._stale()  # noqa: SLF001
+                _draw_face(page, 0, result, face)
         # The handle finds the new annotation by its object.
         return Annotation(page, result, 0)
 

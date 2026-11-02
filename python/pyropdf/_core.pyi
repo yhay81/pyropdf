@@ -374,12 +374,35 @@ def annotation_text(
     max_size: int | None,
     /,
 ) -> tuple[str, int] | None: ...
-def annotation_add(document: _Document, number: int, generation: int, spec: dict[str, object], /) -> _Id | None: ...
+def annotation_add(
+    document: _Document, number: int, generation: int, spec: dict[str, object], /, *, face: bool = False
+) -> _Id | None: ...
+def annotation_draw_face(
+    document: _Document,
+    number: int,
+    generation: int,
+    index: int,
+    annotation: _Id,
+    face: _Font,
+    font: tuple[int, dict[int, str]] | None = None,
+    /,
+) -> list[tuple[int, str]] | None: ...
+def annotation_face(
+    document: _Document, number: int, generation: int, index: int, annotation: _Id, /
+) -> int | None: ...
 def annotation_geometry(
     document: _Document, number: int, generation: int, index: int, annotation: _Id, /
 ) -> tuple[list[list[tuple[float, float]]] | None, tuple[str, str] | None] | None: ...
 def annotation_edit(
-    document: _Document, number: int, generation: int, index: int, annotation: _Id, edit: dict[str, object], /
+    document: _Document,
+    number: int,
+    generation: int,
+    index: int,
+    annotation: _Id,
+    edit: dict[str, object],
+    /,
+    *,
+    face: bool = False,
 ) -> _Id | None: ...
 def annotation_popup(
     document: _Document,

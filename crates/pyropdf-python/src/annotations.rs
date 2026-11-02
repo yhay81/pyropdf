@@ -15,6 +15,7 @@
 pub(crate) mod input;
 pub mod links;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyo3::Borrowed;
@@ -22,11 +23,14 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyropdf_engine::annotations::{
-    LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, TextFit, appearance, ending_size,
-    has_points, is_text_markup, synthesized_for, valid_dashes, zigzag_points,
+    FACE_RESOURCE, LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, TextFit, appearance,
+    ending_size, face_appearance, has_points, is_text_markup, synthesized_for, valid_dashes,
+    zigzag_points,
 };
 use pyropdf_engine::bridge::Bridged;
 use pyropdf_engine::extract;
+use pyropdf_engine::forms::WidgetError;
+use pyropdf_engine::forms::face::{FaceFont, FaceText};
 use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::render::{self, Raster};
 use pyropdf_engine::standard::DA_FONTS;
@@ -39,7 +43,10 @@ use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Reference, Strea
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::document::{_Document, text_string};
-use crate::errors::{MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error};
+use crate::errors::{
+    LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
+};
+use crate::fonts::_Font;
 use crate::objects::set_data;
 use crate::pages::{display_box, index as page_index, number, rect, rotation};
 use crate::pixmap::{Pixmap, bridge_error, raster_error};
@@ -1299,7 +1306,8 @@ fn check_text(annots: &Annots, dict: &Dict) -> PyResult<()> {
             "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
         )),
         Some(TextFit::NotWinAnsi) => Err(PdfError::new_err(
-            "free text draws in a Standard 14 font, which prints WinAnsi characters only",
+            "free text draws in a Standard 14 font, which prints WinAnsi characters only; \
+             an embedded face is known only in the session that added the free text in it",
         )),
         _ => Ok(()),
     }
@@ -1307,8 +1315,16 @@ fn check_text(annots: &Annots, dict: &Dict) -> PyResult<()> {
 
 /// Applies `edit` to the annotation that a handle names, marks its
 /// appearance stale, and returns its object, which a direct dictionary
-/// gains here.
+/// gains here. With `face`, the caller draws the free text in an embedded
+/// face with [`annotation_draw_face`] in the same transaction, so the edit
+/// neither checks the text against a Standard 14 font nor marks the
+/// appearance stale.
 #[pyfunction]
+#[pyo3(signature = (document, number, generation, index, id, edit, face=false))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a handle's location, the edit, and its flag"
+)]
 pub fn annotation_edit(
     py: Python<'_>,
     document: &_Document,
@@ -1317,6 +1333,7 @@ pub fn annotation_edit(
     index: u32,
     id: (u32, u16),
     edit: &Bound<'_, PyAny>,
+    face: bool,
 ) -> PyResult<Option<(u32, u16)>> {
     editing(
         py,
@@ -1328,10 +1345,158 @@ pub fn annotation_edit(
             let (position, mut dict) = annots.find(index, id)?;
             let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
             edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
-            check_text(annots, &dict)?;
-            annots.write(transaction, position, true, dict, |_, _, _, _, _| Ok(false))
+            if !face {
+                check_text(annots, &dict)?;
+            }
+            annots.write(transaction, position, !face, dict, |_, _, _, _, _| {
+                Ok(false)
+            })
         },
     )
+}
+
+/// Returns the object of the Type0 font that the normal appearance of the
+/// free text that a handle names draws its text in, as
+/// [`annotation_draw_face`] names it, or `None` for an annotation that no
+/// embedded face drew; `None` too for a page that is gone.
+#[pyfunction]
+pub fn annotation_face(
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<u32>> {
+    let (version, index_of_pages, budget) = page_index(document)?;
+    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
+        return Ok(None);
+    };
+    let (_, dict) = annots.find(index, id)?;
+    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+        return Ok(None);
+    }
+    let Some(Value::Dict(appearances)) = annots.resolved(dict.get("AP"))? else {
+        return Ok(None);
+    };
+    let Some(Value::Stream(normal)) = annots.resolved(appearances.get("N"))? else {
+        return Ok(None);
+    };
+    let Some(Value::Dict(resources)) = annots.resolved(normal.dict().get("Resources"))? else {
+        return Ok(None);
+    };
+    let Some(Value::Dict(fonts)) = annots.resolved(resources.get("Font"))? else {
+        return Ok(None);
+    };
+    Ok(match fonts.get(FACE_RESOURCE) {
+        Some(Value::Reference(font)) => Some(font.number()),
+        _ => None,
+    })
+}
+
+/// Draws the free text that a handle names with its text in embedded
+/// `face`, as the appearance settler draws it in a Standard 14 font, and
+/// returns the glyphs that it shows with their texts.
+///
+/// Without `font`, it only collects the glyphs and writes nothing. With
+/// `font`, the Type0 font of the face that the appearance names and the
+/// text that its ToUnicode CMap maps each glyph to, it writes the normal
+/// appearance, whose resources name the font [`FACE_RESOURCE`]: that is
+/// where the free text records its face, since an annotation has no
+/// `/DR`. Refuses a character that the face has no glyph for and text that
+/// does not fit, leaving the document as it was. Returns `None` for a page
+/// that is gone.
+#[pyfunction]
+#[pyo3(signature = (document, number, generation, index, id, face, font=None))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a handle's location, the face, and its font"
+)]
+pub fn annotation_draw_face(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    face: &_Font,
+    font: Option<(u32, HashMap<u32, String>)>,
+) -> PyResult<Option<Vec<(u32, String)>>> {
+    let Some(face) = face.embedded() else {
+        return Err(PdfError::new_err(
+            "free text draws an OpenType face here, not a Standard 14 font",
+        ));
+    };
+    editing(
+        py,
+        document,
+        number,
+        generation,
+        |annots, transaction, budget| {
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let (position, dict) = annots.find(index, id)?;
+            let font = match &font {
+                Some((number, mapped)) => {
+                    let generation = transaction
+                        .version()
+                        .get(*number, budget)
+                        .map_err(store)?
+                        .map_or(0, |object| object.generation());
+                    Some(FaceFont {
+                        font: Reference::new(*number, generation),
+                        mapped,
+                    })
+                }
+                None => None,
+            };
+            let writing = font.is_some();
+            let mut text = FaceText::new(face, font, budget).map_err(face_error)?;
+            let Some(drawn) = face_appearance(&annots.reader(), &dict, &mut text).map_err(store)?
+            else {
+                return Err(PdfError::new_err(
+                    "only a free text with a usable rectangle draws in an embedded face",
+                ));
+            };
+            match drawn.text_fit() {
+                TextFit::Unfit => {
+                    return Err(PdfError::new_err(
+                        "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
+                    ));
+                }
+                TextFit::NoGlyph(character) => {
+                    return Err(PdfError::new_err(format!(
+                        "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
+                        face.full_name,
+                        u32::from(character)
+                    )));
+                }
+                TextFit::Fits | TextFit::NotWinAnsi => {}
+            }
+            if writing {
+                let reference = transaction.allocate().map_err(store)?;
+                transaction
+                    .write(reference.number(), &Value::from(drawn.form()), budget)
+                    .map_err(store)?;
+                charge_copy(CopyPart::Dict(&dict), budget)?;
+                let mut dict = dict;
+                let mut appearances = Dict::new();
+                appearances.insert(Name::from("N"), Value::Reference(reference));
+                dict.insert(Name::from("AP"), Value::Dict(appearances));
+                annots.write(transaction, position, false, dict, |_, _, _, _, _| {
+                    Ok(false)
+                })?;
+            }
+            Ok(text.into_drawn())
+        },
+    )
+}
+
+/// Maps a refusal of an embedded face's drawing to its Python error.
+fn face_error(error: WidgetError) -> PyErr {
+    match error {
+        WidgetError::Malformed(message) => PdfError::new_err(message.into_owned()),
+        WidgetError::Lines => LimitError::new_err(("text_line_count", error.to_string())),
+        WidgetError::Store(error) => store_error(&error),
+    }
 }
 
 /// Moves the popup of the annotation that a handle names to a display
@@ -2247,14 +2412,19 @@ impl Spec {
 
 /// Adds the annotation that `spec` describes to page object `(number,
 /// generation)`, marks its appearance stale so that settling draws it, and
-/// returns its object; or `None` for a page that is gone.
+/// returns its object; or `None` for a page that is gone. With `face`, the
+/// caller draws the free text in an embedded face with
+/// [`annotation_draw_face`] in the same transaction, so the text is not
+/// checked against a Standard 14 font and the appearance is not marked.
 #[pyfunction]
+#[pyo3(signature = (document, number, generation, spec, face=false))]
 pub fn annotation_add(
     py: Python<'_>,
     document: &_Document,
     number: u32,
     generation: u16,
     spec: &Bound<'_, PyAny>,
+    face: bool,
 ) -> PyResult<Option<(u32, u16)>> {
     editing(
         py,
@@ -2273,7 +2443,9 @@ pub fn annotation_add(
                 return Err(PdfError::new_err("the page's /Annots is not an array"));
             }
             let mut dict = spec.dictionary(annots)?;
-            check_text(annots, &dict)?;
+            if !face {
+                check_text(annots, &dict)?;
+            }
             if let Some(page) = annots.page().object() {
                 dict.insert(Name::from("P"), Value::Reference(page));
             }
@@ -2287,9 +2459,11 @@ pub fn annotation_add(
             let mut items = annots.items.clone();
             items.push(Value::Reference(reference));
             annots.write_items(transaction, items, budget)?;
-            transaction
-                .mark(Structure::Appearance, reference.number(), budget)
-                .map_err(|e| store_error(&e))?;
+            if !face {
+                transaction
+                    .mark(Structure::Appearance, reference.number(), budget)
+                    .map_err(|e| store_error(&e))?;
+            }
             Ok((reference.number(), reference.generation()))
         },
     )

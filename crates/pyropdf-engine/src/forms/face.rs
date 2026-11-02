@@ -66,7 +66,7 @@ impl<'f> FaceText<'f> {
         self.drawn.into_vec()
     }
 
-    pub(super) fn font(&self) -> Option<Reference> {
+    pub(crate) fn font(&self) -> Option<Reference> {
         self.font.as_ref().map(|font| font.font)
     }
 
@@ -80,16 +80,21 @@ impl<'f> FaceText<'f> {
             })
     }
 
-    /// Refuses `value` when the face lacks a glyph for one of its
-    /// characters other than a control character.
-    pub(super) fn check(&self, value: &str) -> Result<(), WidgetError> {
+    /// Returns the first character of `value`, other than a control
+    /// character, that the face has no glyph for.
+    pub(crate) fn missing(&self, value: &str) -> Result<Option<char>, LayoutError> {
         let glyphs = self.shape(value)?;
-        if let Some(character) = glyphs
+        Ok(glyphs
             .iter()
             .filter(|glyph| glyph.glyph == 0)
             .filter_map(|glyph| value[glyph.cluster.clone()].chars().next())
-            .find(|character| !character.is_control())
-        {
+            .find(|character| !character.is_control()))
+    }
+
+    /// Refuses `value` when the face lacks a glyph for one of its
+    /// characters other than a control character.
+    pub(super) fn check(&self, value: &str) -> Result<(), WidgetError> {
+        if let Some(character) = self.missing(value)? {
             return Err(WidgetError::Malformed(
                 format!(
                     "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
@@ -104,7 +109,7 @@ impl<'f> FaceText<'f> {
 
     /// Lays out `text` in a box at `font_size`, the lines `line_height` em
     /// apart and placed by the face's ascender and descender.
-    pub(super) fn layout<'t>(
+    pub(crate) fn layout<'t>(
         &self,
         text: &'t str,
         box_size: (f64, f64),
@@ -146,7 +151,7 @@ impl<'f> FaceText<'f> {
     /// shaped advance and by its offset, `Ts` raises it, and a glyph whose
     /// text the ToUnicode CMap does not map is shown inside `/ActualText`,
     /// as canvas text draws it.
-    pub(super) fn show(
+    pub(crate) fn show(
         &mut self,
         out: &mut BudgetVec<'_, u8>,
         line: &str,

@@ -36,6 +36,7 @@ use pyropdf_store::version::{Transaction, Version};
 use pyropdf_store::{Error, Result};
 
 use crate::forms;
+use crate::forms::face::FaceText;
 
 /// The most points that one annotation's geometry holds, a squiggly line's
 /// zigzag included.
@@ -74,7 +75,7 @@ pub use missing::{
     MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
 };
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
-pub use text::{STAMPS, TextFit, default_appearance};
+pub use text::{FACE_RESOURCE, STAMPS, TextFit, default_appearance};
 
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`
 /// lists its corners.
@@ -682,8 +683,8 @@ pub struct Appearance {
     points: usize,
     /// The matrix that maps the form's box onto the rectangle.
     matrix: [f64; 6],
-    /// The Standard 14 font that the content's text names, by resource.
-    font: Option<text::FontResource>,
+    /// The font that the content's text names, by resource.
+    font: Option<text::TextFont>,
     /// Whether the text of a free text fit.
     fit: TextFit,
 }
@@ -710,20 +711,28 @@ impl Appearance {
         );
         dict.insert(Name::from("Matrix"), numbers_array(&self.matrix));
         let mut resources = Dict::new();
-        if let Some((resource, base_font)) = self.font {
-            let mut font = Dict::new();
-            font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
-            font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
-            font.insert(Name::from("BaseFont"), Value::Name(Name::from(base_font)));
-            if !matches!(base_font, "Symbol" | "ZapfDingbats") {
-                font.insert(
-                    Name::from("Encoding"),
-                    Value::Name(Name::from("WinAnsiEncoding")),
-                );
+        match self.font {
+            Some(text::TextFont::Standard((resource, base_font))) => {
+                let mut font = Dict::new();
+                font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+                font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+                font.insert(Name::from("BaseFont"), Value::Name(Name::from(base_font)));
+                if !matches!(base_font, "Symbol" | "ZapfDingbats") {
+                    font.insert(
+                        Name::from("Encoding"),
+                        Value::Name(Name::from("WinAnsiEncoding")),
+                    );
+                }
+                let mut fonts = Dict::new();
+                fonts.insert(Name::from(resource), Value::Dict(font));
+                resources.insert(Name::from("Font"), Value::Dict(fonts));
             }
-            let mut fonts = Dict::new();
-            fonts.insert(Name::from(resource), Value::Dict(font));
-            resources.insert(Name::from("Font"), Value::Dict(fonts));
+            Some(text::TextFont::Embedded(reference)) => {
+                let mut fonts = Dict::new();
+                fonts.insert(Name::from(FACE_RESOURCE), Value::Reference(reference));
+                resources.insert(Name::from("Font"), Value::Dict(fonts));
+            }
+            None => {}
         }
         if self.alpha < 1.0 || self.blend.is_some() {
             let mut state = Dict::new();
@@ -833,18 +842,34 @@ pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>>
 /// for a kind that [`draws`] refuses, or for a dictionary without a usable
 /// rectangle, geometry, or opacity.
 pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
-    appearance_with(reader, dict, false)
+    appearance_with(reader, dict, false, None)
+}
+
+/// Draws the normal appearance of the free text `dict` as [`appearance`]
+/// does, with its text in embedded `face` instead of the font of `/DA`, or
+/// returns `None` for another kind. While `face` collects glyphs, the
+/// appearance names no font and is not to be written.
+pub fn face_appearance(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    face: &mut FaceText<'_>,
+) -> Result<Option<Appearance>> {
+    if reader.name(dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+        return Ok(None);
+    }
+    appearance_with(reader, dict, false, Some(face))
 }
 
 /// Charges aggregate path points only for render-time synthesis.
 fn appearance_for_render(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
-    appearance_with(reader, dict, true)
+    appearance_with(reader, dict, true, None)
 }
 
 fn appearance_with(
     reader: &Reader<'_>,
     dict: &Dict,
     aggregate: bool,
+    face: Option<&mut FaceText<'_>>,
 ) -> Result<Option<Appearance>> {
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
@@ -913,7 +938,7 @@ fn appearance_with(
     let mut fit = TextFit::Fits;
     match (&*subtype, &geometry) {
         (b"FreeText", _) => {
-            (fit, font) = text::free_text(&mut canvas, reader, dict, &paint, rect)?;
+            (fit, font) = text::free_text(&mut canvas, reader, dict, &paint, rect, face)?;
         }
         (b"Stamp", _) => {
             let icon = reader.entry(dict, "Name")?;
@@ -921,7 +946,7 @@ fn appearance_with(
                 Some(Value::Name(name)) => name.as_bytes(),
                 _ => b"Draft",
             };
-            font = text::stamp(&mut canvas, &paint, icon, size)?;
+            font = text::stamp(&mut canvas, &paint, icon, size)?.map(text::TextFont::Standard);
         }
         (b"Text", _) => {
             let icon = reader.name(dict, "Name")?;

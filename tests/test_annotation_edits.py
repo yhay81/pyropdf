@@ -3,13 +3,16 @@
 pylopdf's tests/test_annotation_edits.py at ebb01d3c. Intended
 differences: the core's edits are called as ``_core.annotation_edit`` with
 the page's object and the annotation's handle; pyropdf's ``Caret`` takes
-its display rectangle rather than a point; free text draws in a
-Standard 14 font only, so non-Latin text is refused instead of drawn in an
-installed face (pylopdf skips that case without its ``jp`` extra).
+its display rectangle rather than a point; pyropdf has no installed face,
+so non-Latin free text in a Standard 14 font is refused, and
+``test_non_latin_free_text_keeps_its_installed_face`` passes an embedded
+``Font`` instead, with text that its test subset has glyphs for (pylopdf
+skips that case without its ``jp`` extra).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -24,6 +27,7 @@ from pyropdf import (
     Caret,
     Color,
     FileAttachment,
+    Font,
     FreeText,
     Ink,
     LineAnnotation,
@@ -39,6 +43,7 @@ from pyropdf import (
 )
 
 WHITE = (255, 255, 255)
+JAPANESE = Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:
@@ -216,6 +221,15 @@ def test_non_latin_free_text_is_refused_and_changes_nothing() -> None:
         free_text.contents = "更新"
 
     assert page.text().strip() == "Latin"
+
+
+def test_non_latin_free_text_keeps_its_installed_face() -> None:
+    page = _page()
+    free_text = page.annotations.add(FreeText((20, 20, 200, 60), "日本語", font=Font.from_file(JAPANESE)))
+
+    free_text.contents = "テキスト"
+
+    assert page.text().strip() == "テキスト"
 
 
 def test_edits_of_annotations_that_other_producers_wrote() -> None:
