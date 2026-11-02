@@ -8,6 +8,7 @@ test_canvas_text.py and in embedded faces in test_canvas_embedded.py.
 from __future__ import annotations
 
 import itertools
+import random
 import struct
 import sys
 import threading
@@ -839,3 +840,26 @@ def test_drawing_a_pixmap_past_the_memory_budget_is_refused_without_changes() ->
         canvas.image((0, 0, 100, 100), pixmap)
     assert raised.value.code == "memory_size"
     assert (doc.to_bytes(), doc.history.steps) == before
+
+
+def test_pixmap_png_counts_encoded_output_in_memory_budget() -> None:
+    width = height = 256
+    rng = random.Random(1847)  # noqa: S311 - reproducible image samples, not secrets.
+    samples = rng.randbytes(width * height * 3)
+    rows = b"".join(b"\x00" + samples[y * width * 3 : (y + 1) * width * 3] for y in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    _source_doc, source = _new_page(width, height)
+    with source.draw() as canvas:
+        canvas.image((0, 0, width, height), png)
+    pixmap = source.pixmap(dpi=72)
+    assert len(_core.pixmap_png(pyropdf.Document()._core(), pixmap)) > 180_000  # noqa: SLF001
+
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=500_000))
+    with pytest.raises(pyropdf.LimitError) as raised:
+        _core.pixmap_png(document._core(), pixmap)  # noqa: SLF001
+    assert raised.value.code == "memory_size"

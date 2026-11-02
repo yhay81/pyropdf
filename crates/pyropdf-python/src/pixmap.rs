@@ -23,7 +23,7 @@ use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::ocr;
 use pyropdf_engine::render::{self, Raster, RasterError};
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, BudgetVec};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::save::deflate;
 use pyropdf_store::value::Reference;
 
@@ -72,6 +72,28 @@ fn png_chunk(out: &mut dyn Write, kind: &[u8; 4], data: &[u8]) -> io::Result<()>
     out.write_all(kind)?;
     out.write_all(data)?;
     out.write_all(&crc.sum().to_be_bytes())
+}
+
+/// An encoded image sink whose growth is charged to the operation budget.
+struct BudgetedPngOutput<'b> {
+    bytes: BudgetVec<'b, u8>,
+    refusal: Option<LimitExceeded>,
+}
+
+impl Write for BudgetedPngOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self.bytes.try_extend_from_slice(bytes) {
+            Ok(()) => Ok(bytes.len()),
+            Err(refusal) => {
+                self.refusal = Some(refusal);
+                Err(io::Error::other("PNG output exceeded its budget"))
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// A rendered page: immutable pixels, row by row from the top, RGB or gray,
@@ -1238,10 +1260,55 @@ pub fn pixmap_png<'py>(
     pixmap: &Pixmap,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let budget = document.budget();
-    let mut out = Vec::new();
-    py.detach(|| pixmap.encode_png(&mut out, &budget))
-        .map_err(|e| e.into_py("failed to encode PNG"))?;
-    Ok(PyBytes::new(py, &out))
+    let mut out = BudgetedPngOutput {
+        bytes: BudgetVec::new(&budget),
+        refusal: None,
+    };
+    let result = py.detach(|| pixmap.encode_png(&mut out, &budget));
+    if let Some(refusal) = out.refusal {
+        return Err(limit_error(&refusal));
+    }
+    result.map_err(|e| e.into_py("failed to encode PNG"))?;
+    // Python copies the encoded bytes while the Rust output remains live.
+    // Charge both allocations and use the fallible Python allocation API.
+    let len = out.bytes.len();
+    budget
+        .charge(
+            LimitCode::MemorySize,
+            u64::try_from(len).unwrap_or(u64::MAX),
+        )
+        .map_err(|e| limit_error(&e))?;
+    let size =
+        isize::try_from(len).map_err(|_| PyValueError::new_err("the encoded PNG is too large"))?;
+    // SAFETY: a null source requests an uninitialized bytes object. It is
+    // owned locally and is never exposed to Python before it is filled.
+    let raw = unsafe { ffi::PyBytes_FromStringAndSize(ptr::null(), size) };
+    // SAFETY: PyBytes_FromStringAndSize returns a new reference or null with
+    // a Python exception set. The owned handle also frees it on refusal.
+    let bytes = unsafe { Bound::from_owned_ptr_or_err(py, raw)? };
+    // SAFETY: `bytes` is a new, unshared bytes object and the result points
+    // to its `len` bytes of writable storage until the object is published.
+    let target = unsafe { ffi::PyBytes_AsString(bytes.as_ptr()).cast::<u8>() } as usize;
+    // The object remains owned and inaccessible to Python while detached, so
+    // another thread can cancel the operation while the bytes are copied.
+    py.detach(|| -> Result<(), LimitExceeded> {
+        for (index, source) in out.bytes.chunks(16 * 1024).enumerate() {
+            budget.poll()?;
+            // SAFETY: every chunk fits in the allocated, unshared object, and
+            // the source is a distinct Rust buffer. No uninitialized bytes
+            // are read. The owning handle remains alive until this finishes.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    source.as_ptr(),
+                    (target as *mut u8).add(index * 16 * 1024),
+                    source.len(),
+                );
+            }
+        }
+        budget.poll()
+    })
+    .map_err(|e| limit_error(&e))?;
+    bytes.cast_into::<PyBytes>().map_err(Into::into)
 }
 
 #[pyfunction]
