@@ -1,0 +1,19 @@
+# The probe behind issue #433: hayro 0.8.0 alone renders a page to RGBA, and
+# moxcms, which hayro-interpret already uses, converts the raster to CMYK
+# through an output ICC profile. The empty table below makes this directory a
+# workspace of its own, so the root Cargo.toml and Cargo.lock stay unchanged.
+[workspace]
+
+[package]
+name = "cmyk-raster"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+hayro = "0.8.0"
+moxcms = "0.8.1"
+
+[profile.release]
+debug = false
