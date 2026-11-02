@@ -565,15 +565,23 @@ class Field:
         if font is None or isinstance(value, bool) or self.type not in _TEXT_TYPES:
             _core.form_field_fill(self._core(), self._id, value)
             return
-        with document.transaction():
-            _core.form_field_fill(self._core(), self._id, value, False)  # noqa: FBT003 - the core's flag
+        # One operation: every call below charges one budget from the
+        # document's limits, and a refusal discards the whole fill.
+        core = self._core()
+        operation = _core.begin_operation(core, "")
+        try:
+            _core.form_field_fill(core, self._id, value, False)  # noqa: FBT003 - the core's flag
             face = font._font  # noqa: SLF001 - the package's own face.
-            drawn = _core.form_field_draw_face(self._core(), self._id, face)
+            drawn = _core.form_field_draw_face(core, self._id, face)
             xref, mapped = 0, {}
             if drawn:
                 xref = embedded_font(document, font, _cache(document).fonts)
                 mapped = add_glyphs(document, xref, font, drawn)
-            _core.form_field_draw_face(self._core(), self._id, face, (xref, mapped))
+            _core.form_field_draw_face(core, self._id, face, (xref, mapped))
+        except BaseException:
+            _core.abort_canvas(core, operation)
+            raise
+        _core.end_transaction(core, True)  # noqa: FBT003 - the core's flag
 
     @property
     def scripts(self) -> Scripts:
