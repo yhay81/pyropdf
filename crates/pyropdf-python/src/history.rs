@@ -419,12 +419,35 @@ fn canvas_budget(document: &_Document) -> Budget {
 
 /// Opens a canvas operation: a transaction named `draw`, or one nested in
 /// this thread's open transaction, whose work charges one budget from the
-/// document's limits. A canvas nested in another canvas is a view of the
+/// document's limits. A canvas nested in another operation is a view of the
 /// outer operation, which it charges. Waiting for another thread's
 /// transaction is part of the operation, so its deadline and cancellation
 /// apply to the wait.
 #[pyfunction]
 pub fn begin_canvas(py: Python<'_>, document: &_Document) -> PyResult<OperationBudget> {
+    begin_with(py, document, || canvas_budget(document), "draw")
+}
+
+/// Opens an operation named `name` as [`begin_canvas`] opens a canvas, but
+/// with every limit of the document, for an edit of several core calls
+/// such as a form fill in an embedded font. `abort_canvas` discards it.
+#[pyfunction]
+pub fn begin_operation(
+    py: Python<'_>,
+    document: &_Document,
+    name: String,
+) -> PyResult<OperationBudget> {
+    begin_with(py, document, || document.fresh_budget(), &name)
+}
+
+/// Opens an operation whose budget `limits` returns, named `name` when it
+/// is the outermost transaction.
+fn begin_with(
+    py: Python<'_>,
+    document: &_Document,
+    limits: impl Fn() -> Budget,
+    name: &str,
+) -> PyResult<OperationBudget> {
     document.document()?;
     let handle = |operation: SharedBudget| OperationBudget {
         operation,
@@ -434,9 +457,9 @@ pub fn begin_canvas(py: Python<'_>, document: &_Document) -> PyResult<OperationB
         let mut guard = lock(&document.history.open);
         if let Some(open) = owned(&mut guard) {
             let operation = match &open.operation {
-                Some(outer) => outer.constrained_by(&canvas_budget(document)),
+                Some(outer) => outer.constrained_by(&limits()),
                 None => {
-                    let operation = canvas_budget(document).share();
+                    let operation = limits().share();
                     operation.poll().map(|()| operation)
                 }
             }
@@ -447,7 +470,7 @@ pub fn begin_canvas(py: Python<'_>, document: &_Document) -> PyResult<OperationB
             return Ok(handle(operation));
         }
     }
-    let operation = canvas_budget(document).share();
+    let operation = limits().share();
     let (_, transaction) = document.on_current(py, |store| {
         loop {
             operation.poll()?;
@@ -463,7 +486,7 @@ pub fn begin_canvas(py: Python<'_>, document: &_Document) -> PyResult<OperationB
         transaction,
         savepoints: Vec::new(),
         operation: Some(operation.clone()),
-        name: "draw".into(),
+        name: name.into(),
         snapshot: None,
     });
     Ok(handle(operation))

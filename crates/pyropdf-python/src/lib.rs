@@ -83,9 +83,9 @@ mod _core {
     };
     #[pymodule_export]
     use super::history::{
-        OperationBudget, abort_canvas, begin_canvas, begin_transaction, end_transaction,
-        history_clear, history_redo, history_restore, history_save, history_state, history_undo,
-        set_history_limit,
+        OperationBudget, abort_canvas, begin_canvas, begin_operation, begin_transaction,
+        end_transaction, history_clear, history_redo, history_restore, history_save, history_state,
+        history_undo, set_history_limit,
     };
     #[pymodule_export]
     use super::images::{decode_png, encode_jpeg_samples, image_samples, image_stored, page_image};

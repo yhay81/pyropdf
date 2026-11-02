@@ -32,12 +32,16 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
 import pytest
 
 import pyropdf
-from pyropdf import _core
+from pyropdf import _core, _form
+from pyropdf._canvas import _cache
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 NOTO_SANS_JP = FONTS / "NotoSansJP-subset.otf"
@@ -1949,3 +1953,131 @@ def test_cached_fill_observes_cancellation() -> None:
     with pytest.raises(pyropdf.LimitError) as caught:
         field.value = "cancelled"
     assert caught.value.code == "cancelled"
+
+
+# An embedded-font fill is one operation (#518).
+
+
+def _capture_operation(monkeypatch: pytest.MonkeyPatch) -> list[_core._OperationBudget]:
+    operations: list[_core._OperationBudget] = []
+    begin = _core.begin_operation
+
+    def capture(document: _core._Document, name: str) -> _core._OperationBudget:
+        operation = begin(document, name)
+        operations.append(operation)
+        return operation
+
+    monkeypatch.setattr(_core, "begin_operation", capture)
+    return operations
+
+
+def test_an_embedded_font_fill_charges_one_operation(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = pyropdf.open(_build_form_pdf(), limits=pyropdf.DocumentLimits(max_memory_size=50_000_000))
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    operations = _capture_operation(monkeypatch)
+    used: dict[str, int] = {}
+
+    def record(name: str, call: Callable[..., object]) -> Callable[..., object]:
+        def wrapped(*args: object) -> object:
+            (operation,) = operations
+            used[f"{name} before"] = operation.used("memory_size")
+            result = call(*args)
+            used[f"{name} after"] = operation.used("memory_size")
+            return result
+
+        return wrapped
+
+    monkeypatch.setattr(_form, "embedded_font", record("font", _form.embedded_font))
+    monkeypatch.setattr(_form, "add_glyphs", record("glyphs", _form.add_glyphs))
+    doc.form["customer"].value = "日本語"
+
+    (operation,) = operations
+    # The value and the first appearance charged the operation before the
+    # font, and the font and its glyphs charged the same operation.
+    assert used["font before"] > 0
+    assert used["font after"] > used["font before"]
+    assert used["glyphs after"] > used["glyphs before"]
+    with pytest.raises(ValueError, match="not active"):
+        operation.used("memory_size")
+    assert _values(doc)["customer"] == "日本語"
+    assert doc.history.steps[-1] == ""
+
+
+def test_a_fill_that_fits_without_the_font_refuses_with_it_and_rolls_back() -> None:
+    # Find a memory limit that opens the document and a fill without the
+    # form font, but that the embedded-font fill exceeds.
+    data = _build_form_pdf()
+    for limit in range(20_000, 2_000_000, 2_000):
+        plain = pyropdf.open(data, limits=pyropdf.DocumentLimits(max_memory_size=limit))
+        try:
+            plain.form["customer"].value = "Hello"
+        except pyropdf.LimitError:
+            continue
+        doc = pyropdf.open(data, limits=pyropdf.DocumentLimits(max_memory_size=limit))
+        doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+        value, before, steps, count = _values(doc)["customer"], doc.to_bytes(), doc.history.steps, len(doc.objects)
+        try:
+            doc.form["customer"].value = "日本語のテキスト"
+        except pyropdf.LimitError as error:
+            code = error.code
+            break
+    else:
+        pytest.fail("no memory limit fits a plain fill and refuses the embedded-font fill")
+    assert code == "memory_size"
+    assert _values(doc)["customer"] == value
+    assert doc.to_bytes() == before
+    assert len(doc.objects) == count
+    assert doc.history.steps == steps
+
+
+def test_a_memory_limit_rolls_back_the_value_appearances_and_glyphs(monkeypatch: pytest.MonkeyPatch) -> None:
+    limit = 50_000_000
+    doc = pyropdf.open(_build_form_pdf(), limits=pyropdf.DocumentLimits(max_memory_size=limit))
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    doc.form["customer"].value = "日本"
+    field = doc.form["customer"]
+    (widget,) = field.widgets
+    font = next(xref for xref in _cache(doc).fonts.values())
+    widths = list(doc.objects[font]["DescendantFonts"][0]["W"])
+    cmap = doc.objects[font]["ToUnicode"].read()
+    appearance = widget.obj["AP"]["N"].read()
+    before, steps, state = doc.to_bytes(), doc.history.steps, _core.history_state(doc._core())  # noqa: SLF001
+    operations = _capture_operation(monkeypatch)
+    add_glyphs = _form.add_glyphs
+    reached: list[bool] = []
+
+    def exhaust(*args: object) -> dict[int, str]:
+        # The new glyphs are written; then the operation has 16 bytes left,
+        # as if the fill's earlier calls had used the rest.
+        mapped = add_glyphs(*args)  # ty: ignore[invalid-argument-type]
+        reached.append(True)
+        (operation,) = operations
+        operation.charge("memory_size", limit - operation.used("memory_size") - 16)
+        return mapped
+
+    monkeypatch.setattr(_form, "add_glyphs", exhaust)
+    with pytest.raises(pyropdf.LimitError) as error:
+        field.value = "日本語のテキスト"
+    assert error.value.code == "memory_size"
+    assert reached == [True]
+    assert field.value == "日本"
+    assert widget.obj["AP"]["N"].read() == appearance
+    assert list(doc.objects[font]["DescendantFonts"][0]["W"]) == widths
+    assert doc.objects[font]["ToUnicode"].read() == cmap
+    assert doc.history.steps == steps
+    assert _core.history_state(doc._core()) == state  # noqa: SLF001
+    assert doc.to_bytes() == before
+    # The next fill within the limit succeeds.
+    monkeypatch.setattr(_form, "add_glyphs", add_glyphs)
+    field.value = "日本語のテキスト"
+    assert field.value == "日本語のテキスト"
+
+
+def test_an_embedded_font_fill_inside_a_transaction_charges_its_own_operation() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_JP)
+    with doc.transaction("both"):
+        doc.form["customer"].value = "日本"
+        doc.form["customer"].value = "日本語"
+    assert doc.history.steps[-1] == "both"
+    assert _values(doc)["customer"] == "日本語"
