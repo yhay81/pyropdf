@@ -20,6 +20,10 @@ pub enum LimitCode {
     /// An object nests arrays and dictionaries deeper than
     /// `DocumentLimits.max_object_depth`.
     ObjectDepth,
+    /// The bytes of one object of the input, up to the next object or
+    /// cross-reference section, exceed 256 MiB, which hayro-syntax would parse
+    /// in one call that cannot be cancelled.
+    ObjectParseSize,
     /// A stream decodes to more than `DocumentLimits.max_decompressed_size`.
     DecompressedSize,
     /// A content stream of a page decodes to more than
@@ -218,11 +222,12 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 73] = [
+    pub const ALL: [Self; 74] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
         Self::ObjectDepth,
+        Self::ObjectParseSize,
         Self::DecompressedSize,
         Self::PageContentSize,
         Self::TotalDecompressedSize,
@@ -302,6 +307,7 @@ impl LimitCode {
             Self::PageCount => "page_count",
             Self::ObjectCount => "object_count",
             Self::ObjectDepth => "object_depth",
+            Self::ObjectParseSize => "object_parse_size",
             Self::DecompressedSize => "decompressed_size",
             Self::PageContentSize => "page_content_size",
             Self::TotalDecompressedSize => "total_decompressed_size",
@@ -383,6 +389,7 @@ impl LimitCode {
             Self::PageCount => "the document has too many pages",
             Self::ObjectCount => "the document has too many objects",
             Self::ObjectDepth => "an object nests arrays and dictionaries too deeply",
+            Self::ObjectParseSize => "an object is too large to parse",
             Self::DecompressedSize => "a stream decodes to too many bytes",
             Self::PageContentSize => "a page content stream decodes to too many bytes",
             Self::TotalDecompressedSize => "the streams of the operation decode to too many bytes",
@@ -466,6 +473,7 @@ impl LimitCode {
             Self::PageCount => Some("pages"),
             Self::ObjectCount => Some("objects"),
             Self::ObjectDepth => Some("levels"),
+            Self::ObjectParseSize => Some("bytes"),
             Self::DecompressedSize => Some("bytes"),
             Self::PageContentSize => Some("bytes"),
             Self::TotalDecompressedSize => Some("bytes"),
@@ -547,6 +555,7 @@ impl LimitCode {
             Self::PageCount => None,
             Self::ObjectCount => None,
             Self::ObjectDepth => None,
+            Self::ObjectParseSize => Some(268_435_456),
             Self::DecompressedSize => None,
             Self::PageContentSize => None,
             Self::TotalDecompressedSize => None,

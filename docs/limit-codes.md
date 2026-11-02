@@ -7,6 +7,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `page_count` | No limit | The document has more pages than `DocumentLimits.max_pages`. |
 | `object_count` | No limit | The document has more objects than `DocumentLimits.max_objects`. |
 | `object_depth` | No limit | An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`. |
+| `object_parse_size` | 256 MiB | The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, which hayro-syntax would parse in one call that cannot be cancelled. |
 | `decompressed_size` | No limit | A stream decodes to more than `DocumentLimits.max_decompressed_size`. |
 | `page_content_size` | No limit | A content stream of a page decodes to more than `DocumentLimits.max_page_content_size`. |
 | `total_decompressed_size` | No limit | The streams that one operation decodes are larger together than `DocumentLimits.max_total_decompressed_size`. |
