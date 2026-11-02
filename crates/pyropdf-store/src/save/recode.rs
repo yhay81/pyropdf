@@ -4,9 +4,9 @@
 use flate2::{Compress, Compression, FlushCompress, Status};
 
 use super::Result;
-use crate::ErrorKind;
 use crate::budget::{Budget, BudgetVec};
 use crate::value::{Array, Bytes, Name, Stream, Value};
+use crate::{ErrorKind, LimitExceeded};
 
 /// How a save writes the data of streams.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -66,37 +66,18 @@ pub(super) fn compressed(stream: &Stream, level: u8, budget: &Budget) -> Result<
     {
         return Ok(None);
     }
-    budget.poll()?;
     let data = stream.data().as_slice();
-    // Output that would not be shorter than the data is not kept, so the
-    // buffer holds no more than the data.
-    let mut out = BudgetVec::new(budget);
-    out.try_extend(data.iter().map(|_| 0u8))?;
-    let mut encoder = Compress::new(Compression::new(u32::from(level.min(9))), true);
-    loop {
-        let read = usize::try_from(encoder.total_in()).unwrap_or(usize::MAX);
-        let written = usize::try_from(encoder.total_out()).unwrap_or(usize::MAX);
-        let (Some(input), Some(output)) = (data.get(read..), out.as_mut_slice().get_mut(written..))
-        else {
-            return Ok(None);
-        };
-        if output.is_empty() {
-            return Ok(None);
-        }
-        match encoder.compress(input, output, FlushCompress::Finish) {
-            Ok(Status::StreamEnd) => break,
-            Ok(Status::Ok) => budget.poll()?,
-            Ok(Status::BufError) | Err(_) => return Ok(None),
-        }
-    }
-    out.truncate(usize::try_from(encoder.total_out()).unwrap_or(usize::MAX));
+    // Output that would not be shorter than the data is not kept.
+    let Some(out) = deflate(data, level, data.len().saturating_sub(1), budget)? else {
+        return Ok(None);
+    };
     let mut dict = dict.clone();
     #[expect(
         clippy::disallowed_methods,
         reason = "the stream's dictionary gains one entry, its `/Filter`"
     )]
     dict.insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
-    Ok(Some(Stream::new(dict, Bytes::new(out.into_vec()))))
+    Ok(Some(Stream::new(dict, Bytes::new(out))))
 }
 
 fn decompressed(stream: &Stream, budget: &Budget) -> Result<Option<Stream>> {
@@ -165,4 +146,70 @@ fn array(values: &[Value], budget: &Budget) -> Result<Value> {
     let mut items = BudgetVec::new(budget);
     items.try_extend(values.iter().cloned())?;
     Ok(Value::Array(Array::from(items.into_vec())))
+}
+
+/// The input that [`deflate`] compresses between two polls of the budget.
+const DEFLATE_STEP: usize = 64 * 1024;
+
+/// Compresses `data` with Flate, in the zlib format, at the level from 0 to
+/// 9, and returns `None` when the output would be longer than `limit`
+/// bytes. The output buffer is charged to `budget` before it grows, and the
+/// budget is polled between steps of the input, so cancellation and the
+/// deadline stop a long compression.
+///
+/// # Errors
+///
+/// Returns the budget's refusal when the output buffer passes its memory
+/// limit, or when the operation is cancelled or runs past its deadline.
+pub fn deflate(
+    data: &[u8],
+    level: u8,
+    limit: usize,
+    budget: &Budget,
+) -> crate::Result<Option<Vec<u8>>> {
+    deflate_with(data, level, limit, budget, || budget.poll())
+}
+
+/// Compresses as [`deflate`] does, calling `poll` where it polls the budget.
+pub(super) fn deflate_with(
+    data: &[u8],
+    level: u8,
+    limit: usize,
+    budget: &Budget,
+    mut poll: impl FnMut() -> std::result::Result<(), LimitExceeded>,
+) -> crate::Result<Option<Vec<u8>>> {
+    poll()?;
+    // zlib's `compressBound`: stored blocks, plus the header and trailer.
+    let bound = data
+        .len()
+        .saturating_add(data.len() >> 12)
+        .saturating_add(data.len() >> 14)
+        .saturating_add(data.len() >> 25)
+        .saturating_add(19);
+    let mut out = BudgetVec::new(budget);
+    out.try_extend(std::iter::repeat_n(0u8, bound.min(limit)))?;
+    let mut encoder = Compress::new(Compression::new(u32::from(level.min(9))), true);
+    loop {
+        let read = usize::try_from(encoder.total_in()).unwrap_or(usize::MAX);
+        let written = usize::try_from(encoder.total_out()).unwrap_or(usize::MAX);
+        let (Some(rest), Some(output)) = (data.get(read..), out.as_mut_slice().get_mut(written..))
+        else {
+            return Ok(None);
+        };
+        if output.is_empty() {
+            return Ok(None);
+        }
+        let (input, flush) = if rest.len() > DEFLATE_STEP {
+            (&rest[..DEFLATE_STEP], FlushCompress::None)
+        } else {
+            (rest, FlushCompress::Finish)
+        };
+        match encoder.compress(input, output, flush) {
+            Ok(Status::StreamEnd) => break,
+            Ok(Status::Ok) => poll()?,
+            Ok(Status::BufError) | Err(_) => return Ok(None),
+        }
+    }
+    out.truncate(usize::try_from(encoder.total_out()).unwrap_or(usize::MAX));
+    Ok(Some(out.into_vec()))
 }

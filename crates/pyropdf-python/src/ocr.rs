@@ -229,7 +229,7 @@ fn add(transaction: &mut Transaction, value: Value, budget: &Budget) -> PyResult
 /// Writes an uncompressed stream of `data` and returns a reference to it.
 fn add_stream(transaction: &mut Transaction, data: &[u8], budget: &Budget) -> PyResult<Value> {
     let mut stream = Stream::new(Dict::new(), Bytes::default());
-    set_data(&mut stream, data, false)?;
+    set_data(&mut stream, data, false, budget)?;
     add(transaction, Value::Stream(Box::new(stream)), budget).map(Value::Reference)
 }
 

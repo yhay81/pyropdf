@@ -19,11 +19,8 @@
 //! generation)` for a reference, and `("c", root, path)` for a copy of what
 //! a handle names.
 
-use std::io::Write as _;
 use std::sync::Arc;
 
-use flate2::Compression;
-use flate2::write::ZlibEncoder;
 use pyo3::exceptions::{PyIndexError, PyKeyError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyList, PyTuple};
@@ -33,6 +30,7 @@ use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs;
+use pyropdf_store::save::deflate;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Real, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
@@ -554,22 +552,27 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
 }
 
 /// Sets the data of `stream` to `data`, given decoded, compressed with
-/// `/FlateDecode` when `compress`, and drops its previous filters.
-pub(crate) fn set_data(stream: &mut Stream, data: &[u8], compress: bool) -> PyResult<()> {
+/// `/FlateDecode` when `compress`, and drops its previous filters. The copy
+/// and the compression are charged to `budget`, and compression polls it.
+pub(crate) fn set_data(
+    stream: &mut Stream,
+    data: &[u8],
+    compress: bool,
+    budget: &Budget,
+) -> PyResult<()> {
     let dict = stream.dict_mut();
     dict.remove("Filter");
     dict.remove("DecodeParms");
     if !compress {
-        stream.set_data(Bytes::from(data.to_vec()));
+        let mut copy = BudgetVec::new(budget);
+        copy.try_extend_from_slice(data)
+            .map_err(|e| limit_error(&e))?;
+        stream.set_data(Bytes::from(copy.into_vec()));
         return Ok(());
     }
-    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(data)
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    let encoded = encoder
-        .finish()
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    let encoded = deflate(data, 6, usize::MAX, budget)
+        .map_err(|e| store_error(&e))?
+        .ok_or_else(|| PyValueError::new_err("the data could not be compressed"))?;
     stream
         .dict_mut()
         .insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
@@ -594,7 +597,7 @@ pub fn object_add_stream(
             ));
         };
         let mut stream = Stream::new(dict, Bytes::default());
-        set_data(&mut stream, data, compress)?;
+        set_data(&mut stream, data, compress, budget)?;
         add(transaction, &Value::Stream(Box::new(stream)), budget)
     })
 }
@@ -644,11 +647,11 @@ pub fn stream_write(
     data: &[u8],
     compress: bool,
 ) -> PyResult<()> {
-    change(py, document, Some(root), &[], |value, _, _| {
+    change(py, document, Some(root), &[], |value, _, budget| {
         let Value::Stream(stream) = value else {
             return Err(stale(Some(root), &[]));
         };
-        set_data(stream, data, compress)
+        set_data(stream, data, compress, budget)
     })
 }
 
