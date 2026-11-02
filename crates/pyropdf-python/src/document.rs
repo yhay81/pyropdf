@@ -74,7 +74,7 @@ pub struct _Document {
     /// edit read.
     pub(crate) references: pyropdf_store::refs::Cache,
     /// The open transaction and the names of the history's steps.
-    pub(crate) history: crate::history::State,
+    pub(crate) history: Arc<crate::history::State>,
 }
 
 /// Registers the settlers that pyropdf's engines provide (DESIGN.md
@@ -108,7 +108,7 @@ impl _Document {
             draft_fill_index: FillCache::new(),
             bridge: pyropdf_engine::bridge::Cache::new(),
             references: pyropdf_store::refs::Cache::new(),
-            history: crate::history::State::default(),
+            history: Arc::new(crate::history::State::default()),
         }
     }
 

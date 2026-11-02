@@ -167,6 +167,22 @@ fn the_operation_count_is_bounded() {
 }
 
 #[test]
+fn the_operation_count_of_a_shared_operation_is_its_view_limit() {
+    // The parser reads the limit once. A shared operation cannot tighten
+    // after that read: a stricter limit is a view, which the parser that
+    // reads it obeys, while the operation keeps its own limit.
+    let root = Budget::default()
+        .with_limit(LimitCode::ContentOperationCount, Some(10))
+        .share();
+    let data = || Bytes::new(b"q Q q Q q Q q Q".to_vec());
+    let clone = root.clone();
+    let view = root.tightened(LimitCode::ContentOperationCount, 5).unwrap();
+    let refused = refusal(Operations::parse(data(), &view));
+    assert_eq!(refused.code(), LimitCode::ContentOperationCount);
+    assert_eq!(Operations::parse(data(), &clone).unwrap().len(), 8);
+}
+
+#[test]
 fn deep_operands_are_bounded_by_the_object_depth() {
     let mut content = vec![b'['; 20];
     content.extend_from_slice(&[b']'; 20]);

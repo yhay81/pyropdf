@@ -782,3 +782,147 @@ proptest! {
         prop_assert_eq!(budget.used(bytes), 0);
     }
 }
+
+#[test]
+fn clones_of_a_shared_budget_charge_one_operation() {
+    let operation = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(10))
+        .share();
+    let other = operation.clone();
+    other.charge(LimitCode::MemorySize, 6).unwrap();
+    assert_eq!(operation.used(LimitCode::MemorySize), 6);
+    assert!(operation.charge(LimitCode::MemorySize, 5).is_err());
+    let independent = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(10))
+        .share();
+    independent.charge(LimitCode::MemorySize, 10).unwrap();
+    assert_eq!(operation.used(LimitCode::MemorySize), 6);
+    assert!(!independent.same_operation(&operation));
+    assert!(other.same_operation(&operation) && other.ptr_eq(&operation));
+}
+
+#[test]
+fn a_root_tightened_after_sharing_is_a_new_view_that_the_clone_does_not_relax() {
+    // The configuration of a shared budget is frozen: tightening the root
+    // after a clone yields a view, and a charge of 6 through the view is
+    // refused although the older clone still allows 10.
+    let root = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(10))
+        .share();
+    let clone = root.clone();
+    let tightened = root.tightened(LimitCode::MemorySize, 5).unwrap();
+    assert!(tightened.charge(LimitCode::MemorySize, 6).is_err());
+    assert_eq!(clone.limit(LimitCode::MemorySize), Some(10));
+    clone.charge(LimitCode::MemorySize, 6).unwrap();
+    // The operation's meter is now above the view's limit: the view refuses
+    // even to poll, and a further view cannot be taken.
+    assert_eq!(tightened.poll().unwrap_err().code(), LimitCode::MemorySize);
+    assert!(root.tightened(LimitCode::MemorySize, 5).is_err());
+    // A view never relaxes: a higher limit keeps the operation's.
+    let higher = root.tightened(LimitCode::MemorySize, 20).unwrap();
+    assert_eq!(higher.limit(LimitCode::MemorySize), Some(10));
+    assert!(higher.charge(LimitCode::MemorySize, 5).is_err());
+}
+
+#[test]
+fn a_locally_tightened_view_refuses_preexisting_usage() {
+    let operation = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(10))
+        .share();
+    operation.charge(LimitCode::MemorySize, 6).unwrap();
+    let error = operation.tightened(LimitCode::MemorySize, 5).unwrap_err();
+    assert_eq!(error.code(), LimitCode::MemorySize);
+    let source = Budget::default().with_limit(LimitCode::MemorySize, Some(5));
+    assert!(operation.constrained_by(&source).is_err());
+    // The sibling views keep their own limit: the operation still polls.
+    operation.poll().unwrap();
+    operation.release(LimitCode::MemorySize, 6);
+    let view = operation.constrained_by(&source).unwrap();
+    view.charge(LimitCode::MemorySize, 5).unwrap();
+    assert!(view.charge(LimitCode::MemorySize, 1).is_err());
+    operation.charge(LimitCode::MemorySize, 1).unwrap();
+    assert!(view.poll().is_err());
+    operation.poll().unwrap();
+}
+
+#[test]
+fn a_deadline_or_cancellation_reaches_every_clone_of_a_shared_budget() {
+    // A shared budget takes no new deadline or token: a clone made before
+    // a view observes the same configuration as one made after it, and a
+    // view that adds a deadline or token adds it to itself alone.
+    let token = CancellationToken::new();
+    let operation = Budget::default().with_cancellation(token.clone()).share();
+    let early = operation.clone();
+    token.cancel();
+    assert_eq!(early.poll().unwrap_err().code(), LimitCode::Cancelled);
+    assert_eq!(operation.poll().unwrap_err().code(), LimitCode::Cancelled);
+
+    let operation = Budget::default().share();
+    let early = operation.clone();
+    let source_token = CancellationToken::new();
+    let source = Budget::default()
+        .with_timeout(Duration::from_secs(3600))
+        .with_cancellation(source_token.clone());
+    let view = operation.constrained_by(&source).unwrap();
+    assert!(view.deadline().is_some());
+    assert!(early.deadline().is_none() && operation.deadline().is_none());
+    source_token.cancel();
+    assert_eq!(view.poll().unwrap_err().code(), LimitCode::Cancelled);
+    early.poll().unwrap();
+    let expired = Budget::default().with_timeout(Duration::ZERO);
+    assert_eq!(
+        operation.constrained_by(&expired).unwrap_err().code(),
+        LimitCode::Deadline
+    );
+}
+
+#[test]
+fn a_view_keeps_the_earlier_deadline_of_its_operation() {
+    let operation = Budget::default().with_timeout(Duration::ZERO).share();
+    let later = Budget::default().with_timeout(Duration::from_secs(3600));
+    assert_eq!(
+        operation.constrained_by(&later).unwrap_err().code(),
+        LimitCode::Deadline
+    );
+}
+
+#[test]
+fn a_cached_bound_read_from_a_view_stays_its_limit() {
+    // A consumer that reads a check limit once, as the content parser does
+    // for `content_operation_count`, and checks only above it, sees the
+    // limit of the view it was given for its whole run.
+    let root = Budget::default()
+        .with_limit(LimitCode::ContentOperationCount, Some(10))
+        .share();
+    let view = root.tightened(LimitCode::ContentOperationCount, 5).unwrap();
+    let cached = view.limit(LimitCode::ContentOperationCount);
+    assert_eq!(cached, Some(5));
+    assert!(view.check(LimitCode::ContentOperationCount, 6).is_err());
+    assert!(root.check(LimitCode::ContentOperationCount, 8).is_ok());
+    assert_eq!(view.limit(LimitCode::ContentOperationCount), cached);
+}
+
+#[test]
+fn shared_views_charge_concurrently_within_the_operation_limit() {
+    let operation = Budget::default()
+        .with_limit(LimitCode::MemorySize, Some(1000))
+        .share();
+    let accepted: u64 = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let view = operation.tightened(LimitCode::MemorySize, 900).unwrap();
+                scope.spawn(move || {
+                    (0..200)
+                        .filter(|_| view.charge(LimitCode::MemorySize, 1).is_ok())
+                        .count() as u64
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .sum()
+    });
+    assert_eq!(accepted, 900);
+    assert_eq!(operation.used(LimitCode::MemorySize), 900);
+}
