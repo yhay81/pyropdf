@@ -192,21 +192,26 @@ pub(super) fn deflate_with(
     loop {
         let read = usize::try_from(encoder.total_in()).unwrap_or(usize::MAX);
         let written = usize::try_from(encoder.total_out()).unwrap_or(usize::MAX);
+        if written >= out.len() {
+            // Some levels can pass the bound on data that does not compress.
+            if out.len() >= limit {
+                return Ok(None);
+            }
+            let more = (out.len() / 2).max(DEFLATE_STEP).min(limit - out.len());
+            out.try_extend(std::iter::repeat_n(0u8, more))?;
+        }
         let (Some(rest), Some(output)) = (data.get(read..), out.as_mut_slice().get_mut(written..))
         else {
             return Ok(None);
         };
-        if output.is_empty() {
-            return Ok(None);
-        }
-        let (input, flush) = if rest.len() > DEFLATE_STEP {
-            (&rest[..DEFLATE_STEP], FlushCompress::None)
-        } else {
-            (rest, FlushCompress::Finish)
+        let (input, flush) = match rest.get(..DEFLATE_STEP) {
+            Some(step) if rest.len() > DEFLATE_STEP => (step, FlushCompress::None),
+            _ => (rest, FlushCompress::Finish),
         };
         match encoder.compress(input, output, flush) {
             Ok(Status::StreamEnd) => break,
             Ok(Status::Ok) => poll()?,
+            Ok(Status::BufError) if encoder.total_out() as usize > written => poll()?,
             Ok(Status::BufError) | Err(_) => return Ok(None),
         }
     }
