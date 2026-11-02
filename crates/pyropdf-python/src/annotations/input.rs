@@ -1,5 +1,6 @@
-//! Bounded reads of the mapping that `annotation_add` and `annotation_edit`
-//! take (DESIGN.md F6 and section 9).
+//! Bounded reads of the mappings that `annotation_add` and
+//! `annotation_edit` take, and those of the form bindings (DESIGN.md F6 and
+//! section 9).
 //!
 //! A direct `_core` call skips the Python wrappers' checks, so each string
 //! and collection is measured in place and checked against the operation's
@@ -154,9 +155,7 @@ impl<'a, 'py> Fields<'a, 'py> {
         let Some(value) = self.get(key)? else {
             return Ok(None);
         };
-        let text = string(&value, key)?;
-        admit_text(self.budget, code, total, chars(text)?).map_err(|e| limit_error(&e))?;
-        Ok(Some(text.to_str()?.to_owned()))
+        text(self.budget, &value, key, code, total).map(Some)
     }
 
     /// Copies the name or date of `key`, refusing with `refuse` one longer
@@ -266,11 +265,15 @@ impl<'a, 'py> Fields<'a, 'py> {
         )))
     }
 
-    /// Copies the names of `key`, a required list of at most `max` names.
-    pub(crate) fn names(&self, key: &str, max: usize) -> PyResult<Vec<String>> {
-        let Some(value) = self.get(key)? else {
-            return Err(PyTypeError::new_err(format!("missing {key}")));
-        };
+    /// Copies the names of `key`, a required list of at most `max` names,
+    /// refusing a name longer than any property with `refuse`.
+    pub(crate) fn names(
+        &self,
+        key: &str,
+        max: usize,
+        refuse: impl Fn() -> PyErr,
+    ) -> PyResult<Vec<String>> {
+        let value = self.required(key)?;
         let names = Sequence::new(&value, key)?;
         if names.len() > max {
             return Err(PdfError::new_err(format!(
@@ -278,10 +281,46 @@ impl<'a, 'py> Fields<'a, 'py> {
             )));
         }
         self.items(&names, |name| {
-            short(self.budget, name, key, MAX_NAME, || {
-                PdfError::new_err("an annotation property that cannot be removed")
-            })
+            short(self.budget, name, key, MAX_NAME, &refuse)
         })
+    }
+
+    /// Returns the value of `key`, refusing a missing key or `None`.
+    pub(crate) fn required(&self, key: &str) -> PyResult<Bound<'py, PyAny>> {
+        self.get(key)?
+            .ok_or_else(|| PyTypeError::new_err(format!("missing {key}")))
+    }
+
+    /// Copies the pairs of texts of `key`, such as the `(value, label)`
+    /// choices of a field, refusing more than `max` pairs with `refuse`
+    /// before reading one and counting each text toward `code` with the
+    /// texts of `total` before it.
+    pub(crate) fn pairs(
+        &self,
+        key: &str,
+        max: usize,
+        refuse: impl FnOnce() -> PyErr,
+        code: LimitCode,
+        total: &mut u64,
+    ) -> PyResult<Option<Vec<(String, String)>>> {
+        let Some(value) = self.get(key)? else {
+            return Ok(None);
+        };
+        let pairs = Sequence::new(&value, key)?;
+        if pairs.len() > max {
+            return Err(refuse());
+        }
+        self.items(&pairs, |pair| {
+            let parts = Sequence::new(pair, key)?;
+            if parts.len() != 2 {
+                return Err(PyTypeError::new_err(format!("{key} holds pairs")));
+            }
+            Ok((
+                text(self.budget, &parts.get(0)?, key, code, total)?,
+                text(self.budget, &parts.get(1)?, key, code, total)?,
+            ))
+        })
+        .map(Some)
     }
 
     /// Borrows the bytes of `key`, refusing data longer than `max` before a
@@ -335,6 +374,20 @@ fn string<'b, 'py>(value: &'b Bound<'py, PyAny>, what: &str) -> PyResult<&'b Bou
                 .map_or_else(|_| "another type".into(), |name| name.to_string())
         ))
     })
+}
+
+/// Copies the text `value`, counted toward `code` with the texts of
+/// `total` before it, after admitting its length.
+pub(crate) fn text(
+    budget: &Budget,
+    value: &Bound<'_, PyAny>,
+    what: &str,
+    code: LimitCode,
+    total: &mut u64,
+) -> PyResult<String> {
+    let text = string(value, what)?;
+    admit_text(budget, code, total, chars(text)?).map_err(|e| limit_error(&e))?;
+    Ok(text.to_str()?.to_owned())
 }
 
 /// Copies a short string, refusing one longer than `max` characters with

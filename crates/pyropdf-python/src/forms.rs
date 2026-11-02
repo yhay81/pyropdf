@@ -13,7 +13,9 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
+use pyo3::types::PyBool;
 use pyropdf_engine::annotations::{Reader, synthesized};
 use pyropdf_engine::fonts::embed::Face;
 use pyropdf_engine::forms::defaults::{self, Joined, Renames, Slot};
@@ -29,6 +31,7 @@ use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
+use crate::annotations::input::{self, Fields};
 use crate::annotations::{
     Annots, CopyPart, Rect, border_style, charge_copy, editing, encode_text, rgb,
 };
@@ -1788,10 +1791,34 @@ fn is_winansi(text: &str, budget: &Budget) -> PyResult<bool> {
 type States = Vec<(Id, Vec<Name>)>;
 
 /// A value that setting a field writes: text, or a check box's state.
-#[derive(Clone, FromPyObject)]
+#[derive(Clone)]
 pub enum FillValue {
     Flag(bool),
     Text(String),
+}
+
+impl FillValue {
+    /// Reads a value, admitting a text's length against `budget` before
+    /// copying it.
+    fn read(value: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        if let Ok(flag) = value.cast::<PyBool>() {
+            return Ok(Self::Flag(flag.is_true()));
+        }
+        let text = input::text(
+            budget,
+            value,
+            "a field value",
+            LimitCode::FormFieldInputSize,
+            &mut 0,
+        )?;
+        if text.len() > MAX_INPUT_BYTES {
+            return Err(LimitError::new_err((
+                "form_field_input_size",
+                format!("form field value exceeds the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
+            )));
+        }
+        Ok(Self::Text(text))
+    }
 }
 
 /// Sets the value of field `id` to `value`, and draws its widgets through
@@ -1812,17 +1839,9 @@ pub fn form_field_fill(
     py: Python<'_>,
     document: &_Document,
     id: Id,
-    value: FillValue,
+    value: &Bound<'_, PyAny>,
     draw: bool,
 ) -> PyResult<()> {
-    if let FillValue::Text(text) = &value
-        && text.len() > MAX_INPUT_BYTES
-    {
-        return Err(LimitError::new_err((
-            "form_field_input_size",
-            format!("form field value exceeds the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
-        )));
-    }
     let draft = document.in_transaction();
     let cache = if draft {
         &document.draft_fill_index
@@ -1830,6 +1849,7 @@ pub fn form_field_fill(
         &document.fill_index
     };
     document.edit(py, |transaction, budget| {
+        let value = FillValue::read(value, budget)?;
         let savepoint = transaction.savepoint();
         let result = fill(transaction, id, &value, budget, cache, draft, draw);
         if result.is_err() {
@@ -2450,22 +2470,93 @@ const KIND_FLAGS: i64 = (1 << 15) | (1 << 16) | (1 << 17);
 
 /// The properties that one edit of a field sets, as `Field._edit` passes
 /// them, and the names of those that it removes.
-#[derive(FromPyObject)]
-#[pyo3(from_item_all)]
 pub struct FieldEdit {
-    #[pyo3(default)]
     label: Option<String>,
-    #[pyo3(default)]
     max_length: Option<i64>,
-    #[pyo3(default)]
     flags: Option<i64>,
-    #[pyo3(default)]
     choices: Option<Vec<(String, String)>>,
-    #[pyo3(default)]
     default_value: Option<String>,
-    #[pyo3(default)]
     reset: bool,
     clear: Vec<String>,
+}
+
+/// The most properties that a field edit removes.
+const FIELD_CLEARABLE: usize = 3;
+
+/// Refuses more choices than a choice field has.
+fn too_many_choices() -> PyErr {
+    PdfError::new_err(format!(
+        "a choice field has at most {MAX_VALUE_ITEMS} choices"
+    ))
+}
+
+impl FieldEdit {
+    /// Reads an edit from the mapping that Python passes, checking each
+    /// input-derived size against `budget` before copying it.
+    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        let fields = Fields::new(map, budget);
+        let code = LimitCode::FormFieldInputSize;
+        let mut total = 0;
+        let edit = Self {
+            label: fields.text("label", code, &mut total)?,
+            max_length: fields.value("max_length")?,
+            flags: fields.value("flags")?,
+            choices: fields.pairs(
+                "choices",
+                MAX_VALUE_ITEMS,
+                too_many_choices,
+                code,
+                &mut total,
+            )?,
+            default_value: fields.text("default_value", code, &mut total)?,
+            reset: fields.value("reset")?.unwrap_or(false),
+            clear: fields.names("clear", FIELD_CLEARABLE, cannot_clear)?,
+        };
+        edit.check()?;
+        Ok(edit)
+    }
+
+    /// Checks what the edit holds on its own, before it reads the document.
+    fn check(&self) -> PyResult<()> {
+        let texts: usize = self
+            .label
+            .iter()
+            .chain(&self.default_value)
+            .map(String::len)
+            .chain(
+                self.choices
+                    .iter()
+                    .flatten()
+                    .map(|(value, label)| value.len() + label.len()),
+            )
+            .sum();
+        if texts > MAX_INPUT_BYTES {
+            return Err(LimitError::new_err((
+                "form_field_input_size",
+                format!("field texts exceed the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
+            )));
+        }
+        if let Some(flags) = self.flags
+            && !(0..=i64::from(u32::MAX)).contains(&flags)
+        {
+            return Err(PdfError::new_err("field flags are a 32-bit value"));
+        }
+        if let Some(property) = self
+            .clear
+            .iter()
+            .find(|property| cleared(property).is_none())
+        {
+            return Err(PdfError::new_err(format!(
+                "a field property that cannot be removed: {property:?}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Refuses a name longer than any field property.
+fn cannot_clear() -> PyErr {
+    PdfError::new_err("a field property that cannot be removed")
 }
 
 /// Edits field `id`: sets or removes its label, maximum length, and
@@ -2480,40 +2571,8 @@ pub fn form_field_edit(
     py: Python<'_>,
     document: &_Document,
     id: Id,
-    edit: FieldEdit,
+    edit: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    let texts: usize = edit
-        .label
-        .iter()
-        .chain(&edit.default_value)
-        .map(String::len)
-        .chain(
-            edit.choices
-                .iter()
-                .flatten()
-                .map(|(value, label)| value.len() + label.len()),
-        )
-        .sum();
-    if texts > MAX_INPUT_BYTES {
-        return Err(LimitError::new_err((
-            "form_field_input_size",
-            format!("field texts exceed the {MAX_INPUT_BYTES}-byte UTF-8 limit"),
-        )));
-    }
-    if let Some(flags) = edit.flags
-        && !(0..=i64::from(u32::MAX)).contains(&flags)
-    {
-        return Err(PdfError::new_err("field flags are a 32-bit value"));
-    }
-    if let Some(property) = edit
-        .clear
-        .iter()
-        .find(|property| cleared(property).is_none())
-    {
-        return Err(PdfError::new_err(format!(
-            "a field property that cannot be removed: {property:?}"
-        )));
-    }
     let draft = document.in_transaction();
     let cache = if draft {
         &document.draft_fill_index
@@ -2521,6 +2580,7 @@ pub fn form_field_edit(
         &document.fill_index
     };
     document.edit(py, |transaction, budget| {
+        let edit = FieldEdit::read(edit, budget)?;
         let savepoint = transaction.savepoint();
         let result = edit_field(transaction, id, &edit, budget, cache, draft);
         if result.is_err() {
@@ -2642,44 +2702,37 @@ fn edit_field(
 /// specification. Colours are RGB from 0 to 1, the border is its width,
 /// `/S` style, and dash lengths, `font_name` is a Standard 14 font, and
 /// `align` is a `/Q` code.
-#[derive(FromPyObject)]
-#[pyo3(from_item_all)]
 pub struct FieldSpec {
     /// `text`, `checkbox`, `radio`, `combobox`, `listbox`, `pushbutton`, or
     /// `signature`.
     kind: String,
     name: String,
     rect: Rect,
-    #[pyo3(default)]
     value: Option<String>,
-    #[pyo3(default)]
     default_value: Option<String>,
-    #[pyo3(default)]
     flags: i64,
-    #[pyo3(default)]
     label: Option<String>,
-    #[pyo3(default)]
     max_length: Option<i64>,
-    #[pyo3(default)]
     choices: Option<Vec<(String, String)>>,
-    #[pyo3(default)]
     on_state: Option<String>,
-    #[pyo3(default)]
     caption: Option<String>,
-    #[pyo3(default)]
     border: Option<(f64, String, Vec<f64>)>,
-    #[pyo3(default)]
     border_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     background_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     text_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     font_name: Option<String>,
-    #[pyo3(default)]
     font_size: Option<f64>,
-    #[pyo3(default)]
     align: Option<u8>,
+}
+
+/// Refuses a field kind that no field has.
+fn unknown_kind() -> PyErr {
+    PdfError::new_err("unknown field kind")
+}
+
+/// Refuses a font name longer than any Standard 14 font's.
+fn unknown_font() -> PyErr {
+    PdfError::new_err("unknown Standard 14 font")
 }
 
 /// The `/Ff` bit of a radio group that keeps one button on.
@@ -2707,6 +2760,44 @@ fn field_type(kind: &str) -> PyResult<(&'static str, i64)> {
 }
 
 impl FieldSpec {
+    /// Reads a specification from the mapping that Python passes, checking
+    /// each input-derived size against `budget` before copying it.
+    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        let fields = Fields::new(map, budget);
+        let code = LimitCode::FormFieldInputSize;
+        let mut total = 0;
+        let spec = Self {
+            kind: fields
+                .short("kind", input::MAX_NAME, unknown_kind)?
+                .ok_or_else(|| PyTypeError::new_err("missing kind"))?,
+            name: input::text(budget, &fields.required("name")?, "name", code, &mut total)?,
+            rect: fields.required("rect")?.extract()?,
+            value: fields.text("value", code, &mut total)?,
+            default_value: fields.text("default_value", code, &mut total)?,
+            flags: fields.value("flags")?.unwrap_or(0),
+            label: fields.text("label", code, &mut total)?,
+            max_length: fields.value("max_length")?,
+            choices: fields.pairs(
+                "choices",
+                MAX_VALUE_ITEMS,
+                too_many_choices,
+                code,
+                &mut total,
+            )?,
+            on_state: fields.text("on_state", code, &mut total)?,
+            caption: fields.text("caption", code, &mut total)?,
+            border: fields.border("border")?,
+            border_color: fields.value("border_color")?,
+            background_color: fields.value("background_color")?,
+            text_color: fields.value("text_color")?,
+            font_name: fields.short("font_name", input::MAX_NAME, unknown_font)?,
+            font_size: fields.value("font_size")?,
+            align: fields.value("align")?,
+        };
+        spec.check()?;
+        Ok(spec)
+    }
+
     /// Returns the `/DA` resource name of the specification's Standard 14
     /// font, Helvetica by default.
     fn font_resource(&self) -> PyResult<&'static str> {
@@ -2928,9 +3019,8 @@ pub fn widget_add(
     document: &_Document,
     number: u32,
     generation: u16,
-    spec: FieldSpec,
+    spec: &Bound<'_, PyAny>,
 ) -> PyResult<Option<(Id, u32)>> {
-    spec.check()?;
     let draft = document.in_transaction();
     let cache = if draft {
         &document.draft_fill_index
@@ -2943,6 +3033,7 @@ pub fn widget_add(
         number,
         generation,
         |annots, transaction, budget| {
+            let spec = FieldSpec::read(spec, budget)?;
             budget
                 .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
                 .map_err(|e| limit_error(&e))?;
@@ -6312,34 +6403,46 @@ fn widget_text_font(annots: &Annots<'_>, resource: &str) -> PyResult<Option<&'st
 /// multiple of 90 degrees. Colors are RGB from 0
 /// to 1, the border is `(width, style, dashes)`, and `font_name` is the
 /// PostScript name of a Standard 14 font.
-#[derive(FromPyObject)]
-#[pyo3(from_item_all)]
 pub struct WidgetEdit {
-    #[pyo3(default)]
     rect: Option<Rect>,
-    #[pyo3(default)]
     flags: Option<i64>,
-    #[pyo3(default)]
     border: Option<(f64, String, Vec<f64>)>,
-    #[pyo3(default)]
     border_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     background_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     caption: Option<String>,
-    #[pyo3(default)]
     rotation: Option<i64>,
-    #[pyo3(default)]
     text_color: Option<(f64, f64, f64)>,
-    #[pyo3(default)]
     font_name: Option<String>,
-    #[pyo3(default)]
     font_size: Option<f64>,
     /// Always given, so that the edit is not all defaults.
     clear: Vec<String>,
 }
 
+/// The most properties that a widget edit removes.
+const WIDGET_CLEARABLE: usize = 8;
+
 impl WidgetEdit {
+    /// Reads an edit from the mapping that Python passes, checking each
+    /// input-derived size against `budget` before copying it.
+    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        let fields = Fields::new(map, budget);
+        Ok(Self {
+            rect: fields.value("rect")?,
+            flags: fields.value("flags")?,
+            border: fields.border("border")?,
+            border_color: fields.value("border_color")?,
+            background_color: fields.value("background_color")?,
+            caption: fields.text("caption", LimitCode::AnnotationInputSize, &mut 0)?,
+            rotation: fields.value("rotation")?,
+            text_color: fields.value("text_color")?,
+            font_name: fields.short("font_name", input::MAX_NAME, unknown_font)?,
+            font_size: fields.value("font_size")?,
+            clear: fields.names("clear", WIDGET_CLEARABLE, || {
+                PdfError::new_err("a widget property that cannot be removed")
+            })?,
+        })
+    }
+
     /// Returns the `/DA` abbreviation of the edit's Standard 14 font.
     fn font_resource(&self) -> PyResult<Option<(&'static str, &'static str)>> {
         let Some(name) = &self.font_name else {
@@ -6474,7 +6577,7 @@ pub fn widget_edit(
     generation: u16,
     index: u32,
     id: Id,
-    edit: WidgetEdit,
+    edit: &Bound<'_, PyAny>,
 ) -> PyResult<Option<Id>> {
     let draft = document.in_transaction();
     let cache = if draft {
@@ -6488,6 +6591,7 @@ pub fn widget_edit(
         number,
         generation,
         |annots, transaction, budget| {
+            let edit = WidgetEdit::read(edit, budget)?;
             let before = base(transaction, draft);
             let (position, mut dict) = annots.find(index, id)?;
             if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
