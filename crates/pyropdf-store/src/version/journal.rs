@@ -254,6 +254,7 @@ fn read_version(before: &Version, input: &mut In<'_>, budget: &Budget) -> Result
         [0] => {}
         [1] => {
             let bytes = owned(input.blob()?, budget)?;
+            budget.check(LimitCode::ObjectParseSize, bytes.len() as u64)?;
             let Value::Dict(value) = Value::parse(&bytes, budget)? else {
                 return Err(corrupt("a trailer is not a dictionary"));
             };

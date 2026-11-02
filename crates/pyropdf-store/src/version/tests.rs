@@ -1319,6 +1319,31 @@ fn finalizing_large_written_bytes_refuses_atomically_and_keeps_exact_bytes() {
 }
 
 #[test]
+fn a_trailer_too_large_to_parse_is_refused_before_parsing() {
+    let document = document(None);
+    let mut transaction = document.begin();
+    let large = Dict::from_iter([(
+        Name::from("Large"),
+        Value::String(PdfString::literal(vec![b'x'; 100_003])),
+    )]);
+    let small = Budget::default().with_limit(LimitCode::ObjectParseSize, Some(100_000));
+    let parses = crate::value::PARSES.with(std::cell::Cell::get);
+    let error = transaction.set_trailer(large.clone(), &small).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectParseSize)
+    );
+    assert_eq!(crate::value::PARSES.with(std::cell::Cell::get), parses);
+    assert_eq!(
+        transaction.version().trailer(),
+        document.current().trailer()
+    );
+    assert_eq!(small.used(LimitCode::MemorySize), 0);
+    transaction.set_trailer(large, &Budget::default()).unwrap();
+    assert!(transaction.version().trailer().get("Large").is_some());
+}
+
+#[test]
 fn finalizing_large_trailer_refusal_does_not_change_the_draft() {
     let document = document(None);
     let mut transaction = document.begin();
