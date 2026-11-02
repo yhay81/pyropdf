@@ -7,8 +7,9 @@ import hashlib
 import math
 import os
 import re
+import sys
 from collections.abc import Iterable
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -44,7 +45,7 @@ from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Generator, Sequence
     from types import TracebackType
     from typing import Self, TypeAlias
 
@@ -822,6 +823,8 @@ class Canvas:
     """
 
     __slots__ = (
+        "_buffered",
+        "_charged",
         "_closed",
         "_depth",
         "_elements",
@@ -832,6 +835,7 @@ class Canvas:
         "_marked",
         "_mcids",
         "_oc",
+        "_operation",
         "_page",
         "_points",
         "_properties",
@@ -855,6 +859,11 @@ class Canvas:
         self._layers: list[tuple[list[bytes], float | None]] = [([], None)]
         self._depth = 0
         self._points = 0
+        # The canvas's operation, while its with block runs; the bytes its
+        # buffers hold; and the memory it charged the operation and holds.
+        self._operation: _core._OperationBudget | None = None
+        self._buffered = 0
+        self._charged = 0
         self._xobjects: dict[str, int] = {}
         # A Standard 14 font's base name, or the object number of an embedded face's Type0 font.
         self._fonts: dict[str, str | int] = {}
@@ -882,7 +891,9 @@ class Canvas:
             msg = "a canvas is used in one with block; start another with page.draw()"
             raise ValueError(msg)
         document = self._page.document
-        _core.begin_transaction(document._core(), "draw")  # noqa: SLF001
+        # One operation from the document's limits holds the canvas's
+        # preparation, its buffers, and its writes.
+        self._operation = _core.begin_canvas(document._core())  # noqa: SLF001
         self._entered = True
         self._tagged = isinstance(document.catalog.get("StructTreeRoot"), Dictionary)
         return self
@@ -898,18 +909,24 @@ class Canvas:
             return
         self._closed = True
         core = self._page.document._core()  # noqa: SLF001
+        operation = self._active
         keep = exc_type is None and bool(self._layers[0][0])
-        if keep and self._depth:
-            _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
-            msg = "a canvas scope is still open"
-            raise RuntimeError(msg)
         try:
+            if keep and self._depth:
+                msg = "a canvas scope is still open"
+                raise RuntimeError(msg)  # noqa: TRY301 - the canvas is discarded below.
             if keep:
                 self._commit()
+            self._release(self._charged)
         except BaseException:
-            _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
+            _core.abort_canvas(core, operation)
             raise
-        _core.end_transaction(core, keep)
+        finally:
+            self._layers = [([], None)]
+        if keep:
+            _core.end_transaction(core, True)  # noqa: FBT003 - the core's flag
+        else:
+            _core.abort_canvas(core, operation)
 
     def _check_open(self) -> None:
         if self._closed or not self._entered:
@@ -921,7 +938,45 @@ class Canvas:
         self._check_open()
         if len(self._layers) == 1:
             data = self._mark(data)
-        self._layers[-1][0].append(data)
+        self._append(self._layers[-1][0], data)
+
+    def _append(self, parts: list[bytes], data: bytes) -> None:
+        """Buffer ``data`` in ``parts``, after checking the content's size and charging the operation."""
+        size = len(data) + 1  # and the newline that joins it
+        if self._buffered + size > _DEFAULT_MAX_CONTENT_SIZE:
+            code = "content_input_size"
+            msg = f"the canvas holds over {_DEFAULT_MAX_CONTENT_SIZE} bytes of content"
+            raise LimitError(code, msg)
+        self._charge(size)
+        self._buffered += size
+        parts.append(data)
+
+    @property
+    def _active(self) -> _core._OperationBudget:
+        """The canvas's operation, which its with block opened."""
+        if self._operation is None:
+            self._check_open()
+            raise AssertionError
+        return self._operation
+
+    def _charge(self, size: int) -> None:
+        """Charge ``size`` bytes of memory to the operation, after its deadline and cancellation."""
+        self._active.charge("memory_size", size)
+        self._charged += size
+
+    def _release(self, size: int) -> None:
+        if size:
+            self._active.release("memory_size", size)
+            self._charged -= size
+
+    @contextmanager
+    def _scratch(self, size: int) -> Generator[None]:
+        """Charge ``size`` bytes of memory that a block allocates and frees."""
+        self._charge(size)
+        try:
+            yield
+        finally:
+            self._release(size)
 
     def _mark(self, data: bytes) -> bytes:
         if not self._tags:
@@ -939,7 +994,7 @@ class Canvas:
     def _unmark(self) -> None:
         """Close the open marked content of an element, before a scope starts or ends."""
         if self._marked is not None:
-            self._layers[0][0].append(b"EMC")
+            self._append(self._layers[0][0], b"EMC")
             self._marked = None
 
     def _count(self, points: int) -> None:
@@ -964,19 +1019,24 @@ class Canvas:
             self._layers.append(([], group))
         else:
             self._scopes.append(closing)
-            self._layers[-1][0].append(opening)
+            self._append(self._layers[-1][0], opening)
 
     def _pop(self) -> None:
         self._depth -= 1
         self._unmark()
         closing = self._scopes.pop()
         if closing is not None:
-            self._layers[-1][0].append(closing)
+            self._append(self._layers[-1][0], closing)
             return
         parts, group = self._layers.pop()
         if not parts:
             return
-        name = self._add_xobject(self._group_form(b"\n".join(parts)))
+        size = sum(len(part) + 1 for part in parts)
+        with self._scratch(size):
+            name = self._add_xobject(self._group_form(b"\n".join(parts)))
+        # The group's buffer is written and freed.
+        self._buffered -= size
+        self._release(size)
         gstate = self._gstate(fill_alpha=cast("float", group), stroke_alpha=cast("float", group))
         self._emit(b"q\n/" + gstate.encode() + b" gs\n/" + name.encode() + b" Do\nQ")
 
@@ -990,7 +1050,7 @@ class Canvas:
                 raise ValueError(msg)
         self._enter_scope()
         if element is None:
-            self._layers[-1][0].append(b"/Artifact BMC")
+            self._append(self._layers[-1][0], b"/Artifact BMC")
         elif self._tags:
             cast("_Element", self._tags[-1]).kids.append(element)
         else:
@@ -1001,7 +1061,7 @@ class Canvas:
         self._depth -= 1
         self._unmark()
         if self._tags.pop() is None:
-            self._layers[-1][0].append(b"EMC")
+            self._append(self._layers[-1][0], b"EMC")
 
     def _group_form(self, content: bytes) -> int:
         """Write ``content`` as a transparency group over the whole page, in display space."""
@@ -1070,14 +1130,17 @@ class Canvas:
                 if not isinstance(group, Dictionary) or group.get("Type") != "OCG":
                     msg = f"object {xref}, a layer that the canvas draws, is no longer an optional content group"
                     raise StaleObjectError(msg)
-        content = b"\n".join(self._layers[0][0])
         rotation, box = _page_space(page)
         matrix = _user_from_display(rotation, box)
-        data = b"q\n" + _numbers(*matrix) + b" cm\n" + content + b"\nQ\n"
-        if len(data) > _DEFAULT_MAX_CONTENT_SIZE:
+        opening = b"q\n" + _numbers(*matrix) + b" cm\n"
+        size = len(opening) + self._buffered + 2
+        # Check the size and charge the joined content and its framed copy before making them.
+        if size > _DEFAULT_MAX_CONTENT_SIZE:
             code = "content_input_size"
-            msg = f"the canvas writes {len(data)} bytes of content, over the {_DEFAULT_MAX_CONTENT_SIZE}-byte limit"
+            msg = f"the canvas writes {size} bytes of content, over the {_DEFAULT_MAX_CONTENT_SIZE}-byte limit"
             raise LimitError(code, msg)
+        self._charge(2 * size)
+        data = opening + b"\n".join(self._layers[0][0]) + b"\nQ\n"
         if self._elements:
             # The elements name their content in a Form of the canvas's own, which has a parent tree key.
             form = objects.add_stream(
@@ -1293,27 +1356,30 @@ class Canvas:
         self._check_open()
         checked = _text_input(text, max_text_size)
         rotation = _quarter_turn(rotate)
-        lines = checked.splitlines()
-        most = _max_lines(max_text_size)
-        if most is not None and len(lines) > most:
-            code = "text_line_count"
-            msg = f"the text has {len(lines)} lines, over the limit of {most}"
-            raise LimitError(code, msg)
         origin = _point(at, "at")
         font_size = _size(size)
         filled, stroked = _text_paint(fill, stroke)
         spacing = _line_height(line_height)
-        if not any(lines):
-            return
-        face = _canvas_font("\n".join(lines), font)
-        leading = face._font.leading(font_size, spacing)  # noqa: SLF001
-        cos, sin = _TURNS[rotation]
-        placed = [
-            (line, origin.x - index * leading * sin, origin.y + index * leading * cos)
-            for index, line in enumerate(lines)
-            if line
-        ]
-        self._emit_text(face, font_size, (filled, stroked), rotation, [(line, x, y, 0.0) for line, x, y in placed])
+        # Count the lines, then charge them, before splitting.
+        count = _line_count(checked)
+        most = _max_lines(max_text_size)
+        if most is not None and count > most:
+            code = "text_line_count"
+            msg = f"the text has {count} lines, over the limit of {most}"
+            raise LimitError(code, msg)
+        with self._scratch(_lines_size(checked, count)):
+            lines = checked.splitlines()
+            if not any(lines):
+                return
+            face = _canvas_font("\n".join(lines), font)
+            leading = face._font.leading(font_size, spacing)  # noqa: SLF001
+            cos, sin = _TURNS[rotation]
+            placed = [
+                (line, origin.x - index * leading * sin, origin.y + index * leading * cos, 0.0)
+                for index, line in enumerate(lines)
+                if line
+            ]
+            self._emit_text(face, font_size, (filled, stroked), rotation, placed)
 
     def textbox(  # noqa: PLR0913 - the text style options.
         self,
@@ -1350,6 +1416,34 @@ class Canvas:
         self._check_open()
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
+        with self._scratch(2 * sys.getsizeof(_text_input(text, max_text_size))):
+            return self._textbox(
+                box,
+                text,
+                font=font,
+                size=size,
+                align=align,
+                line_height=line_height,
+                paint=(fill, stroke),
+                rotation=rotation,
+                max_text_size=max_text_size,
+            )
+
+    def _textbox(  # noqa: PLR0913 - the text style options.
+        self,
+        box: Rect,
+        text: str,
+        *,
+        font: Font | None,
+        size: float,
+        align: str,
+        line_height: float | None,
+        paint: tuple[Color | None, Stroke | Color | None],
+        rotation: int,
+        max_text_size: int | None,
+    ) -> TextFit:
+        """Lay out and draw a text box, once the memory of its normalized text is charged."""
+        fill, stroke = paint
         normalized = _textbox_text(text, max_text_size)
         if align not in _ALIGNMENTS:
             msg = f"align must be one of {', '.join(_ALIGNMENTS)}: {align!r}"
@@ -1363,7 +1457,14 @@ class Canvas:
             return TextFit(spare_height=height)
         face = _canvas_font(normalized, font)
         lines, _needed, spare, ascent, leading = face._font.layout(  # noqa: SLF001
-            normalized, width, height, font_size, spacing, align == "justify", _max_lines(max_text_size)
+            normalized,
+            width,
+            height,
+            font_size,
+            spacing,
+            align == "justify",
+            _max_lines(max_text_size),
+            operation=self._operation,
         )
         if spare < 0:
             return TextFit(spare_height=spare)
@@ -1412,10 +1513,10 @@ class Canvas:
             document = self._page.document
             xref = embedded_font(document, font, _cache(document).fonts)
             name = self._font_name(xref)
-            shown = _shown_glyphs(document, xref, font, size, lines)
+            shown = _shown_glyphs(document, xref, font, size, lines, operation=self._operation)
         else:
             name = self._add_font(font)
-            shown = _shown_winansi(font, lines)
+            shown = _shown_winansi(font, lines, self._operation)
         parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
         if stroke is not None:
             parts.append(b"2 Tr" if fill is not None else b"1 Tr")
@@ -1741,12 +1842,33 @@ def _gstate_dict(key: tuple[float | None, float | None, str | None]) -> dict[str
     return entries
 
 
-def _shown_winansi(font: Font, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
+# The line boundaries of str.splitlines.
+_LINE_SEPARATORS = ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+# A bound on the memory of one str object beyond its characters, and of a list slot.
+_STR_OVERHEAD = sys.getsizeof("") + 8
+
+
+def _line_count(text: str) -> int:
+    """Return ``len(text.splitlines())`` without splitting ``text``."""
+    if not text:
+        return 0
+    breaks = sum(str.count(text, separator) for separator in _LINE_SEPARATORS) - str.count(text, "\r\n")
+    return breaks + (text[-1] not in _LINE_SEPARATORS)
+
+
+def _lines_size(text: str, count: int) -> int:
+    """Return a bound on the memory of ``text``'s lines and of their joined copy."""
+    return 2 * sys.getsizeof(text) + count * _STR_OVERHEAD
+
+
+def _shown_winansi(
+    font: Font, lines: list[tuple[str, float, float, float]], operation: _core._OperationBudget | None
+) -> list[bytes]:
     """Return the operators that show each line in a Standard 14 font, with its word spacing."""
     shown = []
     word_space = 0.0
     for line, _x, _y, spacing in lines:
-        operators = b"<" + font._font.encode(line).hex().encode() + b"> Tj"  # noqa: SLF001
+        operators = b"<" + font._font.encode(line, None, operation=operation).hex().encode() + b"> Tj"  # noqa: SLF001
         if spacing != word_space:
             operators = _fmt(spacing) + b" Tw\n" + operators
             word_space = spacing
@@ -1754,8 +1876,14 @@ def _shown_winansi(font: Font, lines: list[tuple[str, float, float, float]]) -> 
     return shown
 
 
-def _shown_glyphs(
-    document: Document, xref: int, font: Font, size: float, lines: list[tuple[str, float, float, float]]
+def _shown_glyphs(  # noqa: PLR0913 - the font, the lines, and the operation.
+    document: Document,
+    xref: int,
+    font: Font,
+    size: float,
+    lines: list[tuple[str, float, float, float]],
+    *,
+    operation: _core._OperationBudget | None,
 ) -> list[bytes]:
     """Return the operators that show each line in an embedded face.
 
@@ -1763,7 +1891,7 @@ def _shown_glyphs(
     their glyph IDs, after their widths and texts are added to the font.
     """
     face = font._font  # noqa: SLF001 - the package's own face.
-    shaped = [face.shape(line) for line, _x, _y, _spacing in lines]
+    shaped = [face.shape(line, operation=operation) for line, _x, _y, _spacing in lines]
     drawn = [
         (glyph[0], line[glyph[5] : glyph[6]])
         for (line, *_), glyphs in zip(lines, shaped, strict=True)

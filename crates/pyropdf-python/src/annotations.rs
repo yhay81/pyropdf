@@ -2621,10 +2621,10 @@ pub fn annotation_text(
     else {
         return Ok(None);
     };
-    let budget = document
-        .budget()
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
+    let budget = document.call_budget(&[
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
     py.detach(|| {
         let bridged = Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?;
         let mut text = String::new();

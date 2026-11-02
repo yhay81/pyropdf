@@ -39,7 +39,9 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 /// hayro's default page, A4 in points, for a page without a usable box.
 const A4: (f64, f64) = (595.0, 842.0);
 
-pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageIndex>, Budget)> {
+pub(crate) fn index(
+    document: &_Document,
+) -> PyResult<(Arc<Version>, Arc<PageIndex>, SharedBudget)> {
     let budget = document.budget();
     let (version, index) = index_with(document, None, &budget)?;
     Ok((version, index, budget))
@@ -48,7 +50,7 @@ pub(crate) fn index(document: &_Document) -> PyResult<(Arc<Version>, Arc<PageInd
 /// Returns the version that reads of `document` see and its page index,
 /// charging `budget`; `operation`, if given, also settles the open
 /// transaction's writes instead of the document's own operation.
-fn index_with(
+pub(crate) fn index_with(
     document: &_Document,
     operation: Option<&Budget>,
     budget: &Budget,
@@ -354,7 +356,7 @@ pub fn copy_page_resources(
     let (version, source_index, budget) = match (operation, snapshot) {
         (None, None) => {
             let (version, index, budget) = self::index(source)?;
-            (version, index, budget.share())
+            (version, index, budget)
         }
         (Some(operation), Some(snapshot)) => {
             if !operation.is_active_on(document) {

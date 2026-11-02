@@ -128,10 +128,11 @@ pub fn page_text(
 ) -> PyResult<(String, usize)> {
     let key = text_key(options);
     let options = text_options(options)?;
-    let (version, index, budget) = crate::pages::index(document)?;
-    let budget = budget
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
+    let budget = document.call_budget(&[
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     py.detach(|| {
         let reference = Reference::new(number, generation);
         let (at, page) = index
@@ -184,11 +185,12 @@ pub fn document_text(
     max_size: Option<u64>,
 ) -> PyResult<(String, usize)> {
     let options = text_options(options)?;
-    let (version, index, budget) = crate::pages::index(document)?;
+    let budget = document.call_budget(&[
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     let indexes = crate::pages::entries(pages, index.len())?;
-    let budget = budget
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
     py.detach(|| {
         let mut text = String::new();
         let mut skipped = 0usize;
@@ -299,10 +301,11 @@ fn with_layout<T: Send>(
 ) -> PyResult<T> {
     let key = text_key(options);
     let options = text_options(options)?;
-    let (version, index, budget) = crate::pages::index(document)?;
-    let budget = budget
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
+    let budget = document.call_budget(&[
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     py.detach(|| {
         let reference = Reference::new(number, generation);
         let (at, page) = index
@@ -379,11 +382,12 @@ pub fn page_search(
     max_size: Option<u64>,
 ) -> PyResult<(Hits, usize)> {
     let options = text_options(options)?;
-    let (version, index, budget) = crate::pages::index(document)?;
-    let budget = budget
-        .with_limit(LimitCode::SearchHitCount, max_hits)
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
+    let budget = document.call_budget(&[
+        (LimitCode::SearchHitCount, max_hits),
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     py.detach(|| {
         let reference = Reference::new(number, generation);
         let at = index
@@ -430,10 +434,11 @@ pub fn page_selection(
         return Err(PyValueError::new_err("selection points must be finite"));
     }
     let options = text_options(options)?;
-    let (version, index, budget) = crate::pages::index(document)?;
-    let budget = budget
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
+    let budget = document.call_budget(&[
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     py.detach(|| {
         let at = index
             .index_of(Reference::new(number, generation))
@@ -466,10 +471,11 @@ pub fn page_tables(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(Vec<TableTuple>, usize)> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let budget = budget
-        .with_limit(LimitCode::TextGlyphCount, max_glyphs)
-        .with_limit(LimitCode::TextSize, max_size);
+    let budget = document.call_budget(&[
+        (LimitCode::TextGlyphCount, max_glyphs),
+        (LimitCode::TextSize, max_size),
+    ])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     py.detach(|| {
         let at = index
             .index_of(Reference::new(number, generation))

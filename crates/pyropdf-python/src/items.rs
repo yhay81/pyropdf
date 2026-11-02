@@ -36,8 +36,8 @@ pub fn page_content(
     clip: Option<BBox>,
     max_elements: Option<u64>,
 ) -> PyResult<Py<PyAny>> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let budget = budget.with_limit(LimitCode::ContentElementCount, max_elements);
+    let budget = document.call_budget(&[(LimitCode::ContentElementCount, max_elements)])?;
+    let (version, index) = crate::pages::index_with(document, None, &budget)?;
     let (text_runs, paths, images) = kinds;
     let kinds = ItemKinds {
         text_runs,
