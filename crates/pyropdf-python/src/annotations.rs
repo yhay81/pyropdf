@@ -2218,7 +2218,7 @@ impl Spec {
         entries.insert(Name::from("Type"), Value::Name(Name::from("EmbeddedFile")));
         entries.insert(Name::from("Params"), Value::Dict(params));
         let mut stream = Stream::new(entries, Bytes::default());
-        set_data(&mut stream, data, true)?;
+        set_data(&mut stream, data, true, budget)?;
         let file = transaction.allocate().map_err(|e| store_error(&e))?;
         transaction
             .write(file.number(), &Value::Stream(Box::new(stream)), budget)

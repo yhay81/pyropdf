@@ -1368,3 +1368,79 @@ fn full_save_accepts_object_zero_explicitly_freed_after_repair() {
     let normal = open(saved(&version, false));
     assert_objects(&normal.current(), saved(&normal.current(), false));
 }
+
+/// Bytes that Flate barely shortens, so that compression takes many steps.
+fn noise(len: usize) -> Vec<u8> {
+    let mut state = 0x2545_f491_u32;
+    (0..len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state.to_le_bytes()[0]
+        })
+        .collect()
+}
+
+#[test]
+fn deflate_round_trips_through_zlib() {
+    use std::io::Read as _;
+    let data: Vec<u8> = (0..1_000_000u32).map(|i| (i % 251) as u8).collect();
+    let out = recode::deflate(&data, 6, usize::MAX, &Budget::default())
+        .unwrap()
+        .unwrap();
+    assert!(out.len() < data.len());
+    let mut back = Vec::new();
+    flate2::read::ZlibDecoder::new(out.as_slice())
+        .read_to_end(&mut back)
+        .unwrap();
+    assert_eq!(back, data);
+}
+
+#[test]
+fn deflate_stops_at_a_poll_in_the_middle() {
+    let data = noise(32 * 64 * 1024);
+    let budget = Budget::default();
+    let mut polls = 0;
+    let complete = recode::deflate_with(&data, 6, usize::MAX, &budget, || {
+        polls += 1;
+        Ok(())
+    });
+    assert!(complete.unwrap().is_some());
+    assert!(polls >= 32, "{polls} polls");
+    let middle = polls / 2;
+    let mut seen = 0;
+    let stopped = recode::deflate_with(&data, 6, usize::MAX, &budget, || {
+        seen += 1;
+        if seen == middle {
+            Err(LimitExceeded::new(LimitCode::Cancelled))
+        } else {
+            Ok(())
+        }
+    });
+    let error = stopped.unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    assert_eq!(seen, middle);
+}
+
+#[test]
+fn deflate_charges_its_output_to_the_memory_budget() {
+    let data = noise(1024 * 1024);
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(64 * 1024));
+    let error = recode::deflate(&data, 6, usize::MAX, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert_eq!(budget.used(LimitCode::MemorySize), 0);
+}
+
+#[test]
+fn deflate_gives_up_past_its_output_limit() {
+    let data = noise(256 * 1024);
+    let out = recode::deflate(&data, 6, data.len() - 1, &Budget::default()).unwrap();
+    assert!(out.is_none());
+}
