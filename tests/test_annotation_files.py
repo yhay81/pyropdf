@@ -11,6 +11,7 @@ pylopdf's tests/test_annotation_files.py at ebb01d3c. Intended differences:
 
 from __future__ import annotations
 
+import random
 from typing import Any, cast
 
 import pytest
@@ -231,3 +232,27 @@ def test_the_file_name_description_and_dates_are_edited() -> None:
     with pytest.raises(pyropdf.StaleObjectError):
         attached.read()
     assert repr(attached) == "<stale AnnotationFile>"
+
+
+def test_attaching_and_writing_past_the_memory_budget_change_nothing() -> None:
+    source = pyropdf.Document()
+    source.pages.new((200, 200))
+    limits = pyropdf.DocumentLimits(max_memory_size=64 * 1024)
+    doc = pyropdf.open(source.to_bytes(), limits=limits)
+    page = doc.pages[0]
+    large = random.Random(0).randbytes(512 * 1024)  # noqa: S311 - test data, not a secret
+    before = doc.to_bytes(), doc.history.steps
+    with pytest.raises(pyropdf.LimitError) as raised:
+        page.annotations.add(FileAttachment((20, 30), large, filename="large.bin"))
+    assert raised.value.code == "memory_size"
+    assert (doc.to_bytes(), doc.history.steps) == before
+    assert len(page.annotations) == 0
+
+    attached = page.annotations.add(FileAttachment((20, 30), b"small", filename="note.txt")).file
+    assert attached is not None
+    before = doc.to_bytes(), doc.history.steps
+    with pytest.raises(pyropdf.LimitError) as raised:
+        attached.write(large)
+    assert raised.value.code == "memory_size"
+    assert (doc.to_bytes(), doc.history.steps) == before
+    assert attached.read() == b"small"
