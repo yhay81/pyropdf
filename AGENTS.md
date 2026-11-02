@@ -230,6 +230,7 @@ every later turn, so read only what the task needs:
 | `spike` | A time-boxed investigation that ends in a measured recommendation |
 | `upstream` | Work that lands in an engine or dependency repository |
 | `adoption` | pyropdf adopts a released engine change |
+| `upstream:todo` | Upstream: no draft yet; an agent can investigate and prepare one |
 | `upstream:draft` | Upstream: prepared here, not yet published; waits on the owner's go-ahead |
 | `upstream:filed` | Upstream: issue or pull request filed upstream; waits on the maintainer |
 | `upstream:merged` | Upstream: merged upstream; waits on a release |

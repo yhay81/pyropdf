@@ -23,8 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 REPO = "yhay81/pyropdf"
 PHASE = re.compile(r"Phase (\d+):")
 GROUPS = ("pull_requests", "with_pr", "claimed", "ready", "decisions", "upstream", "blocked", "triage")
-# Whose move an upstream issue waits on: the owner, a maintainer, or a release.
-UPSTREAM_STATES = ("draft", "filed", "merged")
+# Whose move an upstream issue waits on: an agent, the owner, a maintainer, or a release.
+UPSTREAM_STATES = ("todo", "draft", "filed", "merged")
 
 
 @dataclass(frozen=True)
@@ -286,7 +286,7 @@ def render(data: dict[str, Any]) -> str:
         f"Read blockers: gh api --paginate repos/{REPO}/issues/N/dependencies/blocked_by",
         f"Read PR checks: gh pr checks N --repo {REPO}",
         "Decisions: read existing recommendations first; the owner decides, agents prepare evidence.",
-        "Upstream: draft waits on the owner, filed on a maintainer, merged on a release; publishing needs approval.",
+        "Upstream: todo needs a draft, draft waits on the owner, filed on a maintainer, merged on a release.",
         "Claims: read the branch/handoff comment; do not take over merely because no PR exists.",
         "Recheck immediately before claiming: this report is a snapshot, not a reservation.",
     ]
