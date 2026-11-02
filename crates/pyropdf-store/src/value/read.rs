@@ -68,7 +68,8 @@ impl Value {
         PARSES.with(|parses| parses.set(parses.get() + 1));
         // hayro-syntax 0.8 cannot poll or charge its internal parser (#509).
         // Check either side so an already refused operation never starts it,
-        // and a refusal while it runs is returned before conversion.
+        // and a refusal while it runs is returned before conversion. Reads
+        // of the base check the bytes against `object_parse_size` first.
         budget.poll()?;
         let result = guard(|| {
             let object = MaybeRef::<Object<'_>>::from_bytes(source.as_slice());

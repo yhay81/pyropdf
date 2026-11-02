@@ -14,6 +14,7 @@ LimitCode: TypeAlias = Literal[
     "page_count",
     "object_count",
     "object_depth",
+    "object_parse_size",
     "decompressed_size",
     "page_content_size",
     "total_decompressed_size",
@@ -92,6 +93,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "page_count": "The document has more pages than `DocumentLimits.max_pages`.",
         "object_count": "The document has more objects than `DocumentLimits.max_objects`.",
         "object_depth": "An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`.",
+        "object_parse_size": (
+            "The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, "
+            "which hayro-syntax would parse in one call that cannot be cancelled."
+        ),
         "decompressed_size": "A stream decodes to more than `DocumentLimits.max_decompressed_size`.",
         "page_content_size": "A content stream of a page decodes to more than `DocumentLimits.max_page_content_size`.",
         "total_decompressed_size": (

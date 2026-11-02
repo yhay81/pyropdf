@@ -45,6 +45,12 @@ message = "an object nests arrays and dictionaries too deeply"
 unit = "levels"
 reached = "An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`."
 
+[codes.object_parse_size]
+message = "an object is too large to parse"
+unit = "bytes"
+default = 268_435_456
+reached = "The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, which hayro-syntax would parse in one call that cannot be cancelled."
+
 # Decoding streams.
 
 [codes.decompressed_size]

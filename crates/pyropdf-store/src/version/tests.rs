@@ -1402,6 +1402,30 @@ fn cached_reads_honor_cancellation() {
 }
 
 #[test]
+fn reads_refuse_objects_too_large_to_parse_before_parsing() {
+    let mut base = MemoryBase::new(trailer(-1));
+    let source = format!("({})", "x".repeat(4096));
+    base.insert(
+        Reference::new(1, 0),
+        Bytes::from(source.clone().into_bytes()),
+    );
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+    let span = source.len() as u64;
+    let small = Budget::default().with_limit(LimitCode::ObjectParseSize, Some(span - 1));
+    let parses = crate::value::PARSES.with(std::cell::Cell::get);
+    let error = version.get(1, &small).unwrap_err();
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::ObjectParseSize)
+    );
+    assert_eq!(crate::value::PARSES.with(std::cell::Cell::get), parses);
+    let fits = Budget::default().with_limit(LimitCode::ObjectParseSize, Some(span));
+    let object = version.get(1, &fits).unwrap().unwrap();
+    assert!(matches!(&**object.value(), Value::String(_)));
+}
+
+#[test]
 fn allocations_never_repeat_after_undo_drop_or_empty_commit() {
     let document = Document::new(Arc::new(MemoryBase::default()), None);
     let budget = Budget::default();
