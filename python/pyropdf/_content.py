@@ -12,13 +12,15 @@ from __future__ import annotations
 import enum
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeAlias, overload
 
 from pyropdf._geometry import Matrix, Point, Rect
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from pyropdf._document import Document
 
 
 class BlendMode(enum.StrEnum):
@@ -360,6 +362,18 @@ class Path:
     soft_mask: SoftMask | None
 
 
+class _Source:
+    """The document that read an item, which a pickle leaves out."""
+
+    __slots__ = ("document",)
+
+    def __init__(self, document: Document) -> None:
+        self.document = document
+
+    def __reduce__(self) -> tuple[type[_Source], tuple[None]]:
+        return _Source, (None,)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Image:
     """An image painted on the page."""
@@ -385,6 +399,7 @@ class Image:
     context: GraphicsContext
     blend_mode: BlendMode
     soft_mask: SoftMask | None
+    _source: _Source | None = field(default=None, init=False, repr=False, compare=False)
 
 
 ContentItem: TypeAlias = TextRun | Path | Image
@@ -600,7 +615,8 @@ def _soft_mask(raw: tuple[int, bool] | None) -> SoftMask | None:
 class _Converter:
     """Turn the core's tuples into values, sharing equal paints."""
 
-    def __init__(self, fonts: list[Any], states: _Contexts) -> None:
+    def __init__(self, fonts: list[Any], states: _Contexts, source: _Source | None = None) -> None:
+        self.source = source
         self.fonts = [
             FontRef(
                 name=name,
@@ -703,7 +719,7 @@ class _Converter:
             bbox,
             (state, blend, soft_mask),
         ) = raw
-        return Image(
+        image = Image(
             xref=xref,
             width=width,
             height=height,
@@ -720,6 +736,8 @@ class _Converter:
             blend_mode=_BLEND_MODES[blend],
             soft_mask=_soft_mask(soft_mask),
         )
+        object.__setattr__(image, "_source", self.source)
+        return image
 
 
 class _Contexts:
@@ -774,10 +792,11 @@ class _Contexts:
         return value
 
 
-def _content_from_core(raw: Any) -> Content:  # noqa: ANN401 - the core's nested tuples.
-    """Build a :class:`Content` from ``_core.page_content``."""
+def _content_from_core(raw: Any, document: Document | None = None) -> Content:  # noqa: ANN401 - the core's nested tuples.
+    """Build a :class:`Content` from ``_core.page_content``; its images name ``document``."""
     items, fonts, clips, groups, marks, states = raw
-    converter = _Converter(fonts, _Contexts(clips, groups, marks, states))
+    source = None if document is None else _Source(document)
+    converter = _Converter(fonts, _Contexts(clips, groups, marks, states), source)
     converted: list[ContentItem] = []
     for kind, item in items:
         if kind == _TEXT_RUN:
