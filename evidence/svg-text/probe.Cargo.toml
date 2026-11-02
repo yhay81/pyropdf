@@ -1,0 +1,12 @@
+[package]
+name = "svgprobe"
+version = "0.0.0"
+edition = "2024"
+[[bin]]
+name = "probe"
+path = "src/main.rs"
+[dependencies]
+hayro = "=0.8.0"
+hayro-svg = "=0.8.0"
+kurbo = "0.13"
+[workspace]
