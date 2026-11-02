@@ -8,8 +8,10 @@ test_canvas_text.py and in embedded faces in test_canvas_embedded.py.
 from __future__ import annotations
 
 import itertools
+import struct
 import sys
 import threading
+import zlib
 from typing import TYPE_CHECKING
 
 import pytest
@@ -789,3 +791,51 @@ def test_a_placed_page_shows_its_crop_box() -> None:
     _assert_rect(blue.bbox, (50, 50, 110, 110))
     assert _pixel(page, 80, 80) == (0, 0, 255)
     assert _pixel(page, 10, 10) == (255, 255, 255)
+
+
+def _interlaced_rgba_png(width: int, height: int) -> tuple[bytes, bytes]:
+    """Return an Adam7-interlaced 8-bit RGBA PNG and its samples in row order."""
+    samples = bytes(
+        (x * 31 + y * 17 + channel * 59) % 256 for y in range(height) for x in range(width) for channel in range(4)
+    )
+    passes = [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)]
+    raw = bytearray()
+    for x0, y0, dx, dy in passes:
+        columns = range(x0, width, dx)
+        if not columns:
+            continue
+        for y in range(y0, height, dy):
+            raw.append(0)
+            for x in columns:
+                start = (y * width + x) * 4
+                raw += samples[start : start + 4]
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 1)
+    png = (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+    )
+    return png, samples
+
+
+def test_interlaced_png_decodes_row_by_row_to_the_same_samples() -> None:
+    png, samples = _interlaced_rgba_png(37, 29)
+    core = pyropdf.Document()._core()  # noqa: SLF001
+    width, height, gray, color, alpha = _core.decode_png(core, png)
+    assert (width, height, gray) == (37, 29, False)
+    assert alpha == samples[3::4]
+    assert color == bytes(b for i, b in enumerate(samples) if i % 4 != 3)
+
+
+def test_drawing_a_pixmap_past_the_memory_budget_is_refused_without_changes() -> None:
+    _source_doc, source = _new_page(256, 256)
+    pixmap = source.pixmap(dpi=144, alpha=True)
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    page = doc.pages.new((100, 100))
+    before = doc.to_bytes(), doc.history.steps
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.image((0, 0, 100, 100), pixmap)
+    assert raised.value.code == "memory_size"
+    assert (doc.to_bytes(), doc.history.steps) == before

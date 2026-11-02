@@ -218,16 +218,49 @@ fn decode_png_buffers<'b>(data: &[u8], budget: &'b Budget) -> PyResult<DecodedPn
             .try_extend_from_slice(&ZEROES[..len])
             .map_err(|e| limit_error(&e))?;
     }
-    let info = reader.next_frame(&mut buffer).map_err(invalid)?;
-    buffer.truncate(info.buffer_size());
-    let (gray, alpha) = match info.color_type {
+    // Read row by row, polling between rows, rather than with
+    // `next_frame`, which reads the whole frame without polling.
+    let (width, height) = (reader.info().width, reader.info().height);
+    let (color_type, _) = reader.output_color_type();
+    let line = reader
+        .output_line_size(width)
+        .ok_or_else(|| PyValueError::new_err("the PNG image is too large"))?;
+    let mut row = BudgetVec::new(budget);
+    row.try_extend(std::iter::repeat_n(0u8, line))
+        .map_err(|e| limit_error(&e))?;
+    // After `EXPAND` and `STRIP_16`, every sample has 8 bits.
+    let bits = u8::try_from(color_type.samples() * 8).unwrap_or(u8::MAX);
+    let mut next = 0;
+    while let Some(interlace) = reader.read_row(row.as_mut_slice()).map_err(invalid)? {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        match interlace {
+            png::InterlaceInfo::Null(_) => {
+                let start = next * line;
+                if let Some(target) = buffer.as_mut_slice().get_mut(start..start + line) {
+                    target.copy_from_slice(row.as_slice());
+                }
+                next += 1;
+            }
+            png::InterlaceInfo::Adam7(info) => {
+                png::expand_interlaced_row(
+                    buffer.as_mut_slice(),
+                    line,
+                    row.as_slice(),
+                    &info,
+                    bits,
+                );
+            }
+        }
+    }
+    buffer.truncate(line * height as usize);
+    let (gray, alpha) = match color_type {
         png::ColorType::Grayscale => (true, false),
         png::ColorType::GrayscaleAlpha => (true, true),
         png::ColorType::Rgb | png::ColorType::Indexed => (false, false),
         png::ColorType::Rgba => (false, true),
     };
     if !alpha {
-        return Ok((info.width, info.height, gray, buffer, None));
+        return Ok((width, height, gray, buffer, None));
     }
     let channels = if gray { 1 } else { 3 };
     let pixels = buffer.len() / (channels + 1);
@@ -250,7 +283,7 @@ fn decode_png_buffers<'b>(data: &[u8], budget: &'b Budget) -> PyResult<DecodedPn
                 .map_err(|e| limit_error(&e))?;
         }
     }
-    Ok((info.width, info.height, gray, color, Some(opacity)))
+    Ok((width, height, gray, color, Some(opacity)))
 }
 
 /// Width, height, color components, 8-bit samples, and the alpha that

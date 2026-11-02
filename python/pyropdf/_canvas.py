@@ -1464,7 +1464,7 @@ class Canvas:
             stream = _image_stream(document, xref)
         else:
             if isinstance(source, Pixmap):
-                data = source.to_bytes("png")
+                data = _core.pixmap_png(document._core(), source)  # noqa: SLF001
             elif isinstance(source, (bytes, bytearray, memoryview)):
                 data = bytes(source)
             elif isinstance(source, (str, os.PathLike)):

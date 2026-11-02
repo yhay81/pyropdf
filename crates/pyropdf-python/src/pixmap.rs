@@ -1229,6 +1229,21 @@ fn temporary_sibling(target: &Path) -> io::Result<(PathBuf, File)> {
 /// Returns the colors of `pixmap` without its alpha, as the samples of an
 /// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
 /// or as a JPEG at `quality` when it is given, for gray or RGB.
+/// Encodes `pixmap` as PNG for `document`, under a budget from the
+/// document's limits: its memory limit, cancellation token, and deadline.
+#[pyfunction]
+pub fn pixmap_png<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    pixmap: &Pixmap,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let budget = document.budget();
+    let mut out = Vec::new();
+    py.detach(|| pixmap.encode_png(&mut out, &budget))
+        .map_err(|e| e.into_py("failed to encode PNG"))?;
+    Ok(PyBytes::new(py, &out))
+}
+
 #[pyfunction]
 #[pyo3(signature = (pixmap, components, quality=None))]
 pub fn recolor_samples<'py>(
