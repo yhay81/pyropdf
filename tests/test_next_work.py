@@ -198,3 +198,20 @@ def test_a_linked_pr_prevents_duplicate_work_without_a_claim(monkeypatch: pytest
     assert data["groups"]["with_pr"][0]["linked_prs"] == (56,)
     assert [item["number"] for item in data["groups"]["ready"]] == [26]
     assert "Resume inspection of #27" in data["next"]
+
+
+def test_upstream_work_is_ordered_and_shown_by_whose_move_it_waits_on() -> None:
+    items = [
+        issue(1, labels=("tracker",)),
+        issue(2, labels=("upstream",)),
+        issue(3, labels=("upstream", "upstream:merged")),
+        issue(4, labels=("upstream", "upstream:filed")),
+        issue(5, labels=("upstream", "upstream:draft")),
+        issue(6, labels=("upstream", "upstream:draft", "upstream:filed")),
+    ]
+    data = work.report(items, work.CI("main", "a" * 40, "success", "url"), "main")
+    assert [item["number"] for item in data["groups"]["upstream"]] == [5, 4, 3, 2, 6]
+    text = work.render(data)
+    assert "#5 Work 5 (state=draft," in text
+    assert "#2 Work 2 (state=unlabeled," in text
+    assert "#6 Work 6 (state=ambiguous," in text

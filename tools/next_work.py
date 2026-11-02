@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 REPO = "yhay81/pyropdf"
 PHASE = re.compile(r"Phase (\d+):")
 GROUPS = ("pull_requests", "with_pr", "claimed", "ready", "decisions", "upstream", "blocked", "triage")
+# Whose move an upstream issue waits on: the owner, a maintainer, or a release.
+UPSTREAM_STATES = ("draft", "filed", "merged")
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,14 @@ def current_ci(branch: str, commit: str, runs: list[dict[str, Any]]) -> CI:
     return CI(branch, commit, state, run["url"])
 
 
+def upstream_state(labels: tuple[str, ...] | list[str]) -> str:
+    """Name the one `upstream:*` state label, or say that it is missing or ambiguous."""
+    states = [label.removeprefix("upstream:") for label in labels if label.startswith("upstream:")]
+    if len(states) == 1 and states[0] in UPSTREAM_STATES:
+        return states[0]
+    return "unlabeled" if not states else "ambiguous"
+
+
 def classify(item: Item, earliest_phase: int | None) -> str | None:  # noqa: PLR0911 - ordered work states
     """Separate implementation from claims, blockers, decisions, and upstream.
 
@@ -190,6 +200,8 @@ def report(items: list[Item], ci: CI, branch: str) -> dict[str, Any]:
     for entries in groups.values():
         entries.sort(key=lambda item: item.number)
     groups["ready"].sort(key=lambda item: (item.phase or 0, -item.dependents, item.number))
+    order = {state: index for index, state in enumerate(UPSTREAM_STATES)}
+    groups["upstream"].sort(key=lambda item: (order.get(upstream_state(item.labels), len(order)), item.number))
     return {
         "repository": REPO,
         "observed_at": datetime.now(UTC).isoformat(),
@@ -261,6 +273,8 @@ def render(data: dict[str, Any]) -> str:
         lines.append(f"\n{group.replace('_', ' ').title()}:")
         for item in entries:
             counts = f"blockers={item['blockers']}, open dependents={item['dependents']}"
+            if group == "upstream":
+                counts = f"state={upstream_state(item['labels'])}, " + counts
             if item["linked_prs"]:
                 counts += ", PRs=" + ",".join(f"#{number}" for number in item["linked_prs"])
             lines.append(f"  #{item['number']} {item['title']} ({counts}) | {item['url']}")
@@ -272,7 +286,7 @@ def render(data: dict[str, Any]) -> str:
         f"Read blockers: gh api --paginate repos/{REPO}/issues/N/dependencies/blocked_by",
         f"Read PR checks: gh pr checks N --repo {REPO}",
         "Decisions: read existing recommendations first; the owner decides, agents prepare evidence.",
-        "Upstream: inspect release/adoption status; local drafts are allowed, publication needs authorization.",
+        "Upstream: draft waits on the owner, filed on a maintainer, merged on a release; publishing needs approval.",
         "Claims: read the branch/handoff comment; do not take over merely because no PR exists.",
         "Recheck immediately before claiming: this report is a snapshot, not a reservation.",
     ]
