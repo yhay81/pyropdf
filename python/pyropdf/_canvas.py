@@ -791,7 +791,8 @@ class _Images:
         # The faces of the Type0 fonts that free text was drawn in, by font object.
         self.faces: dict[int, Font] = {}
         self.images: dict[bytes, int] = {}
-        self.forms: dict[tuple[int, int, int, bytes], int] = {}
+        # The Forms of placed pages, with the source objects each depends on.
+        self.forms = _core._PageForms()  # noqa: SLF001
 
 
 class Canvas:
@@ -1514,15 +1515,18 @@ class Canvas:
         """Draw another page, of any open document or this one, into ``rect``.
 
         The page is placed as a Form XObject, as vector content with its
-        fonts and images; a page of another document is copied with the
-        objects it reaches when this call is made. ``clip`` is a rectangle
+        fonts and images: its content, geometry and resources are read
+        from one version of its document, and its resources are copied
+        with the objects they reach as they are when this call is made, so
+        a later edit of the source does not change the placed page. ``clip`` is a rectangle
         in the source page's display coordinates, those of its
         :attr:`Page.rect`: only the part of the page inside it is drawn,
         scaled into ``rect`` in place of the whole page. ``rotate`` turns
         the page, or its clipped part, clockwise by 0, 90, 180, or 270
         degrees, and ``keep_aspect`` centres it in ``rect`` at its aspect
         ratio after the turn. A page placed several times, by any canvas of
-        this document, is stored once while its content is unchanged.
+        this document, is stored once while its content, its geometry and
+        every object its resources reach are unchanged.
         Annotations and form fields of the source page are not drawn.
         """
         from pyropdf._page import Page  # noqa: PLC0415 - pyropdf._page imports this module.
@@ -1533,13 +1537,41 @@ class Canvas:
             raise TypeError(msg)
         box = _rect(rect, "rect")
         rotation = _quarter_turn(rotate)
-        source_rotation, source_box = _page_space(source)
-        _, width, height = source._geometry()  # noqa: SLF001
-        whole = Rect(0, 0, width, height)
-        shown = whole if clip is None else _rect(clip, "clip")
-        if not shown.intersects(whole):
-            msg = f"clip {tuple(shown)} does not overlap the source page {tuple(whole)}"
-            raise ValueError(msg)
+        document = self._page.document
+        core, source_core = document._core(), source.document._core()  # noqa: SLF001
+        # One operation reads the page's geometry, content and resources
+        # from one version of its document, and writes or reuses its Form.
+        operation = _core.begin_canvas(core)
+
+        def read() -> tuple[int, tuple[float, float, float, float], Rect, Rect, int]:
+            page = _core.canvas_source_page(source_core, source.xref, source._generation, operation)  # noqa: SLF001
+            if page is None:
+                raise source._stale()  # noqa: SLF001
+            source_rotation, source_box, width, height, _content, snapshot = page
+            whole = Rect(0, 0, width, height)
+            shown = whole if clip is None else _rect(clip, "clip")
+            if not shown.intersects(whole):
+                msg = f"clip {tuple(shown)} does not overlap the source page {tuple(whole)}"
+                raise ValueError(msg)
+            form = _core.canvas_page_form(
+                _cache(document).forms,
+                core,
+                source_core,
+                source.xref,
+                source._generation,  # noqa: SLF001
+                operation,
+                snapshot,
+            )
+            if form is None:
+                raise source._stale()  # noqa: SLF001
+            return source_rotation, source_box, whole, shown, form
+
+        try:
+            source_rotation, source_box, whole, shown, form = read()
+        except BaseException:
+            _core.abort_canvas(core, operation)
+            raise
+        _core.end_transaction(core, True)  # noqa: FBT003 - the core's flag
         # Only the part of the clip on the page is drawn.
         shown &= whole
         covered, place = _placement(box, shown.width, shown.height, keep=bool(keep_aspect), rotation=rotation)
@@ -1550,7 +1582,7 @@ class Canvas:
             return place(dx - shown.x0, dy - shown.y0)
 
         matrix = _affine(convert)
-        name = self._add_xobject(self._form(source, source_box))
+        name = self._add_xobject(form)
         self._emit(
             b"q\n"
             + _numbers(covered.x0, covered.y0, covered.width, covered.height)
@@ -1560,35 +1592,6 @@ class Canvas:
             + name.encode()
             + b" Do\nQ"
         )
-
-    def _form(self, source: Page, box: tuple[float, float, float, float]) -> int:
-        """Return a Form XObject of this document that draws ``source`` in its user space."""
-        document = self._page.document
-        content = source.operations.to_bytes()
-        cache = _cache(document)
-        key = (id(source.document), source.xref, source._generation, hashlib.sha256(content).digest())  # noqa: SLF001
-        xref = cache.forms.get(key)
-        if xref is not None and _still_form(document, xref, box):
-            return xref
-        resources = _core.copy_page_resources(
-            document._core(),  # noqa: SLF001
-            source.document._core(),  # noqa: SLF001
-            source.xref,
-            source._generation,  # noqa: SLF001
-        )
-        if resources is None:
-            raise source._stale()  # noqa: SLF001
-        xref = document.objects.add_stream(
-            content,
-            {
-                "Type": Name("XObject"),
-                "Subtype": Name("Form"),
-                "BBox": list(box),
-                "Resources": document.objects[resources],
-            },
-        )
-        cache.forms[key] = xref
-        return xref
 
     # Scopes.
 
@@ -1915,15 +1918,6 @@ def _still_image(document: Document, xref: int, size: int) -> bool:
     if stream.get("Filter") in ("DCTDecode", "JPXDecode"):
         return len(stream.read(decode=False)) == size
     return True
-
-
-def _still_form(document: Document, xref: int, box: tuple[float, float, float, float]) -> bool:
-    """Return whether ``xref`` is still a Form XObject with ``box``."""
-    stream = document.objects.get(xref) if xref in document.objects else None
-    if not isinstance(stream, Stream) or stream.get("Subtype") != "Form":
-        return False
-    bbox = stream.get("BBox")
-    return bbox is not None and [float(value) for value in bbox] == [float(value) for value in box]
 
 
 def _contents(page: Page) -> list[Stream]:

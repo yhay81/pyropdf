@@ -241,15 +241,18 @@ Canvas.page(
 Draw another page, of any open document or this one, into `rect`.
 
 The page is placed as a Form XObject, as vector content with its
-fonts and images; a page of another document is copied with the
-objects it reaches when this call is made. `clip` is a rectangle
+fonts and images: its content, geometry and resources are read
+from one version of its document, and its resources are copied
+with the objects they reach as they are when this call is made, so
+a later edit of the source does not change the placed page. `clip` is a rectangle
 in the source page's display coordinates, those of its
 `Page.rect`: only the part of the page inside it is drawn,
 scaled into `rect` in place of the whole page. `rotate` turns
 the page, or its clipped part, clockwise by 0, 90, 180, or 270
 degrees, and `keep_aspect` centres it in `rect` at its aspect
 ratio after the turn. A page placed several times, by any canvas of
-this document, is stored once while its content is unchanged.
+this document, is stored once while its content, its geometry and
+every object its resources reach are unchanged.
 Annotations and form fields of the source page are not drawn.
 
 ### `Canvas.clip`

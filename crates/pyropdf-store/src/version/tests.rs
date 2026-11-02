@@ -1673,3 +1673,65 @@ fn derived_anchor_lives_only_as_long_as_its_transaction() {
     drop(transaction);
     assert!(weak.upgrade().is_none());
 }
+
+#[test]
+fn stamps_see_a_write_of_a_stamped_object_and_nothing_else() {
+    let budget = Budget::default();
+    let document = document(None);
+    let mut transaction = document.begin();
+    transaction.write(5, &Value::Integer(50), &budget).unwrap();
+    let first = transaction.commit(&budget).unwrap();
+    let stamps = first.stamps(&[1, 5, 9], &budget).unwrap();
+    assert_eq!(stamps.len(), 3);
+    assert!(stamps.unchanged(&first, &budget).unwrap());
+
+    // An unrelated write leaves the stamps valid, across commits.
+    let mut transaction = document.begin();
+    transaction.write(2, &Value::Integer(20), &budget).unwrap();
+    let unrelated = transaction.commit(&budget).unwrap();
+    assert!(stamps.unchanged(&unrelated, &budget).unwrap());
+
+    // A write of a base object, or a rewrite of the same value, is a change.
+    for number in [1, 5] {
+        let mut transaction = document.begin();
+        let value = value_of(&document.current(), number).unwrap();
+        transaction.write(number, &value, &budget).unwrap();
+        let changed = transaction.snapshot();
+        assert!(!stamps.unchanged(&changed, &budget).unwrap());
+    }
+    // So is freeing one.
+    let mut transaction = document.begin();
+    transaction.free(1, &budget).unwrap();
+    assert!(!stamps.unchanged(&transaction.snapshot(), &budget).unwrap());
+    drop(transaction);
+
+    // A version of another document never matches.
+    let other = Document::new(Arc::new(base()), None).current();
+    assert!(!stamps.unchanged(&other, &budget).unwrap());
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let refused = Budget::default().with_cancellation(cancelled);
+    assert!(stamps.unchanged(&first, &refused).is_err());
+}
+
+#[test]
+fn stamps_keep_neither_the_version_nor_its_objects() {
+    let budget = Budget::default();
+    let document = document(Some(0));
+    let mut transaction = document.begin();
+    transaction.write(2, &Value::Integer(20), &budget).unwrap();
+    let version = transaction.commit(&budget).unwrap();
+    let Some(Slot::Written(object)) = version.slot(2) else {
+        panic!("2 is written");
+    };
+    let weak_object = Arc::downgrade(object);
+    let weak_version = Arc::downgrade(&version);
+    let stamps = version.stamps(&[2], &budget).unwrap();
+    drop(version);
+    let mut transaction = document.begin();
+    transaction.write(2, &Value::Integer(21), &budget).unwrap();
+    let later = transaction.commit(&budget).unwrap();
+    assert!(weak_version.upgrade().is_none());
+    assert!(weak_object.upgrade().is_none());
+    assert!(!stamps.unchanged(&later, &budget).unwrap());
+}

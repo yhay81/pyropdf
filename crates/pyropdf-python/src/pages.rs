@@ -7,6 +7,7 @@
 //! inherited attributes would change under the root, is rewritten with
 //! `/Parent` naming the root and its inherited attributes written out.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use pyo3::exceptions::{PyIndexError, PyValueError};
@@ -14,13 +15,13 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::pages::copy::Copies;
-use pyropdf_engine::pages::import;
+use pyropdf_engine::pages::{import, sources};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, SharedBudget};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
 use pyropdf_store::refs::{self, Edits, Rule};
-use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::{Document, Transaction, Version};
+use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
+use pyropdf_store::version::{Document, ObjectStamps, Transaction, Version};
 
 use crate::annotations::links::{
     Destination, Lead, LeadReader, NamedDestinations, lead, named, read,
@@ -30,6 +31,7 @@ use crate::document::_Document;
 use crate::errors::{MalformedPdfError, PdfError, limit_error, store_error};
 use crate::forms;
 use crate::history::OperationBudget;
+use crate::objects::set_data;
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
@@ -197,6 +199,8 @@ pub(crate) struct CanvasSourceSnapshot {
 struct Captured {
     version: Arc<Version>,
     index: Arc<PageIndex>,
+    /// The page's content as it read it.
+    content: Bytes,
 }
 
 impl CanvasSourceSnapshot {
@@ -303,7 +307,11 @@ pub fn canvas_source_page<'py>(
     let snapshot = Py::new(
         py,
         CanvasSourceSnapshot {
-            captured: Mutex::new(Some(Captured { version, index })),
+            captured: Mutex::new(Some(Captured {
+                version,
+                index,
+                content: data.clone(),
+            })),
             page,
             source: Arc::downgrade(&source_document),
             operation: operation.operation.clone(),
@@ -376,38 +384,239 @@ pub fn copy_page_resources(
         .unwrap_or_else(|| Value::Dict(Dict::new()));
     drop(source_index);
     let written = document.edit(py, |transaction, edit_budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
         // A canvas charges its operation, under the source's limits too.
         let budget: &Budget = if operation.is_some() {
             &budget
         } else {
             edit_budget
         };
-        let value = match (same, operation) {
-            (true, None) => refs::copy_for_edit(&resources, budget).map_err(store)?,
-            (true, Some(_)) => {
-                import::copy_resource_graph(transaction, &version, &resources, budget)
-                    .map_err(store)?
-            }
-            (false, _) => {
-                let (root, _) = root(&transaction.snapshot(), budget)?;
-                let along = import::Along {
-                    values: std::slice::from_ref(&resources),
-                    ..import::Along::default()
-                };
-                let imported =
-                    import::import(transaction, &version, Vec::new(), &[], along, root, budget)
-                        .map_err(store)?;
-                imported.values.into_iter().next().unwrap_or(Value::Null)
-            }
-        };
-        let new = transaction.allocate().map_err(store)?;
-        transaction
-            .write(new.number(), &value, budget)
-            .map_err(store)?;
-        Ok(new.number())
+        write_resources(
+            transaction,
+            &version,
+            &resources,
+            same,
+            operation.is_some(),
+            budget,
+        )
+        .map(|written| written.number())
     })?;
     Ok(Some(written))
+}
+
+/// Writes `resources`, a page's resources in `version`, as a new object of
+/// the transaction and returns its number. From another document the
+/// objects they reach are copied too. Within one document they are shared,
+/// unless `isolated`, when they are copied as well, so that a later edit of
+/// the source's objects does not change them.
+fn write_resources(
+    transaction: &mut Transaction,
+    version: &Version,
+    resources: &Value,
+    same: bool,
+    isolated: bool,
+    budget: &Budget,
+) -> PyResult<Reference> {
+    let store = |e: pyropdf_store::Error| store_error(&e);
+    let value = match (same, isolated) {
+        (true, false) => refs::copy_for_edit(resources, budget).map_err(store)?,
+        (true, true) => {
+            import::copy_resource_graph(transaction, version, resources, budget).map_err(store)?
+        }
+        (false, _) => {
+            let (root, _) = root(&transaction.snapshot(), budget)?;
+            let along = import::Along {
+                values: std::slice::from_ref(resources),
+                ..import::Along::default()
+            };
+            let imported =
+                import::import(transaction, version, Vec::new(), &[], along, root, budget)
+                    .map_err(store)?;
+            imported.values.into_iter().next().unwrap_or(Value::Null)
+        }
+    };
+    let new = transaction.allocate().map_err(store)?;
+    transaction
+        .write(new.number(), &value, budget)
+        .map_err(store)
+}
+
+/// The most Forms of placed pages that a document's cache keeps.
+const PAGE_FORMS: usize = 64;
+
+/// The Forms that canvases of one document wrote for placed pages, each
+/// with what it depends on, so that a page placed again while none of that
+/// changed reuses its Form (DESIGN.md F4).
+///
+/// An entry keeps the page's `/Contents` and inherited `/Resources` values,
+/// its display box, and the stamps of every object that those values reach
+/// in the source, and of the Form and its resources dictionary in the
+/// document. Stamps keep no version alive. The cache keeps at most
+/// [`PAGE_FORMS`] entries, the oldest used leaving first; the stamps of
+/// each were charged to the operation that made it.
+#[pyclass(frozen, name = "_PageForms", module = "pyropdf._core")]
+#[derive(Default)]
+pub(crate) struct PageForms {
+    entries: Mutex<VecDeque<PageForm>>,
+}
+
+/// A placed page's Form and what it depends on.
+struct PageForm {
+    page: Reference,
+    contents: Option<Value>,
+    resources: Value,
+    bbox: [f64; 4],
+    source: ObjectStamps,
+    target: ObjectStamps,
+    form: u32,
+}
+
+#[pymethods]
+impl PageForms {
+    #[new]
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// The number of Forms the cache keeps.
+    fn __len__(&self) -> usize {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
+    }
+}
+
+/// Returns a Form XObject of `document` that draws the page of `source`
+/// that `snapshot` read, in its user space, with its display box as
+/// `/BBox`, and uses the snapshot up.
+///
+/// The Form of an earlier placement is reused while the page's
+/// `/Contents` and inherited `/Resources` values, its display box, every
+/// source object that they reach, and the Form and its resources in
+/// `document` are unchanged. Otherwise the page's resources are copied, as
+/// [`copy_page_resources`] copies them for a canvas, a new Form is written
+/// and `forms` remembers it. Everything charges the operation, under the
+/// source's limits too. `None` when the snapshot no longer lists the page.
+#[pyfunction]
+#[expect(clippy::too_many_arguments, reason = "the private canvas binding")]
+pub fn canvas_page_form(
+    py: Python<'_>,
+    forms: &PageForms,
+    document: &_Document,
+    source: &_Document,
+    number: u32,
+    generation: u16,
+    operation: &OperationBudget,
+    snapshot: &CanvasSourceSnapshot,
+) -> PyResult<Option<u32>> {
+    if !operation.is_active_on(document) {
+        return Err(PyValueError::new_err(
+            "the canvas operation is not active on this document",
+        ));
+    }
+    let page = Reference::new(number, generation);
+    let captured = snapshot.take(&source.document()?, page, operation)?;
+    let budget = operation.for_source(source)?;
+    let Some(entry) = captured
+        .index
+        .index_of(page)
+        .and_then(|at| captured.index.get(at))
+    else {
+        return Ok(None);
+    };
+    let contents = entry.dict().get("Contents").cloned();
+    let resources = entry
+        .inherited("Resources")
+        .cloned()
+        .unwrap_or_else(|| Value::Dict(Dict::new()));
+    let bbox = display_box(entry);
+    let limit = |e: pyropdf_store::LimitExceeded| limit_error(&e);
+    {
+        let target = document.reading()?;
+        let mut entries = forms.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut hit = None;
+        for (at, form) in entries.iter().enumerate() {
+            if form.page == page
+                && form.bbox == bbox
+                && form.contents == contents
+                && form.resources == resources
+                && form
+                    .source
+                    .unchanged(&captured.version, &budget)
+                    .map_err(limit)?
+                && form.target.unchanged(&target, &budget).map_err(limit)?
+            {
+                hit = Some(at);
+                break;
+            }
+        }
+        if let Some(at) = hit
+            && let Some(form) = entries.remove(at)
+        {
+            let number = form.form;
+            entries.push_back(form);
+            return Ok(Some(number));
+        }
+    }
+    let values: Vec<&Value> = contents.iter().chain([&resources]).collect();
+    let reached =
+        sources::reachable(&captured.version, &values, &budget).map_err(|e| store_error(&e))?;
+    let source_stamps = captured
+        .version
+        .stamps(reached.as_slice(), &budget)
+        .map_err(limit)?;
+    drop(reached);
+    let same = std::ptr::eq(document, source);
+    let (form, dictionary) = document.edit(py, |transaction, _| {
+        let dictionary = write_resources(
+            transaction,
+            &captured.version,
+            &resources,
+            same,
+            true,
+            &budget,
+        )?;
+        let mut stream = Stream::new(
+            [
+                (Name::from("Type"), Value::Name(Name::from("XObject"))),
+                (Name::from("Subtype"), Value::Name(Name::from("Form"))),
+                (
+                    Name::from("BBox"),
+                    Value::Array(bbox.iter().map(|&x| Value::from(x)).collect()),
+                ),
+                (Name::from("Resources"), Value::Reference(dictionary)),
+            ]
+            .into_iter()
+            .collect(),
+            Bytes::default(),
+        );
+        set_data(&mut stream, &captured.content, true, &budget)?;
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let form = transaction.allocate().map_err(store)?;
+        let form = transaction
+            .write(form.number(), &Value::Stream(Box::new(stream)), &budget)
+            .map_err(store)?;
+        Ok((form.number(), dictionary.number()))
+    })?;
+    drop(captured);
+    let target = document
+        .reading()?
+        .stamps(&[form, dictionary], &budget)
+        .map_err(limit)?;
+    let mut entries = forms.entries.lock().unwrap_or_else(PoisonError::into_inner);
+    if entries.len() >= PAGE_FORMS {
+        entries.pop_front();
+    }
+    entries.push_back(PageForm {
+        page,
+        contents,
+        resources,
+        bbox,
+        source: source_stamps,
+        target,
+        form,
+    });
+    Ok(Some(form))
 }
 
 /// Sets the `/Rotate` of a page, a multiple of 90 that the caller
