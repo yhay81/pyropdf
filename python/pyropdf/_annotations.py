@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 from pyropdf import _core
 from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
+from pyropdf._fonts import Font
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
@@ -1275,11 +1276,11 @@ def _contents(value: object) -> str | None:
 
 def _bound_input(subtype: str, contents: str | None) -> None:
     """Bound the subtype, contents, and dates that an added annotation writes to 1 MiB of UTF-8."""
-    texts = (subtype, contents or "", _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
-    characters = sum(len(text) for text in texts)
+    texts = (subtype, "" if contents is None else contents, _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
+    characters = sum(str.__len__(text) for text in texts)
     if characters > _MAX_ANNOTATION_INPUT_TEXT_SIZE or (
         characters * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE
-        and sum(len(text.encode()) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+        and sum(len(str.encode(text)) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
     ):
         code = "annotation_input_size"
         msg = f"annotation subtype and contents input exceeds the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte UTF-8 limit"
@@ -1624,6 +1625,197 @@ class FileAttachment:
             # The data was bounded when the specification was made.
             "max_size": None,
         }
+
+
+def _turn(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value % 90:
+        msg = f"rotate must be a multiple of 90: {value!r}"
+        raise ValueError(msg)
+    return value % 360
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class Stamp:
+    """A rubber stamp, as ``page.annotations.add`` takes it.
+
+    ``rect`` is in display coordinates; the stamp's label is drawn as large
+    as fits, centred in a rounded frame, in ``color`` or the stamp's own
+    color (green for approval, red for restriction, blue for the rest), and
+    ``rotate`` turns it clockwise by a multiple of 90 degrees as the page is
+    displayed.
+    """
+
+    rect: Rect
+    icon: StampIcon
+    color: Color | None
+    opacity: float
+    rotate: int
+    contents: str | None
+
+    def __init__(  # noqa: PLR0913 - the stamp's options.
+        self,
+        rect: Sequence[float],
+        *,
+        icon: StampIcon = StampIcon.APPROVED,
+        color: Color | None = None,
+        opacity: float = 1.0,
+        rotate: int = 0,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification."""
+        contents = _contents(contents)
+        _bound_input("Stamp", contents)
+        object.__setattr__(self, "rect", Rect(*_rect(rect)))
+        object.__setattr__(self, "icon", StampIcon(icon))
+        object.__setattr__(self, "color", _optional_color(color, "color"))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "rotate", _turn(rotate))
+        object.__setattr__(self, "contents", contents)
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "subtype": "Stamp",
+            "rect": tuple(self.rect),
+            "icon": _ICON_NAMES[self.icon],
+            "color": None if self.color is None else (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "rotate": self.rotate,
+            "contents": self.contents,
+            "created": _now(),
+        }
+
+
+#: The ``/Q`` code of each free-text alignment.
+_FREE_TEXT_ALIGNMENTS = ("left", "center", "right")
+#: The largest font size of free text, in points.
+_MAX_FREE_TEXT_SIZE = 10_000
+
+
+def _callout(value: object) -> tuple[Point, ...] | None:
+    """Return a callout's two or three points, stopping at a fourth."""
+    if value is None:
+        return None
+    msg = "callout must hold 2 or 3 points: the point it explains, an optional knee, and the box"
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(msg)  # noqa: TRY004 - preserve the specification's existing exception.
+    points: list[Point] = []
+    for point in value:
+        if len(points) == 3:  # noqa: PLR2004 - the fourth point exceeds the bound.
+            raise ValueError(msg)
+        points.append(_point(point))
+    if len(points) < 2:  # noqa: PLR2004 - a callout needs two endpoints.
+        raise ValueError(msg)
+    return tuple(points)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FreeText:
+    """Text written on the page in a box, as ``page.annotations.add`` takes it.
+
+    ``rect`` is the box in display coordinates and ``text`` its text,
+    wrapped as :meth:`Canvas.textbox` wraps it, ``align``-ed, and in the
+    Standard 14 ``font``, Helvetica by default, at ``size`` points and
+    ``text_color``. The font is named in the annotation's ``/DA``, so other
+    viewers can redraw it; it prints WinAnsi characters only. ``color``
+    fills the box, ``border`` outlines it in the text color, and ``rotate``
+    turns the text clockwise by a multiple of 90 degrees as the page is
+    displayed. ``callout`` draws a line from the display point that the
+    text explains, through an optional knee, to the box, with
+    ``callout_ending`` at the explained point. Text that does not fit
+    raises :class:`PdfError`.
+    """
+
+    rect: Rect
+    text: str
+    font: Font | None
+    size: float
+    text_color: Color
+    color: Color | None
+    border: Border
+    align: Literal["left", "center", "right"]
+    rotate: int
+    callout: tuple[Point, ...] | None
+    callout_ending: LineEnding
+    opacity: float
+
+    def __init__(  # noqa: PLR0913 - the text's style options.
+        self,
+        rect: Sequence[float],
+        text: str,
+        *,
+        font: Font | None = None,
+        size: float = 11.0,
+        text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
+        color: Color | None = None,
+        border: Border = Border(0),  # noqa: B008 - Border is immutable.
+        align: Literal["left", "center", "right"] = "left",
+        rotate: int = 0,
+        callout: Sequence[Point | Sequence[float]] | None = None,
+        callout_ending: LineEnding = LineEnding.NONE,
+        opacity: float = 1.0,
+    ) -> None:
+        """Validate the specification; the text is bounded before anything else is read."""
+        if not isinstance(text, str):
+            msg = f"text must be a str: {type(text).__name__}"
+            raise TypeError(msg)
+        _bound_input("FreeText", text)
+        if font is not None and not isinstance(font, Font):
+            msg = f"font must be a pyropdf.Font or None, not {type(font).__name__}"
+            raise TypeError(msg)
+        if font is not None and font._font.standard_name is None:  # noqa: SLF001 - the package's own face.
+            msg = "free text draws in a Standard 14 font; an embedded face is not supported"
+            raise ValueError(msg)
+        size = _number(size, "size")
+        if not 0 < size <= _MAX_FREE_TEXT_SIZE:
+            msg = f"size must be greater than 0 and at most {_MAX_FREE_TEXT_SIZE}: {size!r}"
+            raise ValueError(msg)
+        if not isinstance(border, Border):
+            msg = f"border must be a Border: {border!r}"
+            raise TypeError(msg)
+        if align not in _FREE_TEXT_ALIGNMENTS:
+            msg = f"align must be one of {', '.join(_FREE_TEXT_ALIGNMENTS)}: {align!r}"
+            raise ValueError(msg)
+        points = _callout(callout)
+        object.__setattr__(self, "rect", Rect(*_rect(rect)))
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "font", font)
+        object.__setattr__(self, "size", size)
+        object.__setattr__(self, "text_color", _opaque_color(text_color, "text_color"))
+        object.__setattr__(self, "color", _optional_color(color, "color"))
+        object.__setattr__(self, "border", border)
+        object.__setattr__(self, "align", align)
+        object.__setattr__(self, "rotate", _turn(rotate))
+        object.__setattr__(self, "callout", points)
+        object.__setattr__(self, "callout_ending", LineEnding(callout_ending))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+
+    def _payload(self) -> dict[str, Any]:
+        try:
+            str.encode(self.text, "cp1252")
+        except UnicodeEncodeError as exc:
+            msg = "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters"
+            raise ValueError(msg) from exc
+        border = self.border
+        color = self.color
+        text_color = self.text_color
+        spec: dict[str, Any] = {
+            "subtype": "FreeText",
+            "rect": tuple(self.rect),
+            "contents": self.text,
+            "created": _now(),
+            "color": None if color is None else (color.red, color.green, color.blue),
+            "border": (border.width, _BORDER_STYLE_NAMES[border.style], list(border.dashes)),
+            "opacity": self.opacity,
+            "text_color": (text_color.red, text_color.green, text_color.blue),
+            "font_size": self.size,
+            "font_name": "Helvetica" if self.font is None else self.font._font.standard_name,  # noqa: SLF001
+            "align": _FREE_TEXT_ALIGNMENTS.index(self.align),
+            "rotate": self.rotate,
+        }
+        if self.callout is not None:
+            spec["callout"] = [tuple(point) for point in self.callout]
+            spec["callout_ending"] = _LINE_ENDING_NAMES[self.callout_ending]
+        return spec
 
 
 #: The most points that one annotation's geometry holds (``annotation_point_count``).
@@ -1974,6 +2166,8 @@ AnnotationSpecification: TypeAlias = (
     | Ink
     | Caret
     | FileAttachment
+    | FreeText
+    | Stamp
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -1989,6 +2183,8 @@ _SPECIFICATIONS = (
     Ink,
     Caret,
     FileAttachment,
+    FreeText,
+    Stamp,
 )
 
 
@@ -2080,6 +2276,7 @@ for _public in (
     Caret,
     Circle,
     FileAttachment,
+    FreeText,
     Highlight,
     Ink,
     LineAnnotation,
@@ -2090,6 +2287,7 @@ for _public in (
     PolyLine,
     Square,
     Squiggly,
+    Stamp,
     StampIcon,
     StrikeOut,
     Underline,

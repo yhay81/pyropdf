@@ -129,7 +129,7 @@ fn plan(reader: &Reader<'_>, reference: Reference) -> Result<Option<(Dict, Strea
     let Some(drawn) = appearance_for_render(reader, dict)? else {
         return Ok(None);
     };
-    if drawn.points == 0 {
+    if drawn.points == 0 && drawn.font.is_none() {
         return Ok(None);
     }
     reader
