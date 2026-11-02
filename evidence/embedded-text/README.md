@@ -150,6 +150,18 @@ differences. Each test module's docstring repeats its rows.
 | Form | pyropdf bundles no font extras, so the case that uses an installed Japanese face is not ported. Without `Form.font`, a value outside WinAnsi is left for the viewer to draw. | `test_acroform.py` |
 | Form | `Font.from_bytes` refuses invalid font data before a fill. The core cases that took font bytes become cases on `Font` and `form_field_draw_face`. | `test_acroform.py` |
 | Form | Rendering a filled button is not refused by `max_interpretation_size`. A stale handle comes back with undo, because there is no renumbering save. A refused read needs no `to_bytes` comparison. | `test_acroform.py` |
+| Canvas | `test_canvas_round_trip.py` is not ported: it redraws `page.content()` items with `Canvas.draw(item)`, which pyropdf does not have yet. It is #581, under the Canvas tracker #246. | none |
+
+The pylopdf files of #153 map to these test modules:
+
+| pylopdf ebb01d3c | pyropdf |
+| --- | --- |
+| `test_canvas.py`, `test_draw.py` | `test_canvas.py` (paths, images, placed pages), `test_canvas_text.py` (Standard 14 text), `test_canvas_embedded.py` (embedded faces) |
+| `test_canvas_layer.py`, `test_canvas_tag.py` | the files of the same name |
+| `test_canvas_round_trip.py` | not ported, #581 |
+| `test_font.py` | `test_font.py` (Standard 14), `test_font_embedded.py` (OpenType), `test_canvas_embedded.py` (drawing) |
+| `test_font_objects.py` | `test_canvas_embedded.py` (the Type0 case), `test_page_fonts.py` (reading page fonts) |
+| `test_font_subsetting.py` | `test_font_subsetting.py` |
 
 CI checks the sizes against krilla's: `test_100_stamps_save_no_larger_than_krilla`
 in `tests/test_canvas_embedded.py` asserts each 100-stamp row of the table
