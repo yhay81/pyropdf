@@ -38,6 +38,10 @@ class _OperationBudget:
     def poll(self) -> None: ...
 
 @final
+class _PageForms:
+    def __len__(self) -> int: ...
+
+@final
 class _CanvasSourceSnapshot:
     @property
     def held(self) -> bool: ...
@@ -344,6 +348,16 @@ def page_space(
 def canvas_source_page(
     source: _Document, number: int, generation: int, operation: _OperationBudget, /
 ) -> tuple[int, tuple[float, float, float, float], float, float, bytes, _CanvasSourceSnapshot] | None: ...
+def canvas_page_form(
+    forms: _PageForms,
+    document: _Document,
+    source: _Document,
+    number: int,
+    generation: int,
+    operation: _OperationBudget,
+    snapshot: _CanvasSourceSnapshot,
+    /,
+) -> int | None: ...
 def copy_page_resources(
     document: _Document,
     source: _Document,

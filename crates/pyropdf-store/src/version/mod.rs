@@ -30,6 +30,7 @@ mod base;
 mod document;
 mod journal;
 mod stale;
+mod stamps;
 pub(crate) mod table;
 mod transaction;
 
@@ -47,6 +48,7 @@ pub(crate) use stale::Stale;
 
 pub use base::{Base, MemoryBase};
 pub use document::{Document, HistoryStatus, RestoredHistory};
+pub use stamps::ObjectStamps;
 pub use transaction::{Savepoint, Transaction};
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
