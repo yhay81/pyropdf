@@ -12,7 +12,7 @@
 //! and the appearance settler draws it again once per transaction (section
 //! 7).
 
-mod input;
+pub(crate) mod input;
 pub mod links;
 
 use std::sync::Arc;
@@ -906,7 +906,9 @@ impl Edit {
             modified: fields.short("modified", input::MAX_DATE, long_date)?,
             points: fields.points("points")?,
             line_endings: fields.line_endings("line_endings")?,
-            clear: fields.names("clear", CLEARABLE)?,
+            clear: fields.names("clear", CLEARABLE, || {
+                PdfError::new_err("an annotation property that cannot be removed")
+            })?,
         })
     }
 
