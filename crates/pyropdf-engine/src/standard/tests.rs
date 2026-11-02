@@ -597,6 +597,9 @@ const BREAK_SAMPLES: &[char] = &[
     '\u{2E3A}',
     '\u{FF01}',
     '\u{F08}',
+    '\u{915}',
+    '\u{94D}',
+    '\u{600}',
 ];
 
 /// Text built of runs of sampled characters, some of them long.
@@ -751,6 +754,27 @@ fn grapheme_discovery_polls_inside_one_long_grapheme() {
         scan::grapheme_ends(&flags, poll, |_| Ok(())).map_err(|refusal| refusal.code())
     });
     assert_eq!(grapheme_count(&flags, &budget).unwrap(), LONG / 8);
+}
+
+#[test]
+fn grapheme_discovery_polls_while_looking_back() {
+    let extends = "\u{301}".repeat(LONG / 2);
+    let conjunct = format!("\u{915}\u{94D}{extends}\u{915}");
+    let emoji = format!("\u{1F600}{extends}\u{200D}\u{1F600}");
+    let budget = Budget::default();
+    // Reading the extends forward polls about `LONG / STEP` times, and
+    // looking back over them before the last character polls as often.
+    let forward = LONG / scan::STEP;
+    for text in [conjunct, emoji] {
+        let scan = |poll: &mut scan::Poll<'_>| {
+            scan::grapheme_ends(&text, poll, |_| Ok(())).map_err(|refusal| refusal.code())
+        };
+        assert_stops_midway(forward * 3 / 2, scan);
+        let (result, at) = stop_at(forward * 3 / 2, &cancelled(), scan);
+        assert_eq!(result.unwrap_err(), LimitCode::Cancelled);
+        assert_eq!(at, forward * 3 / 2);
+        assert_eq!(grapheme_count(&text, &budget).unwrap(), 1);
+    }
 }
 
 #[test]

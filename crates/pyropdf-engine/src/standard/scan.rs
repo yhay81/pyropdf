@@ -172,11 +172,12 @@ fn push_run_end(out: &mut String, run: usize, tail: &[char; RUN_ENDS]) -> usize 
 /// order, as `unicode_segmentation`'s grapheme iterator finds them, while
 /// letting its cursor read only a step further at a time.
 ///
-/// The chunks that the cursor reads all start at the text's start, so it
-/// never asks for the text before a chunk: its answers to such requests
-/// lose the parity of regional indicators. Its own look back for a
-/// conjunct, an emoji sequence, or a regional indicator still reads a run
-/// of characters that precede the decision in one step.
+/// Each chunk that the cursor reads after the first starts at the
+/// character before the cursor, so the cursor never decides a boundary at
+/// a chunk's start: there `unicode-segmentation` 1.13.3 counts regional
+/// indicators that it has already counted, and loses their parity. Its look
+/// back for a conjunct or an emoji sequence asks for the text before a
+/// chunk instead of reading past it, and gets that text a step at a time.
 pub(super) fn grapheme_ends(
     text: &str,
     poll: &mut Poll<'_>,
@@ -192,10 +193,11 @@ pub(super) fn grapheme_ends_with(
     found: &mut dyn FnMut(usize) -> Result<(), LimitExceeded>,
 ) -> Result<(), LimitExceeded> {
     let mut cursor = GraphemeCursor::new(0, text.len(), true);
+    let mut start = 0;
     let mut end = step_end(text, 0, step);
     let mut boundaries = 0_usize;
     loop {
-        match cursor.next_boundary(&text[..end], 0) {
+        match cursor.next_boundary(&text[start..end], start) {
             Ok(None) => return Ok(()),
             Ok(Some(boundary)) => {
                 boundaries += 1;
@@ -204,17 +206,22 @@ pub(super) fn grapheme_ends_with(
                 }
                 found(boundary)?;
             }
+            // The cursor stands at the chunk's end, which is not the text's.
             Err(GraphemeIncomplete::NextChunk) => {
                 poll()?;
+                start = text.floor_char_boundary(end - 1);
                 end = step_end(text, end, step);
             }
-            // A chunk from the text's start holds all the context there is,
-            // and the cursor only moves forward inside the text.
-            Err(
-                GraphemeIncomplete::PreContext(_)
-                | GraphemeIncomplete::PrevChunk
-                | GraphemeIncomplete::InvalidOffset,
-            ) => unreachable!("a forward grapheme cursor asked for earlier text"),
+            Err(GraphemeIncomplete::PreContext(context_end)) => {
+                poll()?;
+                let context_start = text.floor_char_boundary(context_end.saturating_sub(step));
+                cursor.provide_context(&text[context_start..context_end], context_start);
+            }
+            // Every chunk holds the cursor and the character after it, and
+            // the cursor only moves forward.
+            Err(GraphemeIncomplete::PrevChunk | GraphemeIncomplete::InvalidOffset) => {
+                unreachable!("a forward grapheme cursor lost its chunk")
+            }
         }
     }
 }
