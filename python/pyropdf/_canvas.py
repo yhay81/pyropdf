@@ -784,10 +784,12 @@ class _TagScope(AbstractContextManager[None]):
 class _Images:
     """The images and pages that a document's canvases wrote, keyed by their content."""
 
-    __slots__ = ("fonts", "forms", "images")
+    __slots__ = ("faces", "fonts", "forms", "images")
 
     def __init__(self) -> None:
         self.fonts: dict[bytes, int] = {}
+        # The faces of the Type0 fonts that free text was drawn in, by font object.
+        self.faces: dict[int, Font] = {}
         self.images: dict[bytes, int] = {}
         self.forms: dict[tuple[int, int, int, bytes], int] = {}
 

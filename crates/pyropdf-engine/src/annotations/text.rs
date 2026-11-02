@@ -1,21 +1,28 @@
 //! Free text and stamps: annotations whose appearance draws Standard 14
-//! text, as pylopdf's `draw_free_text` and `draw_stamp` draw them.
+//! text, or free text in an embedded face, as pylopdf's `draw_free_text`
+//! and `draw_stamp` draw them.
 
 use pyropdf_store::budget::{BudgetVec, LimitCode};
-use pyropdf_store::value::{Dict, Name, Value};
+use pyropdf_store::value::{Dict, Name, Reference, Value};
 use pyropdf_store::{Error, LimitExceeded, Result};
 
 use super::shapes::{LINE_ENDINGS, draw_ending, polyline};
 use super::{Canvas, KAPPA, Paint, Reader, Stroke, quarter_turn};
+use crate::forms::face::FaceText;
 use crate::forms::text_string;
 use crate::standard::{
-    Align, Base14Font, DA_FONTS, DefaultAppearance, DeviceColor, LayoutError, Line,
-    MAX_DEFAULT_APPEARANCE, Placement, Style, TextBox, da_font, font, line_metrics, text_ops,
-    text_width, textbox_layout,
+    Align, Base14Font, DA_FONTS, DefaultAppearance, DeviceColor, FORM_LINE_HEIGHT, LayoutError,
+    Line, MAX_DEFAULT_APPEARANCE, Placement, Style, TextBox, da_font, font, line_metrics, text_ops,
+    text_ops_with, text_width, textbox_layout,
 };
 
 /// The space between a free text's border and its text.
 const FREE_TEXT_PADDING: f64 = 2.0;
+
+/// The name of an embedded face's Type0 font in a free text's appearance
+/// resources. The appearance records the face that drew the text there,
+/// since an annotation has no `/DR`.
+pub const FACE_RESOURCE: &str = "PyroFreeText";
 
 /// Whether the text of a free text could be drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,11 +34,24 @@ pub enum TextFit {
     /// The text holds a character that no Standard 14 font draws, and is
     /// not drawn.
     NotWinAnsi,
+    /// The text holds a character that the embedded face has no glyph
+    /// for, and is not drawn.
+    NoGlyph(char),
 }
 
 /// The font that a drawing's text names: its resource name and the
 /// PostScript name of the Standard 14 font.
 pub(super) type FontResource = (&'static str, &'static str);
+
+/// The font that an appearance's text names.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum TextFont {
+    /// A Standard 14 font, written with the appearance.
+    Standard(FontResource),
+    /// An embedded face's Type0 font that the document has, named
+    /// [`FACE_RESOURCE`].
+    Embedded(Reference),
+}
 
 /// Returns the `/DA` of a free text: its last `Tf` and colour operator;
 /// Helvetica, 12 points, and black for what it does not set, or for a
@@ -76,15 +96,19 @@ fn resource(name: &str) -> Option<(Base14Font, FontResource)> {
 /// border, the callout line of `/CL` with the `/LE` ending at its first
 /// point, and `/Contents` laid out in the box with the font, size, and
 /// colour of `/DA`, aligned by `/Q` and turned counterclockwise by
-/// `/Rotate`. Text that does not fit, or that no Standard 14 font draws, is
-/// left out. Returns whether the text fit and the font that it names.
+/// `/Rotate`. With `face`, the text is drawn in that embedded face at the
+/// size and colour of `/DA` instead of its font, and the appearance names
+/// the face's font even without text. Text that does not fit, or
+/// that the font cannot draw, is left out. Returns whether the text fit and
+/// the font that it names.
 pub(super) fn free_text(
     canvas: &mut Canvas<'_>,
     reader: &Reader<'_>,
     dict: &Dict,
     paint: &Paint,
     rect: [f64; 4],
-) -> Result<(TextFit, Option<FontResource>)> {
+    face: Option<&mut FaceText<'_>>,
+) -> Result<(TextFit, Option<TextFont>)> {
     let [x0, y0, x1, y1] = rect;
     let to_canvas = |(x, y): (f64, f64)| (x - x0, y1 - y);
     let size = (x1 - x0, y1 - y0);
@@ -142,7 +166,9 @@ pub(super) fn free_text(
         }
     }
     if !has_text {
-        return Ok((TextFit::Fits, None));
+        // A face still names its font, so that a later edit finds it.
+        let font = face.and_then(|face| face.font()).map(TextFont::Embedded);
+        return Ok((TextFit::Fits, font));
     }
     if area[2] <= area[0] || area[3] <= area[1] {
         return Ok((TextFit::Unfit, None));
@@ -152,9 +178,6 @@ pub(super) fn free_text(
         Some(Value::Integer(2)) => Align::Right,
         _ => Align::Left,
     };
-    let Some((face, font)) = resource(da_font(&da.font)) else {
-        return Ok((TextFit::Unfit, None));
-    };
     let turn = quarter_turn(reader, dict)?.rem_euclid(360);
     let turn = if turn % 90 == 0 { turn } else { 0 };
     let (width, height) = (area[2] - area[0], area[3] - area[1]);
@@ -162,6 +185,28 @@ pub(super) fn free_text(
         (width, height)
     } else {
         (height, width)
+    };
+    // The box's lower-left corner in the form's space, whose y axis points
+    // up.
+    let origin = [area[0], canvas.height - area[3]];
+    let color = DeviceColor::Rgb(da.color.0, da.color.1, da.color.2);
+    if let Some(face) = face {
+        return face_text(
+            canvas,
+            face,
+            &text,
+            turned_matrix(turn, turned, origin),
+            turned,
+            align,
+            Style {
+                resource: FACE_RESOURCE,
+                size: da.size,
+                color,
+            },
+        );
+    }
+    let Some((face, font)) = resource(da_font(&da.font)) else {
+        return Ok((TextFit::Unfit, None));
     };
     let placement = Placement::lines(line_metrics(face), None);
     let layout = match textbox_layout(
@@ -181,13 +226,10 @@ pub(super) fn free_text(
     if !layout.fits() {
         return Ok((TextFit::Unfit, None));
     }
-    // The box's lower-left corner in the form's space, whose y axis points
-    // up.
-    let origin = [area[0], canvas.height - area[3]];
     let style = Style {
         resource: font.0,
         size: da.size,
-        color: DeviceColor::Rgb(da.color.0, da.color.1, da.color.2),
+        color,
     };
     write_text(
         canvas,
@@ -197,7 +239,76 @@ pub(super) fn free_text(
         align,
         style,
     )?;
-    Ok((TextFit::Fits, Some(font)))
+    Ok((TextFit::Fits, Some(TextFont::Standard(font))))
+}
+
+/// Draws `text` in embedded `face` in a box of `size` that `matrix`
+/// places, with the face's shaped glyphs, as form fields draw their values
+/// in it. Text with a character that the face lacks, or that does not fit,
+/// is left out.
+fn face_text(
+    canvas: &mut Canvas<'_>,
+    face: &mut FaceText<'_>,
+    text: &str,
+    matrix: [f64; 6],
+    size: (f64, f64),
+    align: Align,
+    style: Style<'_>,
+) -> Result<(TextFit, Option<TextFont>)> {
+    let refused = |error: LayoutError| -> Result<(TextFit, Option<TextFont>)> {
+        match error {
+            LayoutError::Limit(refusal) => Err(refusal.into()),
+            _ => Ok((TextFit::Unfit, None)),
+        }
+    };
+    match face.missing(text) {
+        Ok(Some(character)) => return Ok((TextFit::NoGlyph(character), None)),
+        Ok(None) => {}
+        Err(error) => return refused(error),
+    }
+    let layout = match face.layout(text, size, style.size, FORM_LINE_HEIGHT) {
+        Ok(layout) => layout,
+        Err(error) => return refused(error),
+    };
+    if !layout.fits() {
+        return Ok((TextFit::Unfit, None));
+    }
+    let mut out = BudgetVec::new(canvas.out.bytes.budget());
+    let font_size = style.size;
+    text_ops_with(
+        &mut out,
+        size.1,
+        [0.0, 0.0, size.0, size.1],
+        &layout,
+        align,
+        style,
+        |out, line| face.show(out, line, font_size),
+    )
+    .map_err(text_error)?;
+    place(canvas, matrix, &out)?;
+    Ok((TextFit::Fits, face.font().map(TextFont::Embedded)))
+}
+
+/// Maps a refusal of text operators to the store's error.
+fn text_error(error: LayoutError) -> Error {
+    match error {
+        LayoutError::Limit(refusal) => refusal.into(),
+        _ => Error::malformed("an annotation's text has unusable geometry"),
+    }
+}
+
+/// Appends text operators `ops` to `canvas`, placed by `matrix`.
+fn place(canvas: &mut Canvas<'_>, matrix: [f64; 6], ops: &[u8]) -> Result<()> {
+    let ops = std::str::from_utf8(ops)
+        .map_err(|_| Error::malformed("an annotation's text operators are not ASCII"))?;
+    canvas.out.push_str("q\n");
+    let [a, b, c, d, e, f] = matrix.map(super::fmt);
+    canvas
+        .out
+        .push_str(&format!("{a} {b} {c} {d} {e} {f} cm\n"));
+    canvas.out.push_str(ops);
+    canvas.out.push_str("Q\n");
+    Ok(())
 }
 
 /// Draws the callout line of `/CL`, from the point it shows to the box,
@@ -283,20 +394,8 @@ fn write_text(
         align,
         style,
     )
-    .map_err(|error| match error {
-        LayoutError::Limit(refusal) => refusal.into(),
-        _ => Error::malformed("an annotation's text has unusable geometry"),
-    })?;
-    let ops = std::str::from_utf8(&out)
-        .map_err(|_| Error::malformed("an annotation's text operators are not ASCII"))?;
-    canvas.out.push_str("q\n");
-    let [a, b, c, d, e, f] = matrix.map(super::fmt);
-    canvas
-        .out
-        .push_str(&format!("{a} {b} {c} {d} {e} {f} cm\n"));
-    canvas.out.push_str(ops);
-    canvas.out.push_str("Q\n");
-    Ok(())
+    .map_err(text_error)?;
+    place(canvas, matrix, &out)
 }
 
 /// The stamps of ISO 32000-2 section 12.5.6.12 by `/Name`, with the label

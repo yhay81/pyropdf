@@ -4,14 +4,16 @@ pylopdf's tests/test_annotation_free_text.py at ebb01d3c. Intended
 differences: the core's checks are called as ``_core.annotation_add`` with
 the page's object; ``Page.text`` does not draw annotations stored without
 an appearance, so the text that rendering draws for them is read with
-``Annotation.text``, which does; free text draws in a Standard 14 font
-only, so an embedded face and text outside WinAnsi raise ``ValueError``
-(the last two tests are pyropdf's own).
+``Annotation.text``, which does; text outside WinAnsi in a Standard 14
+font raises ``ValueError``, and pyropdf has no installed face, so other
+text needs an embedded ``Font`` (the tests from
+``test_free_text_draws_in_a_standard_14_font_only`` on are pyropdf's own).
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 WHITE = (255, 255, 255)
+JAPANESE = Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
 
 
 def test_callout_stops_after_four_points_even_when_sequence_misreports_length() -> None:
@@ -334,3 +337,81 @@ def test_free_text_appearance_names_its_font() -> None:
     font = form["Resources"]["Font"]["TiRo"]
     assert (font["BaseFont"], font["Encoding"]) == ("Times-Roman", "WinAnsiEncoding")
     assert page.text().strip() == "Named"
+
+
+def test_free_text_in_an_embedded_face_survives_save_and_reopen() -> None:
+    page = pyropdf.Document().pages.new((300, 300))
+
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "日本語", font=Font.from_file(JAPANESE), size=14))
+
+    font = annotation.obj["AP"]["N"]["Resources"]["Font"]["PyroFreeText"]
+    assert (font["Subtype"], font["Encoding"]) == ("Type0", "Identity-H")
+    assert page.text().strip() == "日本語"
+    reopened = pyropdf.open(page.document.to_bytes()).pages[0]
+    (saved,) = reopened.annotations
+    assert saved.contents == "日本語"
+    assert saved.obj["AP"]["N"]["Resources"]["Font"]["PyroFreeText"]["Subtype"] == "Type0"
+    assert reopened.text().strip() == "日本語"
+
+
+def test_free_text_in_an_embedded_face_adds_and_edits_in_one_undo_step_each() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    start = doc.history.position
+
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "日本語", font=Font.from_file(JAPANESE)))
+    assert doc.history.position == start + 1
+    annotation.contents = "テキスト"
+    assert doc.history.position == start + 2
+    assert page.text().strip() == "テキスト"
+
+    doc.history.undo()
+    assert annotation.contents == "日本語"
+    assert page.text().strip() == "日本語"
+    doc.history.undo()
+    assert len(page.annotations) == 0
+
+
+def test_free_text_in_an_embedded_face_keeps_it_through_other_edits() -> None:
+    page = pyropdf.Document().pages.new((300, 300))
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "", font=Font.from_file(JAPANESE)))
+
+    annotation.color = Color(1, 1, 0)
+    annotation.contents = "本日"
+
+    assert page.text().strip() == "本日"
+    assert annotation.obj["AP"]["N"]["Resources"]["Font"]["PyroFreeText"]["Subtype"] == "Type0"
+
+
+def test_a_face_without_a_glyph_for_the_text_changes_nothing() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    face = Font.from_file(JAPANESE)
+    start = doc.history.position
+
+    with pytest.raises(pyropdf.PdfError, match=r"no glyph for U\+66F4"):
+        page.annotations.add(FreeText((20, 20, 200, 60), "更新", font=face))
+    assert "Annots" not in page.obj
+    assert doc.history.position == start
+
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "日本", font=face))
+    before = doc.to_bytes()
+    with pytest.raises(pyropdf.PdfError, match=r"no glyph for U\+66F4"):
+        annotation.contents = "更新"
+    with pytest.raises(pyropdf.PdfError, match="does not fit"):
+        annotation.contents = "日本語" * 100
+    assert annotation.contents == "日本"
+    assert doc.to_bytes() == before
+
+
+def test_a_later_session_redraws_in_the_default_appearance_font() -> None:
+    page = pyropdf.Document().pages.new((300, 300))
+    page.annotations.add(FreeText((20, 20, 200, 60), "日本語", font=Font.from_file(JAPANESE)))
+    reopened = pyropdf.open(page.document.to_bytes()).pages[0]
+    (annotation,) = reopened.annotations
+
+    with pytest.raises(pyropdf.PdfError, match="WinAnsi"):
+        annotation.contents = "本日"
+    assert reopened.text().strip() == "日本語"
+    annotation.contents = "Latin"
+    assert reopened.text().strip() == "Latin"

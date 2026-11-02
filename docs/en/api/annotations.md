@@ -674,10 +674,14 @@ FreeText(
 Text written on the page in a box, as `page.annotations.add` takes it.
 
 `rect` is the box in display coordinates and `text` its text,
-wrapped as `Canvas.textbox` wraps it, `align`-ed, and in the
-Standard 14 `font`, Helvetica by default, at `size` points and
-`text_color`. The font is named in the annotation's `/DA`, so other
-viewers can redraw it; it prints WinAnsi characters only. `color`
+wrapped as `Canvas.textbox` wraps it, `align`-ed, and in
+`font`, Helvetica by default, at `size` points and `text_color`.
+A Standard 14 font is named in the annotation's `/DA`, so other
+viewers can redraw it; it prints WinAnsi characters only. An embedded
+`Font` shapes any text that it has glyphs for; the appearance
+names its font, and edits in the same session draw the text in it
+again. A later session knows no face and redraws the text in the
+`/DA` font, Helvetica, refusing text outside WinAnsi. `color`
 fills the box, `border` outlines it in the text color, and `rotate`
 turns the text clockwise by a multiple of 90 degrees as the page is
 displayed. `callout` draws a line from the display point that the
