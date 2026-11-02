@@ -13,6 +13,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 use pyropdf_engine::annotations::AppearanceSettler;
 use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
+use pyropdf_engine::fonts::settle::FontSubsetSettler;
 pub(crate) use pyropdf_engine::forms::text_string;
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
 use pyropdf_store::memo::Memo;
@@ -79,8 +80,11 @@ pub struct _Document {
 /// Registers the settlers that pyropdf's engines provide (DESIGN.md
 /// section 7).
 fn with_settlers(document: Document) -> Document {
-    document
-        .set_settlers(Settlers::default().with(Structure::Appearance, Arc::new(AppearanceSettler)));
+    document.set_settlers(
+        Settlers::default()
+            .with(Structure::Appearance, Arc::new(AppearanceSettler))
+            .with(Structure::FontSubset, Arc::new(FontSubsetSettler)),
+    );
     document
 }
 
@@ -510,6 +514,7 @@ fn document_limits(limits: &Bound<'_, PyAny>) -> PyResult<DocumentLimits> {
         max_total_decompressed_size: field("max_total_decompressed_size")?,
         max_object_depth: field("max_object_depth")?,
         max_interpretation_size: field("max_interpretation_size")?,
+        max_memory_size: field("max_memory_size")?,
         max_duration: duration
             .map(Duration::try_from_secs_f64)
             .transpose()
@@ -543,6 +548,7 @@ pub fn web_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
         ),
         ("max_object_depth", web.max_object_depth),
         ("max_interpretation_size", web.max_interpretation_size),
+        ("max_memory_size", web.max_memory_size),
     ] {
         fields.set_item(name, value)?;
     }

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import enum
 import hashlib
 import math
 import os
+import re
 from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pyropdf import _core
 from pyropdf._content import (
@@ -25,10 +27,20 @@ from pyropdf._content import (
     Segment,
     Stroke,
 )
-from pyropdf._errors import LimitError, PdfError
+from pyropdf._errors import LimitError, PdfError, StaleObjectError
+from pyropdf._fonts import (
+    _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    Font,
+    _max_lines,
+    _text_input,
+    _textbox_text,
+    add_glyphs,
+    embedded_font,
+)
 from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
-from pyropdf._objects import Name, Stream
+from pyropdf._layers import Layer, LayerMembership
+from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE
 
 if TYPE_CHECKING:
@@ -38,7 +50,7 @@ if TYPE_CHECKING:
 
     from pyropdf._core import Pixmap
     from pyropdf._document import Document
-    from pyropdf._objects import Dictionary
+    from pyropdf._objects import Objects
     from pyropdf._page import Page
 
     PathLike: TypeAlias = "PathBuilder | Path | Iterable[Segment]"
@@ -77,8 +89,21 @@ _BLEND_NAMES = {
     BlendMode.COLOR: "Color",
     BlendMode.LUMINOSITY: "Luminosity",
 }
+#: The alignments of :meth:`Canvas.textbox`, in the order of the core's codes.
+_ALIGNMENTS = ("left", "center", "right", "justify")
+#: The cosine and sine of each clockwise quarter turn, in display space.
+_TURNS = {0: (1, 0), 90: (0, 1), 180: (-1, 0), 270: (0, -1)}
+#: The Standard 14 fonts that draw their own built-in encoding.
+_SYMBOLIC = frozenset({"Symbol", "ZapfDingbats"})
 #: Operators that change the graphics state that later content inherits.
-_STATE_OPERATORS = frozenset({"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "ri", "i"})
+#: Levels of a parent tree that adding a key follows down its last kids.
+_MAX_TREE_DEPTH = 32
+#: The shape of a BCP 47 language tag, and its longest form.
+_LANGUAGE_TAG = re.compile(r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*", re.ASCII)
+_MAX_LANGUAGE_TAG = 256
+_STATE_OPERATORS = frozenset(
+    {"cm", "gs", "W", "W*", "w", "J", "j", "M", "d", "ri", "i", "Tc", "Tw", "Tz", "TL", "Tf", "Tr", "Ts"}
+)
 
 
 def _number(value: object, name: str) -> float:
@@ -183,6 +208,69 @@ def _stroke(value: Stroke | Color | None) -> Stroke | None:
     LineCap(stroke.cap)
     LineJoin(stroke.join)
     return stroke
+
+
+def _stroke_ops(stroke: Stroke) -> list[bytes]:
+    """Return the operators that set a checked stroke's paint and line style."""
+    paint = cast("Color", stroke.paint)
+    return [
+        _numbers(*paint.rgb) + b" RG",
+        _numbers(stroke.width) + b" w",
+        f"{_CAPS[LineCap(stroke.cap)]} J {_JOINS[LineJoin(stroke.join)]} j".encode(),
+        _numbers(stroke.miter_limit) + b" M",
+        b"[" + _numbers(*stroke.dashes) + b"] " + _numbers(stroke.dash_offset) + b" d",
+    ]
+
+
+def _canvas_font(text: str, font: Font | None) -> Font:
+    """Return the font that draws ``text``: ``font``, else Helvetica.
+
+    A Standard 14 font draws WinAnsi text only.
+    """
+    if font is None:
+        font = Font.standard("Helvetica")
+    elif not isinstance(font, Font):
+        msg = f"font must be a pyropdf.Font, not {type(font).__name__}"
+        raise TypeError(msg)
+    if font._font.standard_name is None:  # noqa: SLF001 - an embedded face shapes any text it has glyphs for.
+        return font
+    try:
+        text.encode("cp1252")
+    except UnicodeEncodeError as exc:
+        msg = (
+            "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters; "
+            "load an OpenType face with Font.from_file() for other text"
+        )
+        raise ValueError(msg) from exc
+    return font
+
+
+def _size(value: object) -> float:
+    """Return a positive font size."""
+    size = _number(value, "size")
+    if not size > 0:
+        msg = f"size must be positive: {value!r}"
+        raise ValueError(msg)
+    return size
+
+
+def _line_height(value: object) -> float | None:
+    """Return a positive line-height multiplier, or ``None`` for the font's default."""
+    if value is None:
+        return None
+    line_height = _number(value, "line_height")
+    if not line_height > 0:
+        msg = f"line_height must be positive: {value!r}"
+        raise ValueError(msg)
+    return line_height
+
+
+def _text_paint(fill: Color | None, stroke: Stroke | Color | None) -> tuple[Color | None, Stroke | None]:
+    """Return the fill and stroke of text, which needs at least one."""
+    if fill is None and stroke is None:
+        msg = "text needs a fill or a stroke"
+        raise ValueError(msg)
+    return (None if fill is None else _color(fill, "fill")), _stroke(stroke)
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,16 +638,120 @@ class PathBuilder:
         return f"PathBuilder({len(self._segments)} segments)"
 
 
-class _Scope(AbstractContextManager[None]):
-    """One clip, transform, opacity, or blend scope of a canvas."""
+class TagRole(enum.StrEnum):
+    """A structure type (ISO 32000-1 section 14.8.4), by its PDF name.
 
-    def __init__(self, canvas: Canvas, opening: bytes, *, group: float | None = None) -> None:
+    :attr:`ARTIFACT` marks content that is not part of the document's
+    logical structure, such as page headers, footers, and decoration.
+    """
+
+    PART = "Part"
+    ARTICLE = "Art"
+    SECTION = "Sect"
+    DIV = "Div"
+    BLOCK_QUOTE = "BlockQuote"
+    CAPTION = "Caption"
+    TOC = "TOC"
+    TOC_ITEM = "TOCI"
+    INDEX = "Index"
+    NON_STRUCT = "NonStruct"
+    PARAGRAPH = "P"
+    HEADING_1 = "H1"
+    HEADING_2 = "H2"
+    HEADING_3 = "H3"
+    HEADING_4 = "H4"
+    HEADING_5 = "H5"
+    HEADING_6 = "H6"
+    LIST = "L"
+    LIST_ITEM = "LI"
+    LABEL = "Lbl"
+    LIST_BODY = "LBody"
+    TABLE = "Table"
+    TABLE_ROW = "TR"
+    TABLE_HEADER = "TH"
+    TABLE_DATA = "TD"
+    TABLE_HEAD = "THead"
+    TABLE_BODY = "TBody"
+    TABLE_FOOT = "TFoot"
+    SPAN = "Span"
+    QUOTE = "Quote"
+    NOTE = "Note"
+    REFERENCE = "Reference"
+    BIB_ENTRY = "BibEntry"
+    CODE = "Code"
+    FIGURE = "Figure"
+    FORMULA = "Formula"
+    ARTIFACT = "Artifact"
+    LINK = "Link"
+
+
+class TableHeaderScope(enum.StrEnum):
+    """What a table header cell heads (ISO 32000-1 section 14.8.5.7), by its PDF name."""
+
+    ROW = "Row"
+    COLUMN = "Column"
+    BOTH = "Both"
+
+
+class ListNumbering(enum.StrEnum):
+    """How a list numbers its items (ISO 32000-1 section 14.8.5.5), by its PDF name."""
+
+    NONE = "None"
+    DISC = "Disc"
+    CIRCLE = "Circle"
+    SQUARE = "Square"
+    DECIMAL = "Decimal"
+    LOWER_ROMAN = "LowerRoman"
+    UPPER_ROMAN = "UpperRoman"
+    LOWER_ALPHA = "LowerAlpha"
+    UPPER_ALPHA = "UpperAlpha"
+
+
+def _tag_attribute(
+    value: object,
+    kind: type[enum.StrEnum],
+    name: str,
+    role: TagRole,
+    takes: TagRole,
+) -> str | None:
+    """Return the PDF name of a role-specific tag attribute, refusing it on other roles."""
+    if value is None:
+        return None
+    if role is not takes:
+        msg = f"only {takes.name} tags take {name}: {role.name}"
+        raise ValueError(msg)
+    try:
+        return kind(value).value
+    except ValueError as exc:
+        msg = f"{name} must be a {kind.__name__}: {value!r}"
+        raise ValueError(msg) from exc
+
+
+class _Element:
+    """A structure element that a tag scope opened: its role, its entries, and its kids in order.
+
+    A kid is a marked-content identifier of the canvas's content or a child element.
+    """
+
+    __slots__ = ("entries", "kids", "role")
+
+    def __init__(self, role: str, entries: dict[str, object]) -> None:
+        self.role = role
+        self.entries = entries
+        self.kids: list[int | _Element] = []
+
+
+class _Scope(AbstractContextManager[None]):
+    """One clip, transform, opacity, blend, or layer scope of a canvas."""
+
+    def __init__(self, canvas: Canvas, opening: bytes, closing: bytes, *, group: float | None = None) -> None:
         self._canvas = canvas
         self._opening = opening
+        self._closing = closing
         self._group = group
 
     def __enter__(self) -> None:
-        self._canvas._push(self._opening, group=self._group)  # noqa: SLF001
+        self._canvas._push(self._opening, self._closing, group=self._group)  # noqa: SLF001
 
     def __exit__(
         self,
@@ -570,12 +762,34 @@ class _Scope(AbstractContextManager[None]):
         self._canvas._pop()  # noqa: SLF001
 
 
+class _TagScope(AbstractContextManager[None]):
+    """One tag scope of a canvas: a structure element, or ``None`` for an artifact."""
+
+    def __init__(self, canvas: Canvas, element: _Element | None) -> None:
+        self._canvas = canvas
+        self._element = element
+
+    def __enter__(self) -> None:
+        self._canvas._push_tag(self._element)  # noqa: SLF001
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        self._canvas._pop_tag()  # noqa: SLF001
+
+
 class _Images:
     """The images and pages that a document's canvases wrote, keyed by their content."""
 
-    __slots__ = ("forms", "images")
+    __slots__ = ("faces", "fonts", "forms", "images")
 
     def __init__(self) -> None:
+        self.fonts: dict[bytes, int] = {}
+        # The faces of the Type0 fonts that free text was drawn in, by font object.
+        self.faces: dict[int, Font] = {}
         self.images: dict[bytes, int] = {}
         self.forms: dict[tuple[int, int, int, bytes], int] = {}
 
@@ -594,9 +808,10 @@ class Canvas:
     or a :class:`Color` for a 1-point line; a path with neither is stroked
     with a 1-point black line. A color's alpha below 1 paints it
     translucent. The scopes :meth:`clip`, :meth:`transform`,
-    :meth:`opacity`, and :meth:`blend` are context managers that apply to
-    everything drawn inside them. Text comes with krilla's object sink
-    (DESIGN.md section 7).
+    :meth:`opacity`, :meth:`blend`, :meth:`layer`, and :meth:`tag` are
+    context managers that apply to everything drawn inside them. :meth:`text` and :meth:`textbox` draw
+    text in a :class:`Font`; embedded fonts come with issue 153 (DESIGN.md
+    section 7).
 
     A canvas holds at most 1,048,576 path points, of paths and clips
     together, nests at most 16 scopes, and writes at most 64 MiB of
@@ -605,7 +820,26 @@ class Canvas:
     ``ValueError`` for the nesting.
     """
 
-    __slots__ = ("_closed", "_depth", "_entered", "_gstates", "_layers", "_page", "_points", "_underlay", "_xobjects")
+    __slots__ = (
+        "_closed",
+        "_depth",
+        "_elements",
+        "_entered",
+        "_fonts",
+        "_gstates",
+        "_layers",
+        "_marked",
+        "_mcids",
+        "_oc",
+        "_page",
+        "_points",
+        "_properties",
+        "_scopes",
+        "_tagged",
+        "_tags",
+        "_underlay",
+        "_xobjects",
+    )
 
     def __init__(self, page: Page, *, underlay: bool = False) -> None:
         """Start an empty canvas on ``page``; :meth:`Page.draw` is the usual way."""
@@ -621,7 +855,21 @@ class Canvas:
         self._depth = 0
         self._points = 0
         self._xobjects: dict[str, int] = {}
+        # A Standard 14 font's base name, or the object number of an embedded face's Type0 font.
+        self._fonts: dict[str, str | int] = {}
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
+        # The resource name of each group, or each membership's groups and policy, and the object it names.
+        self._oc: dict[int | tuple[tuple[int, ...], str], str] = {}
+        self._properties: dict[str, int] = {}
+        # The closing of each open clip, transform, blend, and layer scope; None for an opacity group.
+        self._scopes: list[bytes | None] = []
+        # The open tag scopes, None for an artifact, and the elements that no element holds.
+        self._tags: list[_Element | None] = []
+        self._elements: list[_Element] = []
+        # The element whose marked content is open in the page's content, and the next identifier.
+        self._marked: _Element | None = None
+        self._mcids = 0
+        self._tagged = False
         self._closed = False
         self._entered = False
 
@@ -632,8 +880,10 @@ class Canvas:
         if self._closed or self._entered:
             msg = "a canvas is used in one with block; start another with page.draw()"
             raise ValueError(msg)
-        _core.begin_transaction(self._page.document._core(), "draw")  # noqa: SLF001
+        document = self._page.document
+        _core.begin_transaction(document._core(), "draw")  # noqa: SLF001
         self._entered = True
+        self._tagged = isinstance(document.catalog.get("StructTreeRoot"), Dictionary)
         return self
 
     def __exit__(
@@ -666,8 +916,30 @@ class Canvas:
             raise ValueError(msg)
 
     def _emit(self, data: bytes) -> None:
+        """Append drawing ``data``, marked as its tag scope says when it goes to the page's content."""
         self._check_open()
+        if len(self._layers) == 1:
+            data = self._mark(data)
         self._layers[-1][0].append(data)
+
+    def _mark(self, data: bytes) -> bytes:
+        if not self._tags:
+            # Drawing outside every tag scope of a tagged document is an artifact.
+            return b"/Artifact BMC\n" + data + b"\nEMC" if self._tagged else data
+        element = self._tags[-1]
+        if element is None or self._marked is element:
+            return data
+        mcid = self._mcids
+        self._mcids += 1
+        element.kids.append(mcid)
+        self._marked = element
+        return b"/" + element.role.encode() + b" <</MCID " + str(mcid).encode() + b">> BDC\n" + data
+
+    def _unmark(self) -> None:
+        """Close the open marked content of an element, before a scope starts or ends."""
+        if self._marked is not None:
+            self._layers[0][0].append(b"EMC")
+            self._marked = None
 
     def _count(self, points: int) -> None:
         self._points += points
@@ -676,29 +948,59 @@ class Canvas:
             msg = f"the canvas holds more than {_MAX_POINTS} path points"
             raise LimitError(code, msg)
 
-    def _push(self, opening: bytes, *, group: float | None) -> None:
+    def _enter_scope(self) -> None:
         self._check_open()
         if self._depth >= _MAX_SCOPES:
             msg = f"canvas scopes nest at most {_MAX_SCOPES} deep"
             raise ValueError(msg)
         self._depth += 1
+        self._unmark()
+
+    def _push(self, opening: bytes, closing: bytes, *, group: float | None) -> None:
+        self._enter_scope()
         if group is not None:
+            self._scopes.append(None)
             self._layers.append(([], group))
         else:
-            self._emit(b"q\n" + opening)
+            self._scopes.append(closing)
+            self._layers[-1][0].append(opening)
 
     def _pop(self) -> None:
         self._depth -= 1
-        parts, group = self._layers[-1]
-        if group is None or len(self._layers) == 1:
-            self._layers[-1][0].append(b"Q")
+        self._unmark()
+        closing = self._scopes.pop()
+        if closing is not None:
+            self._layers[-1][0].append(closing)
             return
-        self._layers.pop()
+        parts, group = self._layers.pop()
         if not parts:
             return
         name = self._add_xobject(self._group_form(b"\n".join(parts)))
-        gstate = self._gstate(fill_alpha=group, stroke_alpha=group)
+        gstate = self._gstate(fill_alpha=cast("float", group), stroke_alpha=cast("float", group))
         self._emit(b"q\n/" + gstate.encode() + b" gs\n/" + name.encode() + b" Do\nQ")
+
+    def _push_tag(self, element: _Element | None) -> None:
+        if element is not None:
+            if len(self._layers) > 1:
+                msg = "a tag scope cannot start inside an opacity scope"
+                raise ValueError(msg)
+            if self._tags and self._tags[-1] is None:
+                msg = "a tag scope cannot start inside an artifact"
+                raise ValueError(msg)
+        self._enter_scope()
+        if element is None:
+            self._layers[-1][0].append(b"/Artifact BMC")
+        elif self._tags:
+            cast("_Element", self._tags[-1]).kids.append(element)
+        else:
+            self._elements.append(element)
+        self._tags.append(element)
+
+    def _pop_tag(self) -> None:
+        self._depth -= 1
+        self._unmark()
+        if self._tags.pop() is None:
+            self._layers[-1][0].append(b"EMC")
 
     def _group_form(self, content: bytes) -> int:
         """Write ``content`` as a transparency group over the whole page, in display space."""
@@ -722,7 +1024,22 @@ class Canvas:
             resources["XObject"] = {name: objects[xref] for name, xref in self._xobjects.items()}
         if self._gstates:
             resources["ExtGState"] = {name: _gstate_dict(key) for key, name in self._gstates.items()}
+        if self._fonts:
+            resources["Font"] = {name: _font_value(objects, font) for name, font in self._fonts.items()}
+        if self._properties:
+            resources["Properties"] = {name: objects[xref] for name, xref in self._properties.items()}
         return resources
+
+    def _add_font(self, font: Font) -> str:
+        return self._font_name(cast("str", font.name))
+
+    def _font_name(self, font: str | int) -> str:
+        for name, known in self._fonts.items():
+            if known == font:
+                return name
+        name = f"PyroF{len(self._fonts) + 1}"
+        self._fonts[name] = font
+        return name
 
     def _add_xobject(self, xref: int) -> str:
         for name, known in self._xobjects.items():
@@ -745,19 +1062,40 @@ class Canvas:
     def _commit(self) -> None:
         page = self._page
         document = page.document
+        objects = document.objects
+        for oc in self._oc:
+            for xref in (oc,) if isinstance(oc, int) else oc[0]:
+                group = objects.get(xref)
+                if not isinstance(group, Dictionary) or group.get("Type") != "OCG":
+                    msg = f"object {xref}, a layer that the canvas draws, is no longer an optional content group"
+                    raise StaleObjectError(msg)
         content = b"\n".join(self._layers[0][0])
         rotation, box = _page_space(page)
         matrix = _user_from_display(rotation, box)
-        names = _merge_resources(page, self._xobjects, self._gstates)
-        if names:
-            for old, new in names.items():
-                content = content.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
         data = b"q\n" + _numbers(*matrix) + b" cm\n" + content + b"\nQ\n"
         if len(data) > _DEFAULT_MAX_CONTENT_SIZE:
             code = "content_input_size"
             msg = f"the canvas writes {len(data)} bytes of content, over the {_DEFAULT_MAX_CONTENT_SIZE}-byte limit"
             raise LimitError(code, msg)
-        objects = document.objects
+        if self._elements:
+            # The elements name their content in a Form of the canvas's own, which has a parent tree key.
+            form = objects.add_stream(
+                data,
+                {
+                    "Type": Name("XObject"),
+                    "Subtype": Name("Form"),
+                    "BBox": list(box),
+                    "Resources": self._resources_value(),
+                },
+            )
+            objects[form]["StructParents"] = self._write_structure(form)
+            name = f"PyroX{len(self._xobjects) + 1}"
+            name = _merge_resources(page, {name: form}, {}, {}, {}).get(name, name)
+            data = b"q\n/" + name.encode() + b" Do\nQ\n"
+        else:
+            names = _merge_resources(page, self._xobjects, self._gstates, self._fonts, self._properties)
+            for old, new in names.items():
+                data = data.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
         drawn = objects[objects.add_stream(data)]
         existing = _contents(page)
         if self._underlay:
@@ -769,6 +1107,57 @@ class Canvas:
         else:
             streams = [*existing, drawn]
         page.obj["Contents"] = streams
+
+    def _write_structure(self, form: int) -> int:
+        """Add the canvas's elements to the document's structure tree; return the Form's parent tree key.
+
+        A document without a structure tree gets one. The elements join its
+        ``Document`` element when the root holds that one element only, and
+        the root otherwise.
+        """
+        page = self._page
+        document = page.document
+        objects = document.objects
+        catalog = document.catalog
+        root = catalog.get("StructTreeRoot")
+        if not isinstance(root, Dictionary):
+            catalog["StructTreeRoot"] = objects[objects.add({"Type": Name("StructTreeRoot"), "K": []})]
+            root = cast("Dictionary", catalog["StructTreeRoot"])
+            if not isinstance(catalog.get("MarkInfo"), Dictionary):
+                catalog["MarkInfo"] = {}
+            catalog["MarkInfo"]["Marked"] = True
+        holder = _top_element(root)
+        form_ref = objects[form]
+        # Write each element, parents first, then their kids: MCIDs as marked-content references.
+        nodes: dict[int, Dictionary] = {}
+        owners: list[Dictionary | None] = [None] * self._mcids
+        pending: list[tuple[_Element, Dictionary]] = [(element, holder) for element in reversed(self._elements)]
+        written: list[_Element] = []
+        while pending:
+            element, parent = pending.pop()
+            value: dict[str, object] = {"Type": Name("StructElem"), "S": Name(element.role), "P": parent}
+            value["Pg"] = page.obj
+            value.update(element.entries)
+            node = objects[objects.add(value)]
+            nodes[id(element)] = node
+            written.append(element)
+            pending.extend((kid, node) for kid in reversed(element.kids) if isinstance(kid, _Element))
+        for element in written:
+            node = nodes[id(element)]
+            values: list[object] = []
+            for kid in element.kids:
+                if isinstance(kid, _Element):
+                    values.append(nodes[id(kid)])
+                else:
+                    owners[kid] = node
+                    values.append({"Type": Name("MCR"), "Pg": page.obj, "Stm": form_ref, "MCID": kid})
+            node["K"] = values
+        held = holder.get("K")
+        if not isinstance(held, Array):
+            holder["K"] = [] if held is None else [held]
+            held = cast("Array", holder["K"])
+        held.extend(nodes[id(element)] for element in self._elements)
+        return _add_parent_tree_entry(document, root, owners)
 
     # Paths.
 
@@ -798,12 +1187,8 @@ class Canvas:
             parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
         if painted_fill is not None:
             parts.append(_numbers(*painted_fill.rgb) + b" rg")
-        if painted_stroke is not None and stroke_paint is not None:
-            parts.append(_numbers(*stroke_paint.rgb) + b" RG")
-            parts.append(_numbers(painted_stroke.width) + b" w")
-            parts.append(f"{_CAPS[LineCap(painted_stroke.cap)]} J {_JOINS[LineJoin(painted_stroke.join)]} j".encode())
-            parts.append(_numbers(painted_stroke.miter_limit) + b" M")
-            parts.append(b"[" + _numbers(*painted_stroke.dashes) + b"] " + _numbers(painted_stroke.dash_offset) + b" d")
+        if painted_stroke is not None:
+            parts.extend(_stroke_ops(painted_stroke))
         parts.append(construction)
         if painted_fill is not None and painted_stroke is not None:
             parts.append(b"B*" if even_odd else b"B")
@@ -877,6 +1262,170 @@ class Canvas:
 
     # Images and pages.
 
+    # Text.
+
+    def text(  # noqa: PLR0913 - the text style options.
+        self,
+        text: str,
+        at: Sequence[float],
+        *,
+        font: Font | None = None,
+        size: float = 11,
+        fill: Color | None = _BLACK,
+        stroke: Stroke | Color | None = None,
+        line_height: float | None = None,
+        rotate: int = 0,
+        max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    ) -> None:
+        """Draw text whose first baseline starts at ``at``.
+
+        Lines are split with :meth:`str.splitlines` and placed ``line_height``
+        times ``size`` apart, by default at the font's own line height.
+        ``rotate`` turns the text clockwise about ``at`` by 0, 90, 180, or
+        270 degrees, so that at 90 the lines run down the page and stack
+        leftward; :meth:`transform` turns it by any other angle. ``font``
+        defaults to Helvetica. Text is filled, stroked, or both; at least one
+        is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
+        default (``max_text_size``, ``None`` for trusted input), refused with
+        :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
+        """
+        self._check_open()
+        checked = _text_input(text, max_text_size)
+        rotation = _quarter_turn(rotate)
+        lines = checked.splitlines()
+        most = _max_lines(max_text_size)
+        if most is not None and len(lines) > most:
+            code = "text_line_count"
+            msg = f"the text has {len(lines)} lines, over the limit of {most}"
+            raise LimitError(code, msg)
+        origin = _point(at, "at")
+        font_size = _size(size)
+        filled, stroked = _text_paint(fill, stroke)
+        spacing = _line_height(line_height)
+        if not any(lines):
+            return
+        face = _canvas_font("\n".join(lines), font)
+        leading = face._font.leading(font_size, spacing)  # noqa: SLF001
+        cos, sin = _TURNS[rotation]
+        placed = [
+            (line, origin.x - index * leading * sin, origin.y + index * leading * cos)
+            for index, line in enumerate(lines)
+            if line
+        ]
+        self._emit_text(face, font_size, (filled, stroked), rotation, [(line, x, y, 0.0) for line, x, y in placed])
+
+    def textbox(  # noqa: PLR0913 - the text style options.
+        self,
+        rect: Sequence[float],
+        text: str,
+        *,
+        font: Font | None = None,
+        size: float = 11,
+        align: Literal["left", "center", "right", "justify"] = "left",
+        line_height: float | None = None,
+        fill: Color | None = _BLACK,
+        stroke: Stroke | Color | None = None,
+        rotate: int = 0,
+        max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    ) -> TextFit:
+        """Wrap text inside ``rect`` and report how it fits.
+
+        Lines break at Unicode line-break opportunities (UAX #14) and, for a
+        word wider than the box, between grapheme clusters. They are placed
+        as :meth:`text` places them: the first baseline one
+        :attr:`Font.ascender` below the top of ``rect`` and later ones
+        ``line_height`` times ``size`` apart, by default at the font's own
+        line height, and the text fits when the descender of the last line
+        does. When the text does not fit, nothing is drawn and
+        :attr:`TextFit.spare_height` is the negative shortfall;
+        :meth:`Font.text_height` measures the height that the text needs
+        without drawing it. Tabs become single spaces. ``rotate`` turns the
+        text clockwise inside ``rect`` by 0, 90, 180, or 270 degrees: at 90
+        lines run down the box and stack from its right edge leftward, so
+        they wrap at the box's height and fill its width, and at 270 they run
+        up and stack from the left edge. The font, paint, and size options
+        follow :meth:`text`.
+        """
+        self._check_open()
+        box = _rect(rect, "rect")
+        rotation = _quarter_turn(rotate)
+        normalized = _textbox_text(text, max_text_size)
+        if align not in _ALIGNMENTS:
+            msg = f"align must be one of {', '.join(_ALIGNMENTS)}: {align!r}"
+            raise ValueError(msg)
+        upright = rotation in (0, 180)
+        width, height = (box.x1 - box.x0, box.y1 - box.y0) if upright else (box.y1 - box.y0, box.x1 - box.x0)
+        font_size = _size(size)
+        filled, stroked = _text_paint(fill, stroke)
+        spacing = _line_height(line_height)
+        if not normalized:
+            return TextFit(spare_height=height)
+        face = _canvas_font(normalized, font)
+        lines, _needed, spare, ascent, leading = face._font.layout(  # noqa: SLF001
+            normalized, width, height, font_size, spacing, align == "justify", _max_lines(max_text_size)
+        )
+        if spare < 0:
+            return TextFit(spare_height=spare)
+        cos, sin = _TURNS[rotation]
+        # The turned box's top-left corner, from which lines run along (cos, sin) and stack along (-sin, cos).
+        corner = {0: (box.x0, box.y0), 90: (box.x1, box.y0), 180: (box.x1, box.y1), 270: (box.x0, box.y1)}[rotation]
+        placed = []
+        for index, (line, line_width, justify) in enumerate(lines):
+            if not line:
+                continue
+            free = width - line_width
+            across = {"center": free / 2, "right": free}.get(align, 0.0)
+            spaces = line.count(" ")
+            word_space = max(free, 0.0) / spaces if justify and spaces else 0.0
+            along = max(across, 0.0)
+            down = ascent * font_size + index * leading
+            placed.append(
+                (line, corner[0] + along * cos - down * sin, corner[1] + along * sin + down * cos, word_space)
+            )
+        self._emit_text(face, font_size, (filled, stroked), rotation, placed)
+        return TextFit(spare_height=spare)
+
+    def _emit_text(
+        self,
+        font: Font,
+        size: float,
+        paint: tuple[Color | None, Stroke | None],
+        rotation: int,
+        lines: list[tuple[str, float, float, float]],
+    ) -> None:
+        """Draw lines of text, each at its origin in display space with its word spacing."""
+        if not lines:
+            return
+        fill, stroke = paint
+        parts = [b"q"]
+        fill_alpha = None if fill is None or fill.alpha >= 1 else fill.alpha
+        stroke_paint = None if stroke is None else cast("Color", stroke.paint)
+        stroke_alpha = None if stroke_paint is None or stroke_paint.alpha >= 1 else stroke_paint.alpha
+        if fill_alpha is not None or stroke_alpha is not None:
+            parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
+        if fill is not None:
+            parts.append(_numbers(*fill.rgb) + b" rg")
+        if stroke is not None:
+            parts.extend(_stroke_ops(stroke))
+        if font._font.standard_name is None:  # noqa: SLF001
+            document = self._page.document
+            xref = embedded_font(document, font, _cache(document).fonts)
+            name = self._font_name(xref)
+            shown = _shown_glyphs(document, xref, font, size, lines)
+        else:
+            name = self._add_font(font)
+            shown = _shown_winansi(font, lines)
+        parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
+        if stroke is not None:
+            parts.append(b"2 Tr" if fill is not None else b"1 Tr")
+        cos, sin = _TURNS[rotation]
+        for (_line, x, y, _spacing), operators in zip(lines, shown, strict=True):
+            # Display space points down, so the text's own y axis is flipped up.
+            parts.append(_numbers(cos, sin, sin, -cos, _number(x, "at"), _number(y, "at")) + b" Tm")
+            parts.append(operators)
+        parts.append(b"ET\nQ")
+        self._emit(b"\n".join(parts))
+
     def image(
         self,
         rect: Sequence[float],
@@ -917,7 +1466,7 @@ class Canvas:
             stream = _image_stream(document, xref)
         else:
             if isinstance(source, Pixmap):
-                data = source.to_bytes("png")
+                data = _core.pixmap_png(document._core(), source)  # noqa: SLF001
             elif isinstance(source, (bytes, bytearray, memoryview)):
                 data = bytes(source)
             elif isinstance(source, (str, os.PathLike)):
@@ -1049,7 +1598,7 @@ class Canvas:
         construction, points = _path_bytes(_segments(path))
         self._count(points)
         operator = b"W* n" if FillRule(fill_rule) is FillRule.EVEN_ODD else b"W n"
-        return _Scope(self, construction + b"\n" + operator)
+        return _Scope(self, b"q\n" + construction + b"\n" + operator, b"Q")
 
     def transform(self, matrix: Matrix | Sequence[float]) -> AbstractContextManager[None]:
         """Transform what the block draws by ``matrix``, applied before the enclosing transforms."""
@@ -1060,12 +1609,12 @@ class Canvas:
             msg = f"matrix must be a Matrix or six numbers: {matrix!r}"
             raise ValueError(msg) from exc
         values = tuple(_number(value, "matrix") for value in m)
-        return _Scope(self, _numbers(*values) + b" cm")
+        return _Scope(self, b"q\n" + _numbers(*values) + b" cm", b"Q")
 
     def opacity(self, alpha: float) -> AbstractContextManager[None]:
         """Composite what the block draws as one group, then draw it at ``alpha``."""
         self._check_open()
-        return _Scope(self, b"", group=_unit(alpha, "alpha"))
+        return _Scope(self, b"", b"", group=_unit(alpha, "alpha"))
 
     def blend(self, mode: BlendMode | str) -> AbstractContextManager[None]:
         """Blend what the block draws with the content below it."""
@@ -1076,7 +1625,100 @@ class Canvas:
             msg = f"mode must be a BlendMode: {mode!r}"
             raise ValueError(msg) from exc
         name = self._gstate(blend=_BLEND_NAMES[blend_mode])
-        return _Scope(self, b"/" + name.encode() + b" gs")
+        return _Scope(self, b"q\n/" + name.encode() + b" gs", b"Q")
+
+    def layer(self, layer: Layer | LayerMembership) -> AbstractContextManager[None]:
+        """Draw the block as optional content of a :class:`Layer` or a :class:`LayerMembership`.
+
+        What the block draws shows only while ``layer``, a group of the
+        page's document or a membership of its groups, is visible, in
+        rendering, text extraction, and viewers. The block is written as
+        ``/OC`` marked content; a membership is written as a new membership
+        dictionary. A group that is no longer an optional
+        content group when the canvas commits raises
+        :class:`StaleObjectError`. Use a :class:`Layer` returned by this
+        document's :attr:`Document.layers`: a manually constructed or
+        unpickled value has no document of origin and cannot be drawn.
+        """
+        self._check_open()
+        layers = self._page.document.layers
+        if isinstance(layer, LayerMembership):
+            groups = tuple(layers._group(member) for member in layer.layers)  # noqa: SLF001
+            oc: int | tuple[tuple[int, ...], str] = (groups, layer.policy.value)
+        elif isinstance(layer, Layer):
+            oc = layers._group(layer)  # noqa: SLF001
+        else:
+            msg = f"layer takes a Layer or a LayerMembership, not {type(layer).__name__}"
+            raise TypeError(msg)
+        name = self._oc.get(oc)
+        if name is None:
+            objects = self._page.document.objects
+            if isinstance(oc, int):
+                xref = oc
+            else:
+                # hayro reads a membership's policy only from an indirect dictionary.
+                groups, policy = oc
+                value = {"Type": Name("OCMD"), "OCGs": [objects[group] for group in groups], "P": Name(policy)}
+                xref = objects.add(value)
+            name = self._oc[oc] = f"PyroL{len(self._oc) + 1}"
+            self._properties[name] = xref
+        return _Scope(self, b"/OC /" + name.encode() + b" BDC", b"EMC")
+
+    def tag(  # noqa: PLR0913 - the entries of a structure element.
+        self,
+        role: TagRole | str,
+        *,
+        alt: str | None = None,
+        lang: str | None = None,
+        title: str | None = None,
+        actual_text: str | None = None,
+        scope: TableHeaderScope | str | None = None,
+        numbering: ListNumbering | str | None = None,
+    ) -> AbstractContextManager[None]:
+        """Make what the block draws a structure element of the document's structure tree.
+
+        Scopes nest into the structure tree in the order of the calls.
+        :attr:`TagRole.ARTIFACT` marks content outside the logical
+        structure, as is everything drawn outside any tag scope of a
+        document that already has a structure tree. ``alt`` is the
+        alternate description that figures and formulas need, ``title`` the
+        element's title, ``lang`` its BCP 47 language, and ``actual_text``
+        the text that replaces its content for extraction and assistive
+        technology. ``scope`` says what a :attr:`TagRole.TABLE_HEADER` cell
+        heads, and ``numbering`` how a :attr:`TagRole.LIST` numbers its
+        items; other roles take neither.
+
+        The elements join the document's structure tree, created when it
+        has none, under its ``Document`` element when the root holds that
+        one element only. The canvas's drawing is then written as a Form
+        XObject with a ``/StructParents`` key of its own, in which each
+        element names its marked content. A tag scope cannot start inside an
+        :meth:`opacity` scope or an artifact.
+        """
+        self._check_open()
+        try:
+            tag_role = TagRole(role)
+        except ValueError as exc:
+            msg = f"role must be a TagRole: {role!r}"
+            raise ValueError(msg) from exc
+        texts = {"Alt": alt, "Lang": lang, "T": title, "ActualText": actual_text}
+        for key, value in texts.items():
+            if value is not None and not isinstance(value, str):
+                msg = f"{key} must be a string or None: {value!r}"
+                raise TypeError(msg)
+        if lang is not None and (len(lang) > _MAX_LANGUAGE_TAG or _LANGUAGE_TAG.fullmatch(lang) is None):
+            msg = f"lang must be a BCP 47 language tag: {lang!r}"
+            raise ValueError(msg)
+        header_scope = _tag_attribute(scope, TableHeaderScope, "scope", tag_role, TagRole.TABLE_HEADER)
+        list_numbering = _tag_attribute(numbering, ListNumbering, "numbering", tag_role, TagRole.LIST)
+        if tag_role is TagRole.ARTIFACT:
+            return _TagScope(self, None)
+        entries: dict[str, object] = {key: value for key, value in texts.items() if value is not None}
+        if header_scope is not None:
+            entries["A"] = {"O": Name("Table"), "Scope": Name(header_scope)}
+        if list_numbering is not None:
+            entries["A"] = {"O": Name("List"), "ListNumbering": Name(list_numbering)}
+        return _TagScope(self, _Element(tag_role.value, entries))
 
     def __repr__(self) -> str:
         """Return the page and whether the canvas is still open."""
@@ -1094,6 +1736,161 @@ def _gstate_dict(key: tuple[float | None, float | None, str | None]) -> dict[str
     if blend is not None:
         entries["BM"] = Name(blend)
     return entries
+
+
+def _shown_winansi(font: Font, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
+    """Return the operators that show each line in a Standard 14 font, with its word spacing."""
+    shown = []
+    word_space = 0.0
+    for line, _x, _y, spacing in lines:
+        operators = b"<" + font._font.encode(line).hex().encode() + b"> Tj"  # noqa: SLF001
+        if spacing != word_space:
+            operators = _fmt(spacing) + b" Tw\n" + operators
+            word_space = spacing
+        shown.append(operators)
+    return shown
+
+
+def _shown_glyphs(
+    document: Document, xref: int, font: Font, size: float, lines: list[tuple[str, float, float, float]]
+) -> list[bytes]:
+    """Return the operators that show each line in an embedded face.
+
+    The glyphs are shaped in visual order and shown as Identity-H codes,
+    their glyph IDs, after their widths and texts are added to the font.
+    """
+    face = font._font  # noqa: SLF001 - the package's own face.
+    shaped = [face.shape(line) for line, _x, _y, _spacing in lines]
+    drawn = [
+        (glyph[0], line[glyph[5] : glyph[6]])
+        for (line, *_), glyphs in zip(lines, shaped, strict=True)
+        for glyph in glyphs
+        if glyph[0]
+    ]
+    mapped = add_glyphs(document, xref, font, drawn)
+    ids = sorted({glyph for glyph, _ in drawn})
+    widths = dict(zip(ids, face.glyph_widths(ids), strict=True))
+    run = _GlyphRun(size, face.units_per_em, widths, mapped)
+    return [run.show(line, glyphs, spacing) for (line, _x, _y, spacing), glyphs in zip(lines, shaped, strict=True)]
+
+
+class _GlyphRun:
+    """Writes shaped glyphs as ``TJ`` arrays.
+
+    ``TJ`` adjustments move the pen from each glyph's width in ``W`` to its
+    shaped advance and by its offset, ``Ts`` raises it, and a line's word
+    spacing widens its spaces, since ``Tw`` applies to one-byte codes only.
+    A glyph whose text the ToUnicode CMap does not map is shown inside
+    ``/ActualText``.
+    """
+
+    def __init__(self, size: float, units_per_em: int, widths: dict[int, float], mapped: dict[int, str]) -> None:
+        self.size = size
+        self.units_per_em = units_per_em
+        self.scale = 1000 / units_per_em
+        self.widths = widths
+        self.mapped = mapped
+        self.ops: list[bytes] = []
+        self.items: list[bytes] = []
+
+    def flush(self) -> None:
+        if self.items:
+            self.ops.append(b"[" + b" ".join(self.items) + b"] TJ")
+            self.items.clear()
+
+    def show(self, line: str, glyphs: list[tuple[int, int, int, int, int, int, int, bool]], spacing: float) -> bytes:
+        self.ops = []
+        pending = 0.0  # In TJ units: positive moves left.
+        rise = 0
+        for glyph, advance, _y_advance, x_offset, y_offset, start, end, _rtl in glyphs:
+            text = line[start:end]
+            offset = x_offset * self.scale
+            if not glyph:
+                # A control character without a glyph only advances.
+                pending -= advance * self.scale
+                continue
+            if y_offset != rise:
+                self.flush()
+                rise = y_offset
+                self.ops.append(_fmt(rise * self.size / self.units_per_em) + b" Ts")
+            if pending - offset:
+                self.items.append(_fmt(pending - offset))
+            code = b"<%04X>" % glyph
+            # A glyph without text of its own, such as a dot that the face
+            # draws apart from its letter, maps to nothing.
+            if not text or self.mapped.get(glyph) == text:
+                self.items.append(code)
+            else:
+                self.flush()
+                actual = text.encode("utf-16-be", "surrogatepass").hex().upper().encode()
+                self.ops.append(b"/Span <</ActualText <FEFF" + actual + b">>> BDC\n[" + code + b"] TJ\nEMC")
+            pending = self.widths[glyph] - advance * self.scale + offset
+            if spacing and text == " ":
+                pending -= spacing * 1000 / self.size
+        self.flush()
+        if rise:
+            self.ops.append(b"0 Ts")
+        return b"\n".join(self.ops)
+
+
+def _font_value(objects: Objects, font: str | int) -> object:
+    """Return the resource value of a Standard 14 font's base name or an embedded face's Type0 font."""
+    return _font_dict(font) if isinstance(font, str) else objects[font]
+
+
+def _top_element(root: Dictionary) -> Dictionary:
+    """Return the element that new elements join: the root's lone ``Document`` element, or the root."""
+    kids = root.get("K")
+    if isinstance(kids, Array) and len(kids) == 1:
+        kids = kids[0]
+    if isinstance(kids, Dictionary) and kids.is_indirect and kids.get("S") == "Document":
+        return kids
+    return root
+
+
+def _add_parent_tree_entry(document: Document, root: Dictionary, owners: list[Dictionary | None]) -> int:
+    """Add the elements that own a Form's MCIDs to the root's parent tree under a new key; return the key.
+
+    The key follows ``/ParentTreeNextKey`` and every key of the tree, whose
+    largest key its last kids hold. A tree whose last kids go deeper than
+    32 levels raises :class:`LimitError` (``structure_tree_count``).
+    """
+    tree = root.get("ParentTree")
+    if not isinstance(tree, Dictionary):
+        root["ParentTree"] = document.objects[document.objects.add({"Nums": []})]
+        tree = cast("Dictionary", root["ParentTree"])
+    path = [tree]
+    node = tree
+    while not isinstance(node.get("Nums"), Array):
+        kids = node.get("Kids")
+        if not isinstance(kids, Array) or not len(kids) or not isinstance(kids[-1], Dictionary):
+            node["Nums"] = []
+            break
+        if len(path) == _MAX_TREE_DEPTH:
+            code = "structure_tree_count"
+            msg = f"the parent tree is deeper than {_MAX_TREE_DEPTH} levels"
+            raise LimitError(code, msg)
+        node = kids[-1]
+        path.append(node)
+    nums = cast("Array", node["Nums"])
+    following = root.get("ParentTreeNextKey")
+    key = following if isinstance(following, int) and not isinstance(following, bool) and following >= 0 else 0
+    if len(nums) >= 2 and isinstance(nums[-2], int):  # noqa: PLR2004 - a key and its value
+        key = max(key, nums[-2] + 1)
+    nums.extend([key, owners])
+    for held in path[1:]:
+        limits = held.get("Limits")
+        held["Limits"] = [limits[0] if isinstance(limits, Array) and len(limits) else key, key]
+    root["ParentTreeNextKey"] = key + 1
+    return key
+
+
+def _font_dict(base: str) -> dict[str, object]:
+    """Return the font dictionary of a Standard 14 font, which needs no embedding."""
+    font: dict[str, object] = {"Type": Name("Font"), "Subtype": Name("Type1"), "BaseFont": Name(base)}
+    if base not in _SYMBOLIC:
+        font["Encoding"] = Name("WinAnsiEncoding")
+    return font
 
 
 def _page_space(page: Page) -> tuple[int, tuple[float, float, float, float]]:
@@ -1160,14 +1957,18 @@ def _isolated(page: Page) -> bool:
 
 
 def _merge_resources(
-    page: Page, xobjects: dict[str, int], gstates: dict[tuple[float | None, float | None, str | None], str]
+    page: Page,
+    xobjects: dict[str, int],
+    gstates: dict[tuple[float | None, float | None, str | None], str],
+    fonts: dict[str, str | int],
+    properties: dict[str, int],
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
     The page gets its own direct ``/Resources`` when it inherits or shares
     them, so no other page changes. Returns the renamed names.
     """
-    if not xobjects and not gstates:
+    if not xobjects and not gstates and not fonts and not properties:
         return {}
     document = page.document
     own = page.obj.get("Resources")
@@ -1179,6 +1980,8 @@ def _merge_resources(
     for key, entries in (
         ("XObject", {name: document.objects[xref] for name, xref in xobjects.items()}),
         ("ExtGState", {name: _gstate_dict(state) for state, name in gstates.items()}),
+        ("Font", {name: _font_value(document.objects, font) for name, font in fonts.items()}),
+        ("Properties", {name: document.objects[xref] for name, xref in properties.items()}),
     ):
         if not entries:
             continue
@@ -1213,5 +2016,5 @@ def _inherited_resources(page: Page) -> object | None:
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (Canvas, PathBuilder, TextFit):
+for _public in (Canvas, ListNumbering, PathBuilder, TableHeaderScope, TagRole, TextFit):
     _public.__module__ = "pyropdf"

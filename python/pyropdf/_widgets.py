@@ -8,7 +8,7 @@ its widget's object, and the position where it last found it in the page's
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, cast, overload
 
 from pyropdf import _core
 from pyropdf._annotations import (
@@ -23,11 +23,13 @@ from pyropdf._annotations import (
 )
 from pyropdf._content import Color
 from pyropdf._errors import StaleObjectError
+from pyropdf._fonts import Font
 from pyropdf._geometry import Rect
 from pyropdf._objects import Dictionary
 
 if TYPE_CHECKING:
     from pyropdf._core import _Widget, _WidgetStyle
+    from pyropdf._fonts import StandardFontName
     from pyropdf._form import Field, FieldSpecification, Scripts
     from pyropdf._page import Page
 
@@ -215,6 +217,30 @@ class Widget:
     @text_color.setter
     def text_color(self, color: Color) -> None:
         self._set(text_color=_opaque_color(color, "text_color").rgb)
+
+    @property
+    def font(self) -> Font | None:
+        """Return or set the font named by the widget's ``/DA``.
+
+        The ``/DA`` font resolves through the form's ``/DR``. When its
+        resource is absent, a Standard 14 abbreviation such as ``/Cour``
+        names the font; a widget without a ``/DA`` defaults to Helvetica.
+        Returns ``None`` for an embedded or other non-Standard 14 font.
+        Setting takes a Standard 14 :class:`Font` and names it in the form's ``/DR``.
+        """
+        appearance = self._style()[2]
+        if appearance is None:
+            return Font.standard("Helvetica")
+        name = appearance[3]
+        return None if name is None else Font.standard(cast("StandardFontName", name))
+
+    @font.setter
+    def font(self, font: Font) -> None:
+        name = font._font.standard_name if isinstance(font, Font) else None  # noqa: SLF001 - the package's own face.
+        if name is None:
+            msg = f"a widget font is a Standard 14 Font from Font.standard, not {font!r}"
+            raise TypeError(msg)
+        self._set(font_name=name)
 
     @property
     def font_size(self) -> float:

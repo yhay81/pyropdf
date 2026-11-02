@@ -89,6 +89,30 @@ krilla through pylopdf 0.16.0, saved by pylopdf:
 | japanese | 100 | same | 100 | 359.3 | 29.9 |
 | japanese | 100 | varying | 100 | 266.4 | 68.3 |
 
+pyropdf after #482, the same stamps through `page.draw()`
+(`pyropdf_stamps.py`, same faces), with the save's subsetting:
+
+```bash
+uv run python evidence/embedded-text/pyropdf_stamps.py HEBREW LATIN JAPANESE
+```
+
+| Face | Pages | Text | Saved KiB | dedupe=True KiB | + object streams KiB |
+| --- | ---: | --- | ---: | ---: | ---: |
+| hebrew | 1 | same | 2.8 | 2.7 | 2.4 |
+| hebrew | 100 | same | 36.9 | 19.7 | 3.8 |
+| hebrew | 100 | varying | 36.5 | 24.6 | 8.6 |
+| latin | 1 | same | 6.0 | 6.0 | 5.6 |
+| latin | 100 | same | 40.7 | 22.9 | 7.0 |
+| latin | 100 | varying | 36.7 | 25.5 | 9.6 |
+| japanese | 1 | same | 3.2 | 3.2 | 2.8 |
+| japanese | 100 | same | 38.8 | 20.1 | 4.2 |
+| japanese | 100 | varying | 37.0 | 24.6 | 8.6 |
+
+With `dedupe=True` on both sides, every row is smaller than krilla's:
+100 stamps of the same text save to 19.7 to 22.9 KiB against krilla's
+29.6 to 32.3, and varying text to 24.6 to 25.5 KiB against 68.3 to 154.5.
+Without `dedupe`, the 100 identical content streams stay separate objects.
+
 Route C's 100-page rows carry about 0.37 KiB per page of page objects and
 uncompressed content streams that neither writer's font changes; the probe
 does not compress content.
@@ -107,6 +131,29 @@ Other checks:
   mapping (the first glyph of a cluster carries the whole cluster) poppler
   also attaches the holam to the wrong letter; the per-glyph mapping above
   does not.
+
+## Intended differences from pylopdf
+
+pylopdf ebb01d3c's canvas, font, and form tests pass in pyropdf with these
+differences. Each test module's docstring repeats its rows.
+
+| Area | Difference | Tests |
+| --- | --- | --- |
+| Canvas | Text without a `font` draws in Helvetica. Text outside WinAnsi needs a font, because pyropdf installs no font extras. | `test_canvas_text.py` |
+| Canvas | Standard 14 strings are written in hexadecimal. | `test_canvas_text.py` |
+| Canvas | There is no `Document.complexity` and no `create()`. Atomicity is checked on `doc.objects` and with `doc.history.undo()`. | `test_canvas_text.py`, `test_canvas_embedded.py` |
+| Canvas | One Type0 font per face per document, not one per drawing. Saving subsets the program to its drawn glyphs. | `test_canvas_embedded.py` |
+| Font | `/BaseFont /Name` is written with a space, so the tests match the name with a pattern. | `test_font.py` |
+| Font | `glyph_name` and `glyph_text` are not ported. | `test_font.py` |
+| Font | A variable face draws at its default instance only. Any other weight is refused. | `test_font_embedded.py` |
+| Font, canvas, form | The tests use the subset Noto faces of `crates/pyropdf-engine/src/fonts/testdata`, so their texts are the subsets' characters. | `test_font_embedded.py`, `test_canvas_embedded.py`, `test_acroform.py` |
+| Form | pyropdf bundles no font extras, so the case that uses an installed Japanese face is not ported. Without `Form.font`, a value outside WinAnsi is left for the viewer to draw. | `test_acroform.py` |
+| Form | `Font.from_bytes` refuses invalid font data before a fill. The core cases that took font bytes become cases on `Font` and `form_field_draw_face`. | `test_acroform.py` |
+| Form | Rendering a filled button is not refused by `max_interpretation_size`. A stale handle comes back with undo, because there is no renumbering save. A refused read needs no `to_bytes` comparison. | `test_acroform.py` |
+
+CI checks the sizes against krilla's: `test_100_stamps_save_no_larger_than_krilla`
+in `tests/test_canvas_embedded.py` asserts each 100-stamp row of the table
+above, with `dedupe=True`, against krilla's recorded row.
 
 ## Findings
 

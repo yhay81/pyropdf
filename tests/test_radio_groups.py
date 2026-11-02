@@ -3,10 +3,9 @@
 pylopdf's tests/test_radio_groups.py at ebb01d3c, ported. Intended
 differences:
 
-- selecting a button after the repair waits for #193, so the test reads
-  the repaired group, saves it, and undoes the repair instead.
-- the untouched form is built from raw objects, since adding widgets
-  waits for #193.
+- the repair is one undo step, which the first case also checks.
+- the untouched form is also built from raw objects, with a nested group,
+  a check box, and a radio button alone with its name.
 """
 
 from __future__ import annotations
@@ -57,11 +56,15 @@ def test_flat_radio_buttons_become_one_field() -> None:
     assert len(fields) == 2
     assert all("T" not in widget.obj and widget.obj["Parent"] == plan.obj for widget in plan.widgets)
 
+    plan.value = "Team"
+    assert [widget.obj["AS"] for widget in plan.widgets] == ["Off", "Off", "Team"]
     reopened = pyropdf.open(doc.to_bytes())
-    assert reopened.form["plan"].value == "Pro"
+    assert reopened.form["plan"].value == "Team"
     assert [widget.on_state for widget in reopened.form["plan"].widgets] == ["Basic", "Pro", "Team"]
     assert reopened.form.repair_radio_groups() == 0
 
+    doc.history.undo()
+    assert doc.form["plan"].value == "Pro"
     doc.history.undo()
     assert len(doc.form["plan"].widgets) == 1
     assert len(doc.catalog["AcroForm"]["Fields"]) == 4
@@ -70,6 +73,15 @@ def test_flat_radio_buttons_become_one_field() -> None:
 def test_repair_leaves_other_forms_alone() -> None:
     doc = pyropdf.Document()
     assert doc.form.repair_radio_groups() == 0
+    page = doc.pages.new((200, 100))
+    page.widgets.add(pyropdf.RadioButton("plan", (10, 10, 25, 25), on_state="A"))
+    page.widgets.add(pyropdf.RadioButton("plan", (30, 10, 45, 25), on_state="B"))
+    page.widgets.add(pyropdf.CheckBox("agree", (50, 10, 65, 25)))
+    before = doc.to_bytes()
+
+    assert doc.form.repair_radio_groups() == 0
+    assert doc.to_bytes() == before
+
     on = "/AP << /N << /{state} 9 0 R /Off 9 0 R >> >>"
     widget = "/Type /Annot /Subtype /Widget /P 3 0 R"
     doc = pyropdf.open(

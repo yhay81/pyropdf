@@ -358,8 +358,10 @@ the store, so one canvas commits one content stream and one transaction.
 Images and font faces are document resources: each is registered once per
 document, and drawing it again reuses its objects. krilla writes nothing:
 its public API returns a complete PDF per drawing, which pyropdf would have
-to parse and import (F1), and the object sink and document resources that
-would avoid this are outside krilla's scope (issue #466).
+to parse and import (F1). An object sink and document resources would avoid
+this; the krilla maintainer's first impression was that they are probably
+out of scope, without a review or a final decision (issue #466). The choice
+does not wait on that decision: the released API is what pyropdf can use.
 
 Text is drawn in a Standard 14 font, which is not embedded, or in an
 embedded face. harfrust shapes the text of an embedded face, and pyropdf

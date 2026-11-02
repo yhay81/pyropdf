@@ -7,7 +7,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::extract::{self, DecodedImage, Error};
-use pyropdf_store::budget::LimitCode;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::value::{Array, Stream, Value};
 
 use crate::document::_Document;
@@ -169,6 +169,23 @@ pub fn decode_png<'py>(
     document: &_Document,
     data: &[u8],
 ) -> PyResult<DecodedPng<'py>> {
+    let budget = document.budget();
+    // Decoding and splitting a frame can take long enough for another Python
+    // thread to cancel it. Keep Python allocation outside the detached work.
+    let (width, height, gray, color, alpha) = py.detach(|| decode_png_buffers(data, &budget))?;
+    budget.poll().map_err(|e| limit_error(&e))?;
+    Ok((
+        width,
+        height,
+        gray,
+        PyBytes::new(py, &color),
+        alpha.map(|samples| PyBytes::new(py, &samples)),
+    ))
+}
+
+type DecodedPngBuffers<'b> = (u32, u32, bool, BudgetVec<'b, u8>, Option<BudgetVec<'b, u8>>);
+
+fn decode_png_buffers<'b>(data: &[u8], budget: &'b Budget) -> PyResult<DecodedPngBuffers<'b>> {
     let invalid =
         |error: png::DecodingError| PyValueError::new_err(format!("not a PNG image: {error}"));
     let mut decoder = png::Decoder::new(Cursor::new(data));
@@ -180,46 +197,93 @@ pub fn decode_png<'py>(
             "the PNG image has {pixels} pixels, more than the {MAX_PNG_PIXELS}-pixel limit"
         )));
     }
-    document
-        .budget()
+    budget
         .charge(LimitCode::TotalDecompressedSize, pixels * 4)
         .map_err(|e| limit_error(&e))?;
     let mut reader = decoder.read_info().map_err(invalid)?;
     let size = reader
         .output_buffer_size()
         .ok_or_else(|| PyValueError::new_err("the PNG image is too large"))?;
-    let mut buffer = vec![0; size];
-    let info = reader.next_frame(&mut buffer).map_err(invalid)?;
-    buffer.truncate(info.buffer_size());
-    let (gray, alpha) = match info.color_type {
+    let mut buffer = BudgetVec::new(budget);
+    buffer
+        .try_reserve_exact(size)
+        .map_err(|e| limit_error(&e))?;
+    // Initialize in small pieces so a cancelled operation does not have to
+    // finish touching the entire decoded frame before noticing cancellation.
+    const ZEROES: [u8; 16 * 1024] = [0; 16 * 1024];
+    while buffer.len() < size {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        let len = (size - buffer.len()).min(ZEROES.len());
+        buffer
+            .try_extend_from_slice(&ZEROES[..len])
+            .map_err(|e| limit_error(&e))?;
+    }
+    // Read row by row, polling between rows, rather than with
+    // `next_frame`, which reads the whole frame without polling.
+    let (width, height) = (reader.info().width, reader.info().height);
+    let (color_type, _) = reader.output_color_type();
+    let line = reader
+        .output_line_size(width)
+        .ok_or_else(|| PyValueError::new_err("the PNG image is too large"))?;
+    let mut row = BudgetVec::new(budget);
+    row.try_extend(std::iter::repeat_n(0u8, line))
+        .map_err(|e| limit_error(&e))?;
+    // After `EXPAND` and `STRIP_16`, every sample has 8 bits.
+    let bits = u8::try_from(color_type.samples() * 8).unwrap_or(u8::MAX);
+    let mut next = 0;
+    while let Some(interlace) = reader.read_row(row.as_mut_slice()).map_err(invalid)? {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        match interlace {
+            png::InterlaceInfo::Null(_) => {
+                let start = next * line;
+                if let Some(target) = buffer.as_mut_slice().get_mut(start..start + line) {
+                    target.copy_from_slice(row.as_slice());
+                }
+                next += 1;
+            }
+            png::InterlaceInfo::Adam7(info) => {
+                png::expand_interlaced_row(
+                    buffer.as_mut_slice(),
+                    line,
+                    row.as_slice(),
+                    &info,
+                    bits,
+                );
+            }
+        }
+    }
+    buffer.truncate(line * height as usize);
+    let (gray, alpha) = match color_type {
         png::ColorType::Grayscale => (true, false),
         png::ColorType::GrayscaleAlpha => (true, true),
         png::ColorType::Rgb | png::ColorType::Indexed => (false, false),
         png::ColorType::Rgba => (false, true),
     };
     if !alpha {
-        return Ok((
-            info.width,
-            info.height,
-            gray,
-            PyBytes::new(py, &buffer),
-            None,
-        ));
+        return Ok((width, height, gray, buffer, None));
     }
     let channels = if gray { 1 } else { 3 };
-    let mut color = Vec::with_capacity(buffer.len() / (channels + 1) * channels);
-    let mut opacity = Vec::with_capacity(buffer.len() / (channels + 1));
-    for pixel in buffer.chunks_exact(channels + 1) {
-        color.extend_from_slice(&pixel[..channels]);
-        opacity.push(pixel[channels]);
+    let pixels = buffer.len() / (channels + 1);
+    let mut color = BudgetVec::new(budget);
+    let mut opacity = BudgetVec::new(budget);
+    color
+        .try_reserve_exact(pixels * channels)
+        .map_err(|e| limit_error(&e))?;
+    opacity
+        .try_reserve_exact(pixels)
+        .map_err(|e| limit_error(&e))?;
+    for chunk in buffer.chunks((channels + 1) * 4096) {
+        budget.poll().map_err(|e| limit_error(&e))?;
+        for pixel in chunk.chunks_exact(channels + 1) {
+            color
+                .try_extend_from_slice(&pixel[..channels])
+                .map_err(|e| limit_error(&e))?;
+            opacity
+                .try_push(pixel[channels])
+                .map_err(|e| limit_error(&e))?;
+        }
     }
-    Ok((
-        info.width,
-        info.height,
-        gray,
-        PyBytes::new(py, &color),
-        Some(PyBytes::new(py, &opacity)),
-    ))
+    Ok((width, height, gray, color, Some(opacity)))
 }
 
 /// Width, height, color components, 8-bit samples, and the alpha that

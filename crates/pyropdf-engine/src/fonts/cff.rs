@@ -376,6 +376,90 @@ fn add_accents(
 /// Subsets the CFF `data` to the glyphs of `keep`, with their `seac`
 /// accents; `None` when it is not a CFF that this rewrites.
 pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
+    rewrite(data, Some(keep), None)
+}
+
+/// Returns a CID-keyed CFF `data` with an identity charset, so that each
+/// glyph's CID is its glyph ID; `Ok(None)` when the font is name-keyed or
+/// its charset already is the identity, and `Err` when it cannot be read.
+pub(super) fn identity_charset(data: &[u8]) -> Result<Option<Vec<u8>>, ()> {
+    let read = || -> Option<Option<Vec<u8>>> {
+        if *data.first()? != 1 {
+            return None;
+        }
+        let header = usize::from(*data.get(2)?);
+        let (_, names_end) = index(data, header)?;
+        let (tops, _) = index(data, names_end)?;
+        let [top] = tops.as_slice() else {
+            return None;
+        };
+        let top = dict(data.get(top.clone())?)?;
+        if !top.iter().any(|entry| entry.op == ROS) {
+            return Some(None);
+        }
+        let (charstrings, _) = index(data, offset(&top, CHARSTRINGS, 0)?)?;
+        let glyphs = charstrings.len();
+        let charset = value(&top, CHARSET, 0).unwrap_or(0);
+        if charset <= PREDEFINED_CHARSET {
+            // A predefined charset numbers glyphs in order, as the
+            // identity does for the CIDs of the glyphs that it covers.
+            return Some(None);
+        }
+        let at = usize::try_from(charset).ok()?;
+        let block = data.get(at..at + charset_len(data, at, glyphs)?)?;
+        if charset_is_identity(block, glyphs)? {
+            return Some(None);
+        }
+        let mut identity = Vec::new();
+        if glyphs > 1 {
+            let left = u16::try_from(glyphs - 2).ok()?;
+            identity.extend_from_slice(&[2, 0, 1]);
+            identity.extend_from_slice(&left.to_be_bytes());
+        } else {
+            identity.push(0);
+        }
+        Some(Some(rewrite(data, None, Some(&identity))?.data))
+    };
+    read().ok_or(())
+}
+
+/// Whether the charset `block` gives each glyph its glyph ID as its CID.
+fn charset_is_identity(block: &[u8], glyphs: usize) -> Option<bool> {
+    let mut next = 1_usize;
+    match *block.first()? {
+        0 => {
+            for glyph in 1..glyphs {
+                if usize::from(be16(block, 1 + 2 * (glyph - 1))?) != glyph {
+                    return Some(false);
+                }
+            }
+            return Some(true);
+        }
+        format @ (1 | 2) => {
+            let mut at = 1;
+            while next < glyphs {
+                let first = usize::from(be16(block, at)?);
+                let left = if format == 1 {
+                    usize::from(*block.get(at + 2)?)
+                } else {
+                    usize::from(be16(block, at + 2)?)
+                };
+                if first != next {
+                    return Some(false);
+                }
+                next += left + 1;
+                at += if format == 1 { 3 } else { 4 };
+            }
+        }
+        _ => return None,
+    }
+    Some(true)
+}
+
+/// Rewrites `data` with the CharStrings of the glyphs outside `keep`
+/// emptied, all kept when `keep` is `None`, and with `charset` in place of
+/// its charset when given.
+fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) -> Option<Subset> {
     if *data.first()? != 1 {
         return None;
     }
@@ -398,9 +482,11 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
     let (charstrings, _) = index(data, charstrings_at)?;
     let glyphs = charstrings.len();
 
-    let charset = value(&top, CHARSET, 0).unwrap_or(0);
-    let charset_block = if charset > PREDEFINED_CHARSET {
-        let at = usize::try_from(charset).ok()?;
+    let charset_value = value(&top, CHARSET, 0).unwrap_or(0);
+    let charset_block = if let Some(charset) = charset {
+        Some(charset)
+    } else if charset_value > PREDEFINED_CHARSET {
+        let at = usize::try_from(charset_value).ok()?;
         Some(data.get(at..at + charset_len(data, at, glyphs)?)?)
     } else {
         None
@@ -443,8 +529,9 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
         )?)
     };
 
-    let mut keep = keep.clone();
-    if let Some(private) = &private {
+    let all = keep.is_none();
+    let mut keep = keep.cloned().unwrap_or_default();
+    if let Some(private) = private.as_ref().filter(|_| !all) {
         add_accents(
             data,
             &charstrings,
@@ -458,7 +545,7 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
     new_charstrings.try_reserve(glyphs).ok()?;
     let mut kept = 0;
     for (glyph, range) in charstrings.iter().enumerate() {
-        if glyph == 0 || u32::try_from(glyph).is_ok_and(|id| keep.contains(&id)) {
+        if all || glyph == 0 || u32::try_from(glyph).is_ok_and(|id| keep.contains(&id)) {
             new_charstrings.push(data.get(range.clone())?);
             kept += 1;
         } else {
@@ -558,4 +645,101 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
         glyphs,
         kept,
     })
+}
+
+/// The first string ID past the standard strings (5176, appendix A).
+const FIRST_STRING: i32 = 391;
+const CID_COUNT: u16 = 1234;
+const DEFAULT_WIDTH: u16 = 20;
+
+/// Appends a DICT entry of `op` with `operands`, each in the five-byte
+/// integer form, so that an offset's length does not depend on its value.
+fn push_entry(out: &mut Vec<u8>, op: u16, operands: &[i32]) {
+    for operand in operands {
+        out.push(29);
+        out.extend_from_slice(&operand.to_be_bytes());
+    }
+    if op >= 1200 {
+        out.extend_from_slice(&[12, u8::try_from(op - 1200).unwrap_or(0)]);
+    } else {
+        out.push(u8::try_from(op).unwrap_or(0));
+    }
+}
+
+/// Writes a CID-keyed CFF named `name` whose glyphs are `charstrings`, in
+/// the order of `cids`, their CIDs (5176): one Font DICT, no
+/// subroutines, and a Private DICT whose default width is zero, since the
+/// PDF's `W` array gives the widths.
+pub(super) fn cid_keyed(name: &str, charstrings: &[Vec<u8>], cids: &[u16]) -> Option<Vec<u8>> {
+    if charstrings.len() != cids.len() || cids.first() != Some(&0) {
+        return None;
+    }
+    let glyphs = u16::try_from(cids.len()).ok()?;
+    let cid_count = i32::from(*cids.iter().max()?) + 1;
+    let private: Vec<u8> = {
+        let mut out = Vec::new();
+        push_entry(&mut out, DEFAULT_WIDTH, &[0]);
+        out
+    };
+    let top = |charset: i32, fd_select: i32, charstrings: i32, fd_array: i32| {
+        let mut out = Vec::new();
+        push_entry(&mut out, ROS, &[FIRST_STRING, FIRST_STRING + 1, 0]);
+        push_entry(&mut out, CID_COUNT, &[cid_count]);
+        push_entry(&mut out, CHARSET, &[charset]);
+        push_entry(&mut out, FD_SELECT, &[fd_select]);
+        push_entry(&mut out, CHARSTRINGS, &[charstrings]);
+        push_entry(&mut out, FD_ARRAY, &[fd_array]);
+        out
+    };
+    let mut charset = vec![0u8];
+    charset.try_reserve(2 * cids.len()).ok()?;
+    for cid in &cids[1..] {
+        charset.extend_from_slice(&cid.to_be_bytes());
+    }
+    let mut fd_select = vec![3, 0, 1, 0, 0, 0];
+    fd_select.extend_from_slice(&glyphs.to_be_bytes());
+    let items: Vec<&[u8]> = charstrings.iter().map(Vec::as_slice).collect();
+    let charstrings = write_index(&items)?;
+
+    let header = [1, 0, 4, 4];
+    let names = write_index(&[name.as_bytes()])?;
+    let strings = write_index(&[b"Adobe", b"Identity"])?;
+    let global = write_index(&[])?;
+    let top_len = write_index(&[&top(0, 0, 0, 0)])?.len();
+    let charset_at = header.len() + names.len() + top_len + strings.len() + global.len();
+    let fd_select_at = charset_at + charset.len();
+    let charstrings_at = fd_select_at + fd_select.len();
+    let fd_array_at = charstrings_at + charstrings.len();
+    let font_dict = |private_at: i32| {
+        let mut out = Vec::new();
+        push_entry(
+            &mut out,
+            PRIVATE,
+            &[i32::try_from(private.len()).unwrap_or(0), private_at],
+        );
+        out
+    };
+    let fd_array_len = write_index(&[&font_dict(0)])?.len();
+    let private_at = i32::try_from(fd_array_at + fd_array_len).ok()?;
+    let at = |offset: usize| i32::try_from(offset).ok();
+
+    let mut out = Vec::new();
+    out.try_reserve(usize::try_from(private_at).ok()? + private.len())
+        .ok()?;
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&names);
+    out.extend_from_slice(&write_index(&[&top(
+        at(charset_at)?,
+        at(fd_select_at)?,
+        at(charstrings_at)?,
+        at(fd_array_at)?,
+    )])?);
+    out.extend_from_slice(&strings);
+    out.extend_from_slice(&global);
+    out.extend_from_slice(&charset);
+    out.extend_from_slice(&fd_select);
+    out.extend_from_slice(&charstrings);
+    out.extend_from_slice(&write_index(&[&font_dict(private_at)])?);
+    out.extend_from_slice(&private);
+    Some(out)
 }

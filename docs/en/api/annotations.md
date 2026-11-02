@@ -362,6 +362,17 @@ options; an appearance that draws no text, or a hidden annotation,
 gives `""`. `/Contents` is not read; `contents` returns
 it.
 
+### `Annotation.file`
+
+```python
+Annotation.file: AnnotationFile | None
+```
+
+The file that a file attachment embeds, or `None` for another annotation.
+
+A file attachment whose `/FS` is not a file specification
+dictionary embeds no file either.
+
 ### `Annotation.sound`
 
 ```python
@@ -379,6 +390,101 @@ Return the sound that a sound annotation plays, or `None` for another kind of an
 `stream_data_size` past `max_size`. A sound annotation without a
 `/Sound` stream, and a sound whose `/R`, `/C`, `/B`, `/E`,
 or `/CO` is malformed, raise `MalformedPdfError`.
+
+## `AnnotationFile`
+
+```python
+AnnotationFile(annotation: Annotation)
+```
+
+The file that a file attachment annotation embeds, as `Annotation.file` returns it.
+
+It reads the document on every access and has the members of
+`Attachment`, which describes the document's own attachments:
+assigning `filename`, `description`, `created`, or `modified`
+edits the file specification at once. A handle raises
+`StaleObjectError` once its annotation no longer embeds a file.
+
+### `AnnotationFile.filename`
+
+```python
+AnnotationFile.filename: str
+```
+
+The viewer-facing file name (`/UF`, else `/F`), or `""`; assignable.
+
+Settable.
+
+### `AnnotationFile.description`
+
+```python
+AnnotationFile.description: str | None
+```
+
+The description (`/Desc`), or `None`; assignable, and `del` removes it.
+
+Settable.
+
+### `AnnotationFile.size`
+
+```python
+AnnotationFile.size: int
+```
+
+The uncompressed size that the file declares (`/Params /Size`), or -1, as pymupdf does.
+
+### `AnnotationFile.created`
+
+```python
+AnnotationFile.created: str | None
+```
+
+The creation date (`/Params /CreationDate`) as stored, or `None`; assignable and deletable.
+
+Dates are PDF date strings such as `D:20260101120000Z`.
+
+Settable.
+
+### `AnnotationFile.modified`
+
+```python
+AnnotationFile.modified: str | None
+```
+
+The modification date (`/Params /ModDate`) as stored, or `None`; assignable and deletable.
+
+`write` sets it to the current time.
+
+Settable.
+
+### `AnnotationFile.read`
+
+```python
+AnnotationFile.read(*, max_size: int | None = 67108864) -> bytes
+```
+
+Return the file's contents; `max_size` bounds the decoded data (`embedded_file_size`).
+
+The document's limits bound the decoding; `None` lifts `max_size`
+for trusted input.
+
+### `AnnotationFile.write`
+
+```python
+AnnotationFile.write(
+    data: bytes | bytearray | memoryview,
+    /,
+    *,
+    max_size: int | None = 67108864,
+)
+```
+
+Replace the file's contents, as pymupdf's `embfile_upd` does.
+
+The file name, description, and creation date stay; `size` becomes
+the new length, `modified` the current time, and a stale
+`/CheckSum` is dropped. `max_size` bounds `data` before it is
+copied and defaults to 64 MiB (`embedded_file_size`).
 
 ## `AnnotationFlags`
 
@@ -438,7 +544,7 @@ read in the transaction, so that every viewer draws it alike.
 
 ## `AnnotationSpecification`
 
-`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret`
+`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret | pyropdf.FileAttachment | pyropdf.FreeText | pyropdf.Stamp`
 
 ## `AnnotationType`
 
@@ -516,6 +622,72 @@ An ellipse inscribed in a rectangle, as `page.annotations.add` takes it.
 
 The fields are those of `Square`; the ellipse and its border lie
 inside `rect`.
+
+## `FileAttachment`
+
+```python
+FileAttachment(
+    at: Point | Sequence[float],
+    data: bytes | bytearray | memoryview,
+    *,
+    filename: str,
+    description: str | None = None,
+    icon: AttachmentIcon = <AttachmentIcon.PUSH_PIN: 'push_pin'>,
+    color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0),
+    opacity: float = 1.0,
+    contents: str | None = None,
+    max_size: int | None = 67108864,
+)
+```
+
+A file embedded in the page behind an icon, as `page.annotations.add` takes it.
+
+`at` is the display point of the top-left corner of the 20-point
+icon, which stands upright on a turned page too: its `/Rotate` takes
+the page's rotation. `data` is the file and `filename` its name,
+which with `description` stops at 1 MiB (`embedded_file_input_size`);
+`max_size` bounds `data` before it is copied and defaults to 64 MiB
+(`embedded_file_size`). `color` fills the icon. Read the file back
+through `Annotation.file`; the document's own attachments, in
+`Document.attachments`, do not list it.
+
+## `FreeText`
+
+```python
+FreeText(
+    rect: Sequence[float],
+    text: str,
+    *,
+    font: Font | None = None,
+    size: float = 11.0,
+    text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    color: Color | None = None,
+    border: Border = Border(width=0.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    align: Literal['left', 'center', 'right'] = 'left',
+    rotate: int = 0,
+    callout: Sequence[Point | Sequence[float]] | None = None,
+    callout_ending: LineEnding = <LineEnding.NONE: 'none'>,
+    opacity: float = 1.0,
+)
+```
+
+Text written on the page in a box, as `page.annotations.add` takes it.
+
+`rect` is the box in display coordinates and `text` its text,
+wrapped as `Canvas.textbox` wraps it, `align`-ed, and in
+`font`, Helvetica by default, at `size` points and `text_color`.
+A Standard 14 font is named in the annotation's `/DA`, so other
+viewers can redraw it; it prints WinAnsi characters only. An embedded
+`Font` shapes any text that it has glyphs for; the appearance
+names its font, and edits in the same session draw the text in it
+again. A later session knows no face and redraws the text in the
+`/DA` font, Helvetica, refusing text outside WinAnsi. `color`
+fills the box, `border` outlines it in the text color, and `rotate`
+turns the text clockwise by a multiple of 90 degrees as the page is
+displayed. `callout` draws a line from the display point that the
+text explains, through an optional knee, to the box, with
+`callout_ending` at the explained point. Text that does not fit
+raises `PdfError`.
 
 ## `Highlight`
 
@@ -733,6 +905,28 @@ A wavy line under text, as `page.annotations.add` takes it.
 The fields are those of `Highlight`; `color` draws a zigzag
 two points wide along the bottom of each rectangle, at most 65,536 points
 in all (`annotation_point_count`).
+
+## `Stamp`
+
+```python
+Stamp(
+    rect: Sequence[float],
+    *,
+    icon: StampIcon = <StampIcon.APPROVED: 'approved'>,
+    color: Color | None = None,
+    opacity: float = 1.0,
+    rotate: int = 0,
+    contents: str | None = None,
+)
+```
+
+A rubber stamp, as `page.annotations.add` takes it.
+
+`rect` is in display coordinates; the stamp's label is drawn as large
+as fits, centred in a rounded frame, in `color` or the stamp's own
+color (green for approval, red for restriction, blue for the rest), and
+`rotate` turns it clockwise by a multiple of 90 degrees as the page is
+displayed.
 
 ## `StampIcon`
 

@@ -2,17 +2,135 @@
 //! an unchanged value is written as its lexeme (DESIGN.md F3 and section
 //! 4.2).
 
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use hayro_syntax::Pdf;
 use hayro_syntax::object::{self as syntax, MaybeRef, Object};
 use proptest::prelude::*;
 
 use super::*;
-use crate::budget::Budget;
+use crate::budget::{Budget, CancellationToken};
 use crate::value::{Array, Bytes, Dict, Reference};
+use crate::version::{Document, MemoryBase};
 use crate::{ErrorKind, LimitExceeded};
+
+thread_local! {
+    static CANCEL_AFTER: RefCell<Option<(usize, CancellationToken)>> = const { RefCell::new(None) };
+    static CANCELLED_AT: Cell<usize> = const { Cell::new(0) };
+    static LAST_CAPACITY: Cell<usize> = const { Cell::new(0) };
+    static CAPACITY_GROWTHS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Deterministically cancel after the writer has copied part of its output.
+pub(super) fn after_write_chunk(len: usize, capacity: usize) {
+    if LAST_CAPACITY.get() != capacity {
+        LAST_CAPACITY.set(capacity);
+        CAPACITY_GROWTHS.set(CAPACITY_GROWTHS.get() + 1);
+    }
+    CANCEL_AFTER.with_borrow_mut(|target| {
+        if target
+            .as_ref()
+            .is_some_and(|(threshold, _)| len >= *threshold)
+        {
+            let (_, token) = target.take().unwrap();
+            CANCELLED_AT.set(len);
+            token.cancel();
+        }
+    });
+}
+
+#[test]
+fn large_copy_reserves_once_even_with_a_tight_budget() {
+    let data = vec![b'x'; BYTE_POLL_INTERVAL * 8];
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some((data.len() + 1) as u64));
+    let mut out = BudgetVec::new(&budget);
+    out.try_extend_from_slice(b"x").unwrap();
+    LAST_CAPACITY.set(out.capacity());
+    CAPACITY_GROWTHS.set(0);
+    Writer::new(&mut out, true).push(&data).unwrap();
+    assert_eq!(CAPACITY_GROWTHS.get(), 1);
+    assert_eq!(out.len(), data.len() + 1);
+}
+
+#[test]
+fn many_small_writes_do_not_repeat_exact_growth_under_a_tight_budget() {
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(100_000));
+    let mut out = BudgetVec::new(&budget);
+    let data = vec![b'x'; BYTE_POLL_INTERVAL * 2];
+    out.try_extend_from_slice(&data).unwrap();
+    LAST_CAPACITY.set(out.capacity());
+    CAPACITY_GROWTHS.set(0);
+    let mut writer = Writer::new(&mut out, true);
+    let error = (0..=data.len())
+        .find_map(|_| writer.push(b"x").err())
+        .expect("geometric growth must refuse when both buffers do not fit");
+    assert_eq!(
+        error.limit().map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert_eq!(CAPACITY_GROWTHS.get(), 1);
+    assert_eq!(out.len(), data.len() * 2);
+}
+
+#[test]
+fn cancellation_during_relocation_keeps_the_old_buffer_and_charge() {
+    let token = CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    let mut out = BudgetVec::new(&budget);
+    let data = vec![b'x'; BYTE_POLL_INTERVAL * 4];
+    out.try_extend_from_slice(&data).unwrap();
+    let old_capacity = out.capacity();
+    let old_charge = budget.used(LimitCode::MemorySize);
+    BudgetVec::test_cancel_relocation_after(BYTE_POLL_INTERVAL, token);
+    let error = out
+        .try_reserve_polled(old_capacity - out.len() + 1)
+        .unwrap_err();
+    assert_eq!(error.code(), LimitCode::Cancelled);
+    assert_eq!(BudgetVec::test_relocated_bytes(), BYTE_POLL_INTERVAL);
+    assert_eq!(out.as_slice(), data);
+    assert_eq!(out.capacity(), old_capacity);
+    assert_eq!(budget.used(LimitCode::MemorySize), old_charge);
+}
+
+#[test]
+fn relocation_charges_both_live_buffers_and_keeps_old_on_refusal() {
+    let len = BYTE_POLL_INTERVAL * 4;
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some((len * 2) as u64));
+    let mut out = BudgetVec::new(&budget);
+    let data = vec![b'x'; len];
+    out.try_extend_from_slice(&data).unwrap();
+    let old_capacity = out.capacity();
+    let old_charge = budget.used(LimitCode::MemorySize);
+    let error = out
+        .try_reserve_polled(old_capacity - out.len() + 1)
+        .unwrap_err();
+    assert_eq!(error.code(), LimitCode::MemorySize);
+    assert_eq!(out.as_slice(), data);
+    assert_eq!(out.capacity(), old_capacity);
+    assert_eq!(budget.used(LimitCode::MemorySize), old_charge);
+}
+
+#[test]
+fn relocation_keeps_bytes_and_releases_the_old_buffer_charge() {
+    let budget = Budget::default();
+    let mut out = BudgetVec::new(&budget);
+    let data = vec![b'x'; BYTE_POLL_INTERVAL * 4];
+    out.try_extend_from_slice(&data).unwrap();
+    let old_capacity = out.capacity();
+    out.try_reserve_polled(old_capacity - out.len() + 1)
+        .unwrap();
+    assert_eq!(out.as_slice(), data);
+    assert!(out.capacity() > old_capacity);
+    assert_eq!(budget.used(LimitCode::MemorySize), out.capacity() as u64);
+}
+
+fn cancel_after_bytes(threshold: usize, token: CancellationToken) {
+    CANCELLED_AT.set(0);
+    CANCEL_AFTER.set(Some((threshold, token)));
+}
 
 /// Writes `value` in canonical syntax with the default budget.
 fn canonical_bytes(value: &Value) -> Vec<u8> {
@@ -219,6 +337,103 @@ fn names_and_strings_hold_every_byte_value() {
         parse(canonical_bytes(&Value::Dict(keys.clone()))),
         Value::Dict(keys)
     );
+}
+
+#[test]
+fn multi_chunk_names_strings_streams_and_lexemes_keep_their_bytes() {
+    let count = BYTE_POLL_INTERVAL * 3 + 7;
+    let mut raw = vec![b'a'; count];
+    raw[BYTE_POLL_INTERVAL - 1] = b' ';
+    raw[BYTE_POLL_INTERVAL] = b'(';
+    let name = Value::Name(Name::new(raw.clone()));
+    let mut expected = Vec::with_capacity(count + 5);
+    expected.push(b'/');
+    expected.extend_from_slice(&raw[..BYTE_POLL_INTERVAL - 1]);
+    expected.extend_from_slice(b"#20#28");
+    expected.extend_from_slice(&raw[BYTE_POLL_INTERVAL + 1..]);
+    assert_eq!(canonical_bytes(&name), expected);
+
+    let string = literal(&raw);
+    let mut expected = Vec::with_capacity(count + 3);
+    expected.push(b'(');
+    expected.extend_from_slice(&raw[..BYTE_POLL_INTERVAL]);
+    expected.extend_from_slice(b"\\(");
+    expected.extend_from_slice(&raw[BYTE_POLL_INTERVAL + 1..]);
+    expected.push(b')');
+    assert_eq!(canonical_bytes(&string), expected);
+
+    let stream = Value::from(Stream::new(Dict::new(), Bytes::from(raw.clone())));
+    let mut expected = format!("<</Length {count}>>\nstream\n").into_bytes();
+    expected.extend_from_slice(&raw);
+    expected.extend_from_slice(b"\nendstream");
+    assert_eq!(canonical_bytes(&stream), expected);
+
+    let mut source = vec![b'['];
+    source.extend(std::iter::repeat_n(b' ', count));
+    source.extend_from_slice(b"null]");
+    let value = parse(source.clone());
+    assert_eq!(lexeme_bytes(&value), source);
+}
+
+#[test]
+fn cancellation_during_a_large_stream_leaves_the_transaction_unchanged() {
+    let document = Document::new(Arc::new(MemoryBase::default()), None);
+    let good = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(1, &Value::Integer(7), &good).unwrap();
+
+    let token = CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    cancel_after_bytes(BYTE_POLL_INTERVAL, token);
+    let data = vec![b'x'; BYTE_POLL_INTERVAL * 4];
+    let value = Value::from(Stream::new(Dict::new(), Bytes::from(data)));
+    let error = transaction.write(1, &value, &budget).unwrap_err();
+    assert_eq!(
+        error.limit().map(|limit| limit.code()),
+        Some(LimitCode::Cancelled)
+    );
+    let copied = CANCELLED_AT.get();
+    assert!((BYTE_POLL_INTERVAL..BYTE_POLL_INTERVAL * 4).contains(&copied));
+
+    let version = transaction.commit(&good).unwrap();
+    let object = version.get(1, &good).unwrap().unwrap();
+    assert_eq!(object.value().as_ref(), &Value::Integer(7));
+    assert_eq!(
+        document
+            .current()
+            .get(1, &good)
+            .unwrap()
+            .unwrap()
+            .value()
+            .as_ref(),
+        &Value::Integer(7)
+    );
+}
+
+#[test]
+fn cancellation_stops_long_name_string_and_lexeme_writes() {
+    let data = vec![b'a'; BYTE_POLL_INTERVAL * 4];
+    let mut source = vec![b'['];
+    source.extend(std::iter::repeat_n(b' ', data.len()));
+    source.extend_from_slice(b"null]");
+    let values = [
+        Value::Name(Name::new(data.clone())),
+        literal(&data),
+        parse(source),
+    ];
+    for value in values {
+        let token = CancellationToken::new();
+        let budget = Budget::default().with_cancellation(token.clone());
+        cancel_after_bytes(BYTE_POLL_INTERVAL, token);
+        let mut out = BudgetVec::new(&budget);
+        let error = super::value(&mut out, &value).unwrap_err();
+        assert_eq!(
+            error.limit().map(LimitExceeded::code),
+            Some(LimitCode::Cancelled)
+        );
+        assert!(CANCELLED_AT.get() < data.len());
+        assert!(out.len() < data.len());
+    }
 }
 
 #[test]

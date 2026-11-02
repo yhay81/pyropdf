@@ -23,6 +23,7 @@
 mod icons;
 mod missing;
 mod shapes;
+mod text;
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -35,6 +36,7 @@ use pyropdf_store::version::{Transaction, Version};
 use pyropdf_store::{Error, Result};
 
 use crate::forms;
+use crate::forms::face::FaceText;
 
 /// The most points that one annotation's geometry holds, a squiggly line's
 /// zigzag included.
@@ -73,6 +75,7 @@ pub use missing::{
     MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
 };
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
+pub use text::{FACE_RESOURCE, STAMPS, TextFit, default_appearance};
 
 /// A quadrilateral of text markup, `[TL, TR, BL, BR]`, as `/QuadPoints`
 /// lists its corners.
@@ -87,7 +90,10 @@ pub type PointLists = Vec<Vec<(f64, f64)>>;
 pub fn draws(subtype: &[u8]) -> bool {
     is_text_markup(subtype)
         || has_points(subtype)
-        || matches!(subtype, b"Text" | b"Square" | b"Circle" | b"Caret")
+        || matches!(
+            subtype,
+            b"Text" | b"FreeText" | b"Square" | b"Circle" | b"Stamp" | b"Caret" | b"FileAttachment"
+        )
 }
 
 /// Returns whether `subtype` is a line, polygon, polyline, or ink
@@ -675,9 +681,22 @@ pub struct Appearance {
     blend: Option<&'static str>,
     /// The path points that the content draws.
     points: usize,
+    /// The matrix that maps the form's box onto the rectangle.
+    matrix: [f64; 6],
+    /// The font that the content's text names, by resource.
+    font: Option<text::TextFont>,
+    /// Whether the text of a free text fit.
+    fit: TextFit,
 }
 
 impl Appearance {
+    /// Returns whether the text of a free text fit its box and was drawn;
+    /// that of the other kinds always fits.
+    #[must_use]
+    pub const fn text_fit(&self) -> TextFit {
+        self.fit
+    }
+
     /// Returns the form XObject of the appearance, whose `/Matrix` maps its
     /// box onto the rectangle.
     #[must_use]
@@ -690,11 +709,31 @@ impl Appearance {
             Name::from("BBox"),
             numbers_array(&[0.0, 0.0, width, height]),
         );
-        dict.insert(
-            Name::from("Matrix"),
-            numbers_array(&[1.0, 0.0, 0.0, 1.0, self.rect[0], self.rect[1]]),
-        );
+        dict.insert(Name::from("Matrix"), numbers_array(&self.matrix));
         let mut resources = Dict::new();
+        match self.font {
+            Some(text::TextFont::Standard((resource, base_font))) => {
+                let mut font = Dict::new();
+                font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+                font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+                font.insert(Name::from("BaseFont"), Value::Name(Name::from(base_font)));
+                if !matches!(base_font, "Symbol" | "ZapfDingbats") {
+                    font.insert(
+                        Name::from("Encoding"),
+                        Value::Name(Name::from("WinAnsiEncoding")),
+                    );
+                }
+                let mut fonts = Dict::new();
+                fonts.insert(Name::from(resource), Value::Dict(font));
+                resources.insert(Name::from("Font"), Value::Dict(fonts));
+            }
+            Some(text::TextFont::Embedded(reference)) => {
+                let mut fonts = Dict::new();
+                fonts.insert(Name::from(FACE_RESOURCE), Value::Reference(reference));
+                resources.insert(Name::from("Font"), Value::Dict(fonts));
+            }
+            None => {}
+        }
         if self.alpha < 1.0 || self.blend.is_some() {
             let mut state = Dict::new();
             state.insert(Name::from("Type"), Value::Name(Name::from("ExtGState")));
@@ -803,18 +842,34 @@ pub fn fitted_rect(reader: &Reader<'_>, dict: &Dict) -> Result<Option<[f64; 4]>>
 /// for a kind that [`draws`] refuses, or for a dictionary without a usable
 /// rectangle, geometry, or opacity.
 pub fn appearance(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
-    appearance_with(reader, dict, false)
+    appearance_with(reader, dict, false, None)
+}
+
+/// Draws the normal appearance of the free text `dict` as [`appearance`]
+/// does, with its text in embedded `face` instead of the font of `/DA`, or
+/// returns `None` for another kind. While `face` collects glyphs, the
+/// appearance names no font and is not to be written.
+pub fn face_appearance(
+    reader: &Reader<'_>,
+    dict: &Dict,
+    face: &mut FaceText<'_>,
+) -> Result<Option<Appearance>> {
+    if reader.name(dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+        return Ok(None);
+    }
+    appearance_with(reader, dict, false, Some(face))
 }
 
 /// Charges aggregate path points only for render-time synthesis.
 fn appearance_for_render(reader: &Reader<'_>, dict: &Dict) -> Result<Option<Appearance>> {
-    appearance_with(reader, dict, true)
+    appearance_with(reader, dict, true, None)
 }
 
 fn appearance_with(
     reader: &Reader<'_>,
     dict: &Dict,
     aggregate: bool,
+    face: Option<&mut FaceText<'_>>,
 ) -> Result<Option<Appearance>> {
     let Some(subtype) = reader.name(dict, "Subtype")? else {
         return Ok(None);
@@ -838,7 +893,18 @@ fn appearance_with(
     if !(x1 >= x0 && y1 >= y0) {
         return Ok(None);
     }
-    let size = (x1 - x0, y1 - y0);
+    // A stamp turns counterclockwise by /Rotate inside its rectangle.
+    let turn = if &*subtype == b"Stamp" {
+        quarter_turn(reader, dict)?.rem_euclid(360)
+    } else {
+        0
+    };
+    let turn = if turn % 90 == 0 { turn } else { 0 };
+    let size = if turn % 180 == 0 {
+        (x1 - x0, y1 - y0)
+    } else {
+        (y1 - y0, x1 - x0)
+    };
     if !(size.0.is_finite() && size.1.is_finite()) {
         return Err(Error::malformed(
             "an annotation appearance has nonfinite dimensions",
@@ -868,7 +934,20 @@ fn appearance_with(
         canvas.out.push_str("/G0 gs\n");
     }
     let to_canvas = |(x, y): (f64, f64)| (x - x0, y1 - y);
+    let mut font = None;
+    let mut fit = TextFit::Fits;
     match (&*subtype, &geometry) {
+        (b"FreeText", _) => {
+            (fit, font) = text::free_text(&mut canvas, reader, dict, &paint, rect, face)?;
+        }
+        (b"Stamp", _) => {
+            let icon = reader.entry(dict, "Name")?;
+            let icon = match icon.as_deref() {
+                Some(Value::Name(name)) => name.as_bytes(),
+                _ => b"Draft",
+            };
+            font = text::stamp(&mut canvas, &paint, icon, size)?.map(text::TextFont::Standard);
+        }
         (b"Text", _) => {
             let icon = reader.name(dict, "Name")?;
             icons::draw(
@@ -880,17 +959,19 @@ fn appearance_with(
         }
         (b"Caret", _) => {
             let insets = reader.rect_differences(dict, size)?;
-            let turn = match dict.get("Rotate") {
-                Some(value) => reader.number(value)?.unwrap_or(0.0),
-                None => 0.0,
-            };
-            // Only quarter turns are drawn turned.
-            let turn = if turn.fract() == 0.0 && turn.abs() < 1e9 {
-                turn as i64
-            } else {
-                0
-            };
+            let turn = quarter_turn(reader, dict)?;
             icons::caret(&mut canvas, &paint, size, insets, turn);
+        }
+        (b"FileAttachment", _) => {
+            let icon = reader.name(dict, "Name")?;
+            let turn = quarter_turn(reader, dict)?;
+            icons::file(
+                &mut canvas,
+                &paint,
+                icon.as_deref().unwrap_or(b"PushPin"),
+                size,
+                turn,
+            );
         }
         (b"Square" | b"Circle", _) => {
             let insets = reader.rect_differences(dict, size)?;
@@ -955,7 +1036,25 @@ fn appearance_with(
         alpha,
         blend,
         points: canvas.points,
+        matrix: text::turned_matrix(turn, size, [x0, y0]),
+        font,
+        fit,
     }))
+}
+
+/// Returns the `/Rotate` of a caret or a file attachment, the degrees its
+/// drawing turns counterclockwise; a value that is not a whole number
+/// reads as 0, and only quarter turns are drawn turned.
+fn quarter_turn(reader: &Reader<'_>, dict: &Dict) -> Result<i64> {
+    let turn = match dict.get("Rotate") {
+        Some(value) => reader.number(value)?.unwrap_or(0.0),
+        None => 0.0,
+    };
+    Ok(if turn.fract() == 0.0 && turn.abs() < 1e9 {
+        turn as i64
+    } else {
+        0
+    })
 }
 
 fn midpoint(a: (f64, f64), b: (f64, f64)) -> (f64, f64) {

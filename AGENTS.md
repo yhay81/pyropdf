@@ -77,6 +77,10 @@ gh api --paginate repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by
 - **`decision` issues are the owner's call.** Prepare the recommendation that
   the issue asks for, with measurements under `evidence/`, but never build on
   a choice the owner has not made.
+- **Upstream state.** An `upstream` issue carries one `upstream:*` label;
+  move it when the state changes. Once a release contains the change, drop
+  `upstream` and the state label and label it `adoption`: the issue is
+  ordinary work again.
 - **`upstream` issues** change other repositories. Drafting a patch or a
   proposal locally, or in the issue, is fine. Opening an issue or pull request
   in another repository, or commenting there, publishes on the owner's behalf:
@@ -226,10 +230,14 @@ every later turn, so read only what the task needs:
 | `spike` | A time-boxed investigation that ends in a measured recommendation |
 | `upstream` | Work that lands in an engine or dependency repository |
 | `adoption` | pyropdf adopts a released engine change |
+| `upstream:todo` | Upstream: no draft yet; an agent can investigate and prepare one |
+| `upstream:draft` | Upstream: prepared here, not yet published; waits on the owner's go-ahead |
+| `upstream:filed` | Upstream: issue or pull request filed upstream; waits on the maintainer |
+| `upstream:merged` | Upstream: merged upstream; waits on a release |
 | `scope-question` | A question for an upstream maintainer about what belongs in their project |
 | `in-progress` | Claimed; the latest comment names the branch |
 | `area:*` | `infra`, `store`, `schema`, `engine`, `python`, or `evidence` |
-| `engine:*` | `hayro` or `krilla` |
+| `engine:*` | The upstream project: `hayro`, `vello`, `harfrust`, `image-rs`, or `unicode-segmentation`; `krilla` is retired |
 
 ## Repository facts
 

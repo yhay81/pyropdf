@@ -14,6 +14,7 @@ LimitCode: TypeAlias = Literal[
     "page_count",
     "object_count",
     "object_depth",
+    "object_parse_size",
     "decompressed_size",
     "page_content_size",
     "total_decompressed_size",
@@ -64,6 +65,8 @@ LimitCode: TypeAlias = Literal[
     "image_input_size",
     "text_line_count",
     "text_input_size",
+    "shaped_glyph_count",
+    "font_input_size",
     "named_destination_count",
     "named_destination_edge_count",
     "named_destination_depth",
@@ -90,6 +93,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "page_count": "The document has more pages than `DocumentLimits.max_pages`.",
         "object_count": "The document has more objects than `DocumentLimits.max_objects`.",
         "object_depth": "An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`.",
+        "object_parse_size": (
+            "The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, "
+            "which hayro-syntax would parse in one call that cannot be cancelled."
+        ),
         "decompressed_size": "A stream decodes to more than `DocumentLimits.max_decompressed_size`.",
         "page_content_size": "A content stream of a page decodes to more than `DocumentLimits.max_page_content_size`.",
         "total_decompressed_size": (
@@ -205,6 +212,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of "
             "UTF-8."
         ),
+        "shaped_glyph_count": (
+            "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
+        ),
+        "font_input_size": "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB.",
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
             "than 65,536 entries or tree nodes."
@@ -235,7 +246,8 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "count and 4,096."
         ),
         "memory_size": (
-            "The collections of one operation would hold more memory than it allows, or the allocator refuses it."
+            "The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or "
+            "the allocator refuses it."
         ),
         "deadline": "The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets.",
         "cancelled": "A cancellation token of the operation is cancelled.",

@@ -251,6 +251,75 @@ impl<'b, T> BudgetVec<'b, T> {
     }
 }
 
+impl BudgetVec<'_, u8> {
+    /// Reserves for byte output without moving a large existing buffer in a
+    /// single allocator call. Both buffers are charged while they coexist;
+    /// refusal leaves the original contents, capacity, and charges intact.
+    pub(crate) fn try_reserve_polled(&mut self, additional: usize) -> Result<(), LimitExceeded> {
+        const CHUNK: usize = 16 * 1024;
+        let needed = self
+            .items
+            .len()
+            .checked_add(additional)
+            .ok_or_else(|| LimitExceeded::new(LimitCode::MemorySize))?;
+        if needed <= self.items.capacity() {
+            return Ok(());
+        }
+        self.budget.poll()?;
+        if self.items.capacity() <= CHUNK {
+            // A moving realloc can copy at most CHUNK bytes in this case.
+            return self.try_reserve(additional);
+        }
+        let target = needed.max(self.items.capacity().saturating_mul(2));
+        let mut replacement = Self::new(self.budget);
+        // Keep geometric growth. Repeatedly falling back to exact growth
+        // under a tight limit would copy the whole prefix for every byte.
+        replacement.try_reserve_exact(target)?;
+        for chunk in self.items.chunks(CHUNK) {
+            self.budget.poll()?;
+            replacement.try_extend_from_slice(chunk)?;
+            #[cfg(test)]
+            test_after_relocation_chunk(replacement.len());
+        }
+        self.budget.poll()?;
+        mem::swap(&mut self.items, &mut replacement.items);
+        mem::swap(&mut self.charged, &mut replacement.charged);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static CANCEL_RELOCATION: std::cell::RefCell<Option<(usize, super::CancellationToken)>> = const { std::cell::RefCell::new(None) };
+    static RELOCATED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn test_after_relocation_chunk(len: usize) {
+    CANCEL_RELOCATION.with_borrow_mut(|target| {
+        if target
+            .as_ref()
+            .is_some_and(|(threshold, _)| len >= *threshold)
+        {
+            let (_, token) = target.take().unwrap();
+            RELOCATED_BYTES.set(len);
+            token.cancel();
+        }
+    });
+}
+
+#[cfg(test)]
+impl BudgetVec<'_, u8> {
+    pub(crate) fn test_cancel_relocation_after(threshold: usize, token: super::CancellationToken) {
+        RELOCATED_BYTES.set(0);
+        CANCEL_RELOCATION.set(Some((threshold, token)));
+    }
+
+    pub(crate) fn test_relocated_bytes() -> usize {
+        RELOCATED_BYTES.get()
+    }
+}
+
 /// Returns the smallest capacity that a growing buffer takes, as the
 /// standard library chooses it.
 const fn min_capacity<T>() -> usize {

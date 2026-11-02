@@ -45,7 +45,9 @@ method and property of its classes with its full description.
 
 - [`Layer`](layers.md#layer): An optional content group (`/Type /OCG`) and its state in the default configuration.
 - [`LayerConfig`](layers.md#layerconfig): An optional content configuration: the default `/D` at index 0, then each of `/Configs`.
+- [`LayerMembership`](layers.md#layermembership): An optional content membership dictionary (`/OCMD`) as a value.
 - [`Layers`](layers.md#layers_1): The optional content groups of a document, in `/OCGs` order; empty without optional content.
+- [`VisibilityPolicy`](layers.md#visibilitypolicy): How a membership's groups decide its visibility (`/P`, ISO 32000-2 Table 97).
 
 ## [Sanitizing](sanitizing.md)
 
@@ -67,7 +69,10 @@ method and property of its classes with its full description.
 ## [Drawing](drawing.md)
 
 - [`Canvas`](drawing.md#canvas): Drawing on one page in paint order, written as one content stream.
+- [`ListNumbering`](drawing.md#listnumbering): How a list numbers its items (ISO 32000-1 section 14.8.5.5), by its PDF name.
 - [`PathBuilder`](drawing.md#pathbuilder): Geometry for `Canvas.path` and `Canvas.clip`, built from segments.
+- [`TableHeaderScope`](drawing.md#tableheaderscope): What a table header cell heads (ISO 32000-1 section 14.8.5.7), by its PDF name.
+- [`TagRole`](drawing.md#tagrole): A structure type (ISO 32000-1 section 14.8.4), by its PDF name.
 - [`TextFit`](drawing.md#textfit): How text fits a `Canvas.textbox`: the height left below its last line.
 
 ## [Text and content](text-and-content.md)
@@ -129,6 +134,7 @@ method and property of its classes with its full description.
 ## [Annotations](annotations.md)
 
 - [`Annotation`](annotations.md#annotation): A handle on one annotation of a page, as `page.annotations` lists it.
+- [`AnnotationFile`](annotations.md#annotationfile_1): The file that a file attachment annotation embeds, as `Annotation.file` returns it.
 - [`AnnotationFlags`](annotations.md#annotationflags_1): Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.
 - [`Annotations`](annotations.md#annotations_1): The annotations of a page other than links and form widgets, as `page.annotations` returns them.
 - [`AnnotationSpecification`](annotations.md#annotationspecification)
@@ -138,6 +144,8 @@ method and property of its classes with its full description.
 - [`BorderStyle`](annotations.md#borderstyle): The style of an annotation's border, `/BS /S` (ISO 32000-2 Table 168).
 - [`Caret`](annotations.md#caret): A caret that marks where text goes, as `page.annotations.add` takes it.
 - [`Circle`](annotations.md#circle): An ellipse inscribed in a rectangle, as `page.annotations.add` takes it.
+- [`FileAttachment`](annotations.md#fileattachment): A file embedded in the page behind an icon, as `page.annotations.add` takes it.
+- [`FreeText`](annotations.md#freetext): Text written on the page in a box, as `page.annotations.add` takes it.
 - [`Highlight`](annotations.md#highlight): A highlight over text, as `page.annotations.add` takes it.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
@@ -151,6 +159,7 @@ method and property of its classes with its full description.
 - [`SoundEncoding`](annotations.md#soundencoding): How a sound's samples encode amplitudes, `/E` (ISO 32000-2 Table 208).
 - [`Square`](annotations.md#square): A rectangle, as `page.annotations.add` takes it.
 - [`Squiggly`](annotations.md#squiggly): A wavy line under text, as `page.annotations.add` takes it.
+- [`Stamp`](annotations.md#stamp): A rubber stamp, as `page.annotations.add` takes it.
 - [`StampIcon`](annotations.md#stampicon): The stamps of ISO 32000-2 §12.5.6.12, `/Name`; pymupdf's `STAMP_*` codes in their order.
 - [`StrikeOut`](annotations.md#strikeout): A line through text, as `page.annotations.add` takes it.
 - [`Underline`](annotations.md#underline): A line under text, as `page.annotations.add` takes it.

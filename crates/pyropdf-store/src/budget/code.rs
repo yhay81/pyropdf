@@ -20,6 +20,10 @@ pub enum LimitCode {
     /// An object nests arrays and dictionaries deeper than
     /// `DocumentLimits.max_object_depth`.
     ObjectDepth,
+    /// The bytes of one object of the input, up to the next object or
+    /// cross-reference section, exceed 256 MiB, which hayro-syntax would parse
+    /// in one call that cannot be cancelled.
+    ObjectParseSize,
     /// A stream decodes to more than `DocumentLimits.max_decompressed_size`.
     DecompressedSize,
     /// A content stream of a page decodes to more than
@@ -158,6 +162,12 @@ pub enum LimitCode {
     /// The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement
     /// takes is larger than 1 MiB of UTF-8.
     TextInputSize,
+    /// Shaping one string in an embedded face takes more characters, or gives
+    /// more glyphs, than the limit.
+    ShapedGlyphCount,
+    /// The font data that `Font.from_file` or `Font.from_bytes` loads is larger
+    /// than 64 MiB.
+    FontInputSize,
     /// The document's named destinations, its `/Names /Dests` tree and its
     /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
     NamedDestinationCount,
@@ -186,8 +196,8 @@ pub enum LimitCode {
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
-    /// The collections of one operation would hold more memory than it allows,
-    /// or the allocator refuses it.
+    /// The collections of one operation would hold more memory than
+    /// `DocumentLimits.max_memory_size` allows, or the allocator refuses it.
     MemorySize,
     /// The operation runs past its deadline, which
     /// `DocumentLimits.max_duration` or the call sets.
@@ -212,11 +222,12 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 71] = [
+    pub const ALL: [Self; 74] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
         Self::ObjectDepth,
+        Self::ObjectParseSize,
         Self::DecompressedSize,
         Self::PageContentSize,
         Self::TotalDecompressedSize,
@@ -267,6 +278,8 @@ impl LimitCode {
         Self::ImageInputSize,
         Self::TextLineCount,
         Self::TextInputSize,
+        Self::ShapedGlyphCount,
+        Self::FontInputSize,
         Self::NamedDestinationCount,
         Self::NamedDestinationEdgeCount,
         Self::NamedDestinationDepth,
@@ -294,6 +307,7 @@ impl LimitCode {
             Self::PageCount => "page_count",
             Self::ObjectCount => "object_count",
             Self::ObjectDepth => "object_depth",
+            Self::ObjectParseSize => "object_parse_size",
             Self::DecompressedSize => "decompressed_size",
             Self::PageContentSize => "page_content_size",
             Self::TotalDecompressedSize => "total_decompressed_size",
@@ -344,6 +358,8 @@ impl LimitCode {
             Self::ImageInputSize => "image_input_size",
             Self::TextLineCount => "text_line_count",
             Self::TextInputSize => "text_input_size",
+            Self::ShapedGlyphCount => "shaped_glyph_count",
+            Self::FontInputSize => "font_input_size",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
             Self::NamedDestinationDepth => "named_destination_depth",
@@ -373,6 +389,7 @@ impl LimitCode {
             Self::PageCount => "the document has too many pages",
             Self::ObjectCount => "the document has too many objects",
             Self::ObjectDepth => "an object nests arrays and dictionaries too deeply",
+            Self::ObjectParseSize => "an object is too large to parse",
             Self::DecompressedSize => "a stream decodes to too many bytes",
             Self::PageContentSize => "a page content stream decodes to too many bytes",
             Self::TotalDecompressedSize => "the streams of the operation decode to too many bytes",
@@ -423,6 +440,8 @@ impl LimitCode {
             Self::ImageInputSize => "the image data is too large",
             Self::TextLineCount => "the text has too many lines",
             Self::TextInputSize => "the text is too large",
+            Self::ShapedGlyphCount => "the text shapes into too many glyphs",
+            Self::FontInputSize => "the font file is too large",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
             Self::NamedDestinationDepth => "the named-destination tree is too deep",
@@ -454,6 +473,7 @@ impl LimitCode {
             Self::PageCount => Some("pages"),
             Self::ObjectCount => Some("objects"),
             Self::ObjectDepth => Some("levels"),
+            Self::ObjectParseSize => Some("bytes"),
             Self::DecompressedSize => Some("bytes"),
             Self::PageContentSize => Some("bytes"),
             Self::TotalDecompressedSize => Some("bytes"),
@@ -504,6 +524,8 @@ impl LimitCode {
             Self::ImageInputSize => Some("bytes"),
             Self::TextLineCount => Some("lines"),
             Self::TextInputSize => Some("bytes"),
+            Self::ShapedGlyphCount => Some("glyphs"),
+            Self::FontInputSize => Some("bytes"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationEdgeCount => Some("edges"),
             Self::NamedDestinationDepth => Some("levels"),
@@ -533,6 +555,7 @@ impl LimitCode {
             Self::PageCount => None,
             Self::ObjectCount => None,
             Self::ObjectDepth => None,
+            Self::ObjectParseSize => Some(268_435_456),
             Self::DecompressedSize => None,
             Self::PageContentSize => None,
             Self::TotalDecompressedSize => None,
@@ -583,6 +606,8 @@ impl LimitCode {
             Self::ImageInputSize => Some(268_435_456),
             Self::TextLineCount => Some(4_096),
             Self::TextInputSize => Some(1_048_576),
+            Self::ShapedGlyphCount => Some(1_048_576),
+            Self::FontInputSize => Some(67_108_864),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationEdgeCount => Some(131_072),
             Self::NamedDestinationDepth => Some(32),

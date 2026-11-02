@@ -47,9 +47,9 @@ mod _core {
     };
     #[pymodule_export]
     use super::annotations::{
-        _stale_appearances, annotation_add, annotation_edit, annotation_geometry, annotation_list,
-        annotation_open, annotation_pixmap, annotation_popup, annotation_read, annotation_remove,
-        annotation_reply, annotation_text,
+        _stale_appearances, annotation_add, annotation_draw_face, annotation_edit, annotation_face,
+        annotation_geometry, annotation_list, annotation_open, annotation_pixmap, annotation_popup,
+        annotation_read, annotation_remove, annotation_reply, annotation_text,
     };
     #[pymodule_export]
     use super::buffers::{CharColumns, Column};
@@ -73,13 +73,13 @@ mod _core {
     #[pymodule_export]
     use super::fax::encode_ccitt_g4;
     #[pymodule_export]
-    use super::fonts::{_Font, subset_font_program, used_glyphs};
+    use super::fonts::{_Font, mark_font_subset, subset_font_program, used_glyphs};
     #[pymodule_export]
     use super::forms::{
-        flatten, form_field, form_field_choices, form_field_details, form_field_edit,
-        form_field_fill, form_field_read, form_field_remove, form_field_widgets, form_fields,
-        form_repair_radio_groups, form_set_need_appearances, form_walk_counts, widget_add,
-        widget_edit, widget_list, widget_read, widget_remove, widget_style,
+        flatten, form_field, form_field_choices, form_field_details, form_field_draw_face,
+        form_field_edit, form_field_fill, form_field_read, form_field_remove, form_field_widgets,
+        form_fields, form_repair_radio_groups, form_set_need_appearances, form_walk_counts,
+        widget_add, widget_edit, widget_list, widget_read, widget_remove, widget_style,
     };
     #[pymodule_export]
     use super::history::{
@@ -110,7 +110,7 @@ mod _core {
         set_pages,
     };
     #[pymodule_export]
-    use super::pixmap::{Pixmap, recolor_samples, render_page, render_pages};
+    use super::pixmap::{Pixmap, pixmap_png, recolor_samples, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
     #[pymodule_export]

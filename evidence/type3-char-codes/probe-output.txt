@@ -1,0 +1,36 @@
+## hayro-interpret 0.8.0
+# tests/assets/real_world/pdfium-type3.pdf
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+# evidence/type3-char-codes/type3-cases.pdf
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=Some(Char('B'))
+type3	char_code=n/a	as_unicode=Some(Char('あ'))
+type3	char_code=n/a	as_unicode=Some(Char('\0'))
+type3	char_code=n/a	as_unicode=Some(Char('\0'))
+type3	char_code=n/a	as_unicode=None
+type3	char_code=n/a	as_unicode=None
+## hayro main (04a801de)
+# tests/assets/real_world/pdfium-type3.pdf
+type3	char_code=65	as_unicode=None
+type3	char_code=65	as_unicode=None
+type3	char_code=65	as_unicode=None
+# evidence/type3-char-codes/type3-cases.pdf
+type3	char_code=65	as_unicode=None
+type3	char_code=66	as_unicode=None
+type3	char_code=65	as_unicode=Some(Char('A'))
+type3	char_code=66	as_unicode=Some(Char('B'))
+type3	char_code=65	as_unicode=Some(Char('あ'))
+type3	char_code=66	as_unicode=Some(Char('А'))
+type3	char_code=65	as_unicode=Some(Char('B'))
+type3	char_code=66	as_unicode=Some(Char('あ'))
+type3	char_code=65	as_unicode=Some(Char('A'))
+type3	char_code=66	as_unicode=Some(Char('B'))
+type3	char_code=65	as_unicode=Some(Char('A'))
+type3	char_code=66	as_unicode=None

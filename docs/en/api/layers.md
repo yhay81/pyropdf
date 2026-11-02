@@ -32,6 +32,22 @@ LayerConfig(
 
 An optional content configuration: the default `/D` at index 0, then each of `/Configs`.
 
+## `LayerMembership`
+
+```python
+LayerMembership(
+    layers: tuple[Layer, ...] = (),
+    *,
+    policy: VisibilityPolicy = <VisibilityPolicy.ANY_ON: 'AnyOn'>,
+)
+```
+
+An optional content membership dictionary (`/OCMD`) as a value.
+
+Content drawn in a `Canvas.layer` scope of a membership is visible
+as `policy` decides from the visibility of `layers`; a membership
+without groups is visible.
+
 ## `Layers`
 
 ```python
@@ -72,6 +88,18 @@ Layers.configs: list[LayerConfig]
 
 The default configuration, then the alternate ones of `/Configs`.
 
+### `Layers.add`
+
+```python
+Layers.add(name: str, /, *, visible: bool = True) -> Layer
+```
+
+Add a group named `name` and return it, in one transaction.
+
+The group joins `/OCGs` and the default configuration's
+`/Order`, creating `/OCProperties` when the document has none,
+and starts shown or hidden as `visible` says.
+
 ### `Layers.switch`
 
 ```python
@@ -104,3 +132,9 @@ precedence over its `/OCGs` and `/P`. An expression deeper than
 32 levels or with more than 4,096 operands raises
 `LimitError` (`optional_content_expression`). `None`, or
 a dictionary of another type, is visible.
+
+## `VisibilityPolicy`
+
+How a membership's groups decide its visibility (`/P`, ISO 32000-2 Table 97).
+
+Members: `ALL_ON`, `ANY_ON`, `ANY_OFF`, `ALL_OFF`.

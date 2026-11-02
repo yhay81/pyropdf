@@ -182,6 +182,11 @@ impl Origin {
         else {
             return Ok(None);
         };
+        // hayro-syntax 0.8 parses an object in one call that neither polls
+        // nor charges the budget (#509), so the bytes that it may scan are
+        // checked first. That bounds the work of one call, not its
+        // cancellation.
+        budget.check(LimitCode::ObjectParseSize, bytes.len() as u64)?;
         // The length of a stream is read from the base, whose bytes hold
         // the stream, whatever a version wrote since.
         let fetch = |reference| self.base.object(reference, budget);

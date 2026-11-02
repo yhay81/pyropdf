@@ -22,11 +22,16 @@ use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyTuple};
 use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::ocr;
 use pyropdf_engine::render::{self, Raster, RasterError};
+use pyropdf_store::LimitExceeded;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::save::deflate;
 use pyropdf_store::value::Reference;
 
 use crate::codecs;
 use crate::document::_Document;
-use crate::errors::{EncryptedDocumentError, LimitError, PdfError, StaleObjectError, store_error};
+use crate::errors::{
+    EncryptedDocumentError, LimitError, PdfError, StaleObjectError, limit_error, store_error,
+};
 use crate::pixel_ops::{self, Area, Layout};
 
 /// The most distinct colors that `Pixmap.colors` returns by default.
@@ -34,6 +39,62 @@ const DEFAULT_MAX_COLORS: u64 = 65_536;
 
 /// Metres per inch, for PNG's pixels per metre.
 const METRES_PER_INCH: f64 = 0.0254;
+
+/// The most compressed data that one PNG `IDAT` chunk holds.
+const PNG_IDAT_SIZE: usize = 1024 * 1024;
+
+/// Why encoding a pixmap failed.
+enum EncodeError {
+    /// The operation's budget refused it.
+    Limit(LimitExceeded),
+    /// The encoder or the output failed.
+    Other(String),
+}
+
+impl EncodeError {
+    /// Returns the Python error, with `context` before an encoder's message.
+    fn into_py(self, context: &str) -> PyErr {
+        match self {
+            Self::Limit(refusal) => limit_error(&refusal),
+            Self::Other(message) => PdfError::new_err(format!("{context}: {message}")),
+        }
+    }
+}
+
+/// Writes one PNG chunk: its length, type, `data`, and CRC.
+fn png_chunk(out: &mut dyn Write, kind: &[u8; 4], data: &[u8]) -> io::Result<()> {
+    let length = u32::try_from(data.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a PNG chunk is too long"))?;
+    let mut crc = flate2::Crc::new();
+    crc.update(kind);
+    crc.update(data);
+    out.write_all(&length.to_be_bytes())?;
+    out.write_all(kind)?;
+    out.write_all(data)?;
+    out.write_all(&crc.sum().to_be_bytes())
+}
+
+/// An encoded image sink whose growth is charged to the operation budget.
+struct BudgetedPngOutput<'b> {
+    bytes: BudgetVec<'b, u8>,
+    refusal: Option<LimitExceeded>,
+}
+
+impl Write for BudgetedPngOutput<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self.bytes.try_extend_from_slice(bytes) {
+            Ok(()) => Ok(bytes.len()),
+            Err(refusal) => {
+                self.refusal = Some(refusal);
+                Err(io::Error::other("PNG output exceeded its budget"))
+            }
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 /// A rendered page: immutable pixels, row by row from the top, RGB or gray,
 /// each with or without straight alpha, 8 bits per channel.
@@ -173,30 +234,22 @@ impl Pixmap {
         (Arc::clone(&self.data), layout)
     }
 
-    fn encode(&self, out: &mut dyn Write, encoding: Encoding) -> Result<(), String> {
+    fn encode(
+        &self,
+        out: &mut dyn Write,
+        encoding: Encoding,
+        budget: &Budget,
+    ) -> Result<(), EncodeError> {
+        if matches!(encoding, Encoding::Png) {
+            return self.encode_png(out, budget);
+        }
+        self.encode_other(out, encoding).map_err(EncodeError::Other)
+    }
+
+    /// Writes the pixels in a format other than PNG.
+    fn encode_other(&self, out: &mut dyn Write, encoding: Encoding) -> Result<(), String> {
         match encoding {
-            Encoding::Png => {
-                let mut encoder = png::Encoder::new(out, self.width, self.height);
-                encoder.set_color(match (self.gray, self.alpha) {
-                    (true, false) => png::ColorType::Grayscale,
-                    (true, true) => png::ColorType::GrayscaleAlpha,
-                    (false, false) => png::ColorType::Rgb,
-                    (false, true) => png::ColorType::Rgba,
-                });
-                encoder.set_depth(png::BitDepth::Eight);
-                encoder.set_compression(png::Compression::Fast);
-                let per_metre = |dpi: u32| (f64::from(dpi) / METRES_PER_INCH).round() as u32;
-                encoder.set_pixel_dims(Some(png::PixelDimensions {
-                    xppu: per_metre(self.resolution.0),
-                    yppu: per_metre(self.resolution.1),
-                    unit: png::Unit::Meter,
-                }));
-                let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-                writer
-                    .write_image_data(&self.data)
-                    .and_then(|()| writer.finish())
-                    .map_err(|e| e.to_string())
-            }
+            Encoding::Png => unreachable!("PNG goes through encode_png"),
             Encoding::Jpeg(quality) => {
                 let side = |length: u32| {
                     u16::try_from(length).map_err(|_| "JPEG sides end at 65535 pixels".to_owned())
@@ -230,6 +283,62 @@ impl Pixmap {
             Encoding::Ps => codecs::write_ps(out, self.layout(), &self.data, self.resolution)
                 .map_err(|e| e.to_string()),
         }
+    }
+
+    /// Writes the pixels as an 8-bit PNG with its resolution in `pHYs`.
+    /// Each row is stored unfiltered and the image data is compressed with
+    /// `deflate`, so the buffers are charged to `budget` before they grow
+    /// and the work polls it.
+    fn encode_png(&self, out: &mut dyn Write, budget: &Budget) -> Result<(), EncodeError> {
+        let io = |e: io::Error| EncodeError::Other(e.to_string());
+        let limit = |e: LimitExceeded| EncodeError::Limit(e);
+        let row = self.width as usize * self.channels() as usize;
+        let mut filtered = BudgetVec::new(budget);
+        filtered
+            .try_reserve_exact((row + 1).saturating_mul(self.height as usize))
+            .map_err(limit)?;
+        for (index, line) in self.data.chunks_exact(row.max(1)).enumerate() {
+            if index % 256 == 0 {
+                budget.poll().map_err(limit)?;
+            }
+            filtered.try_push(0).map_err(limit)?;
+            filtered.try_extend_from_slice(line).map_err(limit)?;
+        }
+        if row == 0 {
+            filtered
+                .try_extend(std::iter::repeat_n(0, self.height as usize))
+                .map_err(limit)?;
+        }
+        let compressed = deflate(filtered.as_slice(), 1, usize::MAX, budget)
+            .map_err(|e| match e.limit() {
+                Some(refusal) => EncodeError::Limit(*refusal),
+                None => EncodeError::Other(e.to_string()),
+            })?
+            .ok_or_else(|| EncodeError::Other("the image data could not be compressed".into()))?;
+        drop(filtered);
+        let color = match (self.gray, self.alpha) {
+            (true, false) => 0,
+            (true, true) => 4,
+            (false, false) => 2,
+            (false, true) => 6,
+        };
+        let mut header = Vec::with_capacity(13);
+        header.extend_from_slice(&self.width.to_be_bytes());
+        header.extend_from_slice(&self.height.to_be_bytes());
+        header.extend_from_slice(&[8, color, 0, 0, 0]);
+        let per_metre = |dpi: u32| (f64::from(dpi) / METRES_PER_INCH).round() as u32;
+        let mut physical = Vec::with_capacity(9);
+        physical.extend_from_slice(&per_metre(self.resolution.0).to_be_bytes());
+        physical.extend_from_slice(&per_metre(self.resolution.1).to_be_bytes());
+        physical.push(1);
+        out.write_all(b"\x89PNG\r\n\x1a\n").map_err(io)?;
+        png_chunk(out, b"IHDR", &header).map_err(io)?;
+        png_chunk(out, b"pHYs", &physical).map_err(io)?;
+        for part in compressed.chunks(PNG_IDAT_SIZE) {
+            budget.poll().map_err(limit)?;
+            png_chunk(out, b"IDAT", part).map_err(io)?;
+        }
+        png_chunk(out, b"IEND", &[]).map_err(io)
     }
 }
 
@@ -869,7 +978,7 @@ impl Pixmap {
         let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
         let written = AtomicUsize::new(0);
         let mut out = Bounded::new(&written, max_size);
-        let result = py.detach(|| self.encode(&mut out, encoding));
+        let result = py.detach(|| self.encode(&mut out, encoding, &Budget::default()));
         if out.exceeded {
             let limit = max_size.unwrap_or_default();
             return Err(LimitError::new_err((
@@ -880,8 +989,7 @@ impl Pixmap {
                 ),
             )));
         }
-        result
-            .map_err(|e| PdfError::new_err(format!("failed to encode {}: {e}", encoding.name())))?;
+        result.map_err(|e| e.into_py(&format!("failed to encode {}", encoding.name())))?;
         Ok(PyBytes::new(py, &out.bytes))
     }
 
@@ -923,7 +1031,11 @@ impl Pixmap {
             let (temporary, file) = temporary_sibling(&target).map_err(|e| error(&e))?;
             let mut out = BufWriter::new(file);
             let result = self
-                .encode(&mut out, encoding)
+                .encode(&mut out, encoding, &Budget::default())
+                .map_err(|e| match e {
+                    EncodeError::Limit(refusal) => refusal.to_string(),
+                    EncodeError::Other(message) => message,
+                })
                 .and_then(|()| out.flush().map_err(|e| e.to_string()))
                 .and_then(|()| out.get_ref().sync_all().map_err(|e| e.to_string()))
                 .map_err(|e| error(&e));
@@ -1139,6 +1251,66 @@ fn temporary_sibling(target: &Path) -> io::Result<(PathBuf, File)> {
 /// Returns the colors of `pixmap` without its alpha, as the samples of an
 /// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
 /// or as a JPEG at `quality` when it is given, for gray or RGB.
+/// Encodes `pixmap` as PNG for `document`, under a budget from the
+/// document's limits: its memory limit, cancellation token, and deadline.
+#[pyfunction]
+pub fn pixmap_png<'py>(
+    py: Python<'py>,
+    document: &_Document,
+    pixmap: &Pixmap,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let budget = document.budget();
+    let mut out = BudgetedPngOutput {
+        bytes: BudgetVec::new(&budget),
+        refusal: None,
+    };
+    let result = py.detach(|| pixmap.encode_png(&mut out, &budget));
+    if let Some(refusal) = out.refusal {
+        return Err(limit_error(&refusal));
+    }
+    result.map_err(|e| e.into_py("failed to encode PNG"))?;
+    // Python copies the encoded bytes while the Rust output remains live.
+    // Charge both allocations and use the fallible Python allocation API.
+    let len = out.bytes.len();
+    budget
+        .charge(
+            LimitCode::MemorySize,
+            u64::try_from(len).unwrap_or(u64::MAX),
+        )
+        .map_err(|e| limit_error(&e))?;
+    let size =
+        isize::try_from(len).map_err(|_| PyValueError::new_err("the encoded PNG is too large"))?;
+    // SAFETY: a null source requests an uninitialized bytes object. It is
+    // owned locally and is never exposed to Python before it is filled.
+    let raw = unsafe { ffi::PyBytes_FromStringAndSize(ptr::null(), size) };
+    // SAFETY: PyBytes_FromStringAndSize returns a new reference or null with
+    // a Python exception set. The owned handle also frees it on refusal.
+    let bytes = unsafe { Bound::from_owned_ptr_or_err(py, raw)? };
+    // SAFETY: `bytes` is a new, unshared bytes object and the result points
+    // to its `len` bytes of writable storage until the object is published.
+    let target = unsafe { ffi::PyBytes_AsString(bytes.as_ptr()).cast::<u8>() } as usize;
+    // The object remains owned and inaccessible to Python while detached, so
+    // another thread can cancel the operation while the bytes are copied.
+    py.detach(|| -> Result<(), LimitExceeded> {
+        for (index, source) in out.bytes.chunks(16 * 1024).enumerate() {
+            budget.poll()?;
+            // SAFETY: every chunk fits in the allocated, unshared object, and
+            // the source is a distinct Rust buffer. No uninitialized bytes
+            // are read. The owning handle remains alive until this finishes.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    source.as_ptr(),
+                    (target as *mut u8).add(index * 16 * 1024),
+                    source.len(),
+                );
+            }
+        }
+        budget.poll()
+    })
+    .map_err(|e| limit_error(&e))?;
+    bytes.cast_into::<PyBytes>().map_err(Into::into)
+}
+
 #[pyfunction]
 #[pyo3(signature = (pixmap, components, quality=None))]
 pub fn recolor_samples<'py>(
@@ -1275,7 +1447,7 @@ pub fn render_pages(
             .map_err(|e| bridge_error(&e))?;
         render::batch(&bridged, &indexes, &options, workers, |raster| {
             let mut out = Bounded::new(&written, max_size);
-            let result = Pixmap::from(raster).encode(&mut out, encoding);
+            let result = Pixmap::from(raster).encode(&mut out, encoding, &budget);
             if out.exceeded {
                 let limit = max_size.unwrap_or_default();
                 return Err(Failed(LimitError::new_err((
@@ -1283,11 +1455,7 @@ pub fn render_pages(
                     format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
                 ))));
             }
-            result.map_err(|e| {
-                Failed(PdfError::new_err(format!(
-                    "failed to encode the rendered image: {e}"
-                )))
-            })?;
+            result.map_err(|e| Failed(e.into_py("failed to encode the rendered image")))?;
             Ok(out.bytes)
         })
         .map_err(|Failed(error)| error)

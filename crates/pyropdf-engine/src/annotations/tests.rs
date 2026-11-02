@@ -1,5 +1,77 @@
 use super::*;
 
+#[test]
+fn free_text_default_appearance_refuses_an_oversized_value() {
+    use pyropdf_store::value::PdfString;
+    use pyropdf_store::version::{Document, MemoryBase};
+    let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+    let version = document.current();
+    let budget = Budget::default();
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut dict = Dict::new();
+    dict.insert(
+        Name::from("DA"),
+        Value::String(PdfString::literal(vec![b' '; 4096])),
+    );
+    assert!(text::default_appearance(&reader, &dict).is_ok());
+    dict.insert(
+        Name::from("DA"),
+        Value::String(PdfString::literal(vec![b' '; 4097])),
+    );
+    let error = text::default_appearance(&reader, &dict).unwrap_err();
+    assert_eq!(
+        error.limit().unwrap().code(),
+        LimitCode::FormDefaultAppearanceSize
+    );
+}
+
+#[test]
+fn an_unknown_stamp_name_is_never_silently_truncated() {
+    use pyropdf_store::version::{Document, MemoryBase};
+    let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+    let version = document.current();
+    let budget = Budget::default();
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut dict = Dict::new();
+    dict.insert(Name::from("Subtype"), Value::Name(Name::from("Stamp")));
+    dict.insert(Name::from("Rect"), numbers_array(&[0.0, 0.0, 200.0, 100.0]));
+    dict.insert(Name::from("Name"), Value::Name(Name::new(vec![b'A'; 256])));
+    assert!(appearance(&reader, &dict).unwrap().is_some());
+    dict.insert(Name::from("Name"), Value::Name(Name::new(vec![b'A'; 257])));
+    let error = match appearance(&reader, &dict) {
+        Err(error) => error,
+        Ok(_) => panic!("a long stamp name must be refused"),
+    };
+    assert_eq!(error.limit().unwrap().code(), LimitCode::AnnotationTextSize);
+}
+
+#[test]
+fn callout_does_not_copy_an_unknown_line_ending_name() {
+    use pyropdf_store::version::{Document, MemoryBase};
+    let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
+    let version = document.current();
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(65_536));
+    let reader = Reader {
+        version: &version,
+        budget: &budget,
+    };
+    let mut dict = Dict::new();
+    dict.insert(Name::from("Subtype"), Value::Name(Name::from("FreeText")));
+    dict.insert(Name::from("Rect"), numbers_array(&[0.0, 0.0, 200.0, 100.0]));
+    dict.insert(Name::from("CL"), numbers_array(&[10.0, 10.0, 20.0, 20.0]));
+    dict.insert(
+        Name::from("LE"),
+        Value::Name(Name::new(vec![b'A'; 1_048_576])),
+    );
+    assert!(appearance(&reader, &dict).unwrap().is_some());
+}
+
 const QUAD: [(f64, f64); 4] = [(10.0, 30.0), (110.0, 30.0), (10.0, 10.0), (110.0, 10.0)];
 
 #[test]

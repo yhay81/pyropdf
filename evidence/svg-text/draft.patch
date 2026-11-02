@@ -1,0 +1,248 @@
+diff --git c/src/lib.rs i/src/lib.rs
+index 133e240..3044f45 100644
+--- c/src/lib.rs
++++ i/src/lib.rs
+@@ -22,6 +22,7 @@ use crate::mask::MaskKind;
+ use crate::paint::{
+     CachedNativeGradient, CachedShading, CachedShadingPattern, CachedTilingPattern,
+ };
++use crate::text::TextChunk;
+ use hayro_interpret::font::GlyphRun;
+ use hayro_interpret::hayro_syntax::page::Page;
+ use hayro_interpret::util::{Float32Ext, TransformExt};
+@@ -46,6 +47,7 @@ pub(crate) mod image;
+ mod mask;
+ pub(crate) mod paint;
+ mod path;
++mod text;
+ 
+ /// A cache used by the SVG converter.
+ ///
+@@ -87,7 +89,9 @@ pub fn convert<'a>(
+     let mut device = SvgRenderer::new(page, render_settings.clone());
+     device.write_header(page.render_dimensions());
+ 
++    device.recording_text = render_settings.text_layer;
+     interpret_page(page, &mut state, &mut device);
++    device.recording_text = false;
+ 
+     device.finish()
+ }
+@@ -98,6 +102,12 @@ pub struct SvgRenderSettings {
+     /// The background color in format [red, green, blue, alpha].
+     /// Determines the background color of the generated SVG root element.
+     pub bg_color: [u8; 4],
++    /// Whether to add an invisible text layer above the page, so that its
++    /// text can be selected, searched and copied. Glyphs are still drawn as
++    /// paths; the layer holds the Unicode text of every glyph that has a
++    /// mapping, including text drawn invisibly (text rendering mode 3), at
++    /// the position of each glyph.
++    pub text_layer: bool,
+ }
+ 
+ #[allow(clippy::derivable_impls)]
+@@ -105,6 +115,7 @@ impl Default for SvgRenderSettings {
+     fn default() -> Self {
+         Self {
+             bg_color: [0, 0, 0, 0],
++            text_layer: false,
+         }
+     }
+ }
+@@ -122,6 +133,10 @@ pub(crate) struct SvgRenderer<'a> {
+     pub(crate) tiling_patterns: Deduplicator<CachedTilingPattern<'a>>,
+     active_clips: Vec<Id>,
+     pub(crate) dimensions: (f32, f32),
++    /// Whether glyph runs are recorded for the text layer: only while the
++    /// page itself is interpreted, never for masks, patterns or Type 3 glyphs.
++    pub(crate) recording_text: bool,
++    pub(crate) text_layer: Vec<TextChunk>,
+ }
+ 
+ impl<'a> SvgRenderer<'a> {
+@@ -318,6 +333,9 @@ impl<'a> Device<'a> for SvgRenderer<'a> {
+         props: DrawProps<'a>,
+         draw_mode: &DrawMode,
+     ) {
++        if self.recording_text {
++            self.record_text(glyph_run, props.transform);
++        }
+         self.with_group(props.soft_mask.clone(), props.blend_mode, |r| {
+             Self::draw_glyph_run(r, glyph_run, props, draw_mode);
+         });
+@@ -377,6 +395,8 @@ impl<'a> SvgRenderer<'a> {
+             tiling_patterns: Deduplicator::new('t'),
+             active_clips: Vec::new(),
+             dimensions: page.render_dimensions(),
++            recording_text: false,
++            text_layer: Vec::new(),
+         }
+     }
+ 
+@@ -412,11 +432,14 @@ impl<'a> SvgRenderer<'a> {
+     // the case if masks or patterns use new resources that haven't been registered before. As a result,
+     pub(crate) fn with_dummy(&mut self, f: impl FnOnce(&mut Self)) {
+         let mut old_xml = std::mem::replace(&mut self.xml, XmlWriter::new(Options::default()));
++        let recording_text = std::mem::replace(&mut self.recording_text, false);
+         f(self);
++        self.recording_text = recording_text;
+         std::mem::swap(&mut self.xml, &mut old_xml);
+     }
+ 
+     pub(crate) fn finish(mut self) -> String {
++        self.write_text_layer();
+         self.write_glyph_defs();
+         self.write_mask_defs();
+         self.write_clip_path_defs();
+diff --git c/src/text.rs i/src/text.rs
+new file mode 100644
+index 0000000..c7a2af4
+--- /dev/null
++++ i/src/text.rs
+@@ -0,0 +1,146 @@
++//! An invisible text layer, so that the text of a converted page can be
++//! selected, searched and copied while the glyphs stay paths.
++
++use crate::SvgRenderer;
++use crate::convert_transform;
++use hayro_interpret::font::GlyphRun;
++use hayro_interpret::hayro_cmap::BfString;
++use kurbo::{Affine, Point};
++
++/// The tolerance, in glyph units, below which a glyph is taken to sit on
++/// the baseline of the previous one.
++const BASELINE_TOLERANCE: f64 = 0.5;
++
++/// The advance assumed for the last glyph of a run, in glyph units, when
++/// it is needed to place the characters of a multi-character glyph.
++const DEFAULT_ADVANCE: f64 = 500.0;
++
++/// One `text` element of the layer: characters that share a transform.
++pub(crate) struct TextChunk {
++    transform: Affine,
++    text: String,
++    x: Vec<f32>,
++    y: Vec<f32>,
++}
++
++impl SvgRenderer<'_> {
++    /// Records the Unicode text of a glyph run, whatever its draw mode, for
++    /// the text layer. Glyphs without a Unicode mapping are left out.
++    pub(crate) fn record_text(&mut self, glyph_run: &GlyphRun<'_, '_>, transform: Affine) {
++        let glyphs = glyph_run.glyphs();
++        let mut chunk: Option<TextChunk> = None;
++
++        for (index, glyph) in glyphs.iter().enumerate() {
++            let Some(unicode) = glyph.as_unicode() else {
++                continue;
++            };
++            let text = match unicode {
++                BfString::Char(c) => c.to_string(),
++                BfString::String(s) => s,
++            };
++            // SVG text is drawn y-down, glyph space is y-up.
++            let base = transform * glyph.transform() * Affine::scale_non_uniform(1.0, -1.0);
++
++            let same_basis = chunk.as_ref().is_some_and(|c| {
++                let relative = (c.transform.inverse() * base).as_coeffs();
++                (relative[0] - 1.0).abs() < 1e-3
++                    && relative[1].abs() < 1e-3
++                    && relative[2].abs() < 1e-3
++                    && (relative[3] - 1.0).abs() < 1e-3
++            });
++            if !same_basis {
++                self.text_layer.extend(chunk.take());
++                chunk = Some(TextChunk {
++                    transform: base,
++                    text: String::new(),
++                    x: Vec::new(),
++                    y: Vec::new(),
++                });
++            }
++            let chunk = chunk.as_mut().unwrap();
++            let origin = chunk.transform.inverse() * base * Point::ORIGIN;
++            // Characters after the first of a multi-character glyph (a
++            // ligature, say) are spread up to the next glyph's origin.
++            let next = glyphs
++                .get(index + 1)
++                .map(|n| {
++                    chunk.transform.inverse()
++                        * transform
++                        * n.transform()
++                        * Affine::scale_non_uniform(1.0, -1.0)
++                        * Point::ORIGIN
++                })
++                .unwrap_or(origin + (DEFAULT_ADVANCE, 0.0));
++
++            let chars: Vec<char> = text.chars().filter(|c| is_xml_char(*c)).collect();
++            let count = chars.len();
++            for (at, c) in chars.into_iter().enumerate() {
++                let t = at as f64 / count as f64;
++                let p = origin.lerp(next, t);
++                chunk.text.push(if c.is_whitespace() { ' ' } else { c });
++                chunk.x.push(round(p.x));
++                chunk.y.push(round(p.y));
++            }
++        }
++
++        self.text_layer.extend(chunk.take());
++    }
++
++    /// Writes the text layer above everything that the page painted.
++    pub(crate) fn write_text_layer(&mut self) {
++        if self.text_layer.is_empty() {
++            return;
++        }
++
++        self.xml.start_element("g");
++        self.xml.write_attribute("id", "text-layer");
++        self.xml.write_attribute("fill-opacity", "0");
++        self.xml.write_attribute("xml:space", "preserve");
++
++        for chunk in std::mem::take(&mut self.text_layer) {
++            if chunk.text.is_empty() {
++                continue;
++            }
++            self.xml.start_element("text");
++            self.xml.write_attribute_fmt(
++                "transform",
++                format_args!("matrix({})", convert_transform(&chunk.transform)),
++            );
++            self.xml.write_attribute("font-size", "1000");
++            self.xml.write_attribute("x", &join(&chunk.x));
++            if chunk.y.iter().any(|y| y.abs() > BASELINE_TOLERANCE as f32) {
++                self.xml.write_attribute("y", &join(&chunk.y));
++            }
++            // Indentation would add whitespace to the text.
++            self.xml.set_preserve_whitespaces(true);
++            // `write_text` escapes `<` only.
++            let text = chunk.text.replace('&', "&amp;").replace('>', "&gt;");
++            self.xml.write_text(&text);
++            self.xml.end_element();
++            self.xml.set_preserve_whitespaces(false);
++        }
++
++        self.xml.end_element();
++    }
++}
++
++fn round(value: f64) -> f32 {
++    ((value * 10.0).round() / 10.0) as f32
++}
++
++fn join(values: &[f32]) -> String {
++    let mut out = String::with_capacity(values.len() * 6);
++    for (at, value) in values.iter().enumerate() {
++        if at > 0 {
++            out.push(' ');
++        }
++        out.push_str(&value.to_string());
++    }
++    out
++}
++
++/// Whether XML 1.0 allows the character in text.
++fn is_xml_char(c: char) -> bool {
++    matches!(c, '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}')
++        || c >= '\u{10000}'
++}

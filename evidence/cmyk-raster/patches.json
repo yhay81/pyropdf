@@ -1,0 +1,130 @@
+[
+ {
+  "name": "cmyk-c",
+  "paints": "1 0 0 0 k",
+  "content": "1 0 0 0 k 0 0 1 1 re f",
+  "x": 20,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "cmyk-m",
+  "paints": "0 1 0 0 k",
+  "content": "0 1 0 0 k 0 0 1 1 re f",
+  "x": 100,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "cmyk-y",
+  "paints": "0 0 1 0 k",
+  "content": "0 0 1 0 k 0 0 1 1 re f",
+  "x": 180,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "cmyk-k",
+  "paints": "0 0 0 1 k",
+  "content": "0 0 0 1 k 0 0 1 1 re f",
+  "x": 260,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "cmyk-k50",
+  "paints": "0 0 0 0.5 k",
+  "content": "0 0 0 0.5 k 0 0 1 1 re f",
+  "x": 340,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "rich-black",
+  "paints": "0.6 0.4 0.4 1 k",
+  "content": "0.6 0.4 0.4 1 k 0 0 1 1 re f",
+  "x": 420,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "cmyk-tint",
+  "paints": "0.2 0.4 0.6 0.1 k",
+  "content": "0.2 0.4 0.6 0.1 k 0 0 1 1 re f",
+  "x": 500,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "image-k",
+  "paints": "DeviceCMYK image 0 0 0 255",
+  "content": "/Im0 Do",
+  "x": 580,
+  "y": 100,
+  "size": 60
+ },
+ {
+  "name": "image-tint",
+  "paints": "DeviceCMYK image 51 102 153 26",
+  "content": "/Im1 Do",
+  "x": 20,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "rgb-red",
+  "paints": "1 0 0 rg",
+  "content": "1 0 0 rg 0 0 1 1 re f",
+  "x": 100,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "rgb-blue",
+  "paints": "0 0 1 rg",
+  "content": "0 0 1 rg 0 0 1 1 re f",
+  "x": 180,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "rgb-orange",
+  "paints": "1 0.5 0 rg",
+  "content": "1 0.5 0 rg 0 0 1 1 re f",
+  "x": 260,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "gray-50",
+  "paints": "0.5 g",
+  "content": "0.5 g 0 0 1 1 re f",
+  "x": 340,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "k50-over-y",
+  "paints": "0 0 0 1 k at ca 0.5 over 0 0 1 0 k",
+  "content": "0 0 1 0 k 0 0 1 1 re f /Half gs 0 0 0 1 k 0 0 1 1 re f",
+  "x": 420,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "c50-over-m",
+  "paints": "1 0 0 0 k at ca 0.5 over 0 1 0 0 k",
+  "content": "0 1 0 0 k 0 0 1 1 re f /Half gs 1 0 0 0 k 0 0 1 1 re f",
+  "x": 500,
+  "y": 20,
+  "size": 60
+ },
+ {
+  "name": "k-multiply-y",
+  "paints": "0 0 0 1 k /Multiply over 0 0 1 0 k",
+  "content": "0 0 1 0 k 0 0 1 1 re f /Mul gs 0 0 0 1 k 0 0 1 1 re f",
+  "x": 580,
+  "y": 20,
+  "size": 60
+ }
+]

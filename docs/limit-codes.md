@@ -7,6 +7,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `page_count` | No limit | The document has more pages than `DocumentLimits.max_pages`. |
 | `object_count` | No limit | The document has more objects than `DocumentLimits.max_objects`. |
 | `object_depth` | No limit | An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`. |
+| `object_parse_size` | 256 MiB | The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, which hayro-syntax would parse in one call that cannot be cancelled. |
 | `decompressed_size` | No limit | A stream decodes to more than `DocumentLimits.max_decompressed_size`. |
 | `page_content_size` | No limit | A content stream of a page decodes to more than `DocumentLimits.max_page_content_size`. |
 | `total_decompressed_size` | No limit | The streams that one operation decodes are larger together than `DocumentLimits.max_total_decompressed_size`. |
@@ -57,6 +58,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `image_input_size` | 256 MiB | The encoded image that `Pages.new_from_image` reads is larger than 256 MiB. |
 | `text_line_count` | 4,096 lines | The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines. |
 | `text_input_size` | 1 MiB | The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8. |
+| `shaped_glyph_count` | 1,048,576 glyphs | Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit. |
+| `font_input_size` | 64 MiB | The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB. |
 | `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes. |
 | `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |
 | `named_destination_depth` | 32 levels | The named-destination tree has more than 32 levels. |
@@ -66,7 +69,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `toc_input_size` | 16 MiB | The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB together in UTF-8 or as PDF text strings, or leave the outline's text above that. |
 | `structure_tree_count` | 256 levels | A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
-| `memory_size` | No limit | The collections of one operation would hold more memory than it allows, or the allocator refuses it. |
+| `memory_size` | No limit | The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
 | `cancelled` | — | A cancellation token of the operation is cancelled. |
 | `annotation_quad_count` | 4,096 quadrilaterals | A text-markup annotation has more than 4,096 quadrilaterals. |

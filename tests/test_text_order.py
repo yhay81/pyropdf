@@ -243,6 +243,25 @@ def test_an_rtl_edge_token_and_an_ltr_base_line_stay_in_drawing_order() -> None:
     assert page.text().splitlines() == ["PDF םולש", "םלוע PDF"]
 
 
+def test_widely_separated_texts_on_one_baseline_each_read_in_their_own_order() -> None:
+    """A gap of two em separates texts that share no paragraph, as form fields do (#488).
+
+    Each segment is restored on its own, so an RTL phrase beside a distant
+    Latin word reads in logical order, while a line with ordinary word gaps
+    keeps the rule of the cases above.
+    """
+    rtl_phrase = "0001000200030004000500010003000200060007"
+    stream = (
+        f"BT /F1 20 Tf 40 200 Td <{rtl_phrase}> Tj ET\n"
+        "BT /F2 20 Tf 300 200 Td (basic) Tj ET\n"
+        "BT /F2 20 Tf 40 140 Td (basic) Tj ET\n"
+        f"BT /F1 20 Tf 200 140 Td <{rtl_phrase}> Tj ET"
+    )
+    page = pyropdf.open(build_visual_rtl_pdf(stream, width=420)).pages[0]
+
+    assert page.text().splitlines() == ["שְלום עולם basic", "basic שְלום עולם"]
+
+
 def test_vertical_cjk_inference_stops_at_its_candidate_bound() -> None:
     text = "日" * 4097
     page = pyropdf.open(build_nonembedded_cjk_pdf(text)).pages[0]

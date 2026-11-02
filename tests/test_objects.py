@@ -21,6 +21,7 @@ import pickle
 import zlib
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -550,3 +551,25 @@ def test_real_construction() -> None:
         Real(float("inf"))
     with pytest.raises(TypeError):
         Real(True)  # noqa: FBT003
+
+
+@pytest.mark.parametrize("filter_", ["FlateDecode", None])
+def test_add_stream_past_the_memory_budget_is_refused_without_changes(filter_: Literal["FlateDecode"] | None) -> None:
+    source = pyropdf.Document()
+    source.pages.new((200, 200))
+    doc = pyropdf.open(source.to_bytes(), limits=pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    before = doc.to_bytes(), doc.history.steps
+    with pytest.raises(pyropdf.LimitError) as raised:
+        doc.objects.add_stream(bytes(range(256)) * 4096, filter=filter_)
+    assert raised.value.code == "memory_size"
+    assert (doc.to_bytes(), doc.history.steps) == before
+
+
+def test_large_compressed_streams_round_trip() -> None:
+    doc = pyropdf.Document()
+    data = bytes(range(256)) * 16384
+    stream = doc.objects[doc.objects.add_stream(data)]
+    assert isinstance(stream, Stream)
+    assert stream["Filter"] == Name("FlateDecode")
+    assert zlib.decompress(stream.read(decode=False)) == data
+    assert stream.read() == data

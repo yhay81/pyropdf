@@ -47,7 +47,13 @@ def _validate_text_size(texts: list[str], label: str) -> None:
     """Refuse texts that are longer together in UTF-8 than 1 MiB."""
     size = 0
     for text in texts:
-        size += len(text.encode("utf-8", "surrogatepass"))
+        # Every character needs at least one UTF-8 byte. Reject an oversized
+        # input before allocating its encoded copy.
+        if str.__len__(text) > _MAX_INPUT_TEXT_SIZE - size:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
+        size += len(str.encode(text, "utf-8", "surrogatepass"))
         if size > _MAX_INPUT_TEXT_SIZE:
             code = "embedded_file_input_size"
             msg = f"the {label} is longer than the {_MAX_INPUT_TEXT_SIZE}-byte limit in UTF-8"
@@ -60,17 +66,98 @@ def _validate_name(name: object) -> str:
         msg = f"name must be a string: {type(name).__name__}"
         raise TypeError(msg)
     _validate_text_size([name], "attachment lookup name")
-    return name
+    return str.__str__(name)
 
 
-def _validate_data(data: bytes, max_size: int | None) -> bytes:
-    """Check attachment data against ``max_size`` before copying it."""
+def _validate_data(data: object, max_size: int | None) -> bytes:
+    """Check attachment data against ``max_size`` before copying it.
+
+    The data is read through the buffer protocol, which a ``bytes`` subclass
+    cannot override: its ``__len__`` and ``__bytes__`` decide neither the
+    size checked nor the bytes written.
+    """
     _validate_optional_positive_int("max_size", max_size)
-    if max_size is not None and len(data) > max_size:
-        code = "embedded_file_size"
-        msg = f"attachment input is {len(data)} bytes, exceeding the {max_size}-byte limit"
-        raise LimitError(code, msg)
-    return bytes(data)
+    try:
+        view = memoryview(data)  # ty: ignore[invalid-argument-type]
+    except TypeError:
+        msg = f"data must be a bytes-like object: {type(data).__name__}"
+        raise TypeError(msg) from None
+    with view:
+        if max_size is not None and view.nbytes > max_size:
+            code = "embedded_file_size"
+            msg = f"attachment input is {view.nbytes} bytes, exceeding the {max_size}-byte limit"
+            raise LimitError(code, msg)
+        return view.tobytes()
+
+
+#: The file fields that :meth:`Attachment._edit_file` takes.
+_FILE_FIELDS = ("filename", "description", "created", "modified")
+
+
+def _is_date(value: str) -> bool:
+    """Return whether ``value`` is a PDF date string within its bound: ``D:``, then printable ASCII."""
+    if not len("D:") < str.__len__(value) <= _MAX_DATE_SIZE:
+        return False
+    return str.startswith(value, "D:") and str.isascii(value) and str.isprintable(value)
+
+
+def _validate_date(value: object, field: str) -> str:
+    """Check a date that a file field takes, raising :class:`TypeError` or :class:`ValueError`."""
+    if not isinstance(value, str):
+        msg = f"{field} must be a PDF date string such as 'D:20260101120000Z': {type(value).__name__}"
+        raise TypeError(msg)
+    if not _is_date(value):
+        msg = f"{field} must be a PDF date string of up to {_MAX_DATE_SIZE} printable ASCII characters"
+        raise ValueError(msg)
+    return value
+
+
+def _validate_text(value: object, field: str) -> str:
+    """Check a file name or description: a string within the 1 MiB bound."""
+    if not isinstance(value, str):
+        msg = f"{field} must be a str: {type(value).__name__}"
+        raise TypeError(msg)
+    _validate_text_size([value], f"attachment {field}")
+    return str.__str__(value)
+
+
+def _check_edit(edit: object) -> dict[str, str | None]:
+    """Check an edit of file fields as a whole, raising :class:`PdfError`, before anything is written.
+
+    The setters check each value first; this repeats the checks for any
+    caller, as pylopdf's core ``embfile_edit`` does. ``None`` removes a
+    field, except the file name, which a file specification keeps.
+    """
+    if not isinstance(edit, dict):
+        msg = f"a file edit is a dict: {type(edit).__name__}"
+        raise PdfError(msg)
+    checked: dict[str, str | None] = {}
+    texts: list[str] = []
+    for key, value in edit.items():
+        if key not in _FILE_FIELDS:
+            msg = f"unknown file field: {key!r}"
+            raise PdfError(msg)
+        if value is None:
+            if key == "filename":
+                msg = "an embedded file keeps a file name"
+                raise PdfError(msg)
+        elif not isinstance(value, str):
+            msg = f"the file field {key!r} must be a str or None: {type(value).__name__}"
+            raise PdfError(msg)
+        elif key in ("created", "modified"):
+            if not _is_date(value):
+                msg = f"{key} must be a PDF date string of up to {_MAX_DATE_SIZE} printable ASCII characters"
+                raise PdfError(msg)
+        elif key == "filename" and str.__len__(value) == 0:
+            msg = "a file name cannot be empty"
+            raise PdfError(msg)
+        else:
+            texts.append(value)
+        checked[key] = value
+    _validate_text_size(texts, "file name and description")
+    # The object writer calls string methods while encoding.  Use exactly
+    # the contents just checked, without invoking subclass overrides.
+    return {key: str.__str__(value) if value is not None else None for key, value in checked.items()}
 
 
 def _now() -> str:
@@ -193,10 +280,29 @@ def _objects(filespec: object) -> list[int]:
     return numbers
 
 
+def _edit_dates(stream: Stream, edit: dict[str, str | None]) -> None:
+    """Write or remove the dates of a checked edit in the embedded file stream's ``/Params``."""
+    for field, key in (("created", "CreationDate"), ("modified", "ModDate")):
+        if field not in edit:
+            continue
+        if not isinstance(stream.get("Params"), Dictionary):
+            if edit[field] is None:
+                continue
+            stream["Params"] = {}
+        params = stream["Params"]
+        if (date := edit[field]) is not None:
+            params[key] = date
+        elif key in params:
+            del params[key]
+
+
 class Attachment:
     """A handle on one embedded file of a document, as ``doc.attachments[name]`` returns it.
 
-    Properties read the document on every access. A handle raises
+    Properties read the document on every access, and assigning
+    ``filename``, ``description``, ``created``, or ``modified`` edits the
+    file specification at once; ``del`` removes all but the file name. A
+    handle raises
     :class:`StaleObjectError` once its attachment has been deleted.
     """
 
@@ -226,19 +332,66 @@ class Attachment:
         """Return the key under which the document lists the attachment."""
         return self._name
 
+    def _edit_file(self, edit: dict[str, str | None]) -> None:
+        """Apply an edit of file fields in one transaction, after checking all of it.
+
+        A date needs the embedded file stream, whose ``/Params`` hold it; the
+        file name is written as ``/F``, and as ``/UF`` from PDF 1.7 or when
+        the file specification has one; a description raises the document to
+        PDF 1.6, as :meth:`Attachments.add` does.
+        """
+        checked = _check_edit(edit)
+        with self._document.transaction("attachment edit"):
+            filespec = self._filespec()
+            if not isinstance(filespec, Dictionary):
+                msg = f"the attachment {self._name!r} has a file specification that is not a dictionary"
+                raise PdfError(msg)
+            stream = _file(filespec)
+            if stream is None and ("created" in checked or "modified" in checked):
+                msg = f"the attachment {self._name!r} has no embedded file stream to hold its dates"
+                raise PdfError(msg)
+            if (filename := checked.get("filename")) is not None:
+                filespec["F"] = filename
+                if "UF" in filespec or _version(self._document) >= _UF_VERSION:
+                    filespec["UF"] = filename
+            if "description" in checked:
+                if (description := checked["description"]) is not None:
+                    _require(self._document, _DESCRIPTION_VERSION)
+                    filespec["Desc"] = description
+                elif "Desc" in filespec:
+                    del filespec["Desc"]
+            if stream is not None:
+                _edit_dates(stream, checked)
+
     @property
     def filename(self) -> str:
-        """Return the viewer-facing file name (``/UF``, else ``/F``), or ``""``."""
+        """Return the viewer-facing file name (``/UF``, else ``/F``), or ``""``; assignable, never empty."""
         filespec = self._filespec()
         if not isinstance(filespec, Dictionary):
             return _text(filespec) or ""
         return _text(filespec.get("UF")) or _text(filespec.get("F")) or ""
 
+    @filename.setter
+    def filename(self, filename: str) -> None:
+        filename = _validate_text(filename, "filename")
+        if str.__len__(filename) == 0:
+            msg = "a file name cannot be empty"
+            raise ValueError(msg)
+        self._edit_file({"filename": filename})
+
     @property
     def description(self) -> str | None:
-        """Return the description (``/Desc``), or ``None``."""
+        """Return the description (``/Desc``), or ``None``; assignable, and ``del`` removes it."""
         filespec = self._filespec()
         return (_text(filespec.get("Desc")) or None) if isinstance(filespec, Dictionary) else None
+
+    @description.setter
+    def description(self, description: str) -> None:
+        self._edit_file({"description": _validate_text(description, "description")})
+
+    @description.deleter
+    def description(self) -> None:
+        self._edit_file({"description": None})
 
     @property
     def size(self) -> int:
@@ -249,15 +402,38 @@ class Attachment:
 
     @property
     def created(self) -> str | None:
-        """Return the creation date (``/Params /CreationDate``) as stored, or ``None``."""
+        """Return the creation date (``/Params /CreationDate``) as stored, or ``None``; assignable and deletable.
+
+        Dates are PDF date strings such as ``D:20260101120000Z``, of up to 64
+        printable ASCII characters, and need an embedded file stream.
+        """
         params = self._params()
         return (_text(params.get("CreationDate")) or None) if params is not None else None
 
+    @created.setter
+    def created(self, date: str) -> None:
+        self._edit_file({"created": _validate_date(date, "created")})
+
+    @created.deleter
+    def created(self) -> None:
+        self._edit_file({"created": None})
+
     @property
     def modified(self) -> str | None:
-        """Return the modification date (``/Params /ModDate``) as stored, or ``None``; :meth:`write` sets it."""
+        """Return the modification date (``/Params /ModDate``) as stored, or ``None``; assignable and deletable.
+
+        :meth:`write` sets it to the current time.
+        """
         params = self._params()
         return (_text(params.get("ModDate")) or None) if params is not None else None
+
+    @modified.setter
+    def modified(self, date: str) -> None:
+        self._edit_file({"modified": _validate_date(date, "modified")})
+
+    @modified.deleter
+    def modified(self) -> None:
+        self._edit_file({"modified": None})
 
     def read(self, *, max_size: int | None = _DEFAULT_MAX_EMBEDDED_FILE_SIZE) -> bytes:
         """Return the attachment's contents, as pymupdf's ``embfile_get`` does.
@@ -299,12 +475,16 @@ class Attachment:
         ``/CheckSum`` is dropped. ``max_size`` bounds ``data`` and defaults to
         64 MiB, checked before the data is copied.
         """
-        stream = _file(self._filespec())
+        self._document._ensure_open()  # noqa: SLF001
         payload = _validate_data(data, max_size)
-        if stream is None:
-            msg = f"the attachment {self._name!r} has no embedded file stream"
-            raise PdfError(msg)
         with self._document.transaction("attachment write"):
+            # Resolve the stream under the transaction's lock, so that a
+            # concurrent delete cannot leave this write on a stream that
+            # another attachment shares.
+            stream = _file(self._filespec())
+            if stream is None:
+                msg = f"the attachment {self._name!r} has no embedded file stream"
+                raise PdfError(msg)
             stream.write(payload)
             if not isinstance(stream.get("Params"), Dictionary):
                 stream["Params"] = {}
@@ -471,12 +651,18 @@ class Attachments(Mapping[str, Attachment]):
 
     def __delitem__(self, name: str) -> None:
         """Delete the attachment called ``name``; raise :class:`KeyError` when absent."""
-        if name not in self:
+        if not isinstance(name, str):
             raise KeyError(name)
-        entries = _writable(self._document)
-        removed = [entry.filespec for entry in entries if entry.name == name]
-        candidates = sorted({number for filespec in removed for number in _objects(filespec)})
+        name = _validate_name(name)
+        self._document._ensure_open()  # noqa: SLF001
         with self._document.transaction("attachment delete"):
+            # Read the tree under the transaction's lock, so that a
+            # concurrent edit is not overwritten by a stale snapshot.
+            entries = _writable(self._document)
+            removed = [entry.filespec for entry in entries if entry.name == name]
+            if not removed:
+                raise KeyError(name)
+            candidates = sorted({number for filespec in removed for number in _objects(filespec)})
             _rewrite(self._document, [entry for entry in entries if entry.name != name])
             for filespec in removed:
                 _dissociate(self._document, filespec)
@@ -520,7 +706,7 @@ class Attachments(Mapping[str, Attachment]):
         if not isinstance(name, str):
             msg = f"name must be a string: {type(name).__name__}"
             raise TypeError(msg)
-        if not name:
+        if not str.__len__(name):
             msg = "name must be at least 1 character"
             raise ValueError(msg)
         for field, value in (("filename", filename), ("description", description)):
@@ -530,17 +716,25 @@ class Attachments(Mapping[str, Attachment]):
         filename = name if filename is None else filename
         texts = [name, filename] if description is None else [name, filename, description]
         _validate_text_size(texts, "attachment name, filename, and description")
+        # Write exactly the text just checked, without the overrides of a
+        # str subclass, which the object writer would otherwise call.
+        name = str.__str__(name)
+        filename = str.__str__(filename)
+        description = None if description is None else str.__str__(description)
         payload = _validate_data(data, max_size)
-        entries = _writable(self._document)
-        if any(entry.name == name for entry in entries):
-            msg = f"an attachment named {name!r} already exists"
-            raise PdfError(msg)
-        if len(entries) >= _MAX_TREE_ENTRIES:
-            msg = f"the EmbeddedFiles name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
-            raise PdfError(msg)
-        objects = self._document.objects
-        associated = _associated(self._document)
         with self._document.transaction("attachment add"):
+            # Read the tree under the transaction's lock, so that a
+            # concurrent addition or deletion is not overwritten by a stale
+            # snapshot.
+            entries = _writable(self._document)
+            if any(entry.name == name for entry in entries):
+                msg = f"an attachment named {name!r} already exists"
+                raise PdfError(msg)
+            if len(entries) >= _MAX_TREE_ENTRIES:
+                msg = f"the EmbeddedFiles name tree's {_MAX_TREE_ENTRIES}-entry safety limit is reached"
+                raise PdfError(msg)
+            objects = self._document.objects
+            associated = _associated(self._document)
             dictionary = {"Type": Name("EmbeddedFile"), "Params": {"Size": len(payload)}}
             stream = objects[objects.add_stream(payload, dictionary)]
             # /Desc needs 1.6, /UF needs 1.7, and the tree needs 1.4.

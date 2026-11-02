@@ -11,13 +11,15 @@ from __future__ import annotations
 import enum
 import math
 import time
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core
+from pyropdf._canvas import _cache
 from pyropdf._content import BlendMode, Color
-from pyropdf._errors import LimitError, MalformedPdfError, StaleObjectError, StalePageError
+from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
+from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
@@ -327,6 +329,281 @@ def _sound_number(value: object, name: str, *, integer: bool) -> float:
     return value
 
 
+#: Attached files stop at 64 MiB unless the caller passes another bound.
+_DEFAULT_MAX_FILE_SIZE = 64 * 1024 * 1024
+#: The longest date string that a file's ``created`` and ``modified`` take.
+_MAX_DATE_SIZE = 64
+
+
+def _attached_data(data: object, max_size: int | None) -> bytes:
+    """Check attached data against ``max_size`` before copying it (``embedded_file_size``)."""
+    _validate_optional_positive_int("max_size", max_size)
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        msg = f"data must be bytes: {type(data).__name__}"
+        raise TypeError(msg)
+    size = data.nbytes if isinstance(data, memoryview) else len(data)
+    if max_size is not None and size > max_size:
+        code = "embedded_file_size"
+        msg = f"attachment input is {size} bytes, exceeding the {max_size}-byte limit"
+        raise LimitError(code, msg)
+    return bytes(data)
+
+
+def _file_texts(texts: Iterable[str], label: str) -> None:
+    """Refuse texts that are longer together in UTF-8 than 1 MiB (``embedded_file_input_size``)."""
+    size = 0
+    for text in texts:
+        # Each character needs at least one UTF-8 byte. Reject oversized
+        # inputs before allocating an encoded copy of them.
+        # The built-in methods, so that a str subclass cannot report less.
+        if str.__len__(text) > _MAX_ANNOTATION_INPUT_TEXT_SIZE - size:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
+        size += len(str.encode(text, "utf-8", "surrogatepass"))
+        if size > _MAX_ANNOTATION_INPUT_TEXT_SIZE:
+            code = "embedded_file_input_size"
+            msg = f"the {label} is longer than the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte limit in UTF-8"
+            raise LimitError(code, msg)
+
+
+def _file_text(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        msg = f"{name} must be a str: {type(value).__name__}"
+        raise TypeError(msg)
+    # A built-in copy, so that writing does not call a subclass's methods
+    # again after validation.
+    value = str.__str__(value)
+    _file_texts([value], name)
+    return value
+
+
+def _file_date(value: object, name: str) -> str:
+    if not isinstance(value, str):
+        msg = f"{name} must be a str: {type(value).__name__}"
+        raise TypeError(msg)
+    value = str.__str__(value)
+    if not value.startswith("D:") or not value.isascii() or len(value) > _MAX_DATE_SIZE:
+        msg = f"{name} must be a PDF date string such as 'D:20260101120000Z': {value!r}"
+        raise ValueError(msg)
+    return value
+
+
+def _string_text(value: object) -> str | None:
+    return value.text if isinstance(value, String) else None
+
+
+def _embedded_stream(filespec: Dictionary) -> Stream | None:
+    """Return the embedded file stream that a file specification's ``/EF`` names, if any."""
+    files = filespec.get("EF")
+    if not isinstance(files, Dictionary):
+        return None
+    for key in ("F", "UF"):
+        stream = files.get(key)
+        if isinstance(stream, Stream):
+            return stream
+    return None
+
+
+class AnnotationFile:
+    """The file that a file attachment annotation embeds, as :attr:`Annotation.file` returns it.
+
+    It reads the document on every access and has the members of
+    :class:`Attachment`, which describes the document's own attachments:
+    assigning ``filename``, ``description``, ``created``, or ``modified``
+    edits the file specification at once. A handle raises
+    :class:`StaleObjectError` once its annotation no longer embeds a file.
+    """
+
+    __slots__ = ("_annotation",)
+
+    def __init__(self, annotation: Annotation) -> None:
+        """Wrap an annotation; :attr:`Annotation.file` does this."""
+        self._annotation = annotation
+
+    def _filespec(self) -> Dictionary:
+        filespec = self._annotation._filespec()  # noqa: SLF001
+        if filespec is None:
+            msg = "the annotation no longer embeds a file"
+            raise StaleObjectError(msg)
+        return filespec
+
+    def _params(self) -> Dictionary | None:
+        stream = _embedded_stream(self._filespec())
+        params = stream.get("Params") if stream is not None else None
+        return params if isinstance(params, Dictionary) else None
+
+    def _edit(self, name: str, edit: Callable[[Dictionary], None]) -> None:
+        """Apply ``edit`` to the file specification in one transaction that records the annotation's change."""
+        self._filespec()
+        annotation = self._annotation
+        old_id, old_index = annotation._id, annotation._index  # noqa: SLF001
+        try:
+            with annotation._page._document.transaction(name):  # noqa: SLF001
+                # The edit stores a direct annotation as an object of its own.
+                annotation._set()  # noqa: SLF001
+                edit(self._filespec())
+        except BaseException:
+            # A failed edit (including a failed commit) discards the new object.
+            annotation._id, annotation._index = old_id, old_index  # noqa: SLF001
+            raise
+
+    def _edit_params(self, key: str, value: str | None) -> None:
+        def edit(filespec: Dictionary) -> None:
+            stream = _embedded_stream(filespec)
+            if stream is None:
+                msg = "the attached file has no embedded file stream"
+                raise PdfError(msg)
+            if not isinstance(stream.get("Params"), Dictionary):
+                stream["Params"] = {}
+            params = stream["Params"]
+            if value is not None:
+                params[key] = value
+            elif key in params:
+                del params[key]
+
+        self._edit("annotation file edit", edit)
+
+    @property
+    def filename(self) -> str:
+        """Return the viewer-facing file name (``/UF``, else ``/F``), or ``""``; assignable."""
+        filespec = self._filespec()
+        return _string_text(filespec.get("UF")) or _string_text(filespec.get("F")) or ""
+
+    @filename.setter
+    def filename(self, filename: str) -> None:
+        filename = _file_text(filename, "filename")
+        if not filename:
+            msg = "a file name cannot be empty"
+            raise ValueError(msg)
+
+        def edit(filespec: Dictionary) -> None:
+            filespec["F"] = filename
+            filespec["UF"] = filename
+
+        self._edit("annotation file edit", edit)
+
+    @property
+    def description(self) -> str | None:
+        """Return the description (``/Desc``), or ``None``; assignable, and ``del`` removes it."""
+        return _string_text(self._filespec().get("Desc")) or None
+
+    @description.setter
+    def description(self, description: str) -> None:
+        description = _file_text(description, "description")
+
+        def edit(filespec: Dictionary) -> None:
+            filespec["Desc"] = description
+
+        self._edit("annotation file edit", edit)
+
+    @description.deleter
+    def description(self) -> None:
+        def edit(filespec: Dictionary) -> None:
+            if "Desc" in filespec:
+                del filespec["Desc"]
+
+        self._edit("annotation file edit", edit)
+
+    @property
+    def size(self) -> int:
+        """Return the uncompressed size that the file declares (``/Params /Size``), or -1, as pymupdf does."""
+        params = self._params()
+        size = params.get("Size") if params is not None else None
+        return size if isinstance(size, int) and not isinstance(size, bool) else -1
+
+    @property
+    def created(self) -> str | None:
+        """Return the creation date (``/Params /CreationDate``) as stored, or ``None``; assignable and deletable.
+
+        Dates are PDF date strings such as ``D:20260101120000Z``.
+        """
+        params = self._params()
+        return (_string_text(params.get("CreationDate")) or None) if params is not None else None
+
+    @created.setter
+    def created(self, date: str) -> None:
+        self._edit_params("CreationDate", _file_date(date, "created"))
+
+    @created.deleter
+    def created(self) -> None:
+        self._edit_params("CreationDate", None)
+
+    @property
+    def modified(self) -> str | None:
+        """Return the modification date (``/Params /ModDate``) as stored, or ``None``; assignable and deletable.
+
+        :meth:`write` sets it to the current time.
+        """
+        params = self._params()
+        return (_string_text(params.get("ModDate")) or None) if params is not None else None
+
+    @modified.setter
+    def modified(self, date: str) -> None:
+        self._edit_params("ModDate", _file_date(date, "modified"))
+
+    @modified.deleter
+    def modified(self) -> None:
+        self._edit_params("ModDate", None)
+
+    def read(self, *, max_size: int | None = _DEFAULT_MAX_FILE_SIZE) -> bytes:
+        """Return the file's contents; ``max_size`` bounds the decoded data (``embedded_file_size``).
+
+        The document's limits bound the decoding; ``None`` lifts ``max_size``
+        for trusted input.
+        """
+        _validate_optional_positive_int("max_size", max_size)
+        stream = _embedded_stream(self._filespec())
+        if stream is None:
+            msg = "the attached file has no embedded file stream"
+            raise PdfError(msg)
+        try:
+            return stream.read(max_size=max_size)
+        except LimitError as error:
+            if error.code != "stream_data_size":
+                raise
+            code = "embedded_file_size"
+            msg = f"the attached file is larger than the {max_size}-byte limit"
+            raise LimitError(code, msg) from error
+
+    def write(self, data: bytes | bytearray | memoryview, /, *, max_size: int | None = _DEFAULT_MAX_FILE_SIZE) -> None:
+        """Replace the file's contents, as pymupdf's ``embfile_upd`` does.
+
+        The file name, description, and creation date stay; ``size`` becomes
+        the new length, ``modified`` the current time, and a stale
+        ``/CheckSum`` is dropped. ``max_size`` bounds ``data`` before it is
+        copied and defaults to 64 MiB (``embedded_file_size``).
+        """
+        self._filespec()
+        payload = _attached_data(data, max_size)
+        document = self._annotation._page._document  # noqa: SLF001
+
+        def edit(filespec: Dictionary) -> None:
+            stream = _embedded_stream(filespec)
+            if stream is None:
+                objects = document.objects
+                stream = objects[objects.add_stream(payload, {"Type": Name("EmbeddedFile")})]
+                filespec["EF"] = {"F": stream, "UF": stream}
+            else:
+                stream.write(payload)
+            if not isinstance(stream.get("Params"), Dictionary):
+                stream["Params"] = {}
+            params = stream["Params"]
+            params["Size"] = len(payload)
+            params["ModDate"] = _now()
+            if "CheckSum" in params:
+                del params["CheckSum"]
+
+        self._edit("annotation file write", edit)
+
+    def __repr__(self) -> str:
+        """Return ``AnnotationFile('name')``."""
+        try:
+            return f"AnnotationFile({self.filename!r})"
+        except (StaleObjectError, StalePageError):
+            return "<stale AnnotationFile>"
+
+
 def _pdf_name(member: enum.StrEnum) -> str:
     """Return the PDF name of an icon or blend mode member: ``push_pin`` is ``PushPin``."""
     return "".join(part.capitalize() for part in member.value.split("_"))
@@ -408,6 +685,28 @@ def _now() -> str:
     return time.strftime("D:%Y%m%d%H%M%SZ", time.gmtime())
 
 
+def _draw_face(page: Page, index: int, id: tuple[int, int], font: Font) -> None:  # noqa: A002 - an object's id.
+    """Draw free text ``id`` in embedded ``font``, in the caller's transaction.
+
+    A first pass collects the glyphs that the text shows, the font records
+    their widths and texts, and a second pass writes the appearance, whose
+    resources name the font: that is where the free text keeps its face.
+    """
+    document = page._document  # noqa: SLF001
+    location = (document._core(), page._number, page._generation, index, id)  # noqa: SLF001
+    face = font._font  # noqa: SLF001 - the package's own face.
+    drawn = _core.annotation_draw_face(*location, face)
+    if drawn is None:
+        raise page._stale()  # noqa: SLF001
+    cache = _cache(document)
+    # The appearance names the font even without glyphs, so that an edit finds the face.
+    xref = embedded_font(document, font, cache.fonts)
+    cache.faces[xref] = font
+    mapped = add_glyphs(document, xref, font, drawn) if drawn else {}
+    if _core.annotation_draw_face(*location, face, (xref, mapped)) is None:
+        raise page._stale()  # noqa: SLF001
+
+
 class Annotation:
     """A handle on one annotation of a page, as ``page.annotations`` lists it.
 
@@ -444,9 +743,27 @@ class Annotation:
         self._id = result
 
     def _set(self, *, clear: list[str] | None = None, **entries: object) -> None:
-        """Change properties, recording the time of the edit; the appearance settles later."""
+        """Change properties, recording the time of the edit; the appearance settles later.
+
+        A free text drawn in an embedded face this session is drawn again in
+        that face, in the same undo step as the edit.
+        """
         edit: dict[str, object] = {"clear": clear or [], "modified": _now(), **entries}
-        self._changed(_core.annotation_edit(*self._location(), edit))
+        font = self._face()
+        if font is None:
+            self._changed(_core.annotation_edit(*self._location(), edit))
+            return
+        with self._page._document.transaction():  # noqa: SLF001
+            self._changed(_core.annotation_edit(*self._location(), edit, face=True))
+            _draw_face(self._page, self._index, self._id, font)
+
+    def _face(self) -> Font | None:
+        """Return the embedded face that this session drew the free text in, if its appearance still names it."""
+        cache = self._page._document._drawn  # noqa: SLF001
+        if cache is None or not cache.faces:
+            return None
+        xref = _core.annotation_face(*self._location())
+        return None if xref is None else cache.faces.get(xref)
 
     def _text(self, slot: int) -> str | None:
         return self._read()[5][slot]
@@ -908,6 +1225,22 @@ class Annotation:
         _warn_skipped(skipped)
         return text
 
+    def _filespec(self) -> Dictionary | None:
+        """Return the file specification of a file attachment, ``/FS``, or ``None``."""
+        if self.type is not AnnotationType.FILE_ATTACHMENT:
+            return None
+        filespec = self.obj.get("FS")
+        return filespec if isinstance(filespec, Dictionary) else None
+
+    @property
+    def file(self) -> AnnotationFile | None:
+        """Return the file that a file attachment embeds, or ``None`` for another annotation.
+
+        A file attachment whose ``/FS`` is not a file specification
+        dictionary embeds no file either.
+        """
+        return None if self._filespec() is None else AnnotationFile(self)
+
     def sound(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> Sound | None:
         """Return the sound that a sound annotation plays, or ``None`` for another kind of annotation.
 
@@ -989,11 +1322,11 @@ def _contents(value: object) -> str | None:
 
 def _bound_input(subtype: str, contents: str | None) -> None:
     """Bound the subtype, contents, and dates that an added annotation writes to 1 MiB of UTF-8."""
-    texts = (subtype, contents or "", _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
-    characters = sum(len(text) for text in texts)
+    texts = (subtype, "" if contents is None else contents, _DATE_PLACEHOLDER, _DATE_PLACEHOLDER)
+    characters = sum(str.__len__(text) for text in texts)
     if characters > _MAX_ANNOTATION_INPUT_TEXT_SIZE or (
         characters * 4 > _MAX_ANNOTATION_INPUT_TEXT_SIZE
-        and sum(len(text.encode()) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
+        and sum(len(str.encode(text)) for text in texts) > _MAX_ANNOTATION_INPUT_TEXT_SIZE
     ):
         code = "annotation_input_size"
         msg = f"annotation subtype and contents input exceeds the {_MAX_ANNOTATION_INPUT_TEXT_SIZE}-byte UTF-8 limit"
@@ -1268,6 +1601,278 @@ class Caret:
             "contents": self.contents,
             "created": _now(),
         }
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FileAttachment:
+    """A file embedded in the page behind an icon, as ``page.annotations.add`` takes it.
+
+    ``at`` is the display point of the top-left corner of the 20-point
+    icon, which stands upright on a turned page too: its ``/Rotate`` takes
+    the page's rotation. ``data`` is the file and ``filename`` its name,
+    which with ``description`` stops at 1 MiB (``embedded_file_input_size``);
+    ``max_size`` bounds ``data`` before it is copied and defaults to 64 MiB
+    (``embedded_file_size``). ``color`` fills the icon. Read the file back
+    through :attr:`Annotation.file`; the document's own attachments, in
+    :attr:`Document.attachments`, do not list it.
+    """
+
+    at: Point
+    data: bytes
+    filename: str
+    description: str | None
+    icon: AttachmentIcon
+    color: Color
+    opacity: float
+    contents: str | None
+
+    def __init__(  # noqa: PLR0913 - the attachment's options.
+        self,
+        at: Point | Sequence[float],
+        data: bytes | bytearray | memoryview,
+        *,
+        filename: str,
+        description: str | None = None,
+        icon: AttachmentIcon = AttachmentIcon.PUSH_PIN,
+        color: Color = Color(1.0, 1.0, 0.0),  # noqa: B008 - Color is immutable.
+        opacity: float = 1.0,
+        contents: str | None = None,
+        max_size: int | None = _DEFAULT_MAX_FILE_SIZE,
+    ) -> None:
+        """Validate the specification; texts and data are bounded before they are copied."""
+        contents = _contents(contents)
+        if not isinstance(filename, str) or (description is not None and not isinstance(description, str)):
+            msg = "filename must be a str and description a str or None"
+            raise TypeError(msg)
+        filename = str.__str__(filename)
+        description = str.__str__(description) if description is not None else None
+        _file_texts((filename, description or ""), "attached file name and description")
+        _bound_input("FileAttachment", contents)
+        object.__setattr__(self, "at", _point(at))
+        object.__setattr__(self, "data", _attached_data(data, max_size))
+        object.__setattr__(self, "filename", filename)
+        object.__setattr__(self, "description", description)
+        object.__setattr__(self, "icon", AttachmentIcon(icon))
+        object.__setattr__(self, "color", _opaque_color(color))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "contents", contents)
+
+    def _payload(self) -> dict[str, Any]:
+        x, y = self.at
+        return {
+            "subtype": "FileAttachment",
+            "rect": (x, y, x + _NOTE_SIZE, y + _NOTE_SIZE),
+            "data": self.data,
+            "filename": self.filename,
+            "description": self.description,
+            "icon": _ICON_NAMES[self.icon],
+            "color": (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "contents": self.contents,
+            "created": _now(),
+            # The data was bounded when the specification was made.
+            "max_size": None,
+        }
+
+
+def _turn(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value % 90:
+        msg = f"rotate must be a multiple of 90: {value!r}"
+        raise ValueError(msg)
+    return value % 360
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class Stamp:
+    """A rubber stamp, as ``page.annotations.add`` takes it.
+
+    ``rect`` is in display coordinates; the stamp's label is drawn as large
+    as fits, centred in a rounded frame, in ``color`` or the stamp's own
+    color (green for approval, red for restriction, blue for the rest), and
+    ``rotate`` turns it clockwise by a multiple of 90 degrees as the page is
+    displayed.
+    """
+
+    rect: Rect
+    icon: StampIcon
+    color: Color | None
+    opacity: float
+    rotate: int
+    contents: str | None
+
+    def __init__(  # noqa: PLR0913 - the stamp's options.
+        self,
+        rect: Sequence[float],
+        *,
+        icon: StampIcon = StampIcon.APPROVED,
+        color: Color | None = None,
+        opacity: float = 1.0,
+        rotate: int = 0,
+        contents: str | None = None,
+    ) -> None:
+        """Validate the specification."""
+        contents = _contents(contents)
+        _bound_input("Stamp", contents)
+        object.__setattr__(self, "rect", Rect(*_rect(rect)))
+        object.__setattr__(self, "icon", StampIcon(icon))
+        object.__setattr__(self, "color", _optional_color(color, "color"))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+        object.__setattr__(self, "rotate", _turn(rotate))
+        object.__setattr__(self, "contents", contents)
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "subtype": "Stamp",
+            "rect": tuple(self.rect),
+            "icon": _ICON_NAMES[self.icon],
+            "color": None if self.color is None else (self.color.red, self.color.green, self.color.blue),
+            "opacity": self.opacity,
+            "rotate": self.rotate,
+            "contents": self.contents,
+            "created": _now(),
+        }
+
+
+#: The ``/Q`` code of each free-text alignment.
+_FREE_TEXT_ALIGNMENTS = ("left", "center", "right")
+#: The largest font size of free text, in points.
+_MAX_FREE_TEXT_SIZE = 10_000
+
+
+def _callout(value: object) -> tuple[Point, ...] | None:
+    """Return a callout's two or three points, stopping at a fourth."""
+    if value is None:
+        return None
+    msg = "callout must hold 2 or 3 points: the point it explains, an optional knee, and the box"
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(msg)  # noqa: TRY004 - preserve the specification's existing exception.
+    points: list[Point] = []
+    for point in value:
+        if len(points) == 3:  # noqa: PLR2004 - the fourth point exceeds the bound.
+            raise ValueError(msg)
+        points.append(_point(point))
+    if len(points) < 2:  # noqa: PLR2004 - a callout needs two endpoints.
+        raise ValueError(msg)
+    return tuple(points)
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class FreeText:
+    """Text written on the page in a box, as ``page.annotations.add`` takes it.
+
+    ``rect`` is the box in display coordinates and ``text`` its text,
+    wrapped as :meth:`Canvas.textbox` wraps it, ``align``-ed, and in
+    ``font``, Helvetica by default, at ``size`` points and ``text_color``.
+    A Standard 14 font is named in the annotation's ``/DA``, so other
+    viewers can redraw it; it prints WinAnsi characters only. An embedded
+    :class:`Font` shapes any text that it has glyphs for; the appearance
+    names its font, and edits in the same session draw the text in it
+    again. A later session knows no face and redraws the text in the
+    ``/DA`` font, Helvetica, refusing text outside WinAnsi. ``color``
+    fills the box, ``border`` outlines it in the text color, and ``rotate``
+    turns the text clockwise by a multiple of 90 degrees as the page is
+    displayed. ``callout`` draws a line from the display point that the
+    text explains, through an optional knee, to the box, with
+    ``callout_ending`` at the explained point. Text that does not fit
+    raises :class:`PdfError`.
+    """
+
+    rect: Rect
+    text: str
+    font: Font | None
+    size: float
+    text_color: Color
+    color: Color | None
+    border: Border
+    align: Literal["left", "center", "right"]
+    rotate: int
+    callout: tuple[Point, ...] | None
+    callout_ending: LineEnding
+    opacity: float
+
+    def __init__(  # noqa: PLR0913 - the text's style options.
+        self,
+        rect: Sequence[float],
+        text: str,
+        *,
+        font: Font | None = None,
+        size: float = 11.0,
+        text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
+        color: Color | None = None,
+        border: Border = Border(0),  # noqa: B008 - Border is immutable.
+        align: Literal["left", "center", "right"] = "left",
+        rotate: int = 0,
+        callout: Sequence[Point | Sequence[float]] | None = None,
+        callout_ending: LineEnding = LineEnding.NONE,
+        opacity: float = 1.0,
+    ) -> None:
+        """Validate the specification; the text is bounded before anything else is read."""
+        if not isinstance(text, str):
+            msg = f"text must be a str: {type(text).__name__}"
+            raise TypeError(msg)
+        _bound_input("FreeText", text)
+        if font is not None and not isinstance(font, Font):
+            msg = f"font must be a pyropdf.Font or None, not {type(font).__name__}"
+            raise TypeError(msg)
+        size = _number(size, "size")
+        if not 0 < size <= _MAX_FREE_TEXT_SIZE:
+            msg = f"size must be greater than 0 and at most {_MAX_FREE_TEXT_SIZE}: {size!r}"
+            raise ValueError(msg)
+        if not isinstance(border, Border):
+            msg = f"border must be a Border: {border!r}"
+            raise TypeError(msg)
+        if align not in _FREE_TEXT_ALIGNMENTS:
+            msg = f"align must be one of {', '.join(_FREE_TEXT_ALIGNMENTS)}: {align!r}"
+            raise ValueError(msg)
+        points = _callout(callout)
+        object.__setattr__(self, "rect", Rect(*_rect(rect)))
+        object.__setattr__(self, "text", text)
+        object.__setattr__(self, "font", font)
+        object.__setattr__(self, "size", size)
+        object.__setattr__(self, "text_color", _opaque_color(text_color, "text_color"))
+        object.__setattr__(self, "color", _optional_color(color, "color"))
+        object.__setattr__(self, "border", border)
+        object.__setattr__(self, "align", align)
+        object.__setattr__(self, "rotate", _turn(rotate))
+        object.__setattr__(self, "callout", points)
+        object.__setattr__(self, "callout_ending", LineEnding(callout_ending))
+        object.__setattr__(self, "opacity", _opacity(opacity))
+
+    def _face(self) -> Font | None:
+        """Return the embedded face that draws the text, or ``None`` for a Standard 14 font."""
+        font = self.font
+        return None if font is None or font._font.standard_name is not None else font  # noqa: SLF001
+
+    def _payload(self) -> dict[str, Any]:
+        face = self._face()
+        if face is None:
+            try:
+                str.encode(self.text, "cp1252")
+            except UnicodeEncodeError as exc:
+                msg = "Standard 14 fonts can only print WinAnsi (Latin-1-equivalent) characters"
+                raise ValueError(msg) from exc
+        border = self.border
+        color = self.color
+        text_color = self.text_color
+        spec: dict[str, Any] = {
+            "subtype": "FreeText",
+            "rect": tuple(self.rect),
+            "contents": self.text,
+            "created": _now(),
+            "color": None if color is None else (color.red, color.green, color.blue),
+            "border": (border.width, _BORDER_STYLE_NAMES[border.style], list(border.dashes)),
+            "opacity": self.opacity,
+            "text_color": (text_color.red, text_color.green, text_color.blue),
+            "font_size": self.size,
+            # An embedded face's text falls back to Helvetica in viewers that redraw it.
+            "font_name": "Helvetica" if self.font is None or face is not None else self.font._font.standard_name,  # noqa: SLF001
+            "align": _FREE_TEXT_ALIGNMENTS.index(self.align),
+            "rotate": self.rotate,
+        }
+        if self.callout is not None:
+            spec["callout"] = [tuple(point) for point in self.callout]
+            spec["callout_ending"] = _LINE_ENDING_NAMES[self.callout_ending]
+        return spec
 
 
 #: The most points that one annotation's geometry holds (``annotation_point_count``).
@@ -1617,6 +2222,9 @@ AnnotationSpecification: TypeAlias = (
     | PolyLine
     | Ink
     | Caret
+    | FileAttachment
+    | FreeText
+    | Stamp
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -1631,6 +2239,9 @@ _SPECIFICATIONS = (
     PolyLine,
     Ink,
     Caret,
+    FileAttachment,
+    FreeText,
+    Stamp,
 )
 
 
@@ -1698,9 +2309,19 @@ class Annotations(Sequence[Annotation]):
             raise TypeError(msg)
         page = self._page
         payload = cast("dict[str, object]", specification._payload())  # noqa: SLF001
-        result = _core.annotation_add(page._document._core(), page._number, page._generation, payload)  # noqa: SLF001
-        if result is None:
-            raise page._stale()  # noqa: SLF001
+        face = specification._face() if isinstance(specification, FreeText) else None  # noqa: SLF001
+        document = page._document  # noqa: SLF001
+        if face is None:
+            result = _core.annotation_add(document._core(), page._number, page._generation, payload)  # noqa: SLF001
+            if result is None:
+                raise page._stale()  # noqa: SLF001
+        else:
+            # One undo step: the annotation, the face's glyphs, and its appearance.
+            with document.transaction():
+                result = _core.annotation_add(document._core(), page._number, page._generation, payload, face=True)  # noqa: SLF001
+                if result is None:
+                    raise page._stale()  # noqa: SLF001
+                _draw_face(page, 0, result, face)
         # The handle finds the new annotation by its object.
         return Annotation(page, result, 0)
 
@@ -1712,6 +2333,7 @@ class Annotations(Sequence[Annotation]):
 # The package re-exports these names; reprs, pickles, and documentation name them.
 for _public in (
     Annotation,
+    AnnotationFile,
     Annotations,
     AnnotationType,
     AnnotationFlags,
@@ -1720,6 +2342,8 @@ for _public in (
     BorderStyle,
     Caret,
     Circle,
+    FileAttachment,
+    FreeText,
     Highlight,
     Ink,
     LineAnnotation,
@@ -1730,6 +2354,7 @@ for _public in (
     PolyLine,
     Square,
     Squiggly,
+    Stamp,
     StampIcon,
     StrikeOut,
     Underline,

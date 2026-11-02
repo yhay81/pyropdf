@@ -1,18 +1,24 @@
 """Drawing paths, images, and placed pages with Page.draw (DESIGN.md section 7).
 
 Ported from pylopdf's tests/test_canvas.py and tests/test_draw.py at
-ebb01d3c, without text: krilla writes text on the canvas (issue 323).
+ebb01d3c, without text: canvas text in Standard 14 fonts is tested in
+test_canvas_text.py and in embedded faces in test_canvas_embedded.py.
 """
 
 from __future__ import annotations
 
 import itertools
+import random
+import struct
+import sys
+import threading
+import zlib
 from typing import TYPE_CHECKING
 
 import pytest
 
 import pyropdf
-from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke
+from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke, _core
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -720,6 +726,62 @@ def test_png_alpha_is_kept() -> None:
     assert _pixel(page, 15, 5) == (0, 0, 255)
 
 
+@pytest.mark.parametrize("gray", [False, True])
+@pytest.mark.parametrize("alpha", [False, True])
+def test_larger_png_keeps_color_and_alpha_across_the_frame(*, gray: bool, alpha: bool) -> None:
+    _source_doc, source = _new_page(100, 100)
+    with source.draw() as canvas:
+        canvas.rect((0, 0, 50, 100), fill=RED)
+        canvas.rect((50, 50, 100, 100), fill=BLUE)
+    original = source.pixmap(dpi=72, alpha=alpha)
+    if gray:
+        original = original.to_gray()
+    png = original.to_bytes("png")
+    _doc, page = _new_page(100, 100)
+    with page.draw() as canvas:
+        canvas.image((0, 0, 100, 100), png)
+    (image,) = page.images()
+    assert bytes(image.pixmap()) == bytes(original)
+
+
+def test_another_thread_can_cancel_png_decoding() -> None:
+    _source_doc, source = _new_page(256, 256)
+    png = source.pixmap(dpi=72, alpha=True).to_bytes("png")
+    token = pyropdf.CancellationToken()
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    core = document._core()  # noqa: SLF001
+    started = threading.Event()
+    outcome: list[BaseException | None] = []
+
+    def decode_until_cancelled() -> None:
+        started.set()
+        try:
+            for _ in range(100):
+                _core.decode_png(core, png)
+        except pyropdf.LimitError as error:
+            outcome.append(error)
+        else:
+            outcome.append(None)
+
+    # Keep Python from switching threads between the event and a decoder
+    # call, so progress depends on the decoder releasing the GIL.
+    previous_interval = sys.getswitchinterval()
+    try:
+        sys.setswitchinterval(5.0)
+        worker = threading.Thread(target=decode_until_cancelled)
+        worker.start()
+        assert started.wait(timeout=10)
+        token.cancel()
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+    finally:
+        sys.setswitchinterval(previous_interval)
+    assert len(outcome) == 1
+    error = outcome[0]
+    assert isinstance(error, pyropdf.LimitError)
+    assert error.code == "cancelled"
+
+
 def test_a_placed_page_shows_its_crop_box() -> None:
     source = _marked_source()
     source.pages[0].crop_box = (150, 50, 300, 200)
@@ -730,3 +792,74 @@ def test_a_placed_page_shows_its_crop_box() -> None:
     _assert_rect(blue.bbox, (50, 50, 110, 110))
     assert _pixel(page, 80, 80) == (0, 0, 255)
     assert _pixel(page, 10, 10) == (255, 255, 255)
+
+
+def _interlaced_rgba_png(width: int, height: int) -> tuple[bytes, bytes]:
+    """Return an Adam7-interlaced 8-bit RGBA PNG and its samples in row order."""
+    samples = bytes(
+        (x * 31 + y * 17 + channel * 59) % 256 for y in range(height) for x in range(width) for channel in range(4)
+    )
+    passes = [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)]
+    raw = bytearray()
+    for x0, y0, dx, dy in passes:
+        columns = range(x0, width, dx)
+        if not columns:
+            continue
+        for y in range(y0, height, dy):
+            raw.append(0)
+            for x in columns:
+                start = (y * width + x) * 4
+                raw += samples[start : start + 4]
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 1)
+    png = (
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(raw))) + chunk(b"IEND", b"")
+    )
+    return png, samples
+
+
+def test_interlaced_png_decodes_row_by_row_to_the_same_samples() -> None:
+    png, samples = _interlaced_rgba_png(37, 29)
+    core = pyropdf.Document()._core()  # noqa: SLF001
+    width, height, gray, color, alpha = _core.decode_png(core, png)
+    assert (width, height, gray) == (37, 29, False)
+    assert alpha == samples[3::4]
+    assert color == bytes(b for i, b in enumerate(samples) if i % 4 != 3)
+
+
+def test_drawing_a_pixmap_past_the_memory_budget_is_refused_without_changes() -> None:
+    _source_doc, source = _new_page(256, 256)
+    pixmap = source.pixmap(dpi=144, alpha=True)
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    page = doc.pages.new((100, 100))
+    before = doc.to_bytes(), doc.history.steps
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.image((0, 0, 100, 100), pixmap)
+    assert raised.value.code == "memory_size"
+    assert (doc.to_bytes(), doc.history.steps) == before
+
+
+def test_pixmap_png_counts_encoded_output_in_memory_budget() -> None:
+    width = height = 256
+    rng = random.Random(1847)  # noqa: S311 - reproducible image samples, not secrets.
+    samples = rng.randbytes(width * height * 3)
+    rows = b"".join(b"\x00" + samples[y * width * 3 : (y + 1) * width * 3] for y in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+    _source_doc, source = _new_page(width, height)
+    with source.draw() as canvas:
+        canvas.image((0, 0, width, height), png)
+    pixmap = source.pixmap(dpi=72)
+    assert len(_core.pixmap_png(pyropdf.Document()._core(), pixmap)) > 180_000  # noqa: SLF001
+
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=500_000))
+    with pytest.raises(pyropdf.LimitError) as raised:
+        _core.pixmap_png(document._core(), pixmap)  # noqa: SLF001
+    assert raised.value.code == "memory_size"

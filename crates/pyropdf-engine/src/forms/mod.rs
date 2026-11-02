@@ -12,6 +12,7 @@
 //! at ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
 pub mod defaults;
+pub mod face;
 pub mod flatten;
 mod text;
 
@@ -29,9 +30,10 @@ use pyropdf_store::{Error, LimitExceeded, Result};
 
 use crate::annotations::{Reader, Resolved, numbers_array};
 use crate::standard::{
-    self, Align, Base14Font, DefaultAppearance, DeviceColor, FIT_STEP, LayoutError,
-    MAX_DEFAULT_APPEARANCE, MAX_FIT_SIZE, MIN_FIT_SIZE, Style,
+    self, Align, Base14Font, DefaultAppearance, DeviceColor, FIT_STEP, FORM_LINE_HEIGHT,
+    LayoutError, MAX_DEFAULT_APPEARANCE, MAX_FIT_SIZE, MIN_FIT_SIZE, Style,
 };
+use face::FaceText;
 
 /// The most fields of a `/Parent` chain that a widget reads entries from.
 pub const MAX_PARENTS: usize = 64;
@@ -131,13 +133,21 @@ pub enum Drawing {
 }
 
 /// A drawn normal appearance of a widget: its content in the form's space,
-/// the form's size and the matrix that rotates it, and the Standard 14 font
-/// that its text names, by resource and PostScript name.
+/// the form's size and the matrix that rotates it, and the font that its
+/// text names, by resource.
 pub struct WidgetAppearance {
     content: Vec<u8>,
     size: (f64, f64),
     matrix: Option<[f64; 6]>,
-    font: Option<(String, &'static str)>,
+    font: Option<(String, FontEntry)>,
+}
+
+/// The font of an appearance's text.
+enum FontEntry {
+    /// A Standard 14 font by PostScript name, written with the appearance.
+    Standard(&'static str),
+    /// An embedded face's Type0 font that the document has.
+    Embedded(Reference),
 }
 
 impl WidgetAppearance {
@@ -155,19 +165,11 @@ impl WidgetAppearance {
         if let Some(matrix) = self.matrix {
             dict.insert(Name::from("Matrix"), numbers_array(&matrix));
         }
-        if let Some((resource, base_font)) = &self.font {
-            let mut font = Dict::new();
-            font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
-            font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
-            font.insert(Name::from("BaseFont"), Value::Name(Name::from(*base_font)));
-            if !matches!(*base_font, "Symbol" | "ZapfDingbats") {
-                font.insert(
-                    Name::from("Encoding"),
-                    Value::Name(Name::from("WinAnsiEncoding")),
-                );
-            }
-            let reference = transaction.allocate()?;
-            transaction.write(reference.number(), &Value::Dict(font), budget)?;
+        if let Some((resource, entry)) = &self.font {
+            let reference = match entry {
+                FontEntry::Standard(base_font) => standard_font(transaction, base_font, budget)?,
+                FontEntry::Embedded(reference) => *reference,
+            };
             let mut fonts = Dict::new();
             fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
             let mut resources = Dict::new();
@@ -180,6 +182,28 @@ impl WidgetAppearance {
         transaction.write(reference.number(), &Value::from(form), budget)?;
         Ok(reference)
     }
+}
+
+/// Writes the font dictionary of Standard 14 font `base_font` as a new
+/// object and returns its reference.
+fn standard_font(
+    transaction: &mut Transaction,
+    base_font: &str,
+    budget: &Budget,
+) -> Result<Reference> {
+    let mut font = Dict::new();
+    font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+    font.insert(Name::from("BaseFont"), Value::Name(Name::from(base_font)));
+    if !matches!(base_font, "Symbol" | "ZapfDingbats") {
+        font.insert(
+            Name::from("Encoding"),
+            Value::Name(Name::from("WinAnsiEncoding")),
+        );
+    }
+    let reference = transaction.allocate()?;
+    transaction.write(reference.number(), &Value::Dict(font), budget)?;
+    Ok(reference)
 }
 
 /// Draws the appearance of widget `number`, `widget`, for the appearance
@@ -341,7 +365,19 @@ enum TextLayout {
 /// comb value with more graphemes than `/MaxLen`, and text that does not
 /// fit, as pylopdf does when it fills the field.
 pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>, WidgetError> {
-    draw(reader, widget, false)
+    draw(reader, widget, false, None)
+}
+
+/// Draws the normal appearance of a text or choice `widget` from the value
+/// of its field in `face`, as [`appearance`] draws it in a Standard 14
+/// font; returns `None` for a widget of another field. Refuses a value
+/// with a character that the face has no glyph for.
+pub fn face_appearance(
+    reader: &Reader<'_>,
+    widget: &Dict,
+    face: &mut FaceText<'_>,
+) -> Result<Option<Drawing>, WidgetError> {
+    draw(reader, widget, false, Some(face))
 }
 
 /// Draws every normal appearance of `widget` again after its style
@@ -351,17 +387,24 @@ pub fn appearance(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>,
 /// in place of the appearance it has. A signature widget keeps an
 /// appearance that it has.
 pub fn restyled(reader: &Reader<'_>, widget: &Dict) -> Result<Option<Drawing>, WidgetError> {
-    draw(reader, widget, true)
+    draw(reader, widget, true, None)
 }
 
-/// Implements [`appearance`] and, with `every`, [`restyled`].
-fn draw(reader: &Reader<'_>, widget: &Dict, every: bool) -> Result<Option<Drawing>, WidgetError> {
+/// Implements [`appearance`], with `every` [`restyled`], and with `face`
+/// [`face_appearance`].
+fn draw(
+    reader: &Reader<'_>,
+    widget: &Dict,
+    every: bool,
+    face: Option<&mut FaceText<'_>>,
+) -> Result<Option<Drawing>, WidgetError> {
     let entries = entries(reader, widget)?;
     let [field_type, flags, value, quadding, max_len] = &entries;
     let flags = integer(flags.as_deref()).unwrap_or(0);
     let text_field = match field_type.as_deref() {
         Some(Value::Name(name)) if name.as_bytes() == b"Tx" => true,
         Some(Value::Name(name)) if name.as_bytes() == b"Ch" => false,
+        _ if face.is_some() => return Ok(None),
         Some(Value::Name(name)) if name.as_bytes() == b"Btn" && flags & PUSHBUTTON == 0 => {
             return button_states(reader, widget, flags & RADIO != 0, every);
         }
@@ -395,6 +438,7 @@ fn draw(reader: &Reader<'_>, widget: &Dict, every: bool) -> Result<Option<Drawin
                 &caption,
                 TextLayout::SingleLine,
                 Align::Center,
+                None,
             )
             .map(Some);
         }
@@ -434,7 +478,10 @@ fn draw(reader: &Reader<'_>, widget: &Dict, every: bool) -> Result<Option<Drawin
     let value = value_text(reader, value.as_deref())?;
     let style = WidgetStyle::read(reader, widget)?;
     if let TextLayout::Comb(max_len) = layout {
-        let count = standard::grapheme_count(&standard::single_line(&value, reader.budget)?);
+        let count = standard::grapheme_count(
+            &standard::single_line(&value, reader.budget)?,
+            reader.budget,
+        )?;
         if count > max_len {
             return Err(WidgetError::Malformed(
                 format!("comb field value has {count} characters, exceeding MaxLen {max_len}")
@@ -442,19 +489,28 @@ fn draw(reader: &Reader<'_>, widget: &Dict, every: bool) -> Result<Option<Drawin
             ));
         }
     }
-    for (index, character) in value.chars().enumerate() {
-        if index % 1024 == 0 {
-            reader.budget.poll()?;
-        }
-        if standard::winansi_byte(character).is_none() {
-            return Ok(Some(Drawing::Removed));
+    if let Some(face) = &face {
+        face.check(&value)?;
+    } else {
+        for (index, character) in value.chars().enumerate() {
+            if index % 1024 == 0 {
+                reader.budget.poll()?;
+            }
+            if standard::winansi_byte(character).is_none() {
+                return Ok(Some(Drawing::Removed));
+            }
         }
     }
-    drawn(reader, widget, form, &style, &value, layout, align).map(Some)
+    drawn(reader, widget, form, &style, &value, layout, align, face).map(Some)
 }
 
 /// Draws `widget`'s border and background with `value` laid out inside
-/// them in the font of its `/DA`.
+/// them in the font of its `/DA`, or in `face` at the size and colour of
+/// its `/DA`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parts of an appearance that `draw` reads"
+)]
 fn drawn(
     reader: &Reader<'_>,
     widget: &Dict,
@@ -463,16 +519,37 @@ fn drawn(
     value: &str,
     layout: TextLayout,
     align: Align,
+    face: Option<&mut FaceText<'_>>,
 ) -> Result<Drawing, WidgetError> {
-    let text = TextStyle::new(default_appearance(reader, widget, form)?);
+    let appearance = default_appearance(reader, widget, form)?;
+    let form_font = match (&appearance, form) {
+        (Some(appearance), Some(form)) => form_standard_font(reader, form, &appearance.font)?,
+        _ => FormFont::Absent,
+    };
+    let base_font = match form_font {
+        FormFont::Standard(base_font) => Some(base_font),
+        // Drawing in another font's encoding would show other glyphs.
+        FormFont::Unsupported if face.is_none() => {
+            return Err(malformed(
+                "the form font that the widget's /DA names has an /Encoding \
+                 that a Standard 14 appearance cannot reproduce",
+            ));
+        }
+        FormFont::Absent | FormFont::Unsupported => None,
+    };
+    let mut text = TextStyle::new(appearance, base_font);
+    let embedded = face.as_ref().map(|face| face.font());
+    if face.is_some() {
+        face::RESOURCE.clone_into(&mut text.resource);
+    }
     let mut ops = BudgetVec::new(reader.budget);
     match layout {
         TextLayout::Comb(max_len) => {
-            comb_ops(&mut ops, style, &text, value, max_len, align)?;
+            comb_ops(&mut ops, style, &text, value, max_len, align, face)?;
         }
         TextLayout::SingleLine | TextLayout::Multiline => {
             let multiline = matches!(layout, TextLayout::Multiline);
-            text_ops(&mut ops, style, &text, value, multiline, align)?;
+            text_ops(&mut ops, style, &text, value, multiline, align, face)?;
         }
     }
     let mut content = BudgetVec::new(reader.budget);
@@ -491,7 +568,13 @@ fn drawn(
         content.try_extend_from_slice(clip.as_bytes())?;
         content.try_extend_from_slice(&ops)?;
         content.try_extend_from_slice(b"Q\n")?;
-        Some((text.resource, text.base_font))
+        let entry = match embedded {
+            None => FontEntry::Standard(text.base_font),
+            Some(Some(reference)) => FontEntry::Embedded(reference),
+            // Collecting glyphs writes nothing.
+            Some(None) => FontEntry::Standard(text.base_font),
+        };
+        Some((text.resource, entry))
     };
     Ok(Drawing::Drawn(WidgetAppearance {
         content: content.into_vec(),
@@ -499,6 +582,123 @@ fn drawn(
         matrix: style.matrix,
         font,
     }))
+}
+
+/// What a form's `/DR /Font` holds under the font name of a `/DA`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FormFont {
+    /// No unembedded Standard 14 Type1 font: the name falls back to its
+    /// Standard 14 abbreviation, else to Helvetica.
+    Absent,
+    /// A Standard 14 font whose glyphs the appearance's own font
+    /// dictionary reaches: WinAnsi for a text font, the built-in encoding
+    /// for Symbol and ZapfDingbats.
+    Standard(&'static str),
+    /// A Standard 14 font whose `/Encoding` selects glyphs that the
+    /// appearance's own font dictionary cannot reproduce.
+    Unsupported,
+}
+
+/// Resolves the font that the form's `/DR /Font` holds under `/DA` name
+/// `resource`: a collision-free name assigned when a widget is created, or
+/// an arbitrary alias such as `F1`. Entries beyond those that select the
+/// face and its encoding, such as `/Widths` or `/Name`, do not matter.
+///
+/// The appearance writes its own font dictionary, so a text font's
+/// `/Encoding` matters only for the glyphs that it selects: the built-in
+/// `StandardEncoding` of an omitted entry, `WinAnsiEncoding`,
+/// `MacRomanEncoding`, and a dictionary over one of these without
+/// `/Differences` all select Latin text glyphs that WinAnsi reaches, so the
+/// text is drawn in WinAnsi with the same glyphs. Omission is not read as
+/// WinAnsi: the appearance's dictionary names WinAnsi itself. Any other
+/// encoding, and any `/Encoding` on Symbol or ZapfDingbats, is
+/// [`FormFont::Unsupported`] rather than drawn with other glyphs.
+fn form_standard_font(reader: &Reader<'_>, form: &Dict, resource: &str) -> Result<FormFont> {
+    let Some(resources) = reader.entry(form, "DR")? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Dict(resources) = &*resources else {
+        return Ok(FormFont::Absent);
+    };
+    let Some(fonts) = reader.entry(resources, "Font")? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Dict(fonts) = &*fonts else {
+        return Ok(FormFont::Absent);
+    };
+    let Some(font) = reader.entry(fonts, resource)? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Dict(font) = &*font else {
+        return Ok(FormFont::Absent);
+    };
+    if !matches!(reader.entry(font, "Subtype")?.as_deref(), Some(Value::Name(name)) if name.as_bytes() == b"Type1")
+        || !match reader.entry(font, "Type")?.as_deref() {
+            None => true,
+            Some(Value::Name(name)) => name.as_bytes() == b"Font",
+            Some(_) => false,
+        }
+    {
+        return Ok(FormFont::Absent);
+    }
+    let Some(base) = reader.entry(font, "BaseFont")? else {
+        return Ok(FormFont::Absent);
+    };
+    let Value::Name(base) = &*base else {
+        return Ok(FormFont::Absent);
+    };
+    let Some(base) = standard::DA_FONTS
+        .iter()
+        .map(|(_, base)| *base)
+        .find(|name| name.as_bytes() == base.as_bytes())
+    else {
+        return Ok(FormFont::Absent);
+    };
+    if let Some(descriptor) = reader.entry(font, "FontDescriptor")? {
+        let Value::Dict(descriptor) = &*descriptor else {
+            return Ok(FormFont::Absent);
+        };
+        for key in ["FontFile", "FontFile2", "FontFile3"] {
+            if reader.entry(descriptor, key)?.is_some() {
+                // An embedded program draws other outlines than the
+                // Standard 14 font that it is named after.
+                return Ok(FormFont::Absent);
+            }
+        }
+    }
+    let supported = match reader.entry(font, "Encoding")?.as_deref() {
+        None => true,
+        Some(_) if matches!(base, "Symbol" | "ZapfDingbats") => false,
+        Some(Value::Name(name)) => latin_encoding(name.as_bytes()),
+        Some(Value::Dict(encoding)) => {
+            let base_supported = match reader.entry(encoding, "BaseEncoding")?.as_deref() {
+                None => true,
+                Some(Value::Name(name)) => latin_encoding(name.as_bytes()),
+                Some(_) => false,
+            };
+            let differences = match reader.entry(encoding, "Differences")?.as_deref() {
+                None => false,
+                Some(Value::Array(differences)) => !differences.is_empty(),
+                Some(_) => true,
+            };
+            base_supported && !differences
+        }
+        Some(_) => false,
+    };
+    Ok(if supported {
+        FormFont::Standard(base)
+    } else {
+        FormFont::Unsupported
+    })
+}
+
+/// Returns whether a named encoding of a text font selects only the Latin
+/// text glyphs that WinAnsi reaches.
+fn latin_encoding(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"StandardEncoding" | b"WinAnsiEncoding" | b"MacRomanEncoding"
+    )
 }
 
 /// Draws the states that a check box or radio button widget lacks: `Off`,
@@ -975,13 +1175,14 @@ impl TextStyle {
     /// Returns the style of a `/DA`: Helvetica, as `Helv`, for a font that
     /// is no Standard 14 abbreviation, and Helvetica fitted in black without
     /// one.
-    fn new(da: Option<DefaultAppearance>) -> Self {
+    fn new(da: Option<DefaultAppearance>, resolved_font: Option<&'static str>) -> Self {
         let (resource, size, color) = da.map_or_else(
             || ("Helv".to_owned(), 0.0, (0.0, 0.0, 0.0)),
             |da| (da.font, da.size, da.color),
         );
-        let base_font = standard::da_font(&resource);
-        let resource = if base_font == "Helvetica" && resource != "Helv" {
+        let base_font = resolved_font.unwrap_or_else(|| standard::da_font(&resource));
+        let resource = if resolved_font.is_none() && base_font == "Helvetica" && resource != "Helv"
+        {
             "Helv".to_owned()
         } else {
             resource
@@ -1018,6 +1219,7 @@ fn text_ops(
     value: &str,
     multiline: bool,
     align: Align,
+    face: Option<&mut FaceText<'_>>,
 ) -> Result<(), WidgetError> {
     if value.is_empty() {
         return Ok(());
@@ -1033,14 +1235,35 @@ fn text_ops(
     if size.0 <= 0.0 || size.1 <= 0.0 {
         return Ok(());
     }
-    let (layout, font_size) = standard::fit(&value, size, text.font, text.size, multiline, budget)?;
-    standard::text_ops(
+    let Some(face) = face else {
+        let (layout, font_size) =
+            standard::fit(&value, size, text.font, text.size, multiline, budget)?;
+        standard::text_ops(
+            out,
+            style.height,
+            rect,
+            &layout,
+            align,
+            text.style(font_size),
+        )?;
+        return Ok(());
+    };
+    let (layout, font_size) = standard::fit_with(
+        &value,
+        size,
+        text.size,
+        multiline,
+        budget,
+        |value, size, font_size| face.layout(value, size, font_size, FORM_LINE_HEIGHT),
+    )?;
+    standard::text_ops_with(
         out,
         style.height,
         rect,
         &layout,
         align,
         text.style(font_size),
+        |out, line| face.show(out, line, font_size),
     )?;
     Ok(())
 }
@@ -1054,6 +1277,7 @@ fn comb_ops(
     value: &str,
     max_len: usize,
     align: Align,
+    mut face: Option<&mut FaceText<'_>>,
 ) -> Result<(), WidgetError> {
     let budget = out.budget();
     let value = standard::single_line(value, budget)?;
@@ -1077,8 +1301,17 @@ fn comb_ops(
         layouts.try_reserve(graphemes.len())?;
         let mut fits = true;
         for grapheme in graphemes.iter() {
-            let layout =
-                standard::form_layout(grapheme, (cell, size.1), text.font, font_size, 1.0, budget)?;
+            let layout = match &face {
+                Some(face) => face.layout(grapheme, (cell, size.1), font_size, 1.0)?,
+                None => standard::form_layout(
+                    grapheme,
+                    (cell, size.1),
+                    text.font,
+                    font_size,
+                    1.0,
+                    budget,
+                )?,
+            };
             fits &= layout.fits() && layout.lines.len() == 1;
             layouts.try_push(layout)?;
         }
@@ -1102,14 +1335,26 @@ fn comb_ops(
             reason = "a comb has fewer cells than f64 counts exactly"
         )]
         let x0 = rect[0] + (start + index) as f64 * cell;
-        standard::text_ops(
-            out,
-            style.height,
-            [x0, rect[1], x0 + cell, rect[3]],
-            layout,
-            Align::Center,
-            text.style(font_size),
-        )?;
+        let cell = [x0, rect[1], x0 + cell, rect[3]];
+        match face.as_deref_mut() {
+            Some(face) => standard::text_ops_with(
+                out,
+                style.height,
+                cell,
+                layout,
+                Align::Center,
+                text.style(font_size),
+                |out, line| face.show(out, line, font_size),
+            )?,
+            None => standard::text_ops(
+                out,
+                style.height,
+                cell,
+                layout,
+                Align::Center,
+                text.style(font_size),
+            )?,
+        }
     }
     Ok(())
 }

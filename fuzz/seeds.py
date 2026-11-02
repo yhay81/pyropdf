@@ -21,6 +21,8 @@ sys.path.insert(0, str(ROOT / "tests"))
 from corpus import DAMAGE, NAMES, damaged  # noqa: E402
 
 ASSETS = ROOT / "tests" / "assets"
+#: The subset faces of the engine's font tests, as seeds of ``fonts``.
+FONTS = ROOT / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 TARGETS = ("index", "save", "bridge", "interpret")
 #: The values of uncompressed objects, as the ``value`` target reads them.
 OBJECT = re.compile(rb"\d+\s+\d+\s+obj\b(.*?)\bendobj", re.DOTALL)
@@ -60,6 +62,8 @@ def main() -> None:
             if len(content) <= MAX_CONTENT_SEED and CONTENT_OPERATOR.search(content):
                 write("content", content)
                 write("interpret", content)
+    for path in sorted(FONTS.glob("*.[ot]tf")):
+        write("fonts", path.read_bytes())
 
 
 if __name__ == "__main__":

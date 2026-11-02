@@ -45,6 +45,12 @@ message = "an object nests arrays and dictionaries too deeply"
 unit = "levels"
 reached = "An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`."
 
+[codes.object_parse_size]
+message = "an object is too large to parse"
+unit = "bytes"
+default = 268_435_456
+reached = "The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, which hayro-syntax would parse in one call that cannot be cancelled."
+
 # Decoding streams.
 
 [codes.decompressed_size]
@@ -350,6 +356,18 @@ unit = "bytes"
 default = 1_048_576
 reached = "The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8."
 
+[codes.shaped_glyph_count]
+message = "the text shapes into too many glyphs"
+unit = "glyphs"
+default = 1_048_576
+reached = "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
+
+[codes.font_input_size]
+message = "the font file is too large"
+unit = "bytes"
+default = 67_108_864
+reached = "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB."
+
 [codes.named_destination_count]
 message = "the named destinations are too many"
 unit = "entries"
@@ -408,7 +426,7 @@ reached = "A list of pages, such as the `pages` of `doc.render`, holds more entr
 [codes.memory_size]
 message = "the operation needs too much memory"
 unit = "bytes"
-reached = "The collections of one operation would hold more memory than it allows, or the allocator refuses it."
+reached = "The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or the allocator refuses it."
 
 [codes.deadline]
 message = "the operation ran past its deadline"

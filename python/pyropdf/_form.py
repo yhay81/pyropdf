@@ -13,8 +13,10 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, NoReturn, TypeAlias
 
 from pyropdf import _core
 from pyropdf._annotations import _BORDER_STYLE_NAMES, Border, _opaque_color, _rect
+from pyropdf._canvas import _cache
 from pyropdf._content import Color
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
+from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Rect
 from pyropdf._objects import Array, Dictionary, Name, Stream, String
 from pyropdf._page import Page
@@ -86,6 +88,8 @@ class FieldFlags(enum.IntFlag):
 
 
 _DEFINED_FIELD_FLAGS = sum(flag.value for flag in FieldFlags)
+# The fields whose values draw as text.
+_TEXT_TYPES = frozenset({FieldType.TEXT, FieldType.COMBOBOX, FieldType.LISTBOX})
 
 
 class ScriptTrigger(enum.StrEnum):
@@ -540,7 +544,8 @@ class Field:
         other text and choice fields that have none yet; the form's
         ``/NeedAppearances`` stays true while a widget is left without one.
         A value that WinAnsiEncoding cannot show leaves the widgets for the
-        viewer to draw. Setting a check box or radio button to a state name
+        viewer to draw, unless :attr:`Form.font` is set: then the field's
+        widgets are drawn in that face, in one undo step. Setting a check box or radio button to a state name
         selects that state in each widget that has it, or else in the first
         widget, and turns the others ``Off``; ``True`` names the first state
         that is not ``Off``, or ``"Yes"``, and ``False`` names ``"Off"``. The
@@ -555,7 +560,20 @@ class Field:
         if not isinstance(value, (str, bool)):
             msg = f"a field value is a str or bool: {value!r}"
             raise TypeError(msg)
-        _core.form_field_fill(self._core(), self._id, value)
+        document = self._document
+        font = document._form_font  # noqa: SLF001
+        if font is None or isinstance(value, bool) or self.type not in _TEXT_TYPES:
+            _core.form_field_fill(self._core(), self._id, value)
+            return
+        with document.transaction():
+            _core.form_field_fill(self._core(), self._id, value, False)  # noqa: FBT003 - the core's flag
+            face = font._font  # noqa: SLF001 - the package's own face.
+            drawn = _core.form_field_draw_face(self._core(), self._id, face)
+            xref, mapped = 0, {}
+            if drawn:
+                xref = embedded_font(document, font, _cache(document).fonts)
+                mapped = add_glyphs(document, xref, font, drawn)
+            _core.form_field_draw_face(self._core(), self._id, face, (xref, mapped))
 
     @property
     def scripts(self) -> Scripts:
@@ -645,6 +663,33 @@ class Form(Mapping[str, Field]):
         if not isinstance(flags, int) or isinstance(flags, bool):
             return SignatureFlags(0)
         return SignatureFlags(flags & (SignatureFlags.SIGNATURES_EXIST | SignatureFlags.APPEND_ONLY))
+
+    @property
+    def font(self) -> Font | None:
+        """Return or set the OpenType face that text and choice values draw in, or ``None``.
+
+        Without one, Helvetica draws WinAnsi values and other values are
+        left for the viewer to draw. With one, setting a text or choice
+        field draws its widgets in the face, embedded once in the document
+        as a Type0 font that a save subsets, and refuses a character that
+        the face has no glyph for. The font belongs to this ``Document``
+        object and is not saved. A Standard 14 font raises :class:`PdfError`.
+        """
+        return self._document._form_font  # noqa: SLF001
+
+    @font.setter
+    def font(self, font: Font | None) -> None:
+        if font is not None:
+            if not isinstance(font, Font):
+                msg = f"a form font is a Font or None: {font!r}"
+                raise TypeError(msg)
+            if font._font.standard_name is not None:  # noqa: SLF001 - the package's own face.
+                msg = (
+                    f"form appearances draw an OpenType Font, not the Standard 14 font {font.name!r}; "
+                    "load one with Font.from_file()"
+                )
+                raise PdfError(msg)
+        self._document._form_font = font  # noqa: SLF001
 
     @property
     def need_appearances(self) -> bool:
@@ -750,13 +795,17 @@ class _FieldSpecification:
             None if background_color is None else _opaque_color(background_color, "background_color"),
         )
 
-    def _text_style(self, font_size: object, text_color: object, align: object) -> None:
+    def _text_style(self, font: object, font_size: object, text_color: object, align: object) -> None:
+        if font is not None and (not isinstance(font, Font) or font._font.standard_name is None):  # noqa: SLF001 - the package's own face.
+            msg = f"a field names a Standard 14 Font, such as Font.standard('Courier'): {font!r}"
+            raise TypeError(msg)
         if isinstance(font_size, bool) or not isinstance(font_size, (int, float)) or not 0 <= font_size <= 10000:  # noqa: PLR2004
             msg = f"font_size is a number from 0, which fits the text, to 10000: {font_size!r}"
             raise ValueError(msg)
         if align not in _FIELD_ALIGNMENTS:
             msg = f"align must be one of {', '.join(_FIELD_ALIGNMENTS)}: {align!r}"
             raise ValueError(msg)
+        object.__setattr__(self, "font", font)
         object.__setattr__(self, "font_size", float(font_size))
         object.__setattr__(self, "text_color", _opaque_color(text_color, "text_color"))
         object.__setattr__(self, "align", align)
@@ -778,6 +827,9 @@ class _FieldSpecification:
             spec["text_color"] = text_color.rgb
             spec["font_size"] = getattr(self, "font_size")  # noqa: B009
             spec["align"] = _FIELD_ALIGNMENTS.index(getattr(self, "align"))  # noqa: B009
+            font: Font | None = getattr(self, "font")  # noqa: B009
+            if font is not None:
+                spec["font_name"] = font._font.standard_name  # noqa: SLF001 - the package's own face.
         return spec
 
 
@@ -786,8 +838,9 @@ class TextField(_FieldSpecification):
     """A text field, or another widget of the text field of that name, as ``page.widgets.add`` takes it.
 
     ``rect`` is in display coordinates. ``value`` and ``default_value`` are
-    the field's text, drawn in Helvetica at ``font_size`` (0 fits the text),
-    in ``text_color``, aligned by ``align``. ``flags`` adds
+    the field's text, drawn in ``font``, a Standard 14 font that is
+    Helvetica by default, at ``font_size`` (0 fits the text), in
+    ``text_color``, aligned by ``align``. ``flags`` adds
     :class:`FieldFlags` such as ``MULTILINE``, ``PASSWORD``, ``COMB``,
     ``REQUIRED``, or ``READ_ONLY``; ``max_length`` bounds the text.
     """
@@ -798,6 +851,7 @@ class TextField(_FieldSpecification):
     value: str | None
     default_value: str | None
     max_length: int | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -815,6 +869,7 @@ class TextField(_FieldSpecification):
         value: str | None = None,
         default_value: str | None = None,
         max_length: int | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         align: Literal["left", "center", "right"] = "left",
@@ -826,7 +881,7 @@ class TextField(_FieldSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, align)
+        self._text_style(font, font_size, text_color, align)
         for text, field in ((value, "value"), (default_value, "default_value")):
             if text is not None:
                 _field_text(text, field)
@@ -993,6 +1048,7 @@ class ComboBox(_ChoiceSpecification):
     choices: tuple[FieldChoice, ...]
     value: str | None
     default_value: str | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -1010,6 +1066,7 @@ class ComboBox(_ChoiceSpecification):
         choices: Iterable[FieldChoice | str],
         value: str | None = None,
         default_value: str | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         align: Literal["left", "center", "right"] = "left",
@@ -1021,7 +1078,7 @@ class ComboBox(_ChoiceSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, align)
+        self._text_style(font, font_size, text_color, align)
         self._choices(choices, value, default_value)
 
 
@@ -1039,6 +1096,7 @@ class ListBox(_ChoiceSpecification):
     choices: tuple[FieldChoice, ...]
     value: str | None
     default_value: str | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -1056,6 +1114,7 @@ class ListBox(_ChoiceSpecification):
         choices: Iterable[FieldChoice | str],
         value: str | None = None,
         default_value: str | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         align: Literal["left", "center", "right"] = "left",
@@ -1067,7 +1126,7 @@ class ListBox(_ChoiceSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, align)
+        self._text_style(font, font_size, text_color, align)
         self._choices(choices, value, default_value)
 
 
@@ -1075,14 +1134,15 @@ class ListBox(_ChoiceSpecification):
 class PushButton(_FieldSpecification):
     """A pushbutton, which holds no value, as ``page.widgets.add`` takes it.
 
-    ``caption`` is drawn centred in Helvetica at ``font_size`` in
-    ``text_color``.
+    ``caption`` is drawn centred in ``font``, a Standard 14 font that is
+    Helvetica by default, at ``font_size`` in ``text_color``.
     """
 
     _kind: ClassVar[str] = "pushbutton"
     name: str
     rect: Rect
     caption: str | None
+    font: Font | None
     font_size: float
     text_color: Color
     align: Literal["left", "center", "right"]
@@ -1098,6 +1158,7 @@ class PushButton(_FieldSpecification):
         rect: Sequence[float],
         *,
         caption: str | None = None,
+        font: Font | None = None,
         font_size: float = 0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         label: str | None = None,
@@ -1108,7 +1169,7 @@ class PushButton(_FieldSpecification):
     ) -> None:
         """Validate the specification."""
         self._common(name, rect, label, flags, border, border_color, background_color)
-        self._text_style(font_size, text_color, "center")
+        self._text_style(font, font_size, text_color, "center")
         if caption is not None:
             _field_text(caption, "caption")
         object.__setattr__(self, "caption", caption)

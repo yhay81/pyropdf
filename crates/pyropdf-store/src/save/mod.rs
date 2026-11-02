@@ -32,7 +32,7 @@ use renumber::Renumbering;
 
 pub use base::FileBase;
 pub use linear::is_linearized;
-pub use recode::Streams;
+pub use recode::{Streams, deflate};
 
 /// A save either reports a typed store error, preserves the sink's I/O
 /// error, or refuses a mode unsupported by this base.

@@ -78,6 +78,25 @@ pub fn text_ops(
     align: Align,
     style: Style<'_>,
 ) -> Result<(), LayoutError> {
+    text_ops_with(out, height, rect, layout, align, style, |out, line| {
+        push_string(out, line)?;
+        out.try_extend_from_slice(b" Tj\n")?;
+        Ok(())
+    })
+}
+
+/// Appends the operators that draw the lines of `layout` in `rect` as
+/// [`text_ops`] does, with `show` appending the operators that show each
+/// line's text, as an embedded face's glyphs draw it.
+pub fn text_ops_with(
+    out: &mut BudgetVec<'_, u8>,
+    height: f64,
+    rect: [f64; 4],
+    layout: &TextBox<'_>,
+    align: Align,
+    style: Style<'_>,
+    mut show: impl FnMut(&mut BudgetVec<'_, u8>, &str) -> Result<(), LayoutError>,
+) -> Result<(), LayoutError> {
     out.budget().poll()?;
     let channels = match style.color {
         DeviceColor::Gray(gray) => [gray, gray, gray],
@@ -127,7 +146,11 @@ pub fn text_ops(
             reason = "a layout holds at most MAX_LINES lines"
         )]
         let baseline = rect[1] + layout.ascent * style.size + number as f64 * layout.leading;
-        let spaces = line.text.bytes().filter(|&byte| byte == b' ').count();
+        let mut spaces = 0;
+        for chunk in line.text.as_bytes().chunks(super::scan::STEP) {
+            out.budget().poll()?;
+            spaces += chunk.iter().filter(|&&byte| byte == b' ').count();
+        }
         #[expect(
             clippy::cast_precision_loss,
             reason = "a line holds fewer spaces than f64 counts exactly"
@@ -156,8 +179,7 @@ pub fn text_ops(
             fmt(height - baseline),
         );
         out.try_extend_from_slice(positioning.as_bytes())?;
-        push_string(out, line.text)?;
-        out.try_extend_from_slice(b" Tj\n")?;
+        show(out, line.text)?;
     }
     out.try_extend_from_slice(b"ET\nQ\n")?;
     Ok(())
@@ -167,7 +189,10 @@ pub fn text_ops(
 /// outside printable ASCII in octal.
 fn push_string(out: &mut BudgetVec<'_, u8>, text: &str) -> Result<(), LayoutError> {
     out.try_push(b'(')?;
-    for character in text.chars() {
+    for (index, character) in text.chars().enumerate() {
+        if index % super::scan::STEP == 0 {
+            out.budget().poll()?;
+        }
         let byte = winansi_byte(character).ok_or(LayoutError::NotWinAnsi)?;
         match byte {
             b'(' | b')' | b'\\' => out.try_extend_from_slice(&[b'\\', byte])?,

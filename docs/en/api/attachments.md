@@ -16,7 +16,10 @@ Attachment(document: Document, name: str)
 
 A handle on one embedded file of a document, as `doc.attachments[name]` returns it.
 
-Properties read the document on every access. A handle raises
+Properties read the document on every access, and assigning
+`filename`, `description`, `created`, or `modified` edits the
+file specification at once; `del` removes all but the file name. A
+handle raises
 `StaleObjectError` once its attachment has been deleted.
 
 ### `Attachment.name`
@@ -33,7 +36,9 @@ The key under which the document lists the attachment.
 Attachment.filename: str
 ```
 
-The viewer-facing file name (`/UF`, else `/F`), or `""`.
+The viewer-facing file name (`/UF`, else `/F`), or `""`; assignable, never empty.
+
+Settable.
 
 ### `Attachment.description`
 
@@ -41,7 +46,9 @@ The viewer-facing file name (`/UF`, else `/F`), or `""`.
 Attachment.description: str | None
 ```
 
-The description (`/Desc`), or `None`.
+The description (`/Desc`), or `None`; assignable, and `del` removes it.
+
+Settable.
 
 ### `Attachment.size`
 
@@ -57,7 +64,12 @@ The uncompressed size that the file declares (`/Params /Size`), or -1, as pymupd
 Attachment.created: str | None
 ```
 
-The creation date (`/Params /CreationDate`) as stored, or `None`.
+The creation date (`/Params /CreationDate`) as stored, or `None`; assignable and deletable.
+
+Dates are PDF date strings such as `D:20260101120000Z`, of up to 64
+printable ASCII characters, and need an embedded file stream.
+
+Settable.
 
 ### `Attachment.modified`
 
@@ -65,7 +77,11 @@ The creation date (`/Params /CreationDate`) as stored, or `None`.
 Attachment.modified: str | None
 ```
 
-The modification date (`/Params /ModDate`) as stored, or `None`; `write` sets it.
+The modification date (`/Params /ModDate`) as stored, or `None`; assignable and deletable.
+
+`write` sets it to the current time.
+
+Settable.
 
 ### `Attachment.read`
 

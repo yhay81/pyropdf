@@ -40,6 +40,7 @@ ComboBox(
     choices: Iterable[FieldChoice | str],
     value: str | None = None,
     default_value: str | None = None,
+    font: Font | None = None,
     font_size: float = 0,
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     align: Literal['left', 'center', 'right'] = 'left',
@@ -208,7 +209,8 @@ appearances of its widgets in a Standard 14 font, with those of the
 other text and choice fields that have none yet; the form's
 `/NeedAppearances` stays true while a widget is left without one.
 A value that WinAnsiEncoding cannot show leaves the widgets for the
-viewer to draw. Setting a check box or radio button to a state name
+viewer to draw, unless `Form.font` is set: then the field's
+widgets are drawn in that face, in one undo step. Setting a check box or radio button to a state name
 selects that state in each widget that has it, or else in the first
 widget, and turns the others `Off`; `True` names the first state
 that is not `Off`, or `"Yes"`, and `False` names `"Off"`. The
@@ -293,6 +295,23 @@ Form.signature_flags: SignatureFlags
 
 The AcroForm's `/SigFlags`, without undefined bits; a document without a form reads none.
 
+### `Form.font`
+
+```python
+Form.font: Font | None
+```
+
+Or set the OpenType face that text and choice values draw in, or `None`.
+
+Without one, Helvetica draws WinAnsi values and other values are
+left for the viewer to draw. With one, setting a text or choice
+field draws its widgets in the face, embedded once in the document
+as a Type0 font that a save subsets, and refuses a character that
+the face has no glyph for. The font belongs to this `Document`
+object and is not saved. A Standard 14 font raises `PdfError`.
+
+Settable.
+
 ### `Form.need_appearances`
 
 ```python
@@ -342,6 +361,7 @@ ListBox(
     choices: Iterable[FieldChoice | str],
     value: str | None = None,
     default_value: str | None = None,
+    font: Font | None = None,
     font_size: float = 0,
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     align: Literal['left', 'center', 'right'] = 'left',
@@ -366,6 +386,7 @@ PushButton(
     rect: Sequence[float],
     *,
     caption: str | None = None,
+    font: Font | None = None,
     font_size: float = 0,
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     label: str | None = None,
@@ -378,8 +399,8 @@ PushButton(
 
 A pushbutton, which holds no value, as `page.widgets.add` takes it.
 
-`caption` is drawn centred in Helvetica at `font_size` in
-`text_color`.
+`caption` is drawn centred in `font`, a Standard 14 font that is
+Helvetica by default, at `font_size` in `text_color`.
 
 ## `RadioButton`
 
@@ -488,6 +509,7 @@ TextField(
     value: str | None = None,
     default_value: str | None = None,
     max_length: int | None = None,
+    font: Font | None = None,
     font_size: float = 0,
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     align: Literal['left', 'center', 'right'] = 'left',
@@ -502,8 +524,9 @@ TextField(
 A text field, or another widget of the text field of that name, as `page.widgets.add` takes it.
 
 `rect` is in display coordinates. `value` and `default_value` are
-the field's text, drawn in Helvetica at `font_size` (0 fits the text),
-in `text_color`, aligned by `align`. `flags` adds
+the field's text, drawn in `font`, a Standard 14 font that is
+Helvetica by default, at `font_size` (0 fits the text), in
+`text_color`, aligned by `align`. `flags` adds
 `FieldFlags` such as `MULTILINE`, `PASSWORD`, `COMB`,
 `REQUIRED`, or `READ_ONLY`; `max_length` bounds the text.
 
@@ -641,6 +664,22 @@ Widget.text_color: Color
 ```
 
 Or set the color of the widget's text, from the `/DA` that it draws with.
+
+Settable.
+
+### `Widget.font`
+
+```python
+Widget.font: Font | None
+```
+
+Or set the font named by the widget's `/DA`.
+
+The `/DA` font resolves through the form's `/DR`. When its
+resource is absent, a Standard 14 abbreviation such as `/Cour`
+names the font; a widget without a `/DA` defaults to Helvetica.
+Returns `None` for an embedded or other non-Standard 14 font.
+Setting takes a Standard 14 `Font` and names it in the form's `/DR`.
 
 Settable.
 

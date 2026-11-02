@@ -15,7 +15,9 @@ cases (issue 467). Intended differences:
 from __future__ import annotations
 
 import math
+import re
 import tracemalloc
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any, cast, get_args
 
 import pytest
@@ -26,6 +28,24 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from pyropdf import StandardFontName
+
+
+def _new_page(width: float = 400, height: float = 200) -> tuple[pyropdf.Document, pyropdf.Page]:
+    doc = pyropdf.Document()
+    return doc, doc.pages.new((width, height))
+
+
+def _end(glyph: pyropdf.Glyph) -> float:
+    assert glyph.advance is not None
+    return glyph.origin.x + glyph.advance
+
+
+def _baselines(page: pyropdf.Page) -> list[float]:
+    return [run.glyphs[0].origin.y for run in page.content().text_runs]
+
+
+def _base_font(data: bytes, name: str) -> bool:
+    return re.search(rb"/BaseFont\s*/" + re.escape(name.encode()) + rb"[\s/>]", data) is not None
 
 
 @pytest.mark.parametrize(
@@ -328,3 +348,110 @@ def test_core_encoding_rejects_glyphs_missing_from_the_selected_font() -> None:
     assert not face.has_glyph(ord("ð"))
     with pytest.raises(pyropdf.PdfError, match="no glyph"):
         face.encode("ð")
+
+
+def test_standard_14_fonts_measure_and_draw_with_afm_widths() -> None:
+    helvetica = pyropdf.Font.standard("Helvetica")
+    bold = pyropdf.Font.standard("Helvetica-Bold")
+    # Adobe AFM widths: H 722, e 556, l 222, o 556, space 278, W 944, r 333, d 556.
+    assert helvetica.text_width("Hello World", 11) == pytest.approx(56.837)
+    assert helvetica.has_glyph("A")
+    assert helvetica.has_glyph("é")
+    assert not helvetica.has_glyph("あ")
+    with pytest.raises(pyropdf.PdfError, match="WinAnsi"):
+        helvetica.text_width("あ", 11)
+
+    doc, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("Hello", (10, 40), font=bold, size=14)
+        with pytest.raises(ValueError, match="WinAnsi"):
+            canvas.text("日本語", (10, 80), font=helvetica)
+    assert _base_font(doc.to_bytes(compress=False), "Helvetica-Bold")
+    (run,) = page.content().text_runs
+    assert _end(run.glyphs[-1]) == pytest.approx(10 + bold.text_width("Hello", 14), abs=1e-2)
+
+
+def test_one_font_draws_on_several_documents() -> None:
+    font = pyropdf.Font.standard("Times-Roman")
+    for _ in range(2):
+        _doc, page = _new_page()
+        with page.draw() as canvas:
+            canvas.text("Shared", (10, 40), font=font)
+        assert page.text() == "Shared\n"
+
+
+@pytest.mark.parametrize("name", ["Times-Roman", "Helvetica"])
+def test_text_height_is_the_height_that_a_textbox_needs(name: StandardFontName) -> None:
+    font = pyropdf.Font.standard(name)
+    text = "A paragraph that wraps onto several lines in a narrow box. " * 3
+    size, width, x, top = 10.5, 150.0, 30.0, 40.25
+
+    height = font.text_height(text, size, width=width)
+    _doc, page = _new_page(400, 400)
+    with page.draw() as canvas:
+        exact = canvas.textbox((x, top, x + width, top + height), text, font=font, size=size)
+        short = canvas.textbox((x, 300, x + width, 300 + height - 0.5), text, font=font, size=size)
+
+    assert exact == pyropdf.TextFit(spare_height=0)
+    assert short.spare_height == pytest.approx(-0.5)
+    # Lines lie one line height apart, the font's ascender minus its descender.
+    line_height = (font.ascender - font.descender) * size
+    baselines = _baselines(page)
+    assert len(baselines) > 2
+    assert height == pytest.approx(len(baselines) * line_height)
+    assert baselines[0] == pytest.approx(top + font.ascender * size, abs=1e-3)
+    gaps = [later - earlier for earlier, later in pairwise(baselines)]
+    assert gaps == pytest.approx([line_height] * len(gaps), abs=1e-3)
+    # The descender of the last line ends at the bottom of the box.
+    assert baselines[-1] - font.descender * size == pytest.approx(top + height, abs=1e-3)
+
+
+def test_text_and_textbox_space_lines_alike() -> None:
+    font = pyropdf.Font.standard("Helvetica")
+    lines = "first\nsecond\nthird"
+    size = 12.0
+    top = 50 - font.ascender * size
+    _doc, page = _new_page(400, 300)
+    with page.draw() as canvas:
+        canvas.text(lines, (20, 50), font=font, size=size)
+        canvas.textbox((200, top, 380, 280), lines, font=font, size=size)
+        canvas.text(lines, (20, 150), font=font, size=size, line_height=1.5)
+        canvas.textbox((200, top + 100, 380, 280), lines, font=font, size=size, line_height=1.5)
+    by_column: dict[bool, list[float]] = {False: [], True: []}
+    for run in page.content().text_runs:
+        by_column[run.glyphs[0].origin.x > 100].append(run.glyphs[0].origin.y)
+    assert len(by_column[False]) == 6
+    assert sorted(by_column[False]) == pytest.approx(sorted(by_column[True]), abs=1e-3)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Helvetica", "Times-Roman", "Times-Bold", "Courier-Bold", "Courier-BoldOblique"],
+)
+def test_standard_14_fonts_draw_under_their_postscript_names(name: StandardFontName) -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new()
+    font = pyropdf.Font.standard(name)
+
+    with page.draw() as canvas:
+        canvas.text("Named", (40, 60), font=font)
+        assert canvas.textbox((40, 100, 300, 160), "Boxed", font=font).fits
+
+    data = doc.to_bytes(compress=False)
+    assert _base_font(data, name)
+    text = pyropdf.open(data).pages[0].text()
+    assert all(word in text for word in ("Named", "Boxed"))
+
+
+def test_symbol_fonts_draw_with_their_built_in_encoding() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new()
+
+    with page.draw() as canvas:
+        assert canvas.textbox((40, 40, 300, 100), "abc", font=pyropdf.Font.standard("Symbol")).fits
+        canvas.text("abc", (40, 140), font=pyropdf.Font.standard("ZapfDingbats"))
+
+    data = doc.to_bytes(compress=False)
+    assert _base_font(data, "Symbol")
+    assert _base_font(data, "ZapfDingbats")
+    assert b"WinAnsiEncoding" not in data

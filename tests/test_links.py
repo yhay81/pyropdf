@@ -1,13 +1,15 @@
 """Tests for Page.links: reading, adding, editing, and removing link annotations.
 
-Ported from pyropdf's tests/test_links.py at ebb01d3. Resolve named
+Ported from pylopdf's tests/test_links.py at ebb01d3. Resolve named
 destinations through a /Names tree in the real-world pdfTeX/hyperref
 usrguide.pdf, and direct /Dest arrays in minimal fixtures.
 
-Intended differences from pyropdf:
+Intended differences from pylopdf:
 
-- ``doc.insert_pdf`` is not in pyropdf yet, so its link tests are not
-  ported.
+- pylopdf's ``insert_pdf`` cases import pages through ``pages.insert`` and
+  ``pages.extend``. Refusals name pyropdf's own messages, and an
+  annotation that aliases its page is imported rather than refused, since
+  pyropdf does not port that guard (DESIGN.md section 14).
 - A link handle names its page by object, so it survives edits of other
   pages, as annotation handles do; it goes stale while its page is gone.
 - ``Link.layer`` waits for optional content in pyropdf.
@@ -772,3 +774,241 @@ def test_oversized_link_text_is_refused_before_encoding() -> None:
     with pytest.raises(pyropdf.LimitError) as caught:
         page.links.add((1, 1, 10, 10), Unencoded("x" * (MIB + 1)))
     assert caught.value.code == "annotation_input_size"
+
+
+# The page-import cases of pyropdf's tests/test_links.py at ebb01d3c, where
+# ``insert_pdf`` imports pages through ``pages.insert`` and ``pages.extend``.
+
+
+def build_pdf(texts: list[str]) -> bytes:
+    """Return one page per text, with MediaBox and Resources on the tree's root."""
+    kids = " ".join(f"{4 + 2 * i} 0 R" for i in range(len(texts)))
+    objects = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: f"<< /Type /Pages /Kids [{kids}] /Count {len(texts)} /MediaBox [0 0 612 792] "
+        "/Resources << /Font << /F1 3 0 R >> >> >>",
+        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    }
+    for i, text in enumerate(texts):
+        content = f"BT /F1 24 Tf 72 720 Td ({text}) Tj ET"
+        objects[4 + 2 * i] = f"<< /Type /Page /Parent 2 0 R /Contents {5 + 2 * i} 0 R >>"
+        objects[5 + 2 * i] = f"<< /Length {len(content)} >>\nstream\n{content}\nendstream"
+    return build_raw_pdf(objects)
+
+
+def _build_import_link_fixture(*, legacy: bool = False, action: bool = True) -> bytes:
+    """Mix source-local, URI, and remote links in an indirect annotation array."""
+    catalog_destinations = "/Dests << /section 7 0 R >>" if legacy else "/Names << /Dests 7 0 R >>"
+    local_destination = "/A 6 0 R" if action else "/Dest /section"
+    destination = "<< /D [4 0 R /XYZ 5 195 1.25] >>"
+    return build_raw_pdf(
+        {
+            1: f"<< /Type /Catalog /Pages 2 0 R {catalog_destinations} >>",
+            2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots 8 0 R >>",
+            4: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>",
+            5: f"<< /Type /Annot /Subtype /Link /Rect [10 10 100 30] {local_destination} >>",
+            6: "<< /S /GoTo /D (section) >>",
+            7: destination if legacy else f"<< /Names [(section) {destination}] >>",
+            8: (
+                "[5 0 R "
+                "<< /Type /Annot /Subtype /Link /Rect [10 40 100 60] "
+                "/A << /S /URI /URI (https://example.com/) >> >> "
+                "<< /Type /Annot /Subtype /Link /Rect [10 70 100 90] "
+                "/A << /S /GoToR /F (remote.pdf) /D (section) >> >>]"
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("action", [False, True])
+def test_insert_pdf_resolves_source_named_destinations(*, legacy: bool, action: bool) -> None:
+    source = pyropdf.open(_build_import_link_fixture(legacy=legacy, action=action))
+    source_bytes = source.to_bytes()
+    target = pyropdf.Document()
+    target.pages.new((200, 200))
+
+    target.pages.extend(source.pages)
+
+    for merged in [target, pyropdf.open(target.to_bytes())]:
+        assert [link.target for link in merged.pages[1].links] == [
+            Destination(2, Point(5, 5), 1.25),
+            "https://example.com/",
+            RemoteDestination("remote.pdf", name="section"),
+        ]
+    assert source.to_bytes() == source_bytes
+    assert source.pages[0].links[0].target == Destination(1, Point(5, 5), 1.25)
+
+
+def test_insert_pdf_named_destination_collision_stays_source_local() -> None:
+    source = pyropdf.open(_build_import_link_fixture())
+    target = pyropdf.open(_build_import_link_fixture())
+
+    target.pages.extend(source.pages)
+
+    assert _page_of(target.pages[0].links[0]) == 1
+    assert _page_of(target.pages[2].links[0]) == 3
+    assert _page_of(pyropdf.open(target.to_bytes()).pages[2].links[0]) == 3
+
+
+def test_insert_pdf_reversed_range_remaps_internal_link() -> None:
+    source = pyropdf.open(_build_import_link_fixture())
+    target = pyropdf.open(build_pdf(["Before", "After"]))
+
+    target.pages.insert(1, source.pages[0:2][::-1])
+
+    assert target.pages[2].links[0].target == Destination(1, Point(5, 5), 1.25)
+    assert "Before" in target.pages[0].text()
+    assert "After" in target.pages[3].text()
+
+
+def test_insert_pdf_reversed_range_remaps_integer_destination() -> None:
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 200 200] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Annots [5 0 R] >>",
+                4: "<< /Type /Page /Parent 2 0 R >>",
+                5: "<< /Type /Annot /Subtype /Link /Rect [10 10 100 30] /Dest [1 /XYZ 5 195 null] >>",
+            }
+        )
+    )
+    target = pyropdf.Document()
+
+    target.pages.extend(source.pages[0:2][::-1])
+
+    assert target.pages[1].links[0].target == Destination(0, Point(5, 5))
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_insert_pdf_omits_links_outside_imported_range(*, named: bool) -> None:
+    source = pyropdf.open(_build_import_link_fixture() if named else _build_direct_dest_fixture())
+    source_bytes = source.to_bytes()
+    target = pyropdf.Document()
+
+    target.pages.extend(source.pages[0:1])
+
+    expected = ["https://example.com/", RemoteDestination("remote.pdf", name="section")] if named else []
+    assert [link.target for link in target.pages[0].links] == expected
+    assert [link.target for link in pyropdf.open(target.to_bytes()).pages[0].links] == expected
+    assert source.to_bytes() == source_bytes
+
+
+def test_insert_pdf_unresolved_name_does_not_bind_to_destination_catalog() -> None:
+    source = pyropdf.open(_build_named_dest_tree_fixture({6: "<< /Names [(other) [3 0 R /Fit]] >>"}))
+    target = pyropdf.open(_build_named_dest_tree_fixture({6: "<< /Names [(missing) [3 0 R /Fit]] >>"}))
+
+    target.pages.extend(source.pages)
+
+    assert target.pages[0].links[0].target == Destination(0)
+    assert len(target.pages[1].links) == 0
+
+
+def _build_import_target(shape: str, populated_pdf: bytes) -> pyropdf.Document:
+    if shape == "populated":
+        return pyropdf.open(populated_pdf)
+    if shape == "empty":
+        return pyropdf.Document()
+    return pyropdf.open(build_raw_pdf({1: "<< /Type /Catalog >>"}))
+
+
+@pytest.mark.parametrize("target_shape", ["populated", "empty", "missing_pages"])
+def test_insert_pdf_named_destination_limit_is_atomic(target_shape: str) -> None:
+    objects: dict[int, str] = {}
+    for object_id in range(6, 38):
+        objects[object_id] = f"<< /Kids [{object_id + 1} 0 R] >>"
+    objects[38] = "<< /Names [(missing) [3 0 R /Fit]] >>"
+    source = pyropdf.open(_build_named_dest_tree_fixture(objects))
+    target = _build_import_target(target_shape, build_pdf(["Unchanged"]))
+    page = target.pages[0] if target_shape == "populated" else None
+    before = target.to_bytes()
+    source_before = source.to_bytes()
+    expected_error = "names no page tree" if target_shape == "missing_pages" else "tree is too deep"
+
+    with pytest.raises(pyropdf.PdfError, match=expected_error):
+        target.pages.extend(source.pages)
+
+    assert target.to_bytes() == before
+    assert source.to_bytes() == source_before
+    if page is not None:
+        assert "Unchanged" in page.text()
+
+
+@pytest.mark.parametrize("target_shape", ["populated", "empty"])
+def test_insert_pdf_imports_an_annotation_aliasing_a_page(target_shape: str) -> None:
+    # pylopdf refuses a page that is its own link annotation before it
+    # changes anything. pyropdf does not port that guard (DESIGN.md section
+    # 14): the import copies what the page reaches, and leaves the source
+    # and the target's existing links as they were.
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /Names << /Dests 5 0 R >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: (
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [3 0 R] "
+                    "/Subtype /Link /Rect [1 1 10 10] /Dest (section) >>"
+                ),
+                4: "<< >>",
+                5: "<< /Names [(section) [3 0 R /Fit]] >>",
+            }
+        )
+    )
+    target = _build_import_target(target_shape, _build_import_link_fixture())
+    count = len(target.pages)
+    source_before = source.to_bytes()
+
+    target.pages.extend(source.pages)
+
+    assert len(pyropdf.open(target.to_bytes()).pages) == count + 1
+    if target_shape == "populated":
+        assert _page_of(target.pages[0].links[0]) == 1
+    assert source.to_bytes() == source_before
+
+
+def test_usrguide_named_destinations_survive_merge() -> None:
+    source = pyropdf.open(ASSETS / "usrguide.pdf")
+    original = [[(link.rect, link.target) for link in page.links] for page in source.pages]
+    target = pyropdf.Document()
+    target.pages.new()
+
+    target.pages.extend(source.pages)
+
+    merged = pyropdf.open(target.to_bytes())
+    for page_number, expected in enumerate(original, start=1):
+        actual = [(link.rect, link.target) for link in merged.pages[page_number].links]
+        assert len(actual) == len(expected)
+        for (before_rect, before), (after_rect, after) in zip(expected, actual, strict=True):
+            assert after_rect == pytest.approx(before_rect)
+            if isinstance(before, Destination):
+                assert after == Destination(before.page + 1, before.point, before.zoom)
+            else:
+                assert after == before
+
+
+def test_insert_pdf_refusal_preserves_original_interpretation_fast_path() -> None:
+    """Keep a bounded original snapshot usable after source-navigation refusal."""
+    compressed = pyropdf.open(build_pdf(["Unchanged"] * 8)).to_bytes(object_streams=True)
+    limit = len(compressed) + 10
+    assert len(pyropdf.open(compressed).to_bytes()) > limit
+    target = pyropdf.open(compressed, limits=pyropdf.DocumentLimits(max_interpretation_size=limit))
+    page = target.pages[0]
+    original_text = page.text()
+    original_png = page.pixmap(alpha=True).to_bytes()
+    # Serialize without the options that change the document and its snapshot.
+    original_bytes = target.to_bytes(compress=False, prune=False)
+
+    objects: dict[int, str] = {}
+    for object_id in range(6, 38):
+        objects[object_id] = f"<< /Kids [{object_id + 1} 0 R] >>"
+    objects[38] = "<< /Names [(missing) [3 0 R /Fit]] >>"
+    source = pyropdf.open(_build_named_dest_tree_fixture(objects))
+
+    with pytest.raises(pyropdf.PdfError, match="tree is too deep"):
+        target.pages.extend(source.pages)
+
+    assert target.to_bytes(compress=False, prune=False) == original_bytes
+    assert page.text() == original_text
+    assert page.pixmap(alpha=True).to_bytes() == original_png
