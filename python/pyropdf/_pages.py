@@ -206,9 +206,9 @@ class Pages(Sequence[Page]):
         overrides it. The pages go where :meth:`new` puts one, in order, and
         are returned.
         """
-        frames = _image_frames(source)
-        override = _dpi_pair(dpi) if dpi is not None else None
         document = self._document
+        frames = _image_frames(document, source)
+        override = _dpi_pair(dpi) if dpi is not None else None
         if index is not None:
             if not _is_int(index):
                 msg = f"page indexes must be integers, not {type(index).__name__}"
@@ -369,6 +369,7 @@ def _dpi_pair(dpi: float | tuple[float, float]) -> tuple[float, float]:
 
 
 def _image_frames(
+    document: Document,
     source: str | os.PathLike[str] | bytes | bytearray | memoryview | Pixmap,
 ) -> Iterable[tuple[bytes, tuple[float, float] | None]]:
     """Return each frame of ``source`` as JPEG, JPEG 2000, or PNG data with the resolution it records."""
@@ -376,7 +377,7 @@ def _image_frames(
 
     if isinstance(source, Pixmap):
         x_dpi, y_dpi = source.resolution
-        return [(source.to_bytes("png", max_size=None), (float(x_dpi), float(y_dpi)))]
+        return [(_core.pixmap_png(document._core(), source), (float(x_dpi), float(y_dpi)))]  # noqa: SLF001
     if isinstance(source, (bytes, bytearray, memoryview)):
         size = source.nbytes if isinstance(source, memoryview) else len(source)
         if size > _MAX_IMAGE_INPUT:
