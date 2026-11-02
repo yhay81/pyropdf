@@ -23,7 +23,7 @@ use pyropdf_engine::forms::face::{FaceFont, FaceText};
 use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::forms::{self as widgets, WidgetError};
 use pyropdf_engine::standard::{DA_FONTS, DefaultAppearance, winansi_byte};
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, SharedBudget};
 use pyropdf_store::memo::{DerivedMap, ReadDependencies, ReadSet, Reads};
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::refs::copy_for_edit;
@@ -974,7 +974,7 @@ fn walk_with_trace(reads: &mut Reads<'_>, tracing: bool) -> PyResult<Form> {
 }
 
 /// Returns the version that reads see.
-fn view(document: &_Document) -> PyResult<(Arc<Version>, Budget)> {
+fn view(document: &_Document) -> PyResult<(Arc<Version>, SharedBudget)> {
     Ok((document.reading_parent()?.0, document.budget()))
 }
 

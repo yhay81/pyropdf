@@ -94,7 +94,7 @@ impl _OcrEngine {
     ) -> PyResult<Vec<OcrTuple>> {
         let budget = document
             .as_ref()
-            .map_or_else(Budget::default, |document| document.budget());
+            .map_or_else(|| Budget::default().share(), |document| document.budget());
         drop(document);
         let (pixels, layout) = pixmap.ocr_raster();
         drop(pixmap);

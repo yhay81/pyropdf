@@ -614,9 +614,7 @@ pub fn stream_read<'py>(
     max_size: Option<u64>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let version = document.reading()?;
-    let budget = document
-        .budget()
-        .with_limit(LimitCode::StreamDataSize, max_size);
+    let budget = document.call_budget(&[(LimitCode::StreamDataSize, max_size)])?;
     let value = root_value(&version, Some(root), &[], &budget)?;
     let Value::Stream(stream) = &*value else {
         return Err(stale(Some(root), &[]));

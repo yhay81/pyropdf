@@ -15,7 +15,7 @@ use pyropdf_engine::annotations::AppearanceSettler;
 use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
 use pyropdf_engine::fonts::settle::FontSubsetSettler;
 pub(crate) use pyropdf_engine::forms::text_string;
-use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode};
+use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode, SharedBudget};
 use pyropdf_store::memo::Memo;
 use pyropdf_store::pages::{Page, PageIndex, PageTree};
 use pyropdf_store::save::{self, FileBase};
@@ -26,7 +26,7 @@ use pyropdf_store::version::{Document, MemoryBase, Version};
 use pyropdf_store::{Error, write};
 
 use crate::annotations::links::NamedDestinations;
-use crate::errors::{DocumentClosedError, MalformedPdfError, save_error, store_error};
+use crate::errors::{DocumentClosedError, MalformedPdfError, limit_error, save_error, store_error};
 use crate::forms::{FillCache, Form};
 use crate::history::DEFAULT_HISTORY_LIMIT;
 use crate::outline::Outline;
@@ -148,8 +148,46 @@ impl _Document {
         self.history.clear();
     }
 
-    /// Returns a budget of one operation from the document's limits.
-    pub(crate) fn budget(&self) -> Budget {
+    /// Returns the budget of what this thread runs now: its innermost
+    /// canvas operation, so that the canvas's reads and writes charge one
+    /// operation, or a new operation from the document's limits.
+    pub(crate) fn budget(&self) -> SharedBudget {
+        self.history
+            .operation()
+            .unwrap_or_else(|| self.fresh_budget().share())
+    }
+
+    /// Returns the budget of one call whose `max_*` options set `limits`.
+    ///
+    /// Inside a canvas operation the call charges the operation, and an
+    /// option can only lower its limits; `None` keeps the operation's.
+    /// Otherwise each option replaces the document's limit, and `None`
+    /// removes it.
+    pub(crate) fn call_budget(
+        &self,
+        limits: &[(LimitCode, Option<u64>)],
+    ) -> PyResult<SharedBudget> {
+        let Some(mut operation) = self.history.operation() else {
+            let budget = limits
+                .iter()
+                .fold(self.fresh_budget(), |budget, &(code, limit)| {
+                    budget.with_limit(code, limit)
+                });
+            return Ok(budget.share());
+        };
+        for &(code, limit) in limits {
+            if let Some(limit) = limit {
+                operation = operation
+                    .tightened(code, limit)
+                    .map_err(|error| limit_error(&error))?;
+            }
+        }
+        Ok(operation)
+    }
+
+    /// Returns a new operation from the document's limits, apart from any
+    /// canvas operation.
+    pub(crate) fn fresh_budget(&self) -> Budget {
         Budget::new(&self.limits)
     }
 }

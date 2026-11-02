@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use pyo3::prelude::*;
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, LimitCode, SharedBudget};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::refs;
@@ -582,13 +582,13 @@ fn walk(reads: &mut Reads<'_>, edit: Option<((u32, u16), &Dict)>) -> PyResult<Ou
 }
 
 /// Returns the version that reads see.
-fn view(document: &_Document) -> PyResult<(Arc<Version>, Budget)> {
+fn view(document: &_Document) -> PyResult<(Arc<Version>, SharedBudget)> {
     Ok((document.reading_parent()?.0, document.budget()))
 }
 
 /// Returns the outline's items of the version that reads see, memoized,
 /// and that version's page index.
-type OutlineView = (Arc<Outline>, Arc<Version>, Arc<PageIndex>, Budget);
+type OutlineView = (Arc<Outline>, Arc<Version>, Arc<PageIndex>, SharedBudget);
 fn memoized(document: &_Document) -> PyResult<OutlineView> {
     let (version, parent) = document.reading_parent()?;
     let budget = document.budget();

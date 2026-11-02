@@ -2,6 +2,7 @@
 //! pages draw with each font, as hayro resolves them, and the subset of a
 //! program to those glyphs.
 
+use std::ops::Deref;
 use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
@@ -12,11 +13,12 @@ use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
 use pyropdf_engine::fonts::{self, Format};
 use pyropdf_engine::standard::{self, Base14Font, LayoutError, LineMetrics, Placement};
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, SharedBudget};
 use pyropdf_store::settle::Structure;
 
 use crate::document::_Document;
 use crate::errors::{LimitError, PdfError, limit_error, store_error};
+use crate::history::OperationBudget;
 use crate::pixmap::bridge_error;
 
 /// Returns, for each font dictionary of `fonts`, by object number and
@@ -385,7 +387,7 @@ impl _Font {
         size: f64,
         max_text_size: Option<u64>,
     ) -> PyResult<Bound<'py, PyTuple>> {
-        let (budget, text) = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(text, None, &[(LimitCode::TextInputSize, max_text_size)])?;
         let mut widths = BudgetVec::new(&budget);
         for character in text.chars() {
             let width = match &self.kind {
@@ -461,7 +463,7 @@ impl _Font {
         size: f64,
         max_text_size: Option<u64>,
     ) -> PyResult<f64> {
-        let (budget, text) = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(text, None, &[(LimitCode::TextInputSize, max_text_size)])?;
         match &self.kind {
             Kind::Standard(font) => {
                 if let Some(character) = text
@@ -481,10 +483,36 @@ impl _Font {
     }
 
     /// Shapes one line of `text` in an embedded face, in visual order.
-    fn shape(&self, py: Python<'_>, text: &str) -> PyResult<Vec<Placed>> {
+    /// With `operation`, as for [`_Font::encode`].
+    #[pyo3(signature = (text, *, operation=None))]
+    fn shape(
+        &self,
+        py: Python<'_>,
+        text: &str,
+        operation: Option<PyRef<'_, OperationBudget>>,
+    ) -> PyResult<Vec<Placed>> {
         let Kind::Embedded(face) = &self.kind else {
             return Err(PyValueError::new_err("a Standard 14 font is not shaped"));
         };
+        let budget = match operation.as_deref() {
+            Some(operation) => {
+                operation.ensure_active()?;
+                TextBudget::shared(operation.operation.clone())
+            }
+            None => TextBudget {
+                budget: Budget::default().share(),
+                start: None,
+            },
+        };
+        // The character index of each byte, and the glyphs that Python
+        // receives.
+        let index_size = u64::try_from(text.len().saturating_add(1))
+            .unwrap_or(u64::MAX)
+            .saturating_mul(u64::try_from(std::mem::size_of::<usize>()).unwrap_or(u64::MAX));
+        budget
+            .charge(LimitCode::MemorySize, index_size)
+            .map_err(|error| limit_error(&error))?;
+        let budget = &budget;
         py.detach(|| {
             // Python indexes text by character, the shaper by UTF-8 byte.
             let mut characters = vec![0; text.len() + 1];
@@ -492,7 +520,7 @@ impl _Font {
                 characters[at..at + character.len_utf8()].fill(index);
             }
             characters[text.len()] = text.chars().count();
-            Ok(shaped(face, text, &Budget::default())?
+            Ok(shaped(face, text, budget)?
                 .into_iter()
                 .map(|glyph| {
                     (
@@ -534,12 +562,16 @@ impl _Font {
     }
 
     /// Returns the WinAnsi bytes that draw `text` in a Standard 14 font.
-    #[pyo3(signature = (text, max_text_size=Some(1_048_576)))]
+    ///
+    /// With `operation`, a canvas's, the call charges the operation and
+    /// observes its limits, deadline and cancellation.
+    #[pyo3(signature = (text, max_text_size=Some(1_048_576), *, operation=None))]
     fn encode<'py>(
         &self,
         py: Python<'py>,
         text: &Bound<'_, PyString>,
         max_text_size: Option<u64>,
+        operation: Option<PyRef<'_, OperationBudget>>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         let Kind::Standard(font) = &self.kind else {
             return Err(PyValueError::new_err(
@@ -547,7 +579,11 @@ impl _Font {
             ));
         };
         let font = *font;
-        let (budget, text) = text_budget(text, max_text_size)?;
+        let (budget, text) = text_budget(
+            text,
+            operation.as_deref(),
+            &[(LimitCode::TextInputSize, max_text_size)],
+        )?;
         let mut bytes = BudgetVec::new(&budget);
         for character in text.chars() {
             if standard::glyph_code(font, character).is_none() {
@@ -578,8 +614,9 @@ impl _Font {
     /// canvas text places them, and returns the lines with their widths
     /// and whether each justifies, the height that they need, the spare
     /// height, the first baseline's depth in em, and the leading. At most
-    /// `max_lines` lines, or any number for `None`.
-    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false))]
+    /// `max_lines` lines, or any number for `None`. With `operation`, as for
+    /// [`_Font::encode`].
+    #[pyo3(signature = (text, width, height, size, line_height, justify, max_lines, max_text_size=Some(1_048_576), normalize=false, *, operation=None))]
     #[expect(clippy::too_many_arguments, reason = "the options of a text box")]
     fn layout(
         &self,
@@ -593,9 +630,16 @@ impl _Font {
         max_lines: Option<u64>,
         max_text_size: Option<u64>,
         normalize: bool,
+        operation: Option<PyRef<'_, OperationBudget>>,
     ) -> PyResult<Py<PyTuple>> {
-        let (budget, text) = text_budget(text, max_text_size)?;
-        let budget = budget.with_limit(LimitCode::TextLineCount, max_lines);
+        let (budget, text) = text_budget(
+            text,
+            operation.as_deref(),
+            &[
+                (LimitCode::TextInputSize, max_text_size),
+                (LimitCode::TextLineCount, max_lines),
+            ],
+        )?;
         let placement = Placement::lines(self.line_metrics(), line_height);
         let em = self.em();
         py.detach(|| {
@@ -720,9 +764,32 @@ impl _Font {
 /// Bounds a text operation before input-derived collections grow.
 fn text_budget<'a>(
     text: &'a Bound<'_, PyString>,
-    max_text_size: Option<u64>,
-) -> PyResult<(Budget, &'a str)> {
-    let budget = Budget::default().with_limit(LimitCode::TextInputSize, max_text_size);
+    operation: Option<&OperationBudget>,
+    limits: &[(LimitCode, Option<u64>)],
+) -> PyResult<(TextBudget, &'a str)> {
+    let budget = match operation {
+        Some(operation) => {
+            operation.ensure_active()?;
+            let mut budget = operation.operation.clone();
+            for &(code, limit) in limits {
+                if let Some(limit) = limit {
+                    budget = budget
+                        .tightened(code, limit)
+                        .map_err(|error| limit_error(&error))?;
+                }
+            }
+            TextBudget::shared(budget)
+        }
+        None => TextBudget {
+            budget: limits
+                .iter()
+                .fold(Budget::default(), |budget, &(code, limit)| {
+                    budget.with_limit(code, limit)
+                })
+                .share(),
+            start: None,
+        },
+    };
     // Call str's own length method: a subclass may override __len__.
     let chars = text
         .py()
@@ -780,5 +847,41 @@ fn layout_error(error: &LayoutError, max_lines: Option<u64>) -> PyErr {
         LayoutError::Limit(refusal) => limit_error(refusal),
         LayoutError::InvalidGeometry => PyValueError::new_err(error.to_string()),
         _ => PdfError::new_err(error.to_string()),
+    }
+}
+
+/// The budget of one text call: its own, or a view of a canvas operation.
+///
+/// A canvas charges the bytes that it keeps of a call's result itself, so
+/// a call returns to the operation, when it ends, the memory that it
+/// charged and did not release.
+struct TextBudget {
+    budget: SharedBudget,
+    /// The operation's memory in use when the call began.
+    start: Option<u64>,
+}
+
+impl TextBudget {
+    fn shared(budget: SharedBudget) -> Self {
+        let start = Some(budget.used(LimitCode::MemorySize));
+        Self { budget, start }
+    }
+}
+
+impl Deref for TextBudget {
+    type Target = Budget;
+
+    fn deref(&self) -> &Budget {
+        &self.budget
+    }
+}
+
+impl Drop for TextBudget {
+    fn drop(&mut self) {
+        if let Some(start) = self.start {
+            let used = self.budget.used(LimitCode::MemorySize);
+            self.budget
+                .release(LimitCode::MemorySize, used.saturating_sub(start));
+        }
     }
 }
