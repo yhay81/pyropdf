@@ -364,6 +364,9 @@ def canvas_page_form(
     snapshot: _CanvasSourceSnapshot,
     /,
 ) -> int | None: ...
+def canvas_copy_image(
+    document: _Document, source: _Document, number: int, operation: _OperationBudget, /
+) -> int | None: ...
 def copy_page_resources(
     document: _Document,
     source: _Document,

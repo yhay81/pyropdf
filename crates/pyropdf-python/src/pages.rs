@@ -621,6 +621,53 @@ pub fn canvas_page_form(
     Ok(Some(form))
 }
 
+/// Copies image object `number` of `source`, as it is in the version that
+/// reads of `source` see, with the objects it reaches but pages, into
+/// `document`'s canvas transaction, and returns the copy's number. Reading
+/// and writing charge the canvas `operation`, under the source's limits
+/// too. `None` when `source` has no object `number` or it is no image
+/// XObject.
+#[pyfunction]
+pub fn canvas_copy_image(
+    py: Python<'_>,
+    document: &_Document,
+    source: &_Document,
+    number: u32,
+    operation: &OperationBudget,
+) -> PyResult<Option<u32>> {
+    if !operation.is_active_on(document) {
+        return Err(PyValueError::new_err(
+            "the canvas operation is not active on this document",
+        ));
+    }
+    let budget = operation.for_source(source)?;
+    let version = source.reading()?;
+    let Some(generation) = version.generation(number) else {
+        return Ok(None);
+    };
+    let reference = Reference::new(number, generation);
+    match resolve(&version, Some(&Value::Reference(reference)), &budget)? {
+        Some(Value::Stream(stream)) if matches!(stream.dict().get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"Image") =>
+            {}
+        _ => return Ok(None),
+    }
+    let copy = document.edit(py, |transaction, _| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let (root, _) = root(&transaction.snapshot(), &budget)?;
+        let along = import::Along {
+            objects: std::slice::from_ref(&reference),
+            ..import::Along::default()
+        };
+        let imported = import::import(transaction, &version, Vec::new(), &[], along, root, &budget)
+            .map_err(store)?;
+        Ok(match imported.objects.into_iter().next() {
+            Some(Value::Reference(copy)) => Some(copy.number()),
+            _ => None,
+        })
+    })?;
+    Ok(copy)
+}
+
 /// Sets the `/Rotate` of a page, a multiple of 90 that the caller
 /// normalized, in one transaction. Returns `false` for a stale page.
 #[pyfunction]

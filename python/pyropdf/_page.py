@@ -671,7 +671,7 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
-        return _content_from_core(raw)
+        return _content_from_core(raw, self._document)
 
     def text(  # noqa: PLR0913 - the text options are all keyword-only
         self,

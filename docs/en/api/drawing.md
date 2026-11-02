@@ -255,6 +255,29 @@ this document, is stored once while its content, its geometry and
 every object its resources reach are unchanged.
 Annotations and form fields of the source page are not drawn.
 
+### `Canvas.draw`
+
+```python
+Canvas.draw(item: Path | Image)
+```
+
+Paint a `Path` or `Image` item that `Page.content` returned.
+
+The item's clips, its groups' opacity and blend modes, and its own
+blend mode are applied; soft masks are not, and pattern paints
+cannot be drawn yet. An image is drawn from its object, with the
+image's own masks: a canvas on a page of the item's document draws
+that object again, and one of another document copies it, with the
+objects it reaches but pages, as it is when this call is made. Images
+without an object number, inline images and image masks, cannot be
+drawn yet, and text runs follow in a later release; an item that
+cannot be drawn raises `TypeError` or `ValueError` and draws
+nothing.
+
+Redrawing the paths and images of a page this way renders within 16
+levels of 255 per channel of the page at 72 dpi, outside the boxes of
+the items that cannot be drawn and of those under a soft mask.
+
 ### `Canvas.clip`
 
 ```python

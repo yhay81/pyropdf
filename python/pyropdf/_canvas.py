@@ -20,6 +20,7 @@ from pyropdf._content import (
     Color,
     CurveTo,
     FillRule,
+    Image,
     LineCap,
     LineJoin,
     LineTo,
@@ -826,6 +827,7 @@ class Canvas:
         "_buffered",
         "_charged",
         "_closed",
+        "_copies",
         "_depth",
         "_elements",
         "_entered",
@@ -865,6 +867,8 @@ class Canvas:
         self._buffered = 0
         self._charged = 0
         self._xobjects: dict[str, int] = {}
+        # The copy of each image of another document that the canvas drew, by its document and number.
+        self._copies: dict[tuple[Document, int], int] = {}
         # A Standard 14 font's base name, or the object number of an embedded face's Type0 font.
         self._fonts: dict[str, str | int] = {}
         self._gstates: dict[tuple[float | None, float | None, str | None], str] = {}
@@ -1693,6 +1697,90 @@ class Canvas:
             + name.encode()
             + b" Do\nQ"
         )
+
+    def draw(self, item: Path | Image) -> None:
+        """Paint a :class:`Path` or :class:`Image` item that :meth:`Page.content` returned.
+
+        The item's clips, its groups' opacity and blend modes, and its own
+        blend mode are applied; soft masks are not, and pattern paints
+        cannot be drawn yet. An image is drawn from its object, with the
+        image's own masks: a canvas on a page of the item's document draws
+        that object again, and one of another document copies it, with the
+        objects it reaches but pages, as it is when this call is made. Images
+        without an object number, inline images and image masks, cannot be
+        drawn yet, and text runs follow in a later release; an item that
+        cannot be drawn raises ``TypeError`` or ``ValueError`` and draws
+        nothing.
+
+        Redrawing the paths and images of a page this way renders within 16
+        levels of 255 per channel of the page at 72 dpi, outside the boxes of
+        the items that cannot be drawn and of those under a soft mask.
+        """
+        self._check_open()
+        if isinstance(item, Image):
+            self._draw_image(item)
+            return
+        if not isinstance(item, Path):
+            msg = f"draw() paints Path and Image items, not {type(item).__name__}"
+            raise TypeError(msg)
+        if item.fill is not None and not isinstance(item.fill, Color):
+            msg = "a canvas fills with a Color; pattern paints cannot be drawn yet"
+            raise TypeError(msg)
+        # Checked before any scope opens, so that a refused stroke draws nothing.
+        stroke = _stroke(item.stroke)
+        with self._item_context(item):
+            self.path(item.segments, fill=item.fill, stroke=stroke, fill_rule=item.fill_rule)
+
+    def _draw_image(self, item: Image) -> None:
+        """Paint an :class:`Image` item from the object it names."""
+        if item.xref == 0:
+            msg = "an image without an object number, an inline image or an image mask, cannot be drawn yet"
+            raise ValueError(msg)
+        if item._source is None or item._source.document is None:  # noqa: SLF001
+            msg = "the image does not name its document; draw an Image that Page.content() returned"
+            raise ValueError(msg)
+        source = item._source.document  # noqa: SLF001
+        document = self._page.document
+        if source is document:
+            _image_stream(document, item.xref)
+            xref = item.xref
+        else:
+            known = self._copies.get((source, item.xref))
+            if known is None:
+                copy = _core.canvas_copy_image(document._core(), source._core(), item.xref, self._active)  # noqa: SLF001
+                if copy is None:
+                    msg = f"object {item.xref} of the item's document is not an image XObject"
+                    raise ValueError(msg)
+                known = self._copies[source, item.xref] = copy
+            xref = known
+        # The item's square holds the first row at y = 0, PDF's at y = 1.
+        matrix = tuple(Matrix(1, 0, 0, -1, 0, 1) * item.matrix)
+        with self._item_context(item):
+            name = self._add_xobject(xref)
+            self._emit(b"q\n" + _numbers(*matrix) + b" cm\n/" + name.encode() + b" Do\nQ")
+
+    @contextmanager
+    def _item_context(self, item: Path | Image) -> Generator[None]:
+        """Apply an item's clips, groups, and blend mode around its painting."""
+        scopes: list[AbstractContextManager[None]] = [
+            self.clip(clip.segments, fill_rule=clip.fill_rule) for clip in item.context.clips
+        ]
+        for group in item.context.groups:
+            if group.blend_mode is not BlendMode.NORMAL:
+                scopes.append(self.blend(group.blend_mode))
+            if group.opacity < 1:
+                scopes.append(self.opacity(group.opacity))
+        if item.blend_mode is not BlendMode.NORMAL:
+            scopes.append(self.blend(item.blend_mode))
+        entered: list[AbstractContextManager[None]] = []
+        try:
+            for scope in scopes:
+                scope.__enter__()
+                entered.append(scope)
+            yield
+        finally:
+            for scope in reversed(entered):
+                scope.__exit__(None, None, None)
 
     # Scopes.
 
