@@ -7,6 +7,7 @@ difference: pyropdf writes no object streams, so the compressed save of
 
 from __future__ import annotations
 
+import random
 import zlib
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event
@@ -910,3 +911,59 @@ def test_attachment_data_must_be_bytes_like(data: object) -> None:
 
     assert list(doc.attachments) == ["a"]
     assert doc.history.steps == steps
+
+
+_LARGE = random.Random(0).randbytes(8 * 1024 * 1024)  # noqa: S311 - test data, not a secret
+
+
+def _attach(doc: pyropdf.Document) -> None:
+    doc.attachments.add("large.bin", _LARGE)
+
+
+def _rewrite(doc: pyropdf.Document) -> None:
+    doc.attachments["small.txt"].write(_LARGE)
+
+
+def _annotate(doc: pyropdf.Document) -> None:
+    doc.pages[0].annotations.add(pyropdf.FileAttachment((20, 30), _LARGE, filename="large.bin"))
+
+
+def _reannotate(doc: pyropdf.Document) -> None:
+    attached = doc.pages[0].annotations[0].file
+    assert attached is not None
+    attached.write(_LARGE)
+
+
+@pytest.mark.parametrize("edit", [_attach, _rewrite, _annotate, _reannotate])
+@pytest.mark.parametrize(
+    ("limits", "code"),
+    [
+        (pyropdf.DocumentLimits(max_memory_size=1024 * 1024), "memory_size"),
+        (pyropdf.DocumentLimits(max_duration=0.01), "deadline"),
+    ],
+)
+def test_embedding_a_large_file_is_refused_without_changes(
+    edit: Callable[[pyropdf.Document], None],
+    limits: pyropdf.DocumentLimits,
+    code: str,
+) -> None:
+    # The data is incompressible, so compressing it charges its full size
+    # and outlasts the deadline: the refusal comes from inside the edit.
+    source = pyropdf.Document()
+    source.pages.new((200, 200))
+    source.attachments.add("small.txt", b"small")
+    source.pages[0].annotations.add(pyropdf.FileAttachment((20, 30), b"small", filename="note.txt"))
+    doc = pyropdf.open(source.to_bytes(), limits=limits)
+    before = doc.to_bytes(), doc.history.steps
+
+    with pytest.raises(pyropdf.LimitError) as raised:
+        edit(doc)
+
+    assert raised.value.code == code
+    assert (doc.to_bytes(), doc.history.steps) == before
+    assert list(doc.attachments) == ["small.txt"]
+    assert doc.attachments["small.txt"].read() == b"small"
+    attached = doc.pages[0].annotations[0].file
+    assert attached is not None
+    assert attached.read() == b"small"
+    assert len(doc.pages[0].annotations) == 1
