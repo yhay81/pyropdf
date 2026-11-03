@@ -35,6 +35,14 @@ def test_the_tag_is_checked_against_the_workspace_version() -> None:
     assert f"## {version}" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
+def test_the_github_release_is_checked_to_be_immutable() -> None:
+    (job,) = re.findall(r"\n  github-release:\n(.*?)(?=\n  \S|\Z)", WORKFLOW, flags=re.DOTALL)
+    checked = job.index("--jq .immutable")
+    assert job.index("gh release create") < checked
+    assert 'if [ "${immutable}" != true ]; then' in job[checked:]
+    assert "exit 1" in job[checked:]
+
+
 def test_the_readme_example_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     (example,) = re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL)
