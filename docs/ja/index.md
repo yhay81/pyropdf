@@ -75,7 +75,7 @@ hide:
 
 <div class="pp-section-title">
 <h2>いまできること</h2>
-<p>0.2 は文書の読み取り・描画・編集・クリーンアップ・軽量化に対応します。<code>page.draw</code> による作図は後のリリースです。</p>
+<p>0.2.1 は文書の読み取り・描画・編集・署名・クリーンアップ・軽量化と、<code>page.draw</code> によるページへの作図に対応します。</p>
 </div>
 
 <div class="pp-cards">

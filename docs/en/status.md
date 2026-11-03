@@ -13,14 +13,15 @@ each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)
 how much of ISO 32000-2 each part covers.
 
-Not yet in 0.2:
+Not yet in 0.2.1:
 
-- text on the canvas of `page.draw` and creating fonts; paths, images,
-  and placed pages are on `main`;
-- free text and stamp annotations, which need text on the canvas;
-- creating digital signatures, which is being prototyped;
-- the content provenance and interpreter fuel that depend on hayro changes
-  under review.
+- redaction, and removing the content outside a rectangle, which need the
+  content provenance of a hayro change under review;
+- the interpreter fuel and cancellation that would bound rendering and
+  interpretation, also a hayro change under review;
+- pixmaps in CMYK, and selectable text in SVG, which wait on hayro;
+- canvas text in other instances of a variable face, and color glyphs,
+  which wait on a design decision.
 
 Progress is tracked in the
 [issue tree](https://github.com/yhay81/pyropdf/issues/1).

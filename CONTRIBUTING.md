@@ -58,3 +58,12 @@ uv run --group docs zensical build -f mkdocs.yml -s
 Pull requests are squash-merged once CI passes and the maintainer has
 reviewed them. By contributing, you agree that your contribution is licensed
 under the [MIT License](LICENSE).
+
+## Releases
+
+The public API is what `pyropdf.__all__` exports and the
+[API reference](https://pyropdf.haya.works/api/) describes. A release that
+only adds to it or fixes it is a patch release, such as 0.2.1 after 0.2.0.
+A minor release is for a change that breaks it, such as removing or
+renaming a public name or parameter, and follows a deprecation where
+possible. [CHANGELOG.md](CHANGELOG.md) lists what each release holds.

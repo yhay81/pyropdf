@@ -57,18 +57,24 @@ boxes that `words()` and `search()` return; see
 
 ## Encoding
 
-`pixmap.save(path)` writes PNG or JPEG by the file's extension, and
+`pixmap.save(path)` writes the format that the file's extension names, and
 `pixmap.to_bytes("png")` or `to_bytes("jpeg", quality=...)` returns the
-encoded bytes. JPEG has no alpha, so encode an opaque pixmap.
+encoded bytes. Besides PNG and JPEG, both write PAM, PBM, PGM, PPM, PNM,
+PSD, and PostScript. Only PNG, PAM, and PSD keep alpha, and the other
+formats refuse it, so encode an opaque pixmap.
 
 ## Pixel operations
 
 Each operation returns a new pixmap: `invert(rect=None)`, `gamma(value)`,
 `tint(black, white)`, `to_gray()`, `to_rgb()`, `with_alpha()`,
-`without_alpha(background)`, `crop(rect)`, and `scale(width, height)`.
-Rectangles are in whole pixels. `Pixmap.from_bytes(data)` and
-`Pixmap.open(path)` read PNG and JPEG, and `to_pil()` returns a Pillow
-image when Pillow is installed.
+`without_alpha(background)`, `crop(rect)`, `scale(width, height)`,
+`rotate(degrees)`, `flip(axis)`, `warp(quad, width, height)`,
+`fill(value, rect=None)`, and `with_pixel(x, y, value)`. `pixel(x, y)`,
+`colors(rect=None)`, `color_count(rect=None)`, and `top_color(rect=None)`
+read the pixels. Rectangles are in whole pixels. `Pixmap.from_bytes(data)`
+and `Pixmap.open(path)` read PNG, JPEG, PBM, PGM, PPM, PAM, BMP, GIF, TIFF,
+and JPEG 2000, and `to_pil()` returns a Pillow image when Pillow is
+installed.
 
 ```python
 import pyropdf
