@@ -59,7 +59,7 @@ fn main() {
             totals[2] += bridged.stats().store;
             totals[3] += bridged.stats().hayro;
             let started = Instant::now();
-            render::raster(&bridged, &render::Fallback::default(), at, &options).unwrap();
+            render::raster(&bridged, at, &options).unwrap();
             totals[4] += started.elapsed();
         }
         let total: Duration = totals.iter().sum();
