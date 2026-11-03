@@ -867,7 +867,14 @@ The display-space font size of the first glyph.
 ## `TilingPattern`
 
 ```python
-TilingPattern(*, bbox: Rect, x_step: float, y_step: float, matrix: Matrix)
+TilingPattern(
+    *,
+    bbox: Rect,
+    x_step: float,
+    y_step: float,
+    matrix: Matrix,
+    opacity: float = 1.0,
+)
 ```
 
 A paint that repeats a pattern cell.
