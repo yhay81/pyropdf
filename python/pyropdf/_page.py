@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from pyropdf._pixmap import Pixmap
     from pyropdf._text import _CoreBlock, _TextOptions
 
-#: Elements that one ``Page.content()`` reads by default (``content_element_count``).
+#: Elements that one ``Page.content()`` or ``Page.paths()`` reads by default (``content_element_count``).
 _DEFAULT_MAX_CONTENT_ELEMENTS = 262_144
 #: UTF-8 bytes of one ``Page.svg()`` by default (``svg_output_size``).
 _DEFAULT_MAX_SVG_SIZE = 64 * 1024 * 1024
