@@ -272,7 +272,8 @@ def test_appearances_stay_without_annotations() -> None:
 
 @pytest.mark.parametrize("where", ["page", "appearance"])
 def test_unreadable_content_leaves_the_document_unchanged(where: str) -> None:
-    unreadable = "0 0 1 rg 1 2 3 4 5 6 7 8 9 10 11 12 m 0 0 10 10 re f"
+    # hayro reads at most 33 operands and stops at a 34th.
+    unreadable = "0 0 1 rg " + " ".join(str(number) for number in range(1, 35)) + " m 0 0 10 10 re f"
     annots = "/Annots [<< /Type /Annot /Subtype /Square /Rect [20 40 60 60] /AP << /N 13 0 R >> >>]"
     extra: dict[int, str | bytes] = {
         13: _stream(unreadable if where == "appearance" else "0 0 1 rg", "/Subtype /Form /BBox [0 0 40 20] ")

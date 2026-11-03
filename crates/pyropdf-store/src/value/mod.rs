@@ -18,8 +18,8 @@
 //! Equality compares what values are, not how they are written: lexemes and
 //! the form of a string do not count, and reals are equal when their `f64`
 //! values are identical, bit for bit. Cloning, comparing, and dropping a
-//! value recurse into the values it holds; hayro-syntax 0.8 parses no object
-//! nested deeper than 64 levels.
+//! value recurse into the values it holds; the store converts no object
+//! nested deeper than [`MAX_NESTING`] levels.
 
 mod bytes;
 mod copy;
@@ -32,6 +32,7 @@ use std::fmt;
 
 pub use bytes::Bytes;
 pub(crate) use copy::{copy_dict_for_edit, copy_for_edit};
+pub use read::MAX_NESTING;
 #[cfg(test)]
 pub(crate) use read::PARSES;
 pub(crate) use read::is_integer;

@@ -151,8 +151,12 @@ fn reals_keep_their_f64_exactly() {
 
 #[test]
 fn references_that_name_no_object_read_as_null() {
+    // hayro-syntax reads object numbers as `u32` (I8, yhay81/pyropdf#18):
+    // `-1 0 R` is two integers and a keyword that it reads as null.
     assert_eq!(parse(b"[-1 0 R 1 65536 R 0 0 R]"), {
         Value::Array(Array::from(vec![
+            Value::Integer(-1),
+            Value::Integer(0),
             Value::Null,
             Value::Null,
             Value::Reference(Reference::new(0, 0)),
@@ -242,17 +246,17 @@ fn a_value_that_hayro_syntax_cannot_read_is_null() {
 }
 
 #[test]
-fn a_panic_in_hayro_syntax_is_a_malformed_input_error() {
-    // hayro-syntax 0.8 skips this name but panics reading it (I3,
-    // yhay81/pyropdf#19). Its next release reads it without panicking, and
-    // this test then changes with the adoption.
-    let error = Value::parse(&Bytes::from(&b"[/AB#FG]"[..]), &Budget::default()).unwrap_err();
-    assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
-    // The order of a dictionary's keys falls back to their bytes when
-    // reading its entries again panics.
+fn a_name_whose_escape_is_not_hexadecimal_keeps_its_bytes() {
+    // hayro-syntax 0.8 skipped this name but panicked reading it, which the
+    // conversion's guard turned into a malformed input error. hayro-syntax
+    // 0.9 reads it as written (I3, yhay81/pyropdf#19).
+    assert_eq!(
+        parse(b"[/AB#FG]"),
+        Value::Array(Array::from(vec![Value::Name(name("AB#FG"))]))
+    );
     let value = parse(b"<< /Z 1 /B#20 2 /AB#FG 3 /C 4 >>");
-    assert_eq!(keys(dict(&value)), [&b"Z"[..], b"C", b"B "]);
-    assert_eq!(dict(&value).get("B "), Some(&Value::Integer(2)));
+    assert_eq!(keys(dict(&value)), [&b"Z"[..], b"B ", b"AB#FG", b"C"]);
+    assert_eq!(dict(&value).get("AB#FG"), Some(&Value::Integer(3)));
 }
 
 #[test]
@@ -543,15 +547,30 @@ fn a_real_with_a_lexeme_is_written_as_it() {
 }
 
 #[test]
-fn the_deepest_object_that_hayro_syntax_parses_converts_and_writes_back() {
+fn the_deepest_object_that_the_store_converts_writes_back() {
+    use hayro_syntax::object::{FromBytes, Object};
+
     let nested = |depth: usize| format!("{}0{}", "[".repeat(depth), "]".repeat(depth)).into_bytes();
     let budget = Budget::default().with_limit(LimitCode::ObjectValueDepth, None);
-    let deepest = Value::parse(&Bytes::from(nested(64)), &budget).unwrap();
+    let deepest = Value::parse(&Bytes::from(nested(MAX_NESTING)), &budget).unwrap();
     let mut out = crate::budget::BudgetVec::new(&budget);
     crate::write::canonical(&mut out, &deepest).unwrap();
-    assert_eq!(out.as_slice(), nested(64));
-    let error = Value::parse(&Bytes::from(nested(65)), &budget).unwrap_err();
+    assert_eq!(out.as_slice(), nested(MAX_NESTING));
+    // hayro-syntax 0.9 parses 512 levels, and the store refuses what its
+    // own recursion does not reach.
+    for depth in [MAX_NESTING + 1, 512] {
+        let deeper = Bytes::from(nested(depth));
+        assert!(Object::from_bytes(deeper.as_slice()).is_some(), "{depth}");
+        let error = Value::parse(&deeper, &budget).unwrap_err();
+        assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
+    }
+    let mut dict = b"<< /A ".to_vec();
+    dict.extend_from_slice(&nested(MAX_NESTING));
+    dict.extend_from_slice(b" >>");
+    let dict = Bytes::from(dict);
+    let error = Value::parse(&dict, &budget).unwrap_err();
     assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
+    assert!(Object::from_bytes(nested(513).as_slice()).is_none());
 }
 
 #[test]
@@ -574,6 +593,34 @@ fn a_real_keeps_the_lexeme_it_is_made_from() {
             "{lexeme:?}"
         );
     }
+}
+
+#[test]
+fn a_stream_whose_data_is_in_an_external_file_reads_but_does_not_decode() {
+    // hayro-syntax 0.9 reads such a stream, which 0.8 refused (#224).
+    for source in [
+        &b"<</Length 4/F (data.bin)>>stream
+data
+endstream"[..],
+        b"<</Length 4/F <</Type/Filespec/F (data.bin)>>/Filter/ASCIIHexDecode>>stream
+6461
+endstream",
+        b"<</Length 4/F 9 0 R>>stream
+data
+endstream",
+    ] {
+        let value = parse(source);
+        assert!(stream(&value).dict().get("F").is_some());
+        assert_eq!(stream(&value).data().as_slice().len(), 4);
+        let error = stream(&value).decoded(&Budget::default()).unwrap_err();
+        assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
+    }
+    // An inline image's abbreviated filter is a name, which a stream's
+    // `/F` is not.
+    let value = parse(b"<</Length 4/F/AHx>>stream
+data
+endstream");
+    assert_eq!(stream(&value).decoded(&Budget::default()).unwrap(), b"data");
 }
 
 #[test]

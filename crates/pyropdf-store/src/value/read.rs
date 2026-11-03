@@ -25,6 +25,16 @@ use crate::{Error, LimitExceeded, Result};
 /// How many values the conversion converts between two polls of the budget.
 const POLL_INTERVAL: u32 = 1024;
 
+/// The deepest nesting of arrays and dictionaries that the conversion
+/// accepts, the outermost container being level 1.
+///
+/// Cloning, comparing, dropping, copying, and decrypting a value recurse
+/// into the values it holds, as does the binding's conversion of an operand.
+/// hayro-syntax 0.8 parsed no deeper object, which bounded that recursion;
+/// hayro-syntax 0.9 parses 512 levels, so the store keeps this bound as its
+/// own (F6).
+pub const MAX_NESTING: usize = 64;
+
 #[cfg(test)]
 thread_local! {
     /// The calls of [`Value::parse`] on this thread, which tests count.
@@ -36,10 +46,10 @@ impl Value {
     ///
     /// The arrays and dictionaries of the value keep their lexemes as slices
     /// of `source`, and a stream keeps its data so. Refuses with a malformed
-    /// input error when hayro-syntax reads no value there, and with a limit
-    /// when the budget refuses: `object_depth` for an array or a dictionary
-    /// nested deeper than it allows, or `memory_size` for what the value
-    /// holds.
+    /// input error when hayro-syntax reads no value there or the value nests
+    /// deeper than [`MAX_NESTING`], and with a limit when the budget refuses:
+    /// `object_depth` for an array or a dictionary nested deeper than it
+    /// allows, or `memory_size` for what the value holds.
     pub fn parse(source: &Bytes, budget: &Budget) -> Result<Self> {
         Self::parse_with_lengths(source, budget, &|_| Ok(None))
     }
@@ -132,11 +142,12 @@ impl Stream {
     /// hayro-syntax, charging its decoded size to `budget` as one stream.
     ///
     /// Refuses with a malformed input error a stream whose filters
-    /// hayro-syntax does not decode, such as an image filter, and with a
-    /// limit what the budget does not allow, such as a chain of more
-    /// filters than its `stream_filter_count`. hayro-syntax 0.8 decodes a
-    /// stream whole and without a bound (yhay81/pyropdf#48), so the budget
-    /// counts the decoded bytes once they are decoded.
+    /// hayro-syntax does not decode, such as an image filter, or whose data
+    /// is in an external file, and with a limit what the budget does not
+    /// allow, such as a chain of more filters than its
+    /// `stream_filter_count`. hayro-syntax 0.8 decodes a stream whole and
+    /// without a bound (yhay81/pyropdf#48), so the budget counts the
+    /// decoded bytes once they are decoded.
     pub fn decoded(&self, budget: &Budget) -> Result<Vec<u8>> {
         self.decoded_as(StreamKind::Any, budget)
     }
@@ -144,6 +155,17 @@ impl Stream {
     /// Returns the data decoded as [`Stream::decoded`] decodes it, charging
     /// its decoded size as a stream of `kind`, whose limits also bound it.
     pub fn decoded_as(&self, kind: StreamKind, budget: &Budget) -> Result<Vec<u8>> {
+        // A stream whose `/F` is a file specification, a string or a
+        // dictionary, holds its data in that file, and its own bytes are
+        // to be ignored (ISO 32000-2 7.3.8.2), so hayro-syntax refuses to
+        // decode it (yhay81/pyropdf#224). A value cannot resolve a
+        // reference, which names a file specification there too.
+        if matches!(
+            self.dict.get("F"),
+            Some(Value::String(_) | Value::Dict(_) | Value::Reference(_))
+        ) {
+            return Err(Error::malformed("the stream's data is in an external file"));
+        }
         match self.dict.get("Filter") {
             None => return copy(&self.data, budget).map(Vec::from).map_err(Into::into),
             Some(Value::Array(filters)) => {
@@ -173,10 +195,11 @@ impl Stream {
 
 /// Runs a conversion, and turns a panic in hayro-syntax into an error.
 ///
-/// hayro-syntax 0.8 panics on some malformed input that it skips but cannot
-/// read, such as an array that holds a name whose `#` is not followed by two
-/// hexadecimal digits (I3, yhay81/pyropdf#19). Its next release reads such
-/// input without panicking.
+/// hayro-syntax 0.8 panicked on some malformed input that it skipped but
+/// could not read, such as an array that holds a name whose `#` is not
+/// followed by two hexadecimal digits. hayro-syntax 0.9 reads that input,
+/// and the guard stays for a panic that is not known yet (I3,
+/// yhay81/pyropdf#19).
 fn guard<T>(conversion: impl FnOnce() -> Result<T>) -> Result<T> {
     panic::catch_unwind(AssertUnwindSafe(conversion))
         .unwrap_or_else(|_| Err(Error::malformed("hayro-syntax panicked on the object")))
@@ -561,12 +584,19 @@ impl<'s, 'b> Converter<'s, 'b> {
 
     /// Refuses with `object_depth` an array or a dictionary at `depth`, the
     /// outermost being at depth 1, when that is deeper than the budget
-    /// allows.
-    fn check_depth(&self, depth: usize) -> Result<(), LimitExceeded> {
+    /// allows, and as malformed input when it is deeper than
+    /// [`MAX_NESTING`].
+    fn check_depth(&self, depth: usize) -> Result<()> {
         self.budget.check(
             LimitCode::ObjectDepth,
             u64::try_from(depth).unwrap_or(u64::MAX),
-        )
+        )?;
+        if depth > MAX_NESTING {
+            return Err(Error::malformed(
+                "an object nests arrays and dictionaries deeper than 64 levels",
+            ));
+        }
+        Ok(())
     }
 
     /// Counts one converted value, and polls the budget every
@@ -646,9 +676,10 @@ fn length_object(bytes: &[u8]) -> Option<usize> {
 
 /// Returns the value of a reference that hayro-syntax read.
 ///
-/// A reference names an object only with a number from 0 to `u32::MAX` and
-/// a generation from 0 to 65535. Any other refers to no object, which PDF
-/// reads as null.
+/// hayro-syntax reads an object number only from 0 to `u32::MAX`, so `-1 0
+/// R` is no reference (I8, yhay81/pyropdf#18). A reference names an object
+/// only with a generation from 0 to 65535; any other refers to no object,
+/// which PDF reads as null.
 fn reference_value(reference: ObjRef) -> Value {
     match u16::try_from(reference.gen_number) {
         Ok(generation) => Value::Reference(Reference::new(reference.obj_number, generation)),

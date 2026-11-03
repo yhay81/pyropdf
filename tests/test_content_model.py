@@ -179,13 +179,16 @@ def test_text_render_modes_follow_the_painting() -> None:
         "BT /F1 12 Tf 1 0 0 RG 0 0 1 rg 10 50 Td 2 Tr (A) Tj 1 Tr (B) Tj 3 Tr (C) Tj 7 Tr (D) Tj 0 Tr (E) Tj ET"
     ).content()
     runs = content.text_runs
+    # Text in mode 7 only clips, and hayro passes it on as invisible text.
     assert [(run.text, run.render_mode) for run in runs] == [
         ("A", TextRenderMode.FILL_STROKE),
         ("B", TextRenderMode.STROKE),
         ("C", TextRenderMode.INVISIBLE),
+        ("D", TextRenderMode.INVISIBLE),
         ("E", TextRenderMode.FILL),
     ]
-    fill_stroke, stroke, invisible, _ = runs
+    fill_stroke, stroke, invisible, clip, _ = runs
+    assert (clip.fill, clip.stroke) == (None, None)
     assert fill_stroke.fill == Color(0, 0, 1, 1)
     assert fill_stroke.stroke is not None
     assert fill_stroke.stroke.paint == Color(1, 0, 0, 1)
@@ -247,7 +250,8 @@ def test_transparency_groups_carry_opacity_and_soft_masks() -> None:
     (path,) = page.content().paths
     outer = path.context.groups[0]
     assert outer.opacity == pytest.approx(0.25)
-    assert outer.soft_mask == SoftMask(subtype=SoftMaskType.ALPHA)
+    # hayro 0.9 no longer identifies the mask's group, object 8.
+    assert outer.soft_mask == SoftMask(xref=0, subtype=SoftMaskType.ALPHA)
     assert outer.blend_mode is BlendMode.NORMAL
     assert path.context.opacity == pytest.approx(0.25)
     assert path.fill == Color(0, 1, 0, 1)

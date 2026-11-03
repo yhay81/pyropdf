@@ -286,9 +286,6 @@ def test_every_key_of_every_object_type_round_trips(name: str) -> None:
         steps = {key: "Undeclared" if key == "*" else key for key in keys}
 
     for key, described in keys.items():
-        # hayro-syntax refuses a stream that names an external file (#224).
-        if isinstance(obj, Stream) and key == "F":
-            continue
         step = steps[key]
         for declared in described.types:
             view[step] = _sample(doc, declared.kind, declared.links, declared.names)

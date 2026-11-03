@@ -71,8 +71,9 @@ class TextRenderMode(enum.StrEnum):
     """How a text run paints its glyphs.
 
     hayro paints the clipping modes 4 to 6 as their painting part and adds
-    their clip to the context of later items; text in mode 7, which only
-    clips, paints nothing and is not an item.
+    their clip to the context of later items. Text in mode 7, which only
+    clips, paints nothing; hayro passes it on as invisible text, so it is an
+    ``INVISIBLE`` run.
     """
 
     FILL = "fill"
@@ -210,8 +211,15 @@ class Stroke:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SoftMask:
-    """A soft mask: the transparency group that masks what it encloses."""
+    """A soft mask: the transparency group that masks what it encloses.
 
+    ``xref`` is deprecated and 0 in what ``Page.content`` returns, since
+    hayro 0.9 no longer identifies the group of a soft mask. The next minor
+    release removes it.
+    """
+
+    xref: int = 0
+    """Deprecated: 0, where it was the object number of the mask's group."""
     subtype: SoftMaskType
 
 
