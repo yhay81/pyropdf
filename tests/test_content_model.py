@@ -235,13 +235,15 @@ def test_items_carry_clips_blend_modes_and_marked_content() -> None:
 
 
 @pytest.mark.spec("transparency-groups", "interpret")
-def test_transparency_groups_carry_opacity_and_soft_masks() -> None:
+@pytest.mark.parametrize("subtype", [SoftMaskType.ALPHA, SoftMaskType.LUMINOSITY])
+def test_transparency_groups_carry_opacity_and_soft_masks(subtype: SoftMaskType) -> None:
     group = "/Type /XObject /Subtype /Form /BBox [0 0 200 100] /Group << /S /Transparency >>"
+    mask = "/Alpha" if subtype is SoftMaskType.ALPHA else "/Luminosity"
     page = page_with(
         "/GS1 gs /Fm Do",
         resources="/ExtGState << /GS1 6 0 R >> /XObject << /Fm 7 0 R >>",
         objects={
-            6: "<< /Type /ExtGState /ca 0.25 /SMask << /S /Alpha /G 8 0 R >> >>",
+            6: f"<< /Type /ExtGState /ca 0.25 /SMask << /S {mask} /G 8 0 R >> >>",
             7: stream_object("0 1 0 rg 10 10 50 50 re f", group),
             # hayro reads a soft mask only when its group names a color space.
             8: stream_object("0 0 200 100 re f", group.replace(">>", "/CS /DeviceGray >>")),
@@ -251,7 +253,7 @@ def test_transparency_groups_carry_opacity_and_soft_masks() -> None:
     outer = path.context.groups[0]
     assert outer.opacity == pytest.approx(0.25)
     # hayro 0.9 no longer identifies the mask's group, object 8.
-    assert outer.soft_mask == SoftMask(xref=0, subtype=SoftMaskType.ALPHA)
+    assert outer.soft_mask == SoftMask(xref=0, subtype=subtype)
     assert outer.blend_mode is BlendMode.NORMAL
     assert path.context.opacity == pytest.approx(0.25)
     assert path.fill == Color(0, 1, 0, 1)
