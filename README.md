@@ -26,12 +26,14 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("output.pdf", incremental=True)
 ```
 
-0.2 reads text, words, layout, tables, images, and Markdown, runs offline
-OCR, renders pages to pixmaps and SVG, edits pages and their boxes,
-annotations, links, form fields, outlines, attachments, metadata, page
-labels, and layers, removes hidden or active content, subsets fonts, and
-saves incrementally or in full, with encryption. Drawing on a page with
-`page.draw` comes in a later release.
+0.2.1 reads text, words, layout, tables, images, fonts, and Markdown,
+exports them as JSON or retrieval chunks, runs offline OCR, and renders
+pages to pixmaps and SVG. It draws paths, images, pages, and text in
+Standard 14 or OpenType fonts with `page.draw`; edits pages and their boxes,
+text, images, colors, annotations, links, form fields, outlines,
+attachments, metadata, page labels, and layers; signs documents and verifies
+signatures; removes hidden or active content and subsets fonts; and saves
+incrementally, in full, or linearized, with encryption.
 
 ## Safety claims
 

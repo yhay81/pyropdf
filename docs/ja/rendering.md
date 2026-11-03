@@ -55,16 +55,20 @@ with pyropdf.open("input.pdf") as doc:
 
 ## エンコード
 
-`pixmap.save(path)` は拡張子に合わせて PNG か JPEG を書き、`pixmap.to_bytes("png")` や
-`to_bytes("jpeg", quality=...)` はエンコードしたバイト列を返します。JPEG にアルファはないので、
-不透明な pixmap をエンコードしてください。
+`pixmap.save(path)` は拡張子が示す形式で書き、`pixmap.to_bytes("png")` や
+`to_bytes("jpeg", quality=...)` はエンコードしたバイト列を返します。どちらも PNG と JPEG のほか、
+PAM、PBM、PGM、PPM、PNM、PSD、PostScript を書けます。アルファを保つのは PNG、PAM、PSD だけで、
+ほかの形式はアルファを拒むので、不透明な pixmap をエンコードしてください。
 
 ## ピクセル操作
 
 どの操作も新しい pixmap を返します：`invert(rect=None)`、`gamma(value)`、
 `tint(black, white)`、`to_gray()`、`to_rgb()`、`with_alpha()`、
-`without_alpha(background)`、`crop(rect)`、`scale(width, height)`。矩形はピクセル単位です。
-`Pixmap.from_bytes(data)` と `Pixmap.open(path)` は PNG と JPEG を読み、`to_pil()` は
+`without_alpha(background)`、`crop(rect)`、`scale(width, height)`、`rotate(degrees)`、
+`flip(axis)`、`warp(quad, width, height)`、`fill(value, rect=None)`、`with_pixel(x, y, value)`。
+`pixel(x, y)`、`colors(rect=None)`、`color_count(rect=None)`、`top_color(rect=None)` は
+ピクセルを読みます。矩形はピクセル単位です。`Pixmap.from_bytes(data)` と `Pixmap.open(path)` は
+PNG、JPEG、PBM、PGM、PPM、PAM、BMP、GIF、TIFF、JPEG 2000 を読み、`to_pil()` は
 Pillow があれば Pillow の画像を返します。
 
 ```python

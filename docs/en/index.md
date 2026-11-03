@@ -75,7 +75,7 @@ hide:
 
 <div class="pp-section-title">
 <h2>What it does today</h2>
-<p>0.2 reads, renders, edits, cleans, and shrinks documents. Drawing with <code>page.draw</code> comes later.</p>
+<p>0.2.1 reads, renders, edits, signs, cleans, and shrinks documents, and draws on their pages with <code>page.draw</code>.</p>
 </div>
 
 <div class="pp-cards">
