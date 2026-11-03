@@ -19,13 +19,17 @@ import pyropdf
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows access control and paths")
 
 
-def access_entries(path: Path) -> list[str]:
-    """Return the access control entries that icacls lists for ``path``, without the path."""
-    command = ["icacls", str(path)]
-    listed = subprocess.run(command, capture_output=True, text=True, check=True).stdout  # noqa: S603
+def access_entries(path: Path) -> list[bytes]:
+    """Return the access control entries that icacls lists for ``path``, without its name.
+
+    icacls writes in the console's code page, which need not be the encoding
+    that Python decodes with, so the entries stay bytes.
+    """
+    command = ["icacls", path.name]
+    listed = subprocess.run(command, capture_output=True, check=True, cwd=path.parent).stdout  # noqa: S603
     lines = [line.strip() for line in listed.splitlines() if line.strip()]
-    # The first line starts with the path; the last reports the files processed.
-    first = lines[0][len(str(path)) :].strip()
+    # The first line starts with the name; the last reports the files processed.
+    first = lines[0][len(path.name) :].strip()
     return [first, *lines[1:-1]]
 
 

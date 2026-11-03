@@ -1,0 +1,6 @@
+# Check text out as committed, with LF, on every platform: Git for Windows
+# defaults to core.autocrlf=true, and tests compare files byte for byte.
+* text=auto eol=lf
+# A PDF is bytes even when it holds no NUL byte for git to detect, so its line
+# endings are never converted.
+*.pdf -text
