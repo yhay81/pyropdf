@@ -3,7 +3,7 @@
 CI runs this with veraPDF's greenfield-apps and greenfield-apps-arlington
 jars, which it downloads pinned by their SHA-256:
 
-    uv run python tools/verapdf.py --jar greenfield-apps-1.28.1.jar --arlington greenfield-apps-arlington-1.26.6.jar
+    uv run python tools/verapdf.py --jar greenfield-apps-1.28.2.jar --arlington greenfield-apps-arlington-1.28.2.jar
 
 Each fixture of tests/assets/pdfa and tests/assets/pdfua is validated under
 its claimed flavour, as is each edit of the preservation harness's EDITS
