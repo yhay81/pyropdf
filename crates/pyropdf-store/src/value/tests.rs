@@ -599,15 +599,9 @@ fn a_real_keeps_the_lexeme_it_is_made_from() {
 fn a_stream_whose_data_is_in_an_external_file_reads_but_does_not_decode() {
     // hayro-syntax 0.9 reads such a stream, which 0.8 refused (#224).
     for source in [
-        &b"<</Length 4/F (data.bin)>>stream
-data
-endstream"[..],
-        b"<</Length 4/F <</Type/Filespec/F (data.bin)>>/Filter/ASCIIHexDecode>>stream
-6461
-endstream",
-        b"<</Length 4/F 9 0 R>>stream
-data
-endstream",
+        &b"<</Length 4/F (data.bin)>>stream\ndata\nendstream"[..],
+        b"<</Length 4/F <</Type/Filespec/F (data.bin)>>/Filter/ASCIIHexDecode>>stream\n6461\nendstream",
+        b"<</Length 4/F 9 0 R>>stream\ndata\nendstream",
     ] {
         let value = parse(source);
         assert!(stream(&value).dict().get("F").is_some());
@@ -617,9 +611,7 @@ endstream",
     }
     // An inline image's abbreviated filter is a name, which a stream's
     // `/F` is not.
-    let value = parse(b"<</Length 4/F/AHx>>stream
-data
-endstream");
+    let value = parse(b"<</Length 4/F/AHx>>stream\ndata\nendstream");
     assert_eq!(stream(&value).decoded(&Budget::default()).unwrap(), b"data");
 }
 
