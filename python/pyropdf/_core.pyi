@@ -108,6 +108,23 @@ class CharColumns:
 class Column:
     def __buffer__(self, flags: int, /) -> memoryview: ...
 
+_PathPaint: TypeAlias = tuple[int, tuple[float, float, float, float]]
+_PathStroke: TypeAlias = tuple[_PathPaint, float, int, int, float, list[float], float]
+_PathRow: TypeAlias = tuple[
+    bytes, list[float], tuple[float, float, float, float], _PathPaint | None, bool, _PathStroke | None, int, int, int
+]
+
+@final
+class PathColumns:
+    def __len__(self) -> int: ...
+    def rows(self, start: int, stop: int, /) -> list[_PathRow]: ...
+    def column(self, name: str, start: int, stop: int, /) -> Column: ...
+    def contexts(self) -> tuple[list[Any], list[Any], list[Any], list[Any]]: ...
+    def patterns(self) -> list[tuple[int, list[float]]]: ...
+    def soft_masks(self) -> bytes: ...
+    def arrow_schema(self) -> object: ...
+    def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
+
 @final
 class Pixmap:
     @property
@@ -584,6 +601,15 @@ def page_content(
     max_elements: int | None,
     /,
 ) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]: ...
+def page_paths(
+    document: _Document,
+    number: int,
+    generation: int,
+    annotations: bool,
+    clip: tuple[float, float, float, float] | None,
+    max_elements: int | None,
+    /,
+) -> PathColumns: ...
 
 _Box: TypeAlias = tuple[float, float, float, float]
 _CoreTable: TypeAlias = tuple[

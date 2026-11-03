@@ -552,6 +552,127 @@ Path(
 
 A path that is filled, stroked, or both.
 
+## `Paths`
+
+```python
+Paths(columns: PathColumns, start: int = 0, stop: int | None = None)
+```
+
+The paths of a page as columns, from `Page.paths`.
+
+Each row is one `Path` of `Page.content`, in paint order,
+and the row view builds that record on demand: `len(paths)`,
+`paths[i]`, and iteration give records equal to `Content.paths`,
+which share `contexts`, `patterns`, and `soft_masks`.
+A slice with a step of 1 is a view of the same columns.
+
+`column` returns each column without a copy as a read-only
+`memoryview`, which `numpy.asarray` reads; its items are in the
+machine's byte order. The columns are those of `names`, one item
+per row:
+
+- `x0`, `y0`, `x1`, `y1` (float64): `Path.bbox`;
+- `segment_offsets` (int32, one more than the rows): row `i`'s
+  segments are items `segment_offsets[i]` to `segment_offsets[i + 1]`
+  of the segment columns;
+- `has_fill` (uint8, 0 or 1): whether `Path.fill` is not `None`;
+- `fill_red`, `fill_green`, `fill_blue`, `fill_alpha` (float32):
+  the fill's `Color`, which hayro computes in float32, so the
+  items hold its components exactly; NaN where the fill is a pattern or
+  absent;
+- `fill_pattern` (int32): the fill's index in `patterns`, -1
+  where it is a color or absent;
+- `fill_rule` (uint8): `Path.fill_rule` as its position in
+  `FillRule`, 0 for nonzero and 1 for even-odd;
+- `has_stroke`, `stroke_red`, `stroke_green`, `stroke_blue`,
+  `stroke_alpha`, and `stroke_pattern`: the same for the paint of
+  `Path.stroke`;
+- `stroke_width`, `stroke_miter_limit`, and `stroke_dash_offset`
+  (float64), and `stroke_cap` and `stroke_join` (uint8, positions in
+  `LineCap` and `LineJoin`): the fields of the
+  `Stroke`, NaN and 0 without one;
+- `stroke_dashes_offsets` (int32, one more than the rows): row `i`'s
+  dash lengths are items `stroke_dashes_offsets[i]` to
+  `stroke_dashes_offsets[i + 1]` of `stroke_dashes` (float64);
+- `context` (uint32): the index of `Path.context` in `contexts`;
+- `blend_mode` (uint8): `Path.blend_mode` as its position in
+  `BlendMode`;
+- `soft_mask` (int32): the index of `Path.soft_mask` in
+  `soft_masks`, -1 where it is `None`.
+
+The segment columns hold one item per segment of every path of the page,
+and a view shares them, as a view of `Chars` shares `text_data`:
+
+- `path` (uint32): the row of the segment's path;
+- `verb` (uint8): the ASCII code of the segment's PDF operator, `m`
+  for `MoveTo`, `l` for `LineTo`, `c` for
+  `CurveTo`, and `h` for `ClosePath`;
+- `to_x`, `to_y` (float64): the segment's `to` point, and for `h`
+  the start of its subpath, where the closing line ends, so that every
+  segment other than `m` runs from the previous segment's point to its
+  own;
+- `c1_x`, `c1_y`, `c2_x`, `c2_y` (float64): a curve's control
+  points, NaN for the other verbs.
+
+The table is also an Arrow struct array through the Arrow PyCapsule
+interface, which pyarrow, polars, and DuckDB import without a copy. Its
+fields are the columns of the rows, with `has_fill` and `has_stroke`
+as Arrow booleans and nulls where the columns hold NaN or -1, and two
+lists in place of the offsets and the columns they index: `segments`,
+a list of structs of the segment columns whose control points are null
+for verbs other than `c`, and `stroke_dashes`, a list of float64,
+null without a stroke.
+
+### `Paths.__len__`
+
+```python
+Paths.__len__() -> int
+```
+
+### `Paths.__getitem__`
+
+```python
+Paths.__getitem__(index: int | slice) -> Path | Paths
+```
+
+### `Paths.__iter__`
+
+```python
+Paths.__iter__() -> Iterator[Path]
+```
+
+### `Paths.contexts`
+
+```python
+Paths.contexts: tuple[GraphicsContext, ...]
+```
+
+The graphics contexts of the page's interpretation, which the `context` column indexes.
+
+### `Paths.patterns`
+
+```python
+Paths.patterns: tuple[ShadingPattern | TilingPattern, ...]
+```
+
+The distinct pattern paints, which `fill_pattern` and `stroke_pattern` index.
+
+### `Paths.soft_masks`
+
+```python
+Paths.soft_masks: tuple[SoftMask, ...]
+```
+
+The distinct soft masks, which the `soft_mask` column indexes.
+
+### `Paths.column`
+
+```python
+Paths.column(name: str) -> memoryview
+```
+
+Return the column `name` of `names` as a read-only `memoryview`, without a copy.
+
 ## `Segment`
 
 `Segment = pyropdf.MoveTo | pyropdf.LineTo | pyropdf.CurveTo | pyropdf.ClosePath`

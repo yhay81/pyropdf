@@ -4,23 +4,26 @@
 :class:`Path`, and :class:`Image` items in paint order and display space.
 Every item carries the :class:`GraphicsContext` that encloses it, and items
 painted under the same clips, transparency groups, and marked content share
-one context object.
+one context object. ``Page.paths()`` returns the paths alone as
+:class:`Paths` columns, without an object per path or segment.
 """
 
 from __future__ import annotations
 
 import enum
 import math
+import threading
 import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, overload
 
 from pyropdf._geometry import Matrix, Point, Rect
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from pyropdf._core import PathColumns, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
 
 
@@ -486,6 +489,194 @@ class Content(Sequence[ContentItem]):
         return _clusters(boxes, float(x_tolerance), float(y_tolerance))
 
 
+class Paths(Sequence[Path]):
+    """The paths of a page as columns, from :meth:`Page.paths`.
+
+    Each row is one :class:`Path` of :meth:`Page.content`, in paint order,
+    and the row view builds that record on demand: ``len(paths)``,
+    ``paths[i]``, and iteration give records equal to ``Content.paths``,
+    which share :attr:`contexts`, :attr:`patterns`, and :attr:`soft_masks`.
+    A slice with a step of 1 is a view of the same columns.
+
+    :meth:`column` returns each column without a copy as a read-only
+    ``memoryview``, which ``numpy.asarray`` reads; its items are in the
+    machine's byte order. The columns are those of :attr:`names`, one item
+    per row:
+
+    - ``x0``, ``y0``, ``x1``, ``y1`` (float64): ``Path.bbox``;
+    - ``segment_offsets`` (int32, one more than the rows): row ``i``'s
+      segments are items ``segment_offsets[i]`` to ``segment_offsets[i + 1]``
+      of the segment columns;
+    - ``has_fill`` (uint8, 0 or 1): whether ``Path.fill`` is not ``None``;
+    - ``fill_red``, ``fill_green``, ``fill_blue``, ``fill_alpha`` (float32):
+      the fill's :class:`Color`, which hayro computes in float32, so the
+      items hold its components exactly; NaN where the fill is a pattern or
+      absent;
+    - ``fill_pattern`` (int32): the fill's index in :attr:`patterns`, -1
+      where it is a color or absent;
+    - ``fill_rule`` (uint8): ``Path.fill_rule`` as its position in
+      :class:`FillRule`, 0 for nonzero and 1 for even-odd;
+    - ``has_stroke``, ``stroke_red``, ``stroke_green``, ``stroke_blue``,
+      ``stroke_alpha``, and ``stroke_pattern``: the same for the paint of
+      ``Path.stroke``;
+    - ``stroke_width``, ``stroke_miter_limit``, and ``stroke_dash_offset``
+      (float64), and ``stroke_cap`` and ``stroke_join`` (uint8, positions in
+      :class:`LineCap` and :class:`LineJoin`): the fields of the
+      :class:`Stroke`, NaN and 0 without one;
+    - ``stroke_dashes_offsets`` (int32, one more than the rows): row ``i``'s
+      dash lengths are items ``stroke_dashes_offsets[i]`` to
+      ``stroke_dashes_offsets[i + 1]`` of ``stroke_dashes`` (float64);
+    - ``context`` (uint32): the index of ``Path.context`` in :attr:`contexts`;
+    - ``blend_mode`` (uint8): ``Path.blend_mode`` as its position in
+      :class:`BlendMode`;
+    - ``soft_mask`` (int32): the index of ``Path.soft_mask`` in
+      :attr:`soft_masks`, -1 where it is ``None``.
+
+    The segment columns hold one item per segment of every path of the page,
+    and a view shares them, as a view of :class:`Chars` shares ``text_data``:
+
+    - ``path`` (uint32): the row of the segment's path;
+    - ``verb`` (uint8): the ASCII code of the segment's PDF operator, ``m``
+      for :class:`MoveTo`, ``l`` for :class:`LineTo`, ``c`` for
+      :class:`CurveTo`, and ``h`` for :class:`ClosePath`;
+    - ``to_x``, ``to_y`` (float64): the segment's ``to`` point, and for ``h``
+      the start of its subpath, where the closing line ends, so that every
+      segment other than ``m`` runs from the previous segment's point to its
+      own;
+    - ``c1_x``, ``c1_y``, ``c2_x``, ``c2_y`` (float64): a curve's control
+      points, NaN for the other verbs.
+
+    The table is also an Arrow struct array through the Arrow PyCapsule
+    interface, which pyarrow, polars, and DuckDB import without a copy. Its
+    fields are the columns of the rows, with ``has_fill`` and ``has_stroke``
+    as Arrow booleans and nulls where the columns hold NaN or -1, and two
+    lists in place of the offsets and the columns they index: ``segments``,
+    a list of structs of the segment columns whose control points are null
+    for verbs other than ``c``, and ``stroke_dashes``, a list of float64,
+    null without a stroke.
+    """
+
+    __slots__ = ("_columns", "_start", "_stop", "_values")
+
+    #: The names of the columns, in the order of the Arrow fields.
+    names: ClassVar[tuple[str, ...]] = (
+        "x0",
+        "y0",
+        "x1",
+        "y1",
+        "segment_offsets",
+        "path",
+        "verb",
+        "to_x",
+        "to_y",
+        "c1_x",
+        "c1_y",
+        "c2_x",
+        "c2_y",
+        "has_fill",
+        "fill_red",
+        "fill_green",
+        "fill_blue",
+        "fill_alpha",
+        "fill_pattern",
+        "fill_rule",
+        "has_stroke",
+        "stroke_red",
+        "stroke_green",
+        "stroke_blue",
+        "stroke_alpha",
+        "stroke_pattern",
+        "stroke_width",
+        "stroke_cap",
+        "stroke_join",
+        "stroke_miter_limit",
+        "stroke_dashes_offsets",
+        "stroke_dashes",
+        "stroke_dash_offset",
+        "context",
+        "blend_mode",
+        "soft_mask",
+    )
+
+    def __init__(self, columns: PathColumns, start: int = 0, stop: int | None = None) -> None:
+        self._columns = columns
+        self._start = start
+        self._stop = len(columns) if stop is None else stop
+        self._values = _PathValues(columns)
+
+    def __len__(self) -> int:
+        return self._stop - self._start
+
+    @overload
+    def __getitem__(self, index: int) -> Path: ...
+    @overload
+    def __getitem__(self, index: slice) -> Paths: ...
+    def __getitem__(self, index: int | slice) -> Path | Paths:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(len(self))
+            if step != 1:
+                msg = f"a slice of Paths takes a step of 1: {index!r}"
+                raise ValueError(msg)
+            view = Paths(self._columns, self._start + start, self._start + max(start, stop))
+            # A view shares the values of its page.
+            view._values = self._values
+            return view
+        row = range(self._start, self._stop)[index]
+        return self._values.path(self._columns.rows(row, row + 1)[0])
+
+    def __iter__(self) -> Iterator[Path]:
+        for start in range(self._start, self._stop, _PATH_ROWS_PER_READ):
+            stop = min(start + _PATH_ROWS_PER_READ, self._stop)
+            yield from map(self._values.path, self._columns.rows(start, stop))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Paths):
+            return NotImplemented
+        return len(self) == len(other) and all(a == b for a, b in zip(self, other, strict=True))
+
+    def __hash__(self) -> int:
+        return hash(tuple(self))
+
+    def __repr__(self) -> str:
+        return f"<Paths {len(self)} rows>"
+
+    @property
+    def contexts(self) -> tuple[GraphicsContext, ...]:
+        """Return the graphics contexts of the page's interpretation, which the ``context`` column indexes."""
+        return self._values.shared()[0]
+
+    @property
+    def patterns(self) -> tuple[ShadingPattern | TilingPattern, ...]:
+        """Return the distinct pattern paints, which ``fill_pattern`` and ``stroke_pattern`` index."""
+        return self._values.shared()[1]
+
+    @property
+    def soft_masks(self) -> tuple[SoftMask, ...]:
+        """Return the distinct soft masks, which the ``soft_mask`` column indexes."""
+        return self._values.shared()[2]
+
+    def column(self, name: str) -> memoryview:
+        """Return the column ``name`` of :attr:`names` as a read-only ``memoryview``, without a copy."""
+        return memoryview(self._columns.column(name, self._start, self._stop))
+
+    def __arrow_c_schema__(self) -> object:
+        """Return the Arrow schema of the rows as a PyCapsule."""
+        return self._columns.arrow_schema()
+
+    def __arrow_c_array__(self, requested_schema: object | None = None) -> tuple[object, object]:
+        """Return the rows as the PyCapsules of an Arrow schema and struct array.
+
+        The array's buffers are the columns; ``requested_schema`` is ignored,
+        as the interface allows.
+        """
+        del requested_schema
+        return self._columns.arrow_array(self._start, self._stop)
+
+
+#: The rows that a :class:`Paths` iteration reads from the core at once.
+_PATH_ROWS_PER_READ = 4096
+
+
 def _painted_box(path: Path) -> Rect | None:
     """Return a path's box, widened by half its stroke's width, or ``None`` when it holds no area."""
     x0, y0, x1, y1 = path.bbox
@@ -633,6 +824,23 @@ def _soft_mask(code: int | None) -> SoftMask | None:
     return None if code is None else SoftMask(subtype=_SOFT_MASK_TYPES[code])
 
 
+def _pattern(kind: int, values: Sequence[float]) -> ShadingPattern | TilingPattern:
+    """Build the pattern paint of one of the core's paint tuples."""
+    if kind == _SHADING:
+        shading_type = int(values[0])
+        return ShadingPattern(
+            shading_type=ShadingType(shading_type) if shading_type else None,
+            matrix=_matrix(values[1:7]),
+            opacity=values[7],
+        )
+    return TilingPattern(
+        bbox=_rect(values[0:4]),
+        x_step=values[4],
+        y_step=values[5],
+        matrix=_matrix(values[6:12]),
+    )
+
+
 class _Converter:
     """Turn the core's tuples into values, sharing equal paints."""
 
@@ -656,25 +864,8 @@ class _Converter:
         kind, values = raw
         key = (kind, tuple(values))
         paint = self.paints.get(key)
-        if paint is not None:
-            return paint
-        if kind == _COLOR:
-            paint = Color(*values)
-        elif kind == _SHADING:
-            shading_type = int(values[0])
-            paint = ShadingPattern(
-                shading_type=ShadingType(shading_type) if shading_type else None,
-                matrix=_matrix(values[1:7]),
-                opacity=values[7],
-            )
-        else:
-            paint = TilingPattern(
-                bbox=_rect(values[0:4]),
-                x_step=values[4],
-                y_step=values[5],
-                matrix=_matrix(values[6:12]),
-            )
-        self.paints[key] = paint
+        if paint is None:
+            paint = self.paints[key] = Color(*values) if kind == _COLOR else _pattern(kind, values)
         return paint
 
     def stroke(self, raw: Any) -> Stroke | None:  # noqa: ANN401 - a nested core tuple.
@@ -813,6 +1004,83 @@ class _Contexts:
         return value
 
 
+#: What the columns of :class:`Paths` index: contexts, patterns, and soft masks.
+_PathShared: TypeAlias = tuple[
+    tuple[GraphicsContext, ...], tuple[ShadingPattern | TilingPattern, ...], tuple[SoftMask, ...]
+]
+
+
+class _PathValues:
+    """The values that the path columns of a page index, built once when first asked for.
+
+    The records of the rows share them, and equal colors share one
+    :class:`Color`, as the items of a :class:`Content` do; a lock keeps two
+    threads from building them twice.
+    """
+
+    __slots__ = ("_colors", "_columns", "_lock", "_shared")
+
+    def __init__(self, columns: PathColumns) -> None:
+        self._columns = columns
+        self._lock = threading.Lock()
+        self._shared: _PathShared | None = None
+        self._colors: dict[tuple[float, float, float, float], Color] = {}
+
+    def shared(self) -> _PathShared:
+        """Return the contexts, patterns, and soft masks."""
+        shared = self._shared
+        if shared is None:
+            with self._lock:
+                shared = self._shared
+                if shared is None:
+                    clips, groups, marks, states = self._columns.contexts()
+                    contexts = _Contexts(clips, groups, marks, states)
+                    shared = self._shared = (
+                        tuple(contexts[index] for index in range(len(states))),
+                        tuple(_pattern(kind, values) for kind, values in self._columns.patterns()),
+                        tuple(mask for raw in self._columns.soft_masks() if (mask := _soft_mask(raw)) is not None),
+                    )
+        return shared
+
+    def paint(self, raw: _PathPaint) -> Paint:
+        """Return the paint of a row: a pattern by its index, or else the color."""
+        pattern, rgba = raw
+        if pattern >= 0:
+            return self.shared()[1][pattern]
+        color = self._colors.get(rgba)
+        if color is None:
+            color = self._colors.setdefault(rgba, Color(*rgba))
+        return color
+
+    def stroke(self, raw: _PathStroke) -> Stroke:
+        """Return the stroke of a row."""
+        paint, width, cap, join, miter_limit, dashes, dash_offset = raw
+        return Stroke(
+            paint=self.paint(paint),
+            width=width,
+            cap=_LINE_CAPS[cap],
+            join=_LINE_JOINS[join],
+            miter_limit=miter_limit,
+            dashes=tuple(dashes),
+            dash_offset=dash_offset,
+        )
+
+    def path(self, row: _PathRow) -> Path:
+        """Return the :class:`Path` of one row of the core's columns."""
+        kinds, coords, bbox, fill, even_odd, stroke, context, blend, soft_mask = row
+        contexts, _, soft_masks = self.shared()
+        return Path(
+            segments=_segments(kinds, coords),
+            fill=None if fill is None else self.paint(fill),
+            fill_rule=FillRule.EVEN_ODD if even_odd else FillRule.NONZERO,
+            stroke=None if stroke is None else self.stroke(stroke),
+            bbox=_rect(bbox),
+            context=contexts[context],
+            blend_mode=_BLEND_MODES[blend],
+            soft_mask=None if soft_mask < 0 else soft_masks[soft_mask],
+        )
+
+
 def _content_from_core(raw: Any, document: Document | None = None) -> Content:  # noqa: ANN401 - the core's nested tuples.
     """Build a :class:`Content` from ``_core.page_content``; its images name ``document``."""
     items, fonts, clips, groups, marks, states = raw
@@ -858,5 +1126,6 @@ for _public in (
     Path,
     Image,
     Content,
+    Paths,
 ):
     _public.__module__ = "pyropdf"

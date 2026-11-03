@@ -52,7 +52,7 @@ mod _core {
         annotation_read, annotation_remove, annotation_reply, annotation_text,
     };
     #[pymodule_export]
-    use super::buffers::{CharColumns, Column};
+    use super::buffers::{CharColumns, Column, PathColumns};
     #[pymodule_export]
     use super::cancel::CancellationToken;
     #[pymodule_export]
@@ -90,7 +90,7 @@ mod _core {
     #[pymodule_export]
     use super::images::{decode_png, encode_jpeg_samples, image_samples, image_stored, page_image};
     #[pymodule_export]
-    use super::items::page_content;
+    use super::items::{page_content, page_paths};
     #[pymodule_export]
     use super::objects::{
         decode_text_string, object_add, object_add_stream, object_delete, object_free_unreferenced,

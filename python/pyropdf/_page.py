@@ -10,7 +10,7 @@ from pyropdf import _core, _markdown
 from pyropdf._annotations import Annotations
 from pyropdf._canvas import Canvas
 from pyropdf._clean import clean_page
-from pyropdf._content import Content, _content_from_core
+from pyropdf._content import Content, Paths, _content_from_core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._fonts import FontInfo, page_fonts
 from pyropdf._geometry import Quad, Rect
@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from pyropdf._pixmap import Pixmap
     from pyropdf._text import _CoreBlock, _TextOptions
 
-#: Elements that one ``Page.content()`` reads by default (``content_element_count``).
+#: Elements that one ``Page.content()`` or ``Page.paths()`` reads by default (``content_element_count``).
 _DEFAULT_MAX_CONTENT_ELEMENTS = 262_144
 #: UTF-8 bytes of one ``Page.svg()`` by default (``svg_output_size``).
 _DEFAULT_MAX_SVG_SIZE = 64 * 1024 * 1024
@@ -676,6 +676,39 @@ class Page:
         except StaleObjectError as error:
             raise self._stale() from error
         return _content_from_core(raw, self._document)
+
+    def paths(
+        self,
+        *,
+        clip: Sequence[float] | None = None,
+        annotations: bool = True,
+        max_elements: int | None = _DEFAULT_MAX_CONTENT_ELEMENTS,
+    ) -> Paths:
+        """Return the paths that the page paints as :class:`Paths` columns, in paint order.
+
+        The rows are the paths of :meth:`content` with ``text_runs=False``,
+        ``images=False``, and the same options, built from the same
+        interpretation without a Python object per path or segment:
+        ``max_elements`` counts what it counts there, and above it the call
+        raises :class:`LimitError` with code ``content_element_count``. The
+        row view builds each :class:`Path` on demand. The GIL is released
+        while hayro interprets the page and the columns are built.
+        """
+        _validate_bool("annotations", annotations)
+        _validate_optional_positive_int("max_elements", max_elements)
+        clip_box = None if clip is None else _clip_box(clip)
+        try:
+            columns = _core.page_paths(
+                self._document._core(),  # noqa: SLF001
+                self._number,
+                self._generation,
+                annotations,
+                clip_box,
+                max_elements,
+            )
+        except StaleObjectError as error:
+            raise self._stale() from error
+        return Paths(columns)
 
     def text(  # noqa: PLR0913 - the text options are all keyword-only
         self,
