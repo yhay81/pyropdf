@@ -646,8 +646,9 @@ fn count(len: usize) -> u64 {
 
 /// Runs a call into hayro-syntax, and reads a panic as no result.
 ///
-/// hayro-syntax 0.8 panics on some malformed input that it skips but cannot
-/// read (I3, yhay81/pyropdf#19).
+/// hayro-syntax 0.8 panicked on some malformed input that it skipped but
+/// could not read. hayro-syntax 0.9 reads the cases known, and the guard
+/// stays for a panic that is not known yet (I3, yhay81/pyropdf#19).
 fn guard<T>(call: impl FnOnce() -> Option<T>) -> Option<T> {
     panic::catch_unwind(AssertUnwindSafe(call)).ok().flatten()
 }

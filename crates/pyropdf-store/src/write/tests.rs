@@ -622,9 +622,8 @@ fn scalar() -> impl Strategy<Value = Value> {
                 PdfString::literal(bytes)
             })
         }),
-        // hayro-syntax 0.8 reads object numbers as `i32` (I8,
-        // yhay81/pyropdf#18).
-        (0..=i32::MAX.unsigned_abs(), any::<u16>())
+        // hayro-syntax reads object numbers as `u32` (I8, yhay81/pyropdf#18).
+        (any::<u32>(), any::<u16>())
             .prop_map(|(number, generation)| Value::Reference(Reference::new(number, generation))),
     ]
 }
@@ -649,9 +648,9 @@ fn direct_value() -> impl Strategy<Value = Value> {
 
 /// Any value, a stream included.
 fn any_value() -> impl Strategy<Value = Value> {
-    // hayro-syntax 0.8 reads no stream whose dictionary has /F, which names
-    // a file that holds the data.
-    let key = bytes(8).prop_filter("hayro-syntax refuses /F", |key| key != b"F");
+    // A stream's dictionary may have /F, which names a file that holds the
+    // data; hayro-syntax 0.9 reads such a stream (#224).
+    let key = prop_oneof![1 => Just(b"F".to_vec()), 7 => bytes(8)];
     let stream = (
         proptest::collection::vec((key, direct_value()), 0..4),
         bytes(64),
