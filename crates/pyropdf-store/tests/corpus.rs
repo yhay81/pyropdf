@@ -158,7 +158,7 @@ fn hayro_objects(bytes: &[u8], numbers: &BTreeMap<u32, (u16, Vec<u8>)>) -> BTree
     numbers
         .iter()
         .filter_map(|(&number, &(generation, _))| {
-            let id = ObjectIdentifier::new(number as i32, i32::from(generation));
+            let id = ObjectIdentifier::new(number, i32::from(generation));
             let object = pdf.xref().get::<Object<'_>>(id)?;
             let mut text = String::new();
             canonical(&object, &mut text, 0);

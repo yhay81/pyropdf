@@ -22,7 +22,8 @@ use hayro::hayro_interpret::{
     BlendMode, CacheKey, ClipPath, Device, DrawMode, DrawProps, FillRule, Image, ImageDrawProps,
     InterpreterCache, InterpreterSettings, MaskType, Paint, SoftMask, StrokeProps, interpret_page,
 };
-use hayro::hayro_syntax::object::{Array, Stream};
+use hayro::hayro_syntax::object::dict::keys::MCID;
+use hayro::hayro_syntax::object::{Array, Dict, Stream};
 use hayro::hayro_syntax::page::Page;
 use hayro::hayro_syntax::{Filter, Pdf};
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
@@ -370,7 +371,7 @@ fn blend_code(mode: BlendMode) -> u8 {
 fn soft_mask_tuple(mask: Option<&SoftMask<'_>>) -> Option<SoftMaskTuple> {
     mask.map(|mask| {
         (
-            u32::try_from(mask.id().obj_number).unwrap_or(0),
+            mask.group_id().obj_number,
             mask.mask_type() == MaskType::Alpha,
         )
     })
@@ -1200,7 +1201,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                     default_resolution
                 };
                 ImageRecord {
-                    xref: u32::try_from(stream.obj_id().obj_number).unwrap_or(0),
+                    xref: stream.obj_id().obj_number,
                     format: (width, height, bits, components, color_space),
                     is_stencil: false,
                     mask,
@@ -1410,8 +1411,9 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
         self.state = None;
     }
 
-    fn begin_marked_content(&mut self, tag: &[u8], mcid: Option<i32>) {
+    fn begin_marked_content(&mut self, tag: &[u8], properties: Option<&Dict<'_>>) {
         self.pending = None;
+        let mcid = properties.and_then(|properties| properties.get::<i32>(MCID));
         if self.kinds.any() {
             self.run(|this| this.begin_mark(tag, mcid));
         }

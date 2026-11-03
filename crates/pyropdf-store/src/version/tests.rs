@@ -1612,10 +1612,7 @@ fn every_corpus_stream_with_an_indirect_length_reads_the_data_that_hayro_reads()
                 continue;
             };
             let generation = version.generation(number).unwrap();
-            let id = hayro_syntax::object::ObjectIdentifier::new(
-                i32::try_from(number).unwrap(),
-                i32::from(generation),
-            );
+            let id = hayro_syntax::object::ObjectIdentifier::new(number, i32::from(generation));
             let theirs = pdf
                 .xref()
                 .get::<hayro_syntax::object::Stream<'_>>(id)

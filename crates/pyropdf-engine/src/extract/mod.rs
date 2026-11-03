@@ -7,7 +7,9 @@
 //! display space. The operation's budget counts its glyphs, path and clip
 //! segments, dash lengths, and items with `content_element_count` (F6).
 
-use hayro::hayro_interpret::{Context, InterpreterCache, InterpreterSettings, TransformExt};
+use hayro::hayro_interpret::{
+    Context, InterpreterCache, InterpreterSettings, RenderContent, TransformExt,
+};
 use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::object::{Array, Dict, Name, Object, Stream};
 use hayro::hayro_syntax::page::Page;
@@ -110,7 +112,11 @@ pub fn page_content_into<S: ContentSink>(
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(Error::NoPage(index))?;
     let settings = InterpreterSettings {
-        render_annotations: annotations,
+        render_content: if annotations {
+            RenderContent::all()
+        } else {
+            RenderContent::PAGE
+        },
         ..InterpreterSettings::default()
     };
     let cache = InterpreterCache::new();

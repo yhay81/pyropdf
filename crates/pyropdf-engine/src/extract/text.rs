@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
-use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings};
+use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings, RenderContent};
 use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::{Affine, BezPath, Point, Rect};
@@ -2538,7 +2538,7 @@ fn collect_page_glyphs(
     // Text includes the annotations' appearances. The sources of a layout
     // with chars interpret the page again with the fonts of the first time.
     let settings = InterpreterSettings {
-        render_annotations: true,
+        render_content: RenderContent::all(),
         ..InterpreterSettings::default()
     };
     let cache = InterpreterCache::new();

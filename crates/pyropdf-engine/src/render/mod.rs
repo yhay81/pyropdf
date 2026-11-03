@@ -1,7 +1,7 @@
 //! Rasterizing a page through hayro, as much as `page.pixmap`
 //! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
-use hayro::hayro_interpret::InterpreterSettings;
+use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 
@@ -344,7 +344,11 @@ fn draw<'a>(
     let transform =
         Affine::translate((-left, -top)) * page_to_raster * page.initial_transform(true).to_kurbo();
     let settings = InterpreterSettings {
-        render_annotations: options.annotations,
+        render_content: if options.annotations {
+            RenderContent::all()
+        } else {
+            RenderContent::PAGE
+        },
         ..InterpreterSettings::default()
     };
     let mut context = RenderContext::new(raster_width, raster_height);

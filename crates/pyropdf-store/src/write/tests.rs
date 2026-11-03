@@ -752,10 +752,7 @@ fn corpus() -> Vec<std::path::PathBuf> {
 fn same(a: &MaybeRef<Object<'_>>, b: &MaybeRef<Object<'_>>) -> bool {
     let null = |object: &MaybeRef<Object<'_>>| match object {
         MaybeRef::NotRef(Object::Null(_)) => true,
-        MaybeRef::Ref(reference) => {
-            u32::try_from(reference.obj_number).is_err()
-                || u16::try_from(reference.gen_number).is_err()
-        }
+        MaybeRef::Ref(reference) => u16::try_from(reference.gen_number).is_err(),
         MaybeRef::NotRef(_) => false,
     };
     match (a, b) {

@@ -20,6 +20,7 @@ use hayro::hayro_interpret::{
 };
 use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::content::TypedIter;
+use hayro::hayro_syntax::object::Dict;
 use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::BezPath;
 use pyropdf_store::LimitExceeded;
@@ -229,7 +230,7 @@ impl<'a> Device<'a> for OriginDevice<'_> {
     }
     fn pop_transparency_group(&mut self) {}
 
-    fn begin_marked_content(&mut self, tag: &[u8], _: Option<i32>) {
+    fn begin_marked_content(&mut self, tag: &[u8], _: Option<&Dict<'_>>) {
         self.depth = self.depth.saturating_add(1);
         if self.form.is_some() {
             return;

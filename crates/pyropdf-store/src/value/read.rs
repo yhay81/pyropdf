@@ -650,12 +650,9 @@ fn length_object(bytes: &[u8]) -> Option<usize> {
 /// a generation from 0 to 65535. Any other refers to no object, which PDF
 /// reads as null.
 fn reference_value(reference: ObjRef) -> Value {
-    match (
-        u32::try_from(reference.obj_number),
-        u16::try_from(reference.gen_number),
-    ) {
-        (Ok(number), Ok(generation)) => Value::Reference(Reference::new(number, generation)),
-        _ => Value::Null,
+    match u16::try_from(reference.gen_number) {
+        Ok(generation) => Value::Reference(Reference::new(reference.obj_number, generation)),
+        Err(_) => Value::Null,
     }
 }
 

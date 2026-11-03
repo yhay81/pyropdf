@@ -641,10 +641,6 @@ pub(crate) fn length_value(len: usize) -> Value {
 }
 
 /// A reference to an indirect object: its object number and generation.
-///
-/// hayro-syntax 0.8 reads object numbers as `i32` (I8,
-/// yhay81/pyropdf#18), so it reads back only references whose number is at
-/// most `i32::MAX`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Reference {
     number: u32,

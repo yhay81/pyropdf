@@ -4,7 +4,9 @@
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_syntax::object::{Dict, ObjectIdentifier};
-use hayro::hayro_interpret::{CacheKey, DrawMode, InterpreterCache, InterpreterSettings};
+use hayro::hayro_interpret::{
+    CacheKey, DrawMode, InterpreterCache, InterpreterSettings, RenderContent,
+};
 use hayro::kurbo::{Affine, BezPath, Rect};
 use pyropdf_store::budget::Budget;
 use pyropdf_store::budget::BudgetVec;
@@ -112,7 +114,7 @@ pub fn used_glyphs(
 ) -> Result<Vec<Vec<u32>>, Error> {
     let pdf = bridged.pdf();
     let settings = InterpreterSettings {
-        render_annotations: true,
+        render_content: RenderContent::all(),
         ..InterpreterSettings::default()
     };
     let cache = InterpreterCache::new();
@@ -176,9 +178,7 @@ pub fn used_glyphs(
         if protected[index] {
             ids.try_push(super::font_guard::KEEP_WHOLE)?;
         } else {
-            let dict = i32::try_from(number).ok().and_then(|number| {
-                xref.get::<Dict<'_>>(ObjectIdentifier::new(number, i32::from(generation)))
-            });
+            let dict = xref.get::<Dict<'_>>(ObjectIdentifier::new(number, i32::from(generation)));
             if let Some(dict) = dict {
                 let key = dict.cache_key();
                 let first = uses.glyphs.partition_point(|&(font, _)| font < key);

@@ -70,8 +70,7 @@ fn extent(
         // exactly one reference in the original base, never recursively,
         // and retain embedded `endstream` tokens and trailing data bytes.
         let reference = Reference::new(
-            u32::try_from(length.obj_number)
-                .map_err(|_| Error::malformed("negative length object number"))?,
+            length.obj_number,
             u16::try_from(length.gen_number)
                 .map_err(|_| Error::malformed("invalid length object generation"))?,
         );
