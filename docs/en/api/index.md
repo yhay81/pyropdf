@@ -104,6 +104,7 @@ method and property of its classes with its full description.
 - [`MoveTo`](text-and-content.md#moveto): Start a new subpath at `to`.
 - [`Paint`](text-and-content.md#paint)
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
+- [`Paths`](text-and-content.md#paths): The paths of a page as columns, from `Page.paths`.
 - [`Segment`](text-and-content.md#segment)
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
 - [`ShadingType`](text-and-content.md#shadingtype): A shading type of ISO 32000-2 §8.7.4.5.

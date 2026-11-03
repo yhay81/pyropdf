@@ -87,6 +87,25 @@ with pyropdf.open("input.pdf") as doc:
     print(page.operations[:3])
 ```
 
+`page.paths()` returns the same paths as `Paths` columns, one row per path,
+with the segments of every path in columns of their own, and builds no
+Python object per path or segment, so that a drawing of a few hundred
+thousand lines reads at about the cost of interpreting the page.
+`column()` returns a column as a read-only `memoryview` that NumPy reads
+without a copy, and pyarrow, polars, and DuckDB import the whole table
+through the Arrow PyCapsule interface. Rows are `Path` records on demand.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    paths = doc.pages[0].paths()
+    print(len(paths), "paths of", len(paths.column("verb")), "segments")
+    # numpy.asarray(paths.column("stroke_red")) reads the same buffer.
+    red = paths.column("stroke_red")
+    print([path.bbox for path, value in zip(paths, red) if value == 1])
+```
+
 ## Images
 
 `page.images()` lists the images that the page paints, in the order of

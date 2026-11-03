@@ -481,6 +481,27 @@ applies; above it the call raises `LimitError` with code
 `content_element_count`. `None` removes the bound for trusted
 input. The GIL is released while hayro interprets the page.
 
+### `Page.paths`
+
+```python
+Page.paths(
+    *,
+    clip: Sequence[float] | None = None,
+    annotations: bool = True,
+    max_elements: int | None = 262144,
+) -> Paths
+```
+
+Return the paths that the page paints as `Paths` columns, in paint order.
+
+The rows are the paths of `content` with `text_runs=False`,
+`images=False`, and the same options, built from the same
+interpretation without a Python object per path or segment:
+`max_elements` counts what it counts there, and above it the call
+raises `LimitError` with code `content_element_count`. The
+row view builds each `Path` on demand. The GIL is released
+while hayro interprets the page and the columns are built.
+
 ### `Page.text`
 
 ```python
