@@ -4447,7 +4447,7 @@
    {}
   ]
  },
- "patent-us223898": {
+ "nonembedded-cjk": {
   "pages": [
    {
     "text": [
@@ -4497,6 +4497,254 @@
      {}
     ],
     "words_exact": [
+     "boxes",
+     {
+      "max_delta": 4.8
+     }
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   },
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
+     "boxes",
+     {
+      "max_delta": 4.8
+     }
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   },
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
+     "boxes",
+     {
+      "max_delta": 4.84
+     }
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   },
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
+     "boxes",
+     {
+      "max_delta": 4.84
+     }
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   },
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
+     "boxes",
+     {
+      "max_delta": 4.76
+     }
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   },
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
+     "boxes",
+     {
+      "max_delta": 7.28
+     }
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   }
+  ],
+  "markdown": [
+   "equal",
+   {}
+  ]
+ },
+ "patent-us223898": {
+  "pages": [
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
      "equal",
      {}
     ],
@@ -4519,6 +4767,72 @@
     "markdown": [
      "equal",
      {}
+    ],
+    "render": [
+     "equal",
+     {}
+    ]
+   },
+   {
+    "text": [
+     "text",
+     {
+      "line_ratio": 0.9333
+     }
+    ],
+    "words": [
+     "text",
+     {
+      "count": [
+       811,
+       810
+      ],
+      "ratio": 0.9796
+     }
+    ],
+    "words_exact": [
+     "text",
+     {
+      "count": [
+       811,
+       810
+      ],
+      "ratio": 0.9796
+     }
+    ],
+    "layout": [
+     "text",
+     {
+      "count": [
+       116,
+       112
+      ],
+      "ratio": 0.9386
+     }
+    ],
+    "search": [
+     "text",
+     {
+      "count": [
+       20,
+       20
+      ],
+      "ratio": 0.6
+     }
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "text",
+     {
+      "line_ratio": 0.8049
+     }
     ],
     "render": [
      "equal",
@@ -4603,8 +4917,10 @@
    }
   ],
   "markdown": [
-   "equal",
-   {}
+   "text",
+   {
+    "line_ratio": 0.947
+   }
   ]
  },
  "pdf20-simple": {
@@ -4735,11 +5051,54 @@
      {}
     ],
     "render": [
-     "close",
-     {
-      "differing": 0.00139,
-      "mean": 0.295
-     }
+     "equal",
+     {}
+    ]
+   }
+  ],
+  "markdown": [
+   "equal",
+   {}
+  ]
+ },
+ "pdfium-ocg-invisible": {
+  "pages": [
+   {
+    "text": [
+     "equal",
+     {}
+    ],
+    "words": [
+     "equal",
+     {}
+    ],
+    "words_exact": [
+     "equal",
+     {}
+    ],
+    "layout": [
+     "equal",
+     {}
+    ],
+    "search": [
+     "equal",
+     {}
+    ],
+    "tables_lines": [
+     "equal",
+     {}
+    ],
+    "tables_text": [
+     "equal",
+     {}
+    ],
+    "markdown": [
+     "equal",
+     {}
+    ],
+    "render": [
+     "equal",
+     {}
     ]
    }
   ],

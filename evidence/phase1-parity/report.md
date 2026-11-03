@@ -15,10 +15,12 @@ then the causes of the rest.
 | f1040 | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
 | mhlw-doc | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
 | nics-background-checks-2015-11 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
-| patent-us223898 | 4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | equal |
+| nonembedded-cjk | 7 | 7/7 | 7/7 | 1/7 (unexplained 6) | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | equal |
+| patent-us223898 | 4 | 3/4 (unexplained 1) | 3/4 (unexplained 1) | 3/4 (unexplained 1) | 3/4 (unexplained 1) | 3/4 (unexplained 1) | 4/4 | 4/4 | 3/4 (unexplained 1) | 4/4 | unexplained |
 | pdf20-simple | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-jpx-lzw | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-links-highlights-annots | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
+| pdfium-ocg-invisible | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-smask-blend | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-type3 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | senate-expenditures | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
@@ -27,8 +29,20 @@ then the causes of the rest.
 
 ## Rendering within tolerance
 
-- pdfium-links-highlights-annots page 1: missing-highlight-appearance {"differing": 0.00139, "mean": 0.295}
+None.
 
 ## Unexplained differences
 
-None.
+- nonembedded-cjk page 2, words_exact: boxes {"max_delta": 4.8}
+- nonembedded-cjk page 3, words_exact: boxes {"max_delta": 4.8}
+- nonembedded-cjk page 4, words_exact: boxes {"max_delta": 4.84}
+- nonembedded-cjk page 5, words_exact: boxes {"max_delta": 4.84}
+- nonembedded-cjk page 6, words_exact: boxes {"max_delta": 4.76}
+- nonembedded-cjk page 7, words_exact: boxes {"max_delta": 7.28}
+- patent-us223898 page 2, text: text {"line_ratio": 0.9333}
+- patent-us223898 page 2, words: text {"count": [811, 810], "ratio": 0.9796}
+- patent-us223898 page 2, words_exact: text {"count": [811, 810], "ratio": 0.9796}
+- patent-us223898 page 2, layout: text {"count": [116, 112], "ratio": 0.9386}
+- patent-us223898 page 2, search: text {"count": [20, 20], "ratio": 0.6}
+- patent-us223898 page 2, markdown: text {"line_ratio": 0.8049}
+- patent-us223898, document markdown: text {"line_ratio": 0.947}

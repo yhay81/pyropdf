@@ -6,3 +6,17 @@ outputs = ["render"]
 kinds = ["close"]
 documents = ["pdfium-links-highlights-annots"]
 pages = [0]
+
+[[cause]]
+id = "heading-above-columns"
+outputs = ["text", "words", "words_exact", "layout", "search", "markdown", "document_markdown"]
+kinds = ["text"]
+documents = ["patent-us223898"]
+pages = [1]
+
+[[cause]]
+id = "fallback-exact-boxes"
+outputs = ["words_exact"]
+kinds = ["boxes"]
+documents = ["nonembedded-cjk"]
+pages = [1, 2, 3, 4, 5, 6]

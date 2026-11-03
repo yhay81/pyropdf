@@ -59,12 +59,15 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 
 ## Causes
 
-The review run on 2026-10-28 covers 14 documents and 155 pages. All JSON
-reading outputs and all document Markdown outputs match. Of the 155
-rasters, 154 match byte for byte; one is close under the stated tolerance.
-No output raises. `metadata.json` identifies the measured source revision
-and corpus hashes. The oracle cache is reused only with a matching freeze
-stamp and an importable package; an unstamped or different cache is rebuilt.
+The run on 2026-11-04 covers the 14 corpus documents, 155 pages, and the 7
+pages of `nonembedded-cjk.pdf`. Of the 162 rasters, 161 match byte for byte,
+the 7 fallback pages among them, and one is close under the stated
+tolerance. The JSON reading outputs and the Markdown match, except on page 2
+of `patent-us223898.pdf` and in the exact word boxes of the fallback pages,
+which the causes below explain. No output raises. `metadata.json` identifies
+the measured source revision and the hashes of the inputs. The oracle cache
+is reused only with a matching stamp of the freeze commit and the extras and
+an importable package; an unstamped or different cache is rebuilt.
 
 ### Missing highlight appearance
 
@@ -81,6 +84,30 @@ its `rust/src/annotation_appearance.rs` gives highlights a Multiply blend.
 The measured pyropdf version passes annotations to hayro without that
 synthesis. The port is tracked by #169 / PR #172. This is an explained,
 within-tolerance difference, rather than byte-identical rendering.
+
+### Headings above columns
+
+`patent-us223898.pdf`, page 2, differs in its text, words, layout, search,
+and Markdown, and so does the document's Markdown. Its heading `UNITED
+STATES PATENT OFFICE.` and the line below it span both columns, and their
+word gaps fall on the column gutter. Frozen pylopdf splits them into the
+columns, as pyropdf did when the run of 2026-10-28 measured the corpus;
+since #460, pyropdf keeps them whole above the columns, as PyMuPDF 2.0 does
+(`evidence/pymupdf-comparison`). The difference is that improvement: the
+words are the same but for `CR` and `C`, which join as `CRC` in the line
+`CRC AMP.`, and the page has four fewer spans.
+
+### Exact boxes of fonts that a document does not embed
+
+The 7 pages of `nonembedded-cjk.pdf` render byte for byte alike, with the
+faces of the font extras (#600). Only their exact word boxes differ, on
+pages 2 to 7, by up to 7.28 points: frozen pylopdf's text extraction also
+draws a font that a document does not embed in its fallback faces, so
+`words(exact_bboxes=True)` measures their outlines, while pyropdf's text
+extraction does not use the fallback faces, which #600 leaves out, and
+gives the boxes that it gives without them. On page 1, whose descendant
+font is a `CIDFontType0`, pylopdf gives those boxes too. The text, the
+other boxes, and the layout match on every page.
 
 Review corrected the original comparator's early equality return for
 matching raster metadata: equal dimensions and stride now still compare
