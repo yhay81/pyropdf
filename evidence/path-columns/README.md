@@ -66,31 +66,31 @@ kept the processor busy during the run, which is why each row is the median
 of five processes and the tables give CPU time as well.
 
 - **Time.**
-  - `paths()` reads the 200,000-line page in 0.25 s, a little longer than
-    rendering it at 36 dpi takes (0.21 s).
-  - The records take 4.0 s, or 2.1 s with the garbage collector off, and
-    PyMuPDF's `get_cdrawings()` takes 1.03 s.
-  - On the 33,000-line page the same calls take 0.065 s, 0.081 s, 1.26 s
-    (0.61 s of CPU time), and 0.19 s.
+  - `paths()` reads the 200,000-line page in 0.27 s, a little longer than
+    rendering it at 36 dpi takes (0.26 s).
+  - The records take 4.6 s, or 2.5 s with the garbage collector off, and
+    PyMuPDF's `get_cdrawings()` takes 1.18 s.
+  - On the 33,000-line page the same calls take 0.055 s, 0.055 s, 0.70 s,
+    and 0.18 s.
 - **Where the time goes.** Once the interpretation is memoized, `paths()`
-  builds the columns of 200,000 paths in 36 ms, and `content().paths`
-  builds the records in 4.3 s. Interpreting the page and recording its
-  paths take the rest of the 0.25 s.
+  builds the columns of 200,000 paths in 51 ms, and `content().paths`
+  builds the records in 6.2 s. Interpreting the page and recording its
+  paths take the rest of the 0.27 s.
 - **Memory.**
-  - The columns hold 224 bytes a path on the line pages: 118 for the path
+  - The columns hold 221 bytes a path on the line pages: 115 for the path
     and 53 for each of its two segments.
-  - A call grows the peak resident set by 581 bytes a path and leaves 693
-    held. The records grow it by 2,247 and leave 2,405, and
-    `get_cdrawings()` 969 and 1,475.
-  - About 470 of the 693 bytes are the interpretation's own tuples, one
+  - A call grows the peak resident set by 583 bytes a path and leaves 689
+    held. The records grow it by 2,242 and leave 2,400, and
+    `get_cdrawings()` 967 and 1,476.
+  - About 470 of the 689 bytes are the interpretation's own tuples, one
     per path, which the page memo keeps for `Page.content()` as well.
     Issue #615 records the paths as columns in the engine, so that the
-    memo holds the 224 bytes alone.
+    memo holds the 221 bytes alone.
 - **The corpus page with the most paths**, `f1040.pdf` page 1 with 502
   paths and 1,604 segments.
-  - `paths()` reads it in 9 ms, against 17 ms for the records and 26 ms
+  - `paths()` reads it in 10 ms, against 19 ms for the records and 29 ms
     for `get_cdrawings()`.
-  - Interpreting the page takes nearly all of the 9 ms. From the memo, the
-    columns take 0.24 ms and the records 10 ms.
+  - Interpreting the page takes nearly all of the 10 ms. From the memo,
+    the columns take 0.27 ms and the records 9 ms.
   - At this size, the memory columns measure fixed costs, such as code
     that runs for the first time, more than the paths.

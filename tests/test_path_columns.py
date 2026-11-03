@@ -236,6 +236,7 @@ def test_the_columns_share_patterns_and_hold_the_types_of_soft_masks() -> None:
     # The position in `SoftMaskType`, whichever type the page paints first.
     assert paths.column("soft_mask").tolist() == [-1, -1, 1, 0]
     assert paths.column("soft_mask").format == "b"
+    assert not hasattr(paths, "soft_masks")
     assert (shaded.soft_mask, patterned.soft_mask) == (None, None)
     assert luminosity.soft_mask == SoftMask(subtype=SoftMaskType.LUMINOSITY)
     assert alpha.soft_mask == SoftMask(subtype=SoftMaskType.ALPHA)
