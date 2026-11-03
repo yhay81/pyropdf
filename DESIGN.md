@@ -1,17 +1,17 @@
 # pyropdf foundation design
 
 This document is pyropdf's design: one versioned object store that every
-engine reads, the contracts that the store needs from the engines, and the
-principles that every change keeps (section 3). It also records the
-evidence from pylopdf that motivated the design, and the plan for building
-pyropdf and moving pylopdf's users to it. The
-[issue tree](https://github.com/yhay81/pyropdf/issues/1) records how far
-that plan has come; this document does not.
+engine reads, the contracts between the store, the engines, and the Python
+API, and the principles that every change keeps (section 3), with the
+reasons for them. Section 2 records the evidence that motivated the design,
+and section 13 the phases that order the work. The
+[issue tree](https://github.com/yhay81/pyropdf/issues/1) records the work
+and how far it has come; this document does not.
 
 ## 1. Concept
 
 pyropdf keeps the concept of [pylopdf](https://github.com/yhay81/pylopdf)
-and changes its foundation.
+and rebuilds its foundation (sections 2 and 14).
 
 - **Complete control.** Every feature of PDF as ISO 32000-2:2020 defines it,
   with its errata and extensions and the PDF/A and PDF/UA profiles, is read
@@ -24,73 +24,55 @@ and changes its foundation.
 - **An essential API.** One way to do each task, typed values, standard
   Python protocols, and one coordinate space: display space, measured from
   the top-left corner of the visible page with `/Rotate` and the CropBox
-  applied. pylopdf's API rules
-  ([api/DESIGN.md](https://github.com/yhay81/pylopdf/blob/main/api/DESIGN.md),
-  section 1) are pyropdf's starting rules.
+  applied. Section 10 states the rules.
 - **Engine-faithful.** hayro interprets and renders, harfrust shapes text,
-  and work that an engine owns lands upstream first. pyropdf builds the
-  store, the binding, the resource policy, the consistency of edits,
-  document understanding, and what it writes: content operators, images,
-  and fonts (section 7).
+  and work that an engine owns lands upstream first (section 6). pyropdf
+  builds the store, the binding, the resource policy, the consistency of
+  edits, document understanding, and what it writes: content operators,
+  images, and fonts (section 7).
 - **Trustworthy.** Hostile input meets typed, bounded refusal. Results carry
   their provenance, independent validators check what pyropdf writes, and
   benchmarks publish losses with wins.
 - **Everywhere.** GIL-enabled and free-threaded CPython, Pyodide and
-  Cloudflare Python Workers, small wheels, and the MIT license.
+  Cloudflare Python Workers (#257, #258), small wheels, and the MIT
+  license.
 
-What changes is underneath. pylopdf holds three object models: lopdf's
-editable graph, hayro's parse of file bytes, and the PDFs that krilla
-generates. It reconciles them after the fact. pyropdf has one store, and
-every engine reads and writes through it.
+Underneath is one store: every engine reads and writes the document
+through it (F1), and nothing reconciles separate object models after the
+fact.
 
 ## 2. Evidence from pylopdf
 
+pylopdf's costs, measured and counted on 2026-10-24, led to this design.
+[evidence/pylopdf-baseline](evidence/pylopdf-baseline/README.md) records
+them in full, with the scripts and the conditions of each run.
+
 ### 2.1 Measurements
 
-Two runs on 2026-10-24, on macOS arm64 with CPython 3.14.8 and the pylopdf
-0.15.0 extension of a development environment; where they differ, both
-results are given. A single fill is the best of seven rounds, and loops ran
-once per size in each run. The code paths named in the last column are
-unchanged on pylopdf's main at `884af0db`. The scripts are in
-[evidence/pylopdf-baseline](evidence/pylopdf-baseline). The larger
-documents repeat pylopdf's `tests/assets/real_world/bill-hr815.pdf` (110
-pages) through `doc.pages.extend`, and each is written with `to_bytes()` and
-opened again before measuring.
+Four workloads, at the largest size measured. pylopdf's results are those
+of pylopdf 0.15.0, and pyropdf's those of the evidence that each row links,
+which records its conditions. The documents repeat pylopdf's
+`tests/assets/real_world/bill-hr815.pdf` (110 pages), and the form is its
+`f1040.pdf`.
 
-| Workload | Result | Cause in pylopdf |
+| Workload | pylopdf, and the cause | pyropdf |
 | --- | --- | --- |
-| Rotate every page, then read its text | 110 pages: 0.16 to 0.17 s, against 0.09 to 0.10 s for reading alone. 440 pages: 1.48 to 1.87 s, against 0.29 to 0.32 s. 1,760 pages: 28.68 to 30.41 s, against 1.29 to 1.59 s, 18 to 24 times as long. | Every edit drops hayro's snapshot, the content guard's results, and every derived cache (`invalidate_hayro_pdf_keeping_placements`), and the next read serializes the whole lopdf graph and parses it again (`hayro_view`). |
-| Fill one text field | 2.17 to 2.19 ms with 2,626 objects, 6.39 to 6.58 ms with 8,646 objects, when only pages without fields were added | Field edits clone the whole lopdf document so that they can roll back on failure (seven sites in `forms.rs`). |
-| Read the value of every field | 7.7 ms for 100 fields, 118 to 126 ms for 400, and 2.18 to 2.24 s for 1,600, while one walk of the form takes 0.07, 0.27 to 0.31, and 1.22 to 1.25 ms | A `Field` handle walks the whole form on every property access to find itself (`Field._facts`). |
-| Stamp text in one OpenType face on 100 pages | 100 embedded font programs and 330 KiB. `dedupe=True` merges them only when every page has the same text (29.6 KiB); with different text it leaves 82.7 KiB | Each `page.draw()` commit generates its own krilla document, so each commit embeds its own subset. |
+| Rotate every page, then read it | 1,760 pages: 28.68 to 30.41 s, 18 to 24 times as long as reading the text alone. Every edit drops hayro's snapshot and every derived cache, and the next read serializes the whole lopdf graph and parses it again. | Rotating and rendering 1,760 pages takes 11.5 s, 3.6 times rendering alone, where pylopdf takes 22.7 s, 7.2 times ([edit-render](evidence/edit-render/README.md)). What still grows with the document is hayro's re-read of each version, with the bytes that the bridge builds for it, and the page index walk (section 6). |
+| Fill one text field | 2.17 to 2.19 ms with 2,626 objects, 6.39 to 6.58 ms with 8,646. Field edits clone the whole lopdf document so that they can roll back on failure. | 0.04 ms with 2,663 objects as with 6,903 ([form-fill-cost](evidence/form-fill-cost/README.md)). |
+| Read the value of every field | 2.18 to 2.24 s for 1,600 fields, while one walk of the form takes 1.22 to 1.25 ms. A `Field` handle walks the whole form on every property access to find itself. | 7.77 ms to list and read 1,600 fields, against 4.72 ms for one walk, which the memo computes once ([form-read-cost](evidence/form-read-cost/README.md)). |
+| Stamp text in one OpenType face on 100 pages | 100 embedded font programs and 330 KiB. `dedupe=True` merges them only when every page has the same text (29.6 KiB); with different text it leaves 82.7 KiB. Each `page.draw()` commit generates its own krilla document, so each commit embeds its own subset. | One program: 37.1 KiB, or 19.7 KiB with `dedupe=True`, and 36.7 and 24.7 KiB with different text ([font-subsets](evidence/font-subsets/README.md)). |
 
 ### 2.2 Structure
 
-Counted on pylopdf's main at `884af0db` (2026-10-24):
-
-- About 5,500 lines of Rust exist because an engine lacks a bound, an API,
-  or linear-time behavior, as pylopdf's roadmap counts them. They include
-  the nesting guards and the scanners behind them (2,477 lines), the
-  reconciliation of how lopdf and hayro read malformed files
-  (`object_recovery.rs`, 1,498 lines), and a parser for krilla's output on
-  the calling thread (`generated_pdf.rs`, 756 lines).
-- Three tokenizers read content streams. hayro-syntax serves rendering,
-  extraction, and the content engine, which keeps each operation's bytes
-  since yhay81/pylopdf#405. lopdf's content parser serves text
-  replacement. And `content_scan.rs` models hayro's tokenizer in order to
-  refuse what would crash it.
-- 67 call sites choose by hand how much an edit invalidates.
-- Incremental save (yhay81/pylopdf#403, 2026-10-24) reads the original
-  bytes again and compares every object of the graph with that baseline,
-  because no editing method reports what it changed. Transactions and undo
-  (yhay81/pylopdf#415, 2026-10-24) keep complete copies of the graph.
-- One `#[pymethods]` block holds the 186 methods of `_Document`.
-- About 60 `LimitError` codes and 421 hand-placed fallible reservations
-  implement the resource policy.
-- lopdf stores real numbers as `f32`, so every save rewrites `35.6812345`
-  as `35.681236`.
-- The development context (`AGENTS.md`) is 249 KB, much of it rules for
-  keeping the engines and caches consistent.
+pylopdf's code shows the same cause. About 5,500 lines of Rust exist
+because an engine lacks a bound, an API, or linear-time behavior, among
+them the reconciliation of how lopdf and hayro read malformed files. 67
+call sites choose by hand how much an edit invalidates, and page cleanup,
+structure-tree pruning, and form import are 3,654 lines of
+operation-specific code. Incremental save compares every object with the
+original bytes, and transactions copy the whole graph, because no editing
+method reports what it changed. lopdf stores real numbers as `f32`, so
+every save rewrites `35.6812345` as `35.681236`.
 
 On damaged input, hayro alone rendered 103 of 112 inputs (14 files under 8
 kinds of damage), while pylopdf with lopdf 0.46 read the first page of 78
@@ -98,9 +80,11 @@ kinds of damage), while pylopdf with lopdf 0.46 read the first page of 78
 
 ### 2.3 Diagnosis
 
-pylopdf's costs come from one decision. lopdf's graph is the editable source
-of truth, hayro reads an immutable snapshot of it, and every edit discards
-that snapshot. As a result:
+pylopdf holds three object models: lopdf's editable graph, hayro's parse of
+file bytes, and the PDFs that krilla generates. It reconciles them after the
+fact, and its costs come from one decision. lopdf's graph is the editable
+source of truth, hayro reads an immutable snapshot of it, and every edit
+discards that snapshot. As a result:
 
 - each edit costs as much as the document;
 - each difference between the two readers becomes pylopdf code;
@@ -287,20 +271,19 @@ A result computed on version X is valid on version Y when the change set from
 X to Y is disjoint from its read set. Settings that change what a computation
 produces, such as fallback fonts, are part of its memo key.
 
-This replaces pylopdf's hand-chosen invalidation, its 67 call sites and the
-rules that classify each editing method, with one mechanism that is correct
-for a new editing method without any declaration. Versions (section 4), read
-sets (this section), document resources (section 7), and identity handles
-(section 10) together make each workload of section 2.1 cost in proportion to
-what it changes or reads, not to the size of the document, once hayro reads
+Read sets keep invalidation correct for a new editing method without any
+declaration (F4), where hand-chosen invalidation needs a rule for every
+method (section 2.2). Versions (section 4), read sets (this
+section), document resources (section 7), and identity handles (section 10)
+together make each workload of section 2.1 cost in proportion to what it
+changes or reads, not to the size of the document, once hayro reads
 versions directly (I1 in section 6).
 
 ## 6. Interpretation contract
 
 pyropdf interprets through hayro-interpret and parses through hayro-syntax.
-It needs the following from them, and contributes each item upstream first.
-pylopdf's guards and scanners record precisely what hayro must bound; that
-analysis goes into upstream patches, not into pyropdf.
+It needs the following from them, and contributes each item upstream first;
+the hayro tracker (#7) follows each one.
 
 | Item | Requirement |
 | --- | --- |
@@ -310,7 +293,7 @@ analysis goes into upstream patches, not into pyropdf.
 | I4 Provenance | Begin and end of every content stream, Form XObject, annotation appearance, tiling pattern, and Type 3 glyph procedure; the operator index and byte span of every painted item; the resource names it used; a callback for `sh`; marked-content properties; colour spaces and components; font and image identity; image-mask streams. |
 | I5 Fuel and cancellation | A budget charged per operator, per function evaluation, and per rasterized area, with a cancellation check. |
 | I6 Linear time | Object stream member tables parsed once (LaurenzV/hayro#1545), a linear search for the end of inline image data, and an operand stack that holds the 33 operands of a DeviceN `scn`. |
-| I7 Spans | The byte span of every parsed object and dictionary entry, which F3 needs. yhay81/pylopdf#405 already keeps each content operation's bytes over hayro's tokenizer. |
+| I7 Spans | The byte span of every parsed object and dictionary entry, which F3 needs. pyropdf's content syntax already keeps each content operation's bytes over hayro's tokenizer (#93). |
 | I8 Object numbers | Object numbers read as `u32`. |
 
 hayro-syntax 0.8 keeps its cross-reference reader, its repair, and its
@@ -352,8 +335,13 @@ the base's is refused, as a save refuses it. I1 makes the password
 unnecessary.
 
 No pyropdf release claims safety for untrusted input before I2 is released.
-If the upstream patch cannot land, pylopdf's guards come over as a listed
-workaround that links the upstream discussion.
+If the upstream patches cannot land, pyropdf bounds that construction
+itself before hayro builds it: an iterative walk, charged to the
+operation's budget, measures how deeply colour spaces, functions, Type 4
+procedures, and content and objects nest, and refuses with `LimitError`
+beyond its bounds. The walk is then pyropdf's own code, listed as an engine
+workaround in the hayro tracker with a link to the upstream discussion
+(#15), and it goes when hayro releases I2.
 
 ## 7. Writing contract and settling
 
@@ -364,10 +352,8 @@ the store, so one canvas commits one content stream and one transaction.
 Images and font faces are document resources: each is registered once per
 document, and drawing it again reuses its objects. krilla writes nothing:
 its public API returns a complete PDF per drawing, which pyropdf would have
-to parse and import (F1). An object sink and document resources would avoid
-this; the krilla maintainer's first impression was that they are probably
-out of scope, without a review or a final decision (issue #466). The choice
-does not wait on that decision: the released API is what pyropdf can use.
+to parse and import (F1), and #466 chose to write text in pyropdf rather
+than wait for krilla to offer an object sink and document resources.
 
 Text is drawn in a Standard 14 font, which is not embedded, or in an
 embedded face. harfrust shapes the text of an embedded face, and pyropdf
@@ -391,7 +377,10 @@ for a TrueType program or through the charset of a CID-keyed CFF program.
 Content codes therefore stay the face's glyph IDs: content written earlier
 needs no rewrite, and a drawing after a save restores the provisional program
 with all its glyphs until the next save. Stamping one face on 100 pages embeds
-one program (`evidence/embedded-text`).
+one program (`evidence/embedded-text`). A variable face draws at its default
+instance, and pyropdf refuses its other instances; how to draw them, and
+colour glyphs (COLR, SVG, or bitmap), which a CIDFont does not draw, is the
+owner's decision in #598.
 
 Dependent structures are settled rather than rebuilt by every call. A
 transaction marks what its writes make stale: appearance streams, outline
@@ -402,8 +391,8 @@ font subsets. Settling runs:
 - at the end of every top-level transaction;
 - before a save, which is the only point where font subsets settle.
 
-A program never observes an unsettled structure, so pylopdf's rule that
-setters apply immediately keeps its meaning, while three setters on one
+A program never observes an unsettled structure, so the rule that setters
+apply immediately (section 10) keeps its meaning, while three setters on one
 annotation draw its appearance once.
 
 ## 8. Typed objects and referential rules
@@ -438,33 +427,148 @@ registered for the roles that refer to what it removes or moves:
 - remove the referrer;
 - point the reference elsewhere.
 
-pylopdf's page cleanup, structure-tree pruning, and form import (3,654 lines
-of operation-specific code) become such rules, and a new feature adds rules
-instead of revisiting every structural operation.
+Page cleanup, structure-tree pruning, and form import become such rules
+rather than operation-specific code (section 2.2), and a new feature adds
+rules instead of revisiting every structural operation.
 
 ## 9. Budgets and errors
 
 - An operation's `Budget` comes from `DocumentLimits` and the call's `max_*`
   options. It counts allocated bytes, elements, decoded bytes, and
-  interpreter fuel, and checks a deadline and a cancellation token.
-  Collections allocate from budgeted arenas, so fallible growth is the
-  default instead of hundreds of hand-placed reservations.
+  interpreter fuel, and checks a deadline and a cancellation token. A
+  collection that grows from input grows through the budget (`BudgetVec`),
+  so fallible growth is the default; the store's `clippy.toml` refuses the
+  growth of the standard collections.
 - Limit codes come from one registry. It generates the Rust enum, the stable
   `LimitError.code` strings, and the security guide's table.
 - The binding borrows Python buffers and strings and checks their sizes once,
   in Rust, before any copy.
 - Opening reads only the index, so damage and limits surface when a part is
   first read. `DocumentLimits(check_at_open=True)` reads every object at
-  open instead, and `DocumentLimits.web()`, pylopdf's web profile, sets it,
-  which keeps pylopdf's guarantee for untrusted uploads.
-- Core crates return typed errors. The binding maps them to pylopdf's
-  hierarchy, which carries over: `PdfError`, `MalformedPdfError`,
-  `PasswordError`, `EncryptedDocumentError`, `LimitError`,
-  `StaleObjectError`, `DocumentClosedError`, and `OcrError`.
+  open instead, so that damage and the limits of objects surface at open.
+- `DocumentLimits.web()` is the profile for documents from outside, read in
+  bounded workers. It bounds the file, the pages, the objects, the decoded
+  size of each stream, of a page's content, and of all the streams of an
+  operation, the nesting of objects, and the data that the interpreter
+  reads. It sets `check_at_open`, so that a damaged upload, or one whose
+  objects pass a limit, is refused when it opens rather than when a part of
+  it is first used.
+- Core crates return typed errors, and the binding maps them to one
+  hierarchy. Every error that pyropdf raises for a document is a
+  `PdfError`, which derives from `Exception` and not from `ValueError`:
+  - `MalformedPdfError` for input that cannot be read as a PDF, empty
+    input included;
+  - `PasswordError` for a password that matches neither password, and
+    `EncryptedDocumentError` for an operation that needs one;
+  - `LimitError`, whose stable `code` names the limit that refused;
+  - `StaleObjectError` for a handle whose object the current version does
+    not hold, with `StalePageError` for a page (section 10);
+  - `DocumentClosedError`, and `OcrError` for OCR models and inference.
 
-## 10. Python API changes
+  An argument that a call cannot take raises `TypeError` or `ValueError`,
+  and a missing file raises `FileNotFoundError`. A recoverable condition,
+  such as glyphs that text extraction leaves out, warns with
+  `PyropdfWarning`.
 
-pylopdf's API rules carry over. The foundation changes these behaviors:
+## 10. Python API
+
+### 10.1 Rules
+
+These rules bind every public API, new or changed; a change to a rule
+changes this section first.
+
+- **One way.** Each task has one way to do it: there are no aliases,
+  synonyms, compatibility layers, or deprecated twins, and no convenience
+  that only shortens another API. Two APIs overlap only where the PDF model
+  itself has two levels, such as a form field and its widgets. Before 1.0,
+  a redesign removes the old API in the same release, and the changelog
+  names what replaces it.
+- **Names.**
+  - Properties expose cheap state of a document or a page, such as
+    `page.rotation` and `doc.metadata`. A property whose change is one
+    atomic edit is assignable, and a removable one supports `del`, as
+    `del doc.xmp` does. There are no `get_` and `set_` pairs.
+  - Collections are properties that return live views with the standard
+    protocols: `doc.pages` is a sequence that supports `del`, `insert`, and
+    `extend`, `doc.attachments` and `doc.form` are mappings, and
+    `page.annotations` and `page.links` are sequences with `add`.
+  - Computed results are methods named after what they return, with
+    keyword-only options: `page.text()`, `page.words()`, `page.tables()`,
+    `page.content()`, `page.pixmap()`, and `page.svg()`.
+  - Actions are verbs, such as `save`, `unlock`, `sanitize`, and
+    `apply_ocr`.
+  - Booleans start with `is_` or `has_`. Names use full words, except
+    established PDF terms such as `xref`, `bbox`, and `dpi`.
+  - One spelling per concept: `rect` for a rectangle that the PDF stores,
+    such as a page's or an annotation's, `bbox` for an extent that pyropdf
+    computes, such as a word's, `index` for a zero-based position, and
+    `xref` for an object number. A pymupdf name is used where it is also
+    the clearest name by these rules, as `Rect`, `Matrix`, and `xref` are;
+    matching pymupdf is never the reason.
+- **Types.**
+
+  | Kind | Use | Rule |
+  | --- | --- | --- |
+  | Handle | Document-backed objects: `Page`, `Annotation`, `Link`, `Field`, `Widget`, `Attachment`, `OutlineItem`, and low-level objects | Names a document and an object (section 10.2); equality compares those, and a stale handle raises `StaleObjectError`. |
+  | Value | Geometry, colors, fonts, pixmaps, and content items | Immutable, and hashable where its content allows. |
+  | Record | Results such as `Word`, `Block`, `Table`, `OcrWord`, and `Probe` | A frozen dataclass with slots and keyword-only fields; no positional tuples. |
+  | Specification | Input that describes something to create, such as `Highlight(...)`, `Encryption(...)`, and `PageLabelRange(...)` | A frozen dataclass, validated on construction. |
+  | Enum | Codes and flags | `IntEnum`, `IntFlag`, or `StrEnum` classes; no module-level constants. |
+  | Option | A choice among strings, such as `format="png"` | A `Literal` type, with one `@overload` per value where the value changes the return type. |
+
+  Geometry is `Point`, `Rect`, `IRect`, `Quad`, and `Matrix`: immutable
+  tuples with geometric operators (`|` for union, `&` for intersection, `*`
+  for transformation, `~` for inversion), validated against non-finite
+  coordinates, with their constants as class attributes such as
+  `Matrix.IDENTITY` and `Rect.EMPTY`. A result is a dictionary only through
+  an explicit `to_dict()` that serializes a record for JSON.
+- **Coordinates.** Every position on a page, read or written, is in display
+  space: points from the top-left corner of the visible page, y downward,
+  after the CropBox offset and `/Rotate`. `Page.rect` describes this space,
+  and the visible page is the CropBox clipped to the MediaBox. The page
+  boxes are read and set in display space too.
+- **Pages.** Page indexes are zero-based everywhere, the outline and page
+  labels included, and negative indexes count from the end, as they do for
+  Python sequences.
+- **Errors.** The exceptions are those of section 9, and an engine's
+  refusal reaches Python as one of them.
+- **Limits.** Untrusted-input caps are keyword-only `max_*` options with
+  bounded defaults and `None` as the trusted opt-out, on top of
+  `DocumentLimits` (section 9). Passing one raises `LimitError` and returns
+  no partial result.
+- **Mutation.**
+  - A method that changes the document is one transaction: it plans its
+    fallible work before it commits, and on refusal nothing changes.
+  - Setters on handles apply immediately, and the structures that depend on
+    them, such as appearances, settle before anything reads them
+    (section 7), so no handle has an `update()`.
+  - A builder that collects drawing before it writes, such as the canvas,
+    is a context manager that commits once on a clean exit and writes
+    nothing after an exception.
+  - An editing method keeps valid every structure that depends on what it
+    changes, such as appearances, widths and encodings, the structure tree,
+    and name and number trees, and its docstring names them; when it
+    cannot, it refuses. What it invalidates and cannot repair, such as a
+    signature over changed bytes or a PDF/A or PDF/UA claim, the change
+    report names before a save (section 10.2).
+- **Concurrency.** Section 4.6 says which calls run in parallel. No
+  process-global state changes what an operation produces: there is no
+  font registry, and output depends on the document, the call's arguments,
+  and the fonts passed in.
+- **Engines.** Each public concept documents the engine that implements
+  it. An engine's limitation surfaces as a typed error or a documented
+  restriction, never as a silent gap, and its fix is engine work
+  (section 6).
+- **Python 3.11.** The oldest supported Python is 3.11 (section 11). Its
+  stable ABI includes the buffer protocol, so every wheel exposes
+  `Pixmap`'s buffer. Dataclasses use `slots=True` and `kw_only=True`, no
+  syntax newer than 3.11 appears, and public type aliases stay `TypeAlias`
+  assignments, because a PEP 695 `type` statement needs 3.12 and changes
+  what `typing.get_args` returns at runtime.
+
+### 10.2 What the foundation gives
+
+The store gives the API these behaviors:
 
 - **Handles.** A handle names a document and a reference (object number and
   generation), with a path for a direct container. Its facts are cached per
@@ -500,7 +604,8 @@ pylopdf's API rules carry over. The foundation changes these behaviors:
 - **Typed objects.** The layer of section 8 sits between the raw object model
   and the domain APIs.
 - **Threads.** Several threads may read one document.
-- **Limits.** `DocumentLimits` adds a time budget and cancellation.
+- **Limits.** `DocumentLimits` bounds time as well, and carries a
+  cancellation token (section 9).
 
 A sketch:
 
@@ -548,9 +653,16 @@ limits.toml        the registry of limit codes (section 9)
 Dependencies point down the list and never up. The store depends on no
 interpreter or writer, and no crate but the binding names PyO3. A crate
 splits further only when compile times or dependency boundaries call for it.
-Packaging follows pylopdf: maturin, one `abi3-py311` wheel per platform,
-free-threaded wheels for 3.14t and 3.15t, and a PyEmscripten wheel. Fonts and
-OCR models stay separate data packages.
+
+maturin builds the package. A release publishes, through PyPI's Trusted
+Publishing, one `abi3-py311` wheel for each of five targets (Linux x86_64
+and aarch64, macOS arm64 and x86_64, and Windows x86_64), a free-threaded
+wheel for each of 3.14t and 3.15t on the same targets, since an abi3 wheel
+does not load on a free-threaded interpreter, and an sdist. A PyEmscripten
+wheel, for Pyodide and Cloudflare Python Workers, is a target for 1.0
+(#257, #258). OCR models stay a separate data package, which the `ocr`
+extra installs (section 14), and canvas text draws in a Standard 14 font
+or in a face that the program supplies (section 7).
 
 Signing (issue #397, `evidence/signing`) uses the RustCrypto line of `cms`
 0.3, `x509-cert` 0.3, `der` 0.8, `p256` and `p384` 0.14, `pkcs8` 0.11,
@@ -562,17 +674,28 @@ network access.
 
 ## 12. Verification
 
-- Python tests are the public contract, as in pylopdf.
+- Python tests in `tests/` are the public contract, and a change to public
+  behavior changes them. Rust tests cover what no public API exposes: the
+  invariants of the store and the engines, through property tests,
+  differential oracles, and fuzz targets.
 - Property tests for the store:
   - without edits, an incremental save reproduces the input byte for byte,
     and a full save reproduces every value exactly;
   - random sequences of transactions keep the invariants of versions: change
     sets, undo, and atomicity on failure.
+- The preservation harness (`tests/test_preservation.py`) applies each
+  editing operation to each corpus document and saves it in full and
+  incrementally: every object that the edit did not touch must read back
+  equal, and an untouched page must keep its text and its rendering. The
+  consistency harness (`tests/test_consistency.py`) checks the same saves
+  with the structural check, qpdf, and pikepdf, which must find no defect
+  that the original lacks. A new editing operation adds its row to both.
 - Differential tests against frozen pylopdf (section 14) on the corpus cover
   every ported capability, and each difference is recorded as an
-  improvement or a regression. pymupdf, pdf.js, and pypdfium2 read the
-  corpus and each save of its edits as development-only oracles
-  (`tools/oracles.py`), outside the package's dependencies; CI runs pdf.js.
+  improvement or a regression (`evidence/phase1-parity`). pymupdf, pdf.js,
+  and pypdfium2 read the corpus and each save of its edits as
+  development-only oracles (`tools/oracles.py`), outside the package's
+  dependencies; CI runs pdf.js.
 - Independent tools check what pyropdf writes, and CI runs each of them:
   veraPDF validates the PDF/A and PDF/UA corpora and their saves, qpdf and
   pikepdf read saved documents, poppler renders embedded-font text for
@@ -587,18 +710,15 @@ network access.
 
 ## 13. Phases
 
+The work runs in five phases. Each is a GitHub milestone with a tracker
+under the roadmap (#1), and the tracker holds the phase's scope and checks
+its exit. Phases order the work but do not gate it: an issue waits only on
+the issues that block it.
+
 ### Phase 0: Foundation
 
-Scope:
-- the store, index and repair, versions, transactions and undo, and change
-  sets;
-- incremental and full save, and the security handler;
-- read-set memoization, budgets, typed errors, and the hayro bridge;
-- a binding with `open`, `Document()`, `probe`, the low-level object model,
-  `doc.pages` with page identity, `page.pixmap`, `save`, and `to_bytes`;
-- upstream: I2 and I7 released, and I1, I6, and I8 proposed.
-
-Exit:
+The store and what proves it (#2): sections 4 to 6 and 9, and the core of
+the binding. Exit:
 - without edits, saves reproduce every corpus document: incremental saves
   byte for byte, full saves in every value;
 - an edit followed by a page read serializes and parses only the objects
@@ -606,109 +726,101 @@ Exit:
   the page tree (section 6), and the benchmark publishes its cost at 110,
   440, and 1,760 pages;
 - a failed transaction leaves the current version unchanged without copying
-  the document;
-- the fuzz targets run in CI;
-- I2 is released, or releases withhold the untrusted-input claim.
+  the document.
 
 ### Phase 1: Reading
 
-Scope:
-- the content model with provenance (I4), and fuel (I5);
-- text, words, layout, search, tables, Markdown, and OCR ported from
-  pylopdf;
-- rendering and SVG.
-
-Exit:
-- differential parity with frozen pylopdf on the corpus, with differences
-  documented;
+The content model with provenance and fuel, text and document
+understanding, and rendering (#3). Exit:
+- differential parity with the frozen oracle of section 12 on the corpus,
+  with differences documented;
 - every content item names its stream and operators.
 
 ### Phase 2: Writing and interaction
 
-Scope:
-- the canvas without text, written by pyropdf (section 7);
-- text on the canvas in the Standard 14 fonts and in embedded faces, and
-  settling;
-- appearances, annotations, links, and forms and widgets with identity
-  handles;
-- page operations with referential rules.
-
-Exit:
+The canvas and its fonts, settling, appearances, annotations, links, forms
+and widgets with identity handles, page operations with referential rules,
+and the change report (#4). Exit:
 - stamping one face on 100 pages embeds one font program;
 - reading every value of a 1,600-field form costs about one walk of the
   form;
-- pylopdf's drawing, annotation, form, and page-operation tests pass after
-  migration.
+- the frozen oracle's drawing, annotation, form, and page-operation tests
+  (section 12) pass after migration.
 
 ### Phase 3: Typed objects
 
-Scope: the Arlington generator, the structural check, and the specification
-map.
-
-Exit:
+The Arlington generator, the structural check, the roles of the
+reverse-reference index, and the specification map (section 8, #5). Exit:
 - every Arlington object maps to a descriptor;
 - the check finds every defect of a corpus broken on purpose.
 
 ### Phase 4: Specification
 
-Scope: pylopdf's remaining roadmap milestones, on this foundation.
+The rest of the specification on this foundation (#6), in one tracker per
+milestone: the content model, the canvas, reading, rendering, writing,
+rewriting, structure, persistence, understanding, verification,
+conformance, and specification completion (#245 to #256), with the
+continuous tracks and the watchlist (#258). Its exit is the 1.0 release,
+whose gates #257 tracks. 1.0 stabilizes the API, and needs:
+- a specification map (section 8) without `planned` or `engine` entries:
+  every feature is `done` in each dimension that applies to it, or
+  `partial` or `non-goal` under a recorded release decision, every
+  `partial` keeps its missing behavior and its issue, and the release notes
+  name these limitations;
+- the preservation and consistency harnesses (section 12) passing for every
+  editing operation;
+- every engine workaround removed, or kept as pyropdf's own code with its
+  reason recorded (section 6);
+- a guide and an end-to-end test for each canonical workflow that #257
+  lists;
+- every artifact of section 11 verified on its target;
+- a published stability policy.
 
-Exit: pylopdf's v1.0 criteria.
+Shipping 1.0 does not claim complete control. A claim of complete control
+within a declared scope needs a published scope with its exclusions, every
+applicable dimension inside it `done` with tests that pass on that
+release, and the harnesses and validators of section 12 passing on it.
 
 ## 14. Moving from pylopdf
 
+pylopdf's users move to pyropdf in these steps.
+
 1. **Freeze.** pylopdf takes no new features after its freeze commit,
-   `ebb01d3c` (#95), which is the reference for differential tests. It takes
-   security fixes until it is archived, and its README and roadmap point
-   here.
-2. **Name.** The first real alpha of `pyropdf` is published early through
-   Trusted Publishing, because a pending publisher does not reserve a name
-   until it publishes.
-3. **Issues.** The open pylopdf issues worth keeping move here by issue
-   transfer before pylopdf is archived, because an archived repository is
-   read-only. They include the roadmap tree (yhay81/pylopdf#325) and engine
-   work (yhay81/pylopdf#324).
-4. **Porting.** A module comes over with its Python tests and names the
-   pylopdf commit it came from.
-   - Ported:
-     - the understanding layer (reading order, tables, Markdown, and OCR);
-     - canvas recording and textbox layout;
-     - the annotation appearance engine and form semantics;
-     - the content syntax that keeps each operation's bytes
-       (yhay81/pylopdf#405);
-     - geometry and `Pixmap`;
-     - the migration tooling, the documentation, the benchmarks, and the CI
-       and release workflows.
-   - Not ported:
-     - the guards;
-     - the reconciliation between lopdf and hayro;
-     - the replacements for lopdf's helpers;
-     - the rules of pylopdf's AGENTS.md. Its measured facts move into this
-       repository's evidence.
-5. **Data packages.** `pylopdf-fonts-*` and `pylopdf-ocr-models` hold data
-   only and can serve as dependencies at first. They are republished under
-   `pyropdf-` names when a release changes them.
-6. **Migration.** pylopdf's codemod learns to rename imports, so code
+   `ebb01d3c` (#95), which is the reference for differential tests
+   (section 12). It takes security fixes until it is archived.
+2. **Porting.** A module comes over with its Python tests and names the
+   pylopdf commit it came from. What pylopdf has only because of its
+   foundation (section 2.2) is not ported:
+   - the guards, whose bounds go upstream as I2 (section 6);
+   - the reconciliation between lopdf and hayro;
+   - the replacements for lopdf's helpers;
+   - the rules of pylopdf's AGENTS.md. Its measured facts move into this
+     repository's evidence.
+3. **Data packages.** `pylopdf-fonts-*` and `pylopdf-ocr-models` hold data
+   only, so pyropdf can use them as they are: the `ocr` extra installs
+   `pylopdf-ocr-models`. Each is republished under a `pyropdf-` name when a
+   release changes it.
+4. **Migration.** pylopdf's codemod learns to rename imports, so code
    written for any pylopdf release, and pymupdf code, migrates in one step.
-7. **Archive.** pylopdf is archived when two conditions hold:
+5. **Archive.** pylopdf is archived when two conditions hold:
    - pyropdf opens, extracts, renders, reorganizes pages, and saves at least
      as well as frozen pylopdf;
    - the codemod migrates pylopdf's example programs.
 
-   pylopdf then publishes a final release whose description points here,
-   and its repository and PyPI project are archived. PyPI's archived status
-   keeps existing releases installable, blocks new uploads, and can be
-   reversed. The documentation site becomes a migration notice.
+   Before that, pylopdf's README and roadmap point here, and the open
+   pylopdf issues worth keeping move here by issue transfer, because an
+   archived repository is read-only. pylopdf then publishes a final release
+   whose description points here, and its repository and PyPI project are
+   archived. PyPI's archived status keeps existing releases installable,
+   blocks new uploads, and can be reversed. The documentation site becomes a
+   migration notice.
 
 ## 15. Risks
 
-- **A second system.** A rebuild delays features and can stall both
-  projects. Phase 0 is small and gated by measurable exits, and pylopdf
-  remains the oracle and the fallback until the archive gate.
-- **Upstream dependence.** I1 and I2 need the maintainers' agreement. The
-  bridge removes the need to wait for I1, and pylopdf's guards are the
-  fallback for I2. The canvas, text included, waits on no engine
-  (section 7).
+- **Upstream dependence.** The items of section 6 need their maintainers'
+  agreement. The bridge removes the need to wait for I1, and pyropdf's own
+  bounds are the fallback for I2 (section 6). The canvas, text included,
+  waits on no engine (section 7).
 - **Text is pyropdf's code.** harfrust shapes text, but the font writer and
   the subset at save read font programs that users supply, so fuzz targets
   cover them (F9). harfrust reads fonts through read-fonts, as hayro does,
@@ -722,11 +834,4 @@ Exit: pylopdf's v1.0 criteria.
   and there are no threads that could give interpretation a larger stack, so
   I2 matters most there.
 - **Name.** Searches for "pyro" find Pyro (Python Remote Objects) and Pyro
-  (probabilistic programming). As of 2026-10-24, "pyropdf" itself is unused
-  on PyPI and GitHub.
-
-## 16. Open questions
-
-- How text draws in an embedded variable face at an instance other than its
-  default, whose outlines the subset at save keeps, and in colour glyphs
-  (COLR, SVG, or bitmap), which a CIDFont does not draw (section 7).
+  (probabilistic programming).
