@@ -55,6 +55,15 @@ with pyropdf.open("input.pdf") as doc:
 boxes that `words()` and `search()` return; see
 [Concepts](concepts.md#display-coordinates).
 
+A raster is at most 65,408 pixels wide, 65,532 high, and 64,000,000 in
+all, and a larger one raises `ValueError`. With `clip`, these limits apply
+to the clipped raster, so a small region renders at scales at which the
+whole page would not: the 100 by 100 point corner of an A1 page renders
+2,000 pixels square at 20 times, where the whole page would take 1.6
+billion pixels. The page under the matrix may measure up to 524,288 pixels
+a side; within that, content that reaches the clip from the far side of the
+page lands within 1/16 of a pixel of where it belongs.
+
 ## Encoding
 
 `pixmap.save(path)` writes the format that the file's extension names, and

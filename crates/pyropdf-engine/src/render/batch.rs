@@ -51,7 +51,7 @@ where
     for &index in indexes {
         let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
         let (_, _, width, height) = extent(page, options)?;
-        most = u64::max(most, width as u64 * height as u64);
+        most = u64::max(most, u64::from(width) * u64::from(height));
     }
     let by_memory = usize::try_from(MAX_LIVE_BYTES / (most * BYTES_PER_PIXEL).max(1))
         .unwrap_or(usize::MAX)
