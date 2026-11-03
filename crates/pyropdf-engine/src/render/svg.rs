@@ -1,7 +1,7 @@
 //! Converting a page to SVG through hayro-svg, as pylopdf's `page.svg` does
 //! (yhay81/pyropdf#120).
 
-use hayro::hayro_interpret::InterpreterSettings;
+use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
 
 use super::RasterError;
 use crate::bridge::Bridged;
@@ -15,7 +15,11 @@ pub fn svg(bridged: &Bridged, index: usize, annotations: bool) -> Result<String,
     let pages = bridged.pdf().pages();
     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
     let settings = InterpreterSettings {
-        render_annotations: annotations,
+        render_content: if annotations {
+            RenderContent::all()
+        } else {
+            RenderContent::PAGE
+        },
         ..InterpreterSettings::default()
     };
     Ok(hayro_svg::convert(

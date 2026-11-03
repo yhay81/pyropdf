@@ -7,7 +7,8 @@ use crate::value::{Bytes, PdfString, Reference, Value};
 use crate::{Error, Result, write};
 
 /// The deepest nesting that the walk follows. Parsed values are shallower:
-/// hayro-syntax reads 64 levels at most.
+/// the store converts [`MAX_NESTING`](crate::value::MAX_NESTING) levels at
+/// most.
 const MAX_DEPTH: usize = 256;
 
 /// Returns `value`, of the object that `reference` names, with its strings

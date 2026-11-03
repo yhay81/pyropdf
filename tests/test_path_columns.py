@@ -228,7 +228,7 @@ def test_patterns_and_soft_masks_are_shared_values() -> None:
     assert paths.column("fill_pattern").tolist() == [0, 0, -1]
     assert shaded.fill is patterned.fill is pattern
     assert paths.column("soft_mask").tolist() == [-1, -1, 0]
-    assert paths.soft_masks == (SoftMask(xref=8, subtype=SoftMaskType.LUMINOSITY),)
+    assert paths.soft_masks == (SoftMask(subtype=SoftMaskType.LUMINOSITY),)
     assert masked.soft_mask is paths.soft_masks[0]
 
 

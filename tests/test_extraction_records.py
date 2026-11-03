@@ -149,6 +149,7 @@ def build_painted_text_pdf() -> bytes:
         "q BT /F1 20 Tf 3 Tr 72 500 Td (Hidden) Tj ET Q "
         "q 0 0 10 10 re W n BT /F1 20 Tf 72 450 Td (Clipped) Tj ET Q "
         "q 60 390 200 40 re W n BT /F1 20 Tf 72 400 Td (Inside) Tj ET Q "
+        "q BT /F1 20 Tf 7 Tr 72 300 Td (ClipOnly) Tj ET Q "
         "BT /F1 20 Tf /Pattern cs /Shade scn 72 350 Td (Pattern) Tj ET"
     )
     return build_raw_pdf(
@@ -187,6 +188,8 @@ def test_spans_report_their_paint_render_mode_and_clipping() -> None:
     assert spans["Both"].color == pyropdf.Color(0.0, 0.0, 0.0, 1.0)
     assert spans["Hidden"].color is None
     assert spans["Pattern"].color is None
+    # Text in mode 7 only clips, and hayro passes it on as invisible text.
+    assert spans["ClipOnly"].color is None
     assert {name: span.render_mode for name, span in spans.items()} == {
         "Red": pyropdf.TextRenderMode.FILL,
         "Half": pyropdf.TextRenderMode.FILL,
@@ -196,13 +199,15 @@ def test_spans_report_their_paint_render_mode_and_clipping() -> None:
         "Clipped": pyropdf.TextRenderMode.FILL,
         "Inside": pyropdf.TextRenderMode.FILL,
         "Pattern": pyropdf.TextRenderMode.FILL,
+        "ClipOnly": pyropdf.TextRenderMode.INVISIBLE,
     }
     assert {name for name, span in spans.items() if span.is_clipped} == {"Clipped"}
     # The render modes agree with what page.content() reports.
     runs = {run.text: run for run in page.content(paths=False, images=False).text_runs}
     assert {name: runs[name].render_mode for name in spans} == {name: span.render_mode for name, span in spans.items()}
-    # By default the clipped span is left out.
+    # By default the clipped span is left out, and the clipping one is text.
     assert "Clipped" not in page.text()
+    assert "ClipOnly" in page.text()
     # A standard font that is not embedded has no program, so no metrics or flags of one.
     red = spans["Red"]
     assert (red.ascender, red.descender) == (0.8, -0.2)

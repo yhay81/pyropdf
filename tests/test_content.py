@@ -246,7 +246,7 @@ def test_deep_operands_are_refused() -> None:
     assert error.value.code == "object_value_depth"
 
 
-def test_operands_as_deep_as_hayro_reads_them_are_read() -> None:
+def test_operands_as_deep_as_objects_nest_are_read() -> None:
     content = b"[" * 64 + b"]" * 64 + b" Do"
     operations = Operations.parse(content)
 
@@ -254,13 +254,20 @@ def test_operands_as_deep_as_hayro_reads_them_are_read() -> None:
     assert operations.to_bytes() == content
 
 
+def test_an_operand_deeper_than_objects_nest_is_refused() -> None:
+    # hayro-syntax 0.9 reads 512 levels; the object model nests 64.
+    with pytest.raises(pyropdf.MalformedPdfError, match="deeper than 64 levels"):
+        Operations.parse(b"[" * 65 + b"]" * 65 + b" Do")
+
+
 def test_content_after_what_hayro_reads_stays_in_the_tail() -> None:
-    # hayro reads at most ten operands and ignores the rest of the stream.
-    content = b"q 1 2 3 4 5 6 7 8 9 10 11 sc Q"
+    # hayro reads at most 33 operands and ignores the rest of the stream.
+    numbers = " ".join(str(number) for number in range(1, 35)).encode()
+    content = b"q " + numbers + b" scn Q"
     operations = Operations.parse(content)
 
     assert [operation.operator for operation in operations] == ["q"]
-    assert operations.tail == b" 1 2 3 4 5 6 7 8 9 10 11 sc Q"
+    assert operations.tail == b" " + numbers + b" scn Q"
     assert operations.to_bytes() == content
 
 
@@ -335,11 +342,11 @@ def test_page_operations_join_streams_as_hayro_does() -> None:
     objects: dict[int, str | bytes] = {
         1: "<< /Type /Catalog /Pages 2 0 R >>",
         2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] >>",
-        3: "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents [5 0 R 6 0 R 7 0 R] >>",
+        # hayro skips the entries that are not streams.
+        3: "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents [5 0 R 7 0 R 6 0 R] >>",
         4: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         5: "<< /Length 21 >>\nstream\nBT /F1 12 Tf 9 9 Td (\nendstream",
         6: "<< /Length 7 >>\nstream\nA) Tj ET\nendstream",
-        # hayro stops at the first entry that is not a stream.
         7: "<< /Type /NotAStream >>",
     }
     doc = pyropdf.open(build_raw_pdf(objects))

@@ -7,10 +7,11 @@ use std::ptr::{self, NonNull};
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::{LimitExceeded, Result};
 
-use super::{Array, Dict, Name, PdfString, Stream, Value};
+use super::{Array, Dict, MAX_NESTING, Name, PdfString, Stream, Value};
 
-/// Copies a value for editing. Each container consumes at most one of the
-/// parser's 64 levels of nesting, including for values constructed by callers.
+/// Copies a value for editing. Each container consumes one of the
+/// [`MAX_NESTING`] levels that the store converts, including for values
+/// constructed by callers.
 pub(crate) fn copy_for_edit(value: &Value, budget: &Budget) -> Result<Value> {
     copy_value(value, budget, 1)
 }
@@ -24,8 +25,9 @@ pub(crate) fn copy_dict_for_edit(dict: &Dict, budget: &Budget) -> Result<Dict> {
 
 fn check_depth(budget: &Budget, depth: u64) -> Result<()> {
     budget.check(LimitCode::ObjectDepth, depth)?;
-    if depth > 64 {
-        return Err(LimitExceeded::over(LimitCode::ObjectDepth, 64, depth).into());
+    let most = u64::try_from(MAX_NESTING).unwrap_or(u64::MAX);
+    if depth > most {
+        return Err(LimitExceeded::over(LimitCode::ObjectDepth, most, depth).into());
     }
     Ok(())
 }

@@ -11,8 +11,8 @@ publish.workspace = true
 [dependencies]
 # Every engine reads the document through the store (DESIGN.md F1).
 pyropdf-store.workspace = true
-hayro = "0.8.0"
-hayro-svg = "0.8.0"
+hayro = "0.9.0"
+hayro-svg = "0.9.0"
 # The font tables that hayro already reads, for the line metrics of text.
 skrifa = "0.46.2"
 # The bidirectional classes of the reading order of text.

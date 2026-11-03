@@ -954,10 +954,7 @@ fn every_corpus_file_indexes_without_repair_and_every_entry_parses() {
             );
             Value::parse(&bytes, &budget)
                 .unwrap_or_else(|error| panic!("{file}, object {number}: {error}"));
-            let id = ObjectIdentifier::new(
-                i32::try_from(number).unwrap(),
-                i32::from(entry.generation()),
-            );
+            let id = ObjectIdentifier::new(number, i32::from(entry.generation()));
             assert!(
                 pdf.xref().get::<Object<'_>>(id).is_some(),
                 "{file}, object {number}"

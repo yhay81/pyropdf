@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use pyropdf_engine::extract::{
     BBox, BlockTuple, ClipTuple, ContentItem, GroupTuple, MarkTuple, PageContent, PaintTuple,
-    PathTuple, SoftMaskTuple, StateTuple,
+    PathTuple, StateTuple,
 };
 
 use crate::errors::PdfError;
@@ -508,9 +508,10 @@ struct PathTable {
     curves: usize,
     /// The dash lengths of every stroke.
     stroke_dashes: Vec<f64>,
-    /// The distinct pattern paints and soft masks that the columns index.
+    /// The distinct pattern paints and soft masks that the columns index, a
+    /// soft mask as its type in the content model.
     patterns: Vec<PaintTuple>,
-    soft_masks: Vec<SoftMaskTuple>,
+    soft_masks: Vec<u8>,
     /// The content's graphics contexts, with the clips, groups, and marked
     /// content that they index, as `page_content` hands them out.
     clips: Vec<ClipTuple>,
@@ -628,7 +629,7 @@ impl PathTable {
         &mut self,
         path: &PathTuple,
         patterns: &mut Patterns,
-        soft_masks: &mut Interned<SoftMaskTuple, SoftMaskTuple>,
+        soft_masks: &mut Interned<u8, u8>,
     ) -> PyResult<()> {
         let (verbs, coords, (x0, y0, x1, y1), fill, even_odd, stroke, (state, blend, mask)) = path;
         let row = self.x0.len();
@@ -888,9 +889,9 @@ impl PathColumns {
         self.table.patterns.clone()
     }
 
-    /// Returns the soft masks that the `soft_mask` column indexes, as
-    /// `(xref, alpha)`.
-    fn soft_masks(&self) -> Vec<SoftMaskTuple> {
+    /// Returns the soft masks that the `soft_mask` column indexes, as bytes of
+    /// their types: 0 for alpha and 1 for luminosity.
+    fn soft_masks(&self) -> Vec<u8> {
         self.table.soft_masks.clone()
     }
 

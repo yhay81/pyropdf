@@ -6,6 +6,10 @@
 # Publishing requires a Trusted Publisher configured on PyPI:
 #   PyPI → project pyropdf → Publishing → GitHub
 #   owner: yhay81 / repository: pyropdf / workflow: release.yml / environment: pypi
+#
+# The GitHub release is immutable, with its assets and tag locked and attested
+# by GitHub, only while the repository enables release immutability:
+#   Settings → General → Releases → Enable release immutability
 name: Release
 
 on:
@@ -16,8 +20,8 @@ on:
 permissions: {}
 
 env:
-  # rust-toolchain.toml pins the same toolchain; tests/test_release_workflow.py
-  # checks that the pins agree.
+  # rust-toolchain.toml pins the same toolchain; tests/test_release.py checks
+  # that the pins agree.
   RUSTUP_TOOLCHAIN: 1.99.1
   CARGO_BUILD_JOBS: 2
 
@@ -222,7 +226,20 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+      # With assets, gh creates a draft, uploads them, and then publishes it,
+      # which is when the release becomes immutable.
       - name: Create GitHub release
         run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes release-assets/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GITHUB_TOKEN cannot read the repository setting beforehand, so the
+      # check reads the release that the previous step published.
+      - name: Verify the release is immutable
+        run: |
+          immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq .immutable)"
+          if [ "${immutable}" != true ]; then
+            echo "::error::${GITHUB_REF_NAME} is not immutable: enable release immutability in the repository settings."
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

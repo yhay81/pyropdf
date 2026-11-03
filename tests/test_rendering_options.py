@@ -8,6 +8,8 @@ differences:
   built with a Highlight whose appearance paints its rectangle red.
 - ``test_rgb_pixmaps_insert_without_a_soft_mask`` waits on Phase 2's
   drawing API, which inserts a pixmap into a page.
+- A clip's raster has the size limits of one raster, as PyMuPDF renders a
+  clip, where pylopdf applies them to the whole page (issue 605).
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import math
 from pathlib import Path
 
 import pytest
+from test_content import build_raw_pdf
 from test_content_model import page_with, stream_object
 from test_pixmap import png_header
 
@@ -23,6 +26,12 @@ import pyropdf
 from pyropdf import Colorspace, Matrix, Pixmap
 
 REAL_WORLD = Path(__file__).parent / "assets" / "real_world"
+
+A1 = (2384, 1684)
+"""A landscape A1 page, in points."""
+
+PAGE_BOUND = 524_288
+"""The longest side, in pixels, of a page under the matrix that a clip renders."""
 
 PNG_GRAY = 0
 PNG_RGB = 2
@@ -205,9 +214,113 @@ def test_a_clip_outside_the_page_raises() -> None:
         page.pixmap(clip=(0, 0, 1))
 
 
-def test_a_clip_keeps_the_limits_of_the_whole_page() -> None:
-    with pytest.raises(ValueError, match="limit of 65408 pixels wide and 65532 pixels high"):
-        _page().pixmap(dpi=72 * 400, clip=(0, 0, 1, 1))
+def _sized(size: tuple[float, float], content: str) -> pyropdf.Page:
+    """Open a page of ``size`` points that paints ``content``, with Helvetica as /F1."""
+    width, height = size
+    return pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: f"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 {width} {height}] >>",
+                3: "<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+                4: stream_object(content),
+                5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+            }
+        )
+    ).pages[0]
+
+
+@pytest.mark.parametrize("scale", [4, 5, 20])
+def test_a_clip_of_a_large_page_renders_at_scales_the_whole_page_cannot(scale: int) -> None:
+    # A line from display (10, 10) to (90, 90) on an A1 page, which passes
+    # 64,000,000 pixels from 4 times on (issue 605).
+    page = _sized(A1, "2 w 10 1674 m 90 1594 l S")
+    with pytest.raises(ValueError, match="exceeds the 64000000-pixel limit"):
+        page.pixmap(matrix=(scale, 0, 0, scale))
+
+    pixmap = page.pixmap(matrix=(scale, 0, 0, scale), clip=(0, 0, 100, 100))
+
+    assert (pixmap.width, pixmap.height) == (100 * scale, 100 * scale)
+    assert _crop(pixmap, 50 * scale, 50 * scale, 50 * scale + 1, 50 * scale + 1) == b"\x00\x00\x00"
+    assert _crop(pixmap, 20 * scale, 80 * scale, 20 * scale + 1, 80 * scale + 1) == b"\xff\xff\xff"
+
+
+def test_a_clip_of_a_large_page_holds_the_pixels_of_the_whole_page() -> None:
+    page = _sized(A1, "2 w 10 1674 m 90 1594 l S")
+    full = page.pixmap(matrix=(3, 0, 0, 3))
+
+    clipped = page.pixmap(matrix=(3, 0, 0, 3), clip=(0, 0, 100, 100))
+
+    assert (clipped.width, clipped.height) == (300, 300)
+    assert bytes(clipped) == _crop(full, 0, 0, 300, 300)
+
+
+def test_ocr_reads_a_clip_of_a_large_page_at_300_dpi() -> None:
+    pytest.importorskip("pylopdf_ocr_models")
+    page = _sized(A1, "BT /F1 36 Tf 20 1609 Td (Region 605) Tj ET")
+    with pytest.raises(ValueError, match="exceeds the 64000000-pixel limit"):
+        page.pixmap(dpi=300)
+
+    # One tile holds the whole clip, 1,667 pixels square at 300 dpi.
+    words = page.ocr(clip=(0, 0, 400, 400), tile_size=1792)
+
+    assert [word.text for word in words] == ["Region 605"]
+    assert 0 < words[0].bbox.x0 < words[0].bbox.x1 < 400
+    assert 0 < words[0].bbox.y0 < words[0].bbox.y1 < 400
+
+
+def _line(start: tuple[float, float], end: tuple[float, float], width: float) -> str:
+    """Return a content stream that strokes from ``start`` to ``end`` ``width`` wide."""
+    return f"{width!r} w {start[0]!r} {start[1]!r} m {end[0]!r} {end[1]!r} l S"
+
+
+def test_a_clip_renders_a_page_up_to_the_bound() -> None:
+    # The page's long side measures the bound, and a 64 pixel clip sits in
+    # its far corner. A line 2 pixels wide comes from near the opposite
+    # corner, which lies a page away; drawn from 256 pixels away instead,
+    # it moves by less than 1/16 of a pixel (evidence/clip-precision-605).
+    scale = PAGE_BOUND / A1[0]
+    unit = 1 / scale
+    clip = (A1[0] - 64 * unit, A1[1] - 64 * unit, *A1)
+    apex = (0.3141592653589793, A1[1] - 0.2718281828459045)
+    tip = (A1[0] + 16 * unit, -13 * unit)
+    start = (tip[0] + (apex[0] - tip[0]) / 2**11, tip[1] + (apex[1] - tip[1]) / 2**11)
+
+    far = _sized(A1, _line(apex, tip, 2 * unit)).pixmap(matrix=(scale, 0, 0, scale), clip=clip)
+    near = _sized(A1, _line(start, tip, 2 * unit)).pixmap(matrix=(scale, 0, 0, scale), clip=clip)
+
+    assert (far.width, far.height) == (64, 64)
+    assert min(bytes(far)) == 0
+    assert max(abs(a - b) for a, b in zip(bytes(far), bytes(near), strict=True)) < 16
+
+
+def test_a_clip_of_a_page_beyond_the_bound_raises() -> None:
+    scale = (PAGE_BOUND + 1) / A1[0]
+
+    with pytest.raises(ValueError, match=rf"page size {PAGE_BOUND + 1}x\d+ exceeds the limit of {PAGE_BOUND} pixels"):
+        _sized(A1, "").pixmap(matrix=(scale, 0, 0, scale), clip=(0, 0, 1, 1))
+
+
+@pytest.mark.parametrize(
+    ("size", "clip", "message"),
+    [
+        ((70000, 2), (0, 0, 65409, 1), "render size 65409x1 exceeds the limit of 65408 pixels wide and 65532 pixels"),
+        ((2, 70000), (0, 0, 1, 65533), "render size 1x65533 exceeds the limit of 65408 pixels wide and 65532 pixels"),
+        ((20000, 20000), (0, 0, 8001, 8000), r"render size 8001x8000 \(64008000 pixels\) exceeds the 64000000-pixel"),
+    ],
+)
+def test_a_clip_keeps_the_limits_of_its_own_raster(
+    size: tuple[float, float], clip: tuple[float, float, float, float], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _strip(*size).pixmap(dpi=72, clip=clip)
+
+
+def test_a_clip_renders_the_widest_raster_of_a_wider_page() -> None:
+    pixmap = _strip(70000, 1).pixmap(dpi=72, clip=(70000 - 65408, 0, 70000, 1))
+
+    assert (pixmap.width, pixmap.height) == (65408, 1)
+    assert bytes(memoryview(pixmap).cast("B")[:3]) == b"\xff\x00\x00"
 
 
 def _strip(width: float, height: float) -> pyropdf.Page:

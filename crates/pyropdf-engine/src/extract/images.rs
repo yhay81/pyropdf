@@ -2,7 +2,9 @@
 //! rendering (ISO 32000-2 8.9), with its soft mask or mask as alpha.
 
 use hayro::hayro_interpret::font::Glyph;
-use hayro::hayro_interpret::{DrawMode, Image, ImageData, InterpreterCache, InterpreterSettings};
+use hayro::hayro_interpret::{
+    DrawMode, Image, ImageData, InterpreterCache, InterpreterSettings, RenderContent,
+};
 use hayro::kurbo::{Affine, BezPath, Rect};
 use pyropdf_store::budget::{Budget, LimitCode};
 
@@ -102,7 +104,11 @@ pub fn page_image(
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(Error::NoPage(index))?;
     let settings = InterpreterSettings {
-        render_annotations: annotations,
+        render_content: if annotations {
+            RenderContent::all()
+        } else {
+            RenderContent::PAGE
+        },
         ..InterpreterSettings::default()
     };
     let cache = InterpreterCache::new();

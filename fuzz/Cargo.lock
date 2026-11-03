@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "ab_glyph_rasterizer"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -605,10 +611,10 @@ dependencies = [
 
 [[package]]
 name = "hayro"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4675ff5acd7ca41c0c34ccd2a3a154f5c86d8b5ec92bef0a114bfb194969e2af"
+version = "0.9.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
+ "ab_glyph_rasterizer",
  "bytemuck",
  "fearless_simd 1.2.0",
  "hayro-interpret",
@@ -621,44 +627,53 @@ dependencies = [
 
 [[package]]
 name = "hayro-ccitt"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2866f0d976e76497480b853d5e258dab6e4b89ecfe991124e08f15dfa8fd03ad"
+version = "0.5.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 
 [[package]]
 name = "hayro-cmap"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24d285dc30731c8485de5fa732fbdf2b3affdf01e4da7c2135022ca6fa664bf6"
+version = "0.1.1"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
  "brotli",
  "hayro-postscript",
 ]
 
 [[package]]
-name = "hayro-interpret"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac9df074ff163a63864cec9b0bf640ccbff8abf4e44481df7369ce0ac172ffbe"
+name = "hayro-font"
+version = "0.5.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
  "bitflags 2.13.2",
  "hayro-cmap",
  "hayro-syntax",
  "kurbo",
- "moxcms",
  "phf",
  "rustc-hash",
  "siphasher",
- "skrifa 0.46.2",
+ "skrifa 0.49.0",
+]
+
+[[package]]
+name = "hayro-interpret"
+version = "0.9.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
+dependencies = [
+ "bitflags 2.13.2",
+ "hayro-cmap",
+ "hayro-font",
+ "hayro-syntax",
+ "kurbo",
+ "moxcms",
+ "rustc-hash",
+ "siphasher",
  "smallvec",
- "yoke",
 ]
 
 [[package]]
 name = "hayro-jbig2"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "000e025850f4592ddcaee85640db70704151f2bafd43b6f431aa5b6a2c6a35a9"
+version = "0.4.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
  "fearless_simd 1.2.0",
  "hayro-ccitt",
@@ -666,24 +681,21 @@ dependencies = [
 
 [[package]]
 name = "hayro-jpeg2000"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "122c5f834c37a2260b9c851bb8be685cf539b2a8b94b704a931ef7d2525d5835"
+version = "0.5.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
  "fearless_simd 1.2.0",
 ]
 
 [[package]]
 name = "hayro-postscript"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "885c5ef0654933139a9b9546fc2c69e18d37f38aa2520f079092b1be18f1fcaa"
+version = "0.2.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 
 [[package]]
 name = "hayro-svg"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7377affc9513cf5b66c4a8b5fa1e6058ae652eef3d13fdc4709004a03968488"
+version = "0.9.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
  "base64",
  "hayro-interpret",
@@ -696,9 +708,8 @@ dependencies = [
 
 [[package]]
 name = "hayro-syntax"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cdc818d8d265dcb42081d488f7599df4f73fb79e9d347ecedcd3c23809d2026"
+version = "0.9.0"
+source = "git+https://github.com/yhay81/hayro?rev=394e4a0d37baf8af513f6ebda15f4bada85d6f23#394e4a0d37baf8af513f6ebda15f4bada85d6f23"
 dependencies = [
  "flate2",
  "hayro-ccitt",
@@ -1104,7 +1115,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "pyropdf-engine"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cms",
  "der",
@@ -1140,7 +1151,7 @@ dependencies = [
 
 [[package]]
 name = "pyropdf-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes",
  "flate2",
@@ -1210,6 +1221,20 @@ dependencies = [
  "bytemuck",
  "font-types",
  "once_cell",
+]
+
+[[package]]
+name = "read-fonts"
+version = "0.46.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdaa4fffe9ff3ca2c353fa9729792805b9b3e324695ff5a081f860612e81b330"
+dependencies = [
+ "bytemuck",
+ "foldhash",
+ "font-types",
+ "once_cell",
+ "smallvec",
+ "yoke",
 ]
 
 [[package]]
@@ -1443,6 +1468,19 @@ checksum = "d4febebda507fb889c545a37a135517769d1391941013561292897961d1887d6"
 dependencies = [
  "bytemuck",
  "read-fonts 0.43.3",
+]
+
+[[package]]
+name = "skrifa"
+version = "0.49.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7459fb60888ad9a5f367dd293fa2fb9df142cb451aa6bfd6cd66a7d6a9b739d"
+dependencies = [
+ "bytemuck",
+ "once_cell",
+ "read-fonts 0.46.0",
+ "smallvec",
+ "yoke",
 ]
 
 [[package]]

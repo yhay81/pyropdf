@@ -13,6 +13,7 @@ from __future__ import annotations
 import enum
 import math
 import threading
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias, overload
@@ -74,8 +75,9 @@ class TextRenderMode(enum.StrEnum):
     """How a text run paints its glyphs.
 
     hayro paints the clipping modes 4 to 6 as their painting part and adds
-    their clip to the context of later items; text in mode 7, which only
-    clips, paints nothing and is not an item.
+    their clip to the context of later items. Text in mode 7, which only
+    clips, paints nothing; hayro passes it on as invisible text, so it is an
+    ``INVISIBLE`` run.
     """
 
     FILL = "fill"
@@ -211,13 +213,34 @@ class Stroke:
     dash_offset: float = 0.0
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, init=False)
 class SoftMask:
-    """A soft mask: the transparency group that masks what it encloses."""
+    """A soft mask: the transparency group that masks what it encloses.
 
-    xref: int
-    """The object number of the mask's group."""
+    ``xref`` is deprecated: reading it warns with ``DeprecationWarning``, and
+    it is 0 in what ``Page.content`` returns, since hayro 0.9 no longer
+    identifies the group of a soft mask. The next minor release removes it.
+    """
+
     subtype: SoftMaskType
+    # What `xref` returns. Equality, hashing, and pickling read this field,
+    # so only reading `xref` itself warns.
+    _xref: int = field(default=0, init=False, repr=False)
+
+    def __init__(self, *, xref: int = 0, subtype: SoftMaskType) -> None:
+        object.__setattr__(self, "subtype", subtype)
+        object.__setattr__(self, "_xref", xref)
+
+    @property
+    def xref(self) -> int:
+        """Deprecated: 0, where it was the object number of the mask's group."""
+        warnings.warn(
+            "SoftMask.xref is deprecated and 0, since hayro 0.9 no longer identifies the group of a soft mask; "
+            "the next minor release of pyropdf removes it",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._xref
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -720,6 +743,7 @@ def _clusters(boxes: list[Rect], x_tolerance: float, y_tolerance: float) -> list
 
 
 _BLEND_MODES = tuple(BlendMode)
+_SOFT_MASK_TYPES = tuple(SoftMaskType)
 _LINE_CAPS = (LineCap.BUTT, LineCap.ROUND, LineCap.SQUARE)
 _LINE_JOINS = (LineJoin.MITER, LineJoin.ROUND, LineJoin.BEVEL)
 _RENDER_MODES = tuple(TextRenderMode)
@@ -796,11 +820,8 @@ def _segments(kinds: bytes, coords: list[float]) -> tuple[Segment, ...]:
     return tuple(segments)
 
 
-def _soft_mask(raw: tuple[int, bool] | None) -> SoftMask | None:
-    if raw is None:
-        return None
-    xref, alpha = raw
-    return SoftMask(xref=xref, subtype=SoftMaskType.ALPHA if alpha else SoftMaskType.LUMINOSITY)
+def _soft_mask(code: int | None) -> SoftMask | None:
+    return None if code is None else SoftMask(subtype=_SOFT_MASK_TYPES[code])
 
 
 def _pattern(kind: int, values: Sequence[float]) -> ShadingPattern | TilingPattern:
