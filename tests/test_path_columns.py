@@ -374,7 +374,9 @@ def _children(owner: _ArrowSchema | _ArrowArray) -> list:
 def test_the_arrow_capsules_hold_a_struct_array_over_the_columns() -> None:
     paths = _drawn_page().paths()[1:4]
     records = list(paths)
-    schema = _ArrowSchema.from_address(_get_pointer(paths.__arrow_c_schema__(), b"arrow_schema"))
+    # The capsule owns the schema, so it stays alive while the test reads it.
+    schema_capsule = paths.__arrow_c_schema__()
+    schema = _ArrowSchema.from_address(_get_pointer(schema_capsule, b"arrow_schema"))
     assert schema.format == b"+s"
     fields = _children(schema)
     names = [field.name.decode() for field in fields]
@@ -411,7 +413,7 @@ def test_the_arrow_capsules_hold_a_struct_array_over_the_columns() -> None:
     assert formats[b"fill_pattern"] == (b"i", 2)
     assert formats[b"stroke_width"] == (b"g", 2)
 
-    schema_capsule, array_capsule = paths.__arrow_c_array__()
+    array_schema, array_capsule = paths.__arrow_c_array__()
     array = _ArrowArray.from_address(_get_pointer(array_capsule, b"arrow_array"))
     assert (array.length, array.null_count, array.n_children) == (3, 0, 27)
     children = _children(array)
@@ -437,7 +439,7 @@ def test_the_arrow_capsules_hold_a_struct_array_over_the_columns() -> None:
     # nothing twice.
     array.release(ctypes.byref(array))
     assert not array.release
-    del array_capsule, schema_capsule
+    del array_capsule, array_schema, schema_capsule
 
 
 def test_numpy_reads_the_coordinates_without_a_copy() -> None:
@@ -449,10 +451,11 @@ def test_numpy_reads_the_coordinates_without_a_copy() -> None:
     assert not to_x.flags.writeable
     # Two reads point at one buffer, the one that Arrow exports too.
     assert numpy.asarray(paths.column("to_x")).ctypes.data == to_x.ctypes.data
-    _, array_capsule = paths.__arrow_c_array__()
+    schema_capsule, array_capsule = paths.__arrow_c_array__()
     array = _ArrowArray.from_address(_get_pointer(array_capsule, b"arrow_array"))
     (values,) = _children(_children(array)[4])
     assert _children(values)[2].buffers[1] == to_x.ctypes.data
+    del array_capsule, schema_capsule
     assert to_x.tolist() == paths.column("to_x").tolist()
     assert numpy.asarray(paths.column("fill_red")).dtype == numpy.float32
     assert numpy.asarray(paths.column("path")).dtype == numpy.uint32
