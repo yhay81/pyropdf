@@ -4,7 +4,9 @@
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_syntax::object::{Dict, ObjectIdentifier};
-use hayro::hayro_interpret::{CacheKey, DrawMode, InterpreterCache, InterpreterSettings};
+use hayro::hayro_interpret::{
+    CacheKey, DrawMode, InterpreterCache, InterpreterSettings, RenderContent,
+};
 use hayro::kurbo::{Affine, BezPath, Rect};
 use pyropdf_store::budget::Budget;
 use pyropdf_store::budget::BudgetVec;
@@ -24,6 +26,8 @@ struct Uses<'a> {
     budget: &'a Budget,
     page_glyphs: u64,
     refusal: Option<pyropdf_store::LimitExceeded>,
+    /// The font key of the run whose glyphs arrive.
+    font: u128,
 }
 
 impl Uses<'_> {
@@ -46,10 +50,12 @@ impl Uses<'_> {
 }
 
 impl ContentSink for Uses<'_> {
-    fn glyph_run(&mut self, _: &GlyphStyle) {}
+    fn glyph_run(&mut self, style: &GlyphStyle) {
+        self.font = style.font;
+    }
     fn glyph(&mut self, glyph: &Glyph<'_>, _: Affine, _: Option<Rect>) {
         if let Glyph::Outline(outline) = glyph {
-            self.record(outline.font_cache_key(), outline.glyph_id().to_u32());
+            self.record(self.font, outline.glyph_id().to_u32());
         }
     }
     fn stroke_completes_fill(&mut self) {}
@@ -112,7 +118,7 @@ pub fn used_glyphs(
 ) -> Result<Vec<Vec<u32>>, Error> {
     let pdf = bridged.pdf();
     let settings = InterpreterSettings {
-        render_annotations: true,
+        render_content: RenderContent::all(),
         ..InterpreterSettings::default()
     };
     let cache = InterpreterCache::new();
@@ -121,6 +127,7 @@ pub fn used_glyphs(
         budget,
         page_glyphs: 0,
         refusal: None,
+        font: 0,
     };
     let mut protected = BudgetVec::new(budget);
     let mut targets = BudgetVec::new(budget);
@@ -176,9 +183,7 @@ pub fn used_glyphs(
         if protected[index] {
             ids.try_push(super::font_guard::KEEP_WHOLE)?;
         } else {
-            let dict = i32::try_from(number).ok().and_then(|number| {
-                xref.get::<Dict<'_>>(ObjectIdentifier::new(number, i32::from(generation)))
-            });
+            let dict = xref.get::<Dict<'_>>(ObjectIdentifier::new(number, i32::from(generation)));
             if let Some(dict) = dict {
                 let key = dict.cache_key();
                 let first = uses.glyphs.partition_point(|&(font, _)| font < key);
@@ -229,6 +234,7 @@ mod tests {
             budget: &budget,
             page_glyphs: 0,
             refusal: None,
+            font: 0,
         };
         uses.record(1, 1);
         uses.record(1, 2);

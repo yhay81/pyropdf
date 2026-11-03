@@ -26,8 +26,8 @@ _DEFAULT_MAX_OPERATIONS = 1 << 20
 #: Bytes of content that ``Operations.parse`` accepts by default (``content_input_size``).
 _DEFAULT_MAX_CONTENT_SIZE = 64 * 1024 * 1024
 
-#: Nesting of arrays and dictionaries in one operand, the depth that
-#: hayro-syntax reads.
+#: Nesting of arrays and dictionaries in one operand, the depth that the
+#: core reads.
 _MAX_OPERAND_DEPTH = 64
 
 _WHITESPACE = b"\x00\t\n\x0c\r "

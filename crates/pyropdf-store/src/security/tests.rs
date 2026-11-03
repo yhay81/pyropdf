@@ -486,7 +486,7 @@ fn a_stream_with_an_indirect_length_decrypts_the_data_that_hayro_decrypts() {
         let Value::Stream(stream) = &**object.value() else {
             panic!("object {number} is a stream");
         };
-        let id = hayro_syntax::object::ObjectIdentifier::new(i32::try_from(number).unwrap(), 0);
+        let id = hayro_syntax::object::ObjectIdentifier::new(number, 0);
         let theirs = pdf
             .xref()
             .get::<hayro_syntax::object::Stream<'_>>(id)

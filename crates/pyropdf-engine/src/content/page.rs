@@ -34,8 +34,8 @@ impl PageContent {
     /// tokenizes it.
     ///
     /// A `/Contents` stream is the content. In an array, every stream is
-    /// followed by one space, and the array ends at the first item that is
-    /// not a stream. A stream whose filters do not decode is left out, and a
+    /// followed by one space, and an item that is not a stream is skipped.
+    /// A stream whose filters do not decode is left out, and a
     /// page without such a stream has no content. Each stream decodes as a
     /// page content stream, which `page_content_size` bounds; the joined
     /// content refuses with `content_stream_size` beyond its limit, and the
@@ -106,8 +106,8 @@ fn resolve(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Arc<Val
         .map(|object| Arc::clone(object.value())))
 }
 
-/// Appends the streams of a `/Contents` array, until the first item that
-/// is not a reference to a stream.
+/// Appends the streams of a `/Contents` array, skipping every item that is
+/// not a reference to a stream.
 fn array<'v>(
     reads: &mut Reads<'_>,
     data: &mut BudgetVec<'_, u8>,
@@ -116,15 +116,14 @@ fn array<'v>(
 ) -> Result<()> {
     for item in items {
         let &Value::Reference(reference) = item else {
-            break;
+            continue;
         };
         let Some(value) = resolve(reads, reference)? else {
-            break;
+            continue;
         };
-        let Value::Stream(stream) = &*value else {
-            break;
-        };
-        append(reads, data, parts, reference, stream, true)?;
+        if let Value::Stream(stream) = &*value {
+            append(reads, data, parts, reference, stream, true)?;
+        }
     }
     Ok(())
 }

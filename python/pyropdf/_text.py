@@ -296,7 +296,7 @@ class Span:
     only stroked; ``None`` for a pattern paint and for invisible text."""
     render_mode: TextRenderMode
     """How the glyphs are painted. hayro paints the clipping modes 4 to 6 as
-    their painting part, and text in mode 7 is not extracted."""
+    their painting part, and passes text in mode 7 on as invisible text."""
     is_clipped: bool
     """Whether the clip paths leave no part of the glyphs' boxes visible, so
     that a viewer shows none of them."""

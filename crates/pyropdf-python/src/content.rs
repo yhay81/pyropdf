@@ -20,9 +20,9 @@ use pyropdf_store::value::{Bytes, Dict, Reference, Value};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, limit_error, store_error};
 
-/// The nesting of arrays and dictionaries that hayro-syntax reads in
+/// The nesting of arrays and dictionaries that the store converts in
 /// content, which bounds the conversion of an operand.
-const MAX_OPERAND_DEPTH: usize = 64;
+const MAX_OPERAND_DEPTH: usize = pyropdf_store::value::MAX_NESTING;
 
 /// The operations of content in the tagged form, and its tail.
 type Content<'py> = (Vec<Bound<'py, PyAny>>, Bound<'py, PyBytes>);

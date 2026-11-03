@@ -10,13 +10,6 @@ create = { status = "partial", missing = "Typed views write every key as declare
 edit = { status = "partial", missing = "Typed views change and remove every key as declared, but no reference rule yet keeps the structures that depend on an object consistent.", issue = 219, milestone = "Phase 3: Typed objects" }
 preserve = { status = "planned", milestone = "Phase 4: Specification" }
 
-# hayro-syntax refuses a stream whose dictionary names an external file.
-[[arlington.rule]]
-keys = ["Length", "Filter", "DecodeParms", "F"]
-read = { status = "engine", upstream = 224 }
-create = { status = "engine", upstream = 224 }
-edit = { status = "engine", upstream = 224 }
-
 [features.flate-filter]
 clause = "7.4.4"
 description = "The FlateDecode filter: zlib-compressed stream data."

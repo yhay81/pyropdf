@@ -8,10 +8,10 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 36 | 0 | 0 | 0 | 167 | 598 |
+| read | 0 | 0 | 0 | 0 | 167 | 634 |
 | interpret | 0 | 1 | 0 | 0 | 783 | 17 |
-| create | 36 | 0 | 0 | 577 | 176 | 12 |
-| edit | 36 | 0 | 0 | 577 | 180 | 8 |
+| create | 0 | 0 | 0 | 613 | 176 | 12 |
+| edit | 0 | 0 | 0 | 613 | 180 | 8 |
 | preserve | 0 | 0 | 0 | 0 | 795 | 6 |
 
 ## Clauses

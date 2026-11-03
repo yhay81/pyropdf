@@ -1,0 +1,16 @@
+# The harness of the hinted renders of issue #18: hayro 0.9 hints text
+# (LaurenzV/hayro#1705), and the font programs that pyropdf subsets render
+# differently hinted. The empty table below makes this directory a workspace
+# of its own.
+[workspace]
+
+[package]
+name = "hinted-subsets"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# The commit that the repository's workspace builds against (#18).
+[dependencies]
+hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }

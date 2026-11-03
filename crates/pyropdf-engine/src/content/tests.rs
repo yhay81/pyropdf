@@ -13,7 +13,7 @@ use pyropdf_store::index::Index;
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::save::FileBase;
-use pyropdf_store::value::{Bytes, Name, Reference, Value};
+use pyropdf_store::value::{Bytes, MAX_NESTING, Name, Reference, Value};
 use pyropdf_store::version::Document;
 use pyropdf_store::{ErrorKind, LimitExceeded};
 
@@ -130,11 +130,23 @@ fn inline_images_end_after_ei() {
 
 #[test]
 fn content_after_what_hayro_reads_stays_in_the_tail() {
-    // hayro reads at most ten operands and stops at an eleventh.
-    let content = b"q 1 2 3 4 5 6 7 8 9 10 11 sc Q";
-    let operations = parse(content);
+    // hayro reads at most 33 operands, those of an `scn` with 32 DeviceN
+    // components and a pattern, and stops at a 34th.
+    let numbers = |count: u32| {
+        (1..=count)
+            .map(|number| number.to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let read = format!("q {} scn Q", numbers(33));
+    assert_eq!(
+        operators(&parse(read.as_bytes())),
+        [&b"q"[..], b"scn", b"Q"]
+    );
+    let content = format!("q {} scn Q", numbers(34));
+    let operations = parse(content.as_bytes());
     assert_eq!(operators(&operations), [&b"q"[..]]);
-    assert_eq!(operations.tail(), b" 1 2 3 4 5 6 7 8 9 10 11 sc Q");
+    assert_eq!(operations.tail(), &content.as_bytes()[1..]);
 }
 
 #[test]
@@ -196,6 +208,27 @@ fn deep_operands_are_bounded_by_the_object_depth() {
         &Budget::new(&limits),
     ));
     assert_eq!(refused.code(), LimitCode::ObjectDepth);
+}
+
+#[test]
+fn an_operand_deeper_than_values_nest_is_refused() {
+    // hayro-syntax 0.9 reads 512 levels, and the store converts 64.
+    let nested = |depth: usize| {
+        let mut content = vec![b'['; depth];
+        content.extend(vec![b']'; depth]);
+        content.extend_from_slice(b" Do");
+        content
+    };
+    assert_eq!(parse(&nested(MAX_NESTING)).len(), 1);
+    let content = nested(MAX_NESTING + 1);
+    let mut theirs = UntypedIter::new(&content);
+    assert!(
+        theirs
+            .next()
+            .is_some_and(|instruction| **instruction.operator == *b"Do")
+    );
+    let error = Operations::parse(Bytes::new(content), &Budget::default()).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Malformed(_)), "{error}");
 }
 
 proptest! {
@@ -293,10 +326,11 @@ fn page_content_joins_streams_as_hayro_does() {
     let bytes = document(&[
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 300 300] >>",
-        b"<< /Type /Page /Parent 2 0 R /Contents [4 0 R 5 0 R 6 0 R 4 0 R] >>",
+        // hayro skips the items that are not streams: an object that is
+        // not one, a reference to no object, and a direct value.
+        b"<< /Type /Page /Parent 2 0 R /Contents [4 0 R 6 0 R 9 0 R null 5 0 R] >>",
         b"<< /Length 21 >>\nstream\nBT /F1 12 Tf 9 9 Td (\nendstream",
         b"<< /Length 8 >>\nstream\nA) Tj ET\nendstream",
-        // hayro stops at the first item that is not a stream.
         b"<< /Type /NotAStream >>",
     ]);
     let content = &pages(&open(bytes.clone()))[0];

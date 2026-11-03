@@ -1,7 +1,7 @@
 //! Rasterizing a page through hayro, as much as `page.pixmap`
 //! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
-use hayro::hayro_interpret::InterpreterSettings;
+use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 
@@ -19,6 +19,20 @@ mod tests;
 
 pub use batch::{MAX_WORKERS, batch};
 pub use svg::svg;
+
+/// What hayro renders with: its defaults, without hinting.
+///
+/// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
+/// did not. Hinting reads more of a font program than the glyphs drawn, so
+/// a program that pyropdf subsets would draw differently hinted
+/// (evidence/hinted-subsets); pyropdf renders text unhinted, as it did with
+/// hayro 0.8 (#18).
+fn render_settings() -> RenderSettings {
+    RenderSettings {
+        hinting: false,
+        ..RenderSettings::default()
+    }
+}
 
 /// A rendered page: its size in pixels and its pixels, row by row from the
 /// top, as premultiplied RGBA with 8 bits per channel.
@@ -41,7 +55,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
         page,
         &RenderCache::new(),
         &InterpreterSettings::default(),
-        &RenderSettings::default(),
+        &render_settings(),
         &PixmapSettings {
             x_scale: scale,
             y_scale: scale,
@@ -344,7 +358,11 @@ fn draw<'a>(
     let transform =
         Affine::translate((-left, -top)) * page_to_raster * page.initial_transform(true).to_kurbo();
     let settings = InterpreterSettings {
-        render_annotations: options.annotations,
+        render_content: if options.annotations {
+            RenderContent::all()
+        } else {
+            RenderContent::PAGE
+        },
         ..InterpreterSettings::default()
     };
     let mut context = RenderContext::new(raster_width, raster_height);
@@ -352,7 +370,7 @@ fn draw<'a>(
         page,
         cache,
         &settings,
-        &RenderSettings::default(),
+        &render_settings(),
         &mut context,
         transform,
     );

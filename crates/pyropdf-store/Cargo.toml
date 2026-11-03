@@ -11,7 +11,7 @@ publish.workspace = true
 [dependencies]
 # The one parser of every object (DESIGN.md F5). The store decodes no image,
 # so the `images` feature and its decoders stay off.
-hayro-syntax = { version = "0.8.0", default-features = false, features = ["std"] }
+hayro-syntax = { version = "0.9.0", default-features = false, features = ["std"] }
 
 # The primitives of the standard security handler (DESIGN.md section 4.5),
 # MIT OR Apache-2.0 as the repository's license allows.

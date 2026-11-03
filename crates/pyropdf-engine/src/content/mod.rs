@@ -8,7 +8,7 @@
 //! of the previous one to the end of its operator, or to the end of `EI` for
 //! an inline image, and the bytes after the last operation are the tail: the
 //! bytes of the operations and the tail, in order, are the content. hayro
-//! stops at an operation that it cannot read, such as one with an eleventh
+//! stops at an operation that it cannot read, such as one with a 34th
 //! operand, and the rest of the content then stays in the tail.
 //!
 //! Until hayro reports where each painted item comes from (I4,
@@ -87,8 +87,11 @@ impl Operations {
     /// with `content_operation_count` more operations than the budget
     /// allows, with the budget's other limits what it does not allow, and
     /// with a malformed input error an operator written with a `#` escape,
-    /// whose place hayro-syntax does not report, or a panic of hayro-syntax
-    /// (I3, yhay81/pyropdf#19).
+    /// whose place hayro-syntax does not report, an operand nested deeper
+    /// than values are ([`MAX_NESTING`]), although hayro-syntax reads it, or
+    /// a panic of hayro-syntax (I3, yhay81/pyropdf#19).
+    ///
+    /// [`MAX_NESTING`]: pyropdf_store::value::MAX_NESTING
     pub fn parse(data: Bytes, budget: &Budget) -> Result<Self> {
         panic::catch_unwind(AssertUnwindSafe(|| parse(&data, budget)))
             .unwrap_or_else(|_| Err(Error::malformed("hayro-syntax panicked on the content")))

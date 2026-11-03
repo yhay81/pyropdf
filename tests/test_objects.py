@@ -248,6 +248,25 @@ def test_unsupported_filters_raise_instead_of_returning_encoded_bytes() -> None:
     assert doc.objects[xref].read(decode=False) == b"data"
 
 
+@pytest.mark.parametrize("specification", ["string", "dictionary"])
+def test_a_stream_that_names_an_external_file_keeps_its_bytes_but_does_not_decode(specification: str) -> None:
+    # A stream whose /F names a file holds its data there (ISO 32000-2
+    # 7.3.8.2), and its own bytes are to be ignored (#224).
+    doc = pyropdf.Document()
+    xref = doc.objects.add_stream(b"data", filter=None)
+    name = String(b"data.bin")
+    doc.objects[xref]["F"] = name if specification == "string" else {"Type": Name("Filespec"), "F": name}
+
+    saved = pyropdf.open(doc.to_bytes())
+    stream = saved.objects[xref]
+    assert isinstance(stream, Stream)
+    file = stream["F"]
+    assert (file if specification == "string" else file["F"]) == name
+    assert stream.read(decode=False) == b"data"
+    with pytest.raises(pyropdf.PdfError):
+        stream.read()
+
+
 def test_add_builds_a_new_page_from_raw_objects() -> None:
     doc = pyropdf.Document()
     doc.pages.new()
@@ -573,3 +592,65 @@ def test_large_compressed_streams_round_trip() -> None:
     assert stream["Filter"] == Name("FlateDecode")
     assert zlib.decompress(stream.read(decode=False)) == data
     assert stream.read() == data
+
+
+def test_objects_numbered_above_2_31_read_render_and_save() -> None:
+    # hayro reads object numbers as u32 (#18): the page tree, its font, and
+    # its content are numbered from 2^31 to u32::MAX - 1.
+    pages, page, font, content = 2**31, 3_000_000_000, 2**32 - 3, 2**32 - 2
+    text = b"BT /F1 24 Tf 20 40 Td (Above) Tj ET"
+    objects = {
+        1: f"<< /Type /Catalog /Pages {pages} 0 R >>",
+        pages: f"<< /Type /Pages /Kids [{page} 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+        page: f"<< /Type /Page /Parent {pages} 0 R /Resources << /Font << /F1 {font} 0 R >> >> "
+        f"/Contents {content} 0 R >>",
+        font: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        content: f"<< /Length {len(text)} >>\nstream\n{text.decode()}\nendstream",
+    }
+    out = bytearray(b"%PDF-1.7\n")
+    offsets = {}
+    for number, body in objects.items():
+        offsets[number] = len(out)
+        out += f"{number} 0 obj\n{body}\nendobj\n".encode()
+    xref = len(out)
+    # One subsection per object, since a table of every number below them
+    # would hold more than four billion rows.
+    out += b"xref\n0 1\n0000000000 65535 f \n"
+    for number in sorted(offsets):
+        out += f"{number} 1\n{offsets[number]:010} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {content + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+
+    doc = pyropdf.open(bytes(out))
+    assert doc.catalog["Pages"].xref == pages
+    (first,) = doc.pages
+    assert first.xref == page
+    assert doc.objects[content].read() == text
+    assert "Above" in first.text()
+    assert first.pixmap(dpi=72).color_count() > 1
+
+    edited = text.replace(b"Above", b"Edited")
+    doc.objects[content].write(edited)
+    assert "Edited" in first.text()
+    for incremental in (True, False):
+        saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+        assert saved.pages[0].xref == page
+        assert saved.objects[content].read() == edited
+        assert "Edited" in saved.pages[0].text()
+
+
+def test_objects_nest_at_most_64_levels() -> None:
+    # hayro-syntax 0.9 parses 512 levels. The object model converts 64, which
+    # bounds the recursion of what reads a value.
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [] /Count 0 >>",
+                3: "[" * 64 + "]" * 64,
+                4: "[" * 65 + "]" * 65,
+            }
+        )
+    )
+    assert len(doc.objects[3]) == 1
+    with pytest.raises(pyropdf.MalformedPdfError, match="deeper than 64 levels"):
+        len(doc.objects[4])
