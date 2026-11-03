@@ -1,13 +1,6 @@
 # The causes of measured differences; README.md explains each.
 
 [[cause]]
-id = "missing-highlight-appearance"
-outputs = ["render"]
-kinds = ["close"]
-documents = ["pdfium-links-highlights-annots"]
-pages = [0]
-
-[[cause]]
 id = "heading-above-columns"
 outputs = ["text", "words", "words_exact", "layout", "search", "markdown", "document_markdown"]
 kinds = ["text"]

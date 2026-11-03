@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from corpus import ADDED, ASSETS, NAMES
+from corpus import ASSETS, NAMES
 
 import pyropdf
 
@@ -47,7 +47,7 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
     results = json.loads((HARNESS / "results.json").read_text())
     report = (HARNESS / "report.md").read_text()
 
-    measured = sorted(set(NAMES) - ADDED)
+    measured = sorted(NAMES)
     assert sorted(results) == sorted([*(name.removesuffix(".pdf") for name in measured), FALLBACK.stem])
     compare = _compare()
     metadata = json.loads((HARNESS / "metadata.json").read_text())

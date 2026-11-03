@@ -59,31 +59,27 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 
 ## Causes
 
-The run on 2026-11-04 covers the 14 corpus documents, 155 pages, and the 7
-pages of `nonembedded-cjk.pdf`. Of the 162 rasters, 161 match byte for byte,
-the 7 fallback pages among them, and one is close under the stated
-tolerance. The JSON reading outputs and the Markdown match, except on page 2
-of `patent-us223898.pdf` and in the exact word boxes of the fallback pages,
+The run on 2026-11-03 covers the 15 corpus documents, 156 pages, and the 7
+pages of `nonembedded-cjk.pdf`. All 163 rasters match byte for byte. The
+JSON reading outputs and the Markdown match, except on page 2 of
+`patent-us223898.pdf` and in the exact word boxes of the fallback pages,
 which the causes below explain. No output raises. `metadata.json` identifies
 the measured source revision and the hashes of the inputs. The oracle cache
 is reused only with a matching stamp of the freeze commit and the extras and
 an importable package; an unstamped or different cache is rebuilt.
 
-### Missing highlight appearance
+### Missing highlight appearance, resolved
 
-`pdfium-links-highlights-annots.pdf`, page 1, differs only at its Highlight
-annotation without `/AP`: pixel bounds x=293..348, y=250..261, within the
-annotation's PDF rectangle [293, 530, 349, 542]. Pixels with a channel delta
-over 16 occupy 0.139% of the page (the threshold is 0.5%); the mean maximum
-channel delta over all pixels is 0.295. Disabling annotations makes the
-page byte-identical, as `annotation-diagnostic.json` records with hashes.
-
-Frozen pylopdf synthesizes missing appearances in
-`rust/src/document/rendering.rs` via `synthesize_missing_appearances_for_render`;
-its `rust/src/annotation_appearance.rs` gives highlights a Multiply blend.
-The measured pyropdf version passes annotations to hayro without that
-synthesis. The port is tracked by #169 / PR #172. This is an explained,
-within-tolerance difference, rather than byte-identical rendering.
+The run of 2026-10-28 found `pdfium-links-highlights-annots.pdf`, page 1,
+close but not equal at its Highlight annotation without `/AP`: pixel bounds
+x=293..348, y=250..261, 0.139% of the page beyond a channel delta of 16.
+Frozen pylopdf synthesizes missing appearances for rendering
+(`synthesize_missing_appearances_for_render` in
+`rust/src/document/rendering.rs`), with a Multiply blend for highlights;
+pyropdf then passed annotations to hayro without that synthesis. #169 ported
+it (PR #172), and the page now renders byte for byte alike:
+`annotation-diagnostic.json` records equal hashes of both engines' renders,
+with and without annotations.
 
 ### Headings above columns
 
