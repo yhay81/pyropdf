@@ -110,8 +110,8 @@ def _assert_columns(paths: pyropdf.Paths, records: Sequence[pyropdf.Path]) -> No
             assert style == [stroke.width, cap, join, stroke.miter_limit, stroke.dash_offset]
         assert paths.contexts[columns["context"][row]] == path.context
         assert columns["blend_mode"][row] == list(BlendMode).index(path.blend_mode)
-        mask = columns["soft_mask"][row]
-        assert (None if mask < 0 else paths.soft_masks[mask]) == path.soft_mask
+        mask = path.soft_mask
+        assert columns["soft_mask"][row] == (-1 if mask is None else list(SoftMaskType).index(mask.subtype))
 
 
 @pytest.mark.parametrize("name", NAMES)
@@ -193,7 +193,6 @@ def test_the_columns_hold_the_segments_paints_and_strokes() -> None:
 
     assert paths.column("blend_mode").tolist() == [0, 0, 0, list(BlendMode).index(BlendMode.MULTIPLY)]
     assert paths.column("soft_mask").tolist() == [-1, -1, -1, -1]
-    assert paths.soft_masks == ()
     contexts = paths.column("context").tolist()
     assert curve.context is paths.contexts[contexts[2]]
     assert curve.context.marked_content[0].mcid == 3
@@ -201,11 +200,13 @@ def test_the_columns_hold_the_segments_paints_and_strokes() -> None:
     assert line.context is triangle.context is paths.contexts[contexts[0]]
 
 
-def test_patterns_and_soft_masks_are_shared_values() -> None:
+def _masked_page() -> pyropdf.Page:
+    """Return a page of two paths in one shading, then one in a luminosity and one in an alpha soft mask."""
     group = "/Type /XObject /Subtype /Form /BBox [0 0 200 100] /Group << /S /Transparency /CS /DeviceGray >>"
-    page = page_with(
-        "q 20 10 60 60 re W n /Sh sh Q /Pattern cs /P1 scn 120 10 40 40 re f /GS1 gs 0 0 1 rg 10 60 20 20 re f",
-        resources="/Shading << /Sh 6 0 R >> /Pattern << /P1 9 0 R >> /ExtGState << /GS1 7 0 R >>",
+    return page_with(
+        "q 20 10 60 60 re W n /Sh sh Q /Pattern cs /P1 scn 120 10 40 40 re f "
+        "/GS1 gs 0 0 1 rg 10 60 20 20 re f /GS2 gs 40 60 20 20 re f",
+        resources="/Shading << /Sh 6 0 R >> /Pattern << /P1 9 0 R >> /ExtGState << /GS1 7 0 R /GS2 10 0 R >>",
         objects={
             6: (
                 "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [20 0 80 0] "
@@ -214,22 +215,30 @@ def test_patterns_and_soft_masks_are_shared_values() -> None:
             7: "<< /Type /ExtGState /SMask << /S /Luminosity /G 8 0 R >> >>",
             8: stream_object("0 0 200 100 re f", group),
             9: "<< /PatternType 2 /Shading 6 0 R >>",
+            10: "<< /Type /ExtGState /SMask << /S /Alpha /G 8 0 R >> >>",
         },
     )
+
+
+def test_the_columns_share_patterns_and_hold_the_types_of_soft_masks() -> None:
+    page = _masked_page()
     paths = page.paths()
     records = page.content().paths
     assert list(paths) == list(records)
     _assert_columns(paths, records)
     # `sh` and the shading pattern paint the same shading in the same space,
     # which the columns hold once.
-    shaded, patterned, masked = paths
+    shaded, patterned, luminosity, alpha = paths
     (pattern,) = paths.patterns
     assert isinstance(pattern, ShadingPattern)
-    assert paths.column("fill_pattern").tolist() == [0, 0, -1]
+    assert paths.column("fill_pattern").tolist() == [0, 0, -1, -1]
     assert shaded.fill is patterned.fill is pattern
-    assert paths.column("soft_mask").tolist() == [-1, -1, 0]
-    assert paths.soft_masks == (SoftMask(subtype=SoftMaskType.LUMINOSITY),)
-    assert masked.soft_mask is paths.soft_masks[0]
+    # The position in `SoftMaskType`, whichever type the page paints first.
+    assert paths.column("soft_mask").tolist() == [-1, -1, 1, 0]
+    assert paths.column("soft_mask").format == "b"
+    assert (shaded.soft_mask, patterned.soft_mask) == (None, None)
+    assert luminosity.soft_mask == SoftMask(subtype=SoftMaskType.LUMINOSITY)
+    assert alpha.soft_mask == SoftMask(subtype=SoftMaskType.ALPHA)
 
 
 def test_a_cad_page_reads_its_lines_by_color() -> None:
@@ -412,6 +421,7 @@ def test_the_arrow_capsules_hold_a_struct_array_over_the_columns() -> None:
     assert formats[b"fill_red"] == (b"f", 2)
     assert formats[b"fill_pattern"] == (b"i", 2)
     assert formats[b"stroke_width"] == (b"g", 2)
+    assert formats[b"soft_mask"] == (b"c", 2)
 
     array_schema, array_capsule = paths.__arrow_c_array__()
     array = _ArrowArray.from_address(_get_pointer(array_capsule, b"arrow_array"))
@@ -459,6 +469,7 @@ def test_numpy_reads_the_coordinates_without_a_copy() -> None:
     assert to_x.tolist() == paths.column("to_x").tolist()
     assert numpy.asarray(paths.column("fill_red")).dtype == numpy.float32
     assert numpy.asarray(paths.column("path")).dtype == numpy.uint32
+    assert numpy.asarray(paths.column("soft_mask")).dtype == numpy.int8
 
 
 def test_pyarrow_imports_the_paths_without_a_copy() -> None:
@@ -475,3 +486,7 @@ def test_pyarrow_imports_the_paths_without_a_copy() -> None:
     assert segments[2][1]["c1_x"] == records[2].segments[1].c1.x  # ty: ignore[unresolved-attribute]
     assert segments[0][1]["c1_x"] is None
     assert pa.array(paths[1:3]).field("x0").to_pylist() == [path.bbox.x0 for path in records[1:3]]
+    masks = pa.array(_masked_page().paths())
+    masks.validate(full=True)
+    assert masks.field("soft_mask").to_pylist() == [None, None, 1, 0]
+    assert masks.field("soft_mask").type == pa.int8()

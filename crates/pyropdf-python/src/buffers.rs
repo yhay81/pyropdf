@@ -297,8 +297,8 @@ const CURVE: u8 = b'c';
 
 /// One path as `python/pyropdf/_content.py` builds a `Path` from it:
 /// `(verbs, coordinates, bbox, fill, even_odd, stroke, context, blend mode,
-/// soft mask)`, with the verbs and coordinates in the forms of the content
-/// model and the soft mask -1 where there is none.
+/// soft mask)`, with the verbs, the coordinates, and the type of the soft
+/// mask in the forms of the content model.
 type PathRow<'a> = (
     &'a [u8],
     Vec<f64>,
@@ -308,7 +308,7 @@ type PathRow<'a> = (
     Option<StrokeRow<'a>>,
     u32,
     u8,
-    i32,
+    Option<u8>,
 );
 
 /// A paint of a [`PathRow`]: its index in the patterns, or -1 for a color,
@@ -340,36 +340,29 @@ fn offset(count: usize) -> PyResult<i32> {
     i32::try_from(count).map_err(|_| PyValueError::new_err("the paths have too many segments"))
 }
 
-/// The distinct values of the paths' patterns or soft masks, in the order
-/// in which the paths first use them, each with its index.
-struct Interned<K, V> {
-    values: Vec<V>,
-    indexes: HashMap<K, i32>,
+/// The distinct pattern paints of the paths, in the order in which the paths
+/// first use them.
+#[derive(Default)]
+struct Patterns {
+    paints: Vec<PaintTuple>,
+    /// The index of each paint, by its kind and the bits of its values.
+    indexes: HashMap<(u8, Vec<u64>), i32>,
 }
 
-impl<K: std::hash::Hash + Eq, V: Clone> Interned<K, V> {
-    fn new() -> Self {
-        Self {
-            values: Vec::new(),
-            indexes: HashMap::new(),
-        }
-    }
-
-    /// Returns the index of `value`, whose key is `key`, adding it when it is
-    /// new.
-    fn index(&mut self, key: K, value: &V) -> PyResult<i32> {
+impl Patterns {
+    /// Returns the index of `paint`, adding it when it is new.
+    fn index(&mut self, paint: &PaintTuple) -> PyResult<i32> {
+        let bits: Vec<u64> = paint.1.iter().map(|&value| value_bits(value)).collect();
+        let key = (paint.0, bits);
         if let Some(&index) = self.indexes.get(&key) {
             return Ok(index);
         }
-        let index = offset(self.values.len())?;
-        self.values.push(value.clone());
+        let index = offset(self.paints.len())?;
+        self.paints.push(paint.clone());
         self.indexes.insert(key, index);
         Ok(index)
     }
 }
-
-/// The patterns of the paths, keyed by kind and the bits of their values.
-type Patterns = Interned<(u8, Vec<u64>), PaintTuple>;
 
 /// Returns the bits of a pattern's value, with -0.0 read as 0.0, as Python
 /// compares them.
@@ -433,9 +426,8 @@ impl PaintColumns {
                 ([red, green, blue, alpha].map(|value| value as f32), -1)
             }
             Some(paint) => {
-                let key = paint.1.iter().map(|&value| value_bits(value)).collect();
                 set_bit(&mut self.pattern_bits, row);
-                ([f32::NAN; 4], patterns.index((paint.0, key), paint)?)
+                ([f32::NAN; 4], patterns.index(paint)?)
             }
         };
         if paint.is_some() {
@@ -488,8 +480,9 @@ struct PathTable {
     /// The index of the path's graphics context in `states`.
     context: Vec<u32>,
     blend_mode: Vec<u8>,
-    /// The index of the path's soft mask in `soft_masks`, or -1.
-    soft_mask: Vec<i32>,
+    /// The position of the type of the path's soft mask in `SoftMaskType`,
+    /// or -1.
+    soft_mask: Vec<i8>,
     /// Arrow bitmap: whether a row has a soft mask.
     soft_mask_bits: Vec<u8>,
     /// Each segment's path, verb, end point, and a curve's control points,
@@ -508,10 +501,8 @@ struct PathTable {
     curves: usize,
     /// The dash lengths of every stroke.
     stroke_dashes: Vec<f64>,
-    /// The distinct pattern paints and soft masks that the columns index, a
-    /// soft mask as its type in the content model.
+    /// The distinct pattern paints that the pattern columns index.
     patterns: Vec<PaintTuple>,
-    soft_masks: Vec<u8>,
     /// The content's graphics contexts, with the clips, groups, and marked
     /// content that they index, as `page_content` hands them out.
     clips: Vec<ClipTuple>,
@@ -606,7 +597,6 @@ impl PathTable {
             curves: 0,
             stroke_dashes: column(dashes)?,
             patterns: Vec::new(),
-            soft_masks: Vec::new(),
             clips: content.clips.clone(),
             groups: content.groups.clone(),
             marks: content.marks.clone(),
@@ -614,23 +604,16 @@ impl PathTable {
         };
         table.segment_offsets.push(0);
         table.stroke_dashes_offsets.push(0);
-        let mut patterns = Patterns::new();
-        let mut soft_masks = Interned::new();
+        let mut patterns = Patterns::default();
         for path in paths() {
-            table.push(path, &mut patterns, &mut soft_masks)?;
+            table.push(path, &mut patterns)?;
         }
-        table.patterns = patterns.values;
-        table.soft_masks = soft_masks.values;
+        table.patterns = patterns.paints;
         Ok(table)
     }
 
     /// Appends one path of the content model.
-    fn push(
-        &mut self,
-        path: &PathTuple,
-        patterns: &mut Patterns,
-        soft_masks: &mut Interned<u8, u8>,
-    ) -> PyResult<()> {
+    fn push(&mut self, path: &PathTuple, patterns: &mut Patterns) -> PyResult<()> {
         let (verbs, coords, (x0, y0, x1, y1), fill, even_odd, stroke, (state, blend, mask)) = path;
         let row = self.x0.len();
         self.x0.push(*x0);
@@ -666,14 +649,12 @@ impl PathTable {
             .push(offset(self.stroke_dashes.len())?);
         self.context.push(*state);
         self.blend_mode.push(*blend);
-        let mask = match mask {
-            Some(mask) => {
-                set_bit(&mut self.soft_mask_bits, row);
-                soft_masks.index(*mask, mask)?
-            }
-            None => -1,
-        };
-        self.soft_mask.push(mask);
+        if mask.is_some() {
+            set_bit(&mut self.soft_mask_bits, row);
+        }
+        // The content model's types, 0 for alpha and 1 for luminosity, are the
+        // positions in `SoftMaskType`.
+        self.soft_mask.push(mask.map_or(-1, |mask| mask as i8));
         Ok(())
     }
 
@@ -766,7 +747,7 @@ impl PathTable {
             }),
             self.context[row],
             self.blend_mode[row],
-            self.soft_mask[row],
+            u8::try_from(self.soft_mask[row]).ok(),
         )
     }
 }
@@ -813,7 +794,7 @@ impl Columns for PathTable {
             "stroke_dash_offset" => (bytes(&self.stroke_dash_offset[rows]), c"d"),
             "context" => (bytes(&self.context[rows]), c"I"),
             "blend_mode" => (&self.blend_mode[rows], c"B"),
-            "soft_mask" => (bytes(&self.soft_mask[rows]), c"i"),
+            "soft_mask" => (bytes(&self.soft_mask[rows]), c"b"),
             _ => return None,
         })
     }
@@ -887,12 +868,6 @@ impl PathColumns {
     /// tuple form of `page_content`.
     fn patterns(&self) -> Vec<PaintTuple> {
         self.table.patterns.clone()
-    }
-
-    /// Returns the soft masks that the `soft_mask` column indexes, as bytes of
-    /// their types: 0 for alpha and 1 for luminosity.
-    fn soft_masks(&self) -> Vec<u8> {
-        self.table.soft_masks.clone()
     }
 
     /// Returns the Arrow schema of the rows as a PyCapsule.
@@ -1143,7 +1118,7 @@ const PATH_STRUCT: Field = Field {
         Field::leaf(c"stroke_dash_offset", c"g", true),
         Field::leaf(c"context", c"I", false),
         Field::leaf(c"blend_mode", c"C", false),
-        Field::leaf(c"soft_mask", c"i", true),
+        Field::leaf(c"soft_mask", c"c", true),
     ],
 };
 
