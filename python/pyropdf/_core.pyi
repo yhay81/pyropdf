@@ -111,7 +111,15 @@ class Column:
 _PathPaint: TypeAlias = tuple[int, tuple[float, float, float, float]]
 _PathStroke: TypeAlias = tuple[_PathPaint, float, int, int, float, list[float], float]
 _PathRow: TypeAlias = tuple[
-    bytes, list[float], tuple[float, float, float, float], _PathPaint | None, bool, _PathStroke | None, int, int, int
+    bytes,
+    list[float],
+    tuple[float, float, float, float],
+    _PathPaint | None,
+    bool,
+    _PathStroke | None,
+    int,
+    int,
+    int | None,
 ]
 
 @final
@@ -121,7 +129,6 @@ class PathColumns:
     def column(self, name: str, start: int, stop: int, /) -> Column: ...
     def contexts(self) -> tuple[list[Any], list[Any], list[Any], list[Any]]: ...
     def patterns(self) -> list[tuple[int, list[float]]]: ...
-    def soft_masks(self) -> bytes: ...
     def arrow_schema(self) -> object: ...
     def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
 

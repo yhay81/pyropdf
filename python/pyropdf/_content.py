@@ -495,8 +495,8 @@ class Paths(Sequence[Path]):
     Each row is one :class:`Path` of :meth:`Page.content`, in paint order,
     and the row view builds that record on demand: ``len(paths)``,
     ``paths[i]``, and iteration give records equal to ``Content.paths``,
-    which share :attr:`contexts`, :attr:`patterns`, and :attr:`soft_masks`.
-    A slice with a step of 1 is a view of the same columns.
+    which share :attr:`contexts` and :attr:`patterns`. A slice with a step of
+    1 is a view of the same columns.
 
     :meth:`column` returns each column without a copy as a read-only
     ``memoryview``, which ``numpy.asarray`` reads; its items are in the
@@ -529,8 +529,9 @@ class Paths(Sequence[Path]):
     - ``context`` (uint32): the index of ``Path.context`` in :attr:`contexts`;
     - ``blend_mode`` (uint8): ``Path.blend_mode`` as its position in
       :class:`BlendMode`;
-    - ``soft_mask`` (int32): the index of ``Path.soft_mask`` in
-      :attr:`soft_masks`, -1 where it is ``None``.
+    - ``soft_mask`` (int8): the ``subtype`` of ``Path.soft_mask`` as its
+      position in :class:`SoftMaskType`, 0 for alpha and 1 for luminosity, and
+      -1 where it is ``None``.
 
     The segment columns hold one item per segment of every path of the page,
     and a view shares them, as a view of :class:`Chars` shares ``text_data``:
@@ -649,11 +650,6 @@ class Paths(Sequence[Path]):
     def patterns(self) -> tuple[ShadingPattern | TilingPattern, ...]:
         """Return the distinct pattern paints, which ``fill_pattern`` and ``stroke_pattern`` index."""
         return self._values.shared()[1]
-
-    @property
-    def soft_masks(self) -> tuple[SoftMask, ...]:
-        """Return the distinct soft masks, which the ``soft_mask`` column indexes."""
-        return self._values.shared()[2]
 
     def column(self, name: str) -> memoryview:
         """Return the column ``name`` of :attr:`names` as a read-only ``memoryview``, without a copy."""
@@ -1004,10 +1000,8 @@ class _Contexts:
         return value
 
 
-#: What the columns of :class:`Paths` index: contexts, patterns, and soft masks.
-_PathShared: TypeAlias = tuple[
-    tuple[GraphicsContext, ...], tuple[ShadingPattern | TilingPattern, ...], tuple[SoftMask, ...]
-]
+#: What the columns of :class:`Paths` index: contexts and patterns.
+_PathShared: TypeAlias = tuple[tuple[GraphicsContext, ...], tuple[ShadingPattern | TilingPattern, ...]]
 
 
 class _PathValues:
@@ -1027,7 +1021,7 @@ class _PathValues:
         self._colors: dict[tuple[float, float, float, float], Color] = {}
 
     def shared(self) -> _PathShared:
-        """Return the contexts, patterns, and soft masks."""
+        """Return the contexts and patterns."""
         shared = self._shared
         if shared is None:
             with self._lock:
@@ -1038,7 +1032,6 @@ class _PathValues:
                     shared = self._shared = (
                         tuple(contexts[index] for index in range(len(states))),
                         tuple(_pattern(kind, values) for kind, values in self._columns.patterns()),
-                        tuple(mask for raw in self._columns.soft_masks() if (mask := _soft_mask(raw)) is not None),
                     )
         return shared
 
@@ -1068,16 +1061,15 @@ class _PathValues:
     def path(self, row: _PathRow) -> Path:
         """Return the :class:`Path` of one row of the core's columns."""
         kinds, coords, bbox, fill, even_odd, stroke, context, blend, soft_mask = row
-        contexts, _, soft_masks = self.shared()
         return Path(
             segments=_segments(kinds, coords),
             fill=None if fill is None else self.paint(fill),
             fill_rule=FillRule.EVEN_ODD if even_odd else FillRule.NONZERO,
             stroke=None if stroke is None else self.stroke(stroke),
             bbox=_rect(bbox),
-            context=contexts[context],
+            context=self.shared()[0][context],
             blend_mode=_BLEND_MODES[blend],
-            soft_mask=None if soft_mask < 0 else soft_masks[soft_mask],
+            soft_mask=_soft_mask(soft_mask),
         )
 
 

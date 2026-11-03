@@ -563,8 +563,8 @@ The paths of a page as columns, from `Page.paths`.
 Each row is one `Path` of `Page.content`, in paint order,
 and the row view builds that record on demand: `len(paths)`,
 `paths[i]`, and iteration give records equal to `Content.paths`,
-which share `contexts`, `patterns`, and `soft_masks`.
-A slice with a step of 1 is a view of the same columns.
+which share `contexts` and `patterns`. A slice with a step of
+1 is a view of the same columns.
 
 `column` returns each column without a copy as a read-only
 `memoryview`, which `numpy.asarray` reads; its items are in the
@@ -597,8 +597,9 @@ per row:
 - `context` (uint32): the index of `Path.context` in `contexts`;
 - `blend_mode` (uint8): `Path.blend_mode` as its position in
   `BlendMode`;
-- `soft_mask` (int32): the index of `Path.soft_mask` in
-  `soft_masks`, -1 where it is `None`.
+- `soft_mask` (int8): the `subtype` of `Path.soft_mask` as its
+  position in `SoftMaskType`, 0 for alpha and 1 for luminosity, and
+  -1 where it is `None`.
 
 The segment columns hold one item per segment of every path of the page,
 and a view shares them, as a view of `Chars` shares `text_data`:
@@ -656,14 +657,6 @@ Paths.patterns: tuple[ShadingPattern | TilingPattern, ...]
 ```
 
 The distinct pattern paints, which `fill_pattern` and `stroke_pattern` index.
-
-### `Paths.soft_masks`
-
-```python
-Paths.soft_masks: tuple[SoftMask, ...]
-```
-
-The distinct soft masks, which the `soft_mask` column indexes.
 
 ### `Paths.column`
 
