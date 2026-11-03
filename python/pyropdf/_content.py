@@ -191,6 +191,8 @@ class TilingPattern:
     y_step: float
     matrix: Matrix
     """The transform from pattern space to display space."""
+    opacity: float = 1.0
+    """The opacity of the pattern cell as a whole."""
 
 
 Paint: TypeAlias = Color | ShadingPattern | TilingPattern
@@ -838,6 +840,7 @@ def _pattern(kind: int, values: Sequence[float]) -> ShadingPattern | TilingPatte
         x_step=values[4],
         y_step=values[5],
         matrix=_matrix(values[6:12]),
+        opacity=values[12],
     )
 
 

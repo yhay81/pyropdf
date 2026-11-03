@@ -37,6 +37,7 @@ from pyropdf import (
     LineJoin,
     LineTo,
     MarkedContent,
+    Matrix,
     MoveTo,
     Point,
     Rect,
@@ -313,7 +314,32 @@ def test_shadings_and_tiling_patterns_are_paints() -> None:
     assert isinstance(tiled.fill, TilingPattern)
     assert tiled.fill.bbox == Rect(0, 0, 10, 10)
     assert (tiled.fill.x_step, tiled.fill.y_step) == (10, 12)
+    assert tiled.fill.opacity == 1
     assert tiled.bbox == pytest.approx(Rect(120, 50, 160, 90))
+
+
+def test_tiling_patterns_report_their_opacity() -> None:
+    tiling = "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10 /Resources << >>"
+    page = page_with(
+        "/Pattern cs /P1 scn 10 10 40 40 re f /Half gs 60 10 40 40 re f",
+        resources="/Pattern << /P1 6 0 R >> /ExtGState << /Half 7 0 R >>",
+        objects={
+            6: stream_object("0 0 5 5 re f", tiling),
+            7: "<< /Type /ExtGState /ca 0.5 >>",
+        },
+    )
+    opaque, half = page.content().paths
+
+    assert isinstance(opaque.fill, TilingPattern)
+    assert opaque.fill.opacity == 1
+    assert isinstance(half.fill, TilingPattern)
+    assert half.fill.opacity == pytest.approx(0.5)
+    assert [pattern.opacity for pattern in page.paths().patterns] == pytest.approx([1, 0.5])
+
+
+def test_tiling_patterns_are_constructible_without_opacity() -> None:
+    pattern = TilingPattern(bbox=Rect(0, 0, 10, 10), x_step=10, y_step=10, matrix=Matrix(1, 0, 0, 1, 0, 0))
+    assert pattern.opacity == 1
 
 
 @pytest.mark.spec("images", "interpret")

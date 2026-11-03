@@ -40,8 +40,8 @@ type Coefficients = [f64; 6];
 /// A paint: kind 0 is a color (red, green, blue, alpha in sRGB), kind 1 a
 /// shading pattern (shading type, or 0 for a shading that hayro could not
 /// read, the six matrix coefficients, and opacity), and kind 2 a tiling
-/// pattern (the four pattern-space bbox coordinates, x step, y step, and the
-/// six matrix coefficients).
+/// pattern (the four pattern-space bbox coordinates, x step, y step, the six
+/// matrix coefficients, and opacity).
 pub type PaintTuple = (u8, Vec<f64>);
 /// A stroke: paint, width, cap, join, miter limit, dash lengths, dash offset.
 pub type StrokeTuple = (PaintTuple, f64, u8, u8, f64, Vec<f64>, f64);
@@ -333,6 +333,7 @@ fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
                     d,
                     e,
                     f,
+                    f64::from(tiling.opacity),
                 ];
                 Ok((2, copy_values(&values, "paint values")?))
             }
