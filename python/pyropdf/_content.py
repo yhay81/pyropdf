@@ -212,8 +212,6 @@ class Stroke:
 class SoftMask:
     """A soft mask: the transparency group that masks what it encloses."""
 
-    xref: int
-    """The object number of the mask's group."""
     subtype: SoftMaskType
 
 
@@ -529,6 +527,7 @@ def _clusters(boxes: list[Rect], x_tolerance: float, y_tolerance: float) -> list
 
 
 _BLEND_MODES = tuple(BlendMode)
+_SOFT_MASK_TYPES = tuple(SoftMaskType)
 _LINE_CAPS = (LineCap.BUTT, LineCap.ROUND, LineCap.SQUARE)
 _LINE_JOINS = (LineJoin.MITER, LineJoin.ROUND, LineJoin.BEVEL)
 _RENDER_MODES = tuple(TextRenderMode)
@@ -605,11 +604,8 @@ def _segments(kinds: bytes, coords: list[float]) -> tuple[Segment, ...]:
     return tuple(segments)
 
 
-def _soft_mask(raw: tuple[int, bool] | None) -> SoftMask | None:
-    if raw is None:
-        return None
-    xref, alpha = raw
-    return SoftMask(xref=xref, subtype=SoftMaskType.ALPHA if alpha else SoftMaskType.LUMINOSITY)
+def _soft_mask(code: int | None) -> SoftMask | None:
+    return None if code is None else SoftMask(subtype=_SOFT_MASK_TYPES[code])
 
 
 class _Converter:

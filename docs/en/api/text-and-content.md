@@ -576,7 +576,7 @@ Members: `FUNCTION`, `AXIAL`, `RADIAL`, `TRIANGLE_MESH`, `COONS_PATCH_MESH`, `TE
 ## `SoftMask`
 
 ```python
-SoftMask(*, xref: int, subtype: SoftMaskType)
+SoftMask(*, subtype: SoftMaskType)
 ```
 
 A soft mask: the transparency group that masks what it encloses.

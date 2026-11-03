@@ -34,8 +34,8 @@ pub use images::{DecodedImage, page_image};
 pub use model::{
     BBox, ClipTuple, ContentItem, ContentSink, FontTuple, GlyphStyle, GlyphsTuple, GroupTuple,
     ImageFormatTuple, ImageTuple, ItemContextTuple, ItemKinds, MarkTuple, PageContent, PaintTuple,
-    PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE, SoftMaskTuple,
-    StateTuple, StrokeTuple, TextRunTuple,
+    PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE, StateTuple,
+    StrokeTuple, TextRunTuple,
 };
 pub use reads::read_page;
 pub use text::{

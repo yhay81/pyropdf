@@ -247,7 +247,7 @@ def test_transparency_groups_carry_opacity_and_soft_masks() -> None:
     (path,) = page.content().paths
     outer = path.context.groups[0]
     assert outer.opacity == pytest.approx(0.25)
-    assert outer.soft_mask == SoftMask(xref=8, subtype=SoftMaskType.ALPHA)
+    assert outer.soft_mask == SoftMask(subtype=SoftMaskType.ALPHA)
     assert outer.blend_mode is BlendMode.NORMAL
     assert path.context.opacity == pytest.approx(0.25)
     assert path.fill == Color(0, 1, 0, 1)

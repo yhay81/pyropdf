@@ -26,6 +26,8 @@ struct Uses<'a> {
     budget: &'a Budget,
     page_glyphs: u64,
     refusal: Option<pyropdf_store::LimitExceeded>,
+    /// The font key of the run whose glyphs arrive.
+    font: u128,
 }
 
 impl Uses<'_> {
@@ -48,10 +50,12 @@ impl Uses<'_> {
 }
 
 impl ContentSink for Uses<'_> {
-    fn glyph_run(&mut self, _: &GlyphStyle) {}
+    fn glyph_run(&mut self, style: &GlyphStyle) {
+        self.font = style.font;
+    }
     fn glyph(&mut self, glyph: &Glyph<'_>, _: Affine, _: Option<Rect>) {
         if let Glyph::Outline(outline) = glyph {
-            self.record(outline.font_cache_key(), outline.glyph_id().to_u32());
+            self.record(self.font, outline.glyph_id().to_u32());
         }
     }
     fn stroke_completes_fill(&mut self) {}
@@ -123,6 +127,7 @@ pub fn used_glyphs(
         budget,
         page_glyphs: 0,
         refusal: None,
+        font: 0,
     };
     let mut protected = BudgetVec::new(budget);
     let mut targets = BudgetVec::new(budget);
@@ -229,6 +234,7 @@ mod tests {
             budget: &budget,
             page_glyphs: 0,
             refusal: None,
+            font: 0,
         };
         uses.record(1, 1);
         uses.record(1, 2);
