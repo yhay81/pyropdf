@@ -14,7 +14,6 @@ differences, as DESIGN.md section 4.1 and #12 decided:
 
 from __future__ import annotations
 
-import resource
 import sys
 
 import pytest
@@ -295,8 +294,9 @@ def test_history_cannot_replace_the_version_inside_a_transaction(operation: str)
     assert doc.history.position == position
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="ru_maxrss is POSIX")
 def test_a_failing_transaction_copies_nothing_of_a_large_document() -> None:
+    # ru_maxrss is POSIX.
+    resource = pytest.importorskip("resource")
     # 1,760 pages of 20 KiB content: a copy of the document would raise the
     # peak resident memory by tens of MiB.
     pages = 1_760

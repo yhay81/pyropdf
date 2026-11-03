@@ -78,7 +78,7 @@ def test_the_check_finds_each_defect_of_the_broken_corpus(name: str) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    sorted(str(path.relative_to(ASSETS)) for path in ASSETS.glob("*/*.pdf") if path.parent != BROKEN),
+    sorted(path.relative_to(ASSETS).as_posix() for path in ASSETS.glob("*/*.pdf") if path.parent != BROKEN),
 )
 def test_every_valid_asset_passes_or_lists_its_real_defects(path: str) -> None:
     report = _open(ASSETS / path).check()

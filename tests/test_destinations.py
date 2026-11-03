@@ -199,17 +199,19 @@ def test_reading_every_page_of_a_large_manual_indexes_it_once() -> None:
     """Link reads reuse one name-tree index and one page index until an edit.
 
     Rebuilding both for every call made this loop take about 13 s in
-    pyropdf; the generous bound only catches that regression.
+    pyropdf; the generous bound only catches that regression. It bounds CPU
+    time, which other processes on a busy machine do not stretch as they do
+    wall time.
     """
     pages = 1_000
     doc = pyropdf.open(_manual(MAX_NAMED_DEST_ENTRIES, pages))
     views = list(doc.pages)
 
-    start = time.perf_counter()
+    start = time.process_time()
     targets = [[_page_of(link) for link in page.links] for page in views]
-    elapsed = time.perf_counter() - start
+    elapsed = time.process_time() - start
 
-    assert elapsed < 2.0, f"reading the links of {pages} pages took {elapsed:.2f}s"
+    assert elapsed < 2.0, f"reading the links of {pages} pages took {elapsed:.2f}s of CPU time"
     assert targets == [list(range(MANUAL_PAGES))] * pages
 
 
