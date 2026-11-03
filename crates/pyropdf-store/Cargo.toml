@@ -15,7 +15,7 @@ hayro-syntax = { version = "0.9.0", default-features = false, features = ["std"]
 
 # The primitives of the standard security handler (DESIGN.md section 4.5),
 # MIT OR Apache-2.0 as the repository's license allows.
-aes = "0.9.3"
+aes = "0.9.4"
 md-5 = "0.11.0"
 sha2 = "0.11.1"
 

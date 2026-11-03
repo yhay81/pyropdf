@@ -23,7 +23,7 @@ pyropdf-store.workspace = true
 flate2 = "1.1.10"
 png = "0.18.1"
 # JPEG output of Pixmap and doc.render, as pylopdf encodes it.
-jpeg-encoder = "0.7.0"
+jpeg-encoder = "0.7.1"
 # JPEG input of Pixmap.from_bytes, the version that hayro already pulls in.
 zune-jpeg = { version = "0.5.15", default-features = false, features = ["std"] }
 # GIF, TIFF, and JPEG 2000 input of Pixmap.from_bytes (#446). hayro already

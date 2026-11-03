@@ -7,6 +7,7 @@
 //! each glyph's CID becomes its original glyph ID.
 
 use std::fmt;
+use std::sync::Arc;
 
 pub use skrifa::GlyphId;
 use skrifa::instance::{LocationRef, Size};
@@ -45,8 +46,9 @@ impl std::error::Error for FaceError {}
 #[derive(Clone, Debug)]
 pub struct Face {
     /// The face alone as an sfnt, with an identity charset when its CFF is
-    /// CID-keyed: what `FontFile2` or `FontFile3` embeds.
-    pub program: Vec<u8>,
+    /// CID-keyed: what `FontFile2` or `FontFile3` embeds. Shared, because
+    /// the shaper's font holds it too.
+    pub program: Arc<Vec<u8>>,
     /// Whether the outlines are CFF, embedded as `CIDFontType0`; TrueType
     /// outlines are embedded as `CIDFontType2`.
     pub cff: bool,
@@ -197,7 +199,7 @@ impl Face {
             .iter()
             .find(|axis| axis.tag() == Tag::new(b"wght"))
             .map(|axis| [axis.min_value(), axis.default_value(), axis.max_value()]);
-        let program = standalone(&font, cff, data.len())?;
+        let program = Arc::new(standalone(&font, cff, data.len())?);
         Ok(Self {
             program,
             cff,

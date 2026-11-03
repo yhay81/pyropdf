@@ -37,7 +37,7 @@ Source = "https://github.com/yhay81/pyropdf"
 
 [build-system]
 # maturin 1.9.4 and later set PYO3_BUILD_EXTENSION_MODULE for PyO3.
-requires = ["maturin>=1.15,<2.0"]
+requires = ["maturin>=1.16,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
@@ -52,19 +52,19 @@ dev = [
     "pikepdf>=10.17.0",
     # pyHanko validates the signatures of doc.sign, with keys and
     # certificates from its dependency cryptography (tests/test_signing.py).
-    "pyhanko>=0.38.0",
-    "pytest>=9.1.1",
-    "ruff>=0.17.2",
+    "pyhanko>=0.38.1",
+    "pytest>=9.2.0",
+    "ruff>=0.17.3",
     # ty is pre-1.0 and its diagnostics change between releases; uv.lock pins
     # the version that CI runs.
-    "ty>=0.0.91",
+    "ty>=0.0.96",
     # The OCR tests run the models of the `ocr` extra.
     "pylopdf-ocr-models>=0.1.0,<0.2",
 ]
 # The documentation site (mkdocs.yml, mkdocs.ja.yml), built in
 # .github/workflows/docs.yml.
 docs = [
-    "zensical>=0.0.71,<0.1",
+    "zensical>=0.0.74,<0.1",
 ]
 # Independent readers that tools/oracles.py compares saves with, outside CI.
 # pymupdf 2 depends on onnxruntime, which has no wheel for every Python here.

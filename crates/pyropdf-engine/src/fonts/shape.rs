@@ -11,12 +11,11 @@
 
 use std::fmt;
 use std::ops::Range;
+use std::sync::Arc;
 
-use harfrust::{Direction, FontRef, Script, ShapeOptions, ShaperData, Tag, UnicodeBuffer};
+use harfrust::{Buffer, Direction, Font, Script, ShapeOptions, ShaperFont, Tag};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use skrifa::MetadataProvider;
-use skrifa::charmap::Charmap;
 use skrifa::raw::TableProvider;
 use unicode_bidi::BidiInfo;
 use unicode_script::{Script as UnicodeScript, UnicodeScript as _};
@@ -27,7 +26,8 @@ mod tests;
 /// Why a face or its text could not be shaped.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ShapeError {
-    /// The program is not an OpenType font that this reads.
+    /// The program is not an OpenType font that this reads, or its tables
+    /// ask for more than the shaper allows.
     Font(String),
     /// The operation's budget refused the text or its glyphs.
     Limit(LimitExceeded),
@@ -73,41 +73,35 @@ pub struct ShapedGlyph {
 }
 
 /// An OpenType face ready to shape, at its default instance.
-pub struct ShapingFace<'a> {
-    font: FontRef<'a>,
-    data: ShaperData,
-    charmap: Charmap<'a>,
+pub struct ShapingFace {
+    font: Font,
 }
 
-impl<'a> ShapingFace<'a> {
+impl ShapingFace {
     /// Reads the face at `index` of `program`, a TrueType, OpenType, or
-    /// collection file.
-    pub fn new(program: &'a [u8], index: u32) -> Result<Self, ShapeError> {
-        let font = FontRef::from_index(program, index)
-            .map_err(|error| ShapeError::Font(error.to_string()))?;
-        if font.head().is_err() {
+    /// collection file, which harfrust's font shares rather than copies.
+    pub fn new(program: Arc<Vec<u8>>, index: u32) -> Result<Self, ShapeError> {
+        let source: Arc<dyn AsRef<[u8]> + Send + Sync> = program;
+        let font = Font::new(source, index)
+            .ok_or_else(|| ShapeError::Font(format!("the program has no face {index}")))?;
+        if font.tables().head().is_err() {
             return Err(ShapeError::Font("the face has no head table".into()));
         }
-        let data = ShaperData::new(&font);
-        let charmap = font.charmap();
-        Ok(Self {
-            font,
-            data,
-            charmap,
-        })
+        Ok(Self { font })
     }
 
     /// Returns the face's units per em.
     #[must_use]
     pub fn units_per_em(&self) -> u16 {
-        self.font.head().map_or(1000, |head| head.units_per_em())
+        self.font.units_per_em()
     }
 
     /// Returns the glyphs of `text` in visual order.
     ///
     /// The text's characters and the glyphs count against
     /// [`LimitCode::ShapedGlyphCount`], and shaping polls the budget between
-    /// runs.
+    /// runs. A run that needs more work or room than harfrust allows it is a
+    /// font error, since only the face's own tables can ask for that.
     pub fn shape<'b>(
         &self,
         text: &str,
@@ -120,8 +114,8 @@ impl<'a> ShapingFace<'a> {
         if text.is_empty() {
             return Ok(glyphs);
         }
-        let shaper = self.data.shaper(&self.font).build();
-        let mut buffer = UnicodeBuffer::new();
+        let shaper = ShaperFont::new(&self.font);
+        let mut buffer = Buffer::new();
         let bidi = BidiInfo::new(text, None);
         for paragraph in &bidi.paragraphs {
             let (levels, runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
@@ -140,116 +134,127 @@ impl<'a> ShapingFace<'a> {
                     } else {
                         Direction::LeftToRight
                     });
-                    if let Some(script) = script {
-                        buffer.set_script(script);
-                    }
+                    buffer.set_script(script);
                     buffer.guess_segment_properties();
-                    let shaped = shaper.shape(buffer, ShapeOptions::new());
-                    self.push_run(text, range.start..range.end, rtl, &shaped, &mut glyphs)?;
-                    buffer = shaped.clear();
+                    harfrust::shape(&shaper, &mut buffer, ShapeOptions::new())
+                        .map_err(|error| ShapeError::Font(error.to_string()))?;
+                    if !buffer.allocation_successful() {
+                        return Err(ShapeError::Font(
+                            "the face asks for more work than the shaper allows".into(),
+                        ));
+                    }
+                    push_run(
+                        &shaper,
+                        text,
+                        range.start..range.end,
+                        rtl,
+                        &buffer,
+                        &mut glyphs,
+                    )?;
+                    buffer.clear();
                 }
             }
         }
         Ok(glyphs)
     }
+}
 
-    /// Appends one shaped run, whose clusters are byte offsets into
-    /// `text[range]`.
-    fn push_run(
-        &self,
-        text: &str,
-        range: Range<usize>,
-        rtl: bool,
-        shaped: &harfrust::GlyphBuffer,
-        glyphs: &mut BudgetVec<'_, ShapedGlyph>,
-    ) -> Result<(), ShapeError> {
-        let infos = shaped.glyph_infos();
-        let positions = shaped.glyph_positions();
-        let budget = glyphs.budget();
-        // The clusters' starts, in logical order. A cluster runs to the next
-        // larger start; the first starts at the run's start, so a character
-        // whose glyph the shaper removed stays with a cluster.
-        let mut starts = BudgetVec::new(budget);
-        starts.try_reserve_exact(infos.len().saturating_add(1))?;
-        for info in infos {
-            starts.try_push(range.start + info.cluster as usize)?;
+/// Appends one shaped run, whose clusters are byte offsets into
+/// `text[range]`.
+fn push_run(
+    shaper: &ShaperFont<'_, '_>,
+    text: &str,
+    range: Range<usize>,
+    rtl: bool,
+    shaped: &Buffer,
+    glyphs: &mut BudgetVec<'_, ShapedGlyph>,
+) -> Result<(), ShapeError> {
+    let infos = shaped.glyph_infos();
+    let positions = shaped.glyph_positions();
+    let budget = glyphs.budget();
+    // The clusters' starts, in logical order. A cluster runs to the next
+    // larger start; the first starts at the run's start, so a character
+    // whose glyph the shaper removed stays with a cluster.
+    let mut starts = BudgetVec::new(budget);
+    starts.try_reserve_exact(infos.len().saturating_add(1))?;
+    for info in infos {
+        starts.try_push(range.start + info.cluster as usize)?;
+    }
+    starts.try_push(range.end)?;
+    starts.sort_unstable();
+    let first_start = starts.first().copied().unwrap_or(range.start);
+    glyphs.try_reserve(infos.len())?;
+    let mut first = 0;
+    while first < infos.len() {
+        let start = range.start + infos[first].cluster as usize;
+        let mut last = first;
+        while last + 1 < infos.len() && range.start + infos[last + 1].cluster as usize == start {
+            last += 1;
         }
-        starts.try_push(range.end)?;
-        starts.sort_unstable();
-        let first_start = starts.first().copied().unwrap_or(range.start);
-        glyphs.try_reserve(infos.len())?;
-        let mut first = 0;
-        while first < infos.len() {
-            let start = range.start + infos[first].cluster as usize;
-            let mut last = first;
-            while last + 1 < infos.len() && range.start + infos[last + 1].cluster as usize == start
-            {
-                last += 1;
-            }
-            let end = starts[starts.partition_point(|&at| at <= start)];
-            let cluster = if start == first_start {
-                range.start..end
-            } else {
-                start..end
+        let end = starts[starts.partition_point(|&at| at <= start)];
+        let cluster = if start == first_start {
+            range.start..end
+        } else {
+            start..end
+        };
+        let own = own_characters(shaper, text, cluster.clone(), &infos[first..=last]);
+        for at in first..=last {
+            let mapped = match &own {
+                Some(own) => own[at - first].clone(),
+                // The glyph that a cluster draws first maps the whole
+                // cluster: the first in logical order, which is the last
+                // in visual order in a right-to-left run.
+                None if (if rtl { at == last } else { at == first }) => cluster.clone(),
+                None => cluster.start..cluster.start,
             };
-            let own = self.own_characters(text, cluster.clone(), &infos[first..=last]);
-            for at in first..=last {
-                let mapped = match &own {
-                    Some(own) => own[at - first].clone(),
-                    // The glyph that a cluster draws first maps the whole
-                    // cluster: the first in logical order, which is the last
-                    // in visual order in a right-to-left run.
-                    None if (if rtl { at == last } else { at == first }) => cluster.clone(),
-                    None => cluster.start..cluster.start,
-                };
-                let position = &positions[at];
-                glyphs.try_push(ShapedGlyph {
-                    glyph: infos[at].glyph_id,
-                    x_advance: position.x_advance,
-                    y_advance: position.y_advance,
-                    x_offset: position.x_offset,
-                    y_offset: position.y_offset,
-                    cluster: cluster.clone(),
-                    text: mapped,
-                    rtl,
-                })?;
-            }
-            first = last + 1;
+            let position = &positions[at];
+            glyphs.try_push(ShapedGlyph {
+                glyph: infos[at].glyph_id,
+                x_advance: position.x_advance,
+                y_advance: position.y_advance,
+                x_offset: position.x_offset,
+                y_offset: position.y_offset,
+                cluster: cluster.clone(),
+                text: mapped,
+                rtl,
+            })?;
         }
-        Ok(())
+        first = last + 1;
     }
+    Ok(())
+}
 
-    /// Maps each glyph of a cluster to its own character, when every glyph
-    /// is the nominal glyph of a distinct character of the cluster and the
-    /// counts match; `None` otherwise.
-    fn own_characters(
-        &self,
-        text: &str,
-        cluster: Range<usize>,
-        infos: &[harfrust::GlyphInfo],
-    ) -> Option<Vec<Range<usize>>> {
-        let characters = text[cluster.clone()].char_indices();
-        if infos.len() > 64 || characters.clone().count() != infos.len() {
-            return None;
-        }
-        let mut used = 0_u64;
-        let mut own = Vec::new();
-        own.try_reserve_exact(infos.len()).ok()?;
-        for info in infos {
-            let (index, (offset, character)) =
-                characters
-                    .clone()
-                    .enumerate()
-                    .find(|&(index, (_, character))| {
-                        used & (1 << index) == 0
-                            && self.charmap.map(character).map(u32::from) == Some(info.glyph_id)
-                    })?;
-            used |= 1 << index;
-            let start = cluster.start + offset;
-            own.push(start..start + character.len_utf8());
-        }
-        Some(own)
+/// Maps each glyph of a cluster to its own character, when every glyph
+/// is the nominal glyph of a distinct character of the cluster and the
+/// counts match; `None` otherwise.
+fn own_characters(
+    shaper: &ShaperFont<'_, '_>,
+    text: &str,
+    cluster: Range<usize>,
+    infos: &[harfrust::GlyphInfo],
+) -> Option<Vec<Range<usize>>> {
+    let characters = text[cluster.clone()].char_indices();
+    if infos.len() > 64 || characters.clone().count() != infos.len() {
+        return None;
     }
+    let mut used = 0_u64;
+    let mut own = Vec::new();
+    own.try_reserve_exact(infos.len()).ok()?;
+    for info in infos {
+        let (index, (offset, character)) =
+            characters
+                .clone()
+                .enumerate()
+                .find(|&(index, (_, character))| {
+                    used & (1 << index) == 0
+                        && shaper.nominal_glyph(u32::from(character)).map(u32::from)
+                            == Some(info.glyph_id)
+                })?;
+        used |= 1 << index;
+        let start = cluster.start + offset;
+        own.push(start..start + character.len_utf8());
+    }
+    Some(own)
 }
 
 /// Splits `text[run]` into script runs in logical order. Common and

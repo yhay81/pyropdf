@@ -30,7 +30,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Preserve rustup and tools installed outside cargo install.
           cache-bin: false
@@ -56,15 +56,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the toolchain of rust-toolchain.toml
         run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Keep one cache per interpreter: PyO3 rebuilds for each.
           key: python-${{ matrix.python }}
           # Preserve rustup and tools installed outside cargo install.
           cache-bin: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          version: "0.13.5"
+          version: "0.13.7"
           cache-suffix: python-${{ matrix.python }}
       - name: Install qpdf and poppler
         # The consistency harness checks saved documents with qpdf, and the
@@ -93,10 +93,10 @@ jobs:
         # build checks each file against the Arlington PDF Model.
         if: matrix.python == '3.11'
         env:
-          VERAPDF_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps/1.28.1/greenfield-apps-1.28.1.jar
-          VERAPDF_SHA256: 916049db6c6335a4a4c624e098499cff152ef523f65693a0d835aec635b6dcbc
-          ARLINGTON_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps-arlington/1.26.6/greenfield-apps-arlington-1.26.6.jar
-          ARLINGTON_SHA256: 0ccb01d10c9ca7df4326ed312ed5f725c88123f9a206d57486b27dd85fcdabd7
+          VERAPDF_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps/1.28.2/greenfield-apps-1.28.2.jar
+          VERAPDF_SHA256: 687d4d8bcfec48c9f7e931cf78ed061f1eeccfba55d4cdc000ba9b4d8aa46ce6
+          ARLINGTON_URL: https://repo1.maven.org/maven2/org/verapdf/apps/greenfield-apps-arlington/1.28.2/greenfield-apps-arlington-1.28.2.jar
+          ARLINGTON_SHA256: a780142be33c9ce00a0fd075c6d7b706074a01e87aa5c7d7328db4ff345a4464
         run: |
           mkdir -p target/verapdf
           curl --fail --silent --show-error --location --output target/verapdf/greenfield-apps.jar "$VERAPDF_URL"
