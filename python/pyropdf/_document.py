@@ -21,7 +21,16 @@ from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
-from pyropdf._fonts import FontInfo, FontProgram, SubsetFont, font_program, subset_fonts
+from pyropdf._fonts import (
+    FallbackFonts,
+    FontInfo,
+    FontProgram,
+    SubsetFont,
+    _replace_fallback_fonts,
+    _set_fallback,
+    font_program,
+    subset_fonts,
+)
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, remove_image, replace_image, rewrite_images
@@ -54,7 +63,7 @@ if TYPE_CHECKING:
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
     from pyropdf._chunks import Chunk
-    from pyropdf._fonts import Font
+    from pyropdf._fonts import FallbackFont, Font, _FontPackage
     from pyropdf._profiles import Profiles
     from pyropdf._signing import Signature, Signer, Timestamper
 
@@ -84,7 +93,7 @@ class Document:
     empty one. Documents are context managers that close on exit.
     """
 
-    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_form_font", "_limits")
+    __slots__ = ("_access", "_closed", "_doc", "_drawn", "_fallback", "_form_font", "_limits")
 
     def __init__(self, *, limits: DocumentLimits | None = None) -> None:
         """Create an empty document without pages; :func:`open` opens an existing one."""
@@ -100,6 +109,10 @@ class Document:
         self._drawn: _Images | None = None
         # The face that form appearances draw field values in; not saved.
         self._form_font: Font | None = None
+        # The fonts that render the CJK fonts that the document does not
+        # embed, by language, or None for the installed font extras; not saved.
+        self._fallback: dict[str, FallbackFont | _FontPackage] | None = None
+        _set_fallback(self, None)
 
     @property
     def limits(self) -> DocumentLimits:
@@ -159,6 +172,41 @@ class Document:
     @outline.deleter
     def outline(self) -> None:
         _write_outline(self, ())
+
+    @property
+    def fallback_fonts(self) -> FallbackFonts:
+        """Return the fonts that render the CJK fonts that the document does not embed, by language.
+
+        hayro draws a font that a document does not embed in a Standard 14
+        font, which has no CJK glyphs, so such text renders blank. A
+        :class:`FallbackFont` draws it instead: a font of the Adobe-Japan1,
+        Korea1, GB1, or CNS1 character collection takes the faces of
+        ``"ja"``, ``"ko"``, ``"zh-CN"``, or ``"zh-TW"``, and an
+        Adobe-Identity font those of the language that its name suggests,
+        such as MS-Gothic for ``"ja"`` or SimSun for ``"zh-CN"``.
+
+        Until it is edited, the mapping holds the faces of the installed
+        font extras, ``pyropdf[jp]``, ``[ko]``, ``[zh-cn]``, and
+        ``[zh-tw]``, which rendering reads the first time that a page needs
+        them. Assigning a mapping of :class:`FallbackFont` records replaces
+        every language, so ``{}`` renders without fallback fonts, and ``del``
+        returns to the installed extras. The fonts belong to this
+        ``Document`` object and are not saved; rendering uses them, and text
+        extraction, which reads the character collection's Unicode, does
+        not.
+        """
+        self._ensure_open()
+        return FallbackFonts(self)
+
+    @fallback_fonts.setter
+    def fallback_fonts(self, fonts: Mapping[str, FallbackFont]) -> None:
+        self._ensure_open()
+        _replace_fallback_fonts(self, fonts)
+
+    @fallback_fonts.deleter
+    def fallback_fonts(self) -> None:
+        self._ensure_open()
+        _set_fallback(self, None)
 
     @property
     def trailer(self) -> Dictionary:

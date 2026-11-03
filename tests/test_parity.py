@@ -1,9 +1,10 @@
 """Differential parity with frozen pylopdf (DESIGN.md §12 and §13).
 
 ``evidence/phase1-parity`` holds the harness and its report. The report test
-runs everywhere. The subset test redumps three corpus documents with both
-engines, and runs only when ``PYROPDF_PARITY_PYLOPDF`` names the Python of an
-environment with frozen pylopdf, such as the ``target/parity/pylopdf-env``
+runs everywhere. The subset test redumps three corpus documents and the pages
+in CJK fonts that the file does not embed with both engines, and runs only
+when ``PYROPDF_PARITY_PYLOPDF`` names the Python of an environment with frozen
+pylopdf and its CJK font extras, such as the ``target/parity/pylopdf-env``
 that ``run.py`` builds.
 """
 
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
 
 HARNESS = Path(__file__).resolve().parents[1] / "evidence" / "phase1-parity"
 SUBSET = ("pdf20-simple.pdf", "pdfium-type3.pdf", "pdfium-links-highlights-annots.pdf")
+#: Pages in CJK fonts that the file does not embed, which both engines render
+#: with the faces of the font extras (#600).
+FALLBACK = Path(__file__).resolve().parent / "assets" / "text" / "nonembedded-cjk.pdf"
 
 
 def _compare() -> ModuleType:
@@ -44,15 +48,18 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
     report = (HARNESS / "report.md").read_text()
 
     measured = sorted(set(NAMES) - ADDED)
-    assert sorted(results) == sorted(name.removesuffix(".pdf") for name in measured)
+    assert sorted(results) == sorted([*(name.removesuffix(".pdf") for name in measured), FALLBACK.stem])
     compare = _compare()
     metadata = json.loads((HARNESS / "metadata.json").read_text())
     assert metadata["pylopdf_commit"] == "ebb01d3c4c742046e8ce7fd72957cd15a2933321"
+    assert metadata["pylopdf_extras"] == "jp,ko,zh-cn,zh-tw"
     assert set(metadata["corpus_sha256"]) == set(measured)
-    for name in measured:
-        assert metadata["corpus_sha256"][name] == hashlib.sha256((ASSETS / name).read_bytes()).hexdigest()
-        result = results[Path(name).stem]
-        with pyropdf.open(ASSETS / name) as document:
+    assert metadata["fallback_sha256"] == {FALLBACK.name: hashlib.sha256(FALLBACK.read_bytes()).hexdigest()}
+    for path in [*(ASSETS / name for name in measured), FALLBACK]:
+        if path != FALLBACK:
+            assert metadata["corpus_sha256"][path.name] == hashlib.sha256(path.read_bytes()).hexdigest()
+        result = results[path.stem]
+        with pyropdf.open(path) as document:
             assert len(result["pages"]) == len(document.pages)
         assert all(set(page) == set(compare.OUTPUTS) for page in result["pages"])
         assert "markdown" in result
@@ -64,12 +71,14 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
 def test_a_subset_redumps_with_only_the_documented_differences(tmp_path: Path) -> None:
     files = [str(ASSETS / name) for name in SUBSET]
     for engine, python in (("pylopdf", os.environ["PYROPDF_PARITY_PYLOPDF"]), ("pyropdf", sys.executable)):
-        subprocess.run([python, HARNESS / "dump.py", engine, tmp_path / engine, *files], check=True)  # noqa: S603
+        dump = [python, HARNESS / "dump.py", engine, tmp_path / engine]
+        subprocess.run([*dump, *files], check=True)  # noqa: S603
+        subprocess.run([*dump, "--fallback-fonts", FALLBACK], check=True)  # noqa: S603
     compare = _compare()
     # Fixing a documented difference to equality is an improvement.
     expected = json.loads((HARNESS / "results.json").read_text())
 
-    for name in SUBSET:
+    for name in (*SUBSET, FALLBACK.name):
         stem = name.removesuffix(".pdf")
         first, second = (
             json.loads((tmp_path / engine / f"{stem}.json").read_text()) for engine in ("pylopdf", "pyropdf")

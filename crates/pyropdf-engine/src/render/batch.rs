@@ -7,7 +7,7 @@ use std::thread;
 
 use hayro::RenderCache;
 
-use super::{Options, Raster, RasterError, draw, extent};
+use super::{Fallback, Options, Raster, RasterError, draw, extent};
 use crate::bridge::Bridged;
 
 /// The most workers that a batch renders on.
@@ -26,8 +26,9 @@ const BYTES_PER_PIXEL: u64 = 8;
 const CACHE_PAGES: usize = 4096;
 
 /// Renders pages `indexes` of `bridged`, counted from 0 and possibly
-/// repeated, through `options`, and passes each raster to `finish`; returns
-/// what `finish` returns, in the order of `indexes`.
+/// repeated, through `options`, with `fallback` drawing the CJK fonts that
+/// the document does not embed, and passes each raster to `finish`;
+/// returns what `finish` returns, in the order of `indexes`.
 ///
 /// Every page is checked before any is rendered. The pages render on up to
 /// `workers` threads, at most [`MAX_WORKERS`], the calling one among them,
@@ -36,6 +37,7 @@ const CACHE_PAGES: usize = 4096;
 /// first error stops the workers from starting another page.
 pub fn batch<T, E>(
     bridged: &Bridged,
+    fallback: &Fallback,
     indexes: &[usize],
     options: &Options,
     workers: usize,
@@ -76,7 +78,7 @@ where
                 cached = 0;
             }
             cached += 1;
-            match draw(pdf, &cache, index, options)
+            match draw(pdf, &cache, fallback, index, options)
                 .map_err(E::from)
                 .and_then(&finish)
             {

@@ -55,6 +55,8 @@ method and property of its classes with its full description.
 
 ## [Fonts](fonts.md)
 
+- [`FallbackFont`](fonts.md#fallbackfont): The faces that render the CJK fonts of one language that a document does not embed.
+- [`FallbackFonts`](fonts.md#fallbackfonts): The fonts that render the CJK fonts that a document does not embed, from `Document.fallback_fonts`.
 - [`Font`](fonts.md#font): A font face that draws and measures text.
 - [`FontInfo`](fonts.md#fontinfo): One font dictionary that a page's resources name, from `Page.fonts`.
 - [`FontProgram`](fonts.md#fontprogram_1): An embedded font program, from `Document.font_program`.

@@ -1,18 +1,19 @@
 # Phase 1 parity with frozen pylopdf
 
 The differential evidence for the exit of Phase 1 (DESIGN.md §13): frozen
-pylopdf and pyropdf read every corpus document, and every difference in
-their outputs is explained here.
+pylopdf and pyropdf read every corpus document, and pages in CJK fonts that
+the file does not embed, and every difference in their outputs is explained
+here.
 
 | File | Role |
 | --- | --- |
-| `run.py PYLOPDF_CHECKOUT` | Builds pylopdf at the freeze commit `ebb01d3c` (#95) into its own environment, dumps both engines over `tests/assets/real_world`, and runs `compare.py` |
-| `dump.py ENGINE OUT FILE...` | Writes one engine's outputs per page and each document's Markdown. The page outputs are listed below |
+| `run.py PYLOPDF_CHECKOUT` | Builds pylopdf at the freeze commit `ebb01d3c` (#95) with its CJK font extras into its own environment, dumps both engines over `tests/assets/real_world` and `tests/assets/text/nonembedded-cjk.pdf`, and runs `compare.py` |
+| `dump.py ENGINE OUT [--fallback-fonts] FILE...` | Writes one engine's outputs per page and each document's Markdown. The page outputs are listed below |
 | `compare.py A B` | Classifies each output of each page and writes `report.md` and `results.json` |
 | `causes.toml` | Matches each kind of difference to a cause below |
 | `report.md` | Pages that are equal per document and output, with the causes of the rest |
 | `results.json` | The kind and measurements of every compared output |
-| `metadata.json` | The measured pyropdf revision, frozen oracle revision, runtimes, and corpus hashes |
+| `metadata.json` | The measured pyropdf revision, frozen oracle revision and extras, runtimes, and the hashes of the corpus and of the fallback pages |
 | `diagnose_annotations.py ORACLE_PYTHON` | Reproduces the annotation-isolation experiment and writes `annotation-diagnostic.json` |
 
 Per page, `dump.py` records:
@@ -26,11 +27,18 @@ Per page, `dump.py` records:
 - `markdown`: the Markdown.
 - `render`: a 72-dpi raster.
 
-Both engines run without fallback fonts: pylopdf is installed without
-extras, and pyropdf has none. `tests/test_parity.py` checks that the report
-covers the corpus and leaves no difference unexplained. When
+The corpus renders without fallback fonts in both engines: `dump.py`
+turns them off. `tests/assets/text/nonembedded-cjk.pdf` holds the pages of
+#600 in CJK fonts that the file does not embed: MS-Gothic in both descendant
+types and both CMaps, MS-Mincho, and fonts of the GB1, CNS1, and Korea1
+collections. With `--fallback-fonts`, both engines render it with the faces
+of the font extras `jp`, `ko`, `zh-cn`, and `zh-tw`, which `run.py` installs
+for pylopdf and pyropdf's dev group installs, in the same versions.
+`tests/test_parity.py` checks that the report covers the corpus and the
+fallback pages and leaves no difference unexplained. When
 `PYROPDF_PARITY_PYLOPDF` names the Python of `target/parity/pylopdf-env`, it
-also redumps three documents and checks their kinds against `results.json`.
+also redumps three corpus documents and the fallback pages and checks their
+kinds against `results.json`.
 
 ```bash
 python3 evidence/phase1-parity/run.py ~/ghq/github.com/yhay81/pylopdf

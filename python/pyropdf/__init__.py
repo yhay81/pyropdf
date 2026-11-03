@@ -86,7 +86,7 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
-from pyropdf._fonts import Font, FontInfo, FontProgram, StandardFontName, SubsetFont
+from pyropdf._fonts import FallbackFont, FallbackFonts, Font, FontInfo, FontProgram, StandardFontName, SubsetFont
 from pyropdf._form import (
     CheckBox,
     ComboBox,
@@ -208,6 +208,8 @@ __all__ = [
     "Element",
     "EncryptedDocumentError",
     "Encryption",
+    "FallbackFont",
+    "FallbackFonts",
     "Field",
     "FieldChoice",
     "FieldFlags",
