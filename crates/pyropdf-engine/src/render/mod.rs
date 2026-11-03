@@ -20,6 +20,20 @@ mod tests;
 pub use batch::{MAX_WORKERS, batch};
 pub use svg::svg;
 
+/// What hayro renders with: its defaults, without hinting.
+///
+/// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
+/// did not. Hinting reads more of a font program than the glyphs drawn, so
+/// a program that pyropdf subsets would draw differently hinted
+/// (evidence/hinted-subsets); pyropdf renders text unhinted, as it did with
+/// hayro 0.8 (#18).
+fn render_settings() -> RenderSettings {
+    RenderSettings {
+        hinting: false,
+        ..RenderSettings::default()
+    }
+}
+
 /// A rendered page: its size in pixels and its pixels, row by row from the
 /// top, as premultiplied RGBA with 8 bits per channel.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +55,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
         page,
         &RenderCache::new(),
         &InterpreterSettings::default(),
-        &RenderSettings::default(),
+        &render_settings(),
         &PixmapSettings {
             x_scale: scale,
             y_scale: scale,
@@ -356,7 +370,7 @@ fn draw<'a>(
         page,
         cache,
         &settings,
-        &RenderSettings::default(),
+        &render_settings(),
         &mut context,
         transform,
     );
