@@ -186,6 +186,25 @@ A document is a base and a chain of versions.
   preserves undo steps when a large undone addition cannot remain as redo.
   Apply the same rule after commit, undo, redo, and a limit change. These
   choices were accepted in #12.
+- A **saved history** carries the history to the same document opened
+  again (#428): `doc.history.save()` returns it as bytes in pyropdf's own
+  format, and `restore()` reads them back. The bytes hold every version that
+  undo and redo reach: each as what it holds differently from the version
+  before it, the oldest as its difference from the base, and written
+  objects as the writer wrote them. With them go the step names, the
+  position, the trailers, the next-number bounds, and the marks that wait
+  for settling (section 7). They hold no object of the base, so a SHA-256
+  fingerprint of the base (its file's bytes, or the objects of a document
+  without a file) names the document that they need, and a SHA-256
+  checksum closes them.
+
+  Restoring refuses another document, an edited one, and a call inside a
+  transaction. It reads, checks, and builds every version under the
+  document's limits before it takes the writer lock, then replaces the
+  history in one step, so data that is corrupt or that a limit refuses
+  leaves the document and its history unchanged. The history budget then
+  applies as after a commit. Section 4.5 says what the bytes hold of an
+  encrypted document.
 - The **change set** between two versions is the union of the object numbers
   that their transactions wrote. Saving, invalidation, and reports all read
   it.
@@ -233,6 +252,25 @@ file's.
   from its bytes (from its decoded member bytes for object streams), and a
   written object is copied as written. Renumbering, deduplication, object
   streams, and recompression happen only when an option asks for them.
+- **Linearized save** (`linearize=True`, #426) is a full save in the
+  layout of ISO 32000-2 Annex F, so that a viewer can show the first page
+  before the rest of the file arrives. The layout is qpdf's, so that a
+  reader that computes the hint tables itself, as
+  `qpdf --check-linearization` does, finds the tables that the file holds:
+  the linearization dictionary with the first page's cross-reference
+  section, the catalog and the objects that open the document, the hint
+  stream, the first page with its objects, each other page with the objects
+  that only it uses, the objects that pages share, and the rest. The save
+  writes what the trailer, the catalog, and the pages reach, numbered anew,
+  and moves the attributes that pages inherit into the pages. It writes the
+  file twice: once to measure the offsets, which fill fields of fixed width,
+  and once to the target. It writes a cross-reference table, so it refuses
+  object streams, a cross-reference stream, and deduplication, and an
+  incremental save refuses it.
+- `Document.is_linearized` reads whether the opened file is linearized: its
+  first object, within its first 1,024 bytes, is a linearization dictionary
+  whose `/L` is the file's length. An update appended to a linearized file
+  changes that length, so the file then reads as not linearized.
 - Saving with the same encryption copies encrypted bytes as they are.
   Changing or removing encryption decrypts and encrypts values again, which
   keeps every value exactly.
@@ -242,7 +280,9 @@ file's.
 The store decrypts strings and streams lazily as they are read, through the
 base's security handler, and encrypts them on write. It writes AES-256
 (revision 6) and AES-128, and reads RC4 but never writes it. New objects stay
-plaintext in memory until a save encrypts them.
+plaintext in memory until a save encrypts them. A saved history (section
+4.1) holds the objects that its steps wrote as the store holds them:
+unencrypted, even for an encrypted document.
 
 ### 4.6 Concurrency
 
@@ -271,9 +311,17 @@ A result computed on version X is valid on version Y when the change set from
 X to Y is disjoint from its read set. Settings that change what a computation
 produces, such as fallback fonts, are part of its memo key.
 
-Read sets keep invalidation correct for a new editing method without any
-declaration (F4), where hand-chosen invalidation needs a rule for every
-method (section 2.2). Versions (section 4), read sets (this
+A result that depends on a few objects, possibly of another document, such
+as the Form of a placed page (section 7), records their stamps instead: for
+each object, what a version holds for it, which is the base's object, a
+written object, or a free entry, remembered without keeping the version or
+its objects alive. The result stays valid while every stamp holds. That is
+the identity that change sets compare, so writing an object again
+invalidates the result even when it writes the same bytes (#503).
+
+Read sets and stamps keep invalidation correct for a new editing method
+without any declaration (F4), where hand-chosen invalidation needs a rule
+for every method (section 2.2). Versions (section 4), read sets (this
 section), document resources (section 7), and identity handles (section 10)
 together make each workload of section 2.1 cost in proportion to what it
 changes or reads, not to the size of the document, once hayro reads
@@ -343,6 +391,22 @@ beyond its bounds. The walk is then pyropdf's own code, listed as an engine
 workaround in the hayro tracker with a link to the upstream discussion
 (#15), and it goes when hayro releases I2.
 
+The other engines read what callers supply: fonts, images, and text. Each
+must work inside the operation's budget (F6): charge what grows from input
+before it grows, poll the deadline and cancellation in bounded steps, and
+return an error instead of panicking. Where one call of an engine cannot,
+pyropdf bounds the input before the call and polls between calls; what
+stays outside the budget is a residual for the owner to accept, and an
+upstream issue follows it.
+
+| Engine | Use | Requirement |
+| --- | --- | --- |
+| vello_cpu | Rasterizes what hayro interprets | CMYK output, agreed with hayro (#433). hayro converts every colour to sRGB, and vello_cpu rasterizes RGBA8 only, so `Page.pixmap` renders gray and RGB. |
+| harfrust | Shapes the text of embedded faces (section 7) | Limits and cancellation inside one shape call (#580). pyropdf counts the text against `shaped_glyph_count` before it shapes, and polls between runs. harfrust reads fonts through the release of read-fonts that hayro uses (section 15). |
+| png (image-rs) | Decodes the PNG images that callers supply | Its inflate state and row buffers charged to the budget, and a poll within a wide row (#561). pyropdf charges the decoded size before decoding, and polls while it fills the output. |
+| zlib-rs | Compresses Flate streams | A compressor initialization that fails with an error instead of asserting (#561). |
+| unicode-segmentation | Finds grapheme clusters for text layout | Its pre-context protocol, which pyropdf answers a step at a time between polls (#552). |
+
 ## 7. Writing contract and settling
 
 pyropdf writes the canvas itself. Paths, shapes, graphics state, clipping,
@@ -354,6 +418,31 @@ document, and drawing it again reuses its objects. krilla writes nothing:
 its public API returns a complete PDF per drawing, which pyropdf would have
 to parse and import (F1), and #466 chose to write text in pyropdf rather
 than wait for krilla to offer an object sink and document resources.
+
+A canvas is one operation (section 9). It takes its budget from the
+document's limits when its block begins, and everything inside the block
+charges that budget before it allocates: validation, buffered content, text
+layout and encoding, the objects that it reads and writes, and the join at
+commit. A call's `max_*` option inside a canvas can only tighten the
+operation, and a canvas inside another is part of the outer one. The
+deadline and cancellation stop preparation as they stop writing, and a
+canvas that a limit refuses, that is cancelled, or that raises writes
+nothing and records no undo step (#500, #505).
+
+Placing a page (`Canvas.page`) reads its geometry, content, and resources
+from one version of the source document, a snapshot taken under the lower
+of the operation's and the source's limits, so an edit of the source while
+the canvas runs cannot mix versions. The placed page becomes a Form XObject
+whose resources are copied from that version, from the same document as
+from another, so a later edit of the source does not change it. The target
+document keeps up to 64 such Forms, the least recently used leaving first,
+and reuses one while three things hold: the page's reference, its
+`/Contents` and inherited `/Resources` values, and its display box are
+equal; the stamps (section 5) of every object that its content and
+resources reach still hold in the source; and the Form and its resources
+are unchanged in the target. An edit of anything that the page draws
+therefore makes a new Form, and an edit of the page's annotations or of
+another page does not (#503).
 
 Text is drawn in a Standard 14 font, which is not embedded, or in an
 embedded face. harfrust shapes the text of an embedded face, and pyropdf
@@ -439,6 +528,13 @@ rules instead of revisiting every structural operation.
   collection that grows from input grows through the budget (`BudgetVec`),
   so fallible growth is the default; the store's `clippy.toml` refuses the
   growth of the standard collections.
+- An operation can span several calls, as a canvas does (section 7). Its
+  budget is then shared, and its configuration fixed, so that a call that
+  reads a limit once never misses a later change. A call that needs a lower
+  limit, or that reads another document under that document's limits as
+  well, takes a view that charges the same meters and can only be stricter,
+  and that refuses at once when the operation has already charged more than
+  the view allows.
 - Limit codes come from one registry. It generates the Rust enum, the stable
   `LimitError.code` strings, and the security guide's table.
 - The binding borrows Python buffers and strings and checks their sizes once,
@@ -594,6 +690,8 @@ The store gives the API these behaviors:
   ([evidence](evidence/real-mapping/README.md)).
 - **Transactions.** `with doc.transaction():` groups edits into one version
   and one undo step, at a cost that does not depend on the document's size.
+  `doc.history` undoes and redoes the steps, and its `save()` and
+  `restore()` carry them to the same document opened again (section 4.1).
 - **Revisions.** `save(incremental=True)` writes only the change set, and the
   file's revisions open as documents of their own.
 - **Change reports.** Before a save, `doc.changes(incremental=...)` reports
@@ -819,8 +917,10 @@ pylopdf's users move to pyropdf in these steps.
 
 - **Upstream dependence.** The items of section 6 need their maintainers'
   agreement. The bridge removes the need to wait for I1, and pyropdf's own
-  bounds are the fallback for I2 (section 6). The canvas, text included,
-  waits on no engine (section 7).
+  bounds are the fallback for I2 (section 6). Until the other engines'
+  requirements land, the residuals that section 6 lists stay outside the
+  operation's budget. The canvas, text included, waits on no engine
+  (section 7).
 - **Text is pyropdf's code.** harfrust shapes text, but the font writer and
   the subset at save read font programs that users supply, so fuzz targets
   cover them (F9). harfrust reads fonts through read-fonts, as hayro does,
