@@ -18,8 +18,8 @@
 //! Equality compares what values are, not how they are written: lexemes and
 //! the form of a string do not count, and reals are equal when their `f64`
 //! values are identical, bit for bit. Cloning, comparing, and dropping a
-//! value recurse into the values it holds; hayro-syntax 0.8 parses no object
-//! nested deeper than 64 levels.
+//! value recurse into the values it holds; the store converts no object
+//! nested deeper than [`MAX_NESTING`] levels.
 
 mod bytes;
 mod copy;
@@ -32,6 +32,7 @@ use std::fmt;
 
 pub use bytes::Bytes;
 pub(crate) use copy::{copy_dict_for_edit, copy_for_edit};
+pub use read::MAX_NESTING;
 #[cfg(test)]
 pub(crate) use read::PARSES;
 pub(crate) use read::is_integer;
@@ -641,10 +642,6 @@ pub(crate) fn length_value(len: usize) -> Value {
 }
 
 /// A reference to an indirect object: its object number and generation.
-///
-/// hayro-syntax 0.8 reads object numbers as `i32` (I8,
-/// yhay81/pyropdf#18), so it reads back only references whose number is at
-/// most `i32::MAX`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Reference {
     number: u32,

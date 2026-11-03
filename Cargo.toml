@@ -17,6 +17,23 @@ pyropdf-store = { path = "crates/pyropdf-store" }
 pyropdf-schema = { path = "crates/pyropdf-schema" }
 pyropdf-engine = { path = "crates/pyropdf-engine" }
 
+# hayro 0.9.0 lacks `GlyphRun::font_dict()`, which groups glyphs by font
+# (#584). Until a release contains LaurenzV/hayro#1734, every hayro crate
+# comes from one commit, hayro main 4f7d16fa with #1734, since the crates
+# name each other by path and their types agree only from one source.
+# fuzz/Cargo.toml repeats this table. #603 removes both.
+[patch.crates-io]
+hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-font = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-interpret = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jbig2 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jpeg2000 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-postscript = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-svg = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-syntax = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+
 # The release profile of pylopdf, where thin LTO kept most of fat LTO's gains
 # in size and speed without the regressions that fat LTO showed there.
 [profile.release]

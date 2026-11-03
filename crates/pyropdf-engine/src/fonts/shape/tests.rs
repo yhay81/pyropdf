@@ -1,35 +1,39 @@
-use harfrust::{FontRef, ShapeOptions, ShaperData, UnicodeBuffer};
+use std::sync::Arc;
+
+use harfrust::{Buffer, Font, ShapeOptions, ShaperFont};
 use proptest::prelude::*;
 use pyropdf_store::budget::{Budget, LimitCode};
+use skrifa::raw::types::Tag;
+use skrifa::{FontRef, MetadataProvider};
 
+use super::super::sfnt;
 use super::{ShapeError, ShapedGlyph, ShapingFace};
 
 const JAPANESE: &[u8] = include_bytes!("../testdata/NotoSansJP-subset.otf");
 const HEBREW: &[u8] = include_bytes!("../testdata/NotoSansHebrew-subset.ttf");
 const ARABIC: &[u8] = include_bytes!("../testdata/NotoSansArabic-Variable-subset.ttf");
 
+fn face(program: &[u8]) -> ShapingFace {
+    ShapingFace::new(Arc::new(program.to_vec()), 0).unwrap()
+}
+
 fn shape(program: &[u8], text: &str) -> Vec<ShapedGlyph> {
     let budget = Budget::default();
-    ShapingFace::new(program, 0)
-        .unwrap()
-        .shape(text, &budget)
-        .unwrap()
-        .into_vec()
+    face(program).shape(text, &budget).unwrap().into_vec()
 }
 
 /// The glyph IDs and advances that harfrust gives the whole text as one run.
 fn harfrust(program: &[u8], text: &str) -> Vec<(u32, i32)> {
-    let font = FontRef::from_index(program, 0).unwrap();
-    let data = ShaperData::new(&font);
-    let shaper = data.shaper(&font).build();
-    let mut buffer = UnicodeBuffer::new();
+    let font = Font::new(program.to_vec(), 0).unwrap();
+    let shaper = ShaperFont::new(&font);
+    let mut buffer = Buffer::new();
     buffer.push_str(text);
     buffer.guess_segment_properties();
-    let shaped = shaper.shape(buffer, ShapeOptions::new());
-    shaped
+    harfrust::shape(&shaper, &mut buffer, ShapeOptions::new()).unwrap();
+    buffer
         .glyph_infos()
         .iter()
-        .zip(shaped.glyph_positions())
+        .zip(buffer.glyph_positions())
         .map(|(info, position)| (info.glyph_id, position.x_advance))
         .collect()
 }
@@ -145,7 +149,7 @@ fn script_runs_split_latin_from_japanese() {
 
 #[test]
 fn the_budget_limits_the_characters_and_the_glyphs() {
-    let face = ShapingFace::new(JAPANESE, 0).unwrap();
+    let face = face(JAPANESE);
     let budget = Budget::default().with_limit(LimitCode::ShapedGlyphCount, Some(3));
 
     let refusal = face.shape("Hello", &budget).unwrap_err();
@@ -155,16 +159,63 @@ fn the_budget_limits_the_characters_and_the_glyphs() {
     assert_eq!(face.shape("Hel", &budget).unwrap().len(), 3);
 }
 
+/// A face whose default feature multiplies the glyph of `A` by 255 four times
+/// over, far beyond what harfrust lets a short text grow to.
+fn expanding() -> Vec<u8> {
+    const LOOKUPS: u16 = 4;
+    const COPIES: u16 = 255;
+    let font = FontRef::new(JAPANESE).unwrap();
+    let glyph = u16::try_from(font.charmap().map('A').unwrap().to_u32()).unwrap();
+    let mut gsub = vec![1, 0, 10, 30, 42 + 2 * LOOKUPS];
+    // `DFLT`, whose default language system uses the one feature.
+    gsub.extend([1, 0x4446, 0x4C54, 8, 4, 0, 0, 0xFFFF, 1, 0]);
+    // `ccmp`, which runs every lookup.
+    gsub.extend([1, 0x6363, 0x6D70, 8, 0, LOOKUPS]);
+    gsub.extend(0..LOOKUPS);
+    // The lookups, which share one multiple substitution of the glyph.
+    gsub.push(LOOKUPS);
+    gsub.extend((0..LOOKUPS).map(|_| 2 + 2 * LOOKUPS));
+    gsub.extend([2, 0, 1, 8, 1, 10 + 2 * COPIES, 1, 8, COPIES]);
+    gsub.extend((0..COPIES).map(|_| glyph));
+    gsub.extend([1, 1, glyph]);
+    let table = |tag: &[u8; 4]| font.table_data(Tag::new(tag)).unwrap().as_bytes().to_vec();
+    sfnt::write(
+        b"OTTO",
+        &[
+            (*b"CFF ", table(b"CFF ")),
+            (
+                *b"GSUB",
+                gsub.iter().flat_map(|word| word.to_be_bytes()).collect(),
+            ),
+            (*b"cmap", table(b"cmap")),
+            (*b"head", table(b"head")),
+            (*b"hhea", table(b"hhea")),
+            (*b"hmtx", table(b"hmtx")),
+            (*b"maxp", table(b"maxp")),
+        ],
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_face_that_asks_for_more_than_the_shaper_allows_is_a_font_error() {
+    let face = face(&expanding());
+    let budget = Budget::default();
+
+    assert_eq!(face.shape("V", &budget).unwrap().len(), 1);
+    assert!(matches!(face.shape("A", &budget), Err(ShapeError::Font(_))));
+}
+
 #[test]
 fn an_invalid_program_is_a_font_error() {
     for program in [&b""[..], b"not a font", &JAPANESE[..12]] {
         assert!(matches!(
-            ShapingFace::new(program, 0),
+            ShapingFace::new(Arc::new(program.to_vec()), 0),
             Err(ShapeError::Font(_))
         ));
     }
     assert!(matches!(
-        ShapingFace::new(HEBREW, 3),
+        ShapingFace::new(Arc::new(HEBREW.to_vec()), 3),
         Err(ShapeError::Font(_))
     ));
 }

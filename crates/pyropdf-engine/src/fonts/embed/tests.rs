@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use skrifa::raw::TableProvider;
 use skrifa::raw::types::Tag;
 use skrifa::{FontRef, GlyphId};
@@ -84,7 +86,7 @@ fn a_cid_keyed_charset_becomes_the_identity_with_the_same_outlines() {
     let glyphs = before.maxp().unwrap().num_glyphs();
     assert_eq!(face.glyph_count, u32::from(glyphs));
     let ours = Face {
-        program: JAPANESE.to_vec(),
+        program: Arc::new(JAPANESE.to_vec()),
         ..face.clone()
     };
     let theirs = Measure::new(&ours);

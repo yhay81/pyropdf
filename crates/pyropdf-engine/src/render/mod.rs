@@ -1,7 +1,7 @@
 //! Rasterizing a page through hayro, as much as `page.pixmap`
 //! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
-use hayro::hayro_interpret::InterpreterSettings;
+use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 
@@ -21,6 +21,20 @@ mod tests;
 pub use batch::{MAX_WORKERS, batch};
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::svg;
+
+/// What hayro renders with: its defaults, without hinting.
+///
+/// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
+/// did not. Hinting reads more of a font program than the glyphs drawn, so
+/// a program that pyropdf subsets would draw differently hinted
+/// (evidence/hinted-subsets); pyropdf renders text unhinted, as it did with
+/// hayro 0.8 (#18).
+fn render_settings() -> RenderSettings {
+    RenderSettings {
+        hinting: false,
+        ..RenderSettings::default()
+    }
+}
 
 /// A rendered page: its size in pixels and its pixels, row by row from the
 /// top, as premultiplied RGBA with 8 bits per channel.
@@ -43,7 +57,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
         page,
         &RenderCache::new(),
         &InterpreterSettings::default(),
-        &RenderSettings::default(),
+        &render_settings(),
         &PixmapSettings {
             x_scale: scale,
             y_scale: scale,
@@ -79,6 +93,12 @@ pub const MAX_WIDTH: u16 = 65_408;
 /// The tallest raster vello_cpu 0.3 renders: a taller one overflows `u16`
 /// when `RenderContext::new` rounds it up to a whole tile of 4 pixels.
 pub const MAX_HEIGHT: u16 = 65_532;
+
+/// The longest side of a transformed page that a clip renders, in pixels.
+/// vello_cpu rasterizes in `f32`, so an edge that reaches the clip from the
+/// far side of the page moves by less than 1/16 of a pixel at this bound,
+/// and by more beyond it (evidence/clip-precision-605).
+pub const MAX_PAGE_SIDE: u32 = 1 << 19;
 
 /// How far a page edge may fall short of a pixel boundary through
 /// floating-point error and still cover that pixel, as MuPDF's
@@ -143,8 +163,9 @@ pub enum RasterError {
     /// The document has no such page.
     NoPage(usize),
     /// The matrix or the page size gives no raster, or one above the
-    /// limits: [`MAX_WIDTH`], [`MAX_HEIGHT`], and [`MAX_PIXELS`]; or the
-    /// options are inconsistent.
+    /// limits: [`MAX_WIDTH`], [`MAX_HEIGHT`], and [`MAX_PIXELS`]; or, with
+    /// a clip, a page above [`MAX_PAGE_SIDE`]; or the options are
+    /// inconsistent.
     Geometry(String),
     /// The clip leaves no pixel of the page.
     Clip(String),
@@ -240,10 +261,10 @@ fn bounds(corners: [hayro::kurbo::Point; 4]) -> (f64, f64, f64, f64) {
 /// boundaries and intersected with the raster, as an origin and a size.
 fn clip_viewport(
     linear: hayro::kurbo::Affine,
-    width: u16,
-    height: u16,
+    width: f64,
+    height: f64,
     clip: (f64, f64, f64, f64),
-) -> std::result::Result<(f64, f64, u16, u16), RasterError> {
+) -> std::result::Result<(f64, f64, f64, f64), RasterError> {
     use hayro::kurbo::Point;
 
     let (cx0, cy0, cx1, cy1) = clip;
@@ -255,7 +276,6 @@ fn clip_viewport(
     let corners =
         [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1)].map(|(x, y)| linear * Point::new(x, y));
     let (x0, y0, x1, y1) = bounds(corners);
-    let (width, height) = (f64::from(width), f64::from(height));
     let x0 = x0.floor().clamp(0.0, width);
     let y0 = y0.floor().clamp(0.0, height);
     let x1 = x1.ceil().clamp(0.0, width);
@@ -265,14 +285,13 @@ fn clip_viewport(
             "clip does not intersect the rendered page".to_owned(),
         ));
     }
-    // Both extents lie within the u16 raster, so the casts are exact.
-    Ok((x0, y0, (x1 - x0) as u16, (y1 - y0) as u16))
+    Ok((x0, y0, x1 - x0, y1 - y0))
 }
 
 /// The whole pixels that `page` covers through the matrix of `options`:
-/// the raster's offset from the transformed page's origin and its size,
-/// refused past the limits of one raster.
-fn extent(
+/// the offset of their raster from the transformed page's origin and its
+/// size, refused when it holds no pixel.
+fn page_extent(
     page: &hayro::hayro_syntax::page::Page<'_>,
     options: &Options,
 ) -> std::result::Result<(f64, f64, f64, f64), RasterError> {
@@ -311,19 +330,50 @@ fn extent(
             "scale is too small, or the PDF page size is invalid".to_owned(),
         ));
     }
-    if pixel_width > f64::from(MAX_WIDTH) || pixel_height > f64::from(MAX_HEIGHT) {
+    Ok((x0, y0, pixel_width, pixel_height))
+}
+
+/// The pixels that `options` renders of `page`: the offset of their raster
+/// from the transformed page's origin and its size, refused past the limits
+/// of one raster, or with a clip of a page longer than [`MAX_PAGE_SIDE`].
+fn extent(
+    page: &hayro::hayro_syntax::page::Page<'_>,
+    options: &Options,
+) -> std::result::Result<(f64, f64, u16, u16), RasterError> {
+    use hayro::kurbo::Affine;
+
+    let (x0, y0, page_width, page_height) = page_extent(page, options)?;
+    let (left, top, width, height) = match options.clip {
+        Some(clip) => {
+            let side = f64::from(MAX_PAGE_SIDE);
+            if page_width > side || page_height > side {
+                return Err(RasterError::Geometry(format!(
+                    "page size {page_width:.0}x{page_height:.0} exceeds the limit of \
+                     {MAX_PAGE_SIDE} pixels a side for a clip"
+                )));
+            }
+            let (a, b, c, d) = options.matrix;
+            let page_to_raster =
+                Affine::translate((-x0, -y0)) * Affine::new([a, b, c, d, 0.0, 0.0]);
+            clip_viewport(page_to_raster, page_width, page_height, clip)?
+        }
+        None => (0.0, 0.0, page_width, page_height),
+    };
+    if width > f64::from(MAX_WIDTH) || height > f64::from(MAX_HEIGHT) {
         return Err(RasterError::Geometry(format!(
-            "render size {pixel_width:.0}x{pixel_height:.0} exceeds the limit of \
+            "render size {width:.0}x{height:.0} exceeds the limit of \
              {MAX_WIDTH} pixels wide and {MAX_HEIGHT} pixels high"
         )));
     }
-    let pixels = (pixel_width as u64) * (pixel_height as u64);
+    // Both sides are whole numbers within the u16 limits, so the casts are exact.
+    let (width, height) = (width as u16, height as u16);
+    let pixels = u64::from(width) * u64::from(height);
     if pixels > MAX_PIXELS {
         return Err(RasterError::Geometry(format!(
-            "render size {pixel_width:.0}x{pixel_height:.0} ({pixels} pixels) exceeds the {MAX_PIXELS}-pixel limit"
+            "render size {width}x{height} ({pixels} pixels) exceeds the {MAX_PIXELS}-pixel limit"
         )));
     }
-    Ok((x0, y0, pixel_width, pixel_height))
+    Ok((x0 + left, y0 + top, width, height))
 }
 
 fn draw<'a>(
@@ -339,23 +389,17 @@ fn draw<'a>(
 
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
-    let (x0, y0, pixel_width, pixel_height) = extent(page, options)?;
+    let (left, top, raster_width, raster_height) = extent(page, options)?;
     let (a, b, c, d) = options.matrix;
-    let linear = Affine::new([a, b, c, d, 0.0, 0.0]);
-    let page_to_raster = Affine::translate((-x0, -y0)) * linear;
-    let (left, top, raster_width, raster_height) = match options.clip {
-        Some(clip) => clip_viewport(
-            page_to_raster,
-            pixel_width as u16,
-            pixel_height as u16,
-            clip,
-        )?,
-        None => (0.0, 0.0, pixel_width as u16, pixel_height as u16),
-    };
-    let transform =
-        Affine::translate((-left, -top)) * page_to_raster * page.initial_transform(true).to_kurbo();
+    let transform = Affine::translate((-left, -top))
+        * Affine::new([a, b, c, d, 0.0, 0.0])
+        * page.initial_transform(true).to_kurbo();
     let settings = InterpreterSettings {
-        render_annotations: options.annotations,
+        render_content: if options.annotations {
+            RenderContent::all()
+        } else {
+            RenderContent::PAGE
+        },
         ..fallback.settings()
     };
     let mut context = RenderContext::new(raster_width, raster_height);
@@ -363,7 +407,7 @@ fn draw<'a>(
         page,
         cache,
         &settings,
-        &RenderSettings::default(),
+        &render_settings(),
         &mut context,
         transform,
     );

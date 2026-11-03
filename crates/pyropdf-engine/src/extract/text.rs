@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
-use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings};
+use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings, RenderContent};
 use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::{Affine, BezPath, Point, Rect};
@@ -442,6 +442,7 @@ struct RunStyle {
     render_mode: u8,
     clip: Option<Rect>,
     run: u32,
+    font: u128,
 }
 
 impl ContentSink for TextCollector<'_> {
@@ -451,6 +452,7 @@ impl ContentSink for TextCollector<'_> {
             render_mode: style.render_mode,
             clip: style.clip,
             run: style.run,
+            font: style.font,
         };
         self.run_start = self.glyphs.len();
         if let Some(checks) = &mut self.checks
@@ -568,7 +570,7 @@ impl TextCollector<'_> {
         // Approximate missing fonts such as Type 3 as half the font size.
         let (advance_width, font_key, font) = match glyph {
             Glyph::Outline(g) => {
-                let key = g.font_cache_key();
+                let key = self.style.font;
                 let info = if let Some((last_key, last_info)) = &self.last_font
                     && *last_key == key
                 {
@@ -2529,6 +2531,7 @@ fn collect_page_glyphs(
             render_mode: RENDER_FILL,
             clip: None,
             run: 0,
+            font: 0,
         },
         run_start: 0,
         checks: content.map(|_| BudgetVec::new(budget)),
@@ -2538,7 +2541,7 @@ fn collect_page_glyphs(
     // Text includes the annotations' appearances. The sources of a layout
     // with chars interpret the page again with the fonts of the first time.
     let settings = InterpreterSettings {
-        render_annotations: true,
+        render_content: RenderContent::all(),
         ..InterpreterSettings::default()
     };
     let cache = InterpreterCache::new();

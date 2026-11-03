@@ -49,7 +49,7 @@ fuzz_target!(
         }
     };
     let budget = Budget::new(&DocumentLimits::web());
-    let Ok(shaping) = ShapingFace::new(&face.program, 0) else {
+    let Ok(shaping) = ShapingFace::new(face.program.clone(), 0) else {
         return;
     };
     let Ok(glyphs) = shaping.shape(TEXT, &budget) else {

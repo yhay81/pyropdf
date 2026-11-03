@@ -58,9 +58,8 @@ def test_every_arlington_object_has_a_read_status_backed_by_a_named_test() -> No
     assert len(names) == 613
     for name in names:
         read = mapped[name]["read"]
-        assert read["status"] in {"done", "engine"}, name
+        assert read["status"] == "done", name
         assert read["tests"] == [f"tests/test_typed_views.py::test_every_key_of_every_object_type_round_trips[{name}]"]
-    assert sum(feature["read"]["status"] == "engine" for feature in mapped.values()) == 36
 
 
 def test_every_named_test_exists() -> None:
@@ -125,7 +124,15 @@ def test_markers_and_statuses_the_generator_does_not_understand_are_refused(tmp_
     cases = [
         (pages, pages_text.replace('spec("page-tree", "read")', 'spec("page-tree", "render")'), "dimensions among"),
         (pages, pages_text.replace('spec("page-tree", "read")', 'spec("page-trees", "read")'), "page-trees"),
-        (features_path, features_text.replace("upstream = 224 }\ncreate", "issue = 224 }\ncreate"), "takes upstream"),
+        (
+            features_path,
+            features_text.replace(
+                "\n[features.flate-filter]\n",
+                '\n[[arlington.rule]]\nkeys = ["F"]\nread = { status = "engine", issue = 224 }\n'
+                "\n[features.flate-filter]\n",
+            ),
+            "takes upstream",
+        ),
         (features_path, features_text.replace('status = "n/a"', 'status = "maybe"'), "unknown status 'maybe'"),
         (
             features_path,

@@ -11,10 +11,10 @@ publish.workspace = true
 [dependencies]
 # Every engine reads the document through the store (DESIGN.md F1).
 pyropdf-store.workspace = true
-hayro = "0.8.0"
-hayro-svg = "0.8.0"
+hayro = "0.9.0"
+hayro-svg = "0.9.0"
 # The font tables that hayro already reads, for the line metrics of text.
-skrifa = "0.46.2"
+skrifa = "0.49.0"
 # The bidirectional classes of the reading order of text.
 unicode-bidi = "0.3.18"
 # The Standard 14 fonts' Adobe metrics, and the break opportunities and
@@ -29,7 +29,7 @@ rten-tensor = "0.27.0"
 # structures of the RustCrypto next line, without cms's builder feature,
 # which pulls in the rsa crate and RUSTSEC-2023-0071. RSA keys sign through
 # a callback outside pyropdf.
-cms = { version = "0.3.0-rc.0", default-features = false }
+cms = { version = "0.3.0-rc.1", default-features = false }
 der = { version = "0.8.3", features = ["alloc", "derive", "oid", "pem"] }
 x509-cert = { version = "0.3.0", default-features = false, features = ["pem"] }
 p256 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem"] }
@@ -39,8 +39,8 @@ p384 = { version = "0.14.0", default-features = false, features = ["ecdsa", "pem
 pkcs8 = { version = "0.11.0", features = ["encryption", "pem"] }
 sha2 = "0.11.1"
 hmac = "0.13.0"
-harfrust = "0.13.3"
-unicode-script = "0.5"
+harfrust = "0.15.0"
+unicode-script = "0.5.9"
 
 [dev-dependencies]
 # Property tests of the bridge (DESIGN.md F9).

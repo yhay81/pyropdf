@@ -6,9 +6,9 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
+use skrifa::raw::model::Error as CsError;
 use skrifa::raw::ps::cff::index::Index;
-use skrifa::raw::ps::cs::{self, CharstringContext, CharstringKind, CommandSink};
-use skrifa::raw::ps::error::Error as CsError;
+use skrifa::raw::ps::charstring::{self as cs, CharstringContext, CharstringKind, CommandSink};
 use skrifa::raw::types::Fixed;
 
 use super::{Subset, be16};

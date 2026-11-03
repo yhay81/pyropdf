@@ -266,10 +266,14 @@ gray with ITU-R BT.601 luma weights.
 `clip` is a display rectangle `(x0, y0, x1, y1)`: its bounding
 box under the matrix, rounded outward to whole pixels and
 intersected with the page, is all that is rasterized. A clip that
-leaves no pixel of the page raises `PdfError`, and the size
-limits of the whole page still apply: a raster is at most 65,408
-pixels wide, 65,532 high, and 64,000,000 in all, and a larger one
-raises `ValueError`. The GIL is released while hayro renders.
+leaves no pixel of the page raises `PdfError`.
+
+A raster is at most 65,408 pixels wide, 65,532 high, and 64,000,000
+in all, and a larger one raises `ValueError`. With `clip`, the
+limits apply to the clipped raster, so a small region renders at
+scales at which the whole page would not, and the page under the
+matrix may measure up to 524,288 pixels a side. The GIL is released
+while hayro renders.
 
 ### `Page.draw`
 
@@ -480,6 +484,27 @@ dash lengths, and items of one interpretation, before `clip`
 applies; above it the call raises `LimitError` with code
 `content_element_count`. `None` removes the bound for trusted
 input. The GIL is released while hayro interprets the page.
+
+### `Page.paths`
+
+```python
+Page.paths(
+    *,
+    clip: Sequence[float] | None = None,
+    annotations: bool = True,
+    max_elements: int | None = 262144,
+) -> Paths
+```
+
+Return the paths that the page paints as `Paths` columns, in paint order.
+
+The rows are the paths of `content` with `text_runs=False`,
+`images=False`, and the same options, built from the same
+interpretation without a Python object per path or segment:
+`max_elements` counts what it counts there, and above it the call
+raises `LimitError` with code `content_element_count`. The
+row view builds each `Path` on demand. The GIL is released
+while hayro interprets the page and the columns are built.
 
 ### `Page.text`
 

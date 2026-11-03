@@ -409,11 +409,7 @@ fn hayro_pages(bytes: &[u8]) -> Option<Vec<Option<u32>>> {
     Some(
         pdf.pages()
             .iter()
-            .map(|page| {
-                page.raw()
-                    .obj_id()
-                    .and_then(|id| u32::try_from(id.obj_number).ok())
-            })
+            .map(|page| page.raw().obj_id().map(|id| id.obj_number))
             .collect(),
     )
 }

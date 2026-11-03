@@ -143,7 +143,7 @@ impl _Font {
 
 /// Shapes `text` in `face` and refuses a character that it has no glyph for.
 fn shaped(face: &Face, text: &str, budget: &Budget) -> PyResult<Vec<ShapedGlyph>> {
-    let shaper = ShapingFace::new(&face.program, 0).map_err(|error| shape_error(&error))?;
+    let shaper = ShapingFace::new(face.program.clone(), 0).map_err(|error| shape_error(&error))?;
     let glyphs = shaper
         .shape(text, budget)
         .map_err(|error| shape_error(&error))?

@@ -6,14 +6,17 @@
 //! The content crosses the boundary as `(items, fonts, clips, groups, marks,
 //! states)`: each item is `(kind, tuple)`, with kind 0 for a text run, 1 for
 //! a path, and 2 for an image, in the tuple forms of
-//! `pyropdf_engine::extract`, which index the other lists.
+//! `pyropdf_engine::extract`, which index the other lists. The paths alone
+//! also cross as the columns of `crate::buffers::PathColumns`, without a
+//! Python object per path (#606).
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
-use pyropdf_engine::extract::{self, BBox, ContentItem, Error, ItemKinds};
+use pyropdf_engine::extract::{self, BBox, ContentItem, Error, ItemKinds, PageContent};
 use pyropdf_store::budget::LimitCode;
 use pyropdf_store::value::Reference;
 
+use crate::buffers::PathColumns;
 use crate::document::{_Document, PageKey, PageKind, PageResult};
 use crate::errors::{PdfError, StaleObjectError, limit_error};
 use crate::pixmap::bridge_error;
@@ -36,6 +39,72 @@ pub fn page_content(
     clip: Option<BBox>,
     max_elements: Option<u64>,
 ) -> PyResult<Py<PyAny>> {
+    let content = with_content(
+        py,
+        document,
+        (number, generation),
+        kinds,
+        (annotations, clip, max_elements),
+        |content| Ok(content.clone()),
+    )?;
+    let mut items = Vec::new();
+    items
+        .try_reserve_exact(content.items.len())
+        .map_err(|error| PdfError::new_err(format!("cannot hold the content items: {error}")))?;
+    for item in content.items {
+        items.push(match item {
+            ContentItem::Text(run) => (0u8, run).into_py_any(py)?,
+            ContentItem::Path(path) => (1u8, path).into_py_any(py)?,
+            ContentItem::Image(image) => (2u8, image).into_py_any(py)?,
+        });
+    }
+    (
+        items,
+        content.fonts,
+        content.clips,
+        content.groups,
+        content.marks,
+        content.states,
+    )
+        .into_py_any(py)
+}
+
+/// Returns the columns of the paths that the page whose object is `number`
+/// and `generation` paints, built with the GIL released from the content
+/// that [`page_content`] memoizes for paths alone, so that `max_elements`
+/// bounds what it bounds there.
+#[pyfunction]
+pub fn page_paths(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    annotations: bool,
+    clip: Option<BBox>,
+    max_elements: Option<u64>,
+) -> PyResult<PathColumns> {
+    with_content(
+        py,
+        document,
+        (number, generation),
+        (false, true, false),
+        (annotations, clip, max_elements),
+        PathColumns::new,
+    )
+}
+
+/// Returns what `then` makes of the memoized content of `kinds` of the page
+/// `(number, generation)`, interpreting the page with `(annotations, clip,
+/// max_elements)` where the memo holds no content that fits, with the GIL
+/// released throughout.
+fn with_content<T: Send>(
+    py: Python<'_>,
+    document: &_Document,
+    (number, generation): (u32, u16),
+    kinds: (bool, bool, bool),
+    (annotations, clip, max_elements): (bool, Option<BBox>, Option<u64>),
+    then: impl FnOnce(&PageContent) -> PyResult<T> + Send,
+) -> PyResult<T> {
     let budget = document.call_budget(&[(LimitCode::ContentElementCount, max_elements)])?;
     let (version, index) = crate::pages::index_with(document, None, &budget)?;
     let (text_runs, paths, images) = kinds;
@@ -44,7 +113,7 @@ pub fn page_content(
         paths,
         images,
     };
-    let result = py.detach(|| {
+    py.detach(|| {
         let reference = Reference::new(number, generation);
         let (at, page) = index
             .index_of(reference)
@@ -62,7 +131,7 @@ pub fn page_content(
                 clip: clip.map(box_bits),
             },
         };
-        document.page_result(
+        let result = document.page_result(
             &key,
             &version,
             page,
@@ -93,32 +162,12 @@ pub fn page_content(
                     elements: budget.used(LimitCode::ContentElementCount) - before,
                 })
             },
-        )
-    })?;
-    let PageResult::Content { content, .. } = &*result else {
-        return Err(PdfError::new_err(
-            "the memo holds another kind of result for this page",
-        ));
-    };
-    let content = content.clone();
-    let mut items = Vec::new();
-    items
-        .try_reserve_exact(content.items.len())
-        .map_err(|error| PdfError::new_err(format!("cannot hold the content items: {error}")))?;
-    for item in content.items {
-        items.push(match item {
-            ContentItem::Text(run) => (0u8, run).into_py_any(py)?,
-            ContentItem::Path(path) => (1u8, path).into_py_any(py)?,
-            ContentItem::Image(image) => (2u8, image).into_py_any(py)?,
-        });
-    }
-    (
-        items,
-        content.fonts,
-        content.clips,
-        content.groups,
-        content.marks,
-        content.states,
-    )
-        .into_py_any(py)
+        )?;
+        let PageResult::Content { content, .. } = &*result else {
+            return Err(PdfError::new_err(
+                "the memo holds another kind of result for this page",
+            ));
+        };
+        then(content)
+    })
 }

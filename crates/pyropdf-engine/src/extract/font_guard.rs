@@ -103,8 +103,8 @@ fn readable(
     let Some(id) = stream.dict().obj_id() else {
         return Ok(false);
     };
-    let (Ok(number), Ok(generation)) = (u32::try_from(id.obj_number), u16::try_from(id.gen_number))
-    else {
+    let number = id.obj_number;
+    let Ok(generation) = u16::try_from(id.gen_number) else {
         return Ok(false);
     };
     let object = match version.get(number, budget) {
@@ -260,21 +260,16 @@ pub(super) fn protect(
         for key in resource.fonts.keys() {
             budget.charge(LimitCode::ContentElementCount, 1)?;
             if let Some(reference) = resource.fonts.get_ref(key.as_ref())
-                && let (Ok(number), Ok(generation)) = (
-                    u32::try_from(reference.obj_number),
-                    u16::try_from(reference.gen_number),
-                )
+                && let Ok(generation) = u16::try_from(reference.gen_number)
             {
+                let number = reference.obj_number;
                 let Some(dict) = resource.fonts.get::<Dict<'_>>(key.as_ref()) else {
                     unknown = true;
                     continue;
                 };
-                let resolved = dict.obj_id().and_then(|id| {
-                    Some((
-                        u32::try_from(id.obj_number).ok()?,
-                        u16::try_from(id.gen_number).ok()?,
-                    ))
-                });
+                let resolved = dict
+                    .obj_id()
+                    .and_then(|id| Some((id.obj_number, u16::try_from(id.gen_number).ok()?)));
                 if resolved.is_some_and(|id| id != (number, generation)) {
                     unknown = true;
                 }

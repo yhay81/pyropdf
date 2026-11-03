@@ -52,9 +52,10 @@ pub enum LimitCode {
     /// `max_size`, or the content that an assignment to `Page.operations`
     /// writes is larger than 64 MiB.
     ContentInputSize,
-    /// `Page.content` reads more glyphs, path and clip segments, dash lengths,
-    /// and items than the call's `max_elements`, or `Pages.new_from_image`
-    /// reads more than 4,096 frames or 256 million pixels of one image.
+    /// `Page.content` or `Page.paths` reads more glyphs, path and clip
+    /// segments, dash lengths, and items than the call's `max_elements`, or
+    /// `Pages.new_from_image` reads more than 4,096 frames or 256 million
+    /// pixels of one image.
     ContentElementCount,
     /// `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects
     /// more glyphs of one page than the call's `max_glyphs`.

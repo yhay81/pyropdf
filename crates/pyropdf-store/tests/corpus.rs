@@ -97,7 +97,7 @@ fn objects(version: &Version) -> BTreeMap<u32, (u16, Vec<u8>)> {
 /// Writes hayro-syntax's reading of `object` canonically: references as
 /// references, and a stream's dictionary and raw data.
 fn canonical(object: &Object<'_>, out: &mut String, depth: usize) {
-    assert!(depth < 128, "hayro-syntax reads 64 levels at most");
+    assert!(depth <= 512, "hayro-syntax reads 512 levels at most");
     match object {
         Object::Null(_) => out.push_str("null"),
         Object::Boolean(b) => write!(out, "{b}").unwrap(),
@@ -158,7 +158,7 @@ fn hayro_objects(bytes: &[u8], numbers: &BTreeMap<u32, (u16, Vec<u8>)>) -> BTree
     numbers
         .iter()
         .filter_map(|(&number, &(generation, _))| {
-            let id = ObjectIdentifier::new(number as i32, i32::from(generation));
+            let id = ObjectIdentifier::new(number, i32::from(generation));
             let object = pdf.xref().get::<Object<'_>>(id)?;
             let mut text = String::new();
             canonical(&object, &mut text, 0);

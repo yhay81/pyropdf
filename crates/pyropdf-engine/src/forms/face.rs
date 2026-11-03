@@ -31,7 +31,7 @@ pub struct FaceFont<'m> {
 /// An embedded face that draws field values, and the glyphs that it drew.
 pub struct FaceText<'f> {
     face: &'f Face,
-    shaper: ShapingFace<'f>,
+    shaper: ShapingFace,
     measure: Measure<'f>,
     em: f64,
     budget: &'f Budget,
@@ -48,7 +48,7 @@ impl<'f> FaceText<'f> {
         font: Option<FaceFont<'f>>,
         budget: &'f Budget,
     ) -> Result<Self, WidgetError> {
-        let shaper = ShapingFace::new(&face.program, 0)
+        let shaper = ShapingFace::new(face.program.clone(), 0)
             .map_err(|error| WidgetError::Malformed(format!("invalid font: {error}").into()))?;
         Ok(Self {
             face,
@@ -75,7 +75,8 @@ impl<'f> FaceText<'f> {
             .shape(text, self.budget)
             .map_err(|error| match error {
                 ShapeError::Limit(refusal) => refusal.into(),
-                // A face that reads shapes text without font errors.
+                // A face that reads fails to shape only when its own
+                // tables ask for more than the shaper allows.
                 ShapeError::Font(_) => LayoutError::InvalidGeometry,
             })
     }

@@ -6,6 +6,10 @@
 # Publishing requires a Trusted Publisher configured on PyPI:
 #   PyPI → project pyropdf → Publishing → GitHub
 #   owner: yhay81 / repository: pyropdf / workflow: release.yml / environment: pypi
+#
+# The GitHub release is immutable, with its assets and tag locked and attested
+# by GitHub, only while the repository enables release immutability:
+#   Settings → General → Releases → Enable release immutability
 name: Release
 
 on:
@@ -16,8 +20,8 @@ on:
 permissions: {}
 
 env:
-  # rust-toolchain.toml pins the same toolchain; tests/test_release_workflow.py
-  # checks that the pins agree.
+  # rust-toolchain.toml pins the same toolchain; tests/test_release.py checks
+  # that the pins agree.
   RUSTUP_TOOLCHAIN: 1.99.1
   CARGO_BUILD_JOBS: 2
 
@@ -65,16 +69,16 @@ jobs:
         with:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.99.1"
-          maturin-version: "1.15.0"
+          maturin-version: "1.16.0"
           args: --release --locked --out dist
           manylinux: auto
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Smoke-test installed wheel
         run: python tools/smoke_artifact.py dist --pattern "*.whl"
       # Exercise the same abi3 wheel on the newest supported CPython as well.
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.15"
       - name: Smoke-test installed wheel on Python 3.15
@@ -116,14 +120,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python.version }}
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.99.1"
-          maturin-version: "1.15.0"
+          maturin-version: "1.16.0"
           args: --release --locked --out dist -i python${{ matrix.python.version }}
           manylinux: auto
       - name: Smoke-test installed free-threaded wheel
@@ -155,9 +159,9 @@ jobs:
         with:
           command: sdist
           rust-toolchain: "1.99.1"
-          maturin-version: "1.15.0"
+          maturin-version: "1.16.0"
           args: --out dist
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
       - name: Smoke-test installed sdist
@@ -204,7 +208,7 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
           sbom-path: release/sbom.spdx.json
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-sbom
@@ -222,7 +226,20 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+      # With assets, gh creates a draft, uploads them, and then publishes it,
+      # which is when the release becomes immutable.
       - name: Create GitHub release
         run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes release-assets/*
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # GITHUB_TOKEN cannot read the repository setting beforehand, so the
+      # check reads the release that the previous step published.
+      - name: Verify the release is immutable
+        run: |
+          immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" --jq .immutable)"
+          if [ "${immutable}" != true ]; then
+            echo "::error::${GITHUB_REF_NAME} is not immutable: enable release immutability in the repository settings."
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -278,7 +278,7 @@ fn check_pages(pdf: &Pdf, pages: &PageIndex) -> Result<()> {
     for (page, ours) in theirs.iter().zip(pages.pages()) {
         let id = page.raw().obj_id().and_then(|id| {
             Some(Reference::new(
-                u32::try_from(id.obj_number).ok()?,
+                id.obj_number,
                 u16::try_from(id.gen_number).ok()?,
             ))
         });

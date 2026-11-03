@@ -22,7 +22,8 @@ use hayro::hayro_interpret::{
     BlendMode, CacheKey, ClipPath, Device, DrawMode, DrawProps, FillRule, Image, ImageDrawProps,
     InterpreterCache, InterpreterSettings, MaskType, Paint, SoftMask, StrokeProps, interpret_page,
 };
-use hayro::hayro_syntax::object::{Array, Stream};
+use hayro::hayro_syntax::object::dict::keys::MCID;
+use hayro::hayro_syntax::object::{Array, Dict, Stream};
 use hayro::hayro_syntax::page::Page;
 use hayro::hayro_syntax::{Filter, Pdf};
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
@@ -39,15 +40,14 @@ type Coefficients = [f64; 6];
 /// A paint: kind 0 is a color (red, green, blue, alpha in sRGB), kind 1 a
 /// shading pattern (shading type, or 0 for a shading that hayro could not
 /// read, the six matrix coefficients, and opacity), and kind 2 a tiling
-/// pattern (the four pattern-space bbox coordinates, x step, y step, and the
-/// six matrix coefficients).
+/// pattern (the four pattern-space bbox coordinates, x step, y step, the six
+/// matrix coefficients, and opacity).
 pub type PaintTuple = (u8, Vec<f64>);
 /// A stroke: paint, width, cap, join, miter limit, dash lengths, dash offset.
 pub type StrokeTuple = (PaintTuple, f64, u8, u8, f64, Vec<f64>, f64);
-/// A soft mask: the object number of its group, and whether it reads alpha.
-pub type SoftMaskTuple = (u32, bool);
-/// What every item carries: its graphics context, blend mode, and soft mask.
-pub type ItemContextTuple = (u32, u8, Option<SoftMaskTuple>);
+/// What every item carries: its graphics context, blend mode, and the type of
+/// its soft mask, 0 for alpha and 1 for luminosity.
+pub type ItemContextTuple = (u32, u8, Option<u8>);
 /// Glyph IDs, Unicode, matrices (six coefficients per glyph), advances, and
 /// ink boxes.
 pub type GlyphsTuple = (
@@ -99,8 +99,8 @@ pub type ImageTuple = (
 pub type FontTuple = (String, bool, Option<u32>, bool, bool, bool);
 /// A clip: segment kinds, coordinates, even-odd fill rule, and bbox.
 pub type ClipTuple = (Vec<u8>, Vec<f64>, bool, BBox);
-/// A transparency group: opacity, blend mode, and soft mask.
-pub type GroupTuple = (f64, u8, Option<SoftMaskTuple>);
+/// A transparency group: opacity, blend mode, and soft mask type, as an item's.
+pub type GroupTuple = (f64, u8, Option<u8>);
 /// A marked-content sequence: tag and MCID.
 pub type MarkTuple = (String, Option<i32>);
 /// A graphics context: clip, group, and marked-content indexes, outermost
@@ -333,6 +333,7 @@ fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
                     d,
                     e,
                     f,
+                    f64::from(tiling.opacity),
                 ];
                 Ok((2, copy_values(&values, "paint values")?))
             }
@@ -367,12 +368,11 @@ fn blend_code(mode: BlendMode) -> u8 {
     }
 }
 
-fn soft_mask_tuple(mask: Option<&SoftMask<'_>>) -> Option<SoftMaskTuple> {
-    mask.map(|mask| {
-        (
-            u32::try_from(mask.id().obj_number).unwrap_or(0),
-            mask.mask_type() == MaskType::Alpha,
-        )
+/// The type of a soft mask: 0 for alpha, 1 for luminosity.
+fn soft_mask_code(mask: Option<&SoftMask<'_>>) -> Option<u8> {
+    mask.map(|mask| match mask.mask_type() {
+        MaskType::Alpha => 0,
+        MaskType::Luminosity => 1,
     })
 }
 
@@ -447,7 +447,7 @@ impl StrokeRecord {
 struct ItemContext {
     state: u32,
     blend: u8,
-    soft_mask: Option<SoftMaskTuple>,
+    soft_mask: Option<u8>,
 }
 
 impl ItemContext {
@@ -563,6 +563,21 @@ pub struct GlyphStyle {
     /// The run's place among the glyph runs that hayro showed on the page,
     /// counting from 0, a stroke that completes a fill included.
     pub run: u32,
+    /// The key of the font the run was shown with: the cache key of its
+    /// dictionary, as `Dict::cache_key` of a font object gives it, or a key
+    /// of its own for hayro's fallback font.
+    pub font: u128,
+}
+
+/// The font key of the runs that hayro shows with its fallback font, which
+/// no font dictionary describes.
+const FALLBACK_FONT_KEY: u128 = 1;
+
+/// The [`GlyphStyle::font`] of a run. Fonts over one program have different
+/// keys, although their glyphs' identifiers agree.
+fn run_font_key(run: &GlyphRun<'_, '_>) -> u128 {
+    run.font_dict()
+        .map_or(FALLBACK_FONT_KEY, |dict| dict.cache_key())
 }
 
 /// What a reader built on the content model receives besides the items.
@@ -806,12 +821,13 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         Ok(ItemContext {
             state: self.intern_state()?,
             blend: blend_code(blend),
-            soft_mask: soft_mask_tuple(soft_mask),
+            soft_mask: soft_mask_code(soft_mask),
         })
     }
 
-    fn outline_font(&mut self, glyph: &OutlineGlyph) -> Result<u32, Error> {
-        let key = glyph.font_cache_key();
+    /// The index of the font with key `key` in the fonts table, adding it
+    /// with what `glyph`'s program says about it.
+    fn outline_font(&mut self, key: u128, glyph: &OutlineGlyph) -> Result<u32, Error> {
         if let Some(index) = self.font_indexes.get(&key) {
             return Ok(*index);
         }
@@ -969,6 +985,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         if glyphs.is_empty() {
             return Ok(());
         }
+        let font_key = run_font_key(run);
         let is_fill = matches!(mode, DrawMode::Fill(_));
         // A stroke completes the preceding fill when it draws the same glyphs
         // at the same places. Equality fails for a transform that is not
@@ -1008,6 +1025,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                     },
                     clip: self.clip_boxes.last().copied(),
                     run: ordinal,
+                    font: font_key,
                 });
             }
             for glyph in glyphs {
@@ -1032,7 +1050,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             }
         }
         if self.kinds.text_runs {
-            self.record_text_item(run, props, mode, completes_fill)?;
+            self.record_text_item(run, font_key, props, mode, completes_fill)?;
         }
         if is_fill {
             self.pending = Some(Pending::Text);
@@ -1043,6 +1061,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
     fn record_text_item<'a>(
         &mut self,
         run: &GlyphRun<'_, 'a>,
+        font_key: u128,
         props: &DrawProps<'a>,
         mode: &DrawMode,
         completes_fill: bool,
@@ -1091,7 +1110,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         let context = self.item_context(props.blend_mode, props.soft_mask.as_ref())?;
         self.charge(1 + glyphs.len())?;
         let font = match &**first {
-            Glyph::Outline(outline) => self.outline_font(outline)?,
+            Glyph::Outline(outline) => self.outline_font(font_key, outline)?,
             Glyph::Type3(_) => self.type3_font()?,
         };
         let mut ids = with_capacity(glyphs.len(), "glyph IDs")?;
@@ -1200,7 +1219,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                     default_resolution
                 };
                 ImageRecord {
-                    xref: u32::try_from(stream.obj_id().obj_number).unwrap_or(0),
+                    xref: stream.obj_id().obj_number,
                     format: (width, height, bits, components, color_space),
                     is_stencil: false,
                     mask,
@@ -1267,7 +1286,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         let index = index_of(self.groups.len())?;
         push(
             &mut self.groups,
-            (f64::from(opacity), blend_code(blend), soft_mask_tuple(mask)),
+            (f64::from(opacity), blend_code(blend), soft_mask_code(mask)),
             "transparency groups",
         )?;
         push(&mut self.group_stack, index, "the group stack")?;
@@ -1410,8 +1429,9 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
         self.state = None;
     }
 
-    fn begin_marked_content(&mut self, tag: &[u8], mcid: Option<i32>) {
+    fn begin_marked_content(&mut self, tag: &[u8], properties: Option<&Dict<'_>>) {
         self.pending = None;
+        let mcid = properties.and_then(|properties| properties.get::<i32>(MCID));
         if self.kinds.any() {
             self.run(|this| this.begin_mark(tag, mcid));
         }
