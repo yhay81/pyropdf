@@ -1001,10 +1001,9 @@ _FONT_PACKAGES = (
 
 @dataclass(frozen=True, slots=True)
 class _FontPackage:
-    """An installed font package: the language of its faces, its extra, and their files."""
+    """An installed font package: the language of its faces, and their files."""
 
     language: str
-    extra: str
     sans: Path
     serif: Path
 
@@ -1023,10 +1022,10 @@ def _import_font_package(name: str) -> object | None:
 def _font_packages() -> tuple[_FontPackage, ...]:
     """Return the installed font packages, found once per process."""
     found = []
-    for language, extra, name in _FONT_PACKAGES:
+    for language, _, name in _FONT_PACKAGES:
         module = cast("Any", _import_font_package(name))
         if module is not None:
-            found.append(_FontPackage(language, extra, Path(module.sans_path()), Path(module.serif_path())))
+            found.append(_FontPackage(language, Path(module.sans_path()), Path(module.serif_path())))
     return tuple(found)
 
 

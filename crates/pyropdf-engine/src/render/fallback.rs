@@ -236,7 +236,7 @@ impl Fallback {
     /// does not embed with these faces, and every other query as hayro's
     /// default resolver does.
     #[must_use]
-    pub fn settings(&self) -> InterpreterSettings {
+    pub(crate) fn settings(&self) -> InterpreterSettings {
         let mut settings = InterpreterSettings::default();
         if self.is_empty() {
             return settings;

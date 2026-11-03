@@ -18,7 +18,6 @@ draws 日本語. Intended differences:
 
 from __future__ import annotations
 
-import sys
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -248,7 +247,6 @@ def test_a_broken_font_package_is_not_taken_for_an_absent_one(monkeypatch: pytes
     assert load("pyropdf_test_absent_fonts") is None
     with pytest.raises(ModuleNotFoundError, match="pyropdf_test_absent_dependency"):
         load("pyropdf_test_broken_fonts")
-    sys.modules.pop("pyropdf_test_broken_fonts", None)
 
 
 def test_each_font_package_has_its_extra() -> None:
