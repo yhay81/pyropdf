@@ -90,7 +90,7 @@ with pyropdf.open("input.pdf") as doc:
 `page.paths()` returns the same paths as `Paths` columns, one row per path,
 with the segments of every path in columns of their own, and builds no
 Python object per path or segment, so that a drawing of a few hundred
-thousand lines reads at about the cost of interpreting the page.
+thousand lines reads in about the time that rendering the page takes.
 `column()` returns a column as a read-only `memoryview` that NumPy reads
 without a copy, and pyarrow, polars, and DuckDB import the whole table
 through the Arrow PyCapsule interface. Rows are `Path` records on demand.

@@ -84,7 +84,7 @@ with pyropdf.open("input.pdf") as doc:
 
 `page.paths()` は同じパスを `Paths` の列として返します。1 行が 1 つのパスで、各パスのセグメントは
 別の列に並び、パスやセグメントごとの Python オブジェクトは作らないので、数十万本の線の図面も
-ページを解釈するのとほぼ同じ手間で読めます。`column()` は NumPy がコピーなしで読める読み取り専用の
+ページを描画するのとほぼ同じ時間で読めます。`column()` は NumPy がコピーなしで読める読み取り専用の
 `memoryview` を返し、pyarrow・polars・DuckDB は Arrow PyCapsule interface で表全体を取り込めます。
 行は必要に応じて `Path` レコードになります。
 
