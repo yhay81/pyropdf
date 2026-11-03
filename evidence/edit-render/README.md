@@ -45,5 +45,7 @@ The split shows where pyropdf's remaining growth is: at 1,760 pages, of
 6.4 ms per page, hayro's re-read of the version takes 2.9 ms, building its
 bytes 0.4 ms, and the page index walk 0.6 ms, all of which grow with the
 document, while the transaction (7 µs) and the render (2.5 ms) do not. I1
-(#14) removes the re-read and the bytes; a page-tree edit that kept the
+(#14) removes the bytes and the cross-reference part of the re-read. Most of
+the re-read is hayro building its page list (evidence/hayro-page-list), which
+needs I1's page-tree requirement as well. A page-tree edit that kept the
 walk's read set elsewhere would remove the walk.
