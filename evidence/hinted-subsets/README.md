@@ -73,4 +73,4 @@ What each choice would take:
   does not have today.
 - **pyropdf renders unhinted**, as it did with hayro 0.8: one setting in
   `crates/pyropdf-engine/src/render/mod.rs`, and the tests stay as they
-  are. This is what #18's pull request does until the owner chooses.
+  are. The owner chose this for 0.2.2 on 2026-11-04 (#18).
