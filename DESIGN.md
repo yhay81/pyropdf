@@ -1,11 +1,12 @@
 # pyropdf foundation design
 
-Status: proposal, 2026-10-24. Nothing described here is implemented.
-
-This document fixes what pyropdf builds before any feature: one versioned
-object store that every engine reads, the contracts it needs from the
-engines, and the order of work. It records the evidence from pylopdf that
-motivates the rebuild and the plan for moving pylopdf's users and code.
+This document is pyropdf's design: one versioned object store that every
+engine reads, the contracts that the store needs from the engines, and the
+principles that every change keeps (section 3). It also records the
+evidence from pylopdf that motivated the design, and the plan for building
+pyropdf and moving pylopdf's users to it. The
+[issue tree](https://github.com/yhay81/pyropdf/issues/1) records how far
+that plan has come; this document does not.
 
 ## 1. Concept
 
@@ -137,7 +138,10 @@ mechanism first.
 - **F8 Schema-driven objects.** The Arlington PDF Model generates the typed
   object layer and the structural check.
 - **F9 Evidence in the repository.** Property tests, differential oracles,
-  fuzzers, and benchmarks are committed and run in CI.
+  fuzzers, and benchmarks are committed with the scripts that run them. CI
+  runs the tests, the fuzzers, and the oracles that it can install; a
+  benchmark runs again with each change that claims an effect, and tests
+  guard what it shows wherever that can be counted.
 
 ## 4. The store
 
@@ -415,6 +419,10 @@ credited in a NOTICE file) and produces three things:
 
 The check evaluates the descriptors and the predicates that can be decided
 without rendering, and reports each departure with its object and clause.
+It implements first the expression, version, storage, and value
+predicates, which decide 98% of the model's predicate cells (#216), and
+counts each predicate that it meets but cannot decide as unchecked instead
+of skipping it.
 
 The typed layer fills the specification map's Read dimension, and the plain
 cases of Create and Edit, mechanically. Hand-written code is left for
@@ -446,9 +454,9 @@ instead of revisiting every structural operation.
 - The binding borrows Python buffers and strings and checks their sizes once,
   in Rust, before any copy.
 - Opening reads only the index, so damage and limits surface when a part is
-  first read. `doc.validate()` runs the complete checks up front, and
-  `DocumentLimits.web()` runs them at open, which keeps pylopdf's guarantee
-  for untrusted uploads.
+  first read. `DocumentLimits(check_at_open=True)` reads every object at
+  open instead, and `DocumentLimits.web()`, pylopdf's web profile, sets it,
+  which keeps pylopdf's guarantee for untrusted uploads.
 - Core crates return typed errors. The binding maps them to pylopdf's
   hierarchy, which carries over: `PdfError`, `MalformedPdfError`,
   `PasswordError`, `EncryptedDocumentError`, `LimitError`,
@@ -484,9 +492,9 @@ pylopdf's API rules carry over. The foundation changes these behaviors:
   and one undo step, at a cost that does not depend on the document's size.
 - **Revisions.** `save(incremental=True)` writes only the change set, and the
   file's revisions open as documents of their own.
-- **Change reports.** Before a save, a report lists what the edits since
-  opening invalidate: the signatures whose objects they touched, and the
-  PDF/A or PDF/UA claims they break.
+- **Change reports.** Before a save, `doc.changes(incremental=...)` reports
+  what the edits since opening invalidate: the signatures whose objects
+  they touched, and the PDF/A or PDF/UA claims they break (#157).
 - **Glyph-level results.** Characters and content items are columnar buffers
   that NumPy and Arrow read without copying; records are views over them.
 - **Typed objects.** The layer of section 8 sits between the raw object model
@@ -494,37 +502,47 @@ pylopdf's API rules carry over. The foundation changes these behaviors:
 - **Threads.** Several threads may read one document.
 - **Limits.** `DocumentLimits` adds a time budget and cancellation.
 
-A sketch, with provisional names:
+A sketch:
 
 ```python
-doc = pyropdf.open("contract.pdf")         # reads the cross-reference data only
+doc = pyropdf.open("contract.pdf")               # reads the cross-reference data only
+cover = pyropdf.open("cover.pdf")
 page = doc.pages[3]
 doc.pages.insert(0, cover.pages[0])
-assert page.index == 4                      # the handle follows its page object
+assert page.index == 4                           # the handle follows its page object
 
-with doc.transaction():                     # one version, one undo step
+with doc.transaction():                          # one version, one undo step
     page.rotation = 90
     doc.form["name"].value = "Ada Lovelace"
 
-print(doc.changes().signatures)             # signed objects that the edits touched
-doc.save("contract.pdf", incremental=True)  # writes only what changed
+print(doc.changes(incremental=True).signatures)  # signed objects that the edits touched
+doc.save("contract.pdf", incremental=True)       # writes only what changed
 ```
 
 ## 11. Layout
 
 ```
 crates/
-  pyropdf-store    objects, index and repair, versions, change sets,
-                   writer, security handler                        (hayro-syntax)
-  pyropdf-schema   typed object descriptors generated from the Arlington PDF Model
-  pyropdf-engine   content model and provenance, rendering, writing,
-                   understanding, signing, budgets                 (hayro, harfrust,
+  pyropdf-store    objects, index and repair, versions, change sets, the
+                   writer, the security handler, budgets, read-set memos,
+                   the page index, the reverse-reference index, and
+                   settling                                        (hayro-syntax)
+  pyropdf-schema   typed object descriptors generated from the Arlington
+                   PDF Model, and the structural check
+  pyropdf-engine   the hayro bridge, content model and provenance,
+                   rendering, writing and fonts, appearances, page
+                   operations, understanding and OCR, signing      (hayro, harfrust,
                                                                     RTen, RustCrypto)
   pyropdf-python   the PyO3 binding, the only crate that depends on PyO3
 python/pyropdf     the Python API
 tests              Python tests: the public contract
-fuzz, oracles      fuzz targets and differential oracles, run in CI
+fuzz               fuzz targets, run in CI
 evidence           measurements and the scripts that produce them
+tools              the work report, the checks, the generators, and the
+                   drivers of the oracles
+docs               the guides in English and Japanese, and the generated
+                   API reference, limit codes, and specification coverage
+limits.toml        the registry of limit codes (section 9)
 ```
 
 Dependencies point down the list and never up. The store depends on no
@@ -552,12 +570,19 @@ network access.
     sets, undo, and atomicity on failure.
 - Differential tests against frozen pylopdf (section 14) on the corpus cover
   every ported capability, and each difference is recorded as an
-  improvement or a regression. pymupdf, pdf.js, and pypdfium2 serve as
-  development-only oracles where a comparison means something.
+  improvement or a regression. pymupdf, pdf.js, and pypdfium2 read the
+  corpus and each save of its edits as development-only oracles
+  (`tools/oracles.py`), outside the package's dependencies; CI runs pdf.js.
+- Independent tools check what pyropdf writes, and CI runs each of them:
+  veraPDF validates the PDF/A and PDF/UA corpora and their saves, qpdf and
+  pikepdf read saved documents, poppler renders embedded-font text for
+  comparison with hayro, and pyHanko validates signatures.
 - Fuzz targets cover the index, repair, the hayro bridge, the writer, and
   every new parser.
-- The four workloads of section 2.1 become regression benchmarks, each at
-  three document sizes.
+- The four workloads of section 2.1 are measured under `evidence/`
+  (`edit-render`, `form-fill-cost`, `form-read-cost`, and `font-subsets`),
+  and tests guard what can be counted, such as one walk of a form and one
+  font program per face.
 - pylopdf's real-document corpus comes over with its license records.
 
 ## 13. Phases
@@ -632,9 +657,10 @@ Exit: pylopdf's v1.0 criteria.
 
 ## 14. Moving from pylopdf
 
-1. **Freeze.** pylopdf takes no new features after a freeze commit, which is
-   the reference for differential tests. It takes security fixes until it is
-   archived, and its README and roadmap point here.
+1. **Freeze.** pylopdf takes no new features after its freeze commit,
+   `ebb01d3c` (#95), which is the reference for differential tests. It takes
+   security fixes until it is archived, and its README and roadmap point
+   here.
 2. **Name.** The first real alpha of `pyropdf` is published early through
    Trusted Publishing, because a pending publisher does not reserve a name
    until it publishes.
@@ -689,7 +715,7 @@ Exit: pylopdf's v1.0 criteria.
   and pyropdf takes the harfrust release that uses hayro's version, so that
   harfrust adds no copy of it.
 - **Later failures.** Lazy opening moves some refusals from `open` to first
-  use. `validate()` and the web profile keep rejection at open available.
+  use. `check_at_open` and the web profile keep rejection at open available.
 - **Overhead.** Persistent maps and read-set recording add constant costs,
   which the benchmarks track.
 - **WebAssembly.** Under Pyodide a stack overflow is fatal to the runtime,
@@ -701,9 +727,6 @@ Exit: pylopdf's v1.0 criteria.
 
 ## 16. Open questions
 
-- Which Arlington predicates the structural check implements first.
-- What the change report is: a method, a value that `save` returns, or a
-  refusal that an option turns into a report.
 - How text draws in an embedded variable face at an instance other than its
   default, whose outlines the subset at save keeps, and in colour glyphs
   (COLR, SVG, or bitmap), which a CIDFont does not draw (section 7).
