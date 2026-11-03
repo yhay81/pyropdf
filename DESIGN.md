@@ -300,7 +300,7 @@ analysis goes into upstream patches, not into pyropdf.
 
 | Item | Requirement |
 | --- | --- |
-| I1 Object source | hayro-syntax resolves objects through a source that the caller supplies (a store version), not only through file bytes: object bytes by identifier, with object-stream members resolved and decryption applied, and the trailer. It needs no public cross-reference reader, repair, or decryption. |
+| I1 Object source | hayro-syntax resolves objects through a source that the caller supplies (a store version), not only through file bytes: object bytes by identifier, with object-stream members resolved and decryption applied, and the trailer. It needs no public cross-reference reader, repair, or decryption. Opening a source does not resolve the whole page tree: a page is resolved when it is read, or from a page list that the source supplies. |
 | I2 Bounded construction | Colour spaces, functions, Type 4 programs, and nested content and objects are built and read without unbounded recursion, and refuse with an error beyond their bounds instead of truncating. |
 | I3 No panics | Malformed input yields errors, not panics (LaurenzV/hayro#1546 and the rest). |
 | I4 Provenance | Begin and end of every content stream, Form XObject, annotation appearance, tiling pattern, and Type 3 glyph procedure; the operator index and byte span of every painted item; the resource names it used; a callback for `sh`; marked-content properties; colour spaces and components; font and image identity; image-mask streams. |
@@ -333,7 +333,9 @@ store, and never repairs on its own. An object that the store reads as
 absent is listed free, which hayro reads as null. A new version
 then costs hayro a fresh read of the cross-reference data and the page tree,
 but no serialization or parse of unchanged objects. That remaining cost still
-grows with the document; I1 removes it.
+grows with the document, and the page tree is most of it
+(`evidence/hayro-page-list`). I1 removes the cross-reference read, and its
+page-tree requirement the rest.
 
 For an encrypted base (yhay81/pyropdf#13), the bridge encrypts the written
 objects with the base's security handler, as a save that keeps the
