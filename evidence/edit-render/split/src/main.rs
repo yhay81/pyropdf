@@ -31,6 +31,7 @@ fn main() {
         "| Pages | Transaction | Page index | Bridge: store | Bridge: hayro re-read | Render | Total |"
     );
     println!("| ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+    let options = render::Options::new((SCALE, 0.0, 0.0, SCALE), false);
     for path in std::env::args().skip(1) {
         let budget = Budget::default();
         let bytes = std::fs::read(&path).unwrap();
@@ -58,7 +59,7 @@ fn main() {
             totals[2] += bridged.stats().store;
             totals[3] += bridged.stats().hayro;
             let started = Instant::now();
-            render::raster(&bridged, at, (SCALE, 0.0, 0.0, SCALE), false).unwrap();
+            render::raster(&bridged, at, &options).unwrap();
             totals[4] += started.elapsed();
         }
         let total: Duration = totals.iter().sum();

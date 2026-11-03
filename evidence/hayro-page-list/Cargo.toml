@@ -1,0 +1,23 @@
+# The harness of issue #585: hayro-syntax's Pdf::new split between reading the
+# cross-reference data and building the page list. The empty table below makes
+# this directory a workspace of its own.
+[workspace]
+
+[package]
+name = "hayro-page-list"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+# The workspace's hayro-syntax 0.8.0 with two timers in Pdf::new, which run.py
+# copies from the Cargo registry and patches before it builds this harness.
+hayro-syntax = { path = "../../target/evidence/hayro-page-list/hayro-syntax", default-features = false, features = ["std"] }
+
+# The release profile of the repository's workspace, so that the timings are
+# those of the code that a wheel would ship.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
