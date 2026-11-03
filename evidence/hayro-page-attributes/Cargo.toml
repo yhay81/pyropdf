@@ -1,0 +1,27 @@
+# The harness of issue #587: hayro-syntax's Pdf::new before and after a page's
+# boxes, rotation, and resources are read on first use. The empty table below
+# makes this directory a workspace of its own.
+[workspace]
+
+[package]
+name = "hayro-page-attributes"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Path dependencies on hayro-syntax of the same version collide in the
+# lockfile, so each version comes by git revision: `before` is the base of the
+# upstream pull request, `after` its head, and `geometry` its variant that
+# still reads the resources when it builds a page, which needs no new `unsafe`.
+[dependencies]
+before = { package = "hayro-syntax", git = "https://github.com/LaurenzV/hayro", rev = "4f7d16fab1a4b2c8de77d109674335e4536258b7", default-features = false, features = ["std"] }
+geometry = { package = "hayro-syntax", git = "https://github.com/yhay81/hayro", rev = "f8cb1c43f752726ccceae7204212c522bd26cd4b", default-features = false, features = ["std"] }
+after = { package = "hayro-syntax", git = "https://github.com/yhay81/hayro", rev = "7da104ef5b0cb6594a731a55745f6decd4c59294", default-features = false, features = ["std"] }
+
+# The release profile of the repository's workspace, so that the timings are
+# those of the code that a wheel would ship.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
