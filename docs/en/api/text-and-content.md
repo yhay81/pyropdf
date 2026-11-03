@@ -581,9 +581,17 @@ SoftMask(*, xref: int = 0, subtype: SoftMaskType)
 
 A soft mask: the transparency group that masks what it encloses.
 
-`xref` is deprecated and 0 in what `Page.content` returns, since
-hayro 0.9 no longer identifies the group of a soft mask. The next minor
-release removes it.
+`xref` is deprecated: reading it warns with `DeprecationWarning`, and
+it is 0 in what `Page.content` returns, since hayro 0.9 no longer
+identifies the group of a soft mask. The next minor release removes it.
+
+### `SoftMask.xref`
+
+```python
+SoftMask.xref: int
+```
+
+Deprecated: 0, where it was the object number of the mask's group.
 
 ## `SoftMaskType`
 

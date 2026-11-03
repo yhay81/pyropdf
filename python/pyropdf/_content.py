@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import enum
 import math
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeAlias, overload
@@ -209,18 +210,34 @@ class Stroke:
     dash_offset: float = 0.0
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, init=False)
 class SoftMask:
     """A soft mask: the transparency group that masks what it encloses.
 
-    ``xref`` is deprecated and 0 in what ``Page.content`` returns, since
-    hayro 0.9 no longer identifies the group of a soft mask. The next minor
-    release removes it.
+    ``xref`` is deprecated: reading it warns with ``DeprecationWarning``, and
+    it is 0 in what ``Page.content`` returns, since hayro 0.9 no longer
+    identifies the group of a soft mask. The next minor release removes it.
     """
 
-    xref: int = 0
-    """Deprecated: 0, where it was the object number of the mask's group."""
     subtype: SoftMaskType
+    # What `xref` returns. Equality, hashing, and pickling read this field,
+    # so only reading `xref` itself warns.
+    _xref: int = field(default=0, init=False, repr=False)
+
+    def __init__(self, *, xref: int = 0, subtype: SoftMaskType) -> None:
+        object.__setattr__(self, "subtype", subtype)
+        object.__setattr__(self, "_xref", xref)
+
+    @property
+    def xref(self) -> int:
+        """Deprecated: 0, where it was the object number of the mask's group."""
+        warnings.warn(
+            "SoftMask.xref is deprecated and 0, since hayro 0.9 no longer identifies the group of a soft mask; "
+            "the next minor release of pyropdf removes it",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._xref
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

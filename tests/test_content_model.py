@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import pickle
+import warnings
 from pathlib import Path
 
 import pytest
@@ -257,6 +258,26 @@ def test_transparency_groups_carry_opacity_and_soft_masks(subtype: SoftMaskType)
     assert outer.blend_mode is BlendMode.NORMAL
     assert path.context.opacity == pytest.approx(0.25)
     assert path.fill == Color(0, 1, 0, 1)
+
+
+def test_soft_mask_xref_is_deprecated_and_reading_it_warns() -> None:
+    mask = SoftMask(subtype=SoftMaskType.ALPHA)
+    with pytest.warns(DeprecationWarning, match="SoftMask.xref is deprecated"):
+        assert mask.xref == 0
+    # A mask built as 0.2.1 built it keeps its number.
+    old = SoftMask(xref=8, subtype=SoftMaskType.LUMINOSITY)
+    with pytest.warns(DeprecationWarning, match="SoftMask.xref is deprecated"):
+        assert old.xref == 8
+    # Building, comparing, hashing, printing, and pickling read no xref.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert mask == SoftMask(xref=0, subtype=SoftMaskType.ALPHA)
+        assert old != SoftMask(subtype=SoftMaskType.LUMINOSITY)
+        assert len({mask, SoftMask(subtype=SoftMaskType.ALPHA)}) == 1
+        assert repr(mask) == f"SoftMask(subtype={SoftMaskType.ALPHA!r})"
+        assert pickle.loads(pickle.dumps(old)) == old  # noqa: S301 - a value pickled here.
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        mask.subtype = SoftMaskType.LUMINOSITY  # ty: ignore[invalid-assignment]
 
 
 def test_items_share_the_context_they_were_painted_in() -> None:
