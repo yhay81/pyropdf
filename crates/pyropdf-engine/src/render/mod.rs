@@ -22,16 +22,24 @@ pub use batch::{MAX_WORKERS, batch};
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::svg;
 
-/// What hayro renders with: its defaults, with text hinted only on request.
+/// What hayro renders with: its defaults, with text hinted only on request
+/// and without its glyph cache.
 ///
 /// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
 /// did not. Hinting reads more of a font program than the glyphs drawn, so
 /// a program that pyropdf subsets would draw differently hinted
 /// (evidence/hinted-subsets); pyropdf renders text unhinted unless asked,
 /// as it did with hayro 0.8 (#18).
+///
+/// hayro 0.9 also reuses a rasterized glyph by default (LaurenzV/hayro#1706),
+/// placed at a quarter of a pixel horizontally and at a whole pixel
+/// vertically, which changes most pages of the corpus. pyropdf fills each
+/// glyph where it lies, as it did with hayro 0.8, at about 1.8 times the time
+/// (#622).
 fn render_settings(hinting: bool) -> RenderSettings {
     RenderSettings {
         hinting,
+        glyph_caching: false,
         ..RenderSettings::default()
     }
 }
