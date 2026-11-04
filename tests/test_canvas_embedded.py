@@ -464,6 +464,22 @@ def test_a_non_identity_cid_keyed_cff_draws_the_same_before_and_after_a_save(jap
     assert bytes(pyropdf.open(first).pages[0].pixmap(dpi=72)) == before
 
 
+@pytest.mark.parametrize("size", [9, 12, 16, 24])
+def test_a_cff_face_hints_the_same_before_and_after_a_save(japanese: pyropdf.Font, size: int) -> None:
+    # The save compacts the program, which keeps its hints and hint values.
+    document, page = _new_page(300, 120)
+    with page.draw() as canvas:
+        canvas.text("日本語、かな。", (20, 40), font=japanese, size=size)
+        canvas.text("AVA 123", (20, 90), font=japanese, size=size)
+    before = bytes(page.pixmap(dpi=72, hinting=True))
+    assert before != bytes(page.pixmap(dpi=72))
+
+    saved = pyropdf.open(document.to_bytes())
+    (font,) = saved.pages[0].fonts()
+    assert font.program == "cff"
+    assert bytes(saved.pages[0].pixmap(dpi=72, hinting=True)) == before
+
+
 @pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
 @pytest.mark.parametrize(("font", "text"), [("japanese", "日本語、かな。"), ("hebrew", "שָׁלוֹם עולם")])
 def test_poppler_draws_the_saved_subset_where_hayro_does(font: str, text: str, request: pytest.FixtureRequest) -> None:
