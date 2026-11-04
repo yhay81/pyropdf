@@ -6,4 +6,4 @@ Subsets made with fontTools' `pyftsubset --layout-features='*'` for the strings 
 - `NotoSansHebrew-subset.ttf`: Noto Sans Hebrew Regular.
 - `NotoSansArabic-Variable-subset.ttf`: Noto Sans Arabic, a variable font shaped at its default instance.
 
-`colour_faces.py` writes the `colour-*` faces, one for each table that can hold a colour glyph, with a square as their only drawing. They are made here and fall under pyropdf's MIT license ([LICENSE](../../../../../LICENSE)).
+`colour_faces.py` writes the `colour-*` faces: one for each table that can hold a colour glyph, with a square as their only drawing, and the `colour-bitmaps-*` faces, which draw solid images in PNG strikes. They are made here and fall under pyropdf's MIT license ([LICENSE](../../../../../LICENSE)).
