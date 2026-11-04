@@ -65,6 +65,10 @@ second, by up to 239 of 255 in a channel; unhinted, in none. The canvas text
 differed in 873 of 36,000 pixels after the save when rendered hinted, and
 since #611 differs in none, hinted or unhinted.
 
+The harness renders with hayro's default glyph cache. Turned off, the choice
+that #622 weighs, the canvas text still differs in none, and the hinted counts
+of mhlw-doc.pdf become 5,957 and 1,333, by up to 224 and 225.
+
 What each choice would take:
 
 - **Subsets keep what hinting reads.** A TrueType subset would keep the
