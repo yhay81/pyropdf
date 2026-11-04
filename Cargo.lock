@@ -1218,6 +1218,7 @@ dependencies = [
  "der",
  "harfrust",
  "hayro",
+ "hayro-font",
  "hayro-svg",
  "hmac",
  "p256",
