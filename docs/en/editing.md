@@ -154,9 +154,10 @@ WinAnsi (roughly Latin-1) characters and refuse other characters with
 `PdfError`. Symbol and ZapfDingbats use their built-in encodings: a
 WinAnsi byte selects a glyph, which may differ from the input character.
 For other scripts, load an OpenType face with
-`Font.from_file`, which the document embeds once. A glyph that COLR paints,
-or that a PNG strike of `sbix` or CBDT holds, draws in its own colours,
-whatever the fill, and reads back as text. Any other colour glyph draws its
+`Font.from_file`, which the document embeds once. For a variable TrueType
+face, `weight=700` selects that instance on the face's weight axis. A glyph
+that COLR paints, or that a PNG strike of `sbix` or CBDT holds, draws in its
+own colours, whatever the fill, and reads back as text. Any other colour glyph draws its
 monochrome fallback outline, and drawing one with no outline raises
 `PdfError`, rather than draw nothing under text that reads back.
 

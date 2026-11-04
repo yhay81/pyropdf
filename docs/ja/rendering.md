@@ -37,6 +37,7 @@ pixmap は buffer protocol に対応するので、NumPy や Pillow は画素を
 | `background` | ページの下に塗る 0〜255 の RGB または RGBA。`alpha` なしでは不透明でなければなりません。 |
 | `annotations` | `False` で注釈とフォームウィジェットの外観を除きます。 |
 | `colorspace` | `"gray"` で ITU-R BT.601 の重みでグレーに変換します。 |
+| `hinting` | `True` で FreeType の light hinting のように文字をヒンティングし、小さな文字をくっきりさせます。既定ではヒンティングしません。 |
 
 ```python
 import pyropdf

@@ -1,5 +1,157 @@
 # Changelog
 
+## 0.2.2 (2026-11-04)
+
+- pyropdf moves to hayro 0.9.0 with LaurenzV/hayro#1734 applied, which
+  hayro has not released: every hayro crate comes from yhay81/hayro commit
+  394e4a0d, which also holds two fixes after 0.9.0 (ToUnicode maps written
+  with `cidrange`, LaurenzV/hayro#1730; fallible allocation in CCITT
+  decoding, LaurenzV/hayro#1733). A build from the sdist fetches that
+  commit from GitHub and needs maturin 1.16 or later (#18, #617).
+- hayro 0.9.0's fixes and performance work reach rendering and extraction,
+  as its changelogs list them: patterns, soft masks, clipping, embedded
+  fonts, the Unicode of glyph names, and malformed files (#18).
+- Text renders as it did in 0.2.1: unhinted, and without hayro 0.9's glyph
+  cache, which would move text by less than a pixel on most pages. Of 163
+  corpus pages at 72 dpi, 162 render byte for byte as on hayro 0.8, and one
+  differs in 495 pixels by at most 5 of 255 (#18, #622).
+- `page.pixmap(hinting=True)` and `Document.render(hinting=True)` hint text
+  as FreeType's light hinting does, which sharpens small text, with hayro's
+  default settings but without its glyph cache. Hinted renders of a
+  document may differ before and after `doc.subset_fonts` or a save that
+  compacts its fonts (#612, #622).
+- `SoftMask.xref` is deprecated: reading it warns with `DeprecationWarning`,
+  and it is 0, since hayro 0.9 no longer identifies the group of a soft
+  mask. `SoftMask(subtype=...)` builds one without it, and building,
+  comparing, hashing, and pickling a mask do not warn. The next minor
+  release removes it (#18).
+- `TilingPattern.opacity` reports the opacity at which a tiling pattern
+  paints, as `ShadingPattern.opacity` does, in `page.content()` and
+  `page.paths()`, since hayro 0.9 leaves it to the device (#608).
+- Objects numbered above 2,147,483,647 resolve in rendering and text
+  extraction (#18).
+- Content operators with up to 33 operands, such as `scn` with up to 32
+  DeviceN components, are read, rendered, and extracted; reading stopped at
+  the 11th operand, which also left the rest of the page unrendered (#18).
+- An item of a page's `/Contents` array that is not a stream is skipped,
+  and the streams after it are read; reading stopped at it (#18).
+- Text in render mode 7, which only clips, is extracted, and
+  `page.content()` reports it as an `INVISIBLE` text run (#18).
+- A name whose `#` is not followed by two hexadecimal digits reads as
+  written instead of raising `MalformedPdfError` (#18).
+- `Operations.parse` and `page.operations` raise `MalformedPdfError` for an
+  operand nested deeper than 64 levels, where reading stopped before it
+  (#18).
+- A stream whose `/F` names an external file reads, with its dictionary and
+  its bytes, and decoding its data raises `MalformedPdfError` instead of
+  returning the bytes to ignore (#224).
+- Text in a font that a document does not embed, or whose program does not
+  load, still reads by the PDF's widths, though hayro 0.9 stretches the
+  substitute glyph in its transform: the boxes of `words`, `layout`,
+  `search`, `selection`, and `tables`, the word gaps of `text`, and the
+  advances of `page.content()` do not follow the stretch, while ink boxes
+  do, as a rendering draws it (#656).
+- Text in a CJK font that a document does not embed renders in fallback
+  faces instead of blank. `doc.fallback_fonts` maps `"ja"`, `"ko"`,
+  `"zh-CN"`, and `"zh-TW"` to `FallbackFont` records of a sans and a serif
+  face, as a `FallbackFonts` mapping that holds the faces of the installed
+  extras `pyropdf[jp]`, `[ko]`, `[zh-cn]`, and `[zh-tw]` until it is
+  edited; a serif name such as a Mincho takes the serif face.
+  `page.pixmap`, `Document.render`, `page.svg`, and `Annotation.pixmap`
+  draw with them, and they are not saved (#600).
+- `page.words`, `page.layout`, `page.chars`, and `page.search` with
+  `exact_bboxes=True` measure such a font on the face of
+  `doc.fallback_fonts` that draws it, and the text runs of `page.content()`
+  describe it as that face: glyph IDs, glyph and run boxes, and the font's
+  weight, where its glyphs had no box and a run's box lay on its baseline.
+  These results now depend on `doc.fallback_fonts`; text and the other
+  boxes do not (#624, #658).
+- `page.paths()` returns the paths of `page.content()` as `Paths` columns,
+  which NumPy reads without a copy through `Paths.column` and Arrow through
+  the PyCapsule interface, and which build a `Path` only for a row that is
+  read. On a page of 200,000 lines it takes 0.21 s, where the paths of
+  `page.content()` take 4.5 s (#606, #615, #618).
+- `Canvas` fills and strokes paths and shapes with the new `LinearGradient`
+  and `RadialGradient`, built from `ColorStop`s, with `GradientExtend`
+  choosing `PAD`, `NONE`, `REPEAT`, or `REFLECT`. Stops with alpha paint
+  through a soft mask, equal function and shading objects are written once
+  in a canvas, and a repeating gradient that needs more than 4,096 cycles
+  raises `LimitError` with code `content_element_count`. Text still paints
+  with a `Color` only, and refuses a gradient with `TypeError` (#632).
+- The type alias `Paint` also includes the two gradients, and `Gradient`
+  names them both (#632).
+- `Font.from_file(path, weight=...)` and `Font.from_bytes(data, weight=...)`
+  draw any weight on a variable TrueType face's axis, from a static program
+  written at load, so that it draws, saves, and subsets as a static face,
+  also in `doc.form.font` and `FallbackFont`; `Font.weight` and `Font.name`
+  describe the instance. A weight outside the axis raises `PdfError`. The
+  program counts against `max_size` (`font_input_size`), and a coordinate
+  that the variations push outside 16 bits refuses. `weight=None` still
+  draws the default instance, and CFF2 stays refused (#629).
+- Canvas text paints a face's COLR v0 and v1 glyphs, and the PNG strikes of
+  its `sbix` and CBDT tables, in their own colours, as Type 3 fonts that
+  read back as text, where 0.2.1 drew their monochrome fallback outlines.
+  COLR paints in the face's default palette, at the instance that the face
+  loaded: solid colours, linear and radial gradients, transforms, clips,
+  shared layers, and the composite modes that PDF's blend modes and soft
+  masks express. These glyphs keep their colours whatever the fill, except
+  a COLR layer in the text's colour, which takes it. A face with `sbix` or
+  CBDT bitmaps and no outlines loads, and `Font.char_bbox` gives the box of
+  a bitmap glyph's image (#631, #633).
+- A COLR glyph that needs a sweep gradient, a gradient stop in the text's
+  colour, the modes `Plus`, `Xor`, `SrcAtop`, or `DestAtop`, or a palette
+  entry that the default palette lacks draws its fallback outline, and one
+  whose paints form a cycle, or nest or number past skrifa's bounds, raises
+  `PdfError` whatever its outline (#633).
+- A colour glyph that has no outline and that the text cannot draw in
+  colour raises `PdfError` naming the character, instead of drawing nothing
+  under text that reads back. `Canvas.text` and `Canvas.textbox` refuse an
+  `SVG ` glyph, a JPEG, TIFF, or raw strike, or a COLR glyph that they
+  cannot paint. A text or choice field filled in `doc.form.font`, and a
+  free text annotation in an OpenType face (`FreeText(..., font=face)`)
+  when it is added or its text changes, refuse any COLR, `sbix`, CBDT, or
+  `SVG ` glyph without an outline. A colour glyph with a monochrome
+  fallback outline still draws that outline, and `Font` measures such
+  glyphs as before (#630, #639, #651).
+- Canvas text in an embedded face draws a multi-glyph cluster whose glyphs
+  do not read as its text inside one `/ActualText`, and maps a glyph
+  without text of its own to U+2060, so MuPDF, PDFium, and Xpdf read the
+  cluster exactly and a glyph such as a dot that a face draws apart from its
+  letter no longer reads as a stray character. Form field values and free
+  text annotations in an embedded face draw clusters the same way. pdf.js,
+  which ends a text chunk at each marked-content sequence, scrambles a
+  right-to-left word that holds such a cluster (#637, #648).
+- `page.text()` and the other text readers honour `/ActualText` over the
+  glyphs inside it, as Xpdf, MuPDF, and PDFium do; `page.content()` still
+  reports each glyph's CMap text (#637).
+- `page.text()` measures Type 3 glyphs by the widths of their font, so
+  adjacent glyphs no longer read with a space between them (#654).
+- A save that compacts a loaded CFF face keeps the stem hints and masks of
+  the glyphs that it keeps and the hint values of each Private DICT, so a
+  viewer that hints CFF text from the program, and
+  `page.pixmap(hinting=True)`, draw the saved text as they draw the face
+  (#611).
+- Saving a document that holds a loaded OpenType face again writes the same
+  bytes when nothing between the saves changed it, also after a dropped
+  transaction or an undone edit, and inside an open transaction: a TrueType
+  face's `/CIDToGIDMap` took a new object number at each save, and a
+  discarded object number raised `/Size` (#652, #665).
+- `page.pixmap(clip=...)` applies the size limits to the clipped raster
+  instead of the whole page, as PyMuPDF does, so a small region of a large
+  page renders at scales at which the whole page would not, and
+  `page.ocr(clip=...)` recognizes it at the default 300 dpi. With a clip,
+  the page under the matrix may measure up to 524,288 pixels a side, and a
+  larger one raises `ValueError` (#605).
+- Text is shaped by harfrust 0.15: a run that a face's own tables make
+  outgrow the shaper's allowance raises `PdfError` instead of using a
+  partial result (#617).
+- The GitHub release is immutable from 0.2.2 on, and the Release workflow
+  fails unless it is; the releases of 0.1.0 to 0.2.1 stay mutable (#604).
+
+No release claims safety for untrusted input before hayro's bounded
+construction (I2, [#15](https://github.com/yhay81/pyropdf/issues/15)) is
+released.
+
 ## 0.2.1 (2026-11-03)
 
 - `page.draw()` returns a `Canvas` that draws on the page when its `with`

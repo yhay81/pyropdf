@@ -13,15 +13,19 @@ each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)
 how much of ISO 32000-2 each part covers.
 
-Not yet in 0.2.1:
+Not yet in 0.2.2:
 
 - redaction, and removing the content outside a rectangle, which need the
   content provenance of a hayro change under review;
 - the interpreter fuel and cancellation that would bound rendering and
   interpretation, also a hayro change under review;
 - pixmaps in CMYK, and selectable text in SVG, which wait on hayro;
-- canvas text in other instances of a variable face, and color glyphs,
-  which wait on a design decision.
+- canvas text in CFF2 variable faces; color glyphs from `SVG ` tables, from
+  JPEG, TIFF, or raw strikes, and COLR glyphs that need a sweep gradient or
+  a compositing mode that PDF lacks, which draw their monochrome outline or
+  refuse; color glyphs in form fields
+  and free text annotations, which draw outlines only; and text filled with
+  a gradient.
 
 Progress is tracked in the
 [issue tree](https://github.com/yhay81/pyropdf/issues/1).

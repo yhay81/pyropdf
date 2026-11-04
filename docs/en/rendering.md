@@ -38,6 +38,7 @@ without a copy: `numpy.asarray(pixmap)` has the shape
 | `background` | An RGB or RGBA tuple, 0 to 255, painted beneath the page; it must be opaque without `alpha`. |
 | `annotations` | `False` leaves out annotation and form widget appearances. |
 | `colorspace` | `"gray"` converts to gray with ITU-R BT.601 weights. |
+| `hinting` | `True` hints text as FreeType's light hinting does, which sharpens small text; text renders unhinted by default. |
 
 ```python
 import pyropdf
