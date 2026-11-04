@@ -27,6 +27,7 @@ mod pixmap;
 mod render;
 mod schema;
 mod security;
+mod shadings;
 mod sign;
 mod source;
 mod text;
@@ -122,6 +123,8 @@ mod _core {
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]
     use super::security::{security_state, unlock};
+    #[pymodule_export]
+    use super::shadings::{CanvasShadings, canvas_gradient, canvas_gradient_pattern};
     #[pymodule_export]
     use super::sign::{
         _Signer, begin_signing, certificate_read, document_file, sign_document, signature_read,

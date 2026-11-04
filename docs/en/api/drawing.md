@@ -26,7 +26,13 @@ and drawn in the order of the calls, over the page's content or, with
 Paths take a `fill` `Color` and a `stroke`, a `Stroke`
 or a `Color` for a 1-point line; a path with neither is stroked
 with a 1-point black line. A color's alpha below 1 paints it
-translucent. The scopes `clip`, `transform`,
+translucent. A `LinearGradient` or a `RadialGradient` paints
+wherever a color does on a path or a shape, and stops that differ in alpha
+paint through a soft mask, so that a fill and a stroke are then two
+paintings. Equal gradient objects are written once in a canvas. A gradient
+renders within 8 levels of 255 per channel of what its stops say at 72 dpi
+in hayro and poppler, and one that repeats within 16, away from its sharp
+changes and from the edges of what it paints. The scopes `clip`, `transform`,
 `opacity`, `blend`, `layer`, and `tag` are
 context managers that apply to everything drawn inside them. `text` and `textbox` draw
 text in a `Font`; embedded fonts come with issue 153 (DESIGN.md
@@ -34,9 +40,12 @@ section 7).
 
 A canvas holds at most 1,048,576 path points, of paths and clips
 together, nests at most 16 scopes, and writes at most 64 MiB of
-content; more raise `LimitError` with code
+content; a gradient has at most 1,048,576 stops, and repeats at most
+4,096 times over what it paints; more raise `LimitError` with code
 `content_element_count` or `content_input_size`, or
-`ValueError` for the nesting.
+`ValueError` for the nesting. A gradient whose line has no extent, whose
+ends are one point or whose circles are one circle, raises `ValueError`
+when it is drawn.
 
 ### `Canvas.path`
 
@@ -44,8 +53,8 @@ content; more raise `LimitError` with code
 Canvas.path(
     path: PathLike,
     *,
-    fill: Color | None = None,
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
     fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
 )
 ```
@@ -59,7 +68,7 @@ Canvas.line(
     start: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
 )
 ```
 
@@ -72,8 +81,8 @@ Canvas.rect(
     rect: Sequence[float],
     *,
     radius: float = 0,
-    fill: Color | None = None,
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
 )
 ```
 
@@ -86,8 +95,8 @@ Canvas.circle(
     center: Sequence[float],
     radius: float,
     *,
-    fill: Color | None = None,
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
 )
 ```
 
@@ -99,8 +108,8 @@ Draw a circle.
 Canvas.ellipse(
     rect: Sequence[float],
     *,
-    fill: Color | None = None,
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
 )
 ```
 
@@ -113,8 +122,8 @@ Canvas.polygon(
     points: Iterable[Sequence[float]],
     *,
     close: bool = True,
-    fill: Color | None = None,
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
     fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
 )
 ```
@@ -130,7 +139,7 @@ Canvas.bezier(
     control2: Sequence[float],
     end: Sequence[float],
     *,
-    stroke: Stroke | Color | None = None,
+    stroke: Stroke | Color | Gradient | None = None,
 )
 ```
 
@@ -269,8 +278,11 @@ Canvas.draw(item: Path | Image)
 Paint a `Path` or `Image` item that `Page.content` returned.
 
 The item's clips, its groups' opacity and blend modes, and its own
-blend mode are applied; soft masks are not, and pattern paints
-cannot be drawn yet. An image is drawn from its object, with the
+blend mode are applied; soft masks are not. A pattern paint cannot be
+drawn, a gradient that a canvas drew included: a `ShadingPattern`
+or `TilingPattern` reports its kind and its matrix, not its stops
+or its cell, so draw a `LinearGradient` or `RadialGradient`
+in place of one. An image is drawn from its object, with the
 image's own masks: a canvas on a page of the item's document draws
 that object again, and one of another document copies it, with the
 objects it reaches but pages, as it is when this call is made. Images

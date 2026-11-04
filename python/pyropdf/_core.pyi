@@ -415,6 +415,30 @@ def canvas_page_form(
 def canvas_copy_image(
     document: _Document, source: _Document, number: int, operation: _OperationBudget, /
 ) -> int | None: ...
+
+class _Shadings:
+    def __init__(self) -> None: ...
+
+def canvas_gradient(
+    document: _Document,
+    shadings: _Shadings,
+    start: tuple[float, float],
+    end: tuple[float, float],
+    radii: tuple[float, float] | None,
+    stops: list[tuple[float, float, float, float, float]],
+    extend: str,
+    area: tuple[float, float, float, float],
+    operation: _OperationBudget,
+    /,
+) -> tuple[int, int | None, float]: ...
+def canvas_gradient_pattern(
+    document: _Document,
+    shadings: _Shadings,
+    shading: int,
+    matrix: tuple[float, float, float, float, float, float],
+    operation: _OperationBudget,
+    /,
+) -> int: ...
 def copy_page_resources(
     document: _Document,
     source: _Document,

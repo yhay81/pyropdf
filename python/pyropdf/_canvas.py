@@ -9,7 +9,7 @@ import os
 import re
 import sys
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from itertools import accumulate, groupby
@@ -20,16 +20,23 @@ from pyropdf._content import (
     BlendMode,
     ClosePath,
     Color,
+    ColorStop,
     CurveTo,
     FillRule,
+    Gradient,
+    GradientExtend,
     Image,
+    LinearGradient,
     LineCap,
     LineJoin,
     LineTo,
     MoveTo,
     Path,
+    RadialGradient,
     Segment,
+    ShadingPattern,
     Stroke,
+    TilingPattern,
 )
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._fonts import (
@@ -50,7 +57,7 @@ from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Sequence
+    from collections.abc import Callable, Generator
     from types import TracebackType
     from typing import Self, TypeAlias
 
@@ -74,8 +81,11 @@ _KAPPA_CURVE = 0.55228474983
 _FLOAT32_MAX = 3.4028234663852886e38
 #: The deepest nesting of clip, transform, opacity, and blend scopes.
 _MAX_SCOPES = 16
-#: The most path and clip points that one canvas holds.
+#: The most path and clip points that one canvas holds, and the most stops of one gradient.
 _MAX_POINTS = 1_048_576
+#: A bound on the memory of one gradient stop on its way to the core: its tuple, its floats, and the core's copy.
+_STOP_SIZE = 256
+_IDENTITY = Matrix(1, 0, 0, 1, 0, 0)
 _BLACK = Color(0.0, 0.0, 0.0)
 _CAPS = {LineCap.BUTT: 0, LineCap.ROUND: 1, LineCap.SQUARE: 2}
 _JOINS = {LineJoin.MITER: 0, LineJoin.ROUND: 1, LineJoin.BEVEL: 2}
@@ -189,18 +199,28 @@ def _color(value: object, name: str) -> Color:
     return value
 
 
-def _stroke(value: Stroke | Color | None) -> Stroke | None:
-    """Return a stroke from a :class:`Stroke` or a :class:`Color`, checked."""
+def _paint(value: object, name: str) -> Color | Gradient:
+    """Return what a canvas paints with, checked as far as it can be without its stops."""
+    if isinstance(value, (LinearGradient, RadialGradient)):
+        return value
+    if isinstance(value, (ShadingPattern, TilingPattern)):
+        msg = f"{name} is a {type(value).__name__}, which does not hold what it paints; draw a Color or a gradient"
+        raise TypeError(msg)
+    if not isinstance(value, Color):
+        msg = f"{name} must be a pyropdf.Color or a gradient, not {type(value).__name__}"
+        raise TypeError(msg)
+    return _color(value, name)
+
+
+def _stroke(value: Stroke | Color | Gradient | None) -> Stroke | None:
+    """Return a stroke from a :class:`Stroke`, a :class:`Color`, or a gradient, checked."""
     if value is None:
         return None
-    stroke = Stroke(paint=value) if isinstance(value, Color) else value
+    stroke = Stroke(paint=value) if isinstance(value, (Color, LinearGradient, RadialGradient)) else value
     if not isinstance(stroke, Stroke):
-        msg = f"stroke must be a pyropdf.Stroke or Color, not {type(value).__name__}"
+        msg = f"stroke must be a pyropdf.Stroke, a Color, or a gradient, not {type(value).__name__}"
         raise TypeError(msg)
-    if not isinstance(stroke.paint, Color):
-        msg = "a canvas strokes with a Color; pattern paints cannot be drawn yet"
-        raise TypeError(msg)
-    _color(stroke.paint, "stroke.paint")
+    _paint(stroke.paint, "stroke.paint")
     # A width of 0 draws the thinnest line that the device can show.
     if _number(stroke.width, "stroke.width") < 0:
         msg = f"stroke.width must be non-negative: {stroke.width!r}"
@@ -219,10 +239,13 @@ def _stroke(value: Stroke | Color | None) -> Stroke | None:
 
 
 def _stroke_ops(stroke: Stroke) -> list[bytes]:
-    """Return the operators that set a checked stroke's paint and line style."""
-    paint = cast("Color", stroke.paint)
+    """Return the operators that set a checked stroke's color and line style."""
+    return [_numbers(*cast("Color", stroke.paint).rgb) + b" RG", *_line_style(stroke)]
+
+
+def _line_style(stroke: Stroke) -> list[bytes]:
+    """Return the operators that set a checked stroke's line style."""
     return [
-        _numbers(*paint.rgb) + b" RG",
         _numbers(stroke.width) + b" w",
         f"{_CAPS[LineCap(stroke.cap)]} J {_JOINS[LineJoin(stroke.join)]} j".encode(),
         _numbers(stroke.miter_limit) + b" M",
@@ -274,11 +297,54 @@ def _line_height(value: object) -> float | None:
 
 
 def _text_paint(fill: Color | None, stroke: Stroke | Color | None) -> tuple[Color | None, Stroke | None]:
-    """Return the fill and stroke of text, which needs at least one."""
+    """Return the fill and stroke of text, which needs at least one, and paints with a :class:`Color`."""
     if fill is None and stroke is None:
         msg = "text needs a fill or a stroke"
         raise ValueError(msg)
-    return (None if fill is None else _color(fill, "fill")), _stroke(stroke)
+    stroked = _stroke(stroke)
+    if stroked is not None and not isinstance(stroked.paint, Color):
+        msg = "text strokes with a Color; a gradient paints paths and shapes"
+        raise TypeError(msg)
+    return (None if fill is None else _color(fill, "fill")), stroked
+
+
+@dataclass(frozen=True, slots=True)
+class _Painting:
+    """The operators that set a paint, and the alpha and the soft mask that it paints through."""
+
+    operators: tuple[bytes, ...]
+    alpha: float | None
+    mask: str | None
+
+
+def _stops(gradient: Gradient) -> list[tuple[float, float, float, float, float]]:
+    """Return the stops of a gradient as the core takes them, checked but for their order."""
+    stops = []
+    for stop in gradient.stops:
+        if not isinstance(stop, ColorStop):
+            msg = f"a gradient's stops must be pyropdf.ColorStop, not {type(stop).__name__}"
+            raise TypeError(msg)
+        color = _color(stop.color, "stop.color")
+        red, green, blue = map(float, color.rgb)
+        stops.append((_number(stop.offset, "stop.offset"), red, green, blue, float(color.alpha)))
+    return stops
+
+
+def _bounds(segments: list[Segment], pad: float) -> tuple[float, float, float, float]:
+    """Return a box around the points of ``segments``, and ``pad`` beyond them."""
+    x0 = y0 = math.inf
+    x1 = y1 = -math.inf
+    for segment in segments:
+        if isinstance(segment, CurveTo):
+            points = (segment.c1, segment.c2, segment.to)
+        elif isinstance(segment, (MoveTo, LineTo)):
+            points = (segment.to,)
+        else:
+            continue
+        for point in points:
+            x, y = _point(point, "point")
+            x0, y0, x1, y1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
+    return (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
 
 
 @dataclass(frozen=True, slots=True)
@@ -752,14 +818,23 @@ class _Element:
 class _Scope(AbstractContextManager[None]):
     """One clip, transform, opacity, blend, or layer scope of a canvas."""
 
-    def __init__(self, canvas: Canvas, opening: bytes, closing: bytes, *, group: float | None = None) -> None:
+    def __init__(
+        self,
+        canvas: Canvas,
+        opening: bytes,
+        closing: bytes,
+        *,
+        group: float | None = None,
+        matrix: Matrix | None = None,
+    ) -> None:
         self._canvas = canvas
         self._opening = opening
         self._closing = closing
         self._group = group
+        self._matrix = matrix
 
     def __enter__(self) -> None:
-        self._canvas._push(self._opening, self._closing, group=self._group)  # noqa: SLF001
+        self._canvas._push(self._opening, self._closing, group=self._group, matrix=self._matrix)  # noqa: SLF001
 
     def __exit__(
         self,
@@ -818,7 +893,13 @@ class Canvas:
     Paths take a ``fill`` :class:`Color` and a ``stroke``, a :class:`Stroke`
     or a :class:`Color` for a 1-point line; a path with neither is stroked
     with a 1-point black line. A color's alpha below 1 paints it
-    translucent. The scopes :meth:`clip`, :meth:`transform`,
+    translucent. A :class:`LinearGradient` or a :class:`RadialGradient` paints
+    wherever a color does on a path or a shape, and stops that differ in alpha
+    paint through a soft mask, so that a fill and a stroke are then two
+    paintings. Equal gradient objects are written once in a canvas. A gradient
+    renders within 8 levels of 255 per channel of what its stops say at 72 dpi
+    in hayro and poppler, and one that repeats within 16, away from its sharp
+    changes and from the edges of what it paints. The scopes :meth:`clip`, :meth:`transform`,
     :meth:`opacity`, :meth:`blend`, :meth:`layer`, and :meth:`tag` are
     context managers that apply to everything drawn inside them. :meth:`text` and :meth:`textbox` draw
     text in a :class:`Font`; embedded fonts come with issue 153 (DESIGN.md
@@ -826,9 +907,12 @@ class Canvas:
 
     A canvas holds at most 1,048,576 path points, of paths and clips
     together, nests at most 16 scopes, and writes at most 64 MiB of
-    content; more raise :class:`LimitError` with code
+    content; a gradient has at most 1,048,576 stops, and repeats at most
+    4,096 times over what it paints; more raise :class:`LimitError` with code
     ``content_element_count`` or ``content_input_size``, or
-    ``ValueError`` for the nesting.
+    ``ValueError`` for the nesting. A gradient whose line has no extent, whose
+    ends are one point or whose circles are one circle, raises ``ValueError``
+    when it is drawn.
     """
 
     __slots__ = (
@@ -843,13 +927,19 @@ class Canvas:
         "_gstates",
         "_layers",
         "_marked",
+        "_masks",
+        "_matrices",
+        "_matrix",
         "_mcids",
         "_oc",
         "_operation",
         "_page",
+        "_pattern_names",
+        "_patterns",
         "_points",
         "_properties",
         "_scopes",
+        "_shadings",
         "_tagged",
         "_tags",
         "_underlay",
@@ -883,6 +973,18 @@ class Canvas:
         # The resource name of each group, or each membership's groups and policy, and the object it names.
         self._oc: dict[int | tuple[tuple[int, ...], str], str] = {}
         self._properties: dict[str, int] = {}
+        # The objects of the canvas's gradients, which its drawings share.
+        self._shadings: _core._Shadings | None = None
+        # The resource name of each soft mask's ExtGState, and of each shading pattern by its shading, its
+        # matrix, and whether it is in the page's content, whose object waits until the commit gives the page's
+        # space; and the objects that are written.
+        self._masks: dict[int, str] = {}
+        self._pattern_names: dict[tuple[int, Matrix, bool], str] = {}
+        self._patterns: dict[str, int] = {}
+        # From the space of what the canvas draws to the default space of the buffer that it goes to: the
+        # canvas's own display space, or the opacity group's. Pattern space ignores the CTM.
+        self._matrix = _IDENTITY
+        self._matrices: list[Matrix] = []
         # The closing of each open clip, transform, blend, and layer scope; None for an opacity group.
         self._scopes: list[bytes | None] = []
         # The open tag scopes, None for an artifact, and the elements that no element holds.
@@ -1024,18 +1126,23 @@ class Canvas:
         self._depth += 1
         self._unmark()
 
-    def _push(self, opening: bytes, closing: bytes, *, group: float | None) -> None:
+    def _push(self, opening: bytes, closing: bytes, *, group: float | None, matrix: Matrix | None) -> None:
         self._enter_scope()
+        self._matrices.append(self._matrix)
         if group is not None:
             self._scopes.append(None)
             self._layers.append(([], group))
+            self._matrix = _IDENTITY
         else:
             self._scopes.append(closing)
             self._append(self._layers[-1][0], opening)
+            if matrix is not None:
+                self._matrix = matrix * self._matrix
 
     def _pop(self) -> None:
         self._depth -= 1
         self._unmark()
+        self._matrix = self._matrices.pop()
         closing = self._scopes.pop()
         if closing is not None:
             self._append(self._layers[-1][0], closing)
@@ -1095,8 +1202,13 @@ class Canvas:
         resources: dict[str, object] = {}
         if self._xobjects:
             resources["XObject"] = {name: objects[xref] for name, xref in self._xobjects.items()}
-        if self._gstates:
-            resources["ExtGState"] = {name: _gstate_dict(key) for key, name in self._gstates.items()}
+        if self._gstates or self._masks:
+            resources["ExtGState"] = {
+                **{name: _gstate_dict(key) for key, name in self._gstates.items()},
+                **{name: objects[xref] for xref, name in self._masks.items()},
+            }
+        if self._patterns:
+            resources["Pattern"] = {name: objects[xref] for name, xref in self._patterns.items()}
         if self._fonts:
             resources["Font"] = {name: _font_value(objects, font) for name, font in self._fonts.items()}
         if self._properties:
@@ -1132,6 +1244,76 @@ class Canvas:
             self._gstates[key] = name
         return name
 
+    def _gradient(self, gradient: Gradient, area: tuple[float, float, float, float]) -> tuple[int, int | None, float]:
+        """Return the objects of ``gradient`` that paints ``area``: its shading, its soft mask, and its alpha."""
+        start, end = _point(gradient.start, "start"), _point(gradient.end, "end")
+        radii = None
+        if isinstance(gradient, RadialGradient):
+            radii = (_number(gradient.start_radius, "start_radius"), _number(gradient.end_radius, "end_radius"))
+        extend = GradientExtend(gradient.extend).value
+        if not isinstance(gradient.stops, Sequence):
+            msg = f"a gradient's stops must be a sequence, not {type(gradient.stops).__name__}"
+            raise TypeError(msg)
+        count = len(gradient.stops)
+        if count > _MAX_POINTS:
+            code = "content_element_count"
+            msg = f"the gradient has {count} stops, over the limit of {_MAX_POINTS}"
+            raise LimitError(code, msg)
+        if self._shadings is None:
+            self._shadings = _core._Shadings()  # noqa: SLF001
+        with self._scratch(count * _STOP_SIZE):
+            return _core.canvas_gradient(
+                self._page.document._core(),  # noqa: SLF001
+                self._shadings,
+                (start.x, start.y),
+                (end.x, end.y),
+                radii,
+                _stops(gradient),
+                extend,
+                area,
+                self._active,
+            )
+
+    def _write_pattern(self, shading: int, matrix: Matrix) -> int:
+        return _core.canvas_gradient_pattern(
+            self._page.document._core(),  # noqa: SLF001
+            cast("_core._Shadings", self._shadings),  # noqa: SLF001
+            shading,
+            (matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f),
+            self._active,
+        )
+
+    def _write_page_patterns(self, matrix: _Affine) -> None:
+        """Write the patterns of the page's content, which reach its default space through its opening ``matrix``."""
+        written = Matrix(*(float(_fmt(value)) for value in matrix))
+        for (shading, inner, in_page), name in self._pattern_names.items():
+            if in_page:
+                self._patterns[name] = self._write_pattern(shading, inner * written)
+
+    def _pattern(self, shading: int) -> str:
+        """Return the resource name of the pattern that paints ``shading`` in the current space."""
+        in_page = len(self._layers) == 1
+        key = (shading, self._matrix, in_page)
+        name = self._pattern_names.get(key)
+        if name is None:
+            name = self._pattern_names[key] = f"PyroP{len(self._pattern_names) + 1}"
+            if not in_page:
+                self._patterns[name] = self._write_pattern(shading, self._matrix)
+        return name
+
+    def _setting(self, paint: Color | Gradient, segments: list[Segment], stroke: Stroke | None) -> _Painting:
+        """Return how to paint ``segments`` with ``paint``, as the fill, or as ``stroke`` if there is one."""
+        if isinstance(paint, Color):
+            operator = b" rg" if stroke is None else b" RG"
+            return _Painting((_numbers(*paint.rgb) + operator,), None if paint.alpha >= 1 else paint.alpha, None)
+        # Past the path by half a line, or by a miter or a square cap, and a thin line's own width.
+        pad = 1.0 if stroke is None else max(stroke.width, 1.0) / 2 * max(stroke.miter_limit, math.sqrt(2)) + 1.0
+        shading, mask, alpha = self._gradient(paint, _bounds(segments, pad))
+        name = self._pattern(shading).encode()
+        space, operator = (b"/Pattern cs", b" scn") if stroke is None else (b"/Pattern CS", b" SCN")
+        masked = None if mask is None else self._masks.setdefault(mask, f"PyroM{len(self._masks) + 1}")
+        return _Painting((space, b"/" + name + operator), None if alpha >= 1 else alpha, masked)
+
     def _commit(self) -> None:
         page = self._page
         document = page.document
@@ -1144,6 +1326,7 @@ class Canvas:
                     raise StaleObjectError(msg)
         rotation, box = _page_space(page)
         matrix = _user_from_display(rotation, box)
+        self._write_page_patterns(matrix)
         opening = b"q\n" + _numbers(*matrix) + b" cm\n"
         size = len(opening) + self._buffered + 2
         # Check the size and charge the joined content and its framed copy before making them.
@@ -1169,7 +1352,9 @@ class Canvas:
             name = _merge_resources(page, {name: form}, {}, {}, {}).get(name, name)
             data = b"q\n/" + name.encode() + b" Do\nQ\n"
         else:
-            names = _merge_resources(page, self._xobjects, self._gstates, self._fonts, self._properties)
+            names = _merge_resources(
+                page, self._xobjects, self._gstates, self._fonts, self._properties, self._patterns, self._masks
+            )
             for old, new in names.items():
                 data = data.replace(b"/" + old.encode() + b" ", b"/" + new.encode() + b" ")
         drawn = objects[objects.add_stream(data)]
@@ -1241,8 +1426,8 @@ class Canvas:
         self,
         path: PathLike,
         *,
-        fill: Color | None = None,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw a path: a :class:`PathBuilder`, a :class:`Path` item's geometry, or segments."""
@@ -1250,32 +1435,57 @@ class Canvas:
         segments = _segments(path)
         if fill is None and stroke is None:
             stroke = _BLACK
-        painted_fill = None if fill is None else _color(fill, "fill")
+        painted_fill = None if fill is None else _paint(fill, "fill")
         painted_stroke = _stroke(stroke)
         even_odd = FillRule(fill_rule) is FillRule.EVEN_ODD
         construction, points = _path_bytes(segments)
         self._count(points)
+        filling = None if painted_fill is None else self._setting(painted_fill, segments, None)
+        stroking = None
+        if painted_stroke is not None:
+            stroking = self._setting(cast("Color | Gradient", painted_stroke.paint), segments, painted_stroke)
+        if filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None):
+            # A soft mask is one graphics state, so each paints in its own.
+            first = self._painted(construction, filling, None, None, even_odd=even_odd)
+            self._emit(first + b"\n" + self._painted(construction, None, stroking, painted_stroke, even_odd=even_odd))
+        else:
+            self._emit(self._painted(construction, filling, stroking, painted_stroke, even_odd=even_odd))
+
+    def _painted(
+        self,
+        construction: bytes,
+        filling: _Painting | None,
+        stroking: _Painting | None,
+        stroke: Stroke | None,
+        *,
+        even_odd: bool,
+    ) -> bytes:
+        """Return the operators that paint a constructed path with a fill, a stroke, or both."""
         parts = [b"q"]
-        fill_alpha = None if painted_fill is None or painted_fill.alpha >= 1 else painted_fill.alpha
-        stroke_paint = None if painted_stroke is None else cast("Color", painted_stroke.paint)
-        stroke_alpha = None if stroke_paint is None or stroke_paint.alpha >= 1 else stroke_paint.alpha
+        fill_alpha = None if filling is None else filling.alpha
+        stroke_alpha = None if stroking is None else stroking.alpha
         if fill_alpha is not None or stroke_alpha is not None:
             parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
-        if painted_fill is not None:
-            parts.append(_numbers(*painted_fill.rgb) + b" rg")
-        if painted_stroke is not None:
-            parts.extend(_stroke_ops(painted_stroke))
+        for painting in (filling, stroking):
+            if painting is not None and painting.mask is not None:
+                parts.append(b"/" + painting.mask.encode() + b" gs")
+            if painting is not None:
+                parts.extend(painting.operators)
+        if stroke is not None and stroking is not None:
+            parts.extend(_line_style(stroke))
         parts.append(construction)
-        if painted_fill is not None and painted_stroke is not None:
+        if filling is not None and stroking is not None:
             parts.append(b"B*" if even_odd else b"B")
-        elif painted_fill is not None:
+        elif filling is not None:
             parts.append(b"f*" if even_odd else b"f")
         else:
             parts.append(b"S")
         parts.append(b"Q")
-        self._emit(b"\n".join(parts))
+        return b"\n".join(parts)
 
-    def line(self, start: Sequence[float], end: Sequence[float], *, stroke: Stroke | Color | None = None) -> None:
+    def line(
+        self, start: Sequence[float], end: Sequence[float], *, stroke: Stroke | Color | Gradient | None = None
+    ) -> None:
         """Draw a straight line, with a 1-point black stroke by default."""
         self.path(PathBuilder().move_to(start).line_to(end), stroke=_BLACK if stroke is None else stroke)
 
@@ -1284,8 +1494,8 @@ class Canvas:
         rect: Sequence[float],
         *,
         radius: float = 0,
-        fill: Color | None = None,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | None = None,
     ) -> None:
         """Draw a rectangle, with corners rounded by ``radius`` points."""
         self.path(PathBuilder().rect(rect, radius=radius), fill=fill, stroke=stroke)
@@ -1295,8 +1505,8 @@ class Canvas:
         center: Sequence[float],
         radius: float,
         *,
-        fill: Color | None = None,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | None = None,
     ) -> None:
         """Draw a circle."""
         self.path(PathBuilder().circle(center, radius), fill=fill, stroke=stroke)
@@ -1305,8 +1515,8 @@ class Canvas:
         self,
         rect: Sequence[float],
         *,
-        fill: Color | None = None,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | None = None,
     ) -> None:
         """Draw the ellipse inside ``rect``."""
         self.path(PathBuilder().ellipse(rect), fill=fill, stroke=stroke)
@@ -1316,8 +1526,8 @@ class Canvas:
         points: Iterable[Sequence[float]],
         *,
         close: bool = True,
-        fill: Color | None = None,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = None,
+        stroke: Stroke | Color | Gradient | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
         """Draw straight segments through ``points``, closed unless ``close`` is false."""
@@ -1330,7 +1540,7 @@ class Canvas:
         control2: Sequence[float],
         end: Sequence[float],
         *,
-        stroke: Stroke | Color | None = None,
+        stroke: Stroke | Color | Gradient | None = None,
     ) -> None:
         """Draw a cubic Bézier curve, with a 1-point black stroke by default."""
         builder = PathBuilder().move_to(start).curve_to(control1, control2, end)
@@ -1798,8 +2008,11 @@ class Canvas:
         """Paint a :class:`Path` or :class:`Image` item that :meth:`Page.content` returned.
 
         The item's clips, its groups' opacity and blend modes, and its own
-        blend mode are applied; soft masks are not, and pattern paints
-        cannot be drawn yet. An image is drawn from its object, with the
+        blend mode are applied; soft masks are not. A pattern paint cannot be
+        drawn, a gradient that a canvas drew included: a :class:`ShadingPattern`
+        or :class:`TilingPattern` reports its kind and its matrix, not its stops
+        or its cell, so draw a :class:`LinearGradient` or :class:`RadialGradient`
+        in place of one. An image is drawn from its object, with the
         image's own masks: a canvas on a page of the item's document draws
         that object again, and one of another document copies it, with the
         objects it reaches but pages, as it is when this call is made. Images
@@ -1819,13 +2032,11 @@ class Canvas:
         if not isinstance(item, Path):
             msg = f"draw() paints Path and Image items, not {type(item).__name__}"
             raise TypeError(msg)
-        if item.fill is not None and not isinstance(item.fill, Color):
-            msg = "a canvas fills with a Color; pattern paints cannot be drawn yet"
-            raise TypeError(msg)
+        fill = None if item.fill is None else _paint(item.fill, "fill")
         # Checked before any scope opens, so that a refused stroke draws nothing.
         stroke = _stroke(item.stroke)
         with self._item_context(item):
-            self.path(item.segments, fill=item.fill, stroke=stroke, fill_rule=item.fill_rule)
+            self.path(item.segments, fill=fill, stroke=stroke, fill_rule=item.fill_rule)
 
     def _draw_image(self, item: Image) -> None:
         """Paint an :class:`Image` item from the object it names."""
@@ -1897,7 +2108,9 @@ class Canvas:
             msg = f"matrix must be a Matrix or six numbers: {matrix!r}"
             raise ValueError(msg) from exc
         values = tuple(_number(value, "matrix") for value in m)
-        return _Scope(self, b"q\n" + _numbers(*values) + b" cm", b"Q")
+        # What the content's operator says, to the digit, is what the canvas's patterns follow.
+        written = Matrix(*(float(_fmt(value)) for value in values))
+        return _Scope(self, b"q\n" + _numbers(*values) + b" cm", b"Q", matrix=written)
 
     def opacity(self, alpha: float) -> AbstractContextManager[None]:
         """Composite what the block draws as one group, then draw it at ``alpha``."""
@@ -2293,19 +2506,21 @@ def _isolated(page: Page) -> bool:
     return depth == 0
 
 
-def _merge_resources(
+def _merge_resources(  # noqa: PLR0913, PLR0917 - the page, and each kind of resource.
     page: Page,
     xobjects: dict[str, int],
     gstates: dict[tuple[float | None, float | None, str | None], str],
     fonts: dict[str, str | int],
     properties: dict[str, int],
+    patterns: dict[str, int] | None = None,
+    masks: dict[int, str] | None = None,
 ) -> dict[str, str]:
     """Add the canvas's resources to the page's own, renaming any that collide.
 
     The page gets its own direct ``/Resources`` when it inherits or shares
     them, so no other page changes. Returns the renamed names.
     """
-    if not xobjects and not gstates and not fonts and not properties:
+    if not xobjects and not gstates and not fonts and not properties and not patterns and not masks:
         return {}
     document = page.document
     own = page.obj.get("Resources")
@@ -2316,7 +2531,14 @@ def _merge_resources(
     renamed: dict[str, str] = {}
     for key, entries in (
         ("XObject", {name: document.objects[xref] for name, xref in xobjects.items()}),
-        ("ExtGState", {name: _gstate_dict(state) for state, name in gstates.items()}),
+        (
+            "ExtGState",
+            {
+                **{name: _gstate_dict(state) for state, name in gstates.items()},
+                **{name: document.objects[xref] for xref, name in (masks or {}).items()},
+            },
+        ),
+        ("Pattern", {name: document.objects[xref] for name, xref in (patterns or {}).items()}),
         ("Font", {name: _font_value(document.objects, font) for name, font in fonts.items()}),
         ("Properties", {name: document.objects[xref] for name, xref in properties.items()}),
     ):
