@@ -8,11 +8,11 @@
 
 use std::collections::BTreeSet;
 
-use pyropdf_store::Result;
 use pyropdf_store::budget::Budget;
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::{Error, Result};
 
 use super::compact::{Compact, compact};
 
@@ -181,9 +181,9 @@ impl Font {
         cid_font.insert(Name::from("BaseFont"), tagged.clone());
         if !compact.cff {
             let map = cid_to_gid(&compact.glyphs);
-            let reference = transaction.allocate()?;
+            let number = map_number(transaction, budget)?;
             let stream = Stream::new(Dict::new(), Bytes::from(map));
-            transaction.write(reference.number(), &Value::from(stream), budget)?;
+            let reference = transaction.write(number, &Value::from(stream), budget)?;
             cid_font.insert(Name::from("CIDToGIDMap"), Value::Reference(reference));
         }
         transaction.write(descendant.number(), &Value::Dict(cid_font), budget)?;
@@ -192,6 +192,31 @@ impl Font {
         font.insert(Name::from("BaseFont"), tagged);
         transaction.write(self.number, &Value::Dict(font), budget)?;
         Ok(())
+    }
+}
+
+/// Returns the number of a CIDToGIDMap: the first after the numbers of the
+/// version that the save settles at which the transaction holds nothing.
+///
+/// [`Transaction::allocate`] would not do. The save discards this
+/// transaction and the document never issues a number twice, so each save
+/// would write the map under a new number, and two saves with no edit between
+/// them would differ. This number depends only on the version. No version
+/// keeps the map, and the write raises the document's high-water mark above
+/// the number, so no allocation takes it later.
+fn map_number(transaction: &Transaction, budget: &Budget) -> Result<u32> {
+    let mut next = transaction.parent().next_number();
+    loop {
+        budget.poll()?;
+        let number = u32::try_from(next).map_err(|_| {
+            Error::malformed(
+                "the document uses object number 4294967295, so no number is left for a CIDToGIDMap",
+            )
+        })?;
+        if transaction.version().slot(number).is_none() {
+            return Ok(number);
+        }
+        next += 1;
     }
 }
 
