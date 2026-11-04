@@ -26,6 +26,7 @@ mod images;
 mod model;
 mod provenance;
 mod reads;
+mod stretch;
 #[cfg(test)]
 mod tests;
 mod text;
