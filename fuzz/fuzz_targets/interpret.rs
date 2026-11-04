@@ -116,10 +116,11 @@ fuzz_target!(|data: &[u8]| {
         paths: true,
         images: true,
     };
+    let fallback = render::Fallback::default();
     for index in 0..count {
         let options = render::Options::new((0.5, 0.0, 0.0, 0.5), true);
-        let _ = render::raster(&bridged, index, &options);
-        let _ = render::svg(&bridged, index, true);
+        let _ = render::raster(&bridged, &fallback, index, &options);
+        let _ = render::svg(&bridged, &fallback, index, true);
         let budget = Budget::new(&DocumentLimits::web());
         let _ = extract::page_content(&bridged, index, kinds, true, None, &budget);
         let options = TextOptions {

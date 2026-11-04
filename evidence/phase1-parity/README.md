@@ -1,18 +1,19 @@
 # Phase 1 parity with frozen pylopdf
 
 The differential evidence for the exit of Phase 1 (DESIGN.md §13): frozen
-pylopdf and pyropdf read every corpus document, and every difference in
-their outputs is explained here.
+pylopdf and pyropdf read every corpus document, and pages in CJK fonts that
+the file does not embed, and every difference in their outputs is explained
+here.
 
 | File | Role |
 | --- | --- |
-| `run.py PYLOPDF_CHECKOUT` | Builds pylopdf at the freeze commit `ebb01d3c` (#95) into its own environment, dumps both engines over `tests/assets/real_world`, and runs `compare.py` |
-| `dump.py ENGINE OUT FILE...` | Writes one engine's outputs per page and each document's Markdown. The page outputs are listed below |
+| `run.py PYLOPDF_CHECKOUT` | Builds pylopdf at the freeze commit `ebb01d3c` (#95) with its CJK font extras into its own environment, dumps both engines over `tests/assets/real_world` and `tests/assets/text/nonembedded-cjk.pdf`, and runs `compare.py` |
+| `dump.py ENGINE OUT [--fallback-fonts] FILE...` | Writes one engine's outputs per page and each document's Markdown. The page outputs are listed below |
 | `compare.py A B` | Classifies each output of each page and writes `report.md` and `results.json` |
 | `causes.toml` | Matches each kind of difference to a cause below |
 | `report.md` | Pages that are equal per document and output, with the causes of the rest |
 | `results.json` | The kind and measurements of every compared output |
-| `metadata.json` | The measured pyropdf revision, frozen oracle revision, runtimes, and corpus hashes |
+| `metadata.json` | The measured pyropdf revision, frozen oracle revision and extras, runtimes, and the hashes of the corpus and of the fallback pages |
 | `diagnose_annotations.py ORACLE_PYTHON` | Reproduces the annotation-isolation experiment and writes `annotation-diagnostic.json` |
 
 Per page, `dump.py` records:
@@ -26,11 +27,18 @@ Per page, `dump.py` records:
 - `markdown`: the Markdown.
 - `render`: a 72-dpi raster.
 
-Both engines run without fallback fonts: pylopdf is installed without
-extras, and pyropdf has none. `tests/test_parity.py` checks that the report
-covers the corpus and leaves no difference unexplained. When
+The corpus renders without fallback fonts in both engines: `dump.py`
+turns them off. `tests/assets/text/nonembedded-cjk.pdf` holds the pages of
+#600 in CJK fonts that the file does not embed: MS-Gothic in both descendant
+types and both CMaps, MS-Mincho, and fonts of the GB1, CNS1, and Korea1
+collections. With `--fallback-fonts`, both engines render it with the faces
+of the font extras `jp`, `ko`, `zh-cn`, and `zh-tw`, which `run.py` installs
+for pylopdf and pyropdf's dev group installs, in the same versions.
+`tests/test_parity.py` checks that the report covers the corpus and the
+fallback pages and leaves no difference unexplained. When
 `PYROPDF_PARITY_PYLOPDF` names the Python of `target/parity/pylopdf-env`, it
-also redumps three documents and checks their kinds against `results.json`.
+also redumps three corpus documents and the fallback pages and checks their
+kinds against `results.json`.
 
 ```bash
 python3 evidence/phase1-parity/run.py ~/ghq/github.com/yhay81/pylopdf
@@ -51,28 +59,73 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 
 ## Causes
 
-The review run on 2026-10-28 covers 14 documents and 155 pages. All JSON
-reading outputs and all document Markdown outputs match. Of the 155
-rasters, 154 match byte for byte; one is close under the stated tolerance.
-No output raises. `metadata.json` identifies the measured source revision
-and corpus hashes. The oracle cache is reused only with a matching freeze
-stamp and an importable package; an unstamped or different cache is rebuilt.
+The run on 2026-11-03 covers the 15 corpus documents, 156 pages, and the 7
+pages of `nonembedded-cjk.pdf`, with pyropdf on hayro 0.9 and frozen pylopdf
+on hayro 0.8. Of the 163 rasters, 11 match byte for byte, 7 are close under
+the stated tolerance, and 145 are not; hayro 0.9's glyph cache, below,
+explains all 152. The JSON reading outputs and the Markdown match, except on
+page 2 of `patent-us223898.pdf` and in the exact word boxes of the fallback
+pages, which the causes below explain. No output raises. `metadata.json`
+identifies the measured source revision and the hashes of the inputs. The
+oracle cache is reused only with a matching stamp of the freeze commit and
+the extras and an importable package; an unstamped or different cache is
+rebuilt.
 
-### Missing highlight appearance
+### hayro 0.9's glyph cache
 
-`pdfium-links-highlights-annots.pdf`, page 1, differs only at its Highlight
-annotation without `/AP`: pixel bounds x=293..348, y=250..261, within the
-annotation's PDF rectangle [293, 530, 349, 542]. Pixels with a channel delta
-over 16 occupy 0.139% of the page (the threshold is 0.5%); the mean maximum
-channel delta over all pixels is 0.295. Disabling annotations makes the
-page byte-identical, as `annotation-diagnostic.json` records with hashes.
+Since #609, pyropdf renders through hayro 0.9, which by default
+(`RenderSettings::glyph_caching`) rasterizes a glyph of text filled in one
+color once, with `ab_glyph_rasterizer`, and reuses the bitmap, placed at a
+quarter of a pixel horizontally and at a whole pixel vertically. hayro 0.8
+filled every glyph where it lies, through vello_cpu. This moves text by less
+than a pixel on every page that fills outline text: the worst, `f1040.pdf`
+page 1, has 8.1% of its pixels more than 16 away in a channel, and the 11
+equal pages draw no such text. On hayro 0.8, at `e5b0d10`, all 163 rasters
+matched byte for byte. With `glyph_caching: false` in `render_settings`,
+measured and not committed, 162 do, the 7 fallback pages among them, and
+`nics-background-checks-2015-11.pdf` differs in 495 pixels by at most 5. The
+owner chose on #18 that a patch release changes no render, without this
+measurement, and the cache makes rendering about 1.8 times as fast, so #622
+asks whether 0.2.2 keeps it.
 
-Frozen pylopdf synthesizes missing appearances in
-`rust/src/document/rendering.rs` via `synthesize_missing_appearances_for_render`;
-its `rust/src/annotation_appearance.rs` gives highlights a Multiply blend.
-The measured pyropdf version passes annotations to hayro without that
-synthesis. The port is tracked by #169 / PR #172. This is an explained,
-within-tolerance difference, rather than byte-identical rendering.
+### Missing highlight appearance, resolved
+
+The run of 2026-10-28 found `pdfium-links-highlights-annots.pdf`, page 1,
+close but not equal at its Highlight annotation without `/AP`: pixel bounds
+x=293..348, y=250..261, 0.139% of the page beyond a channel delta of 16.
+Frozen pylopdf synthesizes missing appearances for rendering
+(`synthesize_missing_appearances_for_render` in
+`rust/src/document/rendering.rs`), with a Multiply blend for highlights;
+pyropdf then passed annotations to hayro without that synthesis. #169 ported
+it (PR #172), and the page renders byte for byte alike on hayro 0.8 and on
+hayro 0.9 without the glyph cache. `annotation-diagnostic.json`, measured
+through the cache, no longer isolates the highlight: the page's text differs
+with and without annotations.
+
+### Headings above columns
+
+`patent-us223898.pdf`, page 2, differs in its text, words, layout, search,
+and Markdown, and so does the document's Markdown. Its heading `UNITED
+STATES PATENT OFFICE.` and the line below it span both columns, and their
+word gaps fall on the column gutter. Frozen pylopdf splits them into the
+columns, as pyropdf did when the run of 2026-10-28 measured the corpus;
+since #460, pyropdf keeps them whole above the columns, as PyMuPDF 2.0 does
+(`evidence/pymupdf-comparison`). The difference is that improvement: the
+words are the same but for `CR` and `C`, which join as `CRC` in the line
+`CRC AMP.`, and the page has four fewer spans.
+
+### Exact boxes of fonts that a document does not embed
+
+Apart from the glyph cache, the 7 pages of `nonembedded-cjk.pdf` render byte
+for byte alike with the faces of the font extras (#600). Of their other
+outputs, only the exact word boxes differ, on pages 2 to 7, by up to 7.28
+points: frozen pylopdf's text extraction also
+draws a font that a document does not embed in its fallback faces, so
+`words(exact_bboxes=True)` measures their outlines, while pyropdf's text
+extraction does not use the fallback faces, which #600 leaves out, and
+gives the boxes that it gives without them. On page 1, whose descendant
+font is a `CIDFontType0`, pylopdf gives those boxes too. The text, the
+other boxes, and the layout match on every page.
 
 Review corrected the original comparator's early equality return for
 matching raster metadata: equal dimensions and stride now still compare

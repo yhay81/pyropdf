@@ -39,13 +39,12 @@ fn corpus_pages_raster_at_1x_as_pylopdf_renders_the_original() {
                 let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
                 let bridged = Arc::new(Bridged::new(&version, &pages, &budget).unwrap());
                 let original = Arc::new(Bridged::of_bytes(bytes));
+                let none = Fallback::default();
                 for at in 0..pages.len() {
                     for alpha in [false, true] {
-                        let ours = raster(&bridged, at, &Options::new((1.0, 0.0, 0.0, 1.0), alpha))
-                            .unwrap();
-                        let theirs =
-                            raster(&original, at, &Options::new((1.0, 0.0, 0.0, 1.0), alpha))
-                                .unwrap();
+                        let options = Options::new((1.0, 0.0, 0.0, 1.0), alpha);
+                        let ours = raster(&bridged, &none, at, &options).unwrap();
+                        let theirs = raster(&original, &none, at, &options).unwrap();
                         assert!(ours == theirs, "{} page {at} alpha={alpha}", path.display());
                         assert_eq!(ours.resolution, (72, 72));
                         assert_eq!(
@@ -84,20 +83,78 @@ fn a_shared_render_cache_renders_as_a_fresh_one() {
                 let shared = Arc::new(Bridged::of_bytes(bytes.clone()));
                 let other = Arc::new(Bridged::of_bytes(bytes));
                 let pages = shared.pdf().pages().len();
-                let identity = (0.5, 0.0, 0.0, 0.5);
+                let options = Options::new((0.5, 0.0, 0.0, 0.5), true);
+                let none = Fallback::default();
                 // Every page in turn through one cache, which earlier pages filled.
                 let cached: Vec<_> = (0..pages)
-                    .map(|at| raster(&shared, at, &Options::new(identity, true)).unwrap())
+                    .map(|at| raster(&shared, &none, at, &options).unwrap())
                     .collect();
                 for (at, cached) in cached.iter().enumerate() {
                     // Rendering another bridge first makes this one start a new cache.
-                    raster(&other, 0, &Options::new(identity, true)).unwrap();
-                    let fresh = raster(&shared, at, &Options::new(identity, true)).unwrap();
+                    raster(&other, &none, 0, &options).unwrap();
+                    let fresh = raster(&shared, &none, at, &options).unwrap();
                     assert!(*cached == fresh, "{} page {at}", path.display());
                 }
             });
         }
     });
+}
+
+/// The options of a raster at 72 dpi on white, hinted or not.
+fn hinted_options(hinting: bool) -> Options {
+    Options {
+        hinting,
+        ..Options::new((1.0, 0.0, 0.0, 1.0), false)
+    }
+}
+
+/// A corpus document with text in an embedded font.
+fn pdf20_simple() -> Arc<Bridged> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdf20-simple.pdf");
+    Arc::new(Bridged::of_bytes(fs::read(path).unwrap()))
+}
+
+#[test]
+fn hinting_renders_as_hayro_renders_with_its_default_settings() {
+    let bridged = pdf20_simple();
+    let pages = bridged.pdf().pages();
+    let theirs = hayro::render(
+        pages.first().unwrap(),
+        &RenderCache::new(),
+        &InterpreterSettings::default(),
+        &RenderSettings::default(),
+        &PixmapSettings {
+            x_scale: 1.0,
+            y_scale: 1.0,
+            bg_color: AlphaColor::WHITE,
+        },
+    );
+    let theirs: Vec<u8> = theirs
+        .data()
+        .iter()
+        .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
+        .collect();
+
+    let hinted = raster(&bridged, 0, &hinted_options(true)).unwrap();
+    assert!(hinted.data == theirs);
+    let unhinted = raster(&bridged, 0, &hinted_options(false)).unwrap();
+    assert!(unhinted.data != theirs);
+}
+
+#[test]
+fn a_render_cache_keeps_hinted_and_unhinted_glyphs_apart() {
+    let bridged = pdf20_simple();
+    let other = pdf20_simple();
+    let fresh = |hinting| {
+        // Rendering another bridge first makes this one start a new cache.
+        raster(&other, 0, &hinted_options(hinting)).unwrap();
+        raster(&bridged, 0, &hinted_options(hinting)).unwrap()
+    };
+    let (hinted, unhinted) = (fresh(true), fresh(false));
+    assert!(raster(&bridged, 0, &hinted_options(false)).unwrap() == unhinted);
+    assert!(raster(&bridged, 0, &hinted_options(true)).unwrap() == hinted);
+    assert!(raster(&bridged, 0, &hinted_options(false)).unwrap() == unhinted);
 }
 
 #[test]
@@ -108,13 +165,14 @@ fn a_batch_renders_each_entry_as_raster_does_in_order() {
     let options = Options::new((0.5, 0.0, 0.0, 0.5), true);
     let count = bridged.pdf().pages().len();
     let indexes: Vec<usize> = (0..count).rev().chain(0..count).collect();
+    let none = Fallback::default();
     let alone: Vec<Raster> = indexes
         .iter()
-        .map(|&at| raster(&bridged, at, &options).unwrap())
+        .map(|&at| raster(&bridged, &none, at, &options).unwrap())
         .collect();
 
     for workers in [1, 3, MAX_WORKERS] {
-        let batched = batch(&bridged, &indexes, &options, workers, |raster| {
+        let batched = batch(&bridged, &none, &indexes, &options, workers, |raster| {
             Ok::<_, RasterError>(raster)
         })
         .unwrap();
@@ -130,15 +188,16 @@ fn a_batch_checks_every_page_before_rendering_any() {
     let count = bridged.pdf().pages().len();
     let options = Options::new((1.0, 0.0, 0.0, 1.0), false);
     let rendered = std::sync::atomic::AtomicUsize::new(0);
+    let none = Fallback::default();
 
-    let result = batch(&bridged, &[0, count, 0], &options, 2, |raster| {
+    let result = batch(&bridged, &none, &[0, count, 0], &options, 2, |raster| {
         rendered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok::<_, RasterError>(raster)
     });
 
     assert_eq!(result.unwrap_err(), RasterError::NoPage(count));
     assert_eq!(rendered.into_inner(), 0);
-    let failed = batch(&bridged, &[0, 0, 0, 0], &options, 2, |_| {
+    let failed = batch(&bridged, &none, &[0, 0, 0, 0], &options, 2, |_| {
         Err::<Raster, _>(RasterError::Clip("stop".to_owned()))
     });
     assert_eq!(failed.unwrap_err(), RasterError::Clip("stop".to_owned()));
@@ -173,4 +232,111 @@ fn take_samples_matches_to_layout() {
             );
         }
     }
+}
+
+/// One page that shows 日本語 at 40 points in a CID font named `name` of
+/// the Adobe-Japan1 collection, which the document does not embed.
+fn nonembedded_japanese(name: &str) -> Vec<u8> {
+    let stream = "BT /F1 40 Tf 20 30 Td <65E5672C8A9E> Tj ET";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] \
+         /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+            .to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{stream}\nendstream",
+            stream.len()
+        ),
+        format!(
+            "<< /Type /Font /Subtype /Type0 /BaseFont /{name} /Encoding /UniJIS-UCS2-H \
+             /DescendantFonts [6 0 R] >>"
+        ),
+        format!(
+            "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /{name} /CIDSystemInfo \
+             << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /FontDescriptor 7 0 R \
+             /DW 1000 >>"
+        ),
+        format!(
+            "<< /Type /FontDescriptor /FontName /{name} /Flags 4 /FontBBox [0 -141 1000 859] \
+             /ItalicAngle 0 /Ascent 859 /Descent -141 /CapHeight 709 /StemV 80 >>"
+        ),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (at, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", at + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+/// The pixels of an RGB raster with a channel darker than mid-gray.
+fn ink(raster: &Raster) -> usize {
+    raster
+        .data
+        .chunks(3)
+        .filter(|pixel| pixel.iter().any(|&channel| channel < 128))
+        .count()
+}
+
+/// The subset of Noto Sans JP in the engine's test data, which draws 日本語.
+fn japanese_face() -> Source {
+    let data = include_bytes!("../fonts/testdata/NotoSansJP-subset.otf");
+    Source::Face(Arc::new(crate::fonts::embed::Face::read(data, 0).unwrap()))
+}
+
+#[test]
+fn fallback_faces_draw_the_cjk_fonts_that_a_document_does_not_embed() {
+    let bridged = Arc::new(Bridged::of_bytes(nonembedded_japanese("MS-Gothic")));
+    let options = Options::new((1.0, 0.0, 0.0, 1.0), false);
+    let none = Fallback::default();
+    let mut japanese = Fallback::default();
+    japanese.set(Language::Japanese, false, Some(japanese_face()));
+    let mut korean = Fallback::default();
+    korean.set(Language::Korean, false, Some(japanese_face()));
+
+    // hayro's own resolver answers with a Standard 14 font, which has no CJK glyphs.
+    let blank = raster(&bridged, &none, 0, &options).unwrap();
+    assert_eq!(ink(&blank), 0);
+    let drawn = raster(&bridged, &japanese, 0, &options).unwrap();
+    assert!(ink(&drawn) > 500, "{} pixels", ink(&drawn));
+    // The thread's cache holds fonts resolved through the faces, so other
+    // faces resolve the fonts again.
+    assert!(raster(&bridged, &none, 0, &options).unwrap() == blank);
+    assert!(raster(&bridged, &korean, 0, &options).unwrap() == blank);
+    assert!(raster(&bridged, &japanese.clone(), 0, &options).unwrap() == drawn);
+
+    let batched = batch(
+        &bridged,
+        &japanese,
+        &[0, 0],
+        &options,
+        2,
+        Ok::<_, RasterError>,
+    )
+    .unwrap();
+    assert!(batched == [drawn.clone(), drawn]);
+    let empty_outlines = |fallback| {
+        svg(&bridged, fallback, 0, true)
+            .unwrap()
+            .matches(" d=\"\"")
+            .count()
+    };
+    assert_eq!(empty_outlines(&none), 3);
+    assert_eq!(empty_outlines(&japanese), 0);
 }

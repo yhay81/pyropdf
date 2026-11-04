@@ -61,7 +61,13 @@ def _structured(a: Any, b: Any, texts: Any) -> tuple[str, dict[str, Any]]:  # no
 
 
 def _span_texts(layout: dict[str, Any]) -> list[str]:
-    return [span["text"] for block in layout["blocks"] for line in block.get("lines", ()) for span in line["spans"]]
+    """Return the text of each span, which a layout with characters holds in their ``c`` entries."""
+    return [
+        span["text"] if "text" in span else "".join(char["c"] for char in span["chars"])
+        for block in layout["blocks"]
+        for line in block.get("lines", ())
+        for span in line["spans"]
+    ]
 
 
 def _render(a: dict[str, int], b: dict[str, int], first: Path, second: Path) -> tuple[str, dict[str, Any]]:

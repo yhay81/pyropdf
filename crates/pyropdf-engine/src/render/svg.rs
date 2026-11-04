@@ -3,15 +3,21 @@
 
 use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
 
-use super::RasterError;
+use super::{Fallback, RasterError};
 use crate::bridge::Bridged;
 
 /// Converts page `index` to an SVG document at 72 dpi, with text drawn as
-/// paths and, unless `annotations` is false, annotation appearances.
+/// paths and, unless `annotations` is false, annotation appearances;
+/// `fallback` draws the CJK fonts that the document does not embed.
 ///
 /// hayro-svg builds the whole document before returning it, so a caller's
 /// size limit applies to the result, not to the conversion's memory.
-pub fn svg(bridged: &Bridged, index: usize, annotations: bool) -> Result<String, RasterError> {
+pub fn svg(
+    bridged: &Bridged,
+    fallback: &Fallback,
+    index: usize,
+    annotations: bool,
+) -> Result<String, RasterError> {
     let pages = bridged.pdf().pages();
     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
     let settings = InterpreterSettings {
@@ -20,7 +26,7 @@ pub fn svg(bridged: &Bridged, index: usize, annotations: bool) -> Result<String,
         } else {
             RenderContent::PAGE
         },
-        ..InterpreterSettings::default()
+        ..fallback.settings()
     };
     Ok(hayro_svg::convert(
         page,
@@ -70,16 +76,17 @@ mod tests {
                     let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
                     let bridged = Bridged::new(&version, &pages, &budget).unwrap();
                     let original = Bridged::of_bytes(bytes);
+                    let none = Fallback::default();
                     for at in 0..pages.len() {
                         for annotations in [true, false] {
-                            let ours = svg(&bridged, at, annotations).unwrap();
-                            let theirs = svg(&original, at, annotations).unwrap();
+                            let ours = svg(&bridged, &none, at, annotations).unwrap();
+                            let theirs = svg(&original, &none, at, annotations).unwrap();
                             assert!(ours == theirs, "{} page {at}", path.display());
                             assert!(ours.starts_with("<svg"));
                         }
                     }
                     assert_eq!(
-                        svg(&bridged, pages.len(), true),
+                        svg(&bridged, &none, pages.len(), true),
                         Err(RasterError::NoPage(pages.len()))
                     );
                 });

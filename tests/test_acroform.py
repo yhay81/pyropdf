@@ -4,8 +4,9 @@ pylopdf's tests/test_acroform.py at ebb01d3c, the reading cases ported.
 Intended differences:
 
 - without ``Form.font`` a value outside WinAnsiEncoding is left for the
-  viewer to draw: pyropdf bundles no font extras, so the case that uses
-  an installed Japanese face is not ported. The kid and intermediate
+  viewer to draw: pyropdf's font extras only render the fonts that a
+  document does not embed, so the case that uses an installed Japanese
+  face is not ported. The kid and intermediate
   cases also read ``Field.widgets`` before they fill.
 - the embedded form font cases use the subset Noto faces of the engine's
   test data, so their values are the subset's characters ("日本語のテキスト"

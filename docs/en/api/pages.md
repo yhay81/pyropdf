@@ -248,6 +248,7 @@ Page.pixmap(
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     annotations: bool = True,
     colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
+    hinting: bool = False,
 ) -> Pixmap
 ```
 
@@ -262,6 +263,13 @@ painted beneath the page, which must be opaque without `alpha`.
 `annotations=False` leaves out the appearances of annotations and
 form widgets. `colorspace="gray"` converts the rendered colors to
 gray with ITU-R BT.601 luma weights.
+
+`hinting=True` hints text, as FreeType's light hinting does, which
+sharpens small text: horizontal text filled at 4 to 128 pixels per
+em, and not stroked or clipping text. The fonts that
+`Document.subset_fonts` subsets and that a save compacts can
+draw differently hinted than their originals, so hinted renders of a
+document before and after either may differ.
 
 `clip` is a display rectangle `(x0, y0, x1, y1)`: its bounding
 box under the matrix, rounded outward to whole pixels and

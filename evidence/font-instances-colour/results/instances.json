@@ -1,0 +1,466 @@
+{
+ "rows": [
+  {
+   "face": "bahnschrift",
+   "axes": {
+    "wght": 700
+   },
+   "default_weight": 400,
+   "weight_axis": [
+    [
+     "wght",
+     300.0,
+     400.0,
+     700.0
+    ],
+    [
+     "wdth",
+     75.0,
+     100.0,
+     100.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 400, not 700; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 961,
+    "instance_ms": 7.2,
+    "source_bytes": 361564,
+    "static_bytes": 155640,
+    "cubic_glyphs": 0,
+    "shaped": 25,
+    "shaped_differ": 0
+   },
+   "fonttools_instancer_s": 0.67,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.7,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0035
+   },
+   "load_s": 0.0008,
+   "draw_s": 0.123,
+   "save_s": 0.001,
+   "saved_kib": 43.4,
+   "compact_kib": 4.1,
+   "saved_program_kib": 1.24,
+   "bytes_differing_from_fonttools_static": 12,
+   "bytes_differing_from_default_instance": 5013,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "paths_inline_kib": 194.7,
+   "paths_forms_kib": 63.3,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  },
+  {
+   "face": "bahnschrift",
+   "axes": {
+    "wght": 300,
+    "wdth": 75
+   },
+   "default_weight": 400,
+   "weight_axis": [
+    [
+     "wght",
+     300.0,
+     400.0,
+     700.0
+    ],
+    [
+     "wdth",
+     75.0,
+     100.0,
+     100.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 400, not 300; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 961,
+    "instance_ms": 9.2,
+    "source_bytes": 361564,
+    "static_bytes": 151832,
+    "cubic_glyphs": 0,
+    "shaped": 25,
+    "shaped_differ": 0
+   },
+   "fonttools_instancer_s": 0.32,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.7,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0057
+   },
+   "load_s": 0.0007,
+   "draw_s": 0.124,
+   "save_s": 0.001,
+   "saved_kib": 43.4,
+   "compact_kib": 4.0,
+   "saved_program_kib": 1.21,
+   "bytes_differing_from_fonttools_static": 18,
+   "bytes_differing_from_default_instance": 8940,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "paths_inline_kib": 192.6,
+   "paths_forms_kib": 63.8,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  },
+  {
+   "face": "segoe-ui-variable",
+   "axes": {
+    "wght": 700
+   },
+   "default_weight": 400,
+   "weight_axis": [
+    [
+     "wght",
+     300.0,
+     400.0,
+     700.0
+    ],
+    [
+     "opsz",
+     5.0,
+     10.5,
+     36.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 400, not 700; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 2530,
+    "instance_ms": 20.6,
+    "source_bytes": 1851000,
+    "static_bytes": 421916,
+    "cubic_glyphs": 0,
+    "shaped": 25,
+    "shaped_differ": 0
+   },
+   "fonttools_instancer_s": 2.93,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.0,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0025
+   },
+   "load_s": 0.0012,
+   "draw_s": 0.119,
+   "save_s": 0.002,
+   "saved_kib": 40.8,
+   "compact_kib": 4.1,
+   "saved_program_kib": 1.3,
+   "bytes_differing_from_fonttools_static": 39,
+   "bytes_differing_from_default_instance": 10743,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "paths_inline_kib": 228.7,
+   "paths_forms_kib": 64.2,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  },
+  {
+   "face": "sitka",
+   "axes": {
+    "wght": 700
+   },
+   "default_weight": 400,
+   "weight_axis": [
+    [
+     "opsz",
+     6.0,
+     11.0,
+     27.5
+    ],
+    [
+     "wght",
+     400.0,
+     400.0,
+     700.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 400, not 700; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 1185,
+    "instance_ms": 10.7,
+    "source_bytes": 516124,
+    "static_bytes": 232220,
+    "cubic_glyphs": 0,
+    "shaped": 23,
+    "shaped_differ": 0
+   },
+   "fonttools_instancer_s": 1.21,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.0,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0001
+   },
+   "load_s": 0.001,
+   "draw_s": 0.12,
+   "save_s": 0.001,
+   "saved_kib": 44.1,
+   "compact_kib": 4.5,
+   "saved_program_kib": 1.84,
+   "bytes_differing_from_fonttools_static": 3,
+   "bytes_differing_from_default_instance": 9924,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "paths_inline_kib": 370.4,
+   "paths_forms_kib": 65.9,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  },
+  {
+   "face": "noto-sans-jp",
+   "axes": {
+    "wght": 400
+   },
+   "default_weight": 100,
+   "weight_axis": [
+    [
+     "wght",
+     100.0,
+     100.0,
+     900.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 100, not 400; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 17936,
+    "instance_ms": 313.1,
+    "source_bytes": 9590844,
+    "static_bytes": 5707404,
+    "cubic_glyphs": 0,
+    "shaped": 23,
+    "shaped_differ": 4
+   },
+   "fonttools_instancer_s": 11.88,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.5,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0018
+   },
+   "load_s": 0.0279,
+   "draw_s": 0.369,
+   "save_s": 0.03,
+   "saved_kib": 64.5,
+   "compact_kib": 4.8,
+   "saved_program_kib": 2.05,
+   "bytes_differing_from_fonttools_static": 36,
+   "bytes_differing_from_default_instance": 8385,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "paths_inline_kib": 450.0,
+   "paths_forms_kib": 59.6,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  },
+  {
+   "face": "noto-sans-jp",
+   "axes": {
+    "wght": 700
+   },
+   "default_weight": 100,
+   "weight_axis": [
+    [
+     "wght",
+     100.0,
+     100.0,
+     900.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 100, not 700; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 17936,
+    "instance_ms": 368.5,
+    "source_bytes": 9590844,
+    "static_bytes": 5697940,
+    "cubic_glyphs": 0,
+    "shaped": 23,
+    "shaped_differ": 4
+   },
+   "fonttools_instancer_s": 12.02,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.5,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0008
+   },
+   "load_s": 0.0327,
+   "draw_s": 0.32,
+   "save_s": 0.026,
+   "saved_kib": 64.5,
+   "compact_kib": 4.8,
+   "saved_program_kib": 2.04,
+   "bytes_differing_from_fonttools_static": 42,
+   "bytes_differing_from_default_instance": 11232,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "paths_inline_kib": 452.2,
+   "paths_forms_kib": 59.7,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  },
+  {
+   "face": "noto-sans-arabic-subset",
+   "axes": {
+    "wght": 700
+   },
+   "default_weight": 400,
+   "weight_axis": [
+    [
+     "wght",
+     100.0,
+     400.0,
+     900.0
+    ],
+    [
+     "wdth",
+     62.5,
+     100.0,
+     100.0
+    ]
+   ],
+   "today_refused": "the font's default instance has weight 400, not 700; pyropdf draws a variable font at its default instance only",
+   "instance_probe": {
+    "glyphs": 56,
+    "instance_ms": 0.7,
+    "source_bytes": 40404,
+    "static_bytes": 10696,
+    "cubic_glyphs": 0,
+    "shaped": 25,
+    "shaped_differ": 0
+   },
+   "fonttools_instancer_s": 0.05,
+   "against_fonttools": {
+    "advances_off_by_more_than_1": 0,
+    "bounds_off_by_more_than_1": 0,
+    "worst_bounds_units": 0.0,
+    "areas_off_by_more_than_1pct": 0,
+    "worst_area_ratio": 0.0001
+   },
+   "load_s": 0.0009,
+   "draw_s": 0.102,
+   "save_s": 0.001,
+   "saved_kib": 38.0,
+   "compact_kib": 3.5,
+   "saved_program_kib": 0.79,
+   "bytes_differing_from_fonttools_static": 3,
+   "bytes_differing_from_default_instance": 1890,
+   "static_readers": {
+    "pyropdf": "ok",
+    "xpdf": "'\\u202bمرحبا\\u202c'",
+    "mupdf": "'مرحب&ا'",
+    "pdfium": "'&مرحبا'"
+   },
+   "paths_inline_kib": 175.2,
+   "paths_forms_kib": 42.0,
+   "paths_readers": {
+    "pyropdf": "''",
+    "xpdf": "''",
+    "mupdf": "''",
+    "pdfium": "''"
+   },
+   "paths_content_items": [
+    "Path"
+   ],
+   "static_content_items": [
+    "TextRun"
+   ]
+  }
+ ],
+ "two_weights": {
+  "programs": 2,
+  "text": "日本語\n日本語\n"
+ }
+}

@@ -3,9 +3,12 @@
 
 Run it with the Python of either engine:
 
-    python dump.py ENGINE OUT FILE...
+    python dump.py ENGINE OUT [--fallback-fonts] FILE...
 
-ENGINE is ``pylopdf`` or ``pyropdf``. For each FILE it writes
+ENGINE is ``pylopdf`` or ``pyropdf``. Each document renders without
+fallback fonts, which the dump turns off, unless ``--fallback-fonts`` keeps
+the faces of the installed font extras, which then render the CJK fonts that
+a document does not embed. For each FILE it writes
 ``OUT/<name>.json`` and, per page, ``OUT/<name>-<page>.rgb``: the samples of
 the page rendered at 72 dpi as opaque RGB. The JSON holds, per page, the text;
 the words, with and without exact boxes; the layout's dictionary, with
@@ -91,12 +94,17 @@ def _page(page: Any, raster: Path) -> dict[str, Any]:  # noqa: ANN401
 def main() -> None:
     """Dump the files that the arguments name."""
     engine_name, out, *files = sys.argv[1:]
+    fallback = files[:1] == ["--fallback-fonts"]
+    if fallback:
+        files = files[1:]
     engine = importlib.import_module(engine_name)
     out_dir = Path(out)
     out_dir.mkdir(parents=True, exist_ok=True)
     warnings.simplefilter("ignore")
     for file in map(Path, files):
         document = engine.open(file.read_bytes())
+        if not fallback:
+            document.fallback_fonts = {}
         pages = [_page(page, out_dir / f"{file.stem}-{index}.rgb") for index, page in enumerate(document.pages)]
         dump = {"pages": pages, "markdown": _guard(document.markdown)}
         (out_dir / f"{file.stem}.json").write_text(json.dumps(dump, ensure_ascii=False))
