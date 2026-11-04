@@ -466,10 +466,36 @@ for a TrueType program or through the charset of a CID-keyed CFF program.
 Content codes therefore stay the face's glyph IDs: content written earlier
 needs no rewrite, and a drawing after a save restores the provisional program
 with all its glyphs until the next save. Stamping one face on 100 pages embeds
-one program (`evidence/embedded-text`). A variable face draws at its default
-instance, and pyropdf refuses its other instances; how to draw them, and
-colour glyphs (COLR, SVG, or bitmap), which a CIDFont does not draw, is the
-owner's decision in #598.
+one program (`evidence/embedded-text`).
+
+A variable face draws at its default instance unless a weight selects another
+on its weight axis; a weight outside the axis refuses. Loading that instance
+writes a static TrueType program: every glyph keeps its ID, composites are
+flattened, and instructions go. From there it is a face like any other, with
+its own font dictionary, provisional program, and subset at save. The program
+is written at load and not at save because the provisional program needs all
+its glyphs from the first drawing, and a face of 17,936 glyphs takes about a
+third of a second. The program stays under the limit on font input, since
+flattening composites can amplify, and a coordinate that the variations push
+outside `i16` refuses. harfrust shapes the source at the instance, because
+kerning has variation deltas. CFF2 stays refused: it has no PDF font type.
+Drawing the instance's glyphs as paths in `/ActualText` is not an option, for
+the reason below (`evidence/font-instances-colour`, #598).
+
+A CIDFont draws a glyph's outline (ISO 32000-2 section 9.7), so a colour glyph
+(COLR, `sbix`, CBDT, or `SVG `) draws its monochrome fallback outline and reads
+as text. A colour glyph whose outline is empty refuses, rather than draw nothing
+under text that reads back, and a face with no outlines refuses at load.
+
+Colour itself is drawn as a Type 3 font whose glyph procedures paint the layers
+or the image, with a ToUnicode CMap, because that is the form that reads as
+text. `/ActualText` over paths or a Form XObject reads as nothing in pyropdf,
+xpdf, MuPDF, and PDFium: the last three honour it only over a shown glyph, and
+pyropdf does not read it. Bitmaps need the Type 3 writer and the image objects
+that the canvas has. COLR also needs a writer for shadings and soft masks, since
+97.7% of Segoe UI Emoji's colour glyphs use alpha in their gradients. The `SVG `
+table is not drawn: a renderer adds 23 crates and parses XML from the input with
+no hook for the budget.
 
 Dependent structures are settled rather than rebuilt by every call. A
 transaction marks what its writes make stale: appearance streams, outline
