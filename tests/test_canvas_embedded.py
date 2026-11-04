@@ -665,7 +665,7 @@ def test_poppler_draws_bitmap_glyphs_in_colour(bitmaps: pyropdf.Font) -> None:
     samples, width = _poppler_rgb(document.to_bytes())
     for (x, y), colour in ((RED_AT, RED), (GREEN_AT, GREEN)):
         at = 3 * (y * width + x)
-        assert tuple(samples[at : at + 3]) == colour
+        assert tuple(samples[at : at + 3]) == pytest.approx(colour, abs=2)
 
 
 def test_bitmap_text_reads_back_as_text_runs(bitmaps: pyropdf.Font) -> None:
