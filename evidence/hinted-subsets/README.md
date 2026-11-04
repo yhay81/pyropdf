@@ -30,8 +30,8 @@ uv run python evidence/hinted-subsets/run.py
   workspace builds against (`Cargo.toml`). It renders every page of each
   pair of documents at 72 dpi on white, with and without hinting, and counts
   the pixels that differ between the two documents and the largest
-  difference of a channel. pyropdf's own renderer leaves hinting off (#18),
-  so it is not the one that compares here.
+  difference of a channel. `tests/test_canvas_embedded.py` compares the
+  canvas text through `page.pixmap(hinting=True)` as well.
 - `run.py` also saves 100 stamps in the CFF face, as
   `test_100_stamps_save_no_larger_than_krilla` draws them, and prints the
   bytes of the file and of its program.
