@@ -4,7 +4,7 @@
 //! draws its monochrome fallback outline. One with no outline would draw
 //! nothing under text that reads back, so drawing refuses it. Measuring does
 //! not: a face may hold glyphs with outlines too, and the text may never be
-//! drawn. [`ColourTables::covers`] is the one place that says which tables
+//! drawn. `ColourTables::covers` is the one place that says which tables
 //! count; a table that canvas text learns to draw in colour leaves it.
 
 use skrifa::color::ColorGlyphCollection;
@@ -137,11 +137,7 @@ pub fn refused_colour_glyph(
         }
         budget.poll()?;
         let glyph = GlyphId::from(id);
-        if id == 0
-            || space == Some(glyph)
-            || !tables.covers(glyph)
-            || paints(&outlines, glyph)
-        {
+        if id == 0 || space == Some(glyph) || !tables.covers(glyph) || paints(&outlines, glyph) {
             passed[word] |= bit;
             continue;
         }

@@ -1,11 +1,13 @@
-//! Embedded faces: any bytes that load as a face shape a text, measure its
-//! glyphs, and compact to them; any bytes compact or refuse. A face that
+//! Embedded faces: any bytes that load as a face shape a text, look for the
+//! colour glyphs that drawing refuses, measure its glyphs, and compact to
+//! them; any bytes compact or refuse. A face that
 //! does not load is a typed error, never a panic: `Unsupported` only for
 //! data that reads as OpenType, and `Font` with its reason otherwise.
 
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use pyropdf_engine::fonts::colour::refused_colour_glyph;
 use pyropdf_engine::fonts::compact::compact;
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::shape::ShapingFace;
@@ -55,6 +57,9 @@ fuzz_target!(
     let Ok(glyphs) = shaping.shape(TEXT, &budget) else {
         return;
     };
+    if let Ok(Some(character)) = refused_colour_glyph(&face, TEXT, &glyphs, &budget) {
+        assert!(TEXT.contains(character), "a refusal names a character of the text");
+    }
     let measure = Measure::new(&face);
     let mut keep = Vec::new();
     for glyph in glyphs.into_vec() {

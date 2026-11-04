@@ -12,8 +12,9 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
   first page.
 - `content`: content streams split into contiguous operations whose bytes
   and tail are the input.
-- `fonts`: embedded faces that load from any bytes, shape a text, measure
-  its glyphs, and compact to them at save; bytes that do not load are a
+- `fonts`: embedded faces that load from any bytes, shape a text, look for
+  the colour glyphs that drawing refuses, measure its glyphs, and compact
+  to them at save; bytes that do not load are a
   typed error, and any bytes compact or refuse (#482).
 - `interpret`: rendering, SVG conversion, text extraction, and content
   items of the first four pages, of a whole file or of a content stream
