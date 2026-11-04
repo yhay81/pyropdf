@@ -108,9 +108,11 @@ WinAnsi (roughly Latin-1) characters and refuse other characters with
 `PdfError`. Symbol and ZapfDingbats use their built-in encodings: a
 WinAnsi byte selects a glyph, which may differ from the input character.
 For other scripts, load an OpenType face with
-`Font.from_file`, which the document embeds once. A colour glyph draws its
-monochrome fallback outline, and drawing one with no outline raises
-`PdfError`, rather than draw nothing under text that reads back.
+`Font.from_file`, which the document embeds once. A glyph that a PNG strike
+of `sbix` or CBDT holds draws in its own colours, whatever the fill, and reads
+back as text. Any other colour glyph draws its monochrome fallback outline,
+and drawing one with no outline raises `PdfError`, rather than draw nothing
+under text that reads back.
 
 ```python
 import pyropdf

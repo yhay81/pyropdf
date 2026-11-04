@@ -564,8 +564,18 @@ impl _Font {
                     .glyph(character)
                     .ok_or_else(|| embedded_missing(face, character))?;
                 let em = self.em();
-                Ok(measure
-                    .ink(glyph)
+                // A strike's image is what a canvas paints; a damaged table
+                // measures as the outline, as it does when nothing is drawn.
+                let font = face.font();
+                let painted = Bitmaps::read(&font)
+                    .ok()
+                    .and_then(|bitmaps| bitmaps.best(glyph, f64::from(u16::MAX)))
+                    .map(|found| {
+                        let [x, y, width, height] = found.rect;
+                        [x, y, x + width, y + height]
+                    });
+                Ok(painted
+                    .or_else(|| measure.ink(glyph))
                     .map_or((0.0, 0.0, 0.0, 0.0), |[x0, y0, x1, y1]| {
                         (x0 / em, y0 / em, x1 / em, y1 / em)
                     }))

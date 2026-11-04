@@ -239,7 +239,8 @@ impl<'b> Fonts<'b> {
         {
             return Ok(());
         }
-        self.budget.charge(LimitCode::MemorySize, text.len() as u64)?;
+        self.budget
+            .charge(LimitCode::MemorySize, text.len() as u64)?;
         self.charged = self.charged.saturating_add(text.len() as u64);
         slot.clear();
         slot.push_str(text);
@@ -333,12 +334,10 @@ impl Font {
         let Some(Value::Dict(procedures)) = dict.get("CharProcs") else {
             return Ok(None);
         };
-        if !names.iter().all(|name| {
-            matches!(
-                procedures.get(name.as_bytes()),
-                Some(Value::Reference(_))
-            )
-        }) {
+        if !names
+            .iter()
+            .all(|name| matches!(procedures.get(name.as_bytes()), Some(Value::Reference(_))))
+        {
             return Ok(None);
         }
         let Some(Value::Dict(resources)) = dict.get("Resources") else {

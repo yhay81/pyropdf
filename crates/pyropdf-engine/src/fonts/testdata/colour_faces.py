@@ -13,8 +13,9 @@ The faces are committed, so the tests do not need fontTools. Each draws:
 - a space that no table covers, and a no-break space that the table covers.
 
 In ``eblc``, the table is a monochrome bitmap table, which is not a colour
-table. ``bitmap-only`` has no outlines at all. ``sbix-jpeg`` and ``cbdt-raw``
-hold strikes that drawing does not read, and ``sbix-damaged`` PNGs that do not
+table, and ``eblc-only`` has that table and no outlines, which a load refuses.
+``bitmap-only`` has no outlines at all. ``sbix-jpeg`` and ``cbdt-raw`` hold
+strikes that drawing does not read, and ``sbix-damaged`` PNGs that do not
 decode.
 
 The ``bitmaps-*`` faces are for drawing in colour, with solid images that a
@@ -29,7 +30,8 @@ from the baseline. They draw:
 - ``N``: nothing, and a space that is 300 units wide;
 - U+E000 onward: ``MANY`` glyphs of the strike of 32, each its own colour.
 
-``-only`` faces have no outlines.
+``-only`` faces have no outlines. ``bitmaps-sbix-2048`` has an em of 2048 and
+none of the ``MANY``.
 """
 
 from __future__ import annotations
@@ -185,7 +187,9 @@ def face(kind: str) -> bytes:
     elif kind == "sbix-jpeg":
         font["sbix"] = _sbix(b"jpg ", b"\xff\xd8\xff\xd9")
     elif kind == "sbix-damaged":
-        font["sbix"] = _sbix(b"png ", b"\x89PNG\r\n\x1a\n" + bytes(32))
+        # A header that asks for one pixel, whose checksum and data do not hold.
+        header = struct.pack(">I4sIIBBBBB", 13, b"IHDR", 1, 1, 8, 2, 0, 0, 0)
+        font["sbix"] = _sbix(b"png ", b"\x89PNG\r\n\x1a\n" + header + bytes(16))
     elif kind == "cbdt":
         image = struct.pack(">BBbbB", 1, 1, 0, 1, 1) + struct.pack(">I", len(PNG)) + PNG
         _bitmaps(font, ("CBLC", "CBDT"), 3, 17, image)
@@ -193,13 +197,13 @@ def face(kind: str) -> bytes:
         # Image format 1: small metrics, then one pixel of 32 bits.
         image = struct.pack(">BBbbB", 1, 1, 0, 1, 1) + bytes(4)
         _bitmaps(font, ("CBLC", "CBDT"), 3, 1, image)
-    elif kind == "eblc":
+    elif kind in {"eblc", "eblc-only"}:
         # Image format 2: small metrics, then one byte of a 1x1 bitmap.
         image = struct.pack(">BBbbB", 1, 1, 0, 1, 1) + b"\x80"
         _bitmaps(font, ("EBLC", "EBDT"), 2, 2, image)
     elif kind in {"svg", "svg-cff"}:
         _svg(font)
-    if kind == "bitmap-only":
+    if kind in {"bitmap-only", "eblc-only"}:
         del font["glyf"]
         del font["loca"]
     out = io.BytesIO()
@@ -218,10 +222,10 @@ def _png(size: int, rgba: tuple[int, int, int, int]) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
 
 
-def _bitmap_strikes() -> tuple[tuple[int, dict[str, bytes]], ...]:
+def _bitmap_strikes(many: int) -> tuple[tuple[int, dict[str, bytes]], ...]:
     """Return the strikes of the ``bitmaps-*`` faces: pixels per em, and each glyph's PNG."""
     small = {"R": _png(32, (255, 0, 0, 255)), "T": _png(32, (255, 0, 0, 128))}
-    for index in range(MANY):
+    for index in range(many):
         small[f"many{index}"] = _png(32, (index % 256, index // 256, 128, 255))
     return (32, small), (120, {"R": _png(120, (255, 0, 0, 255)), "G": _png(120, (0, 255, 0, 255))})
 
@@ -243,7 +247,9 @@ def _sbix_strikes(order: list[str], strikes: tuple[tuple[int, dict[str, bytes]],
             records += record
             at += len(record)
         offsets.append(at)
-        bodies.append(struct.pack(">HH", ppem, 72) + b"".join(struct.pack(">I", offset) for offset in offsets) + records)
+        bodies.append(
+            struct.pack(">HH", ppem, 72) + b"".join(struct.pack(">I", offset) for offset in offsets) + records
+        )
     at = 8 + 4 * len(bodies)
     starts = []
     for body in bodies:
@@ -292,13 +298,23 @@ def _cbdt_strikes(font: TTFont, order: list[str], strikes: tuple[tuple[int, dict
     font["CBDT"] = _opaque("CBDT", data)
 
 
-def bitmap_face(table: str, *, outlines: bool) -> bytes:
-    """Return the ``bitmaps-*`` face of ``table``."""
-    order = [".notdef", "R", "G", "T", "D", "O", "N", "space", *(f"many{index}" for index in range(MANY))]
+def bitmap_face(
+    table: str,
+    *,
+    outlines: bool,
+    em: int = 1000,
+    many: int = MANY,
+    strikes: tuple[tuple[int, dict[str, bytes]], ...] | None = None,
+) -> bytes:
+    """Return the ``bitmaps-*`` face of ``table``, of ``em`` units with ``many`` of its numbered glyphs.
+
+    ``strikes`` replaces its strikes, each pixels per em with each glyph's PNG.
+    """
+    order = [".notdef", "R", "G", "T", "D", "O", "N", "space", *(f"many{index}" for index in range(many))]
     cmap = {ord(name): name for name in "RGTDON"} | {0x20: "space"}
-    cmap |= {0xE000 + index: f"many{index}" for index in range(MANY)}
-    builder = FontBuilder(1000, isTTF=True)
-    builder.setupHead(unitsPerEm=1000, created=0, modified=0)
+    cmap |= {0xE000 + index: f"many{index}" for index in range(many)}
+    builder = FontBuilder(em, isTTF=True)
+    builder.setupHead(unitsPerEm=em, created=0, modified=0)
     builder.setupGlyphOrder(order)
     builder.setupCharacterMap(cmap)
     glyphs = {}
@@ -308,17 +324,18 @@ def bitmap_face(table: str, *, outlines: bool) -> bytes:
             _draw(pen, SQUARE)
         glyphs[name] = pen.glyph()
     builder.setupGlyf(glyphs)
-    advances = {name: (1000, 0) for name in order} | {"O": (700, 0), "space": (300, 0)}
+    advances = dict.fromkeys(order, (em, 0)) | {"O": (em * 7 // 10, 0), "space": (em * 3 // 10, 0)}
     builder.setupHorizontalMetrics(advances)
-    builder.setupHorizontalHeader(ascent=1000, descent=-200)
+    builder.setupHorizontalHeader(ascent=em, descent=-em // 5)
     builder.setupNameTable({"familyName": f"Bitmaps {table}", "styleName": "Regular"})
     builder.setupOS2()
     builder.setupPost()
     font = builder.font
+    strikes = strikes or _bitmap_strikes(many)
     if table == "sbix":
-        font["sbix"] = _sbix_strikes(order, _bitmap_strikes())
+        font["sbix"] = _sbix_strikes(order, strikes)
     else:
-        _cbdt_strikes(font, order, _bitmap_strikes())
+        _cbdt_strikes(font, order, strikes)
     if not outlines:
         del font["glyf"]
         del font["loca"]
@@ -330,12 +347,13 @@ def bitmap_face(table: str, *, outlines: bool) -> bytes:
 def main() -> None:
     """Write every face next to this script."""
     kinds = ("colr0", "colr1", "sbix", "cbdt", "eblc", "svg", "svg-cff", "bitmap-only")
-    for kind in (*kinds, "sbix-jpeg", "cbdt-raw", "sbix-damaged"):
+    for kind in (*kinds, "sbix-jpeg", "cbdt-raw", "sbix-damaged", "eblc-only"):
         suffix = "otf" if kind == "svg-cff" else "ttf"
         (HERE / f"colour-{kind}.{suffix}").write_bytes(face(kind))
     for table in ("sbix", "cbdt"):
         (HERE / f"colour-bitmaps-{table}.ttf").write_bytes(bitmap_face(table, outlines=True))
         (HERE / f"colour-bitmaps-{table}-only.ttf").write_bytes(bitmap_face(table, outlines=False))
+    (HERE / "colour-bitmaps-sbix-2048.ttf").write_bytes(bitmap_face("sbix", outlines=True, em=2048, many=0))
 
 
 if __name__ == "__main__":

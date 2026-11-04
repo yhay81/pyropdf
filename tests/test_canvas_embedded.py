@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import pyropdf
-from pyropdf import _fonts
+from pyropdf import FreeText, _fonts
 
 FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 JAPANESE = FONTS / "NotoSansJP-subset.otf"
@@ -48,11 +48,11 @@ def arabic() -> pyropdf.Font:
 
 
 @pytest.fixture(
-    params=["colr0.ttf", "colr1.ttf", "sbix.ttf", "cbdt.ttf", "svg.ttf", "svg-cff.otf"],
-    ids=["colr0", "colr1", "sbix", "cbdt", "svg", "svg-cff"],
+    params=["colr0.ttf", "colr1.ttf", "sbix-jpeg.ttf", "cbdt-raw.ttf", "svg.ttf", "svg-cff.otf"],
+    ids=["colr0", "colr1", "sbix-jpeg", "cbdt-raw", "svg", "svg-cff"],
 )
 def colour(request: pytest.FixtureRequest) -> pyropdf.Font:
-    """Return a face of ``colour_faces.py``, whose docstring says what its glyphs are."""
+    """Return a face of ``colour_faces.py`` whose colour glyphs a canvas cannot paint, as its docstring says."""
     return pyropdf.Font.from_file(FONTS / f"colour-{request.param}")
 
 
@@ -464,11 +464,6 @@ def test_a_monochrome_bitmap_table_is_not_a_colour_table() -> None:
     assert page.text().strip() == "A"
 
 
-def test_a_face_with_no_outlines_refuses_at_load() -> None:
-    with pytest.raises(pyropdf.PdfError, match="the face has no outlines"):
-        pyropdf.Font.from_file(FONTS / "colour-bitmap-only.ttf")
-
-
 def test_stroked_and_rotated_embedded_text_extracts(japanese: pyropdf.Font) -> None:
     document, page = _new_page()
     with page.draw() as canvas:
@@ -578,3 +573,422 @@ def test_poppler_draws_the_saved_subset_where_hayro_does(font: str, text: str, r
     poppler_box = _ink_box(poppler, width)
     hayro_box = _ink_box(bytes(hayro), width)
     assert all(abs(a - b) <= 2 for a, b in zip(poppler_box, hayro_box, strict=True)), (poppler_box, hayro_box)
+
+
+#: Where each glyph of a ``bitmaps-*`` face's ``"RG"`` paints at 24 points from (20, 50) on a 200 by 60 page.
+RED_AT = (32, 38)
+GREEN_AT = (56, 38)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+MANY = "".join(chr(0xE000 + index) for index in range(300))
+
+
+@pytest.fixture(params=["sbix", "cbdt"])
+def bitmaps(request: pytest.FixtureRequest) -> pyropdf.Font:
+    """Return a ``bitmaps-*`` face of ``colour_faces.py``, whose docstring says what its glyphs are."""
+    return pyropdf.Font.from_file(FONTS / f"colour-bitmaps-{request.param}.ttf")
+
+
+@pytest.fixture(params=["sbix-only", "cbdt-only"])
+def bitmaps_only(request: pytest.FixtureRequest) -> pyropdf.Font:
+    """Return a ``bitmaps-*`` face with no outlines."""
+    return pyropdf.Font.from_file(FONTS / f"colour-bitmaps-{request.param}.ttf")
+
+
+def _objects(document: pyropdf.Document) -> list[object]:
+    return [document.objects[number] for number in document.objects]
+
+
+def _type3_fonts(document: pyropdf.Document) -> list[pyropdf.Dictionary]:
+    return [
+        value
+        for value in _objects(document)
+        if isinstance(value, pyropdf.Dictionary) and value.get("Subtype") == "Type3"
+    ]
+
+
+def _glyph_images(document: pyropdf.Document) -> list[pyropdf.Stream]:
+    """Return the images that the Type 3 fonts' resources name."""
+    found = {}
+    for font in _type3_fonts(document):
+        xobjects = font["Resources"].get("XObject", {})
+        for name in xobjects:
+            found[xobjects[name].xref] = xobjects[name]
+    return list(found.values())
+
+
+def _procedures(document: pyropdf.Document) -> dict[str, bytes]:
+    """Return every Type 3 glyph's procedure, by its name."""
+    found = {}
+    for font in _type3_fonts(document):
+        procedures = font["CharProcs"]
+        for name in procedures:
+            assert str(name) not in found
+            found[str(name)] = procedures[name].read()
+    return found
+
+
+def _poppler_rgb(data: bytes) -> tuple[bytes, int]:
+    """Return poppler's 72 dpi colour render of the first page, and its width."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "page.pdf"
+        path.write_bytes(data)
+        ppm = subprocess.run(  # noqa: S603 - a fixed tool on a file of the test's own.
+            [shutil.which("pdftoppm") or "pdftoppm", "-r", "72", "-singlefile", str(path)],
+            check=True,
+            capture_output=True,
+        ).stdout
+    # A binary PPM: "P6", the width and height, the maximum, then the samples.
+    header = ppm.split(maxsplit=4)
+    width, height = int(header[1]), int(header[2])
+    return ppm[len(ppm) - 3 * width * height :], width
+
+
+def test_bitmap_glyphs_draw_in_colour_in_hayro(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("RG", (20, 50), font=bitmaps, size=24)
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        pixmap = drawn.pixmap(dpi=72)
+        assert pixmap.pixel(*RED_AT)[:3] == RED
+        assert pixmap.pixel(*GREEN_AT)[:3] == GREEN
+        assert pixmap.pixel(100, 38)[:3] == (255, 255, 255)
+
+
+@pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
+def test_poppler_draws_bitmap_glyphs_in_colour(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("RG", (20, 50), font=bitmaps, size=24)
+
+    samples, width = _poppler_rgb(document.to_bytes())
+    for (x, y), colour in ((RED_AT, RED), (GREEN_AT, GREEN)):
+        at = 3 * (y * width + x)
+        assert tuple(samples[at : at + 3]) == colour
+
+
+def test_bitmap_text_reads_back_as_text_runs(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("RG O R", (20, 80), font=bitmaps, size=24)
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        assert drawn.text().strip() == "RG O R"
+        runs = drawn.content(paths=False, images=False).text_runs
+        assert {run.font.is_type3 for run in runs} == {True, False}
+        assert "".join(glyph.text or "" for run in runs for glyph in run.glyphs) == "RG O R"
+
+
+def test_an_em_other_than_1000_keeps_the_widths_in_the_units_of_the_font_matrix() -> None:
+    face = pyropdf.Font.from_file(FONTS / "colour-bitmaps-sbix-2048.ttf")
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("RRG", (20, 50), font=face, size=24)
+
+    (font,) = _type3_fonts(document)
+    assert font["FontMatrix"][0] == pytest.approx(1 / 2048)
+    assert list(font["Widths"]) == [2048, 2048]
+    assert page.text().strip() == "RRG"
+    glyphs = _glyphs(page)
+    assert [glyph.origin.x for glyph in glyphs] == pytest.approx([20, 44, 68], abs=1e-3)
+    pixmap = page.pixmap(dpi=72)
+    assert pixmap.pixel(32, 38)[:3] == RED
+    assert pixmap.pixel(80, 38)[:3] == GREEN
+
+
+def test_a_type3_font_has_the_shape_that_readers_need(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("RG", (20, 80), font=bitmaps, size=24)
+
+    (font,) = _type3_fonts(document)
+    assert font["FontMatrix"][0] == pytest.approx(0.001)
+    assert (font["FirstChar"], font["LastChar"]) == (0, 1)
+    assert list(font["Widths"]) == [1000, 1000]
+    assert list(font["FontBBox"]) == [0, 0, 1000, 1000]
+    assert [str(name) for name in font["Encoding"]["Differences"]][1:] == ["g1s120", "g2s120"]
+    assert _procedures(document)["g1s120"].startswith(b"1000 0 d0\n")
+    assert b"<00> <0052>" in font["ToUnicode"].read()
+
+
+def test_a_fill_does_not_change_a_bitmap_glyph(bitmaps: pyropdf.Font) -> None:
+    _document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("RO", (20, 50), font=bitmaps, size=24, fill=pyropdf.Color(0, 0, 1))
+        canvas.text("R", (120, 50), font=bitmaps, size=24, fill=None, stroke=pyropdf.Color(0, 0, 1))
+
+    pixmap = page.pixmap(dpi=72)
+    assert pixmap.pixel(*RED_AT)[:3] == RED
+    assert pixmap.pixel(55, 38)[:3] == (0, 0, 255)
+    assert pixmap.pixel(132, 38)[:3] == RED
+
+
+def test_a_translucent_bitmap_keeps_its_soft_mask(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("T", (20, 50), font=bitmaps, size=7)
+        canvas.text("T", (40, 50), font=bitmaps, size=24)
+
+    (image,) = _glyph_images(document)
+    assert image["SMask"]["ColorSpace"] == "DeviceGray"
+    red, green, blue = page.pixmap(dpi=72).pixel(52, 38)[:3]
+    assert red == 255
+    assert green == pytest.approx(127, abs=3)
+    assert blue == pytest.approx(127, abs=3)
+
+
+def test_a_face_with_bitmaps_and_no_outlines_draws_and_reads(bitmaps_only: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("R G", (20, 50), font=bitmaps_only, size=24)
+        # A glyph with no bitmap paints nothing, as an empty glyph does.
+        canvas.text("N", (120, 50), font=bitmaps_only, size=24)
+
+    assert _descriptor_programs(document) == set()
+    assert {font.subtype for font in page.fonts()} == {"Type3"}
+    assert page.text().split() == ["R", "G", "N"]
+    glyphs = _glyphs(page)
+    assert [glyph.origin.x for glyph in glyphs[:3]] == pytest.approx([20, 44, 51.2], abs=1e-3)
+    procedures = _procedures(document)
+    assert procedures["g7"] == b"300 0 d0"
+    assert procedures["g6"] == b"1000 0 d0"
+    pixmap = pyropdf.open(document.to_bytes()).pages[0].pixmap(dpi=72)
+    assert pixmap.pixel(*RED_AT)[:3] == RED
+    assert pixmap.pixel(132, 38)[:3] == (255, 255, 255)
+
+
+def test_only_the_canvas_draws_a_face_with_no_outlines(bitmaps_only: pyropdf.Font) -> None:
+    _document, page = _new_page()
+    with pytest.raises(pyropdf.PdfError, match="only canvas text can draw it"):
+        page.annotations.add(FreeText((20, 20, 200, 60), "N", font=bitmaps_only))
+
+
+def test_a_face_with_no_outlines_or_colour_bitmaps_refuses_at_load() -> None:
+    with pytest.raises(pyropdf.PdfError, match="the face has no outlines or colour bitmaps"):
+        pyropdf.Font.from_file(FONTS / "colour-eblc-only.ttf")
+
+
+def test_a_document_holds_one_font_per_256_colour_glyphs(bitmaps: pyropdf.Font) -> None:
+    document = pyropdf.Document()
+    for text in (MANY[:100], MANY[50:], MANY):
+        page = document.pages.new((400, 100))
+        with page.draw() as canvas:
+            canvas.text(text, (10, 40), font=bitmaps, size=1)
+
+    for held in (document, pyropdf.open(document.to_bytes())):
+        counts = sorted(len(font["CharProcs"]) for font in _type3_fonts(held))
+        assert counts == [44, 256]
+        # Each glyph's procedure and image once, however many drawings use them.
+        assert len(_procedures(held)) == 300
+        assert len(_glyph_images(held)) == 300
+        procedure_objects = {font["CharProcs"][name].xref for font in _type3_fonts(held) for name in font["CharProcs"]}
+        assert len(procedure_objects) == 300
+        assert held.pages[2].text().replace("\n", "") == MANY
+    assert len(_descriptor_programs(document)) == 0
+
+
+def test_a_mixed_run_keeps_its_order_and_positions(bitmaps: pyropdf.Font) -> None:
+    _document, page = _new_page()
+    text = "RORGO R O"
+    x, y, size = 20.5, 80.0, 18.0
+    with page.draw() as canvas:
+        canvas.text(text, (x, y), font=bitmaps, size=size)
+
+    glyphs = _glyphs(page)
+    assert [glyph.text for glyph in glyphs] == list(text)
+    for index, glyph in enumerate(glyphs):
+        # Each glyph starts where the shaped advances before it end.
+        assert glyph.origin.x == pytest.approx(x + bitmaps.text_width(text[:index], size), abs=1e-2)
+        assert glyph.origin.y == pytest.approx(y, abs=1e-3)
+    assert page.text().strip() == text
+
+
+def test_a_justified_mixed_line_reaches_the_edge(bitmaps: pyropdf.Font) -> None:
+    _document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.textbox((20, 20, 380, 180), "R O G " * 12, font=bitmaps, size=18, align="justify")
+
+    lines: dict[float, list[pyropdf.Glyph]] = {}
+    for glyph in _glyphs(page):
+        lines.setdefault(round(glyph.origin.y, 3), []).append(glyph)
+    first = lines[min(lines)]
+    assert first[0].origin.x == pytest.approx(20, abs=1e-3)
+    # The last is a red or green glyph one em wide, or an outline that the face's advance ends.
+    assert max(glyph.origin.x for glyph in first) + 18 == pytest.approx(380, abs=8)
+
+
+def test_undo_removes_what_a_drawing_added(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("R", (20, 50), font=bitmaps, size=24)
+    before = set(document.objects)
+    with page.draw() as canvas:
+        canvas.text("GO", (60, 50), font=bitmaps, size=24)
+    assert set(_procedures(document)) == {"g1s120", "g2s120"}
+    assert len(_glyph_images(document)) == 2
+    assert len(_descriptor_programs(document)) == 1
+
+    document.history.undo()
+    assert set(document.objects) == before
+    assert set(_procedures(document)) == {"g1s120"}
+    assert len(_glyph_images(document)) == 1
+    assert document.pages[0].text().strip() == "R"
+
+    document.history.redo()
+    assert set(_procedures(document)) == {"g1s120", "g2s120"}
+    assert document.pages[0].text().split() == ["R", "GO"]
+
+    document.history.undo()
+    document.history.undo()
+    assert _type3_fonts(document) == []
+    page = document.pages[0]
+    with page.draw() as canvas:
+        canvas.text("G", (60, 50), font=bitmaps, size=24)
+    (font,) = _type3_fonts(document)
+    assert [str(name) for name in font["Encoding"]["Differences"]][1:] == ["g2s120"]
+    assert page.text().strip() == "G"
+
+
+def test_a_redo_does_not_duplicate_the_fonts_that_it_brings_back(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("R", (20, 50), font=bitmaps, size=24)
+    document.history.undo()
+    document.history.redo()
+    page = document.pages[0]
+    with page.draw() as canvas:
+        canvas.text("R", (60, 50), font=bitmaps, size=24)
+
+    assert len(_type3_fonts(document)) == 1
+    assert len(_procedures(document)) == 1
+
+
+def test_a_save_writes_only_the_glyphs_that_the_document_draws(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("R", (20, 50), font=bitmaps, size=24)
+    colour_only = document.to_bytes()
+    reopened = pyropdf.open(colour_only)
+    assert set(_procedures(reopened)) == {"g1s120"}
+    assert len(_glyph_images(reopened)) == 1
+    # A drawing with no outlines embeds no program of the face.
+    assert _descriptor_programs(reopened) == set()
+    assert len(colour_only) < 4096
+
+    with page.draw() as canvas:
+        canvas.text("O", (60, 50), font=bitmaps, size=24)
+    reopened = pyropdf.open(document.to_bytes())
+    (program,) = _descriptor_programs(reopened)
+    data = reopened.objects[program].read()
+    # The compacted program keeps outlines, not the strikes.
+    assert b"sbix" not in data
+    assert b"CBDT" not in data
+    assert len(data) < 2048
+    assert reopened.pages[0].text().split() == ["R", "O"]
+
+
+def test_a_later_drawing_after_a_save_adds_to_the_same_font(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("R", (20, 50), font=bitmaps, size=24)
+    first = document.to_bytes()
+    with page.draw() as canvas:
+        canvas.text("G", (60, 50), font=bitmaps, size=24)
+    second = pyropdf.open(document.to_bytes())
+
+    assert pyropdf.open(first).pages[0].text().strip() == "R"
+    assert second.pages[0].text().split() == ["R", "G"]
+    (font,) = _type3_fonts(second)
+    assert len(font["CharProcs"]) == 2
+
+
+def test_a_drawing_takes_the_strike_that_its_size_needs(bitmaps: pyropdf.Font) -> None:
+    document, page = _new_page(400, 100)
+    with page.draw() as canvas:
+        canvas.text("R", (20, 50), font=bitmaps, size=7)
+        canvas.text("R", (40, 50), font=bitmaps, size=7)
+        canvas.text("R", (60, 50), font=bitmaps, size=24)
+        canvas.text("G", (100, 50), font=bitmaps, size=7)
+    with page.draw() as canvas:
+        canvas.text("R", (140, 50), font=bitmaps, size=96)
+
+    assert set(_procedures(document)) == {"g1s32", "g1s120", "g2s120"}
+    assert sorted(image["Width"] for image in _glyph_images(document)) == [32, 120, 120]
+    # Both bitmaps of a glyph read back as its text, at their sizes.
+    assert sorted("".join(page.text().split())) == sorted("RRRGR")
+    # The image of each strike covers one em.
+    pixmap = page.pixmap(dpi=72)
+    assert pixmap.pixel(23, 47)[:3] == RED
+    assert pixmap.pixel(70, 40)[:3] == RED
+
+
+def test_a_dupe_record_draws_the_image_of_the_glyph_that_it_names() -> None:
+    face = pyropdf.Font.from_file(FONTS / "colour-bitmaps-sbix.ttf")
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("RD", (20, 50), font=face, size=24)
+
+    assert set(_procedures(document)) == {"g1s120", "g4s120"}
+    assert len(_glyph_images(document)) == 1
+    assert page.pixmap(dpi=72).pixel(56, 38)[:3] == RED
+    assert page.text().strip() == "RD"
+
+
+def test_the_same_png_anywhere_in_a_document_is_one_image(bitmaps: pyropdf.Font) -> None:
+    document = pyropdf.Document()
+    for text in ("R", "R"):
+        page = document.pages.new((200, 60))
+        with page.draw() as canvas:
+            canvas.text(text, (20, 50), font=bitmaps, size=24)
+
+    assert len(_procedures(document)) == 1
+    assert len(_glyph_images(document)) == 1
+
+
+@pytest.mark.parametrize(
+    ("limits", "code"),
+    [
+        (pyropdf.DocumentLimits(max_total_decompressed_size=1000), "total_decompressed_size"),
+        (pyropdf.DocumentLimits(max_memory_size=30_000), "memory_size"),
+    ],
+    ids=["decoded", "memory"],
+)
+def test_a_limit_refuses_a_bitmap_and_writes_nothing(
+    bitmaps: pyropdf.Font, limits: pyropdf.DocumentLimits, code: str
+) -> None:
+    document = pyropdf.Document(limits=limits)
+    page = document.pages.new((400, 100))
+    numbers = set(document.objects)
+    steps = document.history.steps
+
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.text(MANY[:32] + "RG", (10, 40), font=bitmaps, size=24)
+
+    assert raised.value.code == code
+    assert set(document.objects) == numbers
+    assert document.history.steps == steps
+    assert _type3_fonts(document) == []
+    assert page.text().strip() == ""
+
+
+def test_a_damaged_png_refuses_as_a_font_error_and_a_caught_refusal_writes_nothing() -> None:
+    face = pyropdf.Font.from_file(FONTS / "colour-sbix-damaged.ttf")
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("C", (20, 40), font=face, size=12)
+        numbers = set(document.objects)
+        with pytest.raises(pyropdf.PdfError, match="cannot draw its glyph 1"):
+            canvas.text("CA", (20, 80), font=face, size=12)
+        assert set(document.objects) == numbers
+        canvas.text("C", (20, 120), font=face, size=12)
+
+    assert _type3_fonts(document) == []
+    assert page.text().split() == ["C", "C"]
+
+
+def test_a_bitmap_glyph_measures_by_its_image(bitmaps: pyropdf.Font) -> None:
+    assert bitmaps.char_bbox("R") == pytest.approx((0, 0, 1, 1))
+    # A glyph with no bitmap keeps its outline's box.
+    assert bitmaps.char_bbox("O") == pytest.approx((0, 0, 0.8, 0.8))
+    assert bitmaps.text_width("RO", 10) == pytest.approx(17)

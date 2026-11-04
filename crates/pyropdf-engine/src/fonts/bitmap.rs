@@ -131,12 +131,13 @@ impl<'a> Bitmaps<'a> {
         if bitmap.width == 0 || bitmap.height == 0 {
             return None;
         }
-        let across = self.em / f64::from(bitmap.ppem_x);
-        let up = self.em / f64::from(ppem);
-        let width = f64::from(bitmap.width) * across;
-        let height = f64::from(bitmap.height) * up;
-        let x = f64::from(bitmap.bearing_x) + f64::from(bitmap.inner_bearing_x) * across;
-        let mut y = f64::from(bitmap.bearing_y) + f64::from(bitmap.inner_bearing_y) * up;
+        // Multiplying first keeps whole units whole.
+        let across = |pixels: f32| f64::from(pixels) * self.em / f64::from(bitmap.ppem_x);
+        let up = |pixels: f32| f64::from(pixels) * self.em / f64::from(ppem);
+        let width = f64::from(bitmap.width) * self.em / f64::from(bitmap.ppem_x);
+        let height = f64::from(bitmap.height) * self.em / f64::from(ppem);
+        let x = f64::from(bitmap.bearing_x) + across(bitmap.inner_bearing_x);
+        let mut y = f64::from(bitmap.bearing_y) + up(bitmap.inner_bearing_y);
         if bitmap.placement_origin == Origin::TopLeft {
             y -= height;
         }

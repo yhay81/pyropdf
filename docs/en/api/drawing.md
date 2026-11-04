@@ -164,8 +164,10 @@ defaults to Helvetica. Text is filled, stroked, or both; at least one
 is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
 default (`max_text_size`, `None` for trusted input), refused with
 `LimitError` code `text_input_size` or `text_line_count`.
-A colour glyph with no outline in an OpenType face raises
-`PdfError`, naming the character; see `Font`.
+A colour glyph that a PNG strike holds draws in its own colours, which
+`fill` and `stroke` do not change. Any other colour glyph with no
+outline in an OpenType face raises `PdfError`, naming the
+character; see `Font`.
 
 ### `Canvas.textbox`
 
