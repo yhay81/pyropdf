@@ -10,6 +10,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyFloat, PyList, PyString, PyTuple};
 use pyropdf_engine::extract::{self, Error};
+use pyropdf_engine::fonts::colour::refused_colour_glyph;
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
 use pyropdf_engine::fonts::{self, Format};
@@ -484,8 +485,10 @@ impl _Font {
         }
     }
 
-    /// Shapes one line of `text` in an embedded face, in visual order.
-    /// With `operation`, as for [`_Font::encode`].
+    /// Shapes one line of `text` to draw it in an embedded face, in visual
+    /// order, and refuses a colour glyph with no outline, which would draw
+    /// nothing under text that reads back. With `operation`, as for
+    /// [`_Font::encode`].
     #[pyo3(signature = (text, *, operation=None))]
     fn shape(
         &self,
@@ -522,7 +525,13 @@ impl _Font {
                 characters[at..at + character.len_utf8()].fill(index);
             }
             characters[text.len()] = text.chars().count();
-            Ok(shaped(face, text, budget)?
+            let glyphs = shaped(face, text, budget)?;
+            if let Some(character) = refused_colour_glyph(face, text, &glyphs, budget)
+                .map_err(|error| shape_error(&error))?
+            {
+                return Err(colour_refused(face, character));
+            }
+            Ok(glyphs
                 .into_iter()
                 .map(|glyph| {
                     (
@@ -886,6 +895,15 @@ fn missing_glyph(font: Base14Font, codepoint: u32) -> PyErr {
 fn embedded_missing(face: &Face, character: char) -> PyErr {
     PdfError::new_err(format!(
         "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
+        face.full_name,
+        u32::from(character)
+    ))
+}
+
+/// Refuses a character whose glyph is a colour glyph with no outline, naming it.
+fn colour_refused(face: &Face, character: char) -> PyErr {
+    PdfError::new_err(format!(
+        "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
         face.full_name,
         u32::from(character)
     ))
