@@ -1,0 +1,1330 @@
+{
+ "samples": {
+  "arabic, Noto": {
+   "text": "مرحبا عالم",
+   "glyphs_without_text": 1
+  },
+  "arabic, Calibri": {
+   "text": "مرحبا بكم في شمس",
+   "glyphs_without_text": 2
+  },
+  "hebrew, Noto": {
+   "text": "שָׁלוֹם עולם",
+   "glyphs_without_text": 0
+  },
+  "thai, Tahoma": {
+   "text": "น้ำ คำ ทำ",
+   "glyphs_without_text": 7
+  },
+  "tamil, Nirmala": {
+   "text": "கொடு கோடு",
+   "glyphs_without_text": 4
+  },
+  "bengali, Nirmala": {
+   "text": "কোন বৌ",
+   "glyphs_without_text": 4
+  },
+  "devanagari, Nirmala": {
+   "text": "श्री हिन्दी",
+   "glyphs_without_text": 2
+  },
+  "lao, Leelawadee": {
+   "text": "ນຳ ຄຳ",
+   "glyphs_without_text": 4
+  },
+  "khmer, Leelawadee": {
+   "text": "ខ្មែរ កៅ",
+   "glyphs_without_text": 3
+  },
+  "myanmar, Myanmar Text": {
+   "text": "မြန်မာ ကို",
+   "glyphs_without_text": 2
+  }
+ },
+ "scores": {
+  "before this change": {
+   "arabic, Noto": {
+    "read": {
+     "pyropdf": "مرحبا عالم",
+     "pyropdf_warned": "True",
+     "xpdf": "‫مرحبا عالم‬",
+     "pdfjs": "مرحب&ا عالم",
+     "mupdf": "مرحب&ا عالم",
+     "pdfium": "& مرحبا عالم",
+     "pdfminer": "ملاع ا(cid:38)بحرم",
+     "pypdf": "مرحب&ا عالم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "arabic, Calibri": {
+    "read": {
+     "pyropdf": "مرحبا بكم في شمس",
+     "pyropdf_warned": "True",
+     "xpdf": "‫مرحبا بكم في شمس‬",
+     "pdfjs": "شمسᢝ ᡧ مرحبا بكم يف",
+     "mupdf": "ᢝ شمس\nمرحبا بكم يفᡧ",
+     "pdfium": "شمس\r\nᢝ\r\nᡧ\r\nمرحبا بكم يف",
+     "pdfminer": "سمش  (cid:6301)\n\nفي مكب ابحرم\n\n(cid:6247)",
+     "pypdf": "شمس ᢝᡧ في مرحبا بكم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "hebrew, Noto": {
+    "read": {
+     "pyropdf": "שָׁלוֹם עולם",
+     "pyropdf_warned": "False",
+     "xpdf": "‫ָׁשלֹום עולם‬",
+     "pdfjs": "שָׁלוֹם עולם",
+     "mupdf": "שָׁלוֹם עולם",
+     "pdfium": "שׁ ָ לוֹ ם עולם",
+     "pdfminer": "ׁש\nםלוע ם ֹול ָ",
+     "pypdf": "שָׁלוֹם עולם"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "order",
+     "mupdf": "exact",
+     "pdfium": "order",
+     "pdfjs": "exact",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "thai, Tahoma": {
+    "read": {
+     "pyropdf": "น้ำ คำ ทำ",
+     "pyropdf_warned": "True",
+     "xpdf": "น้ำ คำ ทำ",
+     "pdfjs": "น้ำѼѸѥ คำѼѥ ทำѼѥ",
+     "mupdf": "น้ำѼѸѥ คำѼѥ ทำѼѥ",
+     "pdfium": "น้ำѼѸѥ คำѼѥ ทำѼѥ",
+     "pdfminer": "น้ำ(cid:1148)\n\n(cid:1144)(cid:1125) คำ(cid:1148)(cid:1125) ทำ(cid:1148)(cid:1125)",
+     "pypdf": "น้ำѼѸѥ คำѼѥ ทำѼѥ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "tamil, Nirmala": {
+    "read": {
+     "pyropdf": "கொ டு கோ டு",
+     "pyropdf_warned": "True",
+     "xpdf": "கொ டு கோ டு",
+     "pdfjs": "கொ୷ஏடு கோ୷ஏடு",
+     "mupdf": "கொ୷ஏடு கோ୷ஏடு",
+     "pdfium": "கொ୷ஏடு கோ୷ஏடு",
+     "pdfminer": "கொ(cid:2935)(cid:2959)டு கோ(cid:2935)(cid:2959)டு",
+     "pypdf": "கொ୷ஏடு கோ୷ஏடு"
+    },
+    "score": {
+     "pyropdf": "space",
+     "xpdf": "space",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "bengali, Nirmala": {
+    "read": {
+     "pyropdf": "কো ন বৌ",
+     "pyropdf_warned": "True",
+     "xpdf": "কো ন বৌ",
+     "pdfjs": "কো͵Κন কো΋δ",
+     "mupdf": "কো͵Κন বৌ΋δ",
+     "pdfium": "কো͵Κন বৌ΋δ",
+     "pdfminer": "কো(cid:885)(cid:922)ন কো(cid:907)(cid:948)",
+     "pypdf": "কো͵Κন কো΋δ"
+    },
+    "score": {
+     "pyropdf": "space",
+     "xpdf": "space",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "devanagari, Nirmala": {
+    "read": {
+     "pyropdf": "श्री िहन्दी",
+     "pyropdf_warned": "True",
+     "xpdf": "श्री िहन्दी",
+     "pdfjs": "श्रीı िहन्दीı",
+     "mupdf": "श्रीı िहन्दीı",
+     "pdfium": "श्रीı िहन्दीı",
+     "pdfminer": "श्री(cid:305) िहन्दी(cid:305)",
+     "pypdf": "श्रीı िहन्दीı"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "order",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "lao, Leelawadee": {
+    "read": {
+     "pyropdf": "ນຳ ຄຳ",
+     "pyropdf_warned": "True",
+     "xpdf": "ນຳ ຄຳ",
+     "pdfjs": "ນໍາȃǭ ຄໍາȃǭ",
+     "mupdf": "ນຳȃǭ ຄຳȃǭ",
+     "pdfium": "ນຳȃǭ ຄຳȃǭ",
+     "pdfminer": "ນຳ(cid:515) (cid:493) ຄຳ(cid:515) (cid:493)",
+     "pypdf": "ນຳ ȃ ǭ ຄຳ ȃ ǭ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "khmer, Leelawadee": {
+    "read": {
+     "pyropdf": "ខ្មែរ កៅ",
+     "pyropdf_warned": "True",
+     "xpdf": "ខ្មែ រ កៅ",
+     "pdfjs": "ខ្មែșʢរ កៅȘ",
+     "mupdf": "ខ្មែșʢរ កៅȘ",
+     "pdfium": "ខ្មែșʢរ កៅȘ",
+     "pdfminer": "ខ្មែ(cid:537)(cid:674) រ កៅ(cid:536)",
+     "pypdf": "ខ្មែșʢរ កៅȘ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "space",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "myanmar, Myanmar Text": {
+    "read": {
+     "pyropdf": "ြမနမ်ာ ကို",
+     "pyropdf_warned": "True",
+     "xpdf": "ြမန်မာ ကို",
+     "pdfjs": "ြမန်မာ ကို Ŕ ǽ",
+     "mupdf": "ြမန်မာ ကိုŔǽ",
+     "pdfium": "ြမန်မာ ကိုŔǽ",
+     "pdfminer": "ြမန်မာ ကို(cid:340)\n\n(cid:509)",
+     "pypdf": "ြမန်မာ ကိုŔǽ"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "order",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   }
+  },
+  "this change": {
+   "arabic, Noto": {
+    "read": {
+     "pyropdf": "مرحبا عالم",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا عالم‬",
+     "pdfjs": "ا عالمبمرح",
+     "mupdf": "مرحبا عالم",
+     "pdfium": "مرحبا عالم",
+     "pdfminer": "ملاع اب⁠حرم",
+     "pypdf": "مرح⁠با عالم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "order",
+     "pypdf": "invisible",
+     "pdfminer": "order"
+    }
+   },
+   "arabic, Calibri": {
+    "read": {
+     "pyropdf": "مرحبا بكم في شمس",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا بكم في شمس‬",
+     "pdfjs": "شمس يف مرحبا بكم",
+     "mupdf": "مرحبا بكم يف شمس",
+     "pdfium": "مرحبا بكم يف شمس",
+     "pdfminer": "سمش في⁠\n\n مكب ابحرم\n\n⁠",
+     "pypdf": "مرحبا بكم ⁠⁠في شمس"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "order",
+     "pdfium": "order",
+     "pdfjs": "order",
+     "pypdf": "invisible",
+     "pdfminer": "order"
+    }
+   },
+   "hebrew, Noto": {
+    "read": {
+     "pyropdf": "שָׁלוֹם עולם",
+     "pyropdf_warned": "False",
+     "xpdf": "‫ָׁשלֹום עולם‬",
+     "pdfjs": "שָׁלוֹם עולם",
+     "mupdf": "שָׁלוֹם עולם",
+     "pdfium": "שׁ ָ לוֹ ם עולם",
+     "pdfminer": "ׁש\nםלוע ם ֹול ָ",
+     "pypdf": "שָׁלוֹם עולם"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "order",
+     "mupdf": "exact",
+     "pdfium": "order",
+     "pdfjs": "exact",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "thai, Tahoma": {
+    "read": {
+     "pyropdf": "น้ำ คำ ทำ",
+     "pyropdf_warned": "False",
+     "xpdf": "น้ำ คำ ทำ",
+     "pdfjs": "น้ำ คำ ทำ",
+     "mupdf": "น้ำ คำ ทำ",
+     "pdfium": "น้ำ คำ ทำ",
+     "pdfminer": "น้ำ⁠\n\n⁠⁠ คำ⁠⁠ ทำ⁠⁠",
+     "pypdf": "น้ำ⁠⁠⁠ คำ⁠⁠ ทำ⁠⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "tamil, Nirmala": {
+    "read": {
+     "pyropdf": "கொடு கோடு",
+     "pyropdf_warned": "False",
+     "xpdf": "கொடு கோடு",
+     "pdfjs": "கொடு கோடு",
+     "mupdf": "கொ\nடு கோ\nடு",
+     "pdfium": "கொடு கோடு",
+     "pdfminer": "கொ⁠⁠டு கோ⁠⁠டு",
+     "pypdf": "கொ⁠⁠டு கோ⁠⁠டு"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "bengali, Nirmala": {
+    "read": {
+     "pyropdf": "কোন বৌ",
+     "pyropdf_warned": "False",
+     "xpdf": "কোন বৌ",
+     "pdfjs": "কোন কো",
+     "mupdf": "কো\nন বৌ",
+     "pdfium": "কোন বৌ",
+     "pdfminer": "কো⁠⁠ন কো⁠⁠",
+     "pypdf": "কো⁠⁠ন কো⁠⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "devanagari, Nirmala": {
+    "read": {
+     "pyropdf": "श्री हिन्दी",
+     "pyropdf_warned": "False",
+     "xpdf": "श्री हिन्दी",
+     "pdfjs": "श्री िहन्दी",
+     "mupdf": "श्री हिन्दी",
+     "pdfium": "श्री हिन्दी",
+     "pdfminer": "श्री⁠ िहन्दी⁠",
+     "pypdf": "श्री⁠ िहन्दी⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "order",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   },
+   "lao, Leelawadee": {
+    "read": {
+     "pyropdf": "ນຳ ຄຳ",
+     "pyropdf_warned": "False",
+     "xpdf": "ນຳ ຄຳ",
+     "pdfjs": "ນໍາ ຄໍາ",
+     "mupdf": "ນຳ ຄຳ",
+     "pdfium": "ນຳ ຄຳ",
+     "pdfminer": "ນຳ⁠ ⁠ ຄຳ⁠ ⁠",
+     "pypdf": "ນຳ ⁠ ⁠ ຄຳ ⁠ ⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "space",
+     "pdfminer": "space"
+    }
+   },
+   "khmer, Leelawadee": {
+    "read": {
+     "pyropdf": "ខ្មែរ កៅ",
+     "pyropdf_warned": "False",
+     "xpdf": "ខ្មែរ កៅ",
+     "pdfjs": "ខ្មែរ កៅ",
+     "mupdf": "ខ្មែ\nរ កៅ",
+     "pdfium": "ខ្មែរ កៅ",
+     "pdfminer": "ខ្មែ⁠⁠រ កៅ⁠",
+     "pypdf": "ខ្មែ⁠⁠រ កៅ⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "myanmar, Myanmar Text": {
+    "read": {
+     "pyropdf": "မြနမ်ာ ကို",
+     "pyropdf_warned": "False",
+     "xpdf": "မြန်မာ ကို",
+     "pdfjs": "ြမန်မာ ကို",
+     "mupdf": "မြန်မာ ကို",
+     "pdfium": "မြန်မာ ကို",
+     "pdfminer": "ြမန်မာ ကို⁠\n\n⁠",
+     "pypdf": "ြမန်မာ ကို⁠⁠"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "order",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   }
+  },
+  "this change, no CMap entry": {
+   "arabic, Noto": {
+    "read": {
+     "pyropdf": "مرحبا عالم",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا عالم‬",
+     "pdfjs": "ا عالم&ب مرح",
+     "mupdf": "مرحبا عالم",
+     "pdfium": "مرحبا عالم",
+     "pdfminer": "ملاع اب(cid:38)حرم",
+     "pypdf": "مرح&با عالم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "arabic, Calibri": {
+    "read": {
+     "pyropdf": "مرحبا بكم في شمس",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا بكم في شمس‬",
+     "pdfjs": "شمس يفᢝ ᡧ مرحبا بكم",
+     "mupdf": "مرحبا بكم يف شمس",
+     "pdfium": "مرحبا بكم يف شمس",
+     "pdfminer": "سمش في(cid:6301)\n\n مكب ابحرم\n\n(cid:6247)",
+     "pypdf": "في شمس ᢝᡧ مرحبا بكم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "order",
+     "pdfium": "order",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "hebrew, Noto": {
+    "read": {
+     "pyropdf": "שָׁלוֹם עולם",
+     "pyropdf_warned": "False",
+     "xpdf": "‫ָׁשלֹום עולם‬",
+     "pdfjs": "שָׁלוֹם עולם",
+     "mupdf": "שָׁלוֹם עולם",
+     "pdfium": "שׁ ָ לוֹ ם עולם",
+     "pdfminer": "ׁש\nםלוע ם ֹול ָ",
+     "pypdf": "שָׁלוֹם עולם"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "order",
+     "mupdf": "exact",
+     "pdfium": "order",
+     "pdfjs": "exact",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "thai, Tahoma": {
+    "read": {
+     "pyropdf": "น้ำ คำ ทำ",
+     "pyropdf_warned": "False",
+     "xpdf": "น้ำ คำ ทำ",
+     "pdfjs": "น้ำѼѸѥ คำѼѥ ทำѼѥ",
+     "mupdf": "น้ำ คำ ทำ",
+     "pdfium": "น้ำ คำ ทำ",
+     "pdfminer": "น้ำ(cid:1148)\n\n(cid:1144)(cid:1125) คำ(cid:1148)(cid:1125) ทำ(cid:1148)(cid:1125)",
+     "pypdf": "น้ำѼѸѥ คำѼѥ ทำѼѥ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "tamil, Nirmala": {
+    "read": {
+     "pyropdf": "கொடு கோடு",
+     "pyropdf_warned": "False",
+     "xpdf": "கொடு கோடு",
+     "pdfjs": "கொ୷ஏடு கோ୷ஏடு",
+     "mupdf": "கொ\nடு கோ\nடு",
+     "pdfium": "கொடு கோடு",
+     "pdfminer": "கொ(cid:2935)(cid:2959)டு கோ(cid:2935)(cid:2959)டு",
+     "pypdf": "கொ୷ஏடு கோ୷ஏடு"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "bengali, Nirmala": {
+    "read": {
+     "pyropdf": "কোন বৌ",
+     "pyropdf_warned": "False",
+     "xpdf": "কোন বৌ",
+     "pdfjs": "কো͵Κন কো΋δ",
+     "mupdf": "কো\nন বৌ",
+     "pdfium": "কোন বৌ",
+     "pdfminer": "কো(cid:885)(cid:922)ন কো(cid:907)(cid:948)",
+     "pypdf": "কো͵Κন কো΋δ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "devanagari, Nirmala": {
+    "read": {
+     "pyropdf": "श्री हिन्दी",
+     "pyropdf_warned": "False",
+     "xpdf": "श्री हिन्दी",
+     "pdfjs": "श्रीı िहन्दीı",
+     "mupdf": "श्री हिन्दी",
+     "pdfium": "श्री हिन्दी",
+     "pdfminer": "श्री(cid:305) िहन्दी(cid:305)",
+     "pypdf": "श्रीı िहन्दीı"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "lao, Leelawadee": {
+    "read": {
+     "pyropdf": "ນຳ ຄຳ",
+     "pyropdf_warned": "False",
+     "xpdf": "ນຳ ຄຳ",
+     "pdfjs": "ນໍາȃǭ ຄໍາȃǭ",
+     "mupdf": "ນຳ ຄຳ",
+     "pdfium": "ນຳ ຄຳ",
+     "pdfminer": "ນຳ(cid:515) (cid:493) ຄຳ(cid:515) (cid:493)",
+     "pypdf": "ນຳ ȃ ǭ ຄຳ ȃ ǭ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "khmer, Leelawadee": {
+    "read": {
+     "pyropdf": "ខ្មែរ កៅ",
+     "pyropdf_warned": "False",
+     "xpdf": "ខ្មែរ កៅ",
+     "pdfjs": "ខ្មែșʢ រ កៅȘ",
+     "mupdf": "ខ្មែ\nរ កៅ",
+     "pdfium": "ខ្មែរ កៅ",
+     "pdfminer": "ខ្មែ(cid:537)(cid:674)រ កៅ(cid:536)",
+     "pypdf": "ខ្មែșʢរ កៅȘ"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "myanmar, Myanmar Text": {
+    "read": {
+     "pyropdf": "မြနမ်ာ ကို",
+     "pyropdf_warned": "False",
+     "xpdf": "မြန်မာ ကို",
+     "pdfjs": "ြမန်မာ ကို Ŕ ǽ",
+     "mupdf": "မြန်မာ ကို",
+     "pdfium": "မြန်မာ ကို",
+     "pdfminer": "ြမန်မာ ကို(cid:340)\n\n(cid:509)",
+     "pypdf": "ြမန်မာ ကိုŔǽ"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   }
+  },
+  "this change, empty CMap entry": {
+   "arabic, Noto": {
+    "read": {
+     "pyropdf": "ب",
+     "pyropdf_warned": "True",
+     "xpdf": "‫مرحبا عالم‬",
+     "pdfjs": "ا عالم&ب مرح",
+     "mupdf": "مرحبا عالم",
+     "pdfium": "مرحبا عالم",
+     "pdfminer": "ملاع ابحرم",
+     "pypdf": "مرحبا عالم"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "arabic, Calibri": {
+    "read": {
+     "pyropdf": "في",
+     "pyropdf_warned": "True",
+     "xpdf": "‫مرحبا بكم في شمس‬",
+     "pdfjs": "شمس يفᢝ ᡧ مرحبا بكم",
+     "mupdf": "مرحبا بكم يف شمس",
+     "pdfium": "مرحبا بكم يف شمس",
+     "pdfminer": "سمش في\n\n مكب ابحرم",
+     "pypdf": "مرحبا بكم في شمس"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "exact",
+     "mupdf": "order",
+     "pdfium": "order",
+     "pdfjs": "stray",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "hebrew, Noto": {
+    "read": {
+     "pyropdf": "שָׁלוֹם עולם",
+     "pyropdf_warned": "False",
+     "xpdf": "‫ָׁשלֹום עולם‬",
+     "pdfjs": "שָׁלוֹם עולם",
+     "mupdf": "שָׁלוֹם עולם",
+     "pdfium": "שׁ ָ לוֹ ם עולם",
+     "pdfminer": "ׁש\nםלוע ם ֹול ָ",
+     "pypdf": "שָׁלוֹם עולם"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "order",
+     "mupdf": "exact",
+     "pdfium": "order",
+     "pdfjs": "exact",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "thai, Tahoma": {
+    "read": {
+     "pyropdf": "น้ำคำทำ",
+     "pyropdf_warned": "True",
+     "xpdf": "น้ำ คำ ทำ",
+     "pdfjs": "น้ำѼѸѥ คำѼѥ ทำѼѥ",
+     "mupdf": "น้ำ คำ ทำ",
+     "pdfium": "น้ำ คำ ทำ",
+     "pdfminer": "น้ำ\n\n คำ ทำ",
+     "pypdf": "น้ำ คำ ทำ"
+    },
+    "score": {
+     "pyropdf": "space",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "exact",
+     "pdfminer": "exact"
+    }
+   },
+   "tamil, Nirmala": {
+    "read": {
+     "pyropdf": "கொ கோ",
+     "pyropdf_warned": "True",
+     "xpdf": "கொடு கோடு",
+     "pdfjs": "கொ୷ஏடு கோ୷ஏடு",
+     "mupdf": "கொ\nடு கோ\nடு",
+     "pdfium": "கொடு கோடு",
+     "pdfminer": "கொடு கோடு",
+     "pypdf": "கொடு கோடு"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "exact",
+     "pdfminer": "exact"
+    }
+   },
+   "bengali, Nirmala": {
+    "read": {
+     "pyropdf": "কো বৌ",
+     "pyropdf_warned": "True",
+     "xpdf": "কোন বৌ",
+     "pdfjs": "কো͵Κন কো΋δ",
+     "mupdf": "কো\nন বৌ",
+     "pdfium": "কোন বৌ",
+     "pdfminer": "কোন কো",
+     "pypdf": "কোন কো"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "devanagari, Nirmala": {
+    "read": {
+     "pyropdf": "श्री हिन्दी",
+     "pyropdf_warned": "True",
+     "xpdf": "श्री हिन्दी",
+     "pdfjs": "श्रीı िहन्दीı",
+     "mupdf": "श्री हिन्दी",
+     "pdfium": "श्री हिन्दी",
+     "pdfminer": "श्री िहन्दी",
+     "pypdf": "श्री िहन्दी"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   },
+   "lao, Leelawadee": {
+    "read": {
+     "pyropdf": "ນຳຄຳ",
+     "pyropdf_warned": "True",
+     "xpdf": "ນຳ ຄຳ",
+     "pdfjs": "ນໍາȃǭ ຄໍາȃǭ",
+     "mupdf": "ນຳ ຄຳ",
+     "pdfium": "ນຳ ຄຳ",
+     "pdfminer": "ນຳ  ຄຳ",
+     "pypdf": "ນຳ  ຄຳ"
+    },
+    "score": {
+     "pyropdf": "space",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "space",
+     "pdfminer": "space"
+    }
+   },
+   "khmer, Leelawadee": {
+    "read": {
+     "pyropdf": "ខ្មែកៅ",
+     "pyropdf_warned": "True",
+     "xpdf": "ខ្មែរ កៅ",
+     "pdfjs": "ខ្មែșʢ រ កៅȘ",
+     "mupdf": "ខ្មែ\nរ កៅ",
+     "pdfium": "ខ្មែរ កៅ",
+     "pdfminer": "ខ្មែរ កៅ",
+     "pypdf": "ខ្មែរ កៅ"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "exact",
+     "pdfminer": "exact"
+    }
+   },
+   "myanmar, Myanmar Text": {
+    "read": {
+     "pyropdf": "မြကို",
+     "pyropdf_warned": "True",
+     "xpdf": "မြန်မာ ကို",
+     "pdfjs": "ြမန်မာ ကို Ŕ ǽ",
+     "mupdf": "မြန်မာ ကို",
+     "pdfium": "မြန်မာ ကို",
+     "pdfminer": "ြမန်မာ ကို",
+     "pypdf": "ြမန်မာ ကို"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   }
+  },
+  "span in visual order": {
+   "arabic, Noto": {
+    "read": {
+     "pyropdf": "مرحبا عالم",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا عالم‬",
+     "pdfjs": "ا عالمبمرح",
+     "mupdf": "مرح با عالم",
+     "pdfium": "مرحبا عالم",
+     "pdfminer": "ملاع ا⁠بحرم",
+     "pypdf": "مرحب⁠ا عالم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "space",
+     "pdfium": "exact",
+     "pdfjs": "order",
+     "pypdf": "invisible",
+     "pdfminer": "order"
+    }
+   },
+   "arabic, Calibri": {
+    "read": {
+     "pyropdf": "مرحبا بكم في شمس",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا بكم في شمس‬",
+     "pdfjs": "شمس يف مرحبا بكم",
+     "mupdf": "مرحبا بكم يفيف شمس",
+     "pdfium": "شمس\r\nيف\r\nمرحبا بكم",
+     "pdfminer": "سمش  ⁠\n\nفي مكب ابحرم\n\n⁠",
+     "pypdf": "مرحبا بكم في⁠⁠ شمس"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "stray",
+     "pdfium": "order",
+     "pdfjs": "order",
+     "pypdf": "invisible",
+     "pdfminer": "order"
+    }
+   },
+   "hebrew, Noto": {
+    "read": {
+     "pyropdf": "שָׁלוֹם עולם",
+     "pyropdf_warned": "False",
+     "xpdf": "‫ָׁשלֹום עולם‬",
+     "pdfjs": "שָׁלוֹם עולם",
+     "mupdf": "שָׁלוֹם עולם",
+     "pdfium": "שׁ ָ לוֹ ם עולם",
+     "pdfminer": "ׁש\nםלוע ם ֹול ָ",
+     "pypdf": "שָׁלוֹם עולם"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "order",
+     "mupdf": "exact",
+     "pdfium": "order",
+     "pdfjs": "exact",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "thai, Tahoma": {
+    "read": {
+     "pyropdf": "น้ำ คำ ทำ",
+     "pyropdf_warned": "False",
+     "xpdf": "น้ำ คำ ทำ",
+     "pdfjs": "น้ำ คำ ทำ",
+     "mupdf": "น้ำ คำ ทำ",
+     "pdfium": "น้ำ คำ ทำ",
+     "pdfminer": "น้ำ⁠\n\n⁠⁠ คำ⁠⁠ ทำ⁠⁠",
+     "pypdf": "น้ำ⁠⁠⁠ คำ⁠⁠ ทำ⁠⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "tamil, Nirmala": {
+    "read": {
+     "pyropdf": "கொடு கோடு",
+     "pyropdf_warned": "False",
+     "xpdf": "கொடு கோடு",
+     "pdfjs": "கொடு கோடு",
+     "mupdf": "கொ\nடு கோ\nடு",
+     "pdfium": "கொடு கோடு",
+     "pdfminer": "கொ⁠⁠டு கோ⁠⁠டு",
+     "pypdf": "கொ⁠⁠டு கோ⁠⁠டு"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "bengali, Nirmala": {
+    "read": {
+     "pyropdf": "কোন বৌ",
+     "pyropdf_warned": "False",
+     "xpdf": "কোন বৌ",
+     "pdfjs": "কোন কো",
+     "mupdf": "কো\nন বৌ",
+     "pdfium": "কোন বৌ",
+     "pdfminer": "কো⁠⁠ন কো⁠⁠",
+     "pypdf": "কো⁠⁠ন কো⁠⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "devanagari, Nirmala": {
+    "read": {
+     "pyropdf": "श्री हिन्दी",
+     "pyropdf_warned": "False",
+     "xpdf": "श्री हिन्दी",
+     "pdfjs": "श्री िहन्दी",
+     "mupdf": "श्री हिन्दी",
+     "pdfium": "श्री हिन्दी",
+     "pdfminer": "श्री⁠ िहन्दी⁠",
+     "pypdf": "श्री⁠ िहन्दी⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "order",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   },
+   "lao, Leelawadee": {
+    "read": {
+     "pyropdf": "ນຳ ຄຳ",
+     "pyropdf_warned": "False",
+     "xpdf": "ນຳ ຄຳ",
+     "pdfjs": "ນໍາ ຄໍາ",
+     "mupdf": "ນຳ ຄຳ",
+     "pdfium": "ນຳ ຄຳ",
+     "pdfminer": "ນຳ⁠ ⁠ ຄຳ⁠ ⁠",
+     "pypdf": "ນຳ ⁠ ⁠ ຄຳ ⁠ ⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "stray",
+     "pypdf": "space",
+     "pdfminer": "space"
+    }
+   },
+   "khmer, Leelawadee": {
+    "read": {
+     "pyropdf": "ខ្មែរ កៅ",
+     "pyropdf_warned": "False",
+     "xpdf": "ខ្មែ រ កៅ",
+     "pdfjs": "ខ្មែរ កៅ",
+     "mupdf": "ខ្មែ\nរ កៅ",
+     "pdfium": "ខ្មែរ កៅ",
+     "pdfminer": "ខ្មែ⁠⁠ រ កៅ⁠",
+     "pypdf": "ខ្មែ⁠⁠រ កៅ⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "space",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "space"
+    }
+   },
+   "myanmar, Myanmar Text": {
+    "read": {
+     "pyropdf": "မြနမ်ာ ကို",
+     "pyropdf_warned": "False",
+     "xpdf": "မြန်မာ ကို",
+     "pdfjs": "ြမန်မာ ကို",
+     "mupdf": "မြန်မာ ကို",
+     "pdfium": "မြန်မာ ကို",
+     "pdfminer": "ြမန်မာ ကို⁠\n\n⁠",
+     "pypdf": "ြမန်မာ ကို⁠⁠"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "exact",
+     "mupdf": "exact",
+     "pdfium": "exact",
+     "pdfjs": "order",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   }
+  },
+  "empty span over each extra glyph": {
+   "arabic, Noto": {
+    "read": {
+     "pyropdf": "مرحبا عالم",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرح ⁠با عالم‬",
+     "pdfjs": "ا عالممرحب",
+     "mupdf": "مرحبا عالم",
+     "pdfium": "⁠ مرحبا عالم",
+     "pdfminer": "ملاع ا⁠بحرم",
+     "pypdf": "مرحب⁠ا عالم"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "space",
+     "mupdf": "exact",
+     "pdfium": "space",
+     "pdfjs": "order",
+     "pypdf": "invisible",
+     "pdfminer": "order"
+    }
+   },
+   "arabic, Calibri": {
+    "read": {
+     "pyropdf": "مرحبا بكم في شمس",
+     "pyropdf_warned": "False",
+     "xpdf": "‫مرحبا بكم ⁠ ⁠في شمس‬",
+     "pdfjs": "شمس مرحبا بكم يف",
+     "mupdf": "مرحبا بكم يف شمس",
+     "pdfium": "شمس\r\n⁠\r\n⁠\r\nمرحبا بكم يف",
+     "pdfminer": "سمش  ⁠\n\nفي مكب ابحرم\n\n⁠",
+     "pypdf": "مرحبا بكم في⁠⁠ شمس"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "space",
+     "mupdf": "order",
+     "pdfium": "order",
+     "pdfjs": "order",
+     "pypdf": "invisible",
+     "pdfminer": "order"
+    }
+   },
+   "hebrew, Noto": {
+    "read": {
+     "pyropdf": "שָׁלוֹם עולם",
+     "pyropdf_warned": "False",
+     "xpdf": "‫ָׁשלֹום עולם‬",
+     "pdfjs": "שָׁלוֹם עולם",
+     "mupdf": "שָׁלוֹם עולם",
+     "pdfium": "שׁ ָ לוֹ ם עולם",
+     "pdfminer": "ׁש\nםלוע ם ֹול ָ",
+     "pypdf": "שָׁלוֹם עולם"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "order",
+     "mupdf": "exact",
+     "pdfium": "order",
+     "pdfjs": "exact",
+     "pypdf": "exact",
+     "pdfminer": "order"
+    }
+   },
+   "thai, Tahoma": {
+    "read": {
+     "pyropdf": "น้ำ คำ ทำ",
+     "pyropdf_warned": "False",
+     "xpdf": "น้ำ⁠⁠ คำ⁠⁠ ทำ⁠⁠",
+     "pdfjs": "น้ำ คำ ทำ",
+     "mupdf": "น้ำ คำ ทำ",
+     "pdfium": "น้ำ⁠⁠⁠ คำ⁠⁠ ทำ⁠⁠",
+     "pdfminer": "น้ำ⁠\n\n⁠⁠ คำ⁠⁠ ทำ⁠⁠",
+     "pypdf": "น้ำ⁠⁠⁠ คำ⁠⁠ ทำ⁠⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "invisible",
+     "mupdf": "exact",
+     "pdfium": "invisible",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "tamil, Nirmala": {
+    "read": {
+     "pyropdf": "கொ டு கோ டு",
+     "pyropdf_warned": "False",
+     "xpdf": "கொ⁠⁠டு கோ⁠⁠டு",
+     "pdfjs": "கொடு கோடு",
+     "mupdf": "கொ\nடு கோ\nடு",
+     "pdfium": "கொ⁠⁠டு கோ⁠⁠டு",
+     "pdfminer": "கொ⁠⁠டு கோ⁠⁠டு",
+     "pypdf": "கொ⁠⁠டு கோ⁠⁠டு"
+    },
+    "score": {
+     "pyropdf": "space",
+     "xpdf": "invisible",
+     "mupdf": "exact",
+     "pdfium": "invisible",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "invisible"
+    }
+   },
+   "bengali, Nirmala": {
+    "read": {
+     "pyropdf": "কো ন কো",
+     "pyropdf_warned": "False",
+     "xpdf": "কো⁠⁠ন কো⁠⁠",
+     "pdfjs": "কোন কো",
+     "mupdf": "কো\nন কো",
+     "pdfium": "কো⁠⁠ন কো⁠⁠",
+     "pdfminer": "কো⁠⁠ন কো⁠⁠",
+     "pypdf": "কো⁠⁠ন কো⁠⁠"
+    },
+    "score": {
+     "pyropdf": "stray",
+     "xpdf": "stray",
+     "mupdf": "stray",
+     "pdfium": "stray",
+     "pdfjs": "stray",
+     "pypdf": "stray",
+     "pdfminer": "stray"
+    }
+   },
+   "devanagari, Nirmala": {
+    "read": {
+     "pyropdf": "श्री िहन्दी",
+     "pyropdf_warned": "False",
+     "xpdf": "श्री⁠ िहन्दी⁠",
+     "pdfjs": "श्री िहन्दी",
+     "mupdf": "श्री िहन्दी",
+     "pdfium": "श्री⁠ िहन्दी⁠",
+     "pdfminer": "श्री⁠ िहन्दी⁠",
+     "pypdf": "श्री⁠ िहन्दी⁠"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "order",
+     "mupdf": "order",
+     "pdfium": "order",
+     "pdfjs": "order",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   },
+   "lao, Leelawadee": {
+    "read": {
+     "pyropdf": "ນຳ ຄຳ",
+     "pyropdf_warned": "False",
+     "xpdf": "ນຳ⁠ ⁠ ຄຳ⁠ ⁠",
+     "pdfjs": "ນໍາ ຄໍາ",
+     "mupdf": "ນຳ ຄຳ",
+     "pdfium": "ນຳ⁠⁠ ຄຳ⁠⁠",
+     "pdfminer": "ນຳ⁠ ⁠ ຄຳ⁠ ⁠",
+     "pypdf": "ນຳ ⁠ ⁠ ຄຳ ⁠ ⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "space",
+     "mupdf": "exact",
+     "pdfium": "invisible",
+     "pdfjs": "stray",
+     "pypdf": "space",
+     "pdfminer": "space"
+    }
+   },
+   "khmer, Leelawadee": {
+    "read": {
+     "pyropdf": "ខ្មែរ កៅ",
+     "pyropdf_warned": "False",
+     "xpdf": "ខ្មែ⁠⁠ រ កៅ⁠",
+     "pdfjs": "ខ្មែរ កៅ",
+     "mupdf": "ខ្មែ\nរ កៅ",
+     "pdfium": "ខ្មែ⁠\r\n⁠រ កៅ⁠",
+     "pdfminer": "ខ្មែ⁠⁠ រ កៅ⁠",
+     "pypdf": "ខ្មែ⁠⁠រ កៅ⁠"
+    },
+    "score": {
+     "pyropdf": "exact",
+     "xpdf": "space",
+     "mupdf": "exact",
+     "pdfium": "invisible",
+     "pdfjs": "exact",
+     "pypdf": "invisible",
+     "pdfminer": "space"
+    }
+   },
+   "myanmar, Myanmar Text": {
+    "read": {
+     "pyropdf": "ြမနမ်ာ ကို",
+     "pyropdf_warned": "False",
+     "xpdf": "ြမန်မာ ကို⁠",
+     "pdfjs": "ြမန်မာ ကို",
+     "mupdf": "ြမန်မာ ကို",
+     "pdfium": "ြမန်မာ ကို⁠\r\n⁠",
+     "pdfminer": "ြမန်မာ ကို⁠\n\n⁠",
+     "pypdf": "ြမန်မာ ကို⁠⁠"
+    },
+    "score": {
+     "pyropdf": "order",
+     "xpdf": "order",
+     "mupdf": "order",
+     "pdfium": "order",
+     "pdfjs": "order",
+     "pypdf": "order",
+     "pdfminer": "order"
+    }
+   }
+  }
+ },
+ "same_pixels": {
+  "arabic, Noto": true,
+  "arabic, Calibri": true,
+  "hebrew, Noto": true,
+  "thai, Tahoma": true,
+  "tamil, Nirmala": true,
+  "bengali, Nirmala": true,
+  "devanagari, Nirmala": true,
+  "lao, Leelawadee": true,
+  "khmer, Leelawadee": true,
+  "myanmar, Myanmar Text": true
+ }
+}
