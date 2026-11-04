@@ -30,6 +30,7 @@ CRATES = ("pyropdf-store", "pyropdf-schema", "pyropdf-engine", "pyropdf-python")
 FIRST_ALLOWED = {
     "hayro": "pyropdf-engine",
     "hayro-interpret": "pyropdf-engine",
+    "hayro-font": "pyropdf-engine",
     "hayro-svg": "pyropdf-engine",
     "harfrust": "pyropdf-engine",
     "rten": "pyropdf-engine",

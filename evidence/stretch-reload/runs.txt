@@ -1,0 +1,15 @@
+bill-hr815                           110 pages, 104 with a passing run;  1038 of  8163 runs pass; programs: cff
+bunka-kokugo-series-019-p4             1 pages,   0 with a passing run;     0 of     0 runs pass; programs: -
+f1040                                  2 pages,   2 with a passing run;   367 of  1976 runs pass; programs: cff
+mhlw-doc                               2 pages,   0 with a passing run;     0 of   554 runs pass; programs: none, ttf
+nics-background-checks-2015-11         1 pages,   0 with a passing run;     0 of  1098 runs pass; programs: ttf
+patent-us223898                        4 pages,   4 with a passing run;  1974 of  1974 runs pass; programs: none
+pdf20-simple                           1 pages,   0 with a passing run;     0 of     1 runs pass; programs: none
+pdfium-jpx-lzw                         1 pages,   0 with a passing run;     0 of     0 runs pass; programs: -
+pdfium-links-highlights-annots         1 pages,   0 with a passing run;     0 of     3 runs pass; programs: none
+pdfium-ocg-invisible                   1 pages,   0 with a passing run;     0 of     0 runs pass; programs: none
+pdfium-smask-blend                     1 pages,   0 with a passing run;     0 of     0 runs pass; programs: -
+pdfium-type3                           1 pages,   0 with a passing run;     0 of     3 runs pass; programs: none
+senate-expenditures                    1 pages,   0 with a passing run;     0 of   220 runs pass; programs: cff, ttf
+usrguide                              27 pages,   0 with a passing run;     0 of  3262 runs pass; programs: pfa
+wdl6812-manuscript                     2 pages,   0 with a passing run;     0 of     0 runs pass; programs: -
