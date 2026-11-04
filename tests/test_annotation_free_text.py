@@ -473,7 +473,8 @@ def test_changing_a_free_text_to_a_colour_glyph_with_no_outline_keeps_what_it_ha
 def test_a_refused_change_of_a_free_text_leaves_the_saved_bytes() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((300, 300))
-    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "C", font=Font.from_file(FONTS / "colour-svg-cff.otf")))
+    face = Font.from_file(FONTS / "colour-svg-cff.otf")
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "C", font=face))
     before = doc.to_bytes()
 
     with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")):
