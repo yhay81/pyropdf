@@ -87,6 +87,7 @@ method and property of its classes with its full description.
 - [`Clip`](text-and-content.md#clip): A clipping path in display space.
 - [`ClosePath`](text-and-content.md#closepath): Close the current subpath with a line to its start.
 - [`Color`](text-and-content.md#color): A solid paint, as the sRGB color and alpha that hayro converts it to.
+- [`ColorStop`](text-and-content.md#colorstop): A place on a gradient's line, and the color and alpha there.
 - [`Content`](text-and-content.md#content): The items that a page paints, in paint order.
 - [`ContentItem`](text-and-content.md#contentitem)
 - [`CurveTo`](text-and-content.md#curveto): Draw a cubic Bézier curve to `to` with two control points.
@@ -94,11 +95,14 @@ method and property of its classes with its full description.
 - [`FillRule`](text-and-content.md#fillrule): The rule that decides which areas a path fills or clips.
 - [`FontRef`](text-and-content.md#fontref): The font that a text run uses, as hayro reads its font program.
 - [`Glyph`](text-and-content.md#glyph): One glyph of a text run.
+- [`Gradient`](text-and-content.md#gradient)
+- [`GradientExtend`](text-and-content.md#gradientextend): What a gradient paints beyond the two ends of its line.
 - [`GraphicsContext`](text-and-content.md#graphicscontext): The clips, transparency groups, and marked content around an item.
 - [`Image`](text-and-content.md#image): An image painted on the page.
 - [`ImageMask`](text-and-content.md#imagemask): The kind of mask that an image dictionary names.
 - [`Layout`](text-and-content.md#layout): The text of a page as blocks, lines, spans, and, on request, characters.
 - [`Line`](text-and-content.md#line): A line of a `Block`.
+- [`LinearGradient`](text-and-content.md#lineargradient): A paint for a `Canvas` that changes color along a straight line.
 - [`LineCap`](text-and-content.md#linecap): The shape at the open ends of a stroke.
 - [`LineJoin`](text-and-content.md#linejoin): The shape at the corners of a stroke.
 - [`LineTo`](text-and-content.md#lineto): Draw a line to `to`.
@@ -107,6 +111,7 @@ method and property of its classes with its full description.
 - [`Paint`](text-and-content.md#paint)
 - [`Path`](text-and-content.md#path): A path that is filled, stroked, or both.
 - [`Paths`](text-and-content.md#paths): The paths of a page as columns, from `Page.paths`.
+- [`RadialGradient`](text-and-content.md#radialgradient): A paint for a `Canvas` that changes color between two circles.
 - [`Segment`](text-and-content.md#segment)
 - [`ShadingPattern`](text-and-content.md#shadingpattern): A paint that a shading fills, from a shading pattern or `sh`.
 - [`ShadingType`](text-and-content.md#shadingtype): A shading type of ISO 32000-2 §8.7.4.5.

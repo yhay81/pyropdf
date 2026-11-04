@@ -11,6 +11,7 @@ use pyropdf_engine::extract::{
     self, BBox, BlockTuple, Error, PageLayout, QuadTuple, SearchHits, TableTuple, TextOptions,
     TextPeak, Unmapped,
 };
+use pyropdf_engine::render::Fallback;
 use pyropdf_store::ErrorKind;
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::memo::Reads;
@@ -27,10 +28,22 @@ use crate::pixmap::bridge_error;
 /// for U+FFFD, and 2 for the glyph ID.
 pub(crate) type OptionsTuple = (Option<BBox>, bool, u8, bool, bool, bool, bool, bool);
 
-/// The text options as a memo key, with the clip's coordinates as bits.
-pub(crate) type TextKey = (Option<[u64; 4]>, bool, u8, bool, bool, bool, bool, bool);
+/// The text options as a memo key, with the clip's coordinates as bits, and
+/// the fallback faces when the options ask for exact boxes, the only text
+/// that reads them (DESIGN.md section 5).
+pub(crate) type TextKey = (
+    Option<[u64; 4]>,
+    bool,
+    u8,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    Fallback,
+);
 
-fn text_key(options: OptionsTuple) -> TextKey {
+fn text_key(options: OptionsTuple, fallback: &Fallback) -> TextKey {
     let (clip, keep_clipped, unmapped, ligatures, whitespace, dehyphenate, exact, styles) = options;
     (
         clip.map(box_bits),
@@ -41,6 +54,11 @@ fn text_key(options: OptionsTuple) -> TextKey {
         dehyphenate,
         exact,
         styles,
+        if exact {
+            fallback.clone()
+        } else {
+            Fallback::default()
+        },
     )
 }
 
@@ -126,7 +144,7 @@ pub fn page_text(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(String, usize)> {
-    let key = text_key(options);
+    let key = text_key(options, &Fallback::default());
     let options = text_options(options)?;
     let budget = document.call_budget(&[
         (LimitCode::TextGlyphCount, max_glyphs),
@@ -299,7 +317,8 @@ fn with_layout<T: Send>(
     (max_glyphs, max_size): (Option<u64>, Option<u64>),
     then: impl FnOnce(&PageLayout) -> PyResult<T> + Send,
 ) -> PyResult<T> {
-    let key = text_key(options);
+    let fallback = document.fallback();
+    let key = text_key(options, &fallback);
     let options = text_options(options)?;
     let budget = document.call_budget(&[
         (LimitCode::TextGlyphCount, max_glyphs),
@@ -340,9 +359,17 @@ fn with_layout<T: Send>(
                 } else {
                     None
                 };
-                extract::page_layout(&bridged, at, &options, chars, content.as_ref(), &budget)
-                    .map(PageResult::Layout)
-                    .map_err(text_error)
+                extract::page_layout(
+                    &bridged,
+                    &fallback,
+                    at,
+                    &options,
+                    chars,
+                    content.as_ref(),
+                    &budget,
+                )
+                .map(PageResult::Layout)
+                .map_err(text_error)
             },
         )?;
         match &*result {
@@ -388,6 +415,7 @@ pub fn page_search(
         (LimitCode::TextSize, max_size),
     ])?;
     let (version, index) = crate::pages::index_with(document, None, &budget)?;
+    let fallback = document.fallback();
     py.detach(|| {
         let reference = Reference::new(number, generation);
         let at = index
@@ -397,8 +425,9 @@ pub fn page_search(
             .bridge
             .get(&version, &index, &budget)
             .map_err(|e| bridge_error(&e))?;
-        let (hits, skipped) = extract::page_search(&bridged, at, &options, needle, quads, &budget)
-            .map_err(text_error)?;
+        let (hits, skipped) =
+            extract::page_search(&bridged, &fallback, at, &options, needle, quads, &budget)
+                .map_err(text_error)?;
         let hits = match hits {
             SearchHits::Boxes(boxes) => Hits::Boxes(boxes),
             SearchHits::Quads(quads) => Hits::Quads(quads),

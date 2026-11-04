@@ -25,6 +25,7 @@ use pyropdf_store::value::{Bytes, Value};
 use pyropdf_store::{Error, Result};
 
 mod page;
+pub mod shading;
 #[cfg(test)]
 mod tests;
 
