@@ -9,14 +9,17 @@
 //! not allocations per path. A `ContentSink` sees the same paths and glyphs,
 //! so text extraction reads what the items show; with items off, the
 //! collector only feeds its sink. Glyph boxes come from the outlines that
-//! hayro computes, and from interpreting Type 3 glyph procedures. The
-//! budget's `content_element_count` bounds glyphs, path and clip segments,
-//! stroke dash lengths, and items, and every collection grows fallibly, so a
-//! refusal returns no partial result.
+//! hayro computes, and from interpreting Type 3 glyph procedures. A font that
+//! a document does not embed is described on the fallback face that draws it,
+//! which a second interpretation reads. The budget's `content_element_count`
+//! bounds glyphs, path and clip segments, stroke dash lengths, and items of the
+//! first, and every collection grows fallibly, so a refusal returns no partial
+//! result.
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use hayro::hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph, Type3Glyph};
 use hayro::hayro_interpret::hayro_cmap::BfString;
@@ -24,18 +27,20 @@ use hayro::hayro_interpret::pattern::Pattern;
 use hayro::hayro_interpret::shading::ShadingType;
 use hayro::hayro_interpret::{
     BlendMode, CacheKey, ClipPath, Device, DrawMode, DrawProps, FillRule, Image, ImageDrawProps,
-    InterpreterCache, InterpreterSettings, MaskType, Paint, SoftMask, StrokeProps, interpret_page,
+    InterpreterCache, InterpreterSettings, MaskType, Paint, RenderContent, SoftMask, StrokeProps,
+    interpret_page,
 };
 use hayro::hayro_syntax::object::dict::keys::{ACTUAL_TEXT, MCID};
 use hayro::hayro_syntax::object::{Array, Dict, Stream, String as PdfString};
 use hayro::hayro_syntax::page::Page;
 use hayro::hayro_syntax::{Filter, Pdf};
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
 use super::{
     DEFAULT_IMAGE_RESOLUTION, Error, extraction_context, image_color_space, jpeg_resolution,
 };
+use crate::render::Fallback;
 
 /// A display-space box: `x0`, `y0`, `x1`, `y1`.
 pub type BBox = (f64, f64, f64, f64);
@@ -1025,7 +1030,29 @@ struct TextRunRecord {
     fill: Option<PaintTuple>,
     stroke: Option<StrokeRecord>,
     bbox: Rect,
+    /// The box of the glyphs' origins and advances, for a run without ink.
+    extent: Rect,
+    /// The place of the run's first glyph among those that hayro showed.
+    first_shown: usize,
     context: ItemContext,
+}
+
+impl TextRunRecord {
+    /// Describes the run as the fallback faces draw it, from its first glyph
+    /// on: the IDs and the ink of `faces`, and the box around that ink. The
+    /// matrices and the advances stay, because a face's stretch in the glyph's
+    /// transform would move them.
+    fn describe_on(&mut self, faces: &[FaceGlyph]) {
+        let mut ink: Option<Rect> = None;
+        for ((id, bbox), face) in self.ids.iter_mut().zip(&mut self.boxes).zip(faces) {
+            *id = face.id;
+            *bbox = face.ink.map(bbox_tuple);
+            if let Some(face) = face.ink {
+                ink = Some(ink.map_or(face, |ink| ink.union(face)));
+            }
+        }
+        self.bbox = ink.unwrap_or(self.extent);
+    }
 }
 
 struct ImageRecord {
@@ -1168,6 +1195,74 @@ pub trait ContentSink {
 /// The sink of `Page.content()`, which reads only the items.
 pub(crate) struct NoSink;
 
+/// What a fallback face draws for one glyph that a page shows.
+struct FaceGlyph {
+    id: Option<u32>,
+    ink: Option<Rect>,
+}
+
+/// The sink of an interpretation through the fallback faces, which reads the
+/// glyph that each face draws for each glyph of the page, and the fonts as the
+/// faces describe them, by the key of the font's dictionary.
+struct FaceGlyphs<'b> {
+    glyphs: BudgetVec<'b, FaceGlyph>,
+    fonts: HashMap<u128, FontTuple>,
+    /// The font of a run whose first glyph has yet to arrive.
+    font: Option<u128>,
+    error: Option<Error>,
+}
+
+impl FaceGlyphs<'_> {
+    fn add_font(&mut self, key: u128, glyph: &OutlineGlyph) -> Result<(), Error> {
+        if !self.fonts.contains_key(&key) {
+            self.fonts.try_reserve(1).map_err(|error| {
+                Error::Allocation(format!("failed to grow the fonts of the faces: {error}"))
+            })?;
+            self.fonts.insert(key, font_tuple(glyph));
+        }
+        Ok(())
+    }
+
+    fn add_glyph(&mut self, glyph: &Glyph<'_>, ink: Option<Rect>) -> Result<(), Error> {
+        let font = self.font.take();
+        let id = match glyph {
+            Glyph::Outline(outline) => {
+                if let Some(font) = font {
+                    self.add_font(font, outline)?;
+                }
+                Some(outline.glyph_id().to_u32())
+            }
+            Glyph::Type3(_) => None,
+        };
+        let ink = ink.filter(|ink| rect_is_finite(*ink));
+        Ok(self.glyphs.try_push(FaceGlyph { id, ink })?)
+    }
+}
+
+impl ContentSink for FaceGlyphs<'_> {
+    fn glyph_run(&mut self, style: &GlyphStyle) {
+        self.font = Some(style.font);
+    }
+
+    fn glyph(&mut self, glyph: &Glyph<'_>, _: Affine, ink: Option<Rect>) {
+        if self.error.is_none() {
+            self.error = self.add_glyph(glyph, ink).err();
+        }
+    }
+
+    fn wants_ink(&self) -> bool {
+        true
+    }
+
+    fn stroke_completes_fill(&mut self) {}
+
+    fn path(&mut self, _: &BezPath, _: Affine, _: &DrawMode) {}
+
+    fn stopped(&self) -> bool {
+        self.error.is_some()
+    }
+}
+
 impl ContentSink for NoSink {
     fn glyph_run(&mut self, _: &GlyphStyle) {}
     fn glyph(&mut self, _: &Glyph<'_>, _: Affine, _: Option<Rect>) {}
@@ -1299,6 +1394,11 @@ pub(crate) struct ContentCollector<'b, S> {
     pending_matrices: Vec<f64>,
     /// The glyph runs that hayro has shown.
     runs: u32,
+    /// The glyphs of the runs that hayro has shown, without the strokes that
+    /// complete a fill, which show the fill's glyphs again.
+    shown: usize,
+    /// The place among them of the first glyph of the latest such run.
+    first_shown: usize,
     outlines: HashMap<u128, Option<GlyphInk>>,
     type3_boxes: HashMap<u128, Option<Rect>>,
     /// The images recorded so far, the ordinal of the next one.
@@ -1334,6 +1434,8 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             pending: None,
             pending_matrices: Vec::new(),
             runs: 0,
+            shown: 0,
+            first_shown: 0,
             outlines: HashMap::new(),
             type3_boxes: HashMap::new(),
             images: 0,
@@ -1397,17 +1499,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         if let Some(index) = self.font_indexes.get(&key) {
             return Ok(*index);
         }
-        let font = match glyph.font_data() {
-            Some(data) => (
-                data.postscript_name.unwrap_or_default(),
-                false,
-                data.weight,
-                data.is_italic,
-                data.is_serif,
-                data.is_monospace,
-            ),
-            None => (String::new(), false, None, false, false, false),
-        };
+        let font = font_tuple(glyph);
         let index = index_of(self.fonts.len())?;
         self.font_indexes.try_reserve(1).map_err(|error| {
             Error::Allocation(format!("failed to grow the font index: {error}"))
@@ -1599,6 +1691,8 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                 self.sink.stroke_completes_fill();
             }
         } else {
+            self.first_shown = self.shown;
+            self.shown += glyphs.len();
             if !self.sink.stopped() {
                 self.sink.glyph_run(&GlyphStyle {
                     color: match (&props.paint, mode) {
@@ -1734,7 +1828,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             advances.push(advance);
             boxes.push(bbox.map(bbox_tuple));
         }
-        let Some(bbox) = ink.or(extent) else {
+        let Some(extent) = extent else {
             return Ok(());
         };
         let record = TextRunRecord {
@@ -1747,7 +1841,9 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             render_mode,
             fill,
             stroke,
-            bbox,
+            bbox: ink.unwrap_or(extent),
+            extent,
+            first_shown: self.first_shown,
             context,
         };
         push(
@@ -1906,6 +2002,35 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
     }
 
     /// Return the items that meet `clip`, or all of them, and the sink.
+    /// Describes the text runs and their fonts on `faces`. Faces that show
+    /// other glyphs, as hayro does when one does not load, leave them as they
+    /// are.
+    fn describe_on(&mut self, faces: FaceGlyphs<'_>) -> Result<(), Error> {
+        let FaceGlyphs {
+            glyphs,
+            mut fonts,
+            error,
+            ..
+        } = faces;
+        if let Some(error) = error {
+            return Err(error);
+        }
+        if glyphs.len() != self.shown {
+            return Ok(());
+        }
+        for record in &mut self.records {
+            if let Record::Text(run) = record {
+                run.describe_on(&glyphs[run.first_shown..]);
+            }
+        }
+        for (key, index) in &self.font_indexes {
+            if let Some(font) = fonts.remove(key) {
+                self.fonts[*index as usize] = font;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn finish(mut self, clip: Option<BBox>) -> Result<(PageContent, S), Error> {
         if let Some(error) = self.error {
             return Err(error);
@@ -1938,6 +2063,21 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             }),
         };
         Ok((content, self.sink))
+    }
+}
+
+/// The font of an outline glyph.
+fn font_tuple(glyph: &OutlineGlyph) -> FontTuple {
+    match glyph.font_data() {
+        Some(data) => (
+            data.postscript_name.unwrap_or_default(),
+            false,
+            data.weight,
+            data.is_italic,
+            data.is_serif,
+            data.is_monospace,
+        ),
+        None => (String::new(), false, None, false, false, false),
     }
 }
 
@@ -2068,5 +2208,68 @@ pub(crate) fn collect_page_content<'a, S: ContentSink>(
     let mut context = extraction_context(pdf, page, cache, settings);
     let mut collector = ContentCollector::new(sink, kinds, budget);
     interpret_page(page, &mut context, &mut collector);
+    collector.finish(clip)
+}
+
+/// Returns what [`collect_page_content`] returns for what `render_content`
+/// selects, with the text runs of a font that the document does not embed
+/// described as the face of `fallback` that draws it: their glyph IDs, ink
+/// boxes, and fonts.
+///
+/// Everything else comes from an interpretation without faces. hayro keeps the
+/// stretch of a face's glyph to its PDF width in the glyph's transform, where
+/// nothing tells it apart, so the matrices and the advances keep what the page
+/// gives without faces, as the exact boxes of text do. Only text runs read the
+/// faces, and only when one of them draws a font of the page, in an
+/// interpretation that records no items and so counts no elements. A clip
+/// keeps the items by their boxes, so it applies after the faces have moved
+/// them.
+#[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
+pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
+    pdf: &'a Pdf,
+    page: &Page<'a>,
+    fallback: &Fallback,
+    render_content: RenderContent,
+    sink: S,
+    kinds: ItemKinds,
+    clip: Option<BBox>,
+    budget: &Budget,
+) -> Result<(PageContent, S), Error> {
+    let asked = Arc::new(AtomicBool::new(false));
+    let settings = InterpreterSettings {
+        render_content,
+        ..if kinds.text_runs {
+            fallback.watching(&asked)
+        } else {
+            InterpreterSettings::default()
+        }
+    };
+    let cache = InterpreterCache::new();
+    let mut context = extraction_context(pdf, page, &cache, settings);
+    let mut collector = ContentCollector::new(sink, kinds, budget);
+    interpret_page(page, &mut context, &mut collector);
+    if collector.error.is_none() && asked.load(Ordering::Relaxed) {
+        let settings = InterpreterSettings {
+            render_content,
+            ..fallback.settings()
+        };
+        let faces = FaceGlyphs {
+            glyphs: BudgetVec::new(budget),
+            fonts: HashMap::new(),
+            font: None,
+            error: None,
+        };
+        let (_, faces) = collect_page_content(
+            pdf,
+            page,
+            settings,
+            &InterpreterCache::new(),
+            faces,
+            ItemKinds::NONE,
+            None,
+            budget,
+        )?;
+        collector.describe_on(faces)?;
+    }
     collector.finish(clip)
 }
