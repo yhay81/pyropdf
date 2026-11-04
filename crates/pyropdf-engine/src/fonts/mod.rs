@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 
+pub mod bitmap;
 mod cff;
 pub mod colour;
 pub mod compact;
@@ -17,6 +18,7 @@ mod sfnt;
 pub mod shape;
 #[cfg(test)]
 mod tests;
+pub mod type3;
 
 /// A subset font program.
 #[derive(Debug, Clone, PartialEq, Eq)]

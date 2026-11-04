@@ -1,0 +1,62 @@
+[
+ {
+  "face": "cbdt",
+  "pages": 100,
+  "varying": false,
+  "draw_seconds": 0.088,
+  "type3_fonts": 1,
+  "procedures": 5,
+  "images": 5,
+  "programs": 0,
+  "saved_bytes": 43293,
+  "saved_dedupe_bytes": 25581,
+  "saved_compressed_bytes": 8908,
+  "face_bytes": 27212,
+  "text_ok": true
+ },
+ {
+  "face": "cbdt",
+  "pages": 100,
+  "varying": true,
+  "draw_seconds": 0.126,
+  "type3_fonts": 1,
+  "procedures": 26,
+  "images": 26,
+  "programs": 0,
+  "saved_bytes": 80303,
+  "saved_dedupe_bytes": 57886,
+  "saved_compressed_bytes": 39557,
+  "face_bytes": 27212,
+  "text_ok": true
+ },
+ {
+  "face": "sbix",
+  "pages": 100,
+  "varying": false,
+  "draw_seconds": 0.099,
+  "type3_fonts": 1,
+  "procedures": 5,
+  "images": 5,
+  "programs": 0,
+  "saved_bytes": 43293,
+  "saved_dedupe_bytes": 25581,
+  "saved_compressed_bytes": 8908,
+  "face_bytes": 27144,
+  "text_ok": true
+ },
+ {
+  "face": "sbix",
+  "pages": 100,
+  "varying": true,
+  "draw_seconds": 0.123,
+  "type3_fonts": 1,
+  "procedures": 26,
+  "images": 26,
+  "programs": 0,
+  "saved_bytes": 80303,
+  "saved_dedupe_bytes": 57886,
+  "saved_compressed_bytes": 39557,
+  "face_bytes": 27144,
+  "text_ok": true
+ }
+]
