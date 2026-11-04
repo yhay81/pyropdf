@@ -740,7 +740,7 @@ impl TextCollector<'_> {
             (1.0, 0.0)
         };
         // Advance is the glyph-space advance transformed by the x basis.
-        // Approximate missing fonts such as Type 3 as half the font size.
+        // Approximate a font that gives none as half the font size.
         let (advance_width, font_key, font) = match glyph {
             Glyph::Outline(g) => {
                 let key = self.style.font;
@@ -766,7 +766,7 @@ impl TextCollector<'_> {
                 };
                 (g.advance_width().map(f64::from), key, info)
             }
-            Glyph::Type3(_) => (None, 0, FontInfo::default()),
+            Glyph::Type3(g) => (g.advance_width().map(f64::from), 0, FontInfo::default()),
         };
         let zero_advance = advance_width == Some(0.0);
         let advance = advance_width
