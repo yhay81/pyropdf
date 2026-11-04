@@ -61,7 +61,7 @@ PACKAGES = {
 
 
 def _font_objects(  # noqa: PLR0913 - a page of PAGES, and the entries that some tests add.
-    first: int, name: str, subtype: str, encoding: str, ordering: str, descendant: str = ""
+    first: int, name: str, subtype: str, encoding: str, ordering: str, *, descendant: str = ""
 ) -> dict[int, str]:
     """Return a Type0 font that the file does not embed, numbered from ``first``, with its descendant and descriptor."""
     return {
@@ -102,7 +102,7 @@ def nonembedded_cjk_pdf(*pages: tuple[str, str, str, str, str], descendant: str 
             f"/Resources << /Font << /F1 {page + 2} 0 R >> >> /Contents {page + 1} 0 R >>"
         )
         objects[page + 1] = f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream"
-        objects |= _font_objects(page + 2, name, subtype, encoding, ordering, descendant)
+        objects |= _font_objects(page + 2, name, subtype, encoding, ordering, descendant=descendant)
         kids.append(f"{page} 0 R")
     objects[2] = f"<< /Type /Pages /Kids [{' '.join(kids)}] /Count {len(kids)} >>"
     return build_raw_pdf(objects)
