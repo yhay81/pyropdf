@@ -16,6 +16,9 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
   the colour glyphs that drawing refuses, measure its glyphs, and compact
   to them at save; bytes that do not load are a
   typed error, and any bytes compact or refuse (#482).
+- `bitmaps`: faces that load from any bytes draw their PNG strikes at three
+  sizes into Type 3 fonts, which read back the codes that they gave (#631).
+  Decoding a PNG is `Canvas.image`'s path, which the Python tests cover.
 - `interpret`: rendering, SVG conversion, text extraction, and content
   items of the first four pages, of a whole file or of a content stream
   that a one-page template with varied resources holds.
@@ -41,7 +44,8 @@ cargo +nightly fuzz run index corpus/index -- -max_total_time=60
 fixtures as seeds of `index`, `save`, and `bridge`, their uncompressed
 objects as seeds of `value`, and their content streams, inflated where they
 are Flate data, as seeds of `content`, and the engine's subset test faces
-as seeds of `fonts`, to `fuzz/corpus/`, which git ignores.
+as seeds of `fonts`, and its colour faces as seeds of `bitmaps`, to
+`fuzz/corpus/`, which git ignores.
 
 ## CI and Actions minutes
 
@@ -50,11 +54,11 @@ and pushes to main that change the store, the engine, or the targets, and for fi
 Mondays. Each job also installs cargo-fuzz and builds the target, about four
 minutes with a warm cache. Linux minutes count once:
 
-- weekly: 6 jobs × (15 + 4) minutes = about 115 minutes, or about 490 a month;
-- pull requests and pushes to main: 6 × (1 + 4) = about 30 minutes each,
+- weekly: 7 jobs × (15 + 4) minutes = about 135 minutes, or about 570 a month;
+- pull requests and pushes to main: 7 × (1 + 4) = about 35 minutes each,
   which Rust changes pay twice: once on the pull request and once on main.
 
 Against the 2,000 minutes a month of a private repository on GitHub Free
-(3,000 on Pro), the weekly run takes about a quarter (or a sixth). Lower
+(3,000 on Pro), the weekly run takes under a third (or a fifth). Lower
 `SECONDS_TO_RUN` or the `paths` of the pull-request trigger if the minutes
 run short.
