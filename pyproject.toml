@@ -27,6 +27,12 @@ classifiers = [
 [project.optional-dependencies]
 # pylopdf's PP-OCR models, which `OcrEngine` discovers (DESIGN.md section 14).
 ocr = ["pylopdf-ocr-models>=0.1.0,<0.2"]
+# pylopdf's Noto CJK faces, which render the CJK fonts that a document does
+# not embed (`Document.fallback_fonts`, DESIGN.md section 14).
+jp = ["pylopdf-fonts-jp>=0.1.1,<0.2"]
+ko = ["pylopdf-fonts-ko>=0.1.1,<0.2"]
+zh-cn = ["pylopdf-fonts-zh-cn>=0.1.1,<0.2"]
+zh-tw = ["pylopdf-fonts-zh-tw>=0.1.1,<0.2"]
 
 [project.urls]
 Homepage = "https://pyropdf.haya.works/"
@@ -60,6 +66,11 @@ dev = [
     "ty>=0.0.96",
     # The OCR tests run the models of the `ocr` extra.
     "pylopdf-ocr-models>=0.1.0,<0.2",
+    # The fallback font tests render with the faces of the CJK extras.
+    "pylopdf-fonts-jp>=0.1.1,<0.2",
+    "pylopdf-fonts-ko>=0.1.1,<0.2",
+    "pylopdf-fonts-zh-cn>=0.1.1,<0.2",
+    "pylopdf-fonts-zh-tw>=0.1.1,<0.2",
 ]
 # The documentation site (mkdocs.yml, mkdocs.ja.yml), built in
 # .github/workflows/docs.yml.

@@ -1332,6 +1332,42 @@ wheels = [
 ]
 
 [[package]]
+name = "pylopdf-fonts-jp"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/f1/996e6fce83b83101f1aa9046131f41ea466f26b94d0352abf2ab20517362/pylopdf_fonts_jp-0.1.1.tar.gz", hash = "sha256:a5291029224a8ac891082f9ba13e346dc9ee93d39d8829e8a4ce8d0a367e93b9", size = 9137244, upload-time = "2026-10-13T01:41:38.185Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/41/af779ef8ead28efbf0086e7b4a9f5dfaba5d5bdad5e6b4e822b354e1dd64/pylopdf_fonts_jp-0.1.1-py3-none-any.whl", hash = "sha256:7fd33378751d0fd2c4a87824c11e0e0cc55350150d8da4c1e5ae90925c0a1cf5", size = 9140582, upload-time = "2026-10-13T01:41:36.166Z" },
+]
+
+[[package]]
+name = "pylopdf-fonts-ko"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/dc/0488c752164bfbd1232848b5fe8581aec653ae988fd8b0cd986c112bc90a/pylopdf_fonts_ko-0.1.1.tar.gz", hash = "sha256:b138c71056209ad9ccf4586794bdff1af7f733729de79ae266b6d3a99b47d0d3", size = 9602031, upload-time = "2026-10-13T01:44:51.411Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/07/47240827f268d47058024cbd0e0abff7aa8bc19c62e8ad6c6d7f6fc83169/pylopdf_fonts_ko-0.1.1-py3-none-any.whl", hash = "sha256:a31ece5cf71d2869f9221f95ab120d341de6028338aa074ad969611e54e40e57", size = 9609679, upload-time = "2026-10-13T01:44:48.695Z" },
+]
+
+[[package]]
+name = "pylopdf-fonts-zh-cn"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f8/8e/334855dd2ddec1469ec83ce5f78c944bb01265609717f8eddcbeaf93669e/pylopdf_fonts_zh_cn-0.1.1.tar.gz", hash = "sha256:dbcae5bb4ce504a4128108f5e0e19ae107f2939acd269faa11681221acc6b5bd", size = 17077180, upload-time = "2026-10-13T01:46:18.102Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/16/cc/acdc4681981f1484de20fe445bb28b588fd453a824c1d5626a9c2fd0f2d5/pylopdf_fonts_zh_cn-0.1.1-py3-none-any.whl", hash = "sha256:e2661ef3790cbe0f0f6aa5338b6859b7cd288ee75bc88cd4239c62cd025d4fb3", size = 17084102, upload-time = "2026-10-13T01:46:14.918Z" },
+]
+
+[[package]]
+name = "pylopdf-fonts-zh-tw"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/79/0c7553e3d5117d8fbcca4136b6a1ebb7ea089e5df4ee9138ff93bed13e46/pylopdf_fonts_zh_tw-0.1.1.tar.gz", hash = "sha256:d4502aa56358f36951437015b2a8be2f26e6fe0bdb501e2740ca4548648ba105", size = 11654069, upload-time = "2026-10-13T01:47:53.897Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/4b/5bb5810755a63891e7ec2bb9cb46115eaca788612148136292eddebffc33/pylopdf_fonts_zh_tw-0.1.1-py3-none-any.whl", hash = "sha256:8b8acabf814f8d4f6cf0773614031be50c3b1020302397c4904726e099c0afde", size = 11656307, upload-time = "2026-10-13T01:47:51.185Z" },
+]
+
+[[package]]
 name = "pylopdf-ocr-models"
 version = "0.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1406,14 +1442,30 @@ name = "pyropdf"
 source = { editable = "." }
 
 [package.optional-dependencies]
+jp = [
+    { name = "pylopdf-fonts-jp" },
+]
+ko = [
+    { name = "pylopdf-fonts-ko" },
+]
 ocr = [
     { name = "pylopdf-ocr-models" },
+]
+zh-cn = [
+    { name = "pylopdf-fonts-zh-cn" },
+]
+zh-tw = [
+    { name = "pylopdf-fonts-zh-tw" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pikepdf" },
     { name = "pyhanko" },
+    { name = "pylopdf-fonts-jp" },
+    { name = "pylopdf-fonts-ko" },
+    { name = "pylopdf-fonts-zh-cn" },
+    { name = "pylopdf-fonts-zh-tw" },
     { name = "pylopdf-ocr-models" },
     { name = "pytest" },
     { name = "ruff" },
@@ -1428,13 +1480,23 @@ oracles = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "pylopdf-ocr-models", marker = "extra == 'ocr'", specifier = ">=0.1.0,<0.2" }]
-provides-extras = ["ocr"]
+requires-dist = [
+    { name = "pylopdf-fonts-jp", marker = "extra == 'jp'", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-fonts-ko", marker = "extra == 'ko'", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-fonts-zh-cn", marker = "extra == 'zh-cn'", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-fonts-zh-tw", marker = "extra == 'zh-tw'", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-ocr-models", marker = "extra == 'ocr'", specifier = ">=0.1.0,<0.2" },
+]
+provides-extras = ["jp", "ko", "ocr", "zh-cn", "zh-tw"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "pikepdf", specifier = ">=10.17.0" },
     { name = "pyhanko", specifier = ">=0.38.1" },
+    { name = "pylopdf-fonts-jp", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-fonts-ko", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-fonts-zh-cn", specifier = ">=0.1.1,<0.2" },
+    { name = "pylopdf-fonts-zh-tw", specifier = ">=0.1.1,<0.2" },
     { name = "pylopdf-ocr-models", specifier = ">=0.1.0,<0.2" },
     { name = "pytest", specifier = ">=9.2.0" },
     { name = "ruff", specifier = ">=0.17.3" },

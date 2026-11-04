@@ -15,6 +15,7 @@ use pyropdf_engine::annotations::AppearanceSettler;
 use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
 use pyropdf_engine::fonts::settle::FontSubsetSettler;
 pub(crate) use pyropdf_engine::forms::text_string;
+use pyropdf_engine::render::Fallback;
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode, SharedBudget};
 use pyropdf_store::memo::Memo;
 use pyropdf_store::pages::{Page, PageIndex, PageTree};
@@ -70,6 +71,10 @@ pub struct _Document {
     pub(crate) draft_fill_index: FillCache,
     /// hayro's reading of the latest version rendered.
     pub(crate) bridge: pyropdf_engine::bridge::Cache,
+    /// The faces that render the CJK fonts that the document does not
+    /// embed, which `python/pyropdf/_fonts.py` sets; a setting of this
+    /// object, not of the document, so unlocking keeps it.
+    fallback: RwLock<Fallback>,
     /// The reverse-reference index of the latest version that a structural
     /// edit read.
     pub(crate) references: pyropdf_store::refs::Cache,
@@ -107,9 +112,28 @@ impl _Document {
             fill_index: FillCache::new(),
             draft_fill_index: FillCache::new(),
             bridge: pyropdf_engine::bridge::Cache::new(),
+            fallback: RwLock::new(Fallback::default()),
             references: pyropdf_store::refs::Cache::new(),
             history: Arc::new(crate::history::State::default()),
         }
+    }
+
+    /// Returns the faces that render the CJK fonts that the document does
+    /// not embed.
+    pub(crate) fn fallback(&self) -> Fallback {
+        self.fallback
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Replaces the faces that render the CJK fonts that the document does
+    /// not embed.
+    pub(crate) fn set_fallback(&self, fallback: Fallback) {
+        *self
+            .fallback
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = fallback;
     }
 
     /// Returns the store's document, or refuses a closed one.

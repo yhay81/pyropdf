@@ -3,6 +3,7 @@
 //! program to those glyphs.
 
 use std::ops::Deref;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
@@ -12,6 +13,7 @@ use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
 use pyropdf_engine::fonts::{self, Format};
+use pyropdf_engine::render::{Fallback, FontFile, Language, Source};
 use pyropdf_engine::standard::{self, Base14Font, LayoutError, LineMetrics, Placement};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, SharedBudget};
 use pyropdf_store::settle::Structure;
@@ -759,6 +761,61 @@ impl _Font {
     fn __repr__(&self) -> String {
         format!("_Font({:?})", self.full_name())
     }
+}
+
+/// A font file of an installed font package, which rendering reads the
+/// first time that a page needs it, at most `max_size` bytes; one object
+/// serves every document that renders with it, so the file is read once.
+#[pyclass(frozen, module = "pyropdf._core")]
+pub struct _FontFile(Arc<FontFile>);
+
+#[pymethods]
+impl _FontFile {
+    #[new]
+    fn new(path: PathBuf, max_size: Option<u64>) -> Self {
+        Self(Arc::new(FontFile::new(path, max_size)))
+    }
+}
+
+/// A face that renders the CJK fonts of one language that a document does
+/// not embed: a loaded OpenType face or an installed font file.
+#[derive(FromPyObject)]
+pub enum FallbackFace<'py> {
+    Font(PyRef<'py, _Font>),
+    File(PyRef<'py, _FontFile>),
+}
+
+/// Sets the faces that render the CJK fonts that `document` does not
+/// embed, replacing all of them: each of `faces` holds a language tag,
+/// `ja`, `ko`, `zh-CN`, or `zh-TW`, whether the face is the serif one, and
+/// the face.
+#[pyfunction]
+pub fn set_fallback_faces(
+    document: &_Document,
+    faces: Vec<(String, bool, FallbackFace<'_>)>,
+) -> PyResult<()> {
+    let mut fallback = Fallback::default();
+    for (tag, serif, face) in faces {
+        let language = Language::from_tag(&tag).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "a fallback font language is 'ja', 'ko', 'zh-CN', or 'zh-TW': {tag:?}"
+            ))
+        })?;
+        let source = match face {
+            FallbackFace::Font(font) => match &font.kind {
+                Kind::Embedded(face) => Source::Face(Arc::clone(face)),
+                Kind::Standard(_) => {
+                    return Err(PdfError::new_err(
+                        "a Standard 14 font cannot render CJK text",
+                    ));
+                }
+            },
+            FallbackFace::File(file) => Source::File(Arc::clone(&file.0)),
+        };
+        fallback.set(language, serif, Some(source));
+    }
+    document.set_fallback(fallback);
+    Ok(())
 }
 
 /// Bounds a text operation before input-derived collections grow.

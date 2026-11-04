@@ -8,6 +8,60 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Fonts
 
+## `FallbackFont`
+
+```python
+FallbackFont(*, sans: Font | None = None, serif: Font | None = None)
+```
+
+The faces that render the CJK fonts of one language that a document does not embed.
+
+Rendering draws a font whose name marks it as serif, such as a Mincho,
+Song, Ming, or Batang face, in `serif`, and any other in `sans`;
+when one of them is `None`, the other draws both. A variable face
+renders at its default instance. `Document.fallback_fonts` maps
+each language to one.
+
+## `FallbackFonts`
+
+```python
+FallbackFonts(document: Document)
+```
+
+The fonts that render the CJK fonts that a document does not embed, from `Document.fallback_fonts`.
+
+The keys are `"ja"`, `"ko"`, `"zh-CN"`, and `"zh-TW"`, the
+languages of the Adobe-Japan1, Korea1, GB1, and CNS1 character
+collections, and each value is a `FallbackFont`. Until it is
+edited, the mapping holds the faces of the installed font extras,
+`pyropdf[jp]`, `[ko]`, `[zh-cn]`, and `[zh-tw]`. Assigning or
+deleting a language changes only that language, and the next rendering
+uses the change.
+
+### `FallbackFonts.__getitem__`
+
+```python
+FallbackFonts.__getitem__(language: str) -> FallbackFont
+```
+
+Return the faces that render `language`, loading an installed extra's once per process.
+
+### `FallbackFonts.__iter__`
+
+```python
+FallbackFonts.__iter__() -> Iterator[str]
+```
+
+Iterate over the languages that have a fallback font.
+
+### `FallbackFonts.__len__`
+
+```python
+FallbackFonts.__len__() -> int
+```
+
+Return the number of languages that have a fallback font.
+
 ## `Font`
 
 ```python

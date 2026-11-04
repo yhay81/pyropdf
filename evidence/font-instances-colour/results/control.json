@@ -1,0 +1,14 @@
+{
+ "actual_text_over_a_glyph": {
+  "pyropdf": "x",
+  "xpdf": "A",
+  "mupdf": "A",
+  "pdfium": "A"
+ },
+ "arabic_at_the_default_instance": {
+  "pyropdf": "مرحبا",
+  "xpdf": "‫مرحبا‬",
+  "mupdf": "مرحب&ا",
+  "pdfium": "&مرحبا"
+ }
+}

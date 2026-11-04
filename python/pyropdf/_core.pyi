@@ -248,6 +248,7 @@ def render_page(
     background: tuple[int, int, int, int],
     clip: tuple[float, float, float, float] | None,
     annotations: bool,
+    hinting: bool,
     /,
 ) -> Pixmap: ...
 def render_page_svg(
@@ -261,6 +262,7 @@ def render_pages(
     gray: bool,
     background: tuple[int, int, int, int],
     annotations: bool,
+    hinting: bool,
     format: str,  # noqa: A002
     quality: int,
     workers: int,
@@ -366,6 +368,11 @@ class _Font:
 
 def mark_font_subset(document: _Document, xref: int, /) -> None: ...
 def subset_font_program(data: bytes, format: str, keep: list[int], /) -> tuple[bytes, int, int] | None: ...  # noqa: A002
+
+class _FontFile:
+    def __init__(self, path: str, max_size: int | None, /) -> None: ...
+
+def set_fallback_faces(document: _Document, faces: list[tuple[str, bool, _Font | _FontFile]], /) -> None: ...
 def page_boxes(
     document: _Document, number: int, generation: int, /
 ) -> list[tuple[float, float, float, float]] | None: ...

@@ -5,8 +5,8 @@ ebb01d3c, the cases without an embedded font (issue 467). Intended
 differences:
 
 - text without a ``font`` is drawn in Helvetica, and text outside WinAnsi
-  needs a font; pyropdf installs no font extras, and embedded fonts come
-  with issue 153, which keeps the embedded cases;
+  needs a font, which pyropdf never takes from its font extras; embedded
+  fonts come with issue 153, which keeps the embedded cases;
 - Standard 14 strings are written in hexadecimal, so no string holds a
   resource name that the commit renames;
 - pyropdf has no ``Document.complexity``; atomicity is checked on the

@@ -4,9 +4,9 @@ Ported from pylopdf 036be111 ``tests/test_ocr_layer.py``. The tests check
 both sides of the contract: nothing is drawn, while extraction and search
 see the text. The differences:
 
-- pylopdf turns its CJK fallback fonts off with ``doc.fallback_fonts``,
-  which pyropdf does not have; the test checks instead that the layer's
-  font embeds no program.
+- pylopdf turns its CJK fallback fonts off with ``doc.fallback_fonts``;
+  the layer draws nothing in any face, so these tests keep them, and one
+  checks instead that the layer's font embeds no program.
 - pylopdf draws its source text with ``page.draw``; these tests write
   content streams that show Helvetica.
 - The tests of undo, of a stale page, of a taken resource name, and of

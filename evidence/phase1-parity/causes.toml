@@ -1,8 +1,31 @@
 # The causes of measured differences; README.md explains each.
 
 [[cause]]
-id = "missing-highlight-appearance"
+id = "hayro-glyph-cache"
 outputs = ["render"]
-kinds = ["close"]
-documents = ["pdfium-links-highlights-annots"]
-pages = [0]
+kinds = ["pixels", "close"]
+documents = [
+    "bill-hr815",
+    "f1040",
+    "mhlw-doc",
+    "nics-background-checks-2015-11",
+    "nonembedded-cjk",
+    "pdf20-simple",
+    "pdfium-links-highlights-annots",
+    "senate-expenditures",
+    "usrguide",
+]
+
+[[cause]]
+id = "heading-above-columns"
+outputs = ["text", "words", "words_exact", "layout", "search", "markdown", "document_markdown"]
+kinds = ["text"]
+documents = ["patent-us223898"]
+pages = [1]
+
+[[cause]]
+id = "fallback-exact-boxes"
+outputs = ["words_exact"]
+kinds = ["boxes"]
+documents = ["nonembedded-cjk"]
+pages = [1, 2, 3, 4, 5, 6]

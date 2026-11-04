@@ -1,4 +1,4 @@
-"""The options of page.pixmap: clip, background, annotations, and colorspace.
+"""The options of page.pixmap: clip, background, annotations, colorspace, and hinting.
 
 Ported from pylopdf's tests/test_rendering_api.py at 036be111. Intended
 differences:
@@ -155,6 +155,42 @@ def test_annotations_must_be_a_bool() -> None:
         _page().pixmap(annotations=1)  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="alpha must be a bool"):
         _page().pixmap(alpha=None)  # ty: ignore[invalid-argument-type]
+
+
+def _corpus_page() -> pyropdf.Page:
+    """Open a corpus page with text in an embedded font."""
+    return pyropdf.open(REAL_WORLD / "pdf20-simple.pdf").pages[0]
+
+
+def test_hinting_changes_text_and_is_off_by_default() -> None:
+    page = _corpus_page()
+    unhinted = bytes(page.pixmap())
+    assert bytes(page.pixmap(hinting=False)) == unhinted
+    assert bytes(page.pixmap(hinting=True)) != unhinted
+
+
+def test_a_render_with_one_hinting_after_the_other_equals_a_fresh_one() -> None:
+    page = _corpus_page()
+    fresh_hinted = bytes(_corpus_page().pixmap(hinting=True))
+    fresh_unhinted = bytes(_corpus_page().pixmap())
+    assert bytes(page.pixmap()) == fresh_unhinted
+    assert bytes(page.pixmap(hinting=True)) == fresh_hinted
+    assert bytes(page.pixmap()) == fresh_unhinted
+
+
+def test_document_render_hints_as_page_pixmap_does() -> None:
+    doc = pyropdf.open(REAL_WORLD / "pdf20-simple.pdf")
+    hinted = [page.pixmap(hinting=True).to_bytes("png") for page in doc.pages]
+    assert doc.render(hinting=True) == hinted
+    assert doc.render() == [page.pixmap().to_bytes("png") for page in doc.pages]
+    assert doc.render() != hinted
+
+
+def test_hinting_must_be_a_bool() -> None:
+    with pytest.raises(TypeError, match="hinting must be a bool"):
+        _page().pixmap(hinting=1)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="hinting must be a bool"):
+        pyropdf.open(REAL_WORLD / "pdf20-simple.pdf").render(hinting=None)  # ty: ignore[invalid-argument-type]
 
 
 def test_gray_holds_the_luma_of_each_color() -> None:

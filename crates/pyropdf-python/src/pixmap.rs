@@ -1361,6 +1361,7 @@ pub fn render_page(
     background: (u8, u8, u8, u8),
     clip: Option<(f64, f64, f64, f64)>,
     annotations: bool,
+    hinting: bool,
 ) -> PyResult<Pixmap> {
     let (version, index, budget) = crate::pages::index(document)?;
     let (red, green, blue, opacity) = background;
@@ -1371,7 +1372,9 @@ pub fn render_page(
         background: [red, green, blue, opacity],
         clip,
         annotations,
+        hinting,
     };
+    let fallback = document.fallback();
     let raster = py.detach(|| -> PyResult<Raster> {
         let at = index
             .index_of(Reference::new(number, generation))
@@ -1384,7 +1387,7 @@ pub fn render_page(
             .bridge
             .get_for_render(&version, &index, &budget, annotations)
             .map_err(|e| bridge_error(&e))?;
-        render::raster(&bridged, at, &options).map_err(raster_error)
+        render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
     })?;
     Ok(Pixmap::from(raster))
 }
@@ -1422,6 +1425,7 @@ pub fn render_pages(
     gray: bool,
     background: (u8, u8, u8, u8),
     annotations: bool,
+    hinting: bool,
     format: &str,
     quality: u8,
     workers: usize,
@@ -1438,14 +1442,16 @@ pub fn render_pages(
         background: [red, green, blue, opacity],
         clip: None,
         annotations,
+        hinting,
     };
     let written = AtomicUsize::new(0);
+    let fallback = document.fallback();
     let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {
         let bridged = document
             .bridge
             .get_for_render(&version, &index, &budget, annotations)
             .map_err(|e| bridge_error(&e))?;
-        render::batch(&bridged, &indexes, &options, workers, |raster| {
+        render::batch(&bridged, &fallback, &indexes, &options, workers, |raster| {
             let mut out = Bounded::new(&written, max_size);
             let result = Pixmap::from(raster).encode(&mut out, encoding, &budget);
             if out.exceeded {
