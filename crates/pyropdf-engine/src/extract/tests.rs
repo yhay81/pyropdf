@@ -118,10 +118,21 @@ fn a_sink_sees_the_same_glyphs_and_paths_with_items_off() {
          BT /F1 12 Tf 10 50 Td 2 Tr (Hi) Tj 0 Tr ( there) Tj ET",
     ));
     let budget = Budget::default();
-    let (all, with_items) =
-        page_content_into(&bridged, 0, Recording::default(), ALL, true, None, &budget).unwrap();
+    let faces = Fallback::default();
+    let (all, with_items) = page_content_into(
+        &bridged,
+        &faces,
+        0,
+        Recording::default(),
+        ALL,
+        true,
+        None,
+        &budget,
+    )
+    .unwrap();
     let (none, without) = page_content_into(
         &bridged,
+        &faces,
         0,
         Recording::default(),
         ItemKinds::NONE,
@@ -156,7 +167,7 @@ fn the_budget_counts_elements_and_a_refusal_keeps_nothing() {
     // One path of five segments, and its graphics context.
     let fits = |limit| {
         let budget = Budget::default().with_limit(LimitCode::ContentElementCount, Some(limit));
-        page_content(&bridged, 0, ALL, true, None, &budget)
+        page_content(&bridged, &Fallback::default(), 0, ALL, true, None, &budget)
     };
     let content = fits(7).unwrap();
     assert_eq!(content.items.len(), 1);
@@ -221,7 +232,16 @@ fn paths_are_rows_of_columns_in_paint_order() {
          BT /F1 12 Tf 10 50 Td (Hi) Tj ET \
          0 0 1 RG 2 w 5 5 m 9 9 l S",
     ));
-    let content = page_content(&bridged, 0, ALL, true, None, &Budget::default()).unwrap();
+    let content = page_content(
+        &bridged,
+        &Fallback::default(),
+        0,
+        ALL,
+        true,
+        None,
+        &Budget::default(),
+    )
+    .unwrap();
     assert_eq!(content.items.len(), 3);
     assert_eq!(path_rows(&content), [0, 1]);
     let paths = &*content.paths;
@@ -268,7 +288,16 @@ fn paths_are_rows_of_columns_in_paint_order() {
 #[test]
 fn a_page_without_paths_has_valid_offsets() {
     let bridged = Bridged::of_bytes(pdf_with(""));
-    let content = page_content(&bridged, 0, ALL, true, None, &Budget::default()).unwrap();
+    let content = page_content(
+        &bridged,
+        &Fallback::default(),
+        0,
+        ALL,
+        true,
+        None,
+        &Budget::default(),
+    )
+    .unwrap();
     assert_eq!(content.paths.rows(), 0);
     assert_eq!(content.paths.segment_offsets, [0]);
     assert_eq!(content.paths.stroke_dashes_offsets, [0]);
@@ -279,7 +308,8 @@ fn a_stroke_of_the_same_segments_completes_the_fill_row() {
     let elements = |content: &str| {
         let bridged = Bridged::of_bytes(pdf_with(content));
         let budget = Budget::default();
-        let content = page_content(&bridged, 0, ALL, true, None, &budget).unwrap();
+        let content =
+            page_content(&bridged, &Fallback::default(), 0, ALL, true, None, &budget).unwrap();
         (content, budget.used(LimitCode::ContentElementCount))
     };
     // The fill costs its item and five segments, and the graphics context
@@ -314,7 +344,16 @@ fn equal_patterns_share_an_index_in_the_order_of_first_use() {
         "/Pattern cs /P2 scn 10 10 20 20 re f /P1 scn 40 10 20 20 re f \
          /P2 scn 70 10 20 20 re f",
     ));
-    let content = page_content(&bridged, 0, ALL, true, None, &Budget::default()).unwrap();
+    let content = page_content(
+        &bridged,
+        &Fallback::default(),
+        0,
+        ALL,
+        true,
+        None,
+        &Budget::default(),
+    )
+    .unwrap();
     let paths = &*content.paths;
     assert_eq!(paths.fill.pattern, [0, 1, 0]);
     assert_eq!(paths.fill.pattern_bits, [0b111]);
@@ -336,7 +375,8 @@ fn a_clip_keeps_the_rows_that_meet_it_after_counting_them_all() {
     ));
     let read = |clip| {
         let budget = Budget::default();
-        let content = page_content(&bridged, 0, ALL, true, clip, &budget).unwrap();
+        let content =
+            page_content(&bridged, &Fallback::default(), 0, ALL, true, clip, &budget).unwrap();
         (content, budget.used(LimitCode::ContentElementCount))
     };
     let (all, all_elements) = read(None);
@@ -388,7 +428,7 @@ fn a_missing_page_is_refused() {
     let bridged = Bridged::of_bytes(pdf_with(""));
     let budget = Budget::default();
     assert_eq!(
-        page_content(&bridged, 1, ALL, true, None, &budget).unwrap_err(),
+        page_content(&bridged, &Fallback::default(), 1, ALL, true, None, &budget).unwrap_err(),
         Error::NoPage(1)
     );
 }
@@ -698,4 +738,224 @@ fn a_face_that_does_not_load_leaves_the_boxes_that_the_page_gives() {
     let measured = first_span(&bridged, &broken, &EXACT);
     std::fs::remove_file(&path).unwrap();
     assert_eq!(measured, first_span(&bridged, &Fallback::default(), &EXACT));
+}
+
+/// Returns a page that shows two glyphs at 40 points in a font named MS-Gothic
+/// that the file embeds: the subset, in a stream of hexadecimal digits.
+fn embedded_japanese() -> Vec<u8> {
+    let content = "BT /F1 40 Tf 20 30 Td <002B002C> Tj ET";
+    let program: String = SUBSET.iter().map(|byte| format!("{byte:02X}")).collect();
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Gothic /Encoding /Identity-H \
+         /DescendantFonts [6 0 R] >>"
+            .to_owned(),
+        "<< /Type /Font /Subtype /CIDFontType0 /BaseFont /MS-Gothic /CIDSystemInfo \
+         << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /DW 1000 \
+         /FontDescriptor 7 0 R >>"
+            .to_owned(),
+        "<< /Type /FontDescriptor /FontName /MS-Gothic /Flags 4 /FontBBox [0 -120 1000 880] \
+         /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 /FontFile3 8 0 R >>"
+            .to_owned(),
+        format!(
+            "<< /Subtype /OpenType /Filter /ASCIIHexDecode /Length {} >>\nstream\n{program}>\nendstream",
+            program.len() + 1
+        ),
+    ];
+    pdf_of(&objects)
+}
+
+/// Returns the content of page 0 through `fallback`.
+fn content_on(bridged: &Bridged, fallback: &Fallback, kinds: ItemKinds) -> PageContent {
+    page_content(bridged, fallback, 0, kinds, true, None, &Budget::default()).unwrap()
+}
+
+/// Returns the text runs of `content`.
+fn text_runs(content: &PageContent) -> Vec<&TextRunTuple> {
+    content
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::Text(run) => Some(&**run),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn text_runs_describe_a_font_that_a_document_does_not_embed_as_its_face() {
+    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    let plain = content_on(&bridged, &Fallback::default(), ALL);
+    let faced = content_on(&bridged, &loaded_japanese(), ALL);
+    let (plain_run, faced_run) = (text_runs(&plain)[0], text_runs(&faced)[0]);
+
+    // Without a face the glyphs have no outline, so the run lies on its
+    // baseline, from its first origin to the end of its last advance.
+    assert!(plain_run.0.4.iter().all(Option::is_none));
+    assert_eq!(plain_run.5, (20.0, 70.0, 140.0, 70.0));
+    assert_eq!(plain.fonts[plain_run.1 as usize].2, None);
+
+    // A face gives each glyph the ID and the ink of what it draws, and the run
+    // the box around that ink, inside the three glyphs' 120 points.
+    assert_ne!(faced_run.0.0, plain_run.0.0);
+    assert!(faced_run.0.0.iter().all(Option::is_some));
+    let boxes: Vec<BBox> = faced_run.0.4.iter().map(|ink| ink.unwrap()).collect();
+    let union = boxes.iter().fold(boxes[0], |all, one| {
+        (
+            all.0.min(one.0),
+            all.1.min(one.1),
+            all.2.max(one.2),
+            all.3.max(one.3),
+        )
+    });
+    assert_eq!(faced_run.5, union);
+    assert!(union.0 > 20.0 && union.2 < 140.0, "{union:?}");
+    // The font keeps its name, and reads the rest of its record from the face.
+    let (plain_font, faced_font) = (
+        &plain.fonts[plain_run.1 as usize],
+        &faced.fonts[faced_run.1 as usize],
+    );
+    assert_eq!(faced_font.0, plain_font.0);
+    assert!(faced_font.2.is_some());
+
+    // The glyphs keep their text and places.
+    assert_eq!(faced_run.0.1, plain_run.0.1);
+    assert_eq!(faced_run.0.2, plain_run.0.2);
+    assert_eq!(faced_run.0.3, plain_run.0.3);
+}
+
+#[test]
+fn a_stretched_face_keeps_the_matrices_and_the_advances_of_a_text_run() {
+    // Half the widths of the face's glyphs, which hayro draws at half their
+    // width, by a transform that would halve their advances too.
+    let bridged = Bridged::of_bytes(nonembedded_japanese("/W [0 65535 500]"));
+    let plain = content_on(&bridged, &Fallback::default(), ALL);
+    let faced = content_on(&bridged, &loaded_japanese(), ALL);
+    let (plain_run, faced_run) = (text_runs(&plain)[0], text_runs(&faced)[0]);
+    assert_eq!(faced_run.0.2, plain_run.0.2);
+    assert_eq!(faced_run.0.3, plain_run.0.3);
+    // The ink of the three glyphs fills most of the 60 points of their widths.
+    let ink = faced_run.5;
+    assert!(ink.0 > 20.0 && ink.2 < 80.0 && ink.2 > 70.0, "{ink:?}");
+}
+
+#[test]
+fn every_text_run_reads_its_own_glyphs_on_the_faces() {
+    // A run in fill and stroke, whose stroke shows its glyph again, between
+    // two others: the places stay in step.
+    let content = "BT /F1 40 Tf 20 30 Td <65E5> Tj ET \
+                   BT 2 Tr /F1 40 Tf 60 30 Td <672C> Tj ET \
+                   BT 0 Tr /F1 40 Tf 100 30 Td <8A9E> Tj ET";
+    let bridged = Bridged::of_bytes(nonembedded_page(content, ""));
+    let faced = content_on(&bridged, &loaded_japanese(), ALL);
+    let runs = text_runs(&faced);
+    assert_eq!(runs.len(), 3);
+    assert_eq!(runs[1].2, RENDER_FILL_STROKE);
+
+    // The three runs draw what one run of the three glyphs draws.
+    let whole = Bridged::of_bytes(nonembedded_japanese(""));
+    let whole = content_on(&whole, &loaded_japanese(), ALL);
+    let whole = &text_runs(&whole)[0].0;
+    for (at, run) in runs.iter().enumerate() {
+        assert_eq!(run.0.0, [whole.0[at]]);
+        assert_eq!(run.0.4, [whole.4[at]]);
+    }
+}
+
+#[test]
+fn a_clip_keeps_a_text_run_by_its_box_on_the_face() {
+    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    let budget = Budget::default();
+    // Above the baseline at 70, inside the ink.
+    let clip = Some((20.0, 45.0, 140.0, 50.0));
+    let without = page_content(&bridged, &Fallback::default(), 0, ALL, true, clip, &budget);
+    assert!(without.unwrap().items.is_empty());
+    let with = page_content(&bridged, &loaded_japanese(), 0, ALL, true, clip, &budget);
+    assert_eq!(with.unwrap().items.len(), 1);
+}
+
+#[test]
+fn only_text_runs_of_a_font_that_is_not_embedded_read_a_face() {
+    let name = format!("pyropdf-content-face-{}.otf", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, SUBSET).unwrap();
+    let file = || Source::File(Arc::new(FontFile::new(path.clone(), None)));
+    let nonembedded = Bridged::of_bytes(nonembedded_japanese(""));
+    let helvetica = Bridged::of_bytes(pdf_with("BT /F1 12 Tf 10 50 Td (Hi there) Tj ET"));
+    let embedded = Bridged::of_bytes(embedded_japanese());
+    let without_runs = ItemKinds {
+        text_runs: false,
+        ..ALL
+    };
+
+    // A face is read once, so one that these calls had read would still draw
+    // after its file is gone.
+    let unread = japanese(file());
+    let read = japanese(file());
+    content_on(&helvetica, &unread, ALL);
+    let drawn = content_on(&embedded, &unread, ALL);
+    content_on(&nonembedded, &unread, without_runs);
+    let measured = content_on(&nonembedded, &read, ALL);
+    std::fs::remove_file(&path).unwrap();
+
+    let none = Fallback::default();
+    // The embedded font draws its own ink, the same under any faces.
+    assert!(text_runs(&drawn)[0].0.4.iter().all(Option::is_some));
+    let own = content_on(&embedded, &none, ALL);
+    assert_eq!(text_runs(&drawn)[0], text_runs(&own)[0]);
+
+    let (kept, plain) = (
+        content_on(&nonembedded, &unread, ALL),
+        content_on(&nonembedded, &none, ALL),
+    );
+    assert_eq!(text_runs(&kept)[0], text_runs(&plain)[0]);
+    let again = content_on(&nonembedded, &read, ALL);
+    assert_eq!(text_runs(&again)[0], text_runs(&measured)[0]);
+    assert_ne!(text_runs(&measured)[0], text_runs(&plain)[0]);
+}
+
+#[test]
+fn a_face_counts_no_elements_of_a_text_run() {
+    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    let plain = Budget::default();
+    page_content(&bridged, &Fallback::default(), 0, ALL, true, None, &plain).unwrap();
+    let elements = plain.used(LimitCode::ContentElementCount);
+    assert!(elements > 0);
+
+    let faces = loaded_japanese();
+    let limit = Some(elements);
+    let budget = Budget::default().with_limit(LimitCode::ContentElementCount, limit);
+    let content = page_content(&bridged, &faces, 0, ALL, true, None, &budget).unwrap();
+    assert_eq!(budget.used(LimitCode::ContentElementCount), elements);
+    assert!(text_runs(&content)[0].0.4.iter().all(Option::is_some));
+
+    let limit = Some(elements - 1);
+    let budget = Budget::default().with_limit(LimitCode::ContentElementCount, limit);
+    assert!(matches!(
+        page_content(&bridged, &faces, 0, ALL, true, None, &budget),
+        Err(Error::Limit(_))
+    ));
+}
+
+#[test]
+fn a_face_that_does_not_load_leaves_the_text_runs_that_the_page_gives() {
+    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    // hayro then shows these codes in no font at all.
+    let name = format!("pyropdf-content-no-face-{}.otf", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, b"no font").unwrap();
+    let broken = japanese(Source::File(Arc::new(FontFile::new(path.clone(), None))));
+    let measured = content_on(&bridged, &broken, ALL);
+    std::fs::remove_file(&path).unwrap();
+    let plain = content_on(&bridged, &Fallback::default(), ALL);
+    assert_eq!(text_runs(&measured)[0], text_runs(&plain)[0]);
+    assert_eq!(measured.fonts, plain.fonts);
 }
