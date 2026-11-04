@@ -1,19 +1,19 @@
 # Paths as columns
 
-The measurement behind issue #606: the paths of a page as `Paths`
+The measurement behind issues #606 and #615: the paths of a page as `Paths`
 columns, from `Page.paths()`, against one `Path` record per path, from
 `Page.content()`, and against PyMuPDF's `get_cdrawings()` and
 `get_drawings()` (DESIGN.md section 10).
 
 ## Approach
 
-The binding builds one buffer per column from the interpretation that
-`Page.content()` memoizes for paths, with the GIL released and no Python
-object per path or segment. Python reads each column through the buffer
-protocol and the whole table through the Arrow PyCapsule interface, and
-the row view builds a `Path` record only when one is asked for. The page
-memo keeps the interpretation's own tuples, one per path, as it does for
-`Page.content()`.
+The engine's content collector appends each path to one buffer per column
+as hayro paints it, and the page memo holds those columns (#615).
+`Page.paths()` hands the memo's buffers to Python without a copy, with the
+GIL released and no Python object per path or segment. Python reads each
+column through the buffer protocol and the whole table through the Arrow
+PyCapsule interface, and the row view builds a `Path` record only when one
+is asked for. `Page.content()` builds its tuples from the same columns.
 
 ## Workload
 
