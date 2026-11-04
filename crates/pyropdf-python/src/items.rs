@@ -7,8 +7,9 @@
 //! states)`: each item is `(kind, tuple)`, with kind 0 for a text run, 1 for
 //! a path, and 2 for an image, in the tuple forms of
 //! `pyropdf_engine::extract`, which index the other lists. The paths alone
-//! also cross as the columns of `crate::buffers::PathColumns`, without a
-//! Python object per path (#606).
+//! also cross as `crate::buffers::PathColumns`, which hands the memoized
+//! content's columns to Python without a copy or a Python object per path
+//! (#606, #615).
 
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
@@ -53,26 +54,27 @@ pub fn page_content(
         .map_err(|error| PdfError::new_err(format!("cannot hold the content items: {error}")))?;
     for item in content.items {
         items.push(match item {
-            ContentItem::Text(run) => (0u8, run).into_py_any(py)?,
-            ContentItem::Path(path) => (1u8, path).into_py_any(py)?,
-            ContentItem::Image(image) => (2u8, image).into_py_any(py)?,
+            ContentItem::Text(run) => (0u8, *run).into_py_any(py)?,
+            ContentItem::Path(row) => (1u8, content.paths.tuple(row as usize)).into_py_any(py)?,
+            ContentItem::Image(image) => (2u8, *image).into_py_any(py)?,
         });
     }
+    let contexts = &*content.contexts;
     (
         items,
         content.fonts,
-        content.clips,
-        content.groups,
-        content.marks,
-        content.states,
+        &contexts.clips,
+        &contexts.groups,
+        &contexts.marks,
+        &contexts.states,
     )
         .into_py_any(py)
 }
 
 /// Returns the columns of the paths that the page whose object is `number`
-/// and `generation` paints, built with the GIL released from the content
-/// that [`page_content`] memoizes for paths alone, so that `max_elements`
-/// bounds what it bounds there.
+/// and `generation` paints: those of the content that [`page_content`]
+/// memoizes for paths alone, read with the GIL released, so that
+/// `max_elements` bounds what it bounds there.
 #[pyfunction]
 pub fn page_paths(
     py: Python<'_>,
@@ -89,7 +91,7 @@ pub fn page_paths(
         (number, generation),
         (false, true, false),
         (annotations, clip, max_elements),
-        PathColumns::new,
+        |content| Ok(PathColumns::new(content)),
     )
 }
 

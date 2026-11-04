@@ -9,40 +9,40 @@
 
 | Call | Time | CPU time | Peak | Held |
 | --- | ---: | ---: | ---: | ---: |
-| `pixmap` | 0.055 s | 0.047 s | 13.8 MiB, 440 B a path | 7.3 MiB, 231 B a path |
-| `records` | 0.700 s | 0.594 s | 65.2 MiB, 2,072 B a path | 75.6 MiB, 2,401 B a path |
-| `records_without_gc` | 0.492 s | 0.359 s | 65.3 MiB, 2,074 B a path | 76.1 MiB, 2,417 B a path |
-| `columns` | 0.055 s | 0.047 s | 13.4 MiB, 427 B a path | 21.7 MiB, 691 B a path |
-| `columns_numpy` | 0.057 s | 0.047 s | 12.0 MiB, 383 B a path | 20.6 MiB, 654 B a path |
-| `get_cdrawings` | 0.182 s | 0.172 s | 0.0 MiB, 0 B a path | 35.7 MiB, 1,133 B a path |
-| `get_drawings` | 0.466 s | 0.422 s | 0.0 MiB, 0 B a path | 44.5 MiB, 1,415 B a path |
+| `pixmap` | 0.085 s | 0.047 s | 13.7 MiB, 435 B a path | 6.6 MiB, 211 B a path |
+| `records` | 1.109 s | 0.578 s | 62.0 MiB, 1,969 B a path | 72.2 MiB, 2,294 B a path |
+| `records_without_gc` | 0.455 s | 0.344 s | 61.8 MiB, 1,963 B a path | 72.2 MiB, 2,294 B a path |
+| `columns` | 0.038 s | 0.047 s | 2.9 MiB, 93 B a path | 12.6 MiB, 401 B a path |
+| `columns_numpy` | 0.037 s | 0.031 s | 1.0 MiB, 33 B a path | 11.0 MiB, 350 B a path |
+| `get_cdrawings` | 0.185 s | 0.172 s | 0.0 MiB, 0 B a path | 35.6 MiB, 1,131 B a path |
+| `get_drawings` | 0.438 s | 0.422 s | 0.0 MiB, 0 B a path | 44.9 MiB, 1,428 B a path |
 
-Once the interpretation is memoized, `content().paths` takes 651.8 ms and `paths()` 7.44 ms. The columns hold 7.0 MiB, 221 bytes a path.
+Once the interpretation is memoized, `content().paths` takes 614.9 ms and `paths()` 0.05 ms. The columns hold 7.0 MiB, 221 bytes a path.
 
 ### lines-200000: 200,000 paths, 400,000 segments
 
 | Call | Time | CPU time | Peak | Held |
 | --- | ---: | ---: | ---: | ---: |
-| `pixmap` | 0.257 s | 0.219 s | 27.1 MiB, 142 B a path | 17.6 MiB, 93 B a path |
-| `records` | 4.587 s | 4.203 s | 427.6 MiB, 2,242 B a path | 457.8 MiB, 2,400 B a path |
-| `records_without_gc` | 2.477 s | 2.219 s | 428.4 MiB, 2,246 B a path | 458.8 MiB, 2,405 B a path |
-| `columns` | 0.273 s | 0.266 s | 111.1 MiB, 583 B a path | 131.5 MiB, 689 B a path |
-| `columns_numpy` | 0.313 s | 0.266 s | 110.4 MiB, 579 B a path | 131.4 MiB, 689 B a path |
-| `get_cdrawings` | 1.183 s | 1.016 s | 184.4 MiB, 967 B a path | 281.5 MiB, 1,476 B a path |
-| `get_drawings` | 2.626 s | 2.453 s | 242.3 MiB, 1,271 B a path | 339.1 MiB, 1,778 B a path |
+| `pixmap` | 0.246 s | 0.219 s | 26.7 MiB, 140 B a path | 17.4 MiB, 91 B a path |
+| `records` | 4.466 s | 4.156 s | 397.3 MiB, 2,083 B a path | 425.2 MiB, 2,229 B a path |
+| `records_without_gc` | 2.288 s | 2.125 s | 396.8 MiB, 2,081 B a path | 425.0 MiB, 2,228 B a path |
+| `columns` | 0.211 s | 0.188 s | 29.7 MiB, 156 B a path | 59.1 MiB, 310 B a path |
+| `columns_numpy` | 0.215 s | 0.203 s | 29.8 MiB, 156 B a path | 59.6 MiB, 312 B a path |
+| `get_cdrawings` | 1.192 s | 1.047 s | 184.5 MiB, 967 B a path | 281.5 MiB, 1,476 B a path |
+| `get_drawings` | 3.032 s | 2.516 s | 242.5 MiB, 1,271 B a path | 339.2 MiB, 1,779 B a path |
 
-Once the interpretation is memoized, `content().paths` takes 6,189.9 ms and `paths()` 51.12 ms. The columns hold 42.2 MiB, 221 bytes a path.
+Once the interpretation is memoized, `content().paths` takes 4,596.6 ms and `paths()` 0.03 ms. The columns hold 42.2 MiB, 221 bytes a path.
 
 ### f1040.pdf, page 1: 502 paths, 1,604 segments
 
 | Call | Time | CPU time | Peak | Held |
 | --- | ---: | ---: | ---: | ---: |
-| `pixmap` | 0.019 s | 0.016 s | 7.0 MiB, 14,524 B a path | 4.2 MiB, 8,739 B a path |
-| `records` | 0.019 s | 0.016 s | 0.0 MiB, 0 B a path | 3.0 MiB, 6,201 B a path |
-| `records_without_gc` | 0.018 s | 0.016 s | 0.0 MiB, 0 B a path | 3.0 MiB, 6,356 B a path |
-| `columns` | 0.010 s | 0.016 s | 0.0 MiB, 0 B a path | 2.1 MiB, 4,471 B a path |
-| `columns_numpy` | 0.010 s | 0.000 s | 0.0 MiB, 0 B a path | 2.1 MiB, 4,357 B a path |
-| `get_cdrawings` | 0.029 s | 0.031 s | 0.0 MiB, 0 B a path | 0.2 MiB, 367 B a path |
-| `get_drawings` | 0.030 s | 0.031 s | 0.0 MiB, 0 B a path | 0.2 MiB, 318 B a path |
+| `pixmap` | 0.019 s | 0.016 s | 6.9 MiB, 14,377 B a path | 4.0 MiB, 8,445 B a path |
+| `records` | 0.020 s | 0.016 s | 0.3 MiB, 636 B a path | 3.3 MiB, 6,887 B a path |
+| `records_without_gc` | 0.018 s | 0.016 s | 0.3 MiB, 579 B a path | 3.3 MiB, 6,903 B a path |
+| `columns` | 0.010 s | 0.000 s | 0.0 MiB, 0 B a path | 2.0 MiB, 4,267 B a path |
+| `columns_numpy` | 0.012 s | 0.016 s | 0.0 MiB, 0 B a path | 2.0 MiB, 4,235 B a path |
+| `get_cdrawings` | 0.028 s | 0.031 s | 0.0 MiB, 0 B a path | 0.2 MiB, 318 B a path |
+| `get_drawings` | 0.030 s | 0.031 s | 0.0 MiB, 0 B a path | 0.2 MiB, 343 B a path |
 
-Once the interpretation is memoized, `content().paths` takes 8.8 ms and `paths()` 0.27 ms. The columns hold 0.1 MiB, 285 bytes a path.
+Once the interpretation is memoized, `content().paths` takes 7.6 ms and `paths()` 0.03 ms. The columns hold 0.1 MiB, 285 bytes a path.

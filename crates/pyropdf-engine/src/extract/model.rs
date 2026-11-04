@@ -4,15 +4,19 @@
 //! `ContentCollector` is the one hayro `Device` that reads page content. It
 //! records what each paint callback receives together with the clips,
 //! transparency groups, and marked content that enclose it, and interns fonts
-//! and graphics contexts so that items share them. A `ContentSink` sees the
-//! same paths and glyphs, so text extraction reads what the items show; with
-//! items off, the collector only feeds its sink. Glyph boxes come from the
-//! outlines that hayro computes, and from interpreting Type 3 glyph
-//! procedures. The budget's `content_element_count` bounds glyphs, path and
-//! clip segments, stroke dash lengths, and items, and every collection grows
-//! fallibly, so a refusal returns no partial result.
+//! and graphics contexts so that items share them. Paths go into the columns
+//! of one [`PathTable`], so that a page of many paths costs bytes per segment,
+//! not allocations per path. A `ContentSink` sees the same paths and glyphs,
+//! so text extraction reads what the items show; with items off, the
+//! collector only feeds its sink. Glyph boxes come from the outlines that
+//! hayro computes, and from interpreting Type 3 glyph procedures. The
+//! budget's `content_element_count` bounds glyphs, path and clip segments,
+//! stroke dash lengths, and items, and every collection grows fallibly, so a
+//! refusal returns no partial result.
 
 use std::collections::HashMap;
+use std::ops::Range;
+use std::sync::Arc;
 
 use hayro::hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph, Type3Glyph};
 use hayro::hayro_interpret::hayro_cmap::BfString;
@@ -113,6 +117,9 @@ const LINE: u8 = b'l';
 const CURVE: u8 = b'c';
 const CLOSE: u8 = b'h';
 
+/// The kind of a color in a [`PaintTuple`].
+const COLOR: u8 = 0;
+
 /// Text render modes the Device API distinguishes.
 pub const RENDER_FILL: u8 = 0;
 pub const RENDER_STROKE: u8 = 1;
@@ -129,19 +136,30 @@ const MASK_COLOR_KEY: u8 = 3;
 /// distinct glyphs cannot grow the cache without bound.
 const MAX_CACHED_GLYPHS: usize = 65_536;
 
-/// One painted item, in the tuple form that crosses into Python.
+/// One painted item: a text run or an image in the tuple form that crosses
+/// into Python, or a path as its row in [`PageContent::paths`].
 #[derive(Clone, Debug)]
 pub enum ContentItem {
-    Text(TextRunTuple),
-    Path(PathTuple),
-    Image(ImageTuple),
+    Text(Box<TextRunTuple>),
+    Path(u32),
+    Image(Box<ImageTuple>),
 }
 
-/// A page's content: items and the fonts and contexts they index.
+/// A page's content: items and the tables they index. The paths and the
+/// contexts are shared, so that what reads them without a copy can outlive
+/// the content.
 #[derive(Clone, Debug)]
 pub struct PageContent {
     pub items: Vec<ContentItem>,
+    pub paths: Arc<PathTable>,
     pub fonts: Vec<FontTuple>,
+    pub contexts: Arc<Contexts>,
+}
+
+/// The graphics contexts of a page's items, with the clips, transparency
+/// groups, and marked content that they index.
+#[derive(Debug)]
+pub struct Contexts {
     pub clips: Vec<ClipTuple>,
     pub groups: Vec<GroupTuple>,
     pub marks: Vec<MarkTuple>,
@@ -158,11 +176,16 @@ fn push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Makes room for `capacity` values in all, without spare room.
+fn reserve_exact<T>(values: &mut Vec<T>, capacity: usize, label: &str) -> Result<(), Error> {
+    values
+        .try_reserve_exact(capacity.saturating_sub(values.len()))
+        .map_err(|error| Error::Allocation(format!("failed to allocate {label}: {error}")))
+}
+
 fn with_capacity<T>(capacity: usize, label: &str) -> Result<Vec<T>, Error> {
     let mut values = Vec::new();
-    values
-        .try_reserve_exact(capacity)
-        .map_err(|error| Error::Allocation(format!("failed to allocate {label}: {error}")))?;
+    reserve_exact(&mut values, capacity, label)?;
     Ok(values)
 }
 
@@ -220,6 +243,7 @@ fn transform_scale(transform: Affine) -> f64 {
 }
 
 /// Path segments in display space, as PDF operators and their coordinates.
+#[derive(Default)]
 struct Segments {
     kinds: Vec<u8>,
     coords: Vec<f64>,
@@ -233,66 +257,77 @@ impl Segments {
     fn count(&self) -> usize {
         self.kinds.len()
     }
-}
 
-/// Map a path's elements through `transform`. Quadratic curves become the
-/// cubic curves that draw them exactly. Returns `None` when a coordinate is
-/// not finite.
-fn segments(path: &BezPath, transform: Affine) -> Result<Option<Segments>, Error> {
-    let elements = path.elements();
-    let coordinate_count = elements
-        .iter()
-        .map(|element| match element {
-            PathEl::MoveTo(_) | PathEl::LineTo(_) => 2,
-            PathEl::QuadTo(..) | PathEl::CurveTo(..) => 6,
-            PathEl::ClosePath => 0,
-        })
-        .sum();
-    let mut kinds = with_capacity(elements.len(), "path segment kinds")?;
-    let mut coords: Vec<f64> = with_capacity(coordinate_count, "path coordinates")?;
-    let mut current = Point::ZERO;
-    let mut start = Point::ZERO;
-    for element in elements {
-        match *element {
-            PathEl::MoveTo(point) => {
-                let point = transform * point;
-                kinds.push(MOVE);
-                coords.extend_from_slice(&[point.x, point.y]);
-                current = point;
-                start = point;
-            }
-            PathEl::LineTo(point) => {
-                let point = transform * point;
-                kinds.push(LINE);
-                coords.extend_from_slice(&[point.x, point.y]);
-                current = point;
-            }
-            PathEl::QuadTo(control, point) => {
-                let control = transform * control;
-                let point = transform * point;
-                let first = current + (control - current) * (2.0 / 3.0);
-                let second = point + (control - point) * (2.0 / 3.0);
-                kinds.push(CURVE);
-                coords.extend_from_slice(&[first.x, first.y, second.x, second.y, point.x, point.y]);
-                current = point;
-            }
-            PathEl::CurveTo(first, second, point) => {
-                let (first, second, point) =
-                    (transform * first, transform * second, transform * point);
-                kinds.push(CURVE);
-                coords.extend_from_slice(&[first.x, first.y, second.x, second.y, point.x, point.y]);
-                current = point;
-            }
-            PathEl::ClosePath => {
-                kinds.push(CLOSE);
-                current = start;
+    /// Replace the segments with a path's elements mapped through `transform`.
+    /// Quadratic curves become the cubic curves that draw them exactly.
+    /// Returns whether every coordinate is finite.
+    fn read(&mut self, path: &BezPath, transform: Affine) -> Result<bool, Error> {
+        let elements = path.elements();
+        let coordinate_count = elements
+            .iter()
+            .map(|element| match element {
+                PathEl::MoveTo(_) | PathEl::LineTo(_) => 2,
+                PathEl::QuadTo(..) | PathEl::CurveTo(..) => 6,
+                PathEl::ClosePath => 0,
+            })
+            .sum();
+        let Self { kinds, coords } = self;
+        kinds.clear();
+        coords.clear();
+        reserve_exact(kinds, elements.len(), "path segment kinds")?;
+        reserve_exact(coords, coordinate_count, "path coordinates")?;
+        let mut current = Point::ZERO;
+        let mut start = Point::ZERO;
+        for element in elements {
+            match *element {
+                PathEl::MoveTo(point) => {
+                    let point = transform * point;
+                    kinds.push(MOVE);
+                    coords.extend_from_slice(&[point.x, point.y]);
+                    current = point;
+                    start = point;
+                }
+                PathEl::LineTo(point) => {
+                    let point = transform * point;
+                    kinds.push(LINE);
+                    coords.extend_from_slice(&[point.x, point.y]);
+                    current = point;
+                }
+                PathEl::QuadTo(control, point) => {
+                    let control = transform * control;
+                    let point = transform * point;
+                    let first = current + (control - current) * (2.0 / 3.0);
+                    let second = point + (control - point) * (2.0 / 3.0);
+                    kinds.push(CURVE);
+                    coords.extend_from_slice(&[
+                        first.x, first.y, second.x, second.y, point.x, point.y,
+                    ]);
+                    current = point;
+                }
+                PathEl::CurveTo(first, second, point) => {
+                    let (first, second, point) =
+                        (transform * first, transform * second, transform * point);
+                    kinds.push(CURVE);
+                    coords.extend_from_slice(&[
+                        first.x, first.y, second.x, second.y, point.x, point.y,
+                    ]);
+                    current = point;
+                }
+                PathEl::ClosePath => {
+                    kinds.push(CLOSE);
+                    current = start;
+                }
             }
         }
+        Ok(coords.iter().all(|value| value.is_finite()))
     }
-    if !coords.iter().all(|value| value.is_finite()) {
-        return Ok(None);
-    }
-    Ok(Some(Segments { kinds, coords }))
+}
+
+/// A path's elements as [`Segments::read`] maps them, or `None` when a
+/// coordinate is not finite.
+fn segments(path: &BezPath, transform: Affine) -> Result<Option<Segments>, Error> {
+    let mut segments = Segments::default();
+    Ok(segments.read(path, transform)?.then_some(segments))
 }
 
 fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
@@ -300,7 +335,7 @@ fn paint_tuple(paint: &Paint<'_>) -> Result<PaintTuple, Error> {
         Paint::Color(color) => {
             let [red, green, blue, alpha] = color.to_rgba().components();
             let values = [red, green, blue, alpha].map(f64::from);
-            Ok((0, copy_values(&values, "paint values")?))
+            Ok((COLOR, copy_values(&values, "paint values")?))
         }
         Paint::Pattern(pattern) => match pattern.as_ref() {
             Pattern::Shading(shading) => {
@@ -377,8 +412,7 @@ fn soft_mask_code(mask: Option<&SoftMask<'_>>) -> Option<u8> {
 }
 
 /// A stroke's style in display space.
-struct StrokeRecord {
-    paint: PaintTuple,
+struct StrokeStyle {
     width: f64,
     cap: u8,
     join: u8,
@@ -387,8 +421,8 @@ struct StrokeRecord {
     dash_offset: f64,
 }
 
-impl StrokeRecord {
-    fn new(paint: &Paint<'_>, stroke: &StrokeProps, transform: Affine) -> Result<Self, Error> {
+impl StrokeStyle {
+    fn new(stroke: &StrokeProps, transform: Affine) -> Result<Self, Error> {
         let scale = transform_scale(transform);
         let mut dashes = with_capacity(stroke.dash_array.len(), "dash lengths")?;
         dashes.extend(
@@ -398,7 +432,6 @@ impl StrokeRecord {
                 .map(|value| f64::from(*value) * scale),
         );
         Ok(Self {
-            paint: paint_tuple(paint)?,
             width: f64::from(stroke.line_width) * scale,
             cap: match stroke.line_cap {
                 Cap::Butt => 0,
@@ -422,24 +455,549 @@ impl StrokeRecord {
     }
 
     fn is_finite(&self) -> bool {
-        paint_is_finite(&self.paint)
-            && self.width.is_finite()
+        self.width.is_finite()
             && self.miter_limit.is_finite()
             && self.dash_offset.is_finite()
             && self.dashes.iter().all(|value| value.is_finite())
     }
+}
+
+/// A text run's stroke: its paint and style.
+struct StrokeRecord {
+    paint: PaintTuple,
+    style: StrokeStyle,
+}
+
+impl StrokeRecord {
+    fn new(paint: &Paint<'_>, stroke: &StrokeProps, transform: Affine) -> Result<Self, Error> {
+        Ok(Self {
+            paint: paint_tuple(paint)?,
+            style: StrokeStyle::new(stroke, transform)?,
+        })
+    }
+
+    fn dash_count(&self) -> usize {
+        self.style.dash_count()
+    }
+
+    fn is_finite(&self) -> bool {
+        paint_is_finite(&self.paint) && self.style.is_finite()
+    }
 
     fn into_tuple(self) -> StrokeTuple {
+        let style = self.style;
         (
             self.paint,
-            self.width,
-            self.cap,
-            self.join,
-            self.miter_limit,
-            self.dashes,
-            self.dash_offset,
+            style.width,
+            style.cap,
+            style.join,
+            style.miter_limit,
+            style.dashes,
+            style.dash_offset,
         )
     }
+}
+
+/// The name of the path columns in an allocation error.
+const PATH_COLUMNS: &str = "the path columns";
+
+/// A count as an Arrow `list` offset.
+fn offset(count: usize) -> Result<i32, Error> {
+    i32::try_from(count)
+        .map_err(|_| Error::Allocation("the paths have too many segments".to_owned()))
+}
+
+/// An Arrow bitmap of `rows` bits, least significant bit first, set where
+/// `set` holds.
+fn bitmap(rows: usize, set: impl Fn(usize) -> bool) -> Result<Vec<u8>, Error> {
+    let mut bits = with_capacity(rows.div_ceil(8), "a path bitmap")?;
+    bits.resize(rows.div_ceil(8), 0u8);
+    for row in (0..rows).filter(|&row| set(row)) {
+        bits[row / 8] |= 1 << (row % 8);
+    }
+    Ok(bits)
+}
+
+/// Keep the values of `column` where `keep` holds.
+fn retain_rows<T>(column: &mut Vec<T>, keep: &[bool]) {
+    let mut kept = keep.iter().copied();
+    column.retain(|_| kept.next().unwrap_or(false));
+}
+
+/// Keep the rows of `offsets`, an Arrow `list` column, where `keep` holds, and
+/// return which values of the column those rows index.
+fn retain_offsets(
+    offsets: &mut Vec<i32>,
+    keep: &[bool],
+    values: usize,
+) -> Result<Vec<bool>, Error> {
+    let mut kept_values = with_capacity(values, PATH_COLUMNS)?;
+    let (mut start, mut total, mut rows) = (0, 0, 1);
+    for (row, &kept) in keep.iter().enumerate() {
+        let end = offsets[row + 1];
+        let count = (end - start) as usize;
+        kept_values.extend(std::iter::repeat_n(kept, count));
+        if kept {
+            total += end - start;
+            offsets[rows] = total;
+            rows += 1;
+        }
+        start = end;
+    }
+    offsets.truncate(rows);
+    Ok(kept_values)
+}
+
+/// The bits of a pattern's value, with -0.0 read as 0.0, as Python compares
+/// them.
+fn value_bits(value: f64) -> u64 {
+    if value == 0.0 { 0 } else { value.to_bits() }
+}
+
+/// A paint in the form of the path columns: a color's sRGB components and
+/// alpha, or a pattern's index in [`PathTable::patterns`].
+#[derive(Clone, Copy)]
+enum PathPaint {
+    Color([f32; 4]),
+    Pattern(i32),
+}
+
+/// One paint of every path, its fill or its stroke.
+#[derive(Debug, Default)]
+pub struct PaintColumns {
+    /// Whether the path has the paint, 0 or 1.
+    pub present: Vec<u8>,
+    /// A color's sRGB components and alpha, NaN for a pattern or no paint.
+    pub red: Vec<f32>,
+    pub green: Vec<f32>,
+    pub blue: Vec<f32>,
+    pub alpha: Vec<f32>,
+    /// A pattern's index in [`PathTable::patterns`], -1 for a color or no
+    /// paint.
+    pub pattern: Vec<i32>,
+    /// Arrow bitmaps: whether a row has the paint, whether it is a color, and
+    /// whether it is a pattern.
+    pub present_bits: Vec<u8>,
+    pub color_bits: Vec<u8>,
+    pub pattern_bits: Vec<u8>,
+}
+
+impl PaintColumns {
+    /// Append a row without the paint.
+    fn push_none(&mut self) -> Result<(), Error> {
+        push(&mut self.present, 0, PATH_COLUMNS)?;
+        push(&mut self.red, f32::NAN, PATH_COLUMNS)?;
+        push(&mut self.green, f32::NAN, PATH_COLUMNS)?;
+        push(&mut self.blue, f32::NAN, PATH_COLUMNS)?;
+        push(&mut self.alpha, f32::NAN, PATH_COLUMNS)?;
+        push(&mut self.pattern, -1, PATH_COLUMNS)
+    }
+
+    /// Give `row`, which has no paint, `paint`.
+    fn set(&mut self, row: usize, paint: PathPaint) {
+        self.present[row] = 1;
+        match paint {
+            PathPaint::Color([red, green, blue, alpha]) => {
+                self.red[row] = red;
+                self.green[row] = green;
+                self.blue[row] = blue;
+                self.alpha[row] = alpha;
+            }
+            PathPaint::Pattern(pattern) => self.pattern[row] = pattern,
+        }
+    }
+
+    /// The paint of `row` in the tuple form of the content model.
+    fn tuple(&self, row: usize, patterns: &[PaintTuple]) -> Option<PaintTuple> {
+        if self.present[row] == 0 {
+            return None;
+        }
+        Some(match usize::try_from(self.pattern[row]) {
+            Ok(pattern) => patterns[pattern].clone(),
+            Err(_) => (
+                COLOR,
+                [
+                    self.red[row],
+                    self.green[row],
+                    self.blue[row],
+                    self.alpha[row],
+                ]
+                .map(f64::from)
+                .to_vec(),
+            ),
+        })
+    }
+
+    /// Keep the rows where `keep` holds.
+    fn retain(&mut self, keep: &[bool]) {
+        retain_rows(&mut self.present, keep);
+        retain_rows(&mut self.red, keep);
+        retain_rows(&mut self.green, keep);
+        retain_rows(&mut self.blue, keep);
+        retain_rows(&mut self.alpha, keep);
+        retain_rows(&mut self.pattern, keep);
+    }
+
+    /// Build the bitmaps and release the spare capacity of the columns.
+    fn seal(&mut self) -> Result<(), Error> {
+        let rows = self.present.len();
+        let (present, pattern) = (&self.present, &self.pattern);
+        self.present_bits = bitmap(rows, |row| present[row] != 0)?;
+        self.color_bits = bitmap(rows, |row| present[row] != 0 && pattern[row] < 0)?;
+        self.pattern_bits = bitmap(rows, |row| pattern[row] >= 0)?;
+        self.present.shrink_to_fit();
+        self.red.shrink_to_fit();
+        self.green.shrink_to_fit();
+        self.blue.shrink_to_fit();
+        self.alpha.shrink_to_fit();
+        self.pattern.shrink_to_fit();
+        Ok(())
+    }
+}
+
+/// The paths of a page's content, one row per path in paint order, each field
+/// in its own column, with the segments of every path and the dash lengths of
+/// every stroke in columns of their own, which offsets index.
+#[derive(Debug, Default)]
+pub struct PathTable {
+    pub x0: Vec<f64>,
+    pub y0: Vec<f64>,
+    pub x1: Vec<f64>,
+    pub y1: Vec<f64>,
+    /// Arrow `list` offsets into the segment columns, one more than the rows.
+    pub segment_offsets: Vec<i32>,
+    pub fill: PaintColumns,
+    /// 1 for the even-odd rule, 0 for the nonzero rule.
+    pub fill_rule: Vec<u8>,
+    pub stroke: PaintColumns,
+    /// The stroke's style, NaN or 0 without a stroke.
+    pub stroke_width: Vec<f64>,
+    pub stroke_cap: Vec<u8>,
+    pub stroke_join: Vec<u8>,
+    pub stroke_miter_limit: Vec<f64>,
+    /// Arrow `list` offsets into `stroke_dashes`, one more than the rows.
+    pub stroke_dashes_offsets: Vec<i32>,
+    pub stroke_dash_offset: Vec<f64>,
+    /// The index of the path's graphics context in [`Contexts::states`].
+    pub context: Vec<u32>,
+    pub blend_mode: Vec<u8>,
+    /// The type of the path's soft mask, 0 for alpha and 1 for luminosity, or
+    /// -1.
+    pub soft_mask: Vec<i8>,
+    /// Arrow bitmap: whether a row has a soft mask.
+    pub soft_mask_bits: Vec<u8>,
+    /// Each segment's path, verb, end point, and a curve's control points,
+    /// NaN for the other verbs; a closing segment ends where its subpath
+    /// starts.
+    pub path: Vec<u32>,
+    pub verb: Vec<u8>,
+    pub to_x: Vec<f64>,
+    pub to_y: Vec<f64>,
+    pub c1_x: Vec<f64>,
+    pub c1_y: Vec<f64>,
+    pub c2_x: Vec<f64>,
+    pub c2_y: Vec<f64>,
+    /// Arrow bitmap: whether a segment is a curve, and how many are.
+    pub curve_bits: Vec<u8>,
+    pub curves: usize,
+    /// The dash lengths of every stroke.
+    pub stroke_dashes: Vec<f64>,
+    /// The distinct pattern paints that the pattern columns index, in the
+    /// order in which the paths first use them.
+    pub patterns: Vec<PaintTuple>,
+}
+
+impl PathTable {
+    fn new() -> Self {
+        Self {
+            segment_offsets: vec![0],
+            stroke_dashes_offsets: vec![0],
+            ..Self::default()
+        }
+    }
+
+    /// The number of paths.
+    pub fn rows(&self) -> usize {
+        self.x0.len()
+    }
+
+    /// The segments of `row`, as a range of the segment columns.
+    pub fn segments_of(&self, row: usize) -> Range<usize> {
+        self.segment_offsets[row] as usize..self.segment_offsets[row + 1] as usize
+    }
+
+    /// The dash lengths of `row`, as a range of [`PathTable::stroke_dashes`].
+    pub fn dashes_of(&self, row: usize) -> Range<usize> {
+        self.stroke_dashes_offsets[row] as usize..self.stroke_dashes_offsets[row + 1] as usize
+    }
+
+    /// The coordinates of `row` in the form of the content model: the points
+    /// that its verbs consume.
+    pub fn coordinates(&self, row: usize) -> Vec<f64> {
+        let mut coords = Vec::new();
+        for segment in self.segments_of(row) {
+            let to = [self.to_x[segment], self.to_y[segment]];
+            match self.verb[segment] {
+                MOVE | LINE => coords.extend(to),
+                CURVE => {
+                    coords.extend([
+                        self.c1_x[segment],
+                        self.c1_y[segment],
+                        self.c2_x[segment],
+                        self.c2_y[segment],
+                    ]);
+                    coords.extend(to);
+                }
+                _ => {}
+            }
+        }
+        coords
+    }
+
+    /// `row` in the tuple form that crosses into Python.
+    pub fn tuple(&self, row: usize) -> PathTuple {
+        (
+            self.verb[self.segments_of(row)].to_vec(),
+            self.coordinates(row),
+            (self.x0[row], self.y0[row], self.x1[row], self.y1[row]),
+            self.fill.tuple(row, &self.patterns),
+            self.fill_rule[row] != 0,
+            self.stroke.tuple(row, &self.patterns).map(|paint| {
+                (
+                    paint,
+                    self.stroke_width[row],
+                    self.stroke_cap[row],
+                    self.stroke_join[row],
+                    self.stroke_miter_limit[row],
+                    self.stroke_dashes[self.dashes_of(row)].to_vec(),
+                    self.stroke_dash_offset[row],
+                )
+            }),
+            (
+                self.context[row],
+                self.blend_mode[row],
+                u8::try_from(self.soft_mask[row]).ok(),
+            ),
+        )
+    }
+
+    fn bbox(&self, row: usize) -> Rect {
+        Rect::new(self.x0[row], self.y0[row], self.x1[row], self.y1[row])
+    }
+
+    /// Append a path with `fill` and `stroke`, each painted with `paint`, and
+    /// return its row.
+    fn push(
+        &mut self,
+        segments: &Segments,
+        bbox: Rect,
+        paint: PathPaint,
+        fill: Option<FillRule>,
+        stroke: Option<&StrokeStyle>,
+        context: ItemContext,
+    ) -> Result<u32, Error> {
+        let row = self.rows();
+        let index = index_of(row)?;
+        push(&mut self.x0, bbox.x0, PATH_COLUMNS)?;
+        push(&mut self.y0, bbox.y0, PATH_COLUMNS)?;
+        push(&mut self.x1, bbox.x1, PATH_COLUMNS)?;
+        push(&mut self.y1, bbox.y1, PATH_COLUMNS)?;
+        self.push_segments(index, segments)?;
+        push(
+            &mut self.segment_offsets,
+            offset(self.verb.len())?,
+            PATH_COLUMNS,
+        )?;
+        self.fill.push_none()?;
+        if fill.is_some() {
+            self.fill.set(row, paint);
+        }
+        let even_odd = fill == Some(FillRule::EvenOdd);
+        push(&mut self.fill_rule, u8::from(even_odd), PATH_COLUMNS)?;
+        self.stroke.push_none()?;
+        push(&mut self.stroke_width, f64::NAN, PATH_COLUMNS)?;
+        push(&mut self.stroke_cap, 0, PATH_COLUMNS)?;
+        push(&mut self.stroke_join, 0, PATH_COLUMNS)?;
+        push(&mut self.stroke_miter_limit, f64::NAN, PATH_COLUMNS)?;
+        push(
+            &mut self.stroke_dashes_offsets,
+            offset(self.stroke_dashes.len())?,
+            PATH_COLUMNS,
+        )?;
+        push(&mut self.stroke_dash_offset, f64::NAN, PATH_COLUMNS)?;
+        push(&mut self.context, context.state, PATH_COLUMNS)?;
+        push(&mut self.blend_mode, context.blend, PATH_COLUMNS)?;
+        // The types are the positions in Python's `SoftMaskType`.
+        let soft_mask = context.soft_mask.map_or(-1, |mask| mask as i8);
+        push(&mut self.soft_mask, soft_mask, PATH_COLUMNS)?;
+        if let Some(stroke) = stroke {
+            self.set_stroke(row, paint, stroke)?;
+        }
+        Ok(index)
+    }
+
+    /// Append the segments of the path at row `path`.
+    fn push_segments(&mut self, path: u32, segments: &Segments) -> Result<(), Error> {
+        let none = [f64::NAN; 2];
+        let mut points = segments.coords.as_chunks::<2>().0.iter().copied();
+        let mut point = || points.next().unwrap_or(none);
+        let mut start = none;
+        for &verb in &segments.kinds {
+            let (to, c1, c2) = match verb {
+                MOVE => {
+                    start = point();
+                    (start, none, none)
+                }
+                LINE => (point(), none, none),
+                CURVE => {
+                    let (c1, c2) = (point(), point());
+                    (point(), c1, c2)
+                }
+                _ => (start, none, none),
+            };
+            push(&mut self.path, path, PATH_COLUMNS)?;
+            push(&mut self.verb, verb, PATH_COLUMNS)?;
+            push(&mut self.to_x, to[0], PATH_COLUMNS)?;
+            push(&mut self.to_y, to[1], PATH_COLUMNS)?;
+            push(&mut self.c1_x, c1[0], PATH_COLUMNS)?;
+            push(&mut self.c1_y, c1[1], PATH_COLUMNS)?;
+            push(&mut self.c2_x, c2[0], PATH_COLUMNS)?;
+            push(&mut self.c2_y, c2[1], PATH_COLUMNS)?;
+        }
+        Ok(())
+    }
+
+    /// Give `row`, the last row, a stroke.
+    fn set_stroke(
+        &mut self,
+        row: usize,
+        paint: PathPaint,
+        stroke: &StrokeStyle,
+    ) -> Result<(), Error> {
+        self.stroke.set(row, paint);
+        self.stroke_width[row] = stroke.width;
+        self.stroke_cap[row] = stroke.cap;
+        self.stroke_join[row] = stroke.join;
+        self.stroke_miter_limit[row] = stroke.miter_limit;
+        self.stroke_dash_offset[row] = stroke.dash_offset;
+        for &dash in &stroke.dashes {
+            push(&mut self.stroke_dashes, dash, PATH_COLUMNS)?;
+        }
+        self.stroke_dashes_offsets[row + 1] = offset(self.stroke_dashes.len())?;
+        Ok(())
+    }
+
+    /// Keep the rows whose box meets `clip`, numbered in order, and the
+    /// patterns that they use.
+    fn retain_meeting(&mut self, clip: BBox) -> Result<(), Error> {
+        let rows = self.rows();
+        let mut keep = with_capacity(rows, PATH_COLUMNS)?;
+        keep.extend((0..rows).map(|row| meets(self.bbox(row), clip)));
+        if keep.iter().all(|&kept| kept) {
+            return Ok(());
+        }
+        retain_rows(&mut self.x0, &keep);
+        retain_rows(&mut self.y0, &keep);
+        retain_rows(&mut self.x1, &keep);
+        retain_rows(&mut self.y1, &keep);
+        self.fill.retain(&keep);
+        retain_rows(&mut self.fill_rule, &keep);
+        self.stroke.retain(&keep);
+        retain_rows(&mut self.stroke_width, &keep);
+        retain_rows(&mut self.stroke_cap, &keep);
+        retain_rows(&mut self.stroke_join, &keep);
+        retain_rows(&mut self.stroke_miter_limit, &keep);
+        retain_rows(&mut self.stroke_dash_offset, &keep);
+        retain_rows(&mut self.context, &keep);
+        retain_rows(&mut self.blend_mode, &keep);
+        retain_rows(&mut self.soft_mask, &keep);
+        let segments = retain_offsets(&mut self.segment_offsets, &keep, self.verb.len())?;
+        retain_rows(&mut self.path, &segments);
+        retain_rows(&mut self.verb, &segments);
+        retain_rows(&mut self.to_x, &segments);
+        retain_rows(&mut self.to_y, &segments);
+        retain_rows(&mut self.c1_x, &segments);
+        retain_rows(&mut self.c1_y, &segments);
+        retain_rows(&mut self.c2_x, &segments);
+        retain_rows(&mut self.c2_y, &segments);
+        let dashes = retain_offsets(
+            &mut self.stroke_dashes_offsets,
+            &keep,
+            self.stroke_dashes.len(),
+        )?;
+        retain_rows(&mut self.stroke_dashes, &dashes);
+        for row in 0..self.rows() {
+            for segment in self.segments_of(row) {
+                self.path[segment] = row as u32;
+            }
+        }
+        self.retain_patterns()
+    }
+
+    /// Keep the patterns that the rows use, in the order in which they first
+    /// use them.
+    fn retain_patterns(&mut self) -> Result<(), Error> {
+        let mut patterns = std::mem::take(&mut self.patterns);
+        let mut indexes = with_capacity(patterns.len(), PATH_COLUMNS)?;
+        indexes.resize(patterns.len(), -1);
+        for row in 0..self.rows() {
+            for column in [&mut self.fill.pattern, &mut self.stroke.pattern] {
+                let Ok(pattern) = usize::try_from(column[row]) else {
+                    continue;
+                };
+                if indexes[pattern] < 0 {
+                    indexes[pattern] = offset(self.patterns.len())?;
+                    let paint = std::mem::take(&mut patterns[pattern]);
+                    push(&mut self.patterns, paint, PATH_COLUMNS)?;
+                }
+                column[row] = indexes[pattern];
+            }
+        }
+        Ok(())
+    }
+
+    /// Build the bitmaps and release the spare capacity of the columns, which
+    /// never change again.
+    fn seal(&mut self) -> Result<(), Error> {
+        self.fill.seal()?;
+        self.stroke.seal()?;
+        let soft_mask = &self.soft_mask;
+        self.soft_mask_bits = bitmap(soft_mask.len(), |row| soft_mask[row] >= 0)?;
+        let verb = &self.verb;
+        self.curve_bits = bitmap(verb.len(), |segment| verb[segment] == CURVE)?;
+        self.curves = verb.iter().filter(|&&verb| verb == CURVE).count();
+        self.x0.shrink_to_fit();
+        self.y0.shrink_to_fit();
+        self.x1.shrink_to_fit();
+        self.y1.shrink_to_fit();
+        self.segment_offsets.shrink_to_fit();
+        self.fill_rule.shrink_to_fit();
+        self.stroke_width.shrink_to_fit();
+        self.stroke_cap.shrink_to_fit();
+        self.stroke_join.shrink_to_fit();
+        self.stroke_miter_limit.shrink_to_fit();
+        self.stroke_dashes_offsets.shrink_to_fit();
+        self.stroke_dash_offset.shrink_to_fit();
+        self.context.shrink_to_fit();
+        self.blend_mode.shrink_to_fit();
+        self.soft_mask.shrink_to_fit();
+        self.path.shrink_to_fit();
+        self.verb.shrink_to_fit();
+        self.to_x.shrink_to_fit();
+        self.to_y.shrink_to_fit();
+        self.c1_x.shrink_to_fit();
+        self.c1_y.shrink_to_fit();
+        self.c2_x.shrink_to_fit();
+        self.c2_y.shrink_to_fit();
+        self.stroke_dashes.shrink_to_fit();
+        self.patterns.shrink_to_fit();
+        Ok(())
+    }
+}
+
+/// Whether `bbox` meets the display-space rectangle `clip`.
+fn meets(bbox: Rect, (x0, y0, x1, y1): BBox) -> bool {
+    !(bbox.x0 > x1 || bbox.x1 < x0 || bbox.y0 > y1 || bbox.y1 < y0)
 }
 
 /// The context index, blend mode, and soft mask of one item.
@@ -470,15 +1028,6 @@ struct TextRunRecord {
     context: ItemContext,
 }
 
-struct PathRecord {
-    segments: Segments,
-    bbox: Rect,
-    fill: Option<PaintTuple>,
-    even_odd: bool,
-    stroke: Option<StrokeRecord>,
-    context: ItemContext,
-}
-
 struct ImageRecord {
     xref: u32,
     format: ImageFormatTuple,
@@ -491,52 +1040,53 @@ struct ImageRecord {
     context: ItemContext,
 }
 
+/// An item in paint order; a path is a row of the collector's [`PathTable`].
+/// The other kinds are boxed, so that a record per path costs little.
 enum Record {
-    Text(TextRunRecord),
-    Path(PathRecord),
-    Image(ImageRecord),
+    Text(Box<TextRunRecord>),
+    Path(u32),
+    Image(Box<ImageRecord>),
 }
 
 impl Record {
-    fn bbox(&self) -> Rect {
+    fn bbox(&self, paths: &PathTable) -> Rect {
         match self {
             Self::Text(run) => run.bbox,
-            Self::Path(path) => path.bbox,
+            Self::Path(row) => paths.bbox(*row as usize),
             Self::Image(image) => image.bbox,
         }
     }
 
-    fn into_item(self) -> ContentItem {
+    /// The record as an item; a path is the row `path_row`.
+    fn into_item(self, path_row: u32) -> ContentItem {
         match self {
-            Self::Text(run) => ContentItem::Text((
-                (run.ids, run.texts, run.matrices, run.advances, run.boxes),
-                run.font,
-                run.render_mode,
-                run.fill,
-                run.stroke.map(StrokeRecord::into_tuple),
-                bbox_tuple(run.bbox),
-                run.context.into_tuple(),
-            )),
-            Self::Path(path) => ContentItem::Path((
-                path.segments.kinds,
-                path.segments.coords,
-                bbox_tuple(path.bbox),
-                path.fill,
-                path.even_odd,
-                path.stroke.map(StrokeRecord::into_tuple),
-                path.context.into_tuple(),
-            )),
-            Self::Image(image) => ContentItem::Image((
-                image.xref,
-                image.format,
-                image.is_stencil,
-                image.mask,
-                image.encoded_size,
-                image.resolution,
-                image.matrix,
-                bbox_tuple(image.bbox),
-                image.context.into_tuple(),
-            )),
+            Self::Text(run) => {
+                let run = *run;
+                ContentItem::Text(Box::new((
+                    (run.ids, run.texts, run.matrices, run.advances, run.boxes),
+                    run.font,
+                    run.render_mode,
+                    run.fill,
+                    run.stroke.map(StrokeRecord::into_tuple),
+                    bbox_tuple(run.bbox),
+                    run.context.into_tuple(),
+                )))
+            }
+            Self::Path(_) => ContentItem::Path(path_row),
+            Self::Image(image) => {
+                let image = *image;
+                ContentItem::Image(Box::new((
+                    image.xref,
+                    image.format,
+                    image.is_stencil,
+                    image.mask,
+                    image.encoded_size,
+                    image.resolution,
+                    image.matrix,
+                    bbox_tuple(image.bbox),
+                    image.context.into_tuple(),
+                )))
+            }
         }
     }
 }
@@ -717,6 +1267,14 @@ pub(crate) struct ContentCollector<'b, S> {
     /// The items to record; with none, the collector only feeds the sink.
     kinds: ItemKinds,
     records: Vec<Record>,
+    paths: PathTable,
+    /// The index of each pattern in the table, by its kind and the bits of
+    /// its values.
+    pattern_indexes: HashMap<(u8, Vec<u64>), i32>,
+    /// The segments of the path being recorded, in a buffer that is reused.
+    segments: Segments,
+    /// The segments of the fill path that a stroke may complete.
+    pending_segments: Segments,
     fonts: Vec<FontTuple>,
     font_indexes: HashMap<u128, u32>,
     type3_font: Option<u32>,
@@ -753,6 +1311,10 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             sink,
             kinds,
             records: Vec::new(),
+            paths: PathTable::new(),
+            pattern_indexes: HashMap::new(),
+            segments: Segments::default(),
+            pending_segments: Segments::default(),
             fonts: Vec::new(),
             font_indexes: HashMap::new(),
             type3_font: None,
@@ -919,6 +1481,33 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         Ok(bbox.map(|bbox| transformed_rect(bbox, transform)))
     }
 
+    /// The form of `paint` in the path columns, adding a pattern to the table
+    /// when it is new, or `None` when a value of the paint is not finite.
+    fn path_paint(&mut self, paint: &Paint<'_>) -> Result<Option<PathPaint>, Error> {
+        if let Paint::Color(color) = paint {
+            let rgba = color.to_rgba().components();
+            let finite = rgba.iter().all(|value| value.is_finite());
+            return Ok(finite.then_some(PathPaint::Color(rgba)));
+        }
+        let paint = paint_tuple(paint)?;
+        if !paint_is_finite(&paint) {
+            return Ok(None);
+        }
+        let mut bits = with_capacity(paint.1.len(), "paint values")?;
+        bits.extend(paint.1.iter().map(|&value| value_bits(value)));
+        let key = (paint.0, bits);
+        if let Some(&index) = self.pattern_indexes.get(&key) {
+            return Ok(Some(PathPaint::Pattern(index)));
+        }
+        let index = offset(self.paths.patterns.len())?;
+        self.pattern_indexes.try_reserve(1).map_err(|error| {
+            Error::Allocation(format!("failed to grow the pattern index: {error}"))
+        })?;
+        push(&mut self.paths.patterns, paint, PATH_COLUMNS)?;
+        self.pattern_indexes.insert(key, index);
+        Ok(Some(PathPaint::Pattern(index)))
+    }
+
     fn record_path(
         &mut self,
         path: &BezPath,
@@ -927,46 +1516,41 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         stroke: Option<&StrokeProps>,
         pending: Option<Pending>,
     ) -> Result<(), Error> {
-        let Some(segments) = segments(path, props.transform)? else {
+        if !self.segments.read(path, props.transform)? {
             return Ok(());
-        };
+        }
         let Some(bbox) = path_bbox(path, props.transform).filter(|bbox| rect_is_finite(*bbox))
         else {
             return Ok(());
         };
         let stroke = stroke
-            .map(|stroke| StrokeRecord::new(&props.paint, stroke, props.transform))
+            .map(|stroke| StrokeStyle::new(stroke, props.transform))
             .transpose()?;
-        let fill_paint = fill.map(|_| paint_tuple(&props.paint)).transpose()?;
-        if !stroke.as_ref().is_none_or(StrokeRecord::is_finite)
-            || !fill_paint.as_ref().is_none_or(paint_is_finite)
-        {
+        if !stroke.as_ref().is_none_or(StrokeStyle::is_finite) {
             return Ok(());
         }
-        self.charge(stroke.as_ref().map_or(0, StrokeRecord::dash_count))?;
+        let Some(paint) = self.path_paint(&props.paint)? else {
+            return Ok(());
+        };
+        self.charge(stroke.as_ref().map_or(0, StrokeStyle::dash_count))?;
         let context = self.item_context(props.blend_mode, props.soft_mask.as_ref())?;
         if fill.is_none()
             && pending == Some(Pending::Path)
-            && let Some(Record::Path(previous)) = self.records.last_mut()
-            && previous.stroke.is_none()
-            && previous.segments.equals(&segments)
+            && let Some(&Record::Path(row)) = self.records.last()
+            && self.paths.stroke.present[row as usize] == 0
+            && self.pending_segments.equals(&self.segments)
+            && let Some(stroke) = &stroke
         {
-            previous.stroke = stroke;
-            return Ok(());
+            return self.paths.set_stroke(row as usize, paint, stroke);
         }
-        self.charge(1 + segments.count())?;
-        let fill_only = stroke.is_none();
-        let record = PathRecord {
-            segments,
-            bbox,
-            fill: fill_paint,
-            even_odd: fill == Some(FillRule::EvenOdd),
-            stroke,
-            context,
-        };
-        push(&mut self.records, Record::Path(record), "content items")?;
-        if fill_only {
+        self.charge(1 + self.segments.count())?;
+        let row = self
+            .paths
+            .push(&self.segments, bbox, paint, fill, stroke.as_ref(), context)?;
+        push(&mut self.records, Record::Path(row), "content items")?;
+        if stroke.is_none() {
             self.pending = Some(Pending::Path);
+            std::mem::swap(&mut self.segments, &mut self.pending_segments);
         }
         Ok(())
     }
@@ -1162,7 +1746,11 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             bbox,
             context,
         };
-        push(&mut self.records, Record::Text(record), "content items")
+        push(
+            &mut self.records,
+            Record::Text(Box::new(record)),
+            "content items",
+        )
     }
 
     fn record_image(
@@ -1231,13 +1819,17 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                 }
             }
         };
-        push(&mut self.records, Record::Image(record), "content items")
+        push(
+            &mut self.records,
+            Record::Image(Box::new(record)),
+            "content items",
+        )
     }
 
     fn push_clip(&mut self, clip: &ClipPath) -> Result<(), Error> {
         let Some(segments) = segments(&clip.path, Affine::IDENTITY)? else {
             // A clip that no finite path describes leaves nothing visible.
-            return self.push_clip_entry(empty_segments(), false, Rect::ZERO);
+            return self.push_clip_entry(Segments::default(), false, Rect::ZERO);
         };
         let bbox = path_bbox(&clip.path, Affine::IDENTITY)
             .filter(|bbox| rect_is_finite(*bbox))
@@ -1310,36 +1902,38 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
     }
 
     /// Return the items that meet `clip`, or all of them, and the sink.
-    pub(crate) fn finish(self, clip: Option<BBox>) -> Result<(PageContent, S), Error> {
+    pub(crate) fn finish(mut self, clip: Option<BBox>) -> Result<(PageContent, S), Error> {
         if let Some(error) = self.error {
             return Err(error);
         }
         let mut items = with_capacity(self.records.len(), "content items")?;
+        let mut path_row = 0;
         for record in self.records {
-            if let Some((x0, y0, x1, y1)) = clip {
-                let bbox = record.bbox();
-                if bbox.x0 > x1 || bbox.x1 < x0 || bbox.y0 > y1 || bbox.y1 < y0 {
-                    continue;
-                }
+            if clip.is_some_and(|clip| !meets(record.bbox(&self.paths), clip)) {
+                continue;
             }
-            items.push(record.into_item());
+            let item = record.into_item(path_row);
+            if matches!(item, ContentItem::Path(_)) {
+                path_row += 1;
+            }
+            items.push(item);
         }
+        if let Some(clip) = clip {
+            self.paths.retain_meeting(clip)?;
+        }
+        self.paths.seal()?;
         let content = PageContent {
             items,
+            paths: Arc::new(self.paths),
             fonts: self.fonts,
-            clips: self.clips,
-            groups: self.groups,
-            marks: self.marks,
-            states: self.states,
+            contexts: Arc::new(Contexts {
+                clips: self.clips,
+                groups: self.groups,
+                marks: self.marks,
+                states: self.states,
+            }),
         };
         Ok((content, self.sink))
-    }
-}
-
-fn empty_segments() -> Segments {
-    Segments {
-        kinds: Vec::new(),
-        coords: Vec::new(),
     }
 }
 
