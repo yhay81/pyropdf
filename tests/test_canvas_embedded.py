@@ -404,13 +404,19 @@ def test_saves_repeat_in_a_transaction_that_has_written_nothing(hebrew: pyropdf.
 
 def test_a_reference_to_a_discarded_object_stays_missing_in_a_save(hebrew: pyropdf.Font) -> None:
     document, page = _new_page()
+    discarded = []
+
+    def discard() -> None:
+        with document.transaction():
+            discarded.append(document.objects[document.objects.add({"A": 1})])
+            raise RuntimeError
+
     with document.transaction():
         with page.draw() as canvas:
             canvas.text("שלום", (72, 100), font=hebrew, size=20)
-        with pytest.raises(RuntimeError), document.transaction():
-            discarded = document.objects[document.objects.add({"A": 1})]
-            raise RuntimeError
-        holder = document.objects.add({"Kept": discarded})
+        with pytest.raises(RuntimeError):
+            discard()
+        holder = document.objects.add({"Kept": discarded[0]})
         data = document.to_bytes()
 
     assert pyropdf.open(data).objects[holder]["Kept"] is None
