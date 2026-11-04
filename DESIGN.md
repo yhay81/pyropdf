@@ -650,7 +650,8 @@ changes this section first.
 - **Concurrency.** Section 4.6 says which calls run in parallel. No
   process-global state changes what an operation produces: there is no
   font registry, and output depends on the document, the call's arguments,
-  and the fonts passed in.
+  the fonts passed in, and the data packages of section 14 that are
+  installed, which the API that uses them documents.
 - **Engines.** Each public concept documents the engine that implements
   it. An engine's limitation surfaces as a typed error or a documented
   restriction, never as a silent gap, and its fix is engine work
@@ -759,8 +760,10 @@ wheel for each of 3.14t and 3.15t on the same targets, since an abi3 wheel
 does not load on a free-threaded interpreter, and an sdist. A PyEmscripten
 wheel, for Pyodide and Cloudflare Python Workers, is a target for 1.0
 (#257, #258). OCR models stay a separate data package, which the `ocr`
-extra installs (section 14), and canvas text draws in a Standard 14 font
-or in a face that the program supplies (section 7).
+extra installs (section 14), as do the CJK faces that render the fonts
+that a document does not embed, which the `jp`, `ko`, `zh-cn`, and
+`zh-tw` extras install; canvas text draws in a Standard 14 font or in a
+face that the program supplies (section 7).
 
 Signing (issue #397, `evidence/signing`) uses the RustCrypto line of `cms`
 0.3, `x509-cert` 0.3, `der` 0.8, `p256` and `p384` 0.14, `pkcs8` 0.11,
@@ -896,8 +899,9 @@ pylopdf's users move to pyropdf in these steps.
      repository's evidence.
 3. **Data packages.** `pylopdf-fonts-*` and `pylopdf-ocr-models` hold data
    only, so pyropdf can use them as they are: the `ocr` extra installs
-   `pylopdf-ocr-models`. Each is republished under a `pyropdf-` name when a
-   release changes it.
+   `pylopdf-ocr-models`, and the `jp`, `ko`, `zh-cn`, and `zh-tw` extras
+   install `pylopdf-fonts-jp`, `-ko`, `-zh-cn`, and `-zh-tw`. Each is
+   republished under a `pyropdf-` name when a release changes it.
 4. **Migration.** pylopdf's codemod learns to rename imports, so code
    written for any pylopdf release, and pymupdf code, migrates in one step.
 5. **Archive.** pylopdf is archived when two conditions hold:
