@@ -1,0 +1,74 @@
+{
+ "base_glyphs": 3487,
+ "classes": [
+  [
+   "shadings with alpha stops",
+   3406
+  ],
+  [
+   "composite",
+   71
+  ],
+  [
+   "solid layers",
+   6
+  ],
+  [
+   "shadings, opaque",
+   4
+  ]
+ ],
+ "paint_formats": [
+  [
+   "PaintGlyph",
+   225545
+  ],
+  [
+   "PaintTransform",
+   221489
+  ],
+  [
+   "alpha stops",
+   139500
+  ],
+  [
+   "PaintRadialGradient",
+   133725
+  ],
+  [
+   "PaintLinearGradient",
+   57211
+  ],
+  [
+   "PaintSolid",
+   34789
+  ],
+  [
+   "PaintColrLayers",
+   11611
+  ],
+  [
+   "PaintScale",
+   7878
+  ],
+  [
+   "alpha solid",
+   1783
+  ],
+  [
+   "PaintComposite",
+   180
+  ],
+  [
+   "PaintTranslate",
+   31
+  ],
+  [
+   "PaintScaleAroundCenter",
+   12
+  ]
+ ],
+ "paint_glyph_median": 61,
+ "paint_glyph_p95": 119,
+ "paint_glyph_max": 857
+}

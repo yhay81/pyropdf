@@ -1,0 +1,130 @@
+{
+ "today": {
+  "segoe_ui_emoji": {
+   "load_s": 0.053,
+   "first_draw_s": 0.511,
+   "saved_kib": 134.9,
+   "readers": {
+    "pyropdf": "ok",
+    "xpdf": "ok",
+    "mupdf": "ok",
+    "pdfium": "ok"
+   },
+   "colours": {
+    "hayro": 256,
+    "mupdf": 255,
+    "pdfium": 256
+   }
+  },
+  "colr1": {
+   "pixels_drawn": false,
+   "text": "A"
+  },
+  "sbix": {
+   "pixels_drawn": false,
+   "text": "A"
+  },
+  "svg": {
+   "pixels_drawn": false,
+   "text": "A"
+  },
+  "bitmap-only": {
+   "refused": "unsupported font: the face has no outlines"
+  }
+ },
+ "type3": {
+  "build_s": 0.75,
+  "file_kib_100_pages": 133.8,
+  "readers": {
+   "pyropdf": "ok",
+   "xpdf": "ok",
+   "mupdf": "ok",
+   "pdfium": "ok"
+  },
+  "colours": {
+   "hayro": 3229,
+   "mupdf": 3210,
+   "pdfium": 3215
+  },
+  "content_items": [
+   "TextRun"
+  ],
+  "glyph_operators_bytes": [
+   8584,
+   19074,
+   19118,
+   11661,
+   162928,
+   6156,
+   21608,
+   9776
+  ],
+  "shadings": [
+   14,
+   37,
+   31,
+   29,
+   61,
+   20,
+   61,
+   28
+  ],
+  "skipped": {
+   "stop alpha": 218
+  }
+ },
+ "form": {
+  "build_s": 0.02,
+  "file_kib_100_pages": 152.6,
+  "readers": {
+   "pyropdf": "''",
+   "xpdf": "''",
+   "mupdf": "''",
+   "pdfium": "''"
+  },
+  "colours": {
+   "hayro": 3256,
+   "mupdf": 3227,
+   "pdfium": 3241
+  },
+  "content_items": [
+   "Path"
+  ],
+  "glyph_operators_bytes": [
+   8584,
+   19074,
+   19118,
+   11661,
+   162928,
+   6156,
+   21608,
+   9776
+  ],
+  "shadings": [
+   14,
+   37,
+   31,
+   29,
+   61,
+   20,
+   61,
+   28
+  ],
+  "skipped": {
+   "stop alpha": 218
+  }
+ },
+ "type3_image": {
+  "readers": {
+   "pyropdf": "ok",
+   "xpdf": "ok",
+   "mupdf": "ok",
+   "pdfium": "ok"
+  },
+  "colours": {
+   "hayro": 2810,
+   "mupdf": 6539,
+   "pdfium": 6545
+  }
+ }
+}
