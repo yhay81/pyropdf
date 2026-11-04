@@ -57,6 +57,8 @@ if TYPE_CHECKING:
 
     PathLike: TypeAlias = "PathBuilder | Path | Iterable[Segment]"
     _Affine: TypeAlias = tuple[float, float, float, float, float, float]
+    # How text draws a glyph in a Type 3 font: its name, advance, and strike, from ``_Font.colour_glyphs``.
+    _ColourGlyph: TypeAlias = tuple[str, float, int]
 
 #: The control-point factor that approximates a quarter circle with a cubic curve.
 _KAPPA = 4 * (math.sqrt(2) - 1) / 3
@@ -786,10 +788,12 @@ class _TagScope(AbstractContextManager[None]):
 class _Images:
     """The images and pages that a document's canvases wrote, keyed by their content."""
 
-    __slots__ = ("faces", "fonts", "forms", "images")
+    __slots__ = ("colour", "faces", "fonts", "forms", "images")
 
     def __init__(self) -> None:
         self.fonts: dict[bytes, int] = {}
+        # The Type 3 fonts of the faces that text drew in colour, by program digest.
+        self.colour: dict[bytes, list[int]] = {}
         # The faces of the Type0 fonts that free text was drawn in, by font object.
         self.faces: dict[int, Font] = {}
         self.images: dict[bytes, int] = {}
@@ -1356,8 +1360,10 @@ class Canvas:
         is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
         default (``max_text_size``, ``None`` for trusted input), refused with
         :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
-        A colour glyph with no outline in an OpenType face raises
-        :class:`PdfError`, naming the character; see :class:`Font`.
+        A colour glyph that a PNG strike holds draws in its own colours, which
+        ``fill`` and ``stroke`` do not change. Any other colour glyph with no
+        outline in an OpenType face raises :class:`PdfError`, naming the
+        character; see :class:`Font`.
         """
         self._check_open()
         checked = _text_input(text, max_text_size)
@@ -1517,14 +1523,13 @@ class Canvas:
         if stroke is not None:
             parts.extend(_stroke_ops(stroke))
         if font._font.standard_name is None:  # noqa: SLF001
-            document = self._page.document
-            xref = embedded_font(document, font, _cache(document).fonts)
-            name = self._font_name(xref)
-            shown = _shown_glyphs(document, xref, font, size, lines, operation=self._operation)
+            # An embedded face's lines select their fonts as their glyphs ask.
+            shown = self._shown_glyphs(font, size, lines)
+            parts.append(b"BT")
         else:
             name = self._add_font(font)
             shown = _shown_winansi(font, lines, self._operation)
-        parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
+            parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
         if stroke is not None:
             parts.append(b"2 Tr" if fill is not None else b"1 Tr")
         cos, sin = _TURNS[rotation]
@@ -1534,6 +1539,90 @@ class Canvas:
             parts.append(operators)
         parts.append(b"ET\nQ")
         self._emit(b"\n".join(parts))
+
+    def _shown_glyphs(self, font: Font, size: float, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
+        """Return the operators that show each line in an embedded face.
+
+        The glyphs are shaped in visual order. One that a strike holds is
+        shown as a one-byte code of a Type 3 font, and any other as an
+        Identity-H code, its glyph ID, after their widths and texts are added
+        to the fonts. Those writes are one nested transaction, so a refusal
+        that the canvas's block catches leaves nothing of them.
+        """
+        document = self._page.document
+        face = font._font  # noqa: SLF001 - the package's own face.
+        operation = self._operation
+        shaped = [face.shape(line, operation=operation) for line, _x, _y, _spacing in lines]
+        drawn = [
+            (glyph[0], line[glyph[5] : glyph[6]])
+            for (line, *_), glyphs in zip(lines, shaped, strict=True)
+            for glyph in glyphs
+            if glyph[0]
+        ]
+        ids = sorted({glyph for glyph, _ in drawn})
+        colour = dict(zip(ids, face.colour_glyphs(ids, size, operation=operation), strict=True))
+        outlined = [entry for entry in drawn if colour[entry[0]] is None]
+        painted = [(cast("_ColourGlyph", colour[glyph])[0], text) for glyph, text in drawn if colour[glyph] is not None]
+        xref = None
+        mapped: dict[int, str] = {}
+        with document.transaction():
+            if outlined:
+                xref = embedded_font(document, font, _cache(document).fonts)
+                mapped = add_glyphs(document, xref, font, outlined)
+            placed = self._colour_glyphs(font, colour, painted) if painted else {}
+        codes: dict[int, tuple[bytes, bytes]] = {}
+        if xref is not None:
+            name = self._font_name(xref).encode()
+            codes.update((glyph, (name, b"<%04X>" % glyph)) for glyph, _ in outlined)
+        for glyph, entry in colour.items():
+            if entry is not None:
+                number, code, text = placed[entry[0]]
+                codes[glyph] = (self._font_name(number).encode(), b"<%02X>" % code)
+                if text is not None:
+                    mapped[glyph] = text
+        widths = dict(zip(ids, face.glyph_widths(ids), strict=True))
+        run = _GlyphRun(size, face.units_per_em, widths, mapped, codes)
+        return [run.show(line, glyphs, spacing) for (line, _x, _y, spacing), glyphs in zip(lines, shaped, strict=True)]
+
+    def _colour_glyphs(
+        self, font: Font, colour: dict[int, _ColourGlyph | None], painted: list[tuple[str, str]]
+    ) -> dict[str, tuple[int, int, str | None]]:
+        """Add what ``font``'s Type 3 fonts lack of ``colour``, and return each glyph's font, code, and CMap text.
+
+        ``painted`` holds each drawn glyph's name with its text. Each glyph
+        of a strike has one procedure and one image in the document, however
+        many drawings use it.
+        """
+        document = self._page.document
+        core = document._core()  # noqa: SLF001
+        face = font._font  # noqa: SLF001 - the package's own face.
+        em = face.units_per_em
+        fonts = _cache(document).colour.setdefault(font._key(), [])  # noqa: SLF001
+        wanted = [(glyph, entry) for glyph, entry in colour.items() if entry is not None]
+        held = _core.type3_codes(core, fonts, em, [entry[0] for _, entry in wanted])
+        new: list[tuple[str, float, tuple[float, float, float, float] | None, int | None]] = []
+        for (glyph, (name, advance, ppem)), found in zip(wanted, held, strict=True):
+            if found is not None:
+                continue
+            if not ppem:
+                new.append((name, advance, None, None))
+                continue
+            png, *rect = face.bitmap(glyph, ppem)
+            with self._scratch(len(png)):
+                image = self._glyph_image(font, glyph, png)
+            new.append((name, advance, (rect[0], rect[1], rect[2], rect[3]), image))
+        pairs = list(dict.fromkeys(painted))
+        placed = _core.type3_draw(core, fonts, em, new, pairs)
+        fonts.extend(dict.fromkeys(number for number, _, _ in placed if number not in fonts))
+        return {name: result for (name, _), result in zip(pairs, placed, strict=True)}
+
+    def _glyph_image(self, font: Font, glyph: int, png: bytes) -> int:
+        """Return the image object of a glyph's PNG, refusing one that does not decode as a damaged font."""
+        try:
+            return self._stored_image(png)
+        except ValueError as error:
+            msg = f"{font.name} cannot draw its glyph {glyph}: {error}"
+            raise PdfError(msg) from error
 
     def image(
         self,
@@ -1967,35 +2056,6 @@ def _shown_winansi(
     return shown
 
 
-def _shown_glyphs(  # noqa: PLR0913 - the font, the lines, and the operation.
-    document: Document,
-    xref: int,
-    font: Font,
-    size: float,
-    lines: list[tuple[str, float, float, float]],
-    *,
-    operation: _core._OperationBudget | None,
-) -> list[bytes]:
-    """Return the operators that show each line in an embedded face.
-
-    The glyphs are shaped in visual order and shown as Identity-H codes,
-    their glyph IDs, after their widths and texts are added to the font.
-    """
-    face = font._font  # noqa: SLF001 - the package's own face.
-    shaped = [face.shape(line, operation=operation) for line, _x, _y, _spacing in lines]
-    drawn = [
-        (glyph[0], line[glyph[5] : glyph[6]])
-        for (line, *_), glyphs in zip(lines, shaped, strict=True)
-        for glyph in glyphs
-        if glyph[0]
-    ]
-    mapped = add_glyphs(document, xref, font, drawn)
-    ids = sorted({glyph for glyph, _ in drawn})
-    widths = dict(zip(ids, face.glyph_widths(ids), strict=True))
-    run = _GlyphRun(size, face.units_per_em, widths, mapped)
-    return [run.show(line, glyphs, spacing) for (line, _x, _y, spacing), glyphs in zip(lines, shaped, strict=True)]
-
-
 class _GlyphRun:
     """Writes shaped glyphs as ``TJ`` arrays.
 
@@ -2003,15 +2063,26 @@ class _GlyphRun:
     shaped advance and by its offset, ``Ts`` raises it, and a line's word
     spacing widens its spaces, since ``Tw`` applies to one-byte codes only.
     A glyph whose text the ToUnicode CMap does not map is shown inside
-    ``/ActualText``.
+    ``/ActualText``. ``codes`` holds each glyph's font and code: ``Tf`` selects
+    a glyph's font where it changes, which leaves the pen and the pending
+    adjustment as they are, so a line may mix a Type0 and Type 3 fonts.
     """
 
-    def __init__(self, size: float, units_per_em: int, widths: dict[int, float], mapped: dict[int, str]) -> None:
+    def __init__(
+        self,
+        size: float,
+        units_per_em: int,
+        widths: dict[int, float],
+        mapped: dict[int, str],
+        codes: dict[int, tuple[bytes, bytes]],
+    ) -> None:
         self.size = size
         self.units_per_em = units_per_em
         self.scale = 1000 / units_per_em
         self.widths = widths
         self.mapped = mapped
+        self.codes = codes
+        self.font: bytes | None = None
         self.ops: list[bytes] = []
         self.items: list[bytes] = []
 
@@ -2035,9 +2106,13 @@ class _GlyphRun:
                 self.flush()
                 rise = y_offset
                 self.ops.append(_fmt(rise * self.size / self.units_per_em) + b" Ts")
+            font, code = self.codes[glyph]
+            if font != self.font:
+                self.flush()
+                self.font = font
+                self.ops.append(b"/" + font + b" " + _fmt(self.size) + b" Tf")
             if pending - offset:
                 self.items.append(_fmt(pending - offset))
-            code = b"<%04X>" % glyph
             # A glyph without text of its own, such as a dot that the face
             # draws apart from its letter, maps to nothing.
             if not text or self.mapped.get(glyph) == text:

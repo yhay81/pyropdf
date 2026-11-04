@@ -666,10 +666,17 @@ class Font:
     (roughly Latin-1) text only, and measures with Adobe's AFM widths. An
     OpenType face is shaped with harfrust, in bidirectional and script runs,
     and a document embeds it once as a Type0 font whose program holds every
-    glyph until a save. A CIDFont draws outlines, so a colour glyph (COLR,
-    ``sbix``, CBDT, or ``SVG``) draws its monochrome fallback outline. Drawing
-    one with no outline raises :class:`PdfError`, rather than draw nothing
-    under text that reads back, though it measures as any glyph does.
+    glyph until a save. A glyph that a PNG strike of ``sbix`` or CBDT holds
+    draws in its own colours on a canvas, whatever the fill, as a Type 3 font
+    that reads back as text: a document holds each glyph of a strike once, and
+    a drawing takes the smallest strike that reaches 300 pixels per inch at its
+    size, else the largest. A face with bitmaps and no outlines loads and draws
+    this way, and a glyph of it with no bitmap, such as a space, paints nothing.
+    A CIDFont draws outlines, so any other colour glyph (COLR, a JPEG, TIFF or
+    raw strike, or ``SVG``), and any colour glyph in a form field or annotation,
+    draws its monochrome fallback outline. Drawing one with no outline raises
+    :class:`PdfError`, rather than draw nothing under text that reads back,
+    though it measures as any glyph does.
     """
 
     __slots__ = ("_digest", "_font")
@@ -1180,6 +1187,9 @@ def _flags(font: _core._Font) -> int:
 def _type0(document: Document, face: Font) -> int:
     """Write the Type0 font of an embedded face, its program provisional with all its glyphs."""
     font = face._font  # noqa: SLF001 - the package's own face.
+    if not font.outlines:
+        msg = f"{font.postscript_name} has colour bitmaps and no outlines, so only canvas text can draw it"
+        raise PdfError(msg)
     objects = document.objects
     program = cast("bytes", font.program())
     cff = font.cff

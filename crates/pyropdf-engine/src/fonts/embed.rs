@@ -52,6 +52,9 @@ pub struct Face {
     /// Whether the outlines are CFF, embedded as `CIDFontType0`; TrueType
     /// outlines are embedded as `CIDFontType2`.
     pub cff: bool,
+    /// Whether the face has outlines. One with colour bitmaps alone has no
+    /// CIDFont: only canvas text draws it, as a Type 3 font.
+    pub outlines: bool,
     /// The PostScript name, or the family name with its spaces removed.
     pub postscript_name: String,
     /// The family name.
@@ -116,11 +119,14 @@ impl Face {
             ));
         }
         let cff = font.table_data(Tag::new(b"CFF ")).is_some();
-        if !cff
-            && (font.table_data(Tag::new(b"glyf")).is_none()
-                || font.table_data(Tag::new(b"loca")).is_none())
-        {
-            return Err(FaceError::Unsupported("the face has no outlines"));
+        let outlines = cff
+            || (font.table_data(Tag::new(b"glyf")).is_some()
+                && font.table_data(Tag::new(b"loca")).is_some());
+        let bitmaps = font.sbix().is_ok() || (font.cbdt().is_ok() && font.cblc().is_ok());
+        if !outlines && !bitmaps {
+            return Err(FaceError::Unsupported(
+                "the face has no outlines or colour bitmaps",
+            ));
         }
         let head = font
             .head()
@@ -203,6 +209,7 @@ impl Face {
         Ok(Self {
             program,
             cff,
+            outlines,
             postscript_name,
             family,
             full_name,
