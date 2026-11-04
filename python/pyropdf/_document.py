@@ -191,9 +191,10 @@ class Document:
         them. Assigning a mapping of :class:`FallbackFont` records replaces
         every language, so ``{}`` renders without fallback fonts, and ``del``
         returns to the installed extras. The fonts belong to this
-        ``Document`` object and are not saved; rendering uses them, and text
-        extraction, which reads the character collection's Unicode, does
-        not.
+        ``Document`` object and are not saved. Rendering uses them, and so
+        do the exact boxes of text, ``exact_bboxes=True``, which measure what
+        a rendering draws. Other text extraction, which reads the character
+        collection's Unicode, does not.
         """
         self._ensure_open()
         return FallbackFonts(self)

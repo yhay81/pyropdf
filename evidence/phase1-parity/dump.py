@@ -103,7 +103,12 @@ def main() -> None:
     warnings.simplefilter("ignore")
     for file in map(Path, files):
         document = engine.open(file.read_bytes())
-        if not fallback:
+        if fallback:
+            # Frozen pylopdf fills its faces at its first rendering, and text
+            # extraction before that gives what it gives without them, so the
+            # first page would otherwise read differently from the others.
+            document.pages[0].pixmap(dpi=72)
+        else:
             document.fallback_fonts = {}
         pages = [_page(page, out_dir / f"{file.stem}-{index}.rgb") for index, page in enumerate(document.pages)]
         dump = {"pages": pages, "markdown": _guard(document.markdown)}
