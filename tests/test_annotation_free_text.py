@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import warnings
@@ -35,6 +36,8 @@ JAPANESE = FONTS / "NotoSansJP-subset.otf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
 HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC_WORD = "مرحبا"
+#: The refusal of a colour glyph with no outline, for one character.
+NO_OUTLINE = r"cannot draw U\+{:04X} \('{}'\): its glyph is a colour glyph with no outline"
 
 
 def test_callout_stops_after_four_points_even_when_sequence_misreports_length() -> None:
@@ -410,6 +413,128 @@ def test_a_face_without_a_glyph_for_the_text_changes_nothing() -> None:
     with pytest.raises(pyropdf.PdfError, match="does not fit"):
         annotation.contents = "日本語" * 100
     assert annotation.contents == "日本"
+    assert doc.to_bytes() == before
+
+
+@pytest.fixture(
+    params=["colr0.ttf", "colr1.ttf", "sbix.ttf", "cbdt.ttf", "svg.ttf", "svg-cff.otf"],
+    ids=["colr0", "colr1", "sbix", "cbdt", "svg", "svg-cff"],
+)
+def colour(request: pytest.FixtureRequest) -> Font:
+    """Return a face of ``colour_faces.py``, whose docstring says what its glyphs are."""
+    return Font.from_file(FONTS / f"colour-{request.param}")
+
+
+def _opaque_pixels(page: pyropdf.Page) -> int:
+    return sum(alpha != 0 for alpha in bytes(page.pixmap(alpha=True))[3::4])
+
+
+@pytest.mark.parametrize(
+    ("text", "character"),
+    [("A", "A"), ("CA", "A"), ("CD", "D"), ("C\nCA", "A")],
+    ids=["alone", "after-a-glyph", "two-points", "second-line"],
+)
+def test_adding_a_free_text_refuses_a_colour_glyph_with_no_outline(colour: Font, text: str, character: str) -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    before = doc.to_bytes()
+    start = doc.history.position
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord(character), character)):
+        page.annotations.add(FreeText((20, 20, 200, 60), text, font=colour))
+
+    assert len(page.annotations) == 0
+    assert "Annots" not in page.obj
+    assert doc.history.position == start
+    assert doc.to_bytes() == before
+
+
+def test_changing_a_free_text_to_a_colour_glyph_with_no_outline_keeps_what_it_had(colour: Font) -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "C", font=colour))
+    appearance = annotation.obj["AP"]["N"]
+    written = appearance.read()
+    pixels = bytes(page.pixmap())
+    start = doc.history.position
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")):
+        annotation.contents = "A"
+
+    assert annotation.contents == "C"
+    assert page.text().strip() == "C"
+    assert annotation.obj["AP"]["N"].xref == appearance.xref
+    assert annotation.obj["AP"]["N"].read() == written
+    assert _opaque_pixels(page) > 0
+    assert bytes(page.pixmap()) == pixels
+    assert doc.history.position == start
+
+
+def test_a_refused_change_of_a_free_text_leaves_the_saved_bytes() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    annotation = page.annotations.add(FreeText((20, 20, 200, 60), "C", font=Font.from_file(FONTS / "colour-svg-cff.otf")))
+    before = doc.to_bytes()
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")):
+        annotation.contents = "A"
+
+    assert doc.to_bytes() == before
+
+
+def test_a_free_text_draws_the_fallback_outline_of_a_colour_glyph(colour: Font) -> None:
+    page = _free_text_in(colour, "B")
+
+    assert _opaque_pixels(page) > 0
+    reopened = pyropdf.open(page.document.to_bytes()).pages[0]
+    assert _opaque_pixels(reopened) > 0
+    assert reopened.text().strip() == "B"
+
+
+def test_changing_a_free_text_to_a_colour_glyph_with_a_fallback_outline_draws_it(colour: Font) -> None:
+    page = _free_text_in(colour, "")
+    (annotation,) = page.annotations
+    assert _opaque_pixels(page) == 0
+
+    annotation.contents = "B"
+
+    assert _opaque_pixels(page) > 0
+    assert page.text().strip() == "B"
+
+
+@pytest.mark.parametrize("text", ["C C", "C\u00a0C", "E"], ids=["space", "covered-space", "empty-uncovered"])
+def test_a_free_text_does_not_refuse_a_glyph_that_asks_for_no_ink(colour: Font, text: str) -> None:
+    (annotation,) = _free_text_in(colour, text).annotations
+
+    assert annotation.contents == text
+
+
+def _with_sbix_strikes(program: bytes, strikes: int) -> bytes:
+    """Return OpenType ``program`` with an ``sbix`` table of ``strikes`` offsets, which is all a lookup counts."""
+    tables = {}
+    for index in range(struct.unpack_from(">H", program, 4)[0]):
+        tag, _, offset, length = struct.unpack_from(">4sIII", program, 12 + 16 * index)
+        tables[tag] = program[offset : offset + length]
+    tables[b"sbix"] = struct.pack(">HHI", 1, 1, strikes) + struct.pack(">I", 8 + 4 * strikes) * strikes
+    directory = program[:4] + struct.pack(">HHHH", len(tables), 0, 0, 0)
+    body = b""
+    for tag in sorted(tables):
+        at = 12 + 16 * len(tables) + len(body)
+        directory += struct.pack(">4sIII", tag, 0, at, len(tables[tag]))
+        body += tables[tag] + bytes(-len(tables[tag]) % 4)
+    return directory + body
+
+
+def test_a_face_whose_colour_tables_ask_for_too_much_is_an_invalid_font_not_an_unfit_text() -> None:
+    face = Font.from_bytes(_with_sbix_strikes((FONTS / "colour-colr1.ttf").read_bytes(), (1 << 16) + 1))
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    before = doc.to_bytes()
+
+    with pytest.raises(pyropdf.PdfError, match="invalid font: the face's colour tables ask for more work"):
+        page.annotations.add(FreeText((20, 20, 200, 60), "C", font=face))
+
+    assert len(page.annotations) == 0
     assert doc.to_bytes() == before
 
 

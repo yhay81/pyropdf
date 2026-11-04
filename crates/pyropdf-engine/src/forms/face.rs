@@ -37,6 +37,16 @@ pub struct FaceFont<'m> {
     pub mapped: &'m HashMap<u32, String>,
 }
 
+/// The first character of a value that a face cannot draw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Undrawable {
+    /// The face has no glyph for it.
+    NoGlyph(char),
+    /// Its glyph is a colour glyph with no outline, which would draw nothing
+    /// under a value that reads back (DESIGN.md section 7).
+    NoOutline(char),
+}
+
 /// An embedded face that draws field values, and the glyphs that it drew.
 pub struct FaceText<'f> {
     face: &'f Face,
@@ -91,48 +101,44 @@ impl<'f> FaceText<'f> {
     }
 
     /// Returns the first character of `value`, other than a control
-    /// character, that the face has no glyph for.
-    pub(crate) fn missing(&self, value: &str) -> Result<Option<char>, LayoutError> {
-        let glyphs = self.shape(value)?;
-        Ok(first_missing(value, &glyphs))
+    /// character, that the face has no glyph for, or else the first whose
+    /// glyph is a colour glyph with no outline.
+    pub(crate) fn undrawable(&self, value: &str) -> Result<Option<Undrawable>, ShapeError> {
+        let glyphs = self.shaper.shape(value, self.budget)?;
+        let missing = glyphs
+            .iter()
+            .filter(|glyph| glyph.glyph == 0)
+            .filter_map(|glyph| value[glyph.cluster.clone()].chars().next())
+            .find(|character| !character.is_control());
+        if let Some(character) = missing {
+            return Ok(Some(Undrawable::NoGlyph(character)));
+        }
+        let refused = refused_colour_glyph(self.face, value, &glyphs, self.budget)?;
+        Ok(refused.map(Undrawable::NoOutline))
     }
 
-    /// Refuses `value` when the face lacks a glyph for one of its
-    /// characters other than a control character, or when the glyph of one
-    /// is a colour glyph with no outline, which would draw nothing under a
-    /// value that reads back (DESIGN.md section 7).
+    /// Refuses `value` when the face cannot draw one of its characters.
     pub(super) fn check(&self, value: &str) -> Result<(), WidgetError> {
-        let glyphs = self.shape(value)?;
-        if let Some(character) = first_missing(value, &glyphs) {
-            return Err(WidgetError::Malformed(
-                format!(
-                    "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
-                    self.face.full_name,
-                    u32::from(character)
-                )
-                .into(),
-            ));
-        }
-        let refused =
-            refused_colour_glyph(self.face, value, &glyphs, self.budget).map_err(|error| {
-                match error {
-                    ShapeError::Limit(refusal) => WidgetError::from(refusal),
-                    ShapeError::Font(reason) => {
-                        WidgetError::Malformed(format!("invalid font: {reason}").into())
-                    }
-                }
-            })?;
-        if let Some(character) = refused {
-            return Err(WidgetError::Malformed(
-                format!(
-                    "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
-                    self.face.full_name,
-                    u32::from(character)
-                )
-                .into(),
-            ));
-        }
-        Ok(())
+        let undrawable = self.undrawable(value).map_err(|error| match error {
+            ShapeError::Limit(refusal) => WidgetError::from(refusal),
+            ShapeError::Font(reason) => {
+                WidgetError::Malformed(format!("invalid font: {reason}").into())
+            }
+        })?;
+        let message = match undrawable {
+            None => return Ok(()),
+            Some(Undrawable::NoGlyph(character)) => format!(
+                "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
+                self.face.full_name,
+                u32::from(character)
+            ),
+            Some(Undrawable::NoOutline(character)) => format!(
+                "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
+                self.face.full_name,
+                u32::from(character)
+            ),
+        };
+        Err(WidgetError::Malformed(message.into()))
     }
 
     /// Lays out `text` in a box at `font_size`, the lines `line_height` em
@@ -408,16 +414,6 @@ fn push_decomposed(
             push_decomposed(decomposed, second)
         }
     }
-}
-
-/// Returns the first character of `value`, other than a control character,
-/// that shaped to no glyph in `glyphs`.
-fn first_missing(value: &str, glyphs: &[ShapedGlyph]) -> Option<char> {
-    glyphs
-        .iter()
-        .filter(|glyph| glyph.glyph == 0)
-        .filter_map(|glyph| value[glyph.cluster.clone()].chars().next())
-        .find(|character| !character.is_control())
 }
 
 /// Appends the pending `TJ` array, if any.
