@@ -16,7 +16,7 @@ then the causes of the rest.
 | mhlw-doc | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
 | nics-background-checks-2015-11 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | nonembedded-cjk | 7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | equal |
-| nonembedded-latin | 12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | equal |
+| nonembedded-latin | 13 | 13/13 | 13/13 | 13/13 | 13/13 | 13/13 | 13/13 | 13/13 | 13/13 | 13/13 | equal |
 | patent-us223898 | 4 | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 4/4 | 4/4 | 3/4 (heading-above-columns 1) | 4/4 | heading-above-columns |
 | pdf20-simple | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-jpx-lzw | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |

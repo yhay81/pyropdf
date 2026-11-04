@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-11-04T05:09:05.590069+00:00",
+  "generated_at": "2026-11-04T05:17:21.651628+00:00",
   "pylopdf_commit": "ebb01d3c4c742046e8ce7fd72957cd15a2933321",
   "pylopdf_extras": "jp,ko,zh-cn,zh-tw",
-  "pyropdf_commit": "7dba16ab75baf912ae4af4821bee4dca505f1744",
+  "pyropdf_commit": "324a508182488993f558eb852f4ca24b8f19ede8",
   "runner_python": "3.14.8 (tags/v3.14.8:8e6e75d, Sep 30 2026, 18:19:33) [MSC v.1944 64 bit (AMD64)]",
   "pyropdf_python": "3.14.8 (tags/v3.14.8:8e6e75d, Sep 30 2026, 18:19:33) [MSC v.1944 64 bit (AMD64)]",
   "oracle_python": "3.14.8 (tags/v3.14.8:8e6e75d, Sep 30 2026, 18:19:33) [MSC v.1944 64 bit (AMD64)]",
@@ -27,6 +27,6 @@
     "nonembedded-cjk.pdf": "03e77727a6295eb7fa052e5f8390c7261e0875c17ec59b64268d4db135155f39"
   },
   "substituted_sha256": {
-    "nonembedded-latin.pdf": "e9e07744a361403c2d294a3a7e528213fe1efb9bc6e53529475c8c14b233a4f7"
+    "nonembedded-latin.pdf": "c7323bd957318e31b7b588c2148ce29bf29482da2d349689914af478f1c351f3"
   }
 }
