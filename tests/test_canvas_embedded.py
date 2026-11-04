@@ -371,7 +371,7 @@ def test_an_object_added_after_a_save_does_not_take_the_number_of_the_map(hebrew
     assert _text_without_warning(reopened.pages[0]).strip() == "שלום"
 
 
-def test_saves_in_an_open_transaction_repeat_and_draw_what_it_wrote(hebrew: pyropdf.Font) -> None:
+def test_saves_in_an_open_transaction_draw_what_it_wrote(hebrew: pyropdf.Font) -> None:
     plain, page = _new_page()
     with page.draw() as canvas:
         canvas.text("שלום", (72, 100), font=hebrew, size=20)
@@ -383,13 +383,37 @@ def test_saves_in_an_open_transaction_repeat_and_draw_what_it_wrote(hebrew: pyro
         # the transaction started from, where the map must not land.
         with page.draw() as canvas:
             canvas.text("שלום", (72, 100), font=hebrew, size=20)
-        first = document.to_bytes()
-        assert document.to_bytes() == first
+        inside = document.to_bytes()
     committed = document.to_bytes()
 
     assert document.to_bytes() == committed
-    for data in (first, committed):
+    for data in (inside, committed):
         assert bytes(pyropdf.open(data).pages[0].pixmap(dpi=72)) == expected
+
+
+def test_saves_repeat_in_a_transaction_that_has_written_nothing(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("שלום", (72, 100), font=hebrew, size=20)
+    first = document.to_bytes()
+
+    with document.transaction():
+        assert document.to_bytes() == first
+        assert document.to_bytes() == first
+
+
+def test_a_reference_to_a_discarded_object_stays_missing_in_a_save(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with document.transaction():
+        with page.draw() as canvas:
+            canvas.text("שלום", (72, 100), font=hebrew, size=20)
+        with pytest.raises(RuntimeError), document.transaction():
+            discarded = document.objects[document.objects.add({"A": 1})]
+            raise RuntimeError
+        holder = document.objects.add({"Kept": discarded})
+        data = document.to_bytes()
+
+    assert pyropdf.open(data).objects[holder]["Kept"] is None
 
 
 def test_one_drawing_is_one_undo_step(japanese: pyropdf.Font) -> None:
