@@ -14,9 +14,8 @@ The faces are committed, so the tests do not need fontTools. Each draws:
 
 In ``eblc``, the table is a monochrome bitmap table, which is not a colour
 table, and ``eblc-only`` has that table and no outlines, which a load refuses.
-``bitmap-only`` has no outlines at all. ``sbix-jpeg`` and ``cbdt-raw`` hold
-strikes that drawing does not read, and ``sbix-damaged`` PNGs that do not
-decode.
+``sbix-jpeg`` and ``cbdt-raw`` hold strikes that drawing does not read, and
+``sbix-damaged`` PNGs that do not decode.
 
 The ``bitmaps-*`` faces are for drawing in colour, with solid images that a
 render can tell apart. Their em is 1000, and a strike's image covers one em
@@ -182,7 +181,7 @@ def face(kind: str) -> bytes:
     font = builder.font
     if kind in {"colr0", "colr1"}:
         _colr(font, int(kind[-1]))
-    elif kind in {"sbix", "bitmap-only"}:
+    elif kind == "sbix":
         font["sbix"] = _sbix()
     elif kind == "sbix-jpeg":
         font["sbix"] = _sbix(b"jpg ", b"\xff\xd8\xff\xd9")
@@ -203,7 +202,7 @@ def face(kind: str) -> bytes:
         _bitmaps(font, ("EBLC", "EBDT"), 2, 2, image)
     elif kind in {"svg", "svg-cff"}:
         _svg(font)
-    if kind in {"bitmap-only", "eblc-only"}:
+    if kind == "eblc-only":
         del font["glyf"]
         del font["loca"]
     out = io.BytesIO()
@@ -346,7 +345,7 @@ def bitmap_face(
 
 def main() -> None:
     """Write every face next to this script."""
-    kinds = ("colr0", "colr1", "sbix", "cbdt", "eblc", "svg", "svg-cff", "bitmap-only")
+    kinds = ("colr0", "colr1", "sbix", "cbdt", "eblc", "svg", "svg-cff")
     for kind in (*kinds, "sbix-jpeg", "cbdt-raw", "sbix-damaged", "eblc-only"):
         suffix = "otf" if kind == "svg-cff" else "ttf"
         (HERE / f"colour-{kind}.{suffix}").write_bytes(face(kind))

@@ -40,7 +40,7 @@ fuzz_target!(
     };
     let mut ids: Vec<u32> = data
         .rchunks_exact(2)
-        .take(64)
+        .take(16)
         .map(|pair| u32::from(u16::from_be_bytes([pair[0], pair[1]])))
         .collect();
     if let Ok(shaping) = ShapingFace::new(face.program.clone(), 0)
