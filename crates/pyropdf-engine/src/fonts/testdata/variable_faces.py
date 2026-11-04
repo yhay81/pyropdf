@@ -1,4 +1,4 @@
-# ruff: noqa: INP001, PLR2004, S101, D103 - a script that writes test data, not a package.
+# ruff: noqa: INP001, D103 - a script that writes test data, not a package.
 """Write the variable faces and the oracle of the tests of instances.
 
 Run from the repository root:
@@ -184,7 +184,9 @@ def oracle() -> None:
             x_min, y_min, x_max, y_max = box.bounds or (0, 0, 0, 0)
             advance = instance["hmtx"][name][0]
             lines.append(f"{weight} {index} {advance} {x_min} {y_min} {x_max} {y_max} {abs(area.value):.1f}")
-    (HERE / "NotoSansArabic-Variable-subset-instances.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (HERE / "NotoSansArabic-Variable-subset-instances.txt").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+    )
 
 
 def main() -> None:

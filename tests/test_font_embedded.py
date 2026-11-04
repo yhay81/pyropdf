@@ -359,7 +359,7 @@ def test_glyphs_add_widths_and_texts_and_undo_removes_them() -> None:
     font = pyropdf.Font.from_file(JAPANESE)
     xref = _register(document, font, cache)
     shaped = font._font.shape("AVA日本")  # noqa: SLF001
-    glyphs = [(glyph, "AVA日本"[start:end]) for glyph, _x, _y, _dx, _dy, start, end, _rtl in shaped]
+    glyphs = [(glyph, "AVA日本"[start:end]) for glyph, _x, _y, _dx, _dy, start, end, *_ in shaped]
 
     with document.transaction("draw"):
         assert _fonts.add_glyphs(document, xref, font, glyphs) == dict(glyphs)
@@ -382,6 +382,28 @@ def test_glyphs_add_widths_and_texts_and_undo_removes_them() -> None:
     descendant, to_unicode = type0["DescendantFonts"][0], type0["ToUnicode"]
     assert _fonts._widths(descendant, font.glyph_count) == {}  # noqa: SLF001
     assert _fonts._mapped(to_unicode, font.glyph_count) == {}  # noqa: SLF001
+
+
+def test_real_text_replaces_the_text_of_a_glyph_drawn_without_its_own() -> None:
+    document = pyropdf.Document()
+    font = pyropdf.Font.from_file(JAPANESE)
+    xref = _register(document, font, {})
+    glyph = font._font.shape("A")[0][0]  # noqa: SLF001
+    no_text = _fonts._NO_TEXT  # noqa: SLF001
+
+    with document.transaction("a glyph without text"):
+        assert _fonts.add_glyphs(document, xref, font, [(glyph, no_text)]) == {glyph: no_text}
+    with document.transaction("its real text"):
+        assert _fonts.add_glyphs(document, xref, font, [(glyph, "A")]) == {glyph: "A"}
+    to_unicode = document.objects[xref]["ToUnicode"]
+    assert _fonts._mapped(to_unicode, font.glyph_count) == {glyph: "A"}  # noqa: SLF001
+
+    # Real text stays, and this drawing wrote nothing, so one undo takes back the real text.
+    with document.transaction("without text again"):
+        assert _fonts.add_glyphs(document, xref, font, [(glyph, no_text)]) == {glyph: "A"}
+    document.history.undo()
+    to_unicode = document.objects[xref]["ToUnicode"]
+    assert _fonts._mapped(to_unicode, font.glyph_count) == {glyph: no_text}  # noqa: SLF001
 
 
 def test_an_undone_registration_is_written_again() -> None:

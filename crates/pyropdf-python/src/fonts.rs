@@ -96,8 +96,8 @@ enum Kind {
 
 /// A glyph that shaping placed, as Python receives it: the glyph ID, its
 /// advance and offsets in font units, the range of the characters that it
-/// draws, and whether its run is right to left.
-type Placed = (u32, i32, i32, i32, i32, usize, usize, bool);
+/// draws, whether its run is right to left, and the range of its cluster.
+type Placed = (u32, i32, i32, i32, i32, usize, usize, bool, usize, usize);
 
 /// The face of `python/pyropdf/_fonts.py`'s `Font`: a Standard 14 font,
 /// measured with Adobe's metrics and drawn in WinAnsi, or an embedded
@@ -575,6 +575,8 @@ impl _Font {
                         characters[glyph.text.start],
                         characters[glyph.text.end],
                         glyph.rtl,
+                        characters[glyph.cluster.start],
+                        characters[glyph.cluster.end],
                     )
                 })
                 .collect())

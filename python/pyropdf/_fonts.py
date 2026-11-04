@@ -524,6 +524,10 @@ _UINT32_MAX = 2**32 - 1
 _BFCHAR_BLOCK = 100
 #: UTF-16 code units of the longest text that a ToUnicode entry maps a glyph to.
 _MAX_MAPPED_UNITS = 256
+#: The ToUnicode text of a glyph without text of its own, such as a dot that a
+#: face draws apart from its letter: WORD JOINER, invisible and no word break.
+#: A reader that ignores ``/ActualText`` reads it, not the CID as a code.
+_NO_TEXT = "\u2060"
 _BFCHAR = re.compile(rb"<([0-9A-Fa-f]{4})>\s*<([0-9A-Fa-f]*)>")
 _BFCHAR_BLOCKS = re.compile(rb"beginbfchar(.*?)endbfchar", re.DOTALL)
 _CMAP_HEAD = b"""/CIDInit /ProcSet findresource begin
@@ -749,8 +753,8 @@ class Font:
         size = memoryview(data).nbytes
         if max_size is not None and size > max_size:
             raise _font_input_limit(size, max_size)
-        face = _core._Font.from_bytes(bytes(data), face_index)
-        return cls._wrap(_at_weight(face, resolved, max_size))  # noqa: SLF001
+        face = _core._Font.from_bytes(bytes(data), face_index)  # noqa: SLF001
+        return cls._wrap(_at_weight(face, resolved, max_size))
 
     @classmethod
     def standard(cls, name: StandardFontName) -> Font:
@@ -1327,8 +1331,10 @@ def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple
 
     Each glyph maps to its text in the ToUnicode CMap unless the CMap
     already maps it to other text, or its text is empty or too long for a
-    CMap entry. The result holds the CMap's text of each glyph that it
-    maps; the content draws an occurrence with other text inside
+    CMap entry. Real text replaces ``_NO_TEXT``, so that drawing a glyph
+    without text of its own never hides its real use from a reader that
+    ignores ``/ActualText``. The result holds the CMap's text of each glyph
+    that it maps; the content draws an occurrence with other text inside
     ``/ActualText``. Writes only what changed, in the caller's transaction.
     """
     parts = _type0_parts(document, xref)
@@ -1344,7 +1350,9 @@ def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple
     widths.update(zip(new, font.glyph_widths(new), strict=True))
     added = False
     for glyph, text in glyphs:
-        if glyph in mapped or not text or len(text.encode("utf-16-be", "surrogatepass")) > 2 * _MAX_MAPPED_UNITS:
+        if mapped.get(glyph, _NO_TEXT) != _NO_TEXT or not text or mapped.get(glyph) == text:
+            continue
+        if len(text.encode("utf-16-be", "surrogatepass")) > 2 * _MAX_MAPPED_UNITS:
             continue
         mapped[glyph] = text
         added = True
