@@ -136,9 +136,10 @@ fn hinting_renders_as_hayro_renders_with_its_default_settings() {
         .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
         .collect();
 
-    let hinted = raster(&bridged, 0, &hinted_options(true)).unwrap();
+    let none = Fallback::default();
+    let hinted = raster(&bridged, &none, 0, &hinted_options(true)).unwrap();
     assert!(hinted.data == theirs);
-    let unhinted = raster(&bridged, 0, &hinted_options(false)).unwrap();
+    let unhinted = raster(&bridged, &none, 0, &hinted_options(false)).unwrap();
     assert!(unhinted.data != theirs);
 }
 
@@ -146,15 +147,16 @@ fn hinting_renders_as_hayro_renders_with_its_default_settings() {
 fn a_render_cache_keeps_hinted_and_unhinted_glyphs_apart() {
     let bridged = pdf20_simple();
     let other = pdf20_simple();
+    let none = Fallback::default();
     let fresh = |hinting| {
         // Rendering another bridge first makes this one start a new cache.
-        raster(&other, 0, &hinted_options(hinting)).unwrap();
-        raster(&bridged, 0, &hinted_options(hinting)).unwrap()
+        raster(&other, &none, 0, &hinted_options(hinting)).unwrap();
+        raster(&bridged, &none, 0, &hinted_options(hinting)).unwrap()
     };
     let (hinted, unhinted) = (fresh(true), fresh(false));
-    assert!(raster(&bridged, 0, &hinted_options(false)).unwrap() == unhinted);
-    assert!(raster(&bridged, 0, &hinted_options(true)).unwrap() == hinted);
-    assert!(raster(&bridged, 0, &hinted_options(false)).unwrap() == unhinted);
+    assert!(raster(&bridged, &none, 0, &hinted_options(false)).unwrap() == unhinted);
+    assert!(raster(&bridged, &none, 0, &hinted_options(true)).unwrap() == hinted);
+    assert!(raster(&bridged, &none, 0, &hinted_options(false)).unwrap() == unhinted);
 }
 
 #[test]
