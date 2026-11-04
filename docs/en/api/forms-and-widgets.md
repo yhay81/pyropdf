@@ -307,8 +307,9 @@ Without one, Helvetica draws WinAnsi values and other values are
 left for the viewer to draw. With one, setting a text or choice
 field draws its widgets in the face, embedded once in the document
 as a Type0 font that a save subsets, and refuses a character that
-the face has no glyph for. The font belongs to this `Document`
-object and is not saved. A Standard 14 font raises `PdfError`.
+the face has no glyph for, or whose glyph is a colour glyph with no
+outline. The font belongs to this `Document` object and is not
+saved. A Standard 14 font raises `PdfError`.
 
 Settable.
 
