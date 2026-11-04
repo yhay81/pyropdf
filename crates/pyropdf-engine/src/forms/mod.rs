@@ -16,6 +16,7 @@ pub mod face;
 pub mod flatten;
 mod text;
 
+pub(crate) use text::append_text;
 pub use text::text_string;
 
 use std::borrow::Cow;

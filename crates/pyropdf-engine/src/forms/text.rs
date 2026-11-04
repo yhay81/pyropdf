@@ -3,7 +3,7 @@
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::BudgetVec;
 
-pub(super) fn append_text(out: &mut BudgetVec<'_, u8>, bytes: &[u8]) -> Result<(), LimitExceeded> {
+pub(crate) fn append_text(out: &mut BudgetVec<'_, u8>, bytes: &[u8]) -> Result<(), LimitExceeded> {
     out.budget().poll()?;
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let units = rest

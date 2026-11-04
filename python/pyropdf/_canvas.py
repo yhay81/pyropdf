@@ -8,9 +8,11 @@ import math
 import os
 import re
 import sys
+import unicodedata
 from collections.abc import Iterable, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+from itertools import accumulate, groupby
 from typing import TYPE_CHECKING, Literal, cast
 
 from pyropdf import _core
@@ -39,10 +41,12 @@ from pyropdf._content import (
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._fonts import (
     _DEFAULT_MAX_GENERATED_TEXT_SIZE,
+    _NO_TEXT,
     Font,
     _max_lines,
     _text_input,
     _textbox_text,
+    _utf16,
     add_glyphs,
     embedded_font,
 )
@@ -2180,6 +2184,13 @@ def _shown_winansi(
     return shown
 
 
+#: A glyph that shaping placed, as ``_Font.shape`` returns it.
+_ShapedGlyph = tuple[int, int, int, int, int, int, int, bool, int, int]
+#: How far, in thousandths of the em, the last glyph of ``/ActualText`` may end
+#: from its cluster's end: readers look for a word gap from about a tenth.
+_CLUSTER_END_TOLERANCE = 50
+
+
 def _shown_glyphs(  # noqa: PLR0913 - the font, the lines, and the operation.
     document: Document,
     xref: int,
@@ -2197,7 +2208,7 @@ def _shown_glyphs(  # noqa: PLR0913 - the font, the lines, and the operation.
     face = font._font  # noqa: SLF001 - the package's own face.
     shaped = [face.shape(line, operation=operation) for line, _x, _y, _spacing in lines]
     drawn = [
-        (glyph[0], line[glyph[5] : glyph[6]])
+        (glyph[0], line[glyph[5] : glyph[6]] or _NO_TEXT)
         for (line, *_), glyphs in zip(lines, shaped, strict=True)
         for glyph in glyphs
         if glyph[0]
@@ -2215,8 +2226,8 @@ class _GlyphRun:
     ``TJ`` adjustments move the pen from each glyph's width in ``W`` to its
     shaped advance and by its offset, ``Ts`` raises it, and a line's word
     spacing widens its spaces, since ``Tw`` applies to one-byte codes only.
-    A glyph whose text the ToUnicode CMap does not map is shown inside
-    ``/ActualText``.
+    A cluster whose glyphs do not read as its text in the ToUnicode CMap is
+    shown inside one ``/ActualText``.
     """
 
     def __init__(self, size: float, units_per_em: int, widths: dict[int, float], mapped: dict[int, str]) -> None:
@@ -2227,45 +2238,81 @@ class _GlyphRun:
         self.mapped = mapped
         self.ops: list[bytes] = []
         self.items: list[bytes] = []
+        self.pending = 0.0  # From the pen to the text position, in TJ units: positive moves left.
+        self.rise = 0
 
     def flush(self) -> None:
         if self.items:
             self.ops.append(b"[" + b" ".join(self.items) + b"] TJ")
             self.items.clear()
 
-    def show(self, line: str, glyphs: list[tuple[int, int, int, int, int, int, int, bool]], spacing: float) -> bytes:
+    def show(self, line: str, glyphs: list[_ShapedGlyph], spacing: float) -> bytes:
         self.ops = []
-        pending = 0.0  # In TJ units: positive moves left.
-        rise = 0
-        for glyph, advance, _y_advance, x_offset, y_offset, start, end, _rtl in glyphs:
-            text = line[start:end]
-            offset = x_offset * self.scale
-            if not glyph:
-                # A control character without a glyph only advances.
-                pending -= advance * self.scale
-                continue
-            if y_offset != rise:
-                self.flush()
-                rise = y_offset
-                self.ops.append(_fmt(rise * self.size / self.units_per_em) + b" Ts")
-            if pending - offset:
-                self.items.append(_fmt(pending - offset))
-            code = b"<%04X>" % glyph
-            # A glyph without text of its own, such as a dot that the face
-            # draws apart from its letter, maps to nothing.
-            if not text or self.mapped.get(glyph) == text:
-                self.items.append(code)
-            else:
-                self.flush()
-                actual = text.encode("utf-16-be", "surrogatepass").hex().upper().encode()
-                self.ops.append(b"/Span <</ActualText <FEFF" + actual + b">>> BDC\n[" + code + b"] TJ\nEMC")
-            pending = self.widths[glyph] - advance * self.scale + offset
-            if spacing and text == " ":
-                pending -= spacing * 1000 / self.size
+        self.pending = 0.0
+        self.rise = 0
+        for (start, end), cluster in groupby(glyphs, key=lambda glyph: glyph[8:]):
+            self._show_cluster(line, line[start:end], list(cluster), spacing)
         self.flush()
-        if rise:
+        if self.rise:
             self.ops.append(b"0 Ts")
         return b"\n".join(self.ops)
+
+    def _reads_as(self, text: str, cluster: list[_ShapedGlyph]) -> bool:
+        """Return whether the CMap's texts of a cluster's glyphs read as its text, in canonical order of its marks."""
+        texts = [self.mapped.get(glyph[0], "") for glyph in cluster if glyph[0]]
+        if cluster[0][7]:
+            texts.reverse()
+        return not texts or unicodedata.normalize("NFD", "".join(texts)) == unicodedata.normalize("NFD", text)
+
+    def _show_cluster(self, line: str, text: str, cluster: list[_ShapedGlyph], spacing: float) -> None:
+        spanned = not self._reads_as(text, cluster)
+        # Readers take the box of ``/ActualText`` from the glyphs inside: MuPDF
+        # from the first glyph, Xpdf and poppler from the first glyph's origin
+        # to the last one's end. So a glyph with a width comes first, not the
+        # mark that a right-to-left run places before its base, and the last
+        # glyph leaves the text position at the cluster's end. Each glyph still
+        # draws where the shaper put it (``evidence/cluster-text``).
+        lead = next((index for index, glyph in enumerate(cluster) if glyph[0] and glyph[1]), 0) if spanned else 0
+        order = [lead, *(index for index in range(len(cluster)) if index != lead)]
+        pens = list(accumulate((glyph[1] * self.scale for glyph in cluster), initial=0.0))
+        ends_span = spanned and sum(1 for glyph in cluster if glyph[0]) > 1
+        if spanned:
+            self.flush()
+            self.ops.append(b"/Span <</ActualText <FEFF" + _utf16(text) + b">>> BDC")
+        at = 0.0
+        for index in order:
+            glyph, _advance, _y_advance, x_offset, y_offset, start, end, *_ = cluster[index]
+            self.pending -= pens[index] - at
+            at = pens[index]
+            if not glyph:
+                # A control character without a glyph only advances.
+                continue
+            offset = x_offset * self.scale
+            follow = pens[-1] - (at + offset + self.widths[glyph]) if ends_span and index == order[-1] else 0.0
+            self._show_glyph(glyph, offset, y_offset, follow if abs(follow) > _CLUSTER_END_TOLERANCE else 0.0)
+            if spacing and line[start:end] == " ":
+                self.pending -= spacing * 1000 / self.size
+        self.pending -= pens[-1] - at
+        if spanned:
+            self.flush()
+            self.ops.append(b"EMC")
+
+    def _show_glyph(self, glyph: int, offset: float, y_offset: int, follow: float) -> None:
+        """Show one glyph at the pen, and move the text position ``follow`` further through ``Tc``."""
+        if y_offset != self.rise:
+            self.flush()
+            self.rise = y_offset
+            self.ops.append(_fmt(self.rise * self.size / self.units_per_em) + b" Ts")
+        if follow:
+            self.flush()
+            self.ops.append(_fmt(follow * self.size / 1000) + b" Tc")
+        if self.pending - offset:
+            self.items.append(_fmt(self.pending - offset))
+        self.items.append(b"<%04X>" % glyph)
+        self.pending = self.widths[glyph] + offset + follow
+        if follow:
+            self.flush()
+            self.ops.append(b"0 Tc")
 
 
 def _font_value(objects: Objects, font: str | int) -> object:
