@@ -4500,10 +4500,8 @@
      {}
     ],
     "words_exact": [
-     "boxes",
-     {
-      "max_delta": 4.8
-     }
+     "equal",
+     {}
     ],
     "layout": [
      "equal",
@@ -4540,10 +4538,8 @@
      {}
     ],
     "words_exact": [
-     "boxes",
-     {
-      "max_delta": 4.8
-     }
+     "equal",
+     {}
     ],
     "layout": [
      "equal",
@@ -4580,10 +4576,8 @@
      {}
     ],
     "words_exact": [
-     "boxes",
-     {
-      "max_delta": 4.84
-     }
+     "equal",
+     {}
     ],
     "layout": [
      "equal",
@@ -4620,10 +4614,8 @@
      {}
     ],
     "words_exact": [
-     "boxes",
-     {
-      "max_delta": 4.84
-     }
+     "equal",
+     {}
     ],
     "layout": [
      "equal",
@@ -4660,10 +4652,8 @@
      {}
     ],
     "words_exact": [
-     "boxes",
-     {
-      "max_delta": 4.76
-     }
+     "equal",
+     {}
     ],
     "layout": [
      "equal",
@@ -4700,10 +4690,8 @@
      {}
     ],
     "words_exact": [
-     "boxes",
-     {
-      "max_delta": 7.28
-     }
+     "equal",
+     {}
     ],
     "layout": [
      "equal",

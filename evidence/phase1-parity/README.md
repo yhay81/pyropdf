@@ -33,7 +33,10 @@ turns them off. `tests/assets/text/nonembedded-cjk.pdf` holds the pages of
 types and both CMaps, MS-Mincho, and fonts of the GB1, CNS1, and Korea1
 collections. With `--fallback-fonts`, both engines render it with the faces
 of the font extras `jp`, `ko`, `zh-cn`, and `zh-tw`, which `run.py` installs
-for pylopdf and pyropdf's dev group installs, in the same versions.
+for pylopdf and pyropdf's dev group installs, in the same versions. The dump
+then renders the first page before it reads any page, because frozen pylopdf
+fills its faces at its first rendering, and text extraction before that gives
+what it gives without them. pyropdf gives the same answer in any order.
 `tests/test_parity.py` checks that the report covers the corpus and the
 fallback pages and leaves no difference unexplained. When
 `PYROPDF_PARITY_PYLOPDF` names the Python of `target/parity/pylopdf-env`, it
@@ -64,8 +67,8 @@ pages of `nonembedded-cjk.pdf`, with pyropdf on hayro 0.9 without its glyph
 cache and frozen pylopdf on hayro 0.8. Of the 163 rasters, 162 match byte
 for byte and one is close under the stated tolerance, which a cause below
 explains. The JSON reading outputs and the Markdown match, except on
-page 2 of `patent-us223898.pdf` and in the exact word boxes of the fallback
-pages, which the causes below explain. No output raises. `metadata.json`
+page 2 of `patent-us223898.pdf`, which a cause below explains. No output
+raises. `metadata.json`
 identifies the measured source revision and the hashes of the inputs. The
 oracle cache is reused only with a matching stamp of the freeze commit and
 the extras and an importable package; an unstamped or different cache is
@@ -120,18 +123,27 @@ since #460, pyropdf keeps them whole above the columns, as PyMuPDF 2.0 does
 words are the same but for `CR` and `C`, which join as `CRC` in the line
 `CRC AMP.`, and the page has four fewer spans.
 
-### Exact boxes of fonts that a document does not embed
+### Exact boxes of fonts that a document does not embed, resolved
 
 The 7 pages of `nonembedded-cjk.pdf` render byte for byte alike with the
-faces of the font extras (#600). Of their other
-outputs, only the exact word boxes differ, on pages 2 to 7, by up to 7.28
-points: frozen pylopdf's text extraction also
-draws a font that a document does not embed in its fallback faces, so
-`words(exact_bboxes=True)` measures their outlines, while pyropdf's text
-extraction does not use the fallback faces, which #600 leaves out, and
-gives the boxes that it gives without them. On page 1, whose descendant
-font is a `CIDFontType0`, pylopdf gives those boxes too. The text, the
-other boxes, and the layout match on every page.
+faces of the font extras (#600). The run of 2026-11-04 on #613 found that of
+their other outputs only the exact word boxes differed, on pages 2 to 7, by up
+to 7.28 points: frozen pylopdf's text extraction also draws a font that a
+document does not embed in its fallback faces, so `words(exact_bboxes=True)`
+measures their outlines, while pyropdf's did not use the faces. #624 measures
+those glyphs on the faces, and every output of the 7 pages now matches.
+
+That run attributed the equal page 1 to its `CIDFontType0` descendant font,
+wrongly: the dump rendered each page after reading it, so frozen pylopdf,
+which fills its faces at its first rendering, read only its first page
+without them. The dump now renders first.
+
+pyropdf takes only the ink from the faces. hayro 0.8 stretched a substitute
+glyph's outline to the PDF's width, and hayro 0.9 keeps that stretch in the
+glyph's transform, where a reader cannot tell it apart, so an advance taken
+through a face would be stretched too. Without faces, the same stretch of a
+Standard 14 substitute moves the advances of pyropdf's text on hayro 0.9,
+which this corpus does not show and #656 tracks.
 
 Review corrected the original comparator's early equality return for
 matching raster metadata: equal dimensions and stride now still compare
