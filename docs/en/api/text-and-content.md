@@ -175,6 +175,14 @@ Color.rgb: tuple[float, float, float]
 
 Return `(red, green, blue)`.
 
+## `ColorStop`
+
+```python
+ColorStop(offset: float, color: Color)
+```
+
+A place on a gradient's line, and the color and alpha there.
+
 ## `Content`
 
 ```python
@@ -347,6 +355,16 @@ Glyph.size: float
 
 The display-space font size.
 
+## `Gradient`
+
+`Gradient = pyropdf.LinearGradient | pyropdf.RadialGradient`
+
+## `GradientExtend`
+
+What a gradient paints beyond the two ends of its line.
+
+Members: `PAD`, `NONE`, `REPEAT`, `REFLECT`.
+
 ## `GraphicsContext`
 
 ```python
@@ -494,6 +512,26 @@ unit vector of the baseline in display space, `(1, 0)` for horizontal
 text, and `is_vertical` is true for vertical writing, in which glyphs
 stack downward.
 
+## `LinearGradient`
+
+```python
+LinearGradient(
+    *,
+    start: Point,
+    end: Point,
+    stops: tuple[ColorStop, ...],
+    extend: GradientExtend = <GradientExtend.PAD: 'pad'>,
+)
+```
+
+A paint for a `Canvas` that changes color along a straight line.
+
+The line runs from `start` to `end`, in the space of what it paints,
+so it moves with `Canvas.transform` as a path does. `stops` are
+in order, and two at one offset make a sharp change. Before the first
+stop and after the last, the color does not change. Color and alpha
+interpolate apart, so a color is not premultiplied by its alpha.
+
 ## `LineCap`
 
 The shape at the open ends of a stroke.
@@ -532,7 +570,7 @@ Start a new subpath at `to`.
 
 ## `Paint`
 
-`Paint = pyropdf.Color | pyropdf.ShadingPattern | pyropdf.TilingPattern`
+`Paint = pyropdf.Color | pyropdf.ShadingPattern | pyropdf.TilingPattern | pyropdf.LinearGradient | pyropdf.RadialGradient`
 
 ## `Path`
 
@@ -665,6 +703,26 @@ Paths.column(name: str) -> memoryview
 ```
 
 Return the column `name` of `names` as a read-only `memoryview`, without a copy.
+
+## `RadialGradient`
+
+```python
+RadialGradient(
+    *,
+    start: Point,
+    start_radius: float,
+    end: Point,
+    end_radius: float,
+    stops: tuple[ColorStop, ...],
+    extend: GradientExtend = <GradientExtend.PAD: 'pad'>,
+)
+```
+
+A paint for a `Canvas` that changes color between two circles.
+
+The line runs from the circle at `start` to the circle at `end`,
+through the circles between them, in the space of what it paints. The
+stops and `extend` are those of a `LinearGradient`.
 
 ## `Segment`
 

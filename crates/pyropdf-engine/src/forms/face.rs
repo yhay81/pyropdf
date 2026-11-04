@@ -16,6 +16,7 @@ use pyropdf_store::value::Reference;
 use skrifa::GlyphId;
 
 use super::{WidgetError, fmt};
+use crate::fonts::colour::refused_colour_glyph;
 use crate::fonts::embed::{Face, Measure};
 use crate::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
 use crate::standard::{self, LayoutError, Placement, TextBox};
@@ -93,20 +94,38 @@ impl<'f> FaceText<'f> {
     /// character, that the face has no glyph for.
     pub(crate) fn missing(&self, value: &str) -> Result<Option<char>, LayoutError> {
         let glyphs = self.shape(value)?;
-        Ok(glyphs
-            .iter()
-            .filter(|glyph| glyph.glyph == 0)
-            .filter_map(|glyph| value[glyph.cluster.clone()].chars().next())
-            .find(|character| !character.is_control()))
+        Ok(first_missing(value, &glyphs))
     }
 
     /// Refuses `value` when the face lacks a glyph for one of its
-    /// characters other than a control character.
+    /// characters other than a control character, or when the glyph of one
+    /// is a colour glyph with no outline, which would draw nothing under a
+    /// value that reads back (DESIGN.md section 7).
     pub(super) fn check(&self, value: &str) -> Result<(), WidgetError> {
-        if let Some(character) = self.missing(value)? {
+        let glyphs = self.shape(value)?;
+        if let Some(character) = first_missing(value, &glyphs) {
             return Err(WidgetError::Malformed(
                 format!(
                     "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
+                    self.face.full_name,
+                    u32::from(character)
+                )
+                .into(),
+            ));
+        }
+        let refused =
+            refused_colour_glyph(self.face, value, &glyphs, self.budget).map_err(|error| {
+                match error {
+                    ShapeError::Limit(refusal) => WidgetError::from(refusal),
+                    ShapeError::Font(reason) => {
+                        WidgetError::Malformed(format!("invalid font: {reason}").into())
+                    }
+                }
+            })?;
+        if let Some(character) = refused {
+            return Err(WidgetError::Malformed(
+                format!(
+                    "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
                     self.face.full_name,
                     u32::from(character)
                 )
@@ -389,6 +408,16 @@ fn push_decomposed(
             push_decomposed(decomposed, second)
         }
     }
+}
+
+/// Returns the first character of `value`, other than a control character,
+/// that shaped to no glyph in `glyphs`.
+fn first_missing(value: &str, glyphs: &[ShapedGlyph]) -> Option<char> {
+    glyphs
+        .iter()
+        .filter(|glyph| glyph.glyph == 0)
+        .filter_map(|glyph| value[glyph.cluster.clone()].chars().next())
+        .find(|character| !character.is_control())
 }
 
 /// Appends the pending `TJ` array, if any.

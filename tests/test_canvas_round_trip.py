@@ -10,6 +10,10 @@ without an appearance stream, which the renderer draws but
 ``Page.content()`` does not report. Those items are
 listed with the reason in ``_not_drawn``, and the documentation of
 ``Canvas.draw`` publishes the same tolerance and exceptions.
+
+A pattern paint reports its kind and its matrix, not its stops or its cell, so
+a canvas cannot draw one again, a gradient that it drew itself included. The
+corpus has none today, so the exception costs its pages nothing.
 """
 
 from __future__ import annotations
@@ -25,7 +29,7 @@ from pathlib import Path as FilePath
 import pytest
 
 import pyropdf
-from pyropdf import Color, Image, Path, Stroke, TextRun
+from pyropdf import Color, ColorStop, Image, LinearGradient, Path, Point, ShadingPattern, Stroke, TextRun
 
 CORPUS = FilePath(__file__).parent / "assets" / "real_world"
 
@@ -139,6 +143,41 @@ def test_draw_redraws_an_image_of_the_same_document_without_a_copy() -> None:
         if isinstance(doc.objects[number], pyropdf.Stream) and doc.objects[number].get("Subtype") == "Image"
     ]
     assert images == [image.xref]
+
+
+def _gradient() -> LinearGradient:
+    stops = (ColorStop(0, Color(1, 0, 0)), ColorStop(1, Color(0, 0, 1)))
+    return LinearGradient(start=Point(0, 0), end=Point(200, 0), stops=stops)
+
+
+def test_draw_refuses_a_gradient_read_back_and_writes_nothing() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    with page.draw() as canvas:
+        canvas.rect((0, 0, 200, 100), fill=_gradient(), stroke=Stroke(paint=_gradient(), width=2))
+    item = page.content().paths[0]
+    assert isinstance(item.fill, ShadingPattern)
+    assert item.stroke is not None
+    target = pyropdf.Document()
+    copy = target.pages.new((200, 200))
+    before = target.to_bytes(), target.history.steps
+    for read_back in (item, dataclasses.replace(item, fill=None), dataclasses.replace(item, stroke=None)):
+        with pytest.raises(TypeError, match="ShadingPattern"), copy.draw() as canvas:
+            canvas.draw(read_back)
+    assert (target.to_bytes(), target.history.steps) == before
+
+
+def test_draw_paints_a_read_back_path_with_a_gradient_in_place_of_its_paint() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    with page.draw() as canvas:
+        canvas.rect((0, 0, 200, 200), fill=_gradient())
+    item = page.content().paths[0]
+    target = pyropdf.Document()
+    copy = target.pages.new((200, 200))
+    with copy.draw() as canvas:
+        canvas.draw(dataclasses.replace(item, fill=_gradient()))
+    assert bytes(copy.pixmap(dpi=72)) == bytes(page.pixmap(dpi=72))
 
 
 def test_draw_refuses_items_it_cannot_draw_and_writes_nothing() -> None:
