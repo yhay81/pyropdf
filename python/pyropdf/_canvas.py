@@ -1356,6 +1356,8 @@ class Canvas:
         is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
         default (``max_text_size``, ``None`` for trusted input), refused with
         :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
+        A colour glyph with no outline in an OpenType face raises
+        :class:`PdfError`, naming the character; see :class:`Font`.
         """
         self._check_open()
         checked = _text_input(text, max_text_size)
@@ -1415,7 +1417,8 @@ class Canvas:
         lines run down the box and stack from its right edge leftward, so
         they wrap at the box's height and fill its width, and at 270 they run
         up and stack from the left edge. The font, paint, and size options
-        follow :meth:`text`.
+        follow :meth:`text`, and text that fits refuses as there: a colour
+        glyph with no outline raises :class:`PdfError`.
         """
         self._check_open()
         box = _rect(rect, "rect")

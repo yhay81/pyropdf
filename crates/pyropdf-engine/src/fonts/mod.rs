@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 mod cff;
+pub mod colour;
 pub mod compact;
 pub mod embed;
 pub mod settle;
