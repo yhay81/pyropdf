@@ -346,6 +346,7 @@ class Page:
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
         annotations: bool = True,
         colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        hinting: bool = False,
     ) -> Pixmap:
         """Render the current version of the page to a :class:`Pixmap`.
 
@@ -358,6 +359,13 @@ class Page:
         ``annotations=False`` leaves out the appearances of annotations and
         form widgets. ``colorspace="gray"`` converts the rendered colors to
         gray with ITU-R BT.601 luma weights.
+
+        ``hinting=True`` hints text, as FreeType's light hinting does, which
+        sharpens small text: horizontal text filled at 4 to 128 pixels per
+        em, and not stroked or clipping text. The fonts that
+        :meth:`Document.subset_fonts` subsets and that a save compacts can
+        draw differently hinted than their originals, so hinted renders of a
+        document before and after either may differ.
 
         ``clip`` is a display rectangle ``(x0, y0, x1, y1)``: its bounding
         box under the matrix, rounded outward to whole pixels and
@@ -374,6 +382,7 @@ class Page:
         linear = _render_matrix(matrix, dpi)
         rgba = _render_background(background, alpha=alpha)
         _validate_bool("annotations", annotations)
+        _validate_bool("hinting", hinting)
         gray = _render_gray(colorspace)
         box = None if clip is None else _clip_box(clip)
         try:
@@ -387,6 +396,7 @@ class Page:
                 rgba,
                 box,
                 annotations,
+                hinting,
             )
         except StaleObjectError as error:
             raise self._stale() from error

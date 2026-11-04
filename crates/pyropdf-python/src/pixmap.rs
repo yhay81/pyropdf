@@ -1361,6 +1361,7 @@ pub fn render_page(
     background: (u8, u8, u8, u8),
     clip: Option<(f64, f64, f64, f64)>,
     annotations: bool,
+    hinting: bool,
 ) -> PyResult<Pixmap> {
     let (version, index, budget) = crate::pages::index(document)?;
     let (red, green, blue, opacity) = background;
@@ -1371,6 +1372,7 @@ pub fn render_page(
         background: [red, green, blue, opacity],
         clip,
         annotations,
+        hinting,
     };
     let raster = py.detach(|| -> PyResult<Raster> {
         let at = index
@@ -1422,6 +1424,7 @@ pub fn render_pages(
     gray: bool,
     background: (u8, u8, u8, u8),
     annotations: bool,
+    hinting: bool,
     format: &str,
     quality: u8,
     workers: usize,
@@ -1438,6 +1441,7 @@ pub fn render_pages(
         background: [red, green, blue, opacity],
         clip: None,
         annotations,
+        hinting,
     };
     let written = AtomicUsize::new(0);
     let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {

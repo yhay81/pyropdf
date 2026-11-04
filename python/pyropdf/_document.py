@@ -771,6 +771,7 @@ class Document:
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
         annotations: bool = True,
         colorspace: Colorspace | Literal["gray", "rgb"] = Colorspace.RGB,
+        hinting: bool = False,
         format: Literal["png", "jpeg"] = "png",  # noqa: A002 - the public name.
         quality: int = 95,
         workers: int | None = None,
@@ -778,10 +779,11 @@ class Document:
     ) -> list[bytes]:
         """Render pages of the current version to encoded images, in the order of ``pages``.
 
-        ``dpi``, ``matrix``, ``alpha``, ``background``, ``annotations``, and
-        ``colorspace`` mean what they mean to :meth:`Page.pixmap`, so the
-        default is opaque RGB at 72 dpi, and each image is what
-        ``page.pixmap(...).to_bytes(format, quality=quality)`` returns.
+        ``dpi``, ``matrix``, ``alpha``, ``background``, ``annotations``,
+        ``colorspace``, and ``hinting`` mean what they mean to
+        :meth:`Page.pixmap`, so the default is opaque RGB at 72 dpi, and each
+        image is what ``page.pixmap(...).to_bytes(format, quality=quality)``
+        returns.
         ``format`` is ``"png"`` or ``"jpeg"`` at ``quality``, 1 through 100;
         JPEG has no alpha. ``pages`` holds page indexes, negative ones from
         the end, and may repeat them; it defaults to every page, and may
@@ -800,6 +802,7 @@ class Document:
         linear = _render_matrix(matrix, dpi)
         rgba = _render_background(background, alpha=alpha)
         _validate_bool("annotations", annotations)
+        _validate_bool("hinting", hinting)
         gray = _render_gray(colorspace)
         _validate_encoding(format, quality, alpha=alpha)
         if workers is None:
@@ -814,7 +817,7 @@ class Document:
         doc = self._core()
         entries = None if pages is None else _page_entries(pages, _core.page_count(doc))
         return _core.render_pages(
-            doc, entries, linear, alpha, gray, rgba, annotations, format, quality, workers, max_size
+            doc, entries, linear, alpha, gray, rgba, annotations, hinting, format, quality, workers, max_size
         )
 
     def text(  # noqa: PLR0913 - the text options are all keyword-only

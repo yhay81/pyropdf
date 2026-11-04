@@ -20,16 +20,16 @@ mod tests;
 pub use batch::{MAX_WORKERS, batch};
 pub use svg::svg;
 
-/// What hayro renders with: its defaults, without hinting.
+/// What hayro renders with: its defaults, with text hinted only on request.
 ///
 /// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
 /// did not. Hinting reads more of a font program than the glyphs drawn, so
 /// a program that pyropdf subsets would draw differently hinted
-/// (evidence/hinted-subsets); pyropdf renders text unhinted, as it did with
-/// hayro 0.8 (#18).
-fn render_settings() -> RenderSettings {
+/// (evidence/hinted-subsets); pyropdf renders text unhinted unless asked,
+/// as it did with hayro 0.8 (#18).
+fn render_settings(hinting: bool) -> RenderSettings {
     RenderSettings {
-        hinting: false,
+        hinting,
         ..RenderSettings::default()
     }
 }
@@ -55,7 +55,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
         page,
         &RenderCache::new(),
         &InterpreterSettings::default(),
-        &render_settings(),
+        &render_settings(false),
         &PixmapSettings {
             x_scale: scale,
             y_scale: scale,
@@ -138,11 +138,13 @@ pub struct Options {
     pub clip: Option<(f64, f64, f64, f64)>,
     /// Whether annotation appearances are drawn.
     pub annotations: bool,
+    /// Whether text is hinted, as hayro's default settings hint it.
+    pub hinting: bool,
 }
 
 impl Options {
     /// Renders through `matrix` in RGB, on white without `alpha` and on
-    /// transparency with it, with annotations and no clip.
+    /// transparency with it, with annotations, no clip, and no hinting.
     pub const fn new(matrix: Matrix, alpha: bool) -> Self {
         Self {
             matrix,
@@ -151,6 +153,7 @@ impl Options {
             background: if alpha { [0; 4] } else { [255; 4] },
             clip: None,
             annotations: true,
+            hinting: false,
         }
     }
 }
@@ -396,7 +399,7 @@ fn draw<'a>(
         page,
         cache,
         &settings,
-        &render_settings(),
+        &render_settings(options.hinting),
         &mut context,
         transform,
     );
