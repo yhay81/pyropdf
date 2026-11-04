@@ -65,10 +65,10 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 
 ## Causes
 
-The run on 2026-11-04 covers the 15 corpus documents, 156 pages, the 12 pages
+The run on 2026-11-04 covers the 15 corpus documents, 156 pages, the 13 pages
 of `nonembedded-latin.pdf`, and the 7 pages of `nonembedded-cjk.pdf`, with
 pyropdf on hayro 0.9 without its glyph cache and frozen pylopdf on hayro 0.8.
-Of the 175 rasters, 174 match byte
+Of the 176 rasters, 175 match byte
 for byte and one is close under the stated tolerance, which a cause below
 explains. The JSON reading outputs and the Markdown match, except on
 page 2 of `patent-us223898.pdf`, which a cause below explains. No output
@@ -156,7 +156,7 @@ space among exact boxes at 125.25, and not at 104.0; a stretch below 1 could
 split a word and one above 1 could join two. pyropdf now takes the stretch out
 of the advances of text and of `page.content()`'s text runs, and keeps it in
 the ink and in the glyphs' matrices, which a rendering draws (#656). Every
-output of the 12 pages now matches. `evidence/stretch-reload` measures what
+output of the 13 pages now matches. `evidence/stretch-reload` measures what
 this costs.
 
 Review corrected the original comparator's early equality return for

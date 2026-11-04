@@ -68,7 +68,9 @@ fn may_be_stretched(transform: Affine) -> bool {
 
 /// `transform` of a glyph of `font` without the stretch that hayro keeps in
 /// it, so that the glyph's advance through it is the PDF's width. A width of 0
-/// stretches the glyph to nothing, which leaves no x basis to recover.
+/// stretches the glyph to nothing, which leaves no x basis to scale back: the
+/// y basis then gives its direction, in display space, whose y axis points
+/// down.
 pub(super) fn without_stretch(
     transform: Affine,
     font: Option<&Font<'_>>,
@@ -78,7 +80,11 @@ pub(super) fn without_stretch(
         return transform;
     };
     let stretch = font.glyph_stretch(outline.glyph_id(), outline.char_code());
-    if stretch == 1.0 || stretch == 0.0 || !stretch.is_finite() {
+    if stretch == 0.0 {
+        let [_, _, c, d, e, f] = transform.as_coeffs();
+        return Affine::new([-d, c, c, d, e, f]);
+    }
+    if stretch == 1.0 || !stretch.is_finite() {
         return transform;
     }
     transform * Affine::scale_non_uniform(stretch.recip(), 1.0)

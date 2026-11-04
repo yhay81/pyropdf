@@ -71,6 +71,8 @@ PAGES = (
     _Page(HELLO, subtype="TrueType", damaged="FontFile2"),
     _Page(HELLO, subtype="TrueType", damaged="FontFile3"),
     _Page(HELLO_UCS2, subtype="Type0", name="MS-Gothic", damaged="FontFile2"),
+    # A glyph stretched to nothing keeps the direction of the text around it.
+    _Page("BT /F1 20 Tf 0 1 -1 0 100 10 Tm (Hi all) Tj ET", widths={"i": 0}),
 )
 
 
@@ -151,6 +153,8 @@ def test_the_fixture_holds_the_pages() -> None:
         (8, {"Hello": (20, 34, 90, 54), "big": (104, 34, 146, 54), "world": (160, 34, 230, 54)}),
         (9, {"Hello": (20, 34, 90, 54), "big": (104, 34, 146, 54), "world": (160, 34, 230, 54)}),
         (10, {"Hello": (20, 34, 90, 54), "big": (104, 34, 146, 54), "world": (160, 34, 230, 54)}),
+        # A glyph stretched to nothing stays in its word, along the rotated text.
+        (12, {"Hi": (84, 66, 104, 90), "all": (84, 20, 104, 62)}),
     ],
 )
 def test_words_and_search_read_the_boxes_of_frozen_pylopdf(index: int, boxes: dict[str, tuple[int, ...]]) -> None:
