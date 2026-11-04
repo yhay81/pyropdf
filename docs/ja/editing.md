@@ -91,6 +91,51 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 配置します。何度も描いた画像やページは一度だけ保存されます。`clip`、`transform`、
 `opacity`、`blend` は、その中で描くもの全体に効くスコープです。
 
+### グラデーション
+
+`LinearGradient` と `RadialGradient` は、パスと図形の上で `Color` が使える場所、
+つまり `fill` と `Stroke` の `paint` で使えます。座標は描くものと同じ空間にあるので、
+`canvas.transform` に合わせて動きます。
+
+```python
+import pyropdf
+from pyropdf import Color, ColorStop, GradientExtend, LinearGradient, Point, RadialGradient, Stroke
+
+sky = LinearGradient(
+    start=Point(0, 0),
+    end=Point(0, 200),
+    stops=(ColorStop(0, Color(0.2, 0.4, 0.9)), ColorStop(1, Color(1, 1, 1))),
+)
+sun = RadialGradient(
+    start=Point(100, 100),
+    start_radius=0,
+    end=Point(100, 100),
+    end_radius=40,
+    # A stop's alpha fades the color out, through a soft mask.
+    stops=(ColorStop(0, Color(1, 0.8, 0)), ColorStop(1, Color(1, 0.8, 0, 0))),
+)
+stripes = LinearGradient(
+    start=Point(0, 0),
+    end=Point(20, 0),
+    stops=(ColorStop(0, Color(0, 0, 0)), ColorStop(1, Color(1, 1, 1))),
+    extend=GradientExtend.REFLECT,
+)
+
+doc = pyropdf.Document()
+page = doc.pages.new((200, 200))
+with page.draw() as canvas:
+    canvas.rect((0, 0, 200, 200), fill=sky)
+    canvas.circle((100, 100), 40, fill=sun)
+    canvas.line((0, 180), (200, 180), stroke=Stroke(paint=stripes, width=6))
+```
+
+`extend` はグラデーションの線の外側に何を描くかを決めます。両端の色を伸ばす `PAD`
+(既定)、何も描かない `NONE`、線を繰り返す `REPEAT`、往復させる `REFLECT` があります。
+同じ関数とシェーディングは 1 つの canvas の中で一度だけ書かれます。`page.content()` は
+描かれたグラデーションを `ShadingPattern` として読み戻します。これは種類と行列を報告しますが
+ストップは持たないので、`canvas.draw` で描き直すことはできません。テキストの塗りと線は
+`Color` で描きます。
+
 ### テキスト
 
 `canvas.text` はベースラインの一点から行を描き、`canvas.textbox` は矩形の中で
