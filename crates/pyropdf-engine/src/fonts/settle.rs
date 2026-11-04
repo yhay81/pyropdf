@@ -8,11 +8,11 @@
 
 use std::collections::BTreeSet;
 
+use pyropdf_store::Result;
 use pyropdf_store::budget::Budget;
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
-use pyropdf_store::{Error, Result};
 
 use super::compact::{Compact, compact};
 
@@ -27,12 +27,11 @@ impl Settler for FontSubsetSettler {
         numbers: &[u32],
         budget: &Budget,
     ) -> Result<()> {
-        let mut maps = MapNumbers::of(transaction, budget)?;
         for &number in numbers {
             // A font that is no longer the shape that pyropdf wrote keeps
             // its program whole.
             if let Some(font) = Font::read(transaction.version(), number, budget)? {
-                font.subset(transaction, &mut maps, budget)?;
+                font.subset(transaction, budget)?;
             }
         }
         Ok(())
@@ -138,12 +137,7 @@ impl Font {
         }))
     }
 
-    fn subset(
-        self,
-        transaction: &mut Transaction,
-        maps: &mut MapNumbers,
-        budget: &Budget,
-    ) -> Result<()> {
+    fn subset(self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
         let base = match self.font.get("BaseFont") {
             Some(Value::Name(name)) => name.as_bytes().to_vec(),
             _ => return Ok(()),
@@ -187,7 +181,9 @@ impl Font {
         cid_font.insert(Name::from("BaseFont"), tagged.clone());
         if !compact.cff {
             let map = cid_to_gid(&compact.glyphs);
-            let number = maps.next(transaction)?;
+            // The same number at each save of one version, so that two saves
+            // with no edit between them write the same bytes.
+            let number = transaction.number_for_save()?;
             let stream = Stream::new(Dict::new(), Bytes::from(map));
             let reference = transaction.write(number, &Value::from(stream), budget)?;
             cid_font.insert(Name::from("CIDToGIDMap"), Value::Reference(reference));
@@ -198,43 +194,6 @@ impl Font {
         font.insert(Name::from("BaseFont"), tagged);
         transaction.write(self.number, &Value::Dict(font), budget)?;
         Ok(())
-    }
-}
-
-/// Where one settling takes the numbers of the CIDToGIDMaps that it writes.
-///
-/// A save discards the transaction that it settles in, and the document never
-/// issues a number twice, so allocating would write a map under a new number
-/// at each save, and two saves with no edit between them would differ. A
-/// transaction that has written nothing takes the numbers after its parent's
-/// instead, which depend only on that version. The version refers to none of
-/// them, since it was written above every number issued before it, and the
-/// write raises the high-water mark above them, so no allocation issues them
-/// later.
-///
-/// A transaction that has written something allocates: its writes may refer to
-/// a number that a transaction nested in it discarded, above its parent's.
-struct MapNumbers(Option<u64>);
-
-impl MapNumbers {
-    fn of(transaction: &Transaction, budget: &Budget) -> Result<Self> {
-        let parent = transaction.parent();
-        let written = transaction.version().changes(parent, budget)?;
-        let unwritten = written.is_some_and(|changes| changes.is_empty());
-        Ok(Self(unwritten.then(|| parent.next_number())))
-    }
-
-    fn next(&mut self, transaction: &mut Transaction) -> Result<u32> {
-        let Some(next) = &mut self.0 else {
-            return Ok(transaction.allocate()?.number());
-        };
-        let number = u32::try_from(*next).map_err(|_| {
-            Error::malformed(
-                "the document uses object number 4294967295, so no number is left for a new object",
-            )
-        })?;
-        *next += 1;
-        Ok(number)
     }
 }
 
