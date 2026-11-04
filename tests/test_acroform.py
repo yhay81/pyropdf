@@ -540,6 +540,16 @@ def test_form_font_draws_the_same_bytes_as_font_input() -> None:
     assert _opaque_pixels(reopened, (45, 67, 255, 97)) > 0
 
 
+def test_form_font_shapes_an_instance_at_its_weight() -> None:
+    """A static program has no kerning of its own, so the source kerns the instance."""
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(FONTS / "variable-latin.ttf", weight=900)
+    doc.form["customer"].value = "AV"
+    widget = doc.objects[_widget_xrefs(doc.form["customer"])[0]]
+    assert b"[<0001> 300 <0002>] TJ" in widget["AP"]["N"].read()
+    assert _values(pyropdf.open(doc.to_bytes()))["customer"] == "AV"
+
+
 def test_form_font_fills_buttons_and_empty_values() -> None:
     doc = pyropdf.open(_build_form_pdf())
     face = pyropdf.Font.from_file(NOTO_SANS_JP)

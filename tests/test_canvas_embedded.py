@@ -16,6 +16,7 @@ import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -26,6 +27,8 @@ FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "
 JAPANESE = FONTS / "NotoSansJP-subset.otf"
 HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
+VARIABLE_LATIN = FONTS / "variable-latin.ttf"
+VARIABLE_COLOUR = FONTS / "variable-colour.ttf"
 LINE = "AVA office 日本語、かな。"
 ARABIC_WORD = "مرحبا"
 #: The refusal of a colour glyph with no outline, for one character.
@@ -45,6 +48,11 @@ def hebrew() -> pyropdf.Font:
 @pytest.fixture(scope="module")
 def arabic() -> pyropdf.Font:
     return pyropdf.Font.from_file(ARABIC)
+
+
+@pytest.fixture(scope="module")
+def arabic_bold() -> pyropdf.Font:
+    return pyropdf.Font.from_file(ARABIC, weight=700)
 
 
 @pytest.fixture(
@@ -311,6 +319,108 @@ def test_one_drawing_is_one_undo_step(japanese: pyropdf.Font) -> None:
     assert _descriptor_programs(document) == set()
 
 
+def test_two_weights_of_one_face_make_two_programs_that_read_back() -> None:
+    document, page = _new_page()
+    bold = pyropdf.Font.from_file(ARABIC, weight=700)
+    light = pyropdf.Font.from_file(ARABIC, weight=200)
+    with page.draw() as canvas:
+        canvas.text("office", (20, 40), font=bold, size=14)
+        canvas.text("tilt", (20, 80), font=light, size=14)
+    assert len(_descriptor_programs(document)) == 2
+    assert page.text().split() == ["office", "tilt"]
+
+    reopened = pyropdf.open(document.to_bytes())
+    assert len(_descriptor_programs(reopened)) == 2
+    assert reopened.pages[0].text().split() == ["office", "tilt"]
+    names = {font._font["BaseFont"] for font in reopened.pages[0].fonts()}  # noqa: SLF001
+    assert len(names) == 2
+    assert all(name.endswith(("_700wght", "_200wght")) for name in names), names
+
+
+def test_the_same_weight_shares_a_program() -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("office", (20, 40), font=pyropdf.Font.from_file(ARABIC, weight=700), size=14)
+        canvas.text("tilt", (20, 80), font=pyropdf.Font.from_file(ARABIC, weight=700), size=14)
+    assert len(_descriptor_programs(document)) == 1
+
+
+def test_the_descriptor_describes_the_instance() -> None:
+    _document, page = _new_page()
+    font = pyropdf.Font.from_file(VARIABLE_LATIN, weight=900)
+    with page.draw() as canvas:
+        canvas.text("AV", (20, 40), font=font, size=14)
+    (used,) = page.fonts()
+    descendant = used._font["DescendantFonts"][0]  # noqa: SLF001
+    descriptor = descendant["FontDescriptor"]
+    assert used._font["BaseFont"] == descriptor["FontName"] == "VariableLatin_900wght"  # noqa: SLF001
+    assert list(descriptor["FontBBox"]) == [100, 0, 1000, 700]
+    assert descriptor["Ascent"] == 850
+    assert descriptor["CapHeight"] == 800
+    assert page.text().strip() == "AV"
+    # The kerning of the instance reaches the drawing: V begins 800 units on.
+    glyphs = _glyphs(page)
+    assert glyphs[1].origin.x - glyphs[0].origin.x == pytest.approx(14 * 0.8, abs=1e-3)
+
+
+def test_a_save_subsets_an_instance() -> None:
+    document, page = _new_page()
+    font = pyropdf.Font.from_file(ARABIC, weight=700)
+    with page.draw() as canvas:
+        canvas.text("tilt", (20, 40), font=font, size=14)
+    whole = cast("bytes", font.program())
+    data = document.to_bytes()
+
+    reopened = pyropdf.open(data)
+    (used,) = reopened.pages[0].fonts()
+    program = reopened.font_program(used)
+    assert program is not None
+    assert len(program.data) < len(whole) / 3
+    assert reopened.pages[0].text().strip() == "tilt"
+    # A save leaves the page's drawing as it was before.
+    assert bytes(reopened.pages[0].pixmap(dpi=72)) == bytes(page.pixmap(dpi=72))
+    assert bytes(page.pixmap(dpi=72)) != bytes(_drawn_at_default("tilt").pixmap(dpi=72))
+
+
+def _drawn_at_default(text: str) -> pyropdf.Page:
+    _document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text(text, (20, 40), font=pyropdf.Font.from_file(ARABIC), size=14)
+    return page
+
+
+def test_undo_removes_a_drawing_of_an_instance_and_its_glyphs() -> None:
+    font = pyropdf.Font.from_file(ARABIC, weight=700)
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("tilt", (20, 40), font=font, size=12)
+    with page.draw() as canvas:
+        canvas.text("office", (20, 80), font=font, size=12)
+    assert page.text().split() == ["tilt", "office"]
+    (used,) = page.fonts()
+    assert len(_fonts._widths(used._font["DescendantFonts"][0], font.glyph_count)) == 7  # noqa: SLF001
+
+    document.history.undo()
+    page = document.pages[0]
+    assert page.text().split() == ["tilt"]
+    (used,) = page.fonts()
+    assert len(_fonts._widths(used._font["DescendantFonts"][0], font.glyph_count)) == 3  # noqa: SLF001 - t, i, l.
+    document.history.undo()
+    assert document.pages[0].text().strip() == ""
+    assert _descriptor_programs(document) == set()
+
+
+def test_a_colour_glyph_with_no_outline_refuses_at_an_instance() -> None:
+    font = pyropdf.Font.from_file(VARIABLE_COLOUR, weight=700)
+    document, page = _new_page()
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")), page.draw() as canvas:
+        canvas.text("A", (20, 40), font=font, size=12)
+    assert _descriptor_programs(document) == set()
+    with page.draw() as canvas:
+        canvas.text("B", (20, 40), font=font, size=12)
+    assert page.text().strip() == "B"
+
+
 def test_drawing_after_a_save_keeps_the_earlier_content(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:
     document, page = _new_page()
     with page.draw() as canvas:
@@ -559,7 +669,8 @@ def test_a_cff_face_hints_the_same_before_and_after_a_save(japanese: pyropdf.Fon
 
 @pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
 @pytest.mark.parametrize(
-    ("font", "text"), [("japanese", "日本語、かな。"), ("hebrew", "שָׁלוֹם עולם"), ("arabic", ARABIC_WORD)]
+    ("font", "text"),
+    [("japanese", "日本語、かな。"), ("hebrew", "שָׁלוֹם עולם"), ("arabic", ARABIC_WORD), ("arabic_bold", "office")],
 )
 def test_poppler_draws_the_saved_subset_where_hayro_does(font: str, text: str, request: pytest.FixtureRequest) -> None:
     document, page = _new_page(300, 80)
@@ -678,6 +789,20 @@ def test_bitmap_text_reads_back_as_text_runs(bitmaps: pyropdf.Font) -> None:
         runs = drawn.content(paths=False, images=False).text_runs
         assert {run.font.is_type3 for run in runs} == {True, False}
         assert "".join(glyph.text or "" for run in runs for glyph in run.glyphs) == "RG O R"
+
+
+@pytest.mark.parametrize("table", ["sbix", "cbdt"])
+def test_an_instance_paints_its_bitmap_glyphs(table: str) -> None:
+    face = pyropdf.Font.from_file(FONTS / f"variable-bitmaps-{table}.ttf", weight=700)
+    assert face.weight == 700
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("RG O R", (20, 80), font=face, size=24)
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        assert drawn.text().strip() == "RG O R"
+        runs = drawn.content(paths=False, images=False).text_runs
+        assert {run.font.is_type3 for run in runs} == {True, False}
 
 
 def test_an_em_other_than_1000_keeps_the_widths_in_the_units_of_the_font_matrix() -> None:
