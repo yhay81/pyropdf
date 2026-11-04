@@ -10,13 +10,14 @@ subsetting at save (#482), which compacts it to the drawn glyphs.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -298,6 +299,134 @@ def test_100_stamps_save_no_larger_than_krilla(face: str, *, varying: bool, requ
     saved = document.to_bytes(dedupe=True, prune=True)
     assert len(saved) / 1024 <= KRILLA_100_STAMPS_KIB[face][varying]
     assert len(_descriptor_programs(pyropdf.open(saved))) == 1
+
+
+def _map_numbers(data: bytes) -> list[int]:
+    """Return the object number of each ``/CIDToGIDMap`` stream that saved ``data`` holds."""
+    return [int(number) for number in re.findall(rb"/CIDToGIDMap (\d+) 0 R", data)]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {},
+        {"incremental": True},
+        {"cross_reference": "stream"},
+        {"object_streams": True},
+        {"prune": True},
+        {"renumber": True},
+        {"linearize": True},
+    ],
+    ids=["full", "incremental", "cross_reference", "object_streams", "prune", "renumber", "linearize"],
+)
+@pytest.mark.parametrize(("face", "text"), [("hebrew", "שלום"), ("japanese", LINE)])
+def test_saving_again_with_no_edit_writes_the_same_bytes(
+    face: str, text: str, options: dict[str, Any], request: pytest.FixtureRequest
+) -> None:
+    source, _ = _new_page()
+    document = pyropdf.open(source.to_bytes())
+    with document.pages[0].draw() as canvas:
+        canvas.text(text, (72, 100), font=request.getfixturevalue(face), size=20)
+
+    first = document.to_bytes(**options)
+
+    assert document.to_bytes(**options) == first
+    assert document.to_bytes(**options) == first
+
+
+def test_the_map_of_each_truetype_face_keeps_its_number_through_saves(
+    hebrew: pyropdf.Font, arabic: pyropdf.Font
+) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("שלום", (72, 100), font=hebrew, size=20)
+        canvas.text(ARABIC_WORD, (72, 150), font=arabic, size=20)
+
+    numbers = _map_numbers(document.to_bytes())
+
+    assert len(set(numbers)) == 2
+    assert _map_numbers(document.to_bytes()) == numbers
+
+
+def test_undo_and_redo_return_to_the_bytes_of_a_saved_truetype_face(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page()
+    before = document.to_bytes()
+    with page.draw() as canvas:
+        canvas.text("שלום", (72, 100), font=hebrew, size=20)
+    drawn = document.to_bytes()
+
+    document.history.undo()
+    assert document.to_bytes() == before
+    document.history.redo()
+    assert document.to_bytes() == drawn
+
+
+def test_an_object_added_after_a_save_does_not_take_the_number_of_the_map(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("שלום", (72, 100), font=hebrew, size=20)
+    (saved,) = _map_numbers(document.to_bytes())
+
+    added = document.objects.add(12345)
+    data = document.to_bytes()
+
+    (number,) = _map_numbers(data)
+    assert added != saved
+    assert added != number
+    reopened = pyropdf.open(data)
+    assert reopened.objects[added] == 12345
+    assert _text_without_warning(reopened.pages[0]).strip() == "שלום"
+
+
+def test_saves_in_an_open_transaction_draw_what_it_wrote(hebrew: pyropdf.Font) -> None:
+    plain, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("שלום", (72, 100), font=hebrew, size=20)
+    expected = bytes(pyropdf.open(plain.to_bytes()).pages[0].pixmap(dpi=72))
+
+    document, page = _new_page()
+    with document.transaction():
+        # The face's own objects lie above the numbers of the version that
+        # the transaction started from, where the map must not land.
+        with page.draw() as canvas:
+            canvas.text("שלום", (72, 100), font=hebrew, size=20)
+        inside = document.to_bytes()
+    committed = document.to_bytes()
+
+    assert document.to_bytes() == committed
+    for data in (inside, committed):
+        assert bytes(pyropdf.open(data).pages[0].pixmap(dpi=72)) == expected
+
+
+def test_saves_repeat_in_a_transaction_that_has_written_nothing(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("שלום", (72, 100), font=hebrew, size=20)
+    first = document.to_bytes()
+
+    with document.transaction():
+        assert document.to_bytes() == first
+        assert document.to_bytes() == first
+
+
+def test_a_reference_to_a_discarded_object_stays_missing_in_a_save(hebrew: pyropdf.Font) -> None:
+    document, page = _new_page()
+    discarded = []
+
+    def discard() -> None:
+        with document.transaction():
+            discarded.append(document.objects[document.objects.add({"A": 1})])
+            raise RuntimeError
+
+    with document.transaction():
+        with page.draw() as canvas:
+            canvas.text("שלום", (72, 100), font=hebrew, size=20)
+        with pytest.raises(RuntimeError):
+            discard()
+        holder = document.objects.add({"Kept": discarded[0]})
+        data = document.to_bytes()
+
+    assert pyropdf.open(data).objects[holder]["Kept"] is None
 
 
 def test_one_drawing_is_one_undo_step(japanese: pyropdf.Font) -> None:
