@@ -100,6 +100,63 @@ fn a_shared_render_cache_renders_as_a_fresh_one() {
     });
 }
 
+/// The options of a raster at 72 dpi on white, hinted or not.
+fn hinted_options(hinting: bool) -> Options {
+    Options {
+        hinting,
+        ..Options::new((1.0, 0.0, 0.0, 1.0), false)
+    }
+}
+
+/// A corpus document with text in an embedded font.
+fn pdf20_simple() -> Arc<Bridged> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdf20-simple.pdf");
+    Arc::new(Bridged::of_bytes(fs::read(path).unwrap()))
+}
+
+#[test]
+fn hinting_renders_as_hayro_renders_with_its_default_settings() {
+    let bridged = pdf20_simple();
+    let pages = bridged.pdf().pages();
+    let theirs = hayro::render(
+        pages.first().unwrap(),
+        &RenderCache::new(),
+        &InterpreterSettings::default(),
+        &RenderSettings::default(),
+        &PixmapSettings {
+            x_scale: 1.0,
+            y_scale: 1.0,
+            bg_color: AlphaColor::WHITE,
+        },
+    );
+    let theirs: Vec<u8> = theirs
+        .data()
+        .iter()
+        .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
+        .collect();
+
+    let hinted = raster(&bridged, 0, &hinted_options(true)).unwrap();
+    assert!(hinted.data == theirs);
+    let unhinted = raster(&bridged, 0, &hinted_options(false)).unwrap();
+    assert!(unhinted.data != theirs);
+}
+
+#[test]
+fn a_render_cache_keeps_hinted_and_unhinted_glyphs_apart() {
+    let bridged = pdf20_simple();
+    let other = pdf20_simple();
+    let fresh = |hinting| {
+        // Rendering another bridge first makes this one start a new cache.
+        raster(&other, 0, &hinted_options(hinting)).unwrap();
+        raster(&bridged, 0, &hinted_options(hinting)).unwrap()
+    };
+    let (hinted, unhinted) = (fresh(true), fresh(false));
+    assert!(raster(&bridged, 0, &hinted_options(false)).unwrap() == unhinted);
+    assert!(raster(&bridged, 0, &hinted_options(true)).unwrap() == hinted);
+    assert!(raster(&bridged, 0, &hinted_options(false)).unwrap() == unhinted);
+}
+
 #[test]
 fn a_batch_renders_each_entry_as_raster_does_in_order() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))

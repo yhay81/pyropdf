@@ -248,6 +248,7 @@ def render_page(
     background: tuple[int, int, int, int],
     clip: tuple[float, float, float, float] | None,
     annotations: bool,
+    hinting: bool,
     /,
 ) -> Pixmap: ...
 def render_page_svg(
@@ -261,6 +262,7 @@ def render_pages(
     gray: bool,
     background: tuple[int, int, int, int],
     annotations: bool,
+    hinting: bool,
     format: str,  # noqa: A002
     quality: int,
     workers: int,

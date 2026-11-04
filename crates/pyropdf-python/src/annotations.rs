@@ -2586,6 +2586,7 @@ pub fn annotation_pixmap(
         background: [red, green, blue, opacity],
         clip: Some(rect),
         annotations: false,
+        hinting: false,
     };
     let raster = py.detach(|| -> PyResult<Raster> {
         let bridged =
