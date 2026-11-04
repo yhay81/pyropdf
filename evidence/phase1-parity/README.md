@@ -7,7 +7,7 @@ here.
 
 | File | Role |
 | --- | --- |
-| `run.py PYLOPDF_CHECKOUT` | Builds pylopdf at the freeze commit `ebb01d3c` (#95) with its CJK font extras into its own environment, dumps both engines over `tests/assets/real_world` and `tests/assets/text/nonembedded-cjk.pdf`, and runs `compare.py` |
+| `run.py PYLOPDF_CHECKOUT` | Builds pylopdf at the freeze commit `ebb01d3c` (#95) with its CJK font extras into its own environment, dumps both engines over `tests/assets/real_world`, `tests/assets/text/nonembedded-latin.pdf`, and `tests/assets/text/nonembedded-cjk.pdf`, and runs `compare.py` |
 | `dump.py ENGINE OUT [--fallback-fonts] FILE...` | Writes one engine's outputs per page and each document's Markdown. The page outputs are listed below |
 | `compare.py A B` | Classifies each output of each page and writes `report.md` and `results.json` |
 | `causes.toml` | Matches each kind of difference to a cause below |
@@ -28,7 +28,10 @@ Per page, `dump.py` records:
 - `render`: a 72-dpi raster.
 
 The corpus renders without fallback fonts in both engines: `dump.py`
-turns them off. `tests/assets/text/nonembedded-cjk.pdf` holds the pages of
+turns them off. So does `tests/assets/text/nonembedded-latin.pdf`, whose pages
+of #656 are in fonts that the file does not embed, or whose programs do not
+load: hayro draws them in Standard 14 substitutes, stretched to the PDF's
+widths. `tests/assets/text/nonembedded-cjk.pdf` holds the pages of
 #600 in CJK fonts that the file does not embed: MS-Gothic in both descendant
 types and both CMaps, MS-Mincho, and fonts of the GB1, CNS1, and Korea1
 collections. With `--fallback-fonts`, both engines render it with the faces
@@ -38,10 +41,10 @@ then renders the first page before it reads any page, because frozen pylopdf
 fills its faces at its first rendering, and text extraction before that gives
 what it gives without them. pyropdf gives the same answer in any order.
 `tests/test_parity.py` checks that the report covers the corpus and the
-fallback pages and leaves no difference unexplained. When
-`PYROPDF_PARITY_PYLOPDF` names the Python of `target/parity/pylopdf-env`, it
-also redumps three corpus documents and the fallback pages and checks their
-kinds against `results.json`.
+pages in fonts that the files do not embed and leaves no difference
+unexplained. When `PYROPDF_PARITY_PYLOPDF` names the Python of
+`target/parity/pylopdf-env`, it also redumps three corpus documents and those
+pages and checks their kinds against `results.json`.
 
 ```bash
 python3 evidence/phase1-parity/run.py ~/ghq/github.com/yhay81/pylopdf
@@ -62,9 +65,10 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 
 ## Causes
 
-The run on 2026-11-04 covers the 15 corpus documents, 156 pages, and the 7
-pages of `nonembedded-cjk.pdf`, with pyropdf on hayro 0.9 without its glyph
-cache and frozen pylopdf on hayro 0.8. Of the 163 rasters, 162 match byte
+The run on 2026-11-04 covers the 15 corpus documents, 156 pages, the 13 pages
+of `nonembedded-latin.pdf`, and the 7 pages of `nonembedded-cjk.pdf`, with
+pyropdf on hayro 0.9 without its glyph cache and frozen pylopdf on hayro 0.8.
+Of the 176 rasters, 175 match byte
 for byte and one is close under the stated tolerance, which a cause below
 explains. The JSON reading outputs and the Markdown match, except on
 page 2 of `patent-us223898.pdf`, which a cause below explains. No output
@@ -140,10 +144,20 @@ without them. The dump now renders first.
 
 pyropdf takes only the ink from the faces. hayro 0.8 stretched a substitute
 glyph's outline to the PDF's width, and hayro 0.9 keeps that stretch in the
-glyph's transform, where a reader cannot tell it apart, so an advance taken
-through a face would be stretched too. Without faces, the same stretch of a
-Standard 14 substitute moves the advances of pyropdf's text on hayro 0.9,
-which this corpus does not show and #656 tracks.
+glyph's transform, so an advance taken through a face would be stretched too.
+
+### Stretched substitutes, resolved
+
+Without faces, the same stretch of a Standard 14 substitute moved the advances
+of pyropdf's text on hayro 0.9, which the corpus does not show: no page of it
+is in a font that hayro stretches. On the first page of
+`nonembedded-latin.pdf`, `Hello` ended at x=106.14, and not at 90.0, and a
+space among exact boxes at 125.25, and not at 104.0; a stretch below 1 could
+split a word and one above 1 could join two. pyropdf now takes the stretch out
+of the advances of text and of `page.content()`'s text runs, and keeps it in
+the ink and in the glyphs' matrices, which a rendering draws (#656). Every
+output of the 13 pages now matches. `evidence/stretch-reload` measures what
+this costs.
 
 Review corrected the original comparator's early equality return for
 matching raster metadata: equal dimensions and stride now still compare

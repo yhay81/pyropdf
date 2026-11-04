@@ -31,8 +31,10 @@ use hayro::hayro_syntax::object::{Array, Dict, Stream, String as PdfString};
 use hayro::hayro_syntax::page::Page;
 use hayro::hayro_syntax::{Filter, Pdf};
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
+use hayro_font::Font;
 use pyropdf_store::budget::{Budget, LimitCode};
 
+use super::stretch::{Stretches, without_stretch};
 use super::{
     DEFAULT_IMAGE_RESOLUTION, Error, extraction_context, image_color_space, jpeg_resolution,
 };
@@ -1117,6 +1119,9 @@ pub struct GlyphStyle {
     /// dictionary, as `Dict::cache_key` of a font object gives it, or a key
     /// of its own for hayro's fallback font.
     pub font: u128,
+    /// The transform of the run's first glyph, as hayro gives it, from its
+    /// 1000-unit glyph space to display space.
+    pub first: Affine,
 }
 
 /// The font key of the runs that hayro shows with its fallback font, which
@@ -1144,6 +1149,13 @@ pub trait ContentSink {
     fn glyph(&mut self, glyph: &Glyph<'_>, transform: Affine, ink: Option<Rect>);
     /// Whether [`ContentSink::glyph`] should receive exact ink boxes.
     fn wants_ink(&self) -> bool {
+        false
+    }
+    /// Whether the transform of [`ContentSink::glyph`] should leave out the
+    /// stretch of a substitute font's glyph, so that the glyph's advance through
+    /// it is the PDF's width. The ink box keeps the stretch that a rendering
+    /// draws.
+    fn wants_advances(&self) -> bool {
         false
     }
     /// The stroke of the glyphs of the latest fill run, which completes that
@@ -1266,7 +1278,7 @@ impl ItemKinds {
     }
 }
 
-pub(crate) struct ContentCollector<'b, S> {
+pub(crate) struct ContentCollector<'a, 'b, S> {
     sink: S,
     /// The items to record; with none, the collector only feeds the sink.
     kinds: ItemKinds,
@@ -1301,16 +1313,22 @@ pub(crate) struct ContentCollector<'b, S> {
     runs: u32,
     outlines: HashMap<u128, Option<GlyphInk>>,
     type3_boxes: HashMap<u128, Option<Rect>>,
+    stretches: Stretches<'a>,
     /// The images recorded so far, the ordinal of the next one.
     images: usize,
     budget: &'b Budget,
     error: Option<Error>,
 }
 
-impl<'b, S: ContentSink> ContentCollector<'b, S> {
+impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
     /// A collector that feeds `sink` and records the items of `kinds` within
-    /// `budget`.
-    pub(crate) fn new(sink: S, kinds: ItemKinds, budget: &'b Budget) -> Self {
+    /// `budget`. `stretches` loads fonts as the interpretation does.
+    pub(crate) fn new(
+        sink: S,
+        kinds: ItemKinds,
+        stretches: Stretches<'a>,
+        budget: &'b Budget,
+    ) -> Self {
         Self {
             sink,
             kinds,
@@ -1336,6 +1354,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             runs: 0,
             outlines: HashMap::new(),
             type3_boxes: HashMap::new(),
+            stretches,
             images: 0,
             budget,
             error: None,
@@ -1461,7 +1480,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
     /// The display-space ink box of a Type 3 glyph. The procedure is measured
     /// once in glyph space; under a transform that rotates by other than a
     /// right angle, the box encloses the rotated glyph-space box.
-    fn type3_box<'a>(
+    fn type3_box(
         &mut self,
         glyph: &Type3Glyph<'a>,
         paint: &Paint<'a>,
@@ -1561,7 +1580,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
 
     /// Send a run's glyphs to the sink, unless a stroke completes the fill
     /// that sent them, and record the run as an item.
-    fn record_text<'a>(
+    fn record_text(
         &mut self,
         run: &GlyphRun<'_, 'a>,
         props: &DrawProps<'a>,
@@ -1574,6 +1593,12 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
             return Ok(());
         }
         let font_key = run_font_key(run);
+        let wants_advances = self.sink.wants_advances();
+        let stretching = if wants_advances || self.kinds.text_runs {
+            self.stretches.font_of(run)
+        } else {
+            None
+        };
         let is_fill = matches!(mode, DrawMode::Fill(_));
         // A stroke completes the preceding fill when it draws the same glyphs
         // at the same places. Equality fails for a transform that is not
@@ -1614,6 +1639,7 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                     clip: self.clip_boxes.last().copied(),
                     run: ordinal,
                     font: font_key,
+                    first: props.transform * glyphs[0].transform(),
                 });
             }
             for glyph in glyphs {
@@ -1633,12 +1659,24 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                     } else {
                         None
                     };
+                    let transform = if wants_advances {
+                        without_stretch(transform, stretching.as_ref(), glyph)
+                    } else {
+                        transform
+                    };
                     self.sink.glyph(glyph, transform, ink);
                 }
             }
         }
         if self.kinds.text_runs {
-            self.record_text_item(run, font_key, props, mode, completes_fill)?;
+            self.record_text_item(
+                run,
+                font_key,
+                stretching.as_ref(),
+                props,
+                mode,
+                completes_fill,
+            )?;
         }
         if is_fill {
             self.pending = Some(Pending::Text);
@@ -1646,10 +1684,11 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
         Ok(())
     }
 
-    fn record_text_item<'a>(
+    fn record_text_item(
         &mut self,
         run: &GlyphRun<'_, 'a>,
         font_key: u128,
+        stretching: Option<&Font<'a>>,
         props: &DrawProps<'a>,
         mode: &DrawMode,
         completes_fill: bool,
@@ -1718,9 +1757,11 @@ impl<'b, S: ContentSink> ContentCollector<'b, S> {
                 ),
                 Glyph::Type3(type3) => (None, None, self.type3_box(type3, &props.paint, combined)?),
             };
-            // Advances are in hayro's 1000-unit glyph space, like outlines.
+            // Advances are in hayro's 1000-unit glyph space, like outlines,
+            // and are the PDF's widths, which the stretch of an outline is not.
+            let unstretched = without_stretch(combined, stretching, glyph);
             let end = width
-                .map(|width| combined * Point::new(width, 0.0))
+                .map(|width| unstretched * Point::new(width, 0.0))
                 .filter(|end| end.x.is_finite() && end.y.is_finite());
             let advance = end.map(|end| (end - origin).hypot());
             let bbox = bbox.filter(|bbox| rect_is_finite(*bbox));
@@ -1963,7 +2004,7 @@ fn glyph_text(glyph: &Glyph<'_>) -> Result<Option<String>, Error> {
     })
 }
 
-impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
+impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, S> {
     fn draw_path(&mut self, path: &BezPath, props: DrawProps<'a>, mode: &DrawMode) {
         let pending = self.pending.take();
         self.sink.path(path, props.transform, mode);
@@ -2065,8 +2106,9 @@ pub(crate) fn collect_page_content<'a, S: ContentSink>(
     clip: Option<BBox>,
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
+    let stretches = Stretches::new(&settings);
     let mut context = extraction_context(pdf, page, cache, settings);
-    let mut collector = ContentCollector::new(sink, kinds, budget);
+    let mut collector = ContentCollector::new(sink, kinds, stretches, budget);
     interpret_page(page, &mut context, &mut collector);
     collector.finish(clip)
 }
