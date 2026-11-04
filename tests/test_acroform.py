@@ -47,6 +47,8 @@ if TYPE_CHECKING:
 FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 NOTO_SANS_JP = FONTS / "NotoSansJP-subset.otf"
 NOTO_SANS_HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
+#: The refusal of a colour glyph with no outline, for one character.
+NO_OUTLINE = r"cannot draw U\+{:04X} \('{}'\): its glyph is a colour glyph with no outline"
 
 
 def build_raw_pdf(objects: dict[int, str]) -> bytes:
@@ -474,6 +476,99 @@ def test_form_font_failures_leave_the_document_unchanged() -> None:
 
     assert doc.to_bytes() == before
     assert doc.history.steps == steps
+
+
+@pytest.fixture(
+    params=["colr0.ttf", "colr1.ttf", "sbix.ttf", "cbdt.ttf", "svg.ttf", "svg-cff.otf"],
+    ids=["colr0", "colr1", "sbix", "cbdt", "svg", "svg-cff"],
+)
+def colour(request: pytest.FixtureRequest) -> pyropdf.Font:
+    """Return a face of ``colour_faces.py``, whose docstring says what its glyphs are."""
+    return pyropdf.Font.from_file(FONTS / f"colour-{request.param}")
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "character"),
+    [
+        ("customer", "A", "A"),
+        ("customer", "CA", "A"),
+        ("customer", "CD", "D"),
+        ("notes", "C\nCA", "A"),
+        ("code", "CA", "A"),
+        ("level", "A", "A"),
+    ],
+    ids=["text", "after-a-glyph", "two-points", "multiline", "comb", "choice"],
+)
+def test_form_font_refuses_a_colour_glyph_with_no_outline(
+    colour: pyropdf.Font, name: str, value: str, character: str
+) -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = colour
+    doc.form[name].value = "C"
+    before = bytes(doc.pages[0].pixmap())
+    steps = doc.history.steps
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord(character), character)):
+        doc.form[name].value = value
+
+    assert doc.form[name].value == "C"
+    assert bytes(doc.pages[0].pixmap()) == before
+    assert doc.history.steps == steps
+
+
+def test_a_refused_fill_leaves_the_saved_bytes() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(FONTS / "colour-svg-cff.otf")
+    doc.form["customer"].value = "C"
+    before = doc.to_bytes()
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")):
+        doc.form["customer"].value = "A"
+
+    assert doc.to_bytes() == before
+
+
+def test_a_refused_first_fill_embeds_no_font(colour: pyropdf.Font) -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = colour
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")):
+        doc.form["customer"].value = "A"
+
+    assert _values(doc)["customer"] == "initial"
+    assert _opaque_pixels(doc, (45, 67, 255, 97)) == 0
+    assert _type0_fonts(doc.to_bytes()) == 0
+
+
+@pytest.mark.parametrize(
+    ("name", "clip"),
+    [("customer", (45, 67, 255, 97)), ("level", (295, 67, 505, 97))],
+    ids=["text", "choice"],
+)
+def test_form_font_draws_the_fallback_outline_of_a_colour_glyph(
+    colour: pyropdf.Font, name: str, clip: tuple[float, float, float, float]
+) -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = colour
+    assert _opaque_pixels(doc, clip) == 0
+
+    doc.form[name].value = "B"
+
+    assert _opaque_pixels(doc, clip) > 0
+    reopened = pyropdf.open(doc.to_bytes())
+    assert _values(reopened)[name] == "B"
+    assert _opaque_pixels(reopened, clip) > 0
+    assert "B" in reopened.pages[0].text().split()
+
+
+@pytest.mark.parametrize("value", ["C C", "C C", "E"], ids=["space", "covered-space", "empty-uncovered"])
+def test_form_font_does_not_refuse_a_glyph_that_asks_for_no_ink(colour: pyropdf.Font, value: str) -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = colour
+
+    doc.form["customer"].value = value
+
+    assert _values(pyropdf.open(doc.to_bytes()))["customer"] == value
 
 
 def test_form_font_belongs_to_the_document() -> None:
