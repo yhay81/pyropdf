@@ -102,6 +102,8 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 内蔵の符号化を使うため、WinAnsi のバイトが選ぶ字形は入力文字と異なることがあります。
 他の文字体系には `Font.from_file` で
 OpenType フォントを読み込みます。文書はそれを一度だけ埋め込みます。
+カラーグリフは単色の代替アウトラインで描きます。アウトラインのないカラーグリフは、
+読み取れる文字の下に何も描かないよう、描くときに `PdfError` で拒否します。
 
 ```python
 import pyropdf

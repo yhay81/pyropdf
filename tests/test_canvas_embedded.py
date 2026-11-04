@@ -28,6 +28,8 @@ HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
 LINE = "AVA office 日本語、かな。"
 ARABIC_WORD = "مرحبا"
+#: The refusal of a colour glyph with no outline, for one character.
+NO_OUTLINE = r"cannot draw U\+{:04X} \('{}'\): its glyph is a colour glyph with no outline"
 
 
 @pytest.fixture(scope="module")
@@ -43,6 +45,15 @@ def hebrew() -> pyropdf.Font:
 @pytest.fixture(scope="module")
 def arabic() -> pyropdf.Font:
     return pyropdf.Font.from_file(ARABIC)
+
+
+@pytest.fixture(
+    params=["colr0.ttf", "colr1.ttf", "sbix.ttf", "cbdt.ttf", "svg.ttf", "svg-cff.otf"],
+    ids=["colr0", "colr1", "sbix", "cbdt", "svg", "svg-cff"],
+)
+def colour(request: pytest.FixtureRequest) -> pyropdf.Font:
+    """Return a face of ``colour_faces.py``, whose docstring says what its glyphs are."""
+    return pyropdf.Font.from_file(FONTS / f"colour-{request.param}")
 
 
 def _new_page(width: float = 400, height: float = 200) -> tuple[pyropdf.Document, pyropdf.Page]:
@@ -335,6 +346,127 @@ def test_drawing_names_the_missing_character(japanese: pyropdf.Font) -> None:
     _document, page = _new_page()
     with page.draw() as canvas, pytest.raises(pyropdf.PdfError, match=r"no glyph for U\+1F980 \('🦀'\)"):
         canvas.text("🦀", (10, 40), font=japanese)
+
+
+@pytest.mark.parametrize("character", ["A", "D"], ids=["empty", "two-points"])
+def test_a_colour_glyph_with_no_outline_refuses_and_writes_nothing(colour: pyropdf.Font, character: str) -> None:
+    document, page = _new_page()
+    steps = document.history.steps
+
+    def draw() -> None:
+        with page.draw() as canvas:
+            canvas.text("C", (20, 40), font=colour, size=12)
+            canvas.text(f"C\nC{character}", (20, 80), font=colour, size=12)
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord(character), character)):
+        draw()
+
+    assert document.history.steps == steps
+    assert page.text().strip() == ""
+    assert page.fonts() == []
+    assert _descriptor_programs(document) == set()
+
+
+def test_a_refusal_caught_in_the_block_leaves_the_rest_of_the_canvas(colour: pyropdf.Font) -> None:
+    document, page = _new_page()
+
+    with page.draw() as canvas:
+        canvas.text("C", (20, 40), font=colour, size=12)
+        with pytest.raises(pyropdf.PdfError, match="colour glyph with no outline"):
+            canvas.text("A", (20, 80), font=colour, size=12)
+        canvas.text("B", (20, 120), font=colour, size=12)
+
+    assert page.text().split() == ["C", "B"]
+    assert pyropdf.open(document.to_bytes()).pages[0].text().split() == ["C", "B"]
+
+
+def test_a_space_or_empty_glyph_that_no_colour_table_covers_draws(colour: pyropdf.Font) -> None:
+    document, page = _new_page()
+
+    with page.draw() as canvas:
+        canvas.text("C C", (20, 40), font=colour, size=12)
+        canvas.text("E", (20, 80), font=colour, size=12)
+
+    assert page.text().split("\n")[:2] == ["C C", "E"]
+    assert pyropdf.open(document.to_bytes()).pages[0].text().split("\n")[:2] == ["C C", "E"]
+
+
+def test_a_space_that_a_colour_table_covers_asks_for_no_ink(colour: pyropdf.Font) -> None:
+    _document, page = _new_page()
+
+    with page.draw() as canvas:
+        canvas.text("C\u00a0C", (20, 40), font=colour, size=12)
+
+    assert page.text().strip().replace("\u00a0", " ") == "C C"
+
+
+def test_a_colour_glyph_with_a_fallback_outline_draws_it(colour: pyropdf.Font) -> None:
+    document, page = _new_page(100, 100)
+    assert page.pixmap(dpi=72).color_count() == 1
+
+    with page.draw() as canvas:
+        canvas.text("B", (10, 60), font=colour, size=48)
+
+    assert page.text().strip() == "B"
+    assert page.pixmap(dpi=72).color_count() > 1
+    saved = pyropdf.open(document.to_bytes()).pages[0]
+    assert saved.text().strip() == "B"
+    assert bytes(saved.pixmap(dpi=72)) == bytes(page.pixmap(dpi=72))
+
+
+def test_a_textbox_refuses_as_text_does(colour: pyropdf.Font) -> None:
+    document, page = _new_page()
+    steps = document.history.steps
+
+    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(0x41, "A")), page.draw() as canvas:
+        canvas.textbox((20, 20, 380, 120), "C A", font=colour, size=12, align="justify")
+
+    assert document.history.steps == steps
+    assert page.text().strip() == ""
+    assert _descriptor_programs(document) == set()
+
+
+def test_a_textbox_draws_a_fallback_outline(colour: pyropdf.Font) -> None:
+    _document, page = _new_page()
+
+    with page.draw() as canvas:
+        canvas.textbox((20, 20, 380, 120), "B C", font=colour, size=12)
+
+    assert page.text().strip() == "B C"
+
+
+def test_a_textbox_that_does_not_fit_draws_nothing_to_refuse(colour: pyropdf.Font) -> None:
+    _document, page = _new_page()
+
+    with page.draw() as canvas:
+        fit = canvas.textbox((20, 20, 380, 21), "A", font=colour, size=12)
+
+    assert fit.spare_height < 0
+    assert page.text().strip() == ""
+
+
+def test_a_colour_glyph_with_no_outline_still_measures(colour: pyropdf.Font) -> None:
+    assert colour.has_glyph("A")
+    assert colour.text_width("A", 10) == pytest.approx(10)
+    assert colour.char_widths("A", 10) == pytest.approx((10,))
+    assert colour.text_height("A", 10, width=100) > 0
+    box = colour.char_bbox("A")
+    assert (box.x0, box.y0, box.x1, box.y1) == (0, 0, 0, 0)
+
+
+def test_a_monochrome_bitmap_table_is_not_a_colour_table() -> None:
+    face = pyropdf.Font.from_file(FONTS / "colour-eblc.ttf")
+    _document, page = _new_page()
+
+    with page.draw() as canvas:
+        canvas.text("A", (20, 40), font=face, size=12)
+
+    assert page.text().strip() == "A"
+
+
+def test_a_face_with_no_outlines_refuses_at_load() -> None:
+    with pytest.raises(pyropdf.PdfError, match="the face has no outlines"):
+        pyropdf.Font.from_file(FONTS / "colour-bitmap-only.ttf")
 
 
 def test_stroked_and_rotated_embedded_text_extracts(japanese: pyropdf.Font) -> None:

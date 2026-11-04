@@ -83,7 +83,10 @@ A Standard 14 font is drawn without embedding, so it prints WinAnsi
 (roughly Latin-1) text only, and measures with Adobe's AFM widths. An
 OpenType face is shaped with harfrust, in bidirectional and script runs,
 and a document embeds it once as a Type0 font whose program holds every
-glyph until a save.
+glyph until a save. A CIDFont draws outlines, so a colour glyph (COLR,
+`sbix`, CBDT, or `SVG`) draws its monochrome fallback outline. Drawing
+one with no outline raises `PdfError`, rather than draw nothing
+under text that reads back, though it measures as any glyph does.
 
 ### `Font.ascender`
 
