@@ -1,19 +1,19 @@
 # Paths as columns
 
-The measurement behind issue #606: the paths of a page as `Paths`
+The measurement behind issues #606 and #615: the paths of a page as `Paths`
 columns, from `Page.paths()`, against one `Path` record per path, from
 `Page.content()`, and against PyMuPDF's `get_cdrawings()` and
 `get_drawings()` (DESIGN.md section 10).
 
 ## Approach
 
-The binding builds one buffer per column from the interpretation that
-`Page.content()` memoizes for paths, with the GIL released and no Python
-object per path or segment. Python reads each column through the buffer
-protocol and the whole table through the Arrow PyCapsule interface, and
-the row view builds a `Path` record only when one is asked for. The page
-memo keeps the interpretation's own tuples, one per path, as it does for
-`Page.content()`.
+The engine's content collector appends each path to one buffer per column
+as hayro paints it, and the page memo holds those columns (#615).
+`Page.paths()` hands the memo's buffers to Python without a copy, with the
+GIL released and no Python object per path or segment. Python reads each
+column through the buffer protocol and the whole table through the Arrow
+PyCapsule interface, and the row view builds a `Path` record only when one
+is asked for. `Page.content()` builds its tuples from the same columns.
 
 ## Workload
 
@@ -66,31 +66,33 @@ kept the processor busy during the run, which is why each row is the median
 of five processes and the tables give CPU time as well.
 
 - **Time.**
-  - `paths()` reads the 200,000-line page in 0.27 s, a little longer than
-    rendering it at 36 dpi takes (0.26 s).
-  - The records take 4.6 s, or 2.5 s with the garbage collector off, and
-    PyMuPDF's `get_cdrawings()` takes 1.18 s.
-  - On the 33,000-line page the same calls take 0.055 s, 0.055 s, 0.70 s,
-    and 0.18 s.
+  - `paths()` reads the 200,000-line page in 0.21 s, a little less than
+    rendering it at 36 dpi takes (0.25 s).
+  - The records take 4.5 s, or 2.3 s with the garbage collector off, and
+    PyMuPDF's `get_cdrawings()` takes 1.19 s.
+  - On the 33,000-line page the same calls take 0.038 s, 0.085 s, 1.11 s,
+    and 0.19 s. The records' CPU time there is 0.58 s, so most of the gap
+    to 1.11 s is other work on the processor.
 - **Where the time goes.** Once the interpretation is memoized, `paths()`
-  builds the columns of 200,000 paths in 51 ms, and `content().paths`
-  builds the records in 6.2 s. Interpreting the page and recording its
-  paths take the rest of the 0.27 s.
+  hands over the columns of 200,000 paths in 0.03 ms, because it copies
+  nothing, and `content().paths` builds the records in 4.6 s. Before #615,
+  when the binding built the columns from one tuple per path, `paths()` took
+  51 ms here. Interpreting the page and recording its paths take nearly all
+  of the 0.21 s.
 - **Memory.**
   - The columns hold 221 bytes a path on the line pages: 115 for the path
-    and 53 for each of its two segments.
-  - A call grows the peak resident set by 583 bytes a path and leaves 689
-    held. The records grow it by 2,242 and leave 2,400, and
-    `get_cdrawings()` 967 and 1,476.
-  - About 470 of the 689 bytes are the interpretation's own tuples, one
-    per path, which the page memo keeps for `Page.content()` as well.
-    Issue #615 records the paths as columns in the engine, so that the
-    memo holds the 221 bytes alone.
+    and 53 for each of its two segments. The content's items add 16 bytes a
+    path.
+  - A call grows the peak resident set by 156 bytes a path and leaves 310
+    held, against 583 and 689 before #615. The records grow it by 2,083 and
+    leave 2,229, and `get_cdrawings()` 967 and 1,476.
+  - The columns and items account for 237 of the 310 bytes. This script does
+    not break down the other 73.
 - **The corpus page with the most paths**, `f1040.pdf` page 1 with 502
   paths and 1,604 segments.
-  - `paths()` reads it in 10 ms, against 19 ms for the records and 29 ms
+  - `paths()` reads it in 10 ms, against 20 ms for the records and 28 ms
     for `get_cdrawings()`.
   - Interpreting the page takes nearly all of the 10 ms. From the memo,
-    the columns take 0.27 ms and the records 9 ms.
+    the columns take 0.03 ms and the records 7.6 ms.
   - At this size, the memory columns measure fixed costs, such as code
     that runs for the first time, more than the paths.

@@ -4,8 +4,9 @@
 //!
 //! The content model interprets a page of a bridged version with one hayro
 //! `Device` and keeps every text run, path, and image in paint order and
-//! display space. The operation's budget counts its glyphs, path and clip
-//! segments, dash lengths, and items with `content_element_count` (F6).
+//! display space, the paths as the columns of a [`PathTable`]. The operation's
+//! budget counts its glyphs, path and clip segments, dash lengths, and items
+//! with `content_element_count` (F6).
 
 use hayro::hayro_interpret::{
     Context, InterpreterCache, InterpreterSettings, RenderContent, TransformExt,
@@ -32,10 +33,10 @@ mod text;
 pub use glyphs::used_glyphs;
 pub use images::{DecodedImage, page_image};
 pub use model::{
-    BBox, ClipTuple, ContentItem, ContentSink, FontTuple, GlyphStyle, GlyphsTuple, GroupTuple,
-    ImageFormatTuple, ImageTuple, ItemContextTuple, ItemKinds, MarkTuple, PageContent, PaintTuple,
-    PathTuple, RENDER_FILL, RENDER_FILL_STROKE, RENDER_INVISIBLE, RENDER_STROKE, StateTuple,
-    StrokeTuple, TextRunTuple,
+    BBox, ClipTuple, ContentItem, ContentSink, Contexts, FontTuple, GlyphStyle, GlyphsTuple,
+    GroupTuple, ImageFormatTuple, ImageTuple, ItemContextTuple, ItemKinds, MarkTuple, PageContent,
+    PaintColumns, PaintTuple, PathTable, PathTuple, RENDER_FILL, RENDER_FILL_STROKE,
+    RENDER_INVISIBLE, RENDER_STROKE, StateTuple, StrokeTuple, TextRunTuple,
 };
 pub use reads::read_page;
 pub use text::{

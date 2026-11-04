@@ -131,7 +131,9 @@ fn a_sink_sees_the_same_glyphs_and_paths_with_items_off() {
 
     assert_eq!(with_items, without);
     assert!(none.items.is_empty());
+    assert_eq!(none.paths.rows(), 0);
     assert_eq!(all.items.len(), 3);
+    assert_eq!(all.paths.rows(), 1);
     // The stroke of the fill-and-stroke run sends no glyphs again.
     assert_eq!(with_items.completions, 1);
     let text: String = with_items
@@ -164,6 +166,219 @@ fn the_budget_counts_elements_and_a_refusal_keeps_nothing() {
         Budget::default().limit(LimitCode::ContentElementCount),
         Some(262_144)
     );
+}
+
+/// Returns a one-page PDF that paints `content`, with two shading patterns,
+/// `/P1` and `/P2`.
+fn pdf_with_patterns(content: &str) -> Vec<u8> {
+    let pattern = |matrix: &str| {
+        format!(
+            "<< /PatternType 2 /Matrix [{matrix}] /Shading << /ShadingType 2 \
+             /ColorSpace /DeviceRGB /Coords [0 0 1 1] /Function << /FunctionType 2 \
+             /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >>"
+        )
+    };
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /Contents 4 0 R \
+         /Resources << /Pattern << /P1 5 0 R /P2 6 0 R >> >> >>"
+            .to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        pattern("1 0 0 1 0 0"),
+        pattern("1 0 0 1 5 5"),
+    ];
+    pdf_of(&objects)
+}
+
+/// Returns the rows that the path items of `content` name, in paint order.
+fn path_rows(content: &PageContent) -> Vec<u32> {
+    content
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ContentItem::Path(row) => Some(*row),
+            ContentItem::Text(_) | ContentItem::Image(_) => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_page_of_paths_costs_a_small_item_per_path() {
+    // What keeps the memo of a CAD page to its columns (#615).
+    assert!(size_of::<ContentItem>() <= 16);
+}
+
+#[test]
+fn paths_are_rows_of_columns_in_paint_order() {
+    let bridged = Bridged::of_bytes(pdf_with(
+        "1 0 0 rg 10 20 m 30 40 l 50 60 70 80 90 90 c h f \
+         BT /F1 12 Tf 10 50 Td (Hi) Tj ET \
+         0 0 1 RG 2 w 5 5 m 9 9 l S",
+    ));
+    let content = page_content(&bridged, 0, ALL, true, None, &Budget::default()).unwrap();
+    assert_eq!(content.items.len(), 3);
+    assert_eq!(path_rows(&content), [0, 1]);
+    let paths = &*content.paths;
+    assert_eq!(paths.rows(), 2);
+    assert_eq!(paths.segment_offsets, [0, 4, 6]);
+    assert_eq!(paths.path, [0, 0, 0, 0, 1, 1]);
+    assert_eq!(paths.verb, b"mlchml");
+    // A closing segment ends where its subpath starts, in display space.
+    assert_eq!(&paths.to_x[..4], [10.0, 30.0, 90.0, 10.0]);
+    assert_eq!(&paths.to_y[..4], [80.0, 60.0, 10.0, 80.0]);
+    assert_eq!((paths.c1_x[2], paths.c2_y[2]), (50.0, 20.0));
+    assert!(paths.c1_x[0].is_nan() && paths.c2_y[3].is_nan());
+    assert_eq!(paths.curve_bits, [0b0000_0100]);
+    assert_eq!(paths.curves, 1);
+    assert_eq!(paths.fill.present, [1, 0]);
+    assert_eq!(paths.stroke.present, [0, 1]);
+    assert_eq!(paths.fill.present_bits, [0b01]);
+    assert_eq!(paths.fill.color_bits, [0b01]);
+    assert_eq!(paths.fill.pattern_bits, [0]);
+    assert_eq!(paths.stroke.present_bits, [0b10]);
+    assert_eq!(paths.soft_mask, [-1, -1]);
+    assert_eq!(paths.soft_mask_bits, [0]);
+
+    let (verbs, coords, bbox, fill, even_odd, stroke, context) = paths.tuple(0);
+    assert_eq!(verbs, b"mlch");
+    assert_eq!(
+        coords,
+        [10.0, 80.0, 30.0, 60.0, 50.0, 40.0, 70.0, 20.0, 90.0, 10.0]
+    );
+    assert_eq!(bbox.0, 10.0);
+    assert_eq!(fill, Some((0, vec![1.0, 0.0, 0.0, 1.0])));
+    assert!(!even_odd);
+    assert_eq!(stroke, None);
+    assert_eq!(context, (0, 0, None));
+    let (_, coords, _, fill, _, stroke, _) = paths.tuple(1);
+    assert_eq!(coords, [5.0, 95.0, 9.0, 91.0]);
+    assert_eq!(fill, None);
+    assert_eq!(
+        stroke,
+        Some(((0, vec![0.0, 0.0, 1.0, 1.0]), 2.0, 0, 0, 10.0, vec![], 0.0))
+    );
+}
+
+#[test]
+fn a_page_without_paths_has_valid_offsets() {
+    let bridged = Bridged::of_bytes(pdf_with(""));
+    let content = page_content(&bridged, 0, ALL, true, None, &Budget::default()).unwrap();
+    assert_eq!(content.paths.rows(), 0);
+    assert_eq!(content.paths.segment_offsets, [0]);
+    assert_eq!(content.paths.stroke_dashes_offsets, [0]);
+}
+
+#[test]
+fn a_stroke_of_the_same_segments_completes_the_fill_row() {
+    let elements = |content: &str| {
+        let bridged = Bridged::of_bytes(pdf_with(content));
+        let budget = Budget::default();
+        let content = page_content(&bridged, 0, ALL, true, None, &budget).unwrap();
+        (content, budget.used(LimitCode::ContentElementCount))
+    };
+    // The fill costs its item and five segments, and the graphics context
+    // one more, whether or not a stroke and its two dashes complete it.
+    let (filled, filled_elements) = elements("10 10 20 20 re f");
+    assert_eq!(filled_elements, 7);
+    assert_eq!(filled.paths.stroke.present, [0]);
+    let (both, both_elements) = elements("[3 1] 0 d 1 0 0 rg 0 1 0 RG 10 10 20 20 re B");
+    assert_eq!(both_elements, 9);
+    assert_eq!(path_rows(&both), [0]);
+    let paths = &*both.paths;
+    assert_eq!(paths.segment_offsets, [0, 5]);
+    assert_eq!(paths.stroke_dashes_offsets, [0, 2]);
+    assert_eq!(paths.stroke_dashes, [3.0, 1.0]);
+    let (_, _, _, fill, _, stroke, _) = paths.tuple(0);
+    assert_eq!(fill, Some((0, vec![1.0, 0.0, 0.0, 1.0])));
+    let (paint, width, ..) = stroke.unwrap();
+    assert_eq!((paint, width), ((0, vec![0.0, 1.0, 0.0, 1.0]), 1.0));
+
+    // A stroke of other segments is a path of its own.
+    let (apart, apart_elements) = elements("10 10 20 20 re f 30 30 20 20 re S");
+    assert_eq!(apart_elements, 13);
+    assert_eq!(path_rows(&apart), [0, 1]);
+    assert_eq!(apart.paths.fill.present, [1, 0]);
+    assert_eq!(apart.paths.stroke.present, [0, 1]);
+    assert_eq!(apart.paths.segment_offsets, [0, 5, 10]);
+}
+
+#[test]
+fn equal_patterns_share_an_index_in_the_order_of_first_use() {
+    let bridged = Bridged::of_bytes(pdf_with_patterns(
+        "/Pattern cs /P2 scn 10 10 20 20 re f /P1 scn 40 10 20 20 re f \
+         /P2 scn 70 10 20 20 re f",
+    ));
+    let content = page_content(&bridged, 0, ALL, true, None, &Budget::default()).unwrap();
+    let paths = &*content.paths;
+    assert_eq!(paths.fill.pattern, [0, 1, 0]);
+    assert_eq!(paths.fill.pattern_bits, [0b111]);
+    assert_eq!(paths.fill.color_bits, [0]);
+    assert!(paths.fill.red.iter().all(|value| value.is_nan()));
+    assert_eq!(paths.patterns.len(), 2);
+    assert_eq!(paths.tuple(2).3.unwrap(), paths.patterns[0]);
+    assert_ne!(paths.patterns[0], paths.patterns[1]);
+}
+
+#[test]
+fn a_clip_keeps_the_rows_that_meet_it_after_counting_them_all() {
+    let bridged = Bridged::of_bytes(pdf_with_patterns(
+        "/Pattern cs /Pattern CS \
+         /P1 scn 10 10 20 20 re f \
+         [3 1] 0 d /P2 scn /P2 SCN 100 10 20 20 re B \
+         [] 0 d /P1 scn 130 10 20 20 re f \
+         170 10 20 20 re f",
+    ));
+    let read = |clip| {
+        let budget = Budget::default();
+        let content = page_content(&bridged, 0, ALL, true, clip, &budget).unwrap();
+        (content, budget.used(LimitCode::ContentElementCount))
+    };
+    let (all, all_elements) = read(None);
+    assert_eq!(all.paths.rows(), 4);
+    assert_eq!(all.paths.fill.pattern, [0, 1, 0, 0]);
+
+    let (clipped, clipped_elements) = read(Some((90.0, 0.0, 155.0, 100.0)));
+    assert_eq!(clipped_elements, all_elements);
+    assert_eq!(path_rows(&clipped), [0, 1]);
+    let paths = &*clipped.paths;
+    assert_eq!(paths.rows(), 2);
+    assert_eq!(
+        (paths.x0.as_slice(), paths.x1.as_slice()),
+        ([100.0, 130.0].as_slice(), [120.0, 150.0].as_slice())
+    );
+    assert_eq!(paths.segment_offsets, [0, 5, 10]);
+    assert_eq!(paths.path, [0, 0, 0, 0, 0, 1, 1, 1, 1, 1]);
+    assert_eq!(paths.verb.len(), 10);
+    assert_eq!(paths.to_x.len(), 10);
+    assert_eq!(paths.stroke_dashes_offsets, [0, 2, 2]);
+    assert_eq!(paths.stroke_dashes, [3.0, 1.0]);
+    assert_eq!(paths.stroke.present, [1, 0]);
+    assert_eq!(paths.fill.present_bits, [0b11]);
+    assert_eq!(paths.stroke.present_bits, [0b01]);
+    // The first pattern that the kept rows use comes first, and each row's
+    // paint is still the pattern that it painted with.
+    assert_eq!(paths.fill.pattern, [0, 1]);
+    assert_eq!(paths.stroke.pattern, [0, -1]);
+    assert_eq!(paths.patterns.len(), 2);
+    assert_eq!(paths.patterns[0], all.paths.patterns[1]);
+    assert_eq!(paths.patterns[1], all.paths.patterns[0]);
+    assert_eq!(paths.tuple(1).3.unwrap(), all.paths.tuple(2).3.unwrap());
+
+    // A clip that every path meets changes nothing, and one that none meets
+    // leaves an empty table with valid offsets.
+    let (met, _) = read(Some((0.0, 0.0, 200.0, 100.0)));
+    assert_eq!(path_rows(&met), [0, 1, 2, 3]);
+    assert_eq!(met.paths.fill.pattern, [0, 1, 0, 0]);
+    let (missed, _) = read(Some((0.0, 200.0, 200.0, 300.0)));
+    assert_eq!(path_rows(&missed), []);
+    assert_eq!(missed.paths.rows(), 0);
+    assert_eq!(missed.paths.segment_offsets, [0]);
+    assert_eq!(missed.paths.stroke_dashes_offsets, [0]);
+    assert!(missed.paths.patterns.is_empty());
 }
 
 #[test]
