@@ -124,9 +124,10 @@ pub struct Refused {
     pub character: char,
     /// The glyph.
     pub glyph: u32,
-    /// The paint that it needs and that nothing draws, or what is wrong with
-    /// its paints; `None` for a table that the drawing does not read.
-    pub paint: Option<&'static str>,
+    /// What its COLR table says of it: a paint that nothing draws, or what is
+    /// wrong with its paints. `None` for a table that the drawing does not
+    /// read.
+    pub verdict: Option<Verdict>,
 }
 
 /// What a canvas paints in a Type 3 font.
@@ -220,14 +221,10 @@ fn refused(
             .chars()
             .find(|character| !character.is_whitespace() && !character.is_control());
         if let Some(character) = character {
-            let paint = match verdict {
-                Some(Verdict::Cannot(paint) | Verdict::Damaged(paint)) => Some(paint),
-                _ => None,
-            };
             return Ok(Some(Refused {
                 character,
                 glyph: u32::from(id),
-                paint,
+                verdict,
             }));
         }
     }

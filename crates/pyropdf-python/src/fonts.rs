@@ -1149,24 +1149,26 @@ fn embedded_missing(face: &Face, character: char) -> PyErr {
     ))
 }
 
-/// Refuses a character whose glyph is a colour glyph with no outline, naming
-/// it and the paint that stands in the way.
+/// Refuses a character whose glyph is a colour glyph with no outline, or whose
+/// COLR paints do not read, naming it and the paint that stands in the way.
 fn colour_refused(face: &Face, refused: &Refused) -> PyErr {
     let Refused {
         character,
         glyph,
-        paint,
+        verdict,
     } = *refused;
+    let name = &face.full_name;
     let code = u32::from(character);
-    PdfError::new_err(match paint {
-        Some(paint) => format!(
-            "{} cannot draw U+{code:04X} ({character:?}): its colour glyph {glyph} does not paint: {paint}",
-            face.full_name,
+    let no_outline =
+        format!("{name} cannot draw U+{code:04X} ({character:?}): its glyph is a colour glyph with no outline");
+    PdfError::new_err(match verdict {
+        Some(Verdict::Damaged(reason)) => format!(
+            "{name} cannot draw U+{code:04X} ({character:?}): its colour glyph {glyph} does not paint: {reason}"
         ),
-        None => format!(
-            "{} cannot draw U+{code:04X} ({character:?}): its glyph is a colour glyph with no outline",
-            face.full_name,
-        ),
+        Some(Verdict::Cannot(paint)) => {
+            format!("{no_outline}, and colour glyph {glyph} needs {paint}, which the canvas does not paint")
+        }
+        Some(Verdict::Paints) | None => no_outline,
     })
 }
 
