@@ -22,6 +22,12 @@ import pyropdf
 FIXTURE = Path(__file__).resolve().parent / "assets" / "text" / "nonembedded-latin.pdf"
 #: The bytes of a font program that no parser reads.
 DAMAGED = "not a font program"
+#: The entries that the stream of each key of a font descriptor requires.
+DAMAGED_ENTRIES = {
+    "FontFile": f"/Length1 {len(DAMAGED)} /Length2 0 /Length3 0",
+    "FontFile2": f"/Length1 {len(DAMAGED)}",
+    "FontFile3": "/Subtype /OpenType",
+}
 
 
 @dataclass(frozen=True)
@@ -77,7 +83,8 @@ def _font_objects(first: int, page: _Page) -> dict[int, str]:
     )
     objects = {first + 1: descriptor}
     if page.damaged:
-        objects[first + 3] = f"<< /Length {len(DAMAGED)} >>\nstream\n{DAMAGED}\nendstream"
+        entries = DAMAGED_ENTRIES[page.damaged]
+        objects[first + 3] = f"<< /Length {len(DAMAGED)} {entries} >>\nstream\n{DAMAGED}\nendstream"
     if page.subtype == "Type0":
         return objects | {
             first: (
@@ -177,7 +184,7 @@ def test_the_advances_of_text_runs_are_the_pdf_widths() -> None:
     assert [glyph.advance for glyph in rotated.glyphs] == pytest.approx([14.0] * 2)
     # hayro's horizontal scaling lengthens it, as the width's own scaling does.
     (wide,) = _runs(_open(2))
-    assert {round(glyph.advance, 6) for glyph in wide.glyphs} == {21.0}
+    assert [glyph.advance for glyph in wide.glyphs] == pytest.approx([21.0] * len(wide.glyphs))
 
 
 def test_the_ink_keeps_the_stretch_that_a_rendering_draws() -> None:

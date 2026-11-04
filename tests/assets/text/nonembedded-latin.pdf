@@ -144,7 +144,7 @@ endobj
 << /Type /FontDescriptor /FontName /Verdana /Flags 32 /FontBBox [0 -200 1000 800] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 /FontFile 56 0 R >>
 endobj
 56 0 obj
-<< /Length 18 >>
+<< /Length 18 /Length1 18 /Length2 0 /Length3 0 >>
 stream
 not a font program
 endstream
@@ -165,7 +165,7 @@ endobj
 << /Type /FontDescriptor /FontName /Verdana /Flags 32 /FontBBox [0 -200 1000 800] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 /FontFile2 62 0 R >>
 endobj
 62 0 obj
-<< /Length 18 >>
+<< /Length 18 /Length1 18 >>
 stream
 not a font program
 endstream
@@ -186,7 +186,7 @@ endobj
 << /Type /FontDescriptor /FontName /Verdana /Flags 32 /FontBBox [0 -200 1000 800] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 /FontFile3 68 0 R >>
 endobj
 68 0 obj
-<< /Length 18 >>
+<< /Length 18 /Subtype /OpenType >>
 stream
 not a font program
 endstream
@@ -210,7 +210,7 @@ endobj
 << /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Gothic /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /FontDescriptor 72 0 R /DW 1000 /W [0 8000 700] >>
 endobj
 74 0 obj
-<< /Length 18 >>
+<< /Length 18 /Length1 18 >>
 stream
 not a font program
 endstream
@@ -274,26 +274,26 @@ xref
 0000008210 00000 n 
 0000000000 00000 f 
 0000008394 00000 n 
-0000008463 00000 n 
-0000008592 00000 n 
-0000008688 00000 n 
-0000009228 00000 n 
+0000008497 00000 n 
+0000008626 00000 n 
+0000008722 00000 n 
+0000009262 00000 n 
 0000000000 00000 f 
-0000009413 00000 n 
-0000009482 00000 n 
-0000009611 00000 n 
-0000009707 00000 n 
-0000010247 00000 n 
+0000009447 00000 n 
+0000009528 00000 n 
+0000009657 00000 n 
+0000009753 00000 n 
+0000010293 00000 n 
 0000000000 00000 f 
-0000010432 00000 n 
-0000010501 00000 n 
-0000010630 00000 n 
-0000010771 00000 n 
-0000010893 00000 n 
-0000011080 00000 n 
-0000011278 00000 n 
+0000010478 00000 n 
+0000010566 00000 n 
+0000010695 00000 n 
+0000010836 00000 n 
+0000010958 00000 n 
+0000011145 00000 n 
+0000011343 00000 n 
 trailer
 << /Size 75 /Root 1 0 R >>
 startxref
-11347
+11424
 %%EOF
