@@ -469,9 +469,10 @@ def test_a_free_texts_cluster_is_one_actual_text_and_its_glyphs_stay_where_the_s
 
 
 def _shown(stream: bytes) -> list[bytes | float]:
-    """Return what shows the text, from its matrix to the end of its object, with each number as a float."""
+    """Return what shows the text after its matrix, without selecting its font, with each number as a float."""
     start = stream.index(b" Tm") + 3
-    tokens = re.findall(rb"<[0-9A-F]+>|[^\s\[\]<>]+", stream[start : stream.index(b"ET", start)])
+    shown = re.sub(rb"/\S+ \S+ Tf", b"", stream[start : stream.index(b"ET", start)])
+    tokens = re.findall(rb"<[0-9A-F]+>|[^\s\[\]<>]+", shown)
     return [float(token) if re.fullmatch(rb"-?[0-9.]+", token) else token for token in tokens]
 
 
