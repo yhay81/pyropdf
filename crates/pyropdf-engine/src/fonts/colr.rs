@@ -53,6 +53,9 @@ const COLOUR_TOLERANCE: f64 = 1.0 / 255.0;
 /// The most pieces that a segment of a gradient is divided into.
 const MAX_PIECES: u32 = 16;
 
+/// How many halvings find the end of a piece: to within 2^-20 of a segment.
+const BISECTIONS: u32 = 20;
+
 /// The largest magnitude of a real that readers hold as a 32-bit float.
 const REAL_MAX: f64 = f32::MAX as f64;
 
@@ -259,11 +262,7 @@ impl<'a> Colr<'a> {
         let form = write_group(painter.transaction, root, outset(ink), budget)?;
         let procedure = procedure(width, &name);
         Ok(Glyph {
-            resources: vec![(
-                Name::from("XObject"),
-                name.clone(),
-                Value::Reference(form),
-            )],
+            resources: vec![(Name::from("XObject"), name.clone(), Value::Reference(form))],
             name,
             width,
             ink: Some(ink),
@@ -274,7 +273,11 @@ impl<'a> Colr<'a> {
     /// Returns the colour of a palette index, `None` for one that the default
     /// palette does not hold.
     fn colour(&self, index: u16) -> Option<Color> {
-        self.palettes.get(0)?.colors().get(usize::from(index)).copied()
+        self.palettes
+            .get(0)?
+            .colors()
+            .get(usize::from(index))
+            .copied()
     }
 }
 
@@ -298,10 +301,22 @@ fn composite_of(mode: CompositeMode) -> Option<Composite> {
         CompositeMode::Dest => Composite::Backdrop,
         CompositeMode::SrcOver => Composite::Blend("Normal"),
         CompositeMode::DestOver => Composite::Under,
-        CompositeMode::SrcIn => Composite::Masked { source: true, out: false },
-        CompositeMode::DestIn => Composite::Masked { source: false, out: false },
-        CompositeMode::SrcOut => Composite::Masked { source: true, out: true },
-        CompositeMode::DestOut => Composite::Masked { source: false, out: true },
+        CompositeMode::SrcIn => Composite::Masked {
+            source: true,
+            out: false,
+        },
+        CompositeMode::DestIn => Composite::Masked {
+            source: false,
+            out: false,
+        },
+        CompositeMode::SrcOut => Composite::Masked {
+            source: true,
+            out: true,
+        },
+        CompositeMode::DestOut => Composite::Masked {
+            source: false,
+            out: true,
+        },
         CompositeMode::Screen => Composite::Blend("Screen"),
         CompositeMode::Overlay => Composite::Blend("Overlay"),
         CompositeMode::Darken => Composite::Blend("Darken"),
@@ -576,7 +591,11 @@ impl<'b> Painter<'_, '_, 'b> {
             return Ok(());
         }
         let matrix = self.transform();
-        if let Brush::Solid { palette_index, alpha } = brush {
+        if let Brush::Solid {
+            palette_index,
+            alpha,
+        } = brush
+        {
             let Some((colour, alpha)) = self.solid(*palette_index, *alpha)? else {
                 return Ok(());
             };
@@ -710,7 +729,12 @@ impl<'b> Painter<'_, '_, 'b> {
             return Ok(false);
         };
         let (geometry, font_stops, extend) = match *brush {
-            Brush::LinearGradient { p0, p1, color_stops, extend } => (
+            Brush::LinearGradient {
+                p0,
+                p1,
+                color_stops,
+                extend,
+            } => (
                 Geometry::Axial {
                     start: [f64::from(p0.x), f64::from(p0.y)],
                     end: [f64::from(p1.x), f64::from(p1.y)],
@@ -718,7 +742,14 @@ impl<'b> Painter<'_, '_, 'b> {
                 color_stops,
                 extend,
             ),
-            Brush::RadialGradient { c0, r0, c1, r1, color_stops, extend } => (
+            Brush::RadialGradient {
+                c0,
+                r0,
+                c1,
+                r1,
+                color_stops,
+                extend,
+            } => (
                 Geometry::Radial {
                     start: [f64::from(c0.x), f64::from(c0.y)],
                     start_radius: f64::from(r0),
@@ -760,7 +791,10 @@ impl<'b> Painter<'_, '_, 'b> {
             extend,
         };
         let area = mapped(inverse, bounds);
-        let painted = match self.shadings.paint(self.transaction, &gradient, area, self.budget) {
+        let painted = match self
+            .shadings
+            .paint(self.transaction, &gradient, area, self.budget)
+        {
             Ok(painted) => painted,
             Err(ShadingError::Degenerate) => return Ok(false),
             Err(error) => return Err(error.into()),
@@ -824,7 +858,11 @@ impl<'b> Painter<'_, '_, 'b> {
             let offset = f64::from(font_stop.offset).clamp(0.0, 1.0);
             let offset = last.map_or(offset, |last| offset.max(last.offset));
             let alpha = own * f64::from(font_stop.alpha).clamp(0.0, 1.0);
-            let stop = Stop { offset, color, alpha };
+            let stop = Stop {
+                offset,
+                color,
+                alpha,
+            };
             match last {
                 Some(last) => premultiplied(last, stop, out)?,
                 None => out.try_push(stop)?,
@@ -881,7 +919,10 @@ impl<'b> Painter<'_, '_, 'b> {
                     backdrop.inked(over_ink);
                 }
             }
-            Composite::Masked { source: shows_source, out } => {
+            Composite::Masked {
+                source: shows_source,
+                out,
+            } => {
                 let under = std::mem::replace(backdrop, Frame::new(budget));
                 let (shown, mask) = if shows_source {
                     (source, under)
@@ -1182,19 +1223,26 @@ fn components(colour: Color) -> ([f64; 3], f64) {
 ///
 /// Where one end has no alpha, its colour never shows, so the other's holds
 /// across the segment. Otherwise alpha stays linear, and the colour goes
-/// along `w(t) = a1 t / (a0 (1 - t) + a1 t)`: the pieces are as many as that
-/// needs to stay within [`COLOUR_TOLERANCE`], each one equal step of `w`.
+/// along `w(t) = a1 t / (a0 (1 - t) + a1 t)`. Each piece reaches as far along
+/// `w` as stays within [`COLOUR_TOLERANCE`], up to [`MAX_PIECES`] pieces,
+/// which an alpha that starts near nothing can need more than.
 fn premultiplied(from: Stop, to: Stop, out: &mut BudgetVec<'_, Stop>) -> Result<(), LimitExceeded> {
     let (first, second) = (from.alpha, to.alpha);
     if first == second || from.color == to.color || to.offset == from.offset {
         return out.try_push(to);
     }
     if first == 0.0 {
-        out.try_push(Stop { color: to.color, ..from })?;
+        out.try_push(Stop {
+            color: to.color,
+            ..from
+        })?;
         return out.try_push(to);
     }
     if second == 0.0 {
-        return out.try_push(Stop { color: from.color, ..to });
+        return out.try_push(Stop {
+            color: from.color,
+            ..to
+        });
     }
     let change = from
         .color
@@ -1203,33 +1251,46 @@ fn premultiplied(from: Stop, to: Stop, out: &mut BudgetVec<'_, Stop>) -> Result<
         .fold(0.0_f64, |most, (a, b)| most.max((b - a).abs()));
     let place = |w: f64| first * w / (second * (1.0 - w) + first * w);
     let colour_at = |t: f64| second * t / (first * (1.0 - t) + second * t);
-    let pieces = (1..MAX_PIECES)
-        .find(|&pieces| {
-            (0..pieces).all(|piece| {
-                let (low, high) = (
-                    f64::from(piece) / f64::from(pieces),
-                    f64::from(piece + 1) / f64::from(pieces),
-                );
-                let (start, end) = (place(low), place(high));
-                let middle = f64::midpoint(start, end);
-                let alpha = first + (second - first) * middle;
-                let wrong = (colour_at(middle) - f64::midpoint(low, high)).abs();
-                alpha * change * wrong <= COLOUR_TOLERANCE
-            })
+    // Whether one piece from `low` to `high` of `w` stays within the
+    // tolerance. The error is largest inside a piece, about its middle.
+    let fits = |low: f64, high: f64| {
+        let (start, end) = (place(low), place(high));
+        [0.25, 0.5, 0.75].into_iter().all(|part| {
+            let t = start + (end - start) * part;
+            let alpha = first + (second - first) * t;
+            let wrong = (colour_at(t) - (low + (high - low) * part)).abs();
+            alpha * change * wrong <= COLOUR_TOLERANCE
         })
-        .unwrap_or(MAX_PIECES);
-    for piece in 1..pieces {
-        let w = f64::from(piece) / f64::from(pieces);
-        let t = place(w);
+    };
+    let mut low = 0.0;
+    for _ in 1..MAX_PIECES {
+        if fits(low, 1.0) {
+            break;
+        }
+        // The furthest end that fits, which a longer piece only passes.
+        let (mut good, mut bad) = (low, 1.0);
+        for _ in 0..BISECTIONS {
+            let middle = f64::midpoint(good, bad);
+            if fits(low, middle) {
+                good = middle;
+            } else {
+                bad = middle;
+            }
+        }
+        if good <= low {
+            break;
+        }
+        let t = place(good);
         out.try_push(Stop {
             offset: from.offset + (to.offset - from.offset) * t,
             color: [
-                from.color[0] + (to.color[0] - from.color[0]) * w,
-                from.color[1] + (to.color[1] - from.color[1]) * w,
-                from.color[2] + (to.color[2] - from.color[2]) * w,
+                from.color[0] + (to.color[0] - from.color[0]) * good,
+                from.color[1] + (to.color[1] - from.color[1]) * good,
+                from.color[2] + (to.color[2] - from.color[2]) * good,
             ],
             alpha: first + (second - first) * t,
         })?;
+        low = good;
     }
     out.try_push(to)
 }
@@ -1242,7 +1303,13 @@ fn positive_radii(
     geometry: Geometry,
     stops: &mut BudgetVec<'_, Stop>,
 ) -> Result<Option<Geometry>, LimitExceeded> {
-    let Geometry::Radial { start, start_radius, end, end_radius } = geometry else {
+    let Geometry::Radial {
+        start,
+        start_radius,
+        end,
+        end_radius,
+    } = geometry
+    else {
         return Ok(Some(geometry));
     };
     if start_radius >= 0.0 && end_radius >= 0.0 {
@@ -1261,12 +1328,22 @@ fn positive_radii(
     let at = |stops: &[Stop], t: f64| -> Stop {
         let after = stops.iter().position(|stop| stop.offset >= t);
         match after {
-            None => Stop { offset: t, ..stops[stops.len() - 1] },
-            Some(0) => Stop { offset: t, ..stops[0] },
+            None => Stop {
+                offset: t,
+                ..stops[stops.len() - 1]
+            },
+            Some(0) => Stop {
+                offset: t,
+                ..stops[0]
+            },
             Some(after) => {
                 let (low, high) = (stops[after - 1], stops[after]);
                 let span = high.offset - low.offset;
-                let part = if span > 0.0 { (t - low.offset) / span } else { 0.0 };
+                let part = if span > 0.0 {
+                    (t - low.offset) / span
+                } else {
+                    0.0
+                };
                 let mix = |a: f64, b: f64| a + (b - a) * part;
                 Stop {
                     offset: t,
@@ -1477,7 +1554,10 @@ fn invert(matrix: Affine) -> Option<Affine> {
         (c * f - d * e) / det,
         (b * e - a * f) / det,
     ];
-    inverse.iter().all(|value| value.is_finite()).then_some(inverse)
+    inverse
+        .iter()
+        .all(|value| value.is_finite())
+        .then_some(inverse)
 }
 
 /// Returns the box around `bounds` through `matrix`.

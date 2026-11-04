@@ -22,7 +22,7 @@ from corpus import DAMAGE, NAMES, damaged  # noqa: E402
 
 ASSETS = ROOT / "tests" / "assets"
 #: The subset faces of the engine's font tests, as seeds of ``fonts``, and its
-#: colour faces, as seeds of ``bitmaps`` too.
+#: colour faces, as seeds of ``bitmaps`` and ``colr`` too.
 FONTS = ROOT / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 TARGETS = ("index", "save", "bridge", "interpret")
 #: The values of uncompressed objects, as the ``value`` target reads them.
@@ -67,6 +67,7 @@ def main() -> None:
         write("fonts", path.read_bytes())
         if path.name.startswith("colour-"):
             write("bitmaps", path.read_bytes())
+            write("colr", path.read_bytes())
 
 
 if __name__ == "__main__":

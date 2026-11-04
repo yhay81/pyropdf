@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use libfuzzer_sys::fuzz_target;
 use pyropdf_engine::fonts::bitmap::{self, Bitmaps, DRAWING_PPI};
-use pyropdf_engine::fonts::colour::refused_canvas_glyph;
+use pyropdf_engine::fonts::colour::{Painted, refused_canvas_glyph};
+use pyropdf_engine::fonts::colr::Colr;
 use pyropdf_engine::fonts::embed::{Face, GlyphId, Measure};
 use pyropdf_engine::fonts::shape::ShapingFace;
 use pyropdf_engine::fonts::type3::{Fonts, GLYPHS_PER_FONT, Glyph};
@@ -46,8 +47,13 @@ fuzz_target!(
     if let Ok(shaping) = ShapingFace::new(face.program.clone(), 0)
         && let Ok(glyphs) = shaping.shape(TEXT, &budget)
     {
-        if let Ok(Some(character)) = refused_canvas_glyph(&face, TEXT, &glyphs, &bitmaps, &budget) {
-            assert!(TEXT.contains(character), "a refusal names a character of the text");
+        let colr = Colr::read(&font);
+        let painted = Painted {
+            colr: colr.as_ref(),
+            bitmaps: &bitmaps,
+        };
+        if let Ok(Some(refused)) = refused_canvas_glyph(&face, TEXT, &glyphs, painted, &budget) {
+            assert!(TEXT.contains(refused.character), "a refusal names a character of the text");
         }
         ids.extend(glyphs.iter().map(|glyph| glyph.glyph));
     }

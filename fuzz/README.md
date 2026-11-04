@@ -19,6 +19,9 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
 - `bitmaps`: faces that load from any bytes draw their PNG strikes at three
   sizes into Type 3 fonts, which read back the codes that they gave (#631).
   Decoding a PNG is `Canvas.image`'s path, which the Python tests cover.
+- `colr`: faces that load from any bytes paint their COLR glyphs into one
+  transaction under the web profile's budget, whole or not at all as the
+  check says, and Type 3 fonts read back the codes that they gave (#633).
 - `interpret`: rendering, SVG conversion, text extraction, and content
   items of the first four pages, of a whole file or of a content stream
   that a one-page template with varied resources holds.
@@ -44,7 +47,7 @@ cargo +nightly fuzz run index corpus/index -- -max_total_time=60
 fixtures as seeds of `index`, `save`, and `bridge`, their uncompressed
 objects as seeds of `value`, and their content streams, inflated where they
 are Flate data, as seeds of `content`, and the engine's subset test faces
-as seeds of `fonts`, and its colour faces as seeds of `bitmaps`, to
+as seeds of `fonts`, and its colour faces as seeds of `bitmaps` and `colr`, to
 `fuzz/corpus/`, which git ignores.
 
 ## CI and Actions minutes
@@ -54,8 +57,8 @@ and pushes to main that change the store, the engine, or the targets, and for fi
 Mondays. Each job also installs cargo-fuzz and builds the target, about four
 minutes with a warm cache. Linux minutes count once:
 
-- weekly: 7 jobs × (15 + 4) minutes = about 135 minutes, or about 570 a month;
-- pull requests and pushes to main: 7 × (1 + 4) = about 35 minutes each,
+- weekly: 8 jobs × (15 + 4) minutes = about 150 minutes, or about 650 a month;
+- pull requests and pushes to main: 8 × (1 + 4) = about 40 minutes each,
   which Rust changes pay twice: once on the pull request and once on main.
 
 Against the 2,000 minutes a month of a private repository on GitHub Free

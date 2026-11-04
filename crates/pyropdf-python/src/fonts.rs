@@ -127,7 +127,10 @@ pub fn type3_codes(
 /// the document's shading objects.
 #[pyfunction]
 #[pyo3(signature = (document, fonts, units_per_em, glyphs, drawn, *, face=None, shadings=None, painted=Vec::new()))]
-#[expect(clippy::too_many_arguments, reason = "what a drawing adds to the fonts")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what a drawing adds to the fonts"
+)]
 pub fn type3_draw(
     py: Python<'_>,
     document: &_Document,
@@ -151,7 +154,9 @@ pub fn type3_draw(
         }
         if !painted.is_empty() {
             let (Some(face), Some(shadings)) = (face.as_deref(), shadings.as_deref()) else {
-                return Err(PyValueError::new_err("a COLR glyph needs its face and shadings"));
+                return Err(PyValueError::new_err(
+                    "a COLR glyph needs its face and shadings",
+                ));
             };
             let Kind::Embedded(face) = &face.kind else {
                 return Err(PyValueError::new_err("a Standard 14 font has no glyph IDs"));
@@ -160,7 +165,8 @@ pub fn type3_draw(
             let colr = Colr::read(&font)
                 .ok_or_else(|| PdfError::new_err("the face has no COLR table to paint"))?;
             let mut table = shadings.lock();
-            new.try_reserve(painted.len()).map_err(|e| limit_error(&e))?;
+            new.try_reserve(painted.len())
+                .map_err(|e| limit_error(&e))?;
             for (name, width, glyph) in &painted {
                 let glyph_id = GlyphId::new(*glyph);
                 let name = Name::from(name.as_str());
@@ -1159,14 +1165,17 @@ fn colour_refused(face: &Face, refused: &Refused) -> PyErr {
     } = *refused;
     let name = &face.full_name;
     let code = u32::from(character);
-    let no_outline =
-        format!("{name} cannot draw U+{code:04X} ({character:?}): its glyph is a colour glyph with no outline");
+    let no_outline = format!(
+        "{name} cannot draw U+{code:04X} ({character:?}): its glyph is a colour glyph with no outline"
+    );
     PdfError::new_err(match verdict {
         Some(Verdict::Damaged(reason)) => format!(
             "{name} cannot draw U+{code:04X} ({character:?}): its colour glyph {glyph} does not paint: {reason}"
         ),
         Some(Verdict::Cannot(paint)) => {
-            format!("{no_outline}, and colour glyph {glyph} needs {paint}, which the canvas does not paint")
+            format!(
+                "{no_outline}, and colour glyph {glyph} needs {paint}, which the canvas does not paint"
+            )
         }
         Some(Verdict::Paints) | None => no_outline,
     })
