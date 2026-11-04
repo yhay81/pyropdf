@@ -33,7 +33,8 @@ const WGHT: Tag = Tag::new(b"wght");
 const BOLD: u16 = 600;
 
 /// The tables that a static program copies: `cmap`, and the colour tables,
-/// which say which glyphs a drawing must refuse as it does for a static face.
+/// which hold the strikes that a canvas paints and say which glyphs a drawing
+/// must refuse, as for a static face.
 const COPIED: [&[u8; 4]; 7] = [
     b"CBDT", b"CBLC", b"COLR", b"CPAL", b"SVG ", b"cmap", b"sbix",
 ];
@@ -154,8 +155,9 @@ impl Face {
     /// The program charges [`LimitCode::FontInputSize`] for every byte it
     /// holds, before the bytes of a glyph join it, since flattening composites
     /// can amplify. A coordinate that the variations push outside `i16`, and
-    /// a weight outside the axis, refuse, and so do CFF outlines: only `glyf`
-    /// is written.
+    /// a weight outside the axis, refuse, and so does a face without TrueType
+    /// outlines: only `glyf` is written. Colour bitmaps have no variations, so
+    /// a face keeps its strikes at any weight.
     pub fn at_weight(&self, weight: u16, budget: &Budget) -> Result<Self, InstanceError> {
         let Some([low, _, high]) = self.weight_axis else {
             return Err(InstanceError::Refused(
@@ -167,9 +169,9 @@ impl Face {
                 "weight {weight} is outside the font's weight axis, which runs from {low} through {high}"
             )));
         }
-        if self.cff {
+        if self.cff || !self.outlines {
             return Err(InstanceError::Refused(
-                "a variable font with CFF outlines has no other instance".to_owned(),
+                "a variable font without TrueType outlines has no other instance".to_owned(),
             ));
         }
         let program = self.instance_program(weight, budget)?;

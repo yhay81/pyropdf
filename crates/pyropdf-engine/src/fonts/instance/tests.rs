@@ -8,6 +8,7 @@ use skrifa::raw::types::Tag;
 use skrifa::raw::{FontData, FontRead, TableProvider};
 use skrifa::{GlyphId, MetadataProvider};
 
+use super::super::bitmap::Bitmaps;
 use super::super::embed::{Face, Measure};
 use super::super::shape::ShapingFace;
 use super::*;
@@ -17,6 +18,9 @@ const ORACLE: &str = include_str!("../testdata/NotoSansArabic-Variable-subset-in
 const LATIN: &[u8] = include_bytes!("../testdata/variable-latin.ttf");
 const COMPOSITES: &[u8] = include_bytes!("../testdata/variable-composites.ttf");
 const OVERFLOW: &[u8] = include_bytes!("../testdata/variable-overflow.ttf");
+const VARIABLE_SBIX: &[u8] = include_bytes!("../testdata/variable-bitmaps-sbix.ttf");
+const VARIABLE_CBDT: &[u8] = include_bytes!("../testdata/variable-bitmaps-cbdt.ttf");
+const BITMAPS_ONLY: &[u8] = include_bytes!("../testdata/colour-bitmaps-sbix-only.ttf");
 const HEBREW: &[u8] = include_bytes!("../testdata/NotoSansHebrew-subset.ttf");
 const JAPANESE: &[u8] = include_bytes!("../testdata/NotoSansJP-subset.otf");
 
@@ -300,12 +304,39 @@ fn a_weight_needs_a_truetype_axis_that_holds_it() {
             Err(InstanceError::Refused(_))
         ));
     }
-    let mut cff = Face::read(JAPANESE, 0).unwrap();
-    cff.weight_axis = Some([100.0, 400.0, 900.0]);
-    assert!(matches!(
-        cff.at_weight(700, &budget(None)),
-        Err(InstanceError::Refused(_))
-    ));
+    for data in [JAPANESE, BITMAPS_ONLY] {
+        let mut face = Face::read(data, 0).unwrap();
+        face.weight_axis = Some([100.0, 400.0, 900.0]);
+        assert!(matches!(
+            face.at_weight(700, &budget(None)),
+            Err(InstanceError::Refused(_))
+        ));
+    }
+}
+
+#[test]
+fn an_instance_keeps_its_bitmaps_where_they_were() {
+    for data in [VARIABLE_SBIX, VARIABLE_CBDT] {
+        let source = FontRef::new(data).unwrap();
+        let theirs = Bitmaps::read(&source).unwrap();
+        let face = instance(data, 700);
+        let font = face.font();
+        let ours = Bitmaps::read(&font).unwrap();
+        for character in ['R', 'G', 'T', 'O'] {
+            let glyph = source.charmap().map(character).unwrap();
+            assert_eq!(font.charmap().map(character), Some(glyph));
+            assert_eq!(
+                ours.best(glyph, 10.0),
+                theirs.best(glyph, 10.0),
+                "{character}"
+            );
+            assert_eq!(
+                ours.best(glyph, 500.0),
+                theirs.best(glyph, 500.0),
+                "{character}"
+            );
+        }
+    }
 }
 
 #[test]

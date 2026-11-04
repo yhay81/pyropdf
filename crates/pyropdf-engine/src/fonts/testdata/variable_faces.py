@@ -16,6 +16,8 @@ weight axis from 100 to 900 with its default at 400:
   variations move to 34000 at 900.
 - ``variable-colour.ttf``: ``A`` is a colour glyph with an empty outline, and
   ``B`` an ordinary glyph.
+- ``variable-bitmaps-sbix.ttf`` and ``variable-bitmaps-cbdt.ttf``: the
+  ``colour-bitmaps-*`` faces of ``colour_faces.py``, with the axis added.
 
 ``NotoSansArabic-Variable-subset-instances.txt`` holds what fontTools' instancer
 writes for ``NotoSansArabic-Variable-subset.ttf``, one line for each weight and
@@ -30,7 +32,7 @@ import math
 from pathlib import Path
 
 from fontTools.colorLib.builder import buildCOLR, buildCPAL
-from fontTools.fontBuilder import FontBuilder
+from fontTools.fontBuilder import FontBuilder, addFvar
 from fontTools.pens.areaPen import AreaPen
 from fontTools.pens.boundsPen import ControlBoundsPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -167,6 +169,12 @@ def colour() -> TTFont:
     return builder.font
 
 
+def bitmaps(table: str) -> TTFont:
+    font = TTFont(HERE / f"colour-bitmaps-{table}.ttf")
+    addFvar(font, [AXIS], [])
+    return font
+
+
 def oracle() -> None:
     source = HERE / "NotoSansArabic-Variable-subset.ttf"
     lines = ["# weight glyph advance x_min y_min x_max y_max area"]
@@ -197,6 +205,8 @@ def main() -> None:
         ("variable-colour", colour),
     ):
         build().save(HERE / f"{name}.ttf")
+    for table in ("sbix", "cbdt"):
+        bitmaps(table).save(HERE / f"variable-bitmaps-{table}.ttf")
     oracle()
 
 

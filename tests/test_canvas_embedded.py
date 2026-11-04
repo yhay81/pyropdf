@@ -791,6 +791,20 @@ def test_bitmap_text_reads_back_as_text_runs(bitmaps: pyropdf.Font) -> None:
         assert "".join(glyph.text or "" for run in runs for glyph in run.glyphs) == "RG O R"
 
 
+@pytest.mark.parametrize("table", ["sbix", "cbdt"])
+def test_an_instance_paints_its_bitmap_glyphs(table: str) -> None:
+    face = pyropdf.Font.from_file(FONTS / f"variable-bitmaps-{table}.ttf", weight=700)
+    assert face.weight == 700
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("RG O R", (20, 80), font=face, size=24)
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        assert drawn.text().strip() == "RG O R"
+        runs = drawn.content(paths=False, images=False).text_runs
+        assert {run.font.is_type3 for run in runs} == {True, False}
+
+
 def test_an_em_other_than_1000_keeps_the_widths_in_the_units_of_the_font_matrix() -> None:
     face = pyropdf.Font.from_file(FONTS / "colour-bitmaps-sbix-2048.ttf")
     document, page = _new_page(200, 60)
