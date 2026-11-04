@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b1ed637011ddf3935d700425be7ebfbf2b74421814cbf6b3e413c9e7060cbd2c # shrinks to geometry = Radial { start: [0.0, 0.0], start_radius: 0.0, end: [0.0, -6172.224034019796], end_radius: 0.14545095578665812 }, stops = [Stop { offset: 0.0, color: [0.0, 0.0, 0.0], alpha: 0.0 }], extend = Repeat, area = [0.0, 0.0, 9170.304028324017, 0.0], repaired = false

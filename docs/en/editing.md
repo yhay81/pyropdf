@@ -97,6 +97,52 @@ optionally clipped and turned. An image or a page drawn several times is
 stored once. `clip`, `transform`, `opacity`, and `blend` are scopes for
 everything drawn inside them.
 
+### Gradients
+
+`LinearGradient` and `RadialGradient` paint wherever a `Color` does on a path
+or a shape, as the `fill` or as the `paint` of a `Stroke`. A gradient's
+coordinates are in the space of what it paints, so it moves with
+`canvas.transform`.
+
+```python
+import pyropdf
+from pyropdf import Color, ColorStop, GradientExtend, LinearGradient, Point, RadialGradient, Stroke
+
+sky = LinearGradient(
+    start=Point(0, 0),
+    end=Point(0, 200),
+    stops=(ColorStop(0, Color(0.2, 0.4, 0.9)), ColorStop(1, Color(1, 1, 1))),
+)
+sun = RadialGradient(
+    start=Point(100, 100),
+    start_radius=0,
+    end=Point(100, 100),
+    end_radius=40,
+    # A stop's alpha fades the color out, through a soft mask.
+    stops=(ColorStop(0, Color(1, 0.8, 0)), ColorStop(1, Color(1, 0.8, 0, 0))),
+)
+stripes = LinearGradient(
+    start=Point(0, 0),
+    end=Point(20, 0),
+    stops=(ColorStop(0, Color(0, 0, 0)), ColorStop(1, Color(1, 1, 1))),
+    extend=GradientExtend.REFLECT,
+)
+
+doc = pyropdf.Document()
+page = doc.pages.new((200, 200))
+with page.draw() as canvas:
+    canvas.rect((0, 0, 200, 200), fill=sky)
+    canvas.circle((100, 100), 40, fill=sun)
+    canvas.line((0, 180), (200, 180), stroke=Stroke(paint=stripes, width=6))
+```
+
+`extend` says what a gradient paints beyond its line: the end colors continue
+(`PAD`, the default), nothing (`NONE`), or the line runs again (`REPEAT`) or
+back and forth (`REFLECT`). Equal functions and shadings are written once in a
+canvas. `page.content()` reads a drawn gradient back as a `ShadingPattern`,
+which reports its kind and its matrix but not its stops, so `canvas.draw` cannot
+paint it again. Text fills and strokes with a `Color`.
+
 ### Text
 
 `canvas.text` draws lines from a baseline point, and `canvas.textbox`
