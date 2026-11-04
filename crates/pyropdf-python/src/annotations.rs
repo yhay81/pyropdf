@@ -1402,9 +1402,9 @@ pub fn annotation_face(
 /// text that its ToUnicode CMap maps each glyph to, it writes the normal
 /// appearance, whose resources name the font [`FACE_RESOURCE`]: that is
 /// where the free text records its face, since an annotation has no
-/// `/DR`. Refuses a character that the face has no glyph for and text that
-/// does not fit, leaving the document as it was. Returns `None` for a page
-/// that is gone.
+/// `/DR`. Refuses a character that the face has no glyph for or whose glyph
+/// is a colour glyph with no outline, and text that does not fit, leaving
+/// the document as it was. Returns `None` for a page that is gone.
 #[pyfunction]
 #[pyo3(signature = (document, number, generation, index, id, face, font=None))]
 #[expect(
@@ -1465,6 +1465,13 @@ pub fn annotation_draw_face(
                 TextFit::NoGlyph(character) => {
                     return Err(PdfError::new_err(format!(
                         "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
+                        face.full_name,
+                        u32::from(character)
+                    )));
+                }
+                TextFit::NoOutline(character) => {
+                    return Err(PdfError::new_err(format!(
+                        "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
                         face.full_name,
                         u32::from(character)
                     )));
