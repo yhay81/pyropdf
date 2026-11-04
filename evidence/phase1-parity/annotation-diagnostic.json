@@ -8,14 +8,19 @@
     542.0
   ],
   "highlight_has_appearance": false,
-  "differing_pixel_bounds_inclusive": null,
+  "differing_pixel_bounds_inclusive": [
+    74,
+    82,
+    346,
+    261
+  ],
   "default_sha256": [
     "3bd3c2caf876ee0664ed99518f3146410da7561fabb90889aae2b3d1c9652755",
-    "3bd3c2caf876ee0664ed99518f3146410da7561fabb90889aae2b3d1c9652755"
+    "54e5e9e74ebcc3bfbf826feeb4afeff7766363ddbecb77d5401bfdde44c3af9e"
   ],
   "annotations_disabled_sha256": [
     "387018d6967b3bf12612c84ac5f35e9d6756eaa895116b0eaadc271dbe67383f",
-    "387018d6967b3bf12612c84ac5f35e9d6756eaa895116b0eaadc271dbe67383f"
+    "7af87dc967fd47c7f2c82a2aa27ecbaff11a97cdfd1d8216be9c4d1ca743fd6d"
   ],
-  "annotations_disabled_equal": true
+  "annotations_disabled_equal": false
 }

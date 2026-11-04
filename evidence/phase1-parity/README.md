@@ -60,13 +60,33 @@ PYROPDF_PARITY_PYLOPDF=target/parity/pylopdf-env/bin/python uv run pytest tests/
 ## Causes
 
 The run on 2026-11-03 covers the 15 corpus documents, 156 pages, and the 7
-pages of `nonembedded-cjk.pdf`. All 163 rasters match byte for byte. The
-JSON reading outputs and the Markdown match, except on page 2 of
-`patent-us223898.pdf` and in the exact word boxes of the fallback pages,
-which the causes below explain. No output raises. `metadata.json` identifies
-the measured source revision and the hashes of the inputs. The oracle cache
-is reused only with a matching stamp of the freeze commit and the extras and
-an importable package; an unstamped or different cache is rebuilt.
+pages of `nonembedded-cjk.pdf`, with pyropdf on hayro 0.9 and frozen pylopdf
+on hayro 0.8. Of the 163 rasters, 11 match byte for byte, 7 are close under
+the stated tolerance, and 145 are not; hayro 0.9's glyph cache, below,
+explains all 152. The JSON reading outputs and the Markdown match, except on
+page 2 of `patent-us223898.pdf` and in the exact word boxes of the fallback
+pages, which the causes below explain. No output raises. `metadata.json`
+identifies the measured source revision and the hashes of the inputs. The
+oracle cache is reused only with a matching stamp of the freeze commit and
+the extras and an importable package; an unstamped or different cache is
+rebuilt.
+
+### hayro 0.9's glyph cache
+
+Since #609, pyropdf renders through hayro 0.9, which by default
+(`RenderSettings::glyph_caching`) rasterizes a glyph of text filled in one
+color once, with `ab_glyph_rasterizer`, and reuses the bitmap, placed at a
+quarter of a pixel horizontally and at a whole pixel vertically. hayro 0.8
+filled every glyph where it lies, through vello_cpu. This moves text by less
+than a pixel on every page that fills outline text: the worst, `f1040.pdf`
+page 1, has 8.1% of its pixels more than 16 away in a channel, and the 11
+equal pages draw no such text. On hayro 0.8, at `e5b0d10`, all 163 rasters
+matched byte for byte. With `glyph_caching: false` in `render_settings`,
+measured and not committed, 162 do, the 7 fallback pages among them, and
+`nics-background-checks-2015-11.pdf` differs in 495 pixels by at most 5. The
+owner chose on #18 that a patch release changes no render, without this
+measurement, and the cache makes rendering about 1.8 times as fast, so #622
+asks whether 0.2.2 keeps it.
 
 ### Missing highlight appearance, resolved
 
@@ -77,8 +97,9 @@ Frozen pylopdf synthesizes missing appearances for rendering
 (`synthesize_missing_appearances_for_render` in
 `rust/src/document/rendering.rs`), with a Multiply blend for highlights;
 pyropdf then passed annotations to hayro without that synthesis. #169 ported
-it (PR #172), and the page now renders byte for byte alike:
-`annotation-diagnostic.json` records equal hashes of both engines' renders,
+it (PR #172), and the page renders byte for byte alike on hayro 0.8 and on
+hayro 0.9 without the glyph cache. `annotation-diagnostic.json`, measured
+through the cache, no longer isolates the highlight: the page's text differs
 with and without annotations.
 
 ### Headings above columns
@@ -95,9 +116,10 @@ words are the same but for `CR` and `C`, which join as `CRC` in the line
 
 ### Exact boxes of fonts that a document does not embed
 
-The 7 pages of `nonembedded-cjk.pdf` render byte for byte alike, with the
-faces of the font extras (#600). Only their exact word boxes differ, on
-pages 2 to 7, by up to 7.28 points: frozen pylopdf's text extraction also
+Apart from the glyph cache, the 7 pages of `nonembedded-cjk.pdf` render byte
+for byte alike with the faces of the font extras (#600). Of their other
+outputs, only the exact word boxes differ, on pages 2 to 7, by up to 7.28
+points: frozen pylopdf's text extraction also
 draws a font that a document does not embed in its fallback faces, so
 `words(exact_bboxes=True)` measures their outlines, while pyropdf's text
 extraction does not use the fallback faces, which #600 leaves out, and

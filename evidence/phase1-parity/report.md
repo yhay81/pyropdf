@@ -10,12 +10,12 @@ then the causes of the rest.
 
 | Document | Pages | text | words | words_exact | layout | search | tables_lines | tables_text | markdown | render | document markdown |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| bill-hr815 | 110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | equal |
+| bill-hr815 | 110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 110/110 | 0/110 (hayro-glyph-cache 110) | equal |
 | bunka-kokugo-series-019-p4 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
-| f1040 | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
-| mhlw-doc | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
-| nics-background-checks-2015-11 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
-| nonembedded-cjk | 7 | 7/7 | 7/7 | 1/7 (fallback-exact-boxes 6) | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | equal |
+| f1040 | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 0/2 (hayro-glyph-cache 2) | equal |
+| mhlw-doc | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 1/2 (hayro-glyph-cache 1) | equal |
+| nics-background-checks-2015-11 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 0/1 (hayro-glyph-cache 1) | equal |
+| nonembedded-cjk | 7 | 7/7 | 7/7 | 1/7 (fallback-exact-boxes 6) | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 | 4/7 (hayro-glyph-cache 3) | equal |
 | patent-us223898 | 4 | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 3/4 (heading-above-columns 1) | 4/4 | 4/4 | 3/4 (heading-above-columns 1) | 4/4 | heading-above-columns |
 | pdf20-simple | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-jpx-lzw | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
@@ -23,13 +23,19 @@ then the causes of the rest.
 | pdfium-ocg-invisible | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-smask-blend | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
 | pdfium-type3 | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
-| senate-expenditures | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | equal |
-| usrguide | 27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | equal |
+| senate-expenditures | 1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 | 0/1 (hayro-glyph-cache 1) | equal |
+| usrguide | 27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 27/27 | 0/27 (hayro-glyph-cache 27) | equal |
 | wdl6812-manuscript | 2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 | equal |
 
 ## Rendering within tolerance
 
-None.
+- mhlw-doc page 2: hayro-glyph-cache {"differing": 0.00495, "mean": 0.246}
+- nonembedded-cjk page 1: hayro-glyph-cache {"differing": 0.0017, "mean": 0.066}
+- nonembedded-cjk page 2: hayro-glyph-cache {"differing": 0.0017, "mean": 0.066}
+- nonembedded-cjk page 3: hayro-glyph-cache {"differing": 0.0017, "mean": 0.066}
+- nonembedded-cjk page 4: hayro-glyph-cache {"differing": 0.00145, "mean": 0.067}
+- pdf20-simple page 1: hayro-glyph-cache {"differing": 0.00135, "mean": 0.042}
+- pdfium-links-highlights-annots page 1: hayro-glyph-cache {"differing": 0.0013, "mean": 0.056}
 
 ## Unexplained differences
 

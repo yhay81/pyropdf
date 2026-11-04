@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-11-03T16:15:17.707307+00:00",
+  "generated_at": "2026-11-03T23:52:03.313833+00:00",
   "pylopdf_commit": "ebb01d3c4c742046e8ce7fd72957cd15a2933321",
   "pylopdf_extras": "jp,ko,zh-cn,zh-tw",
-  "pyropdf_commit": "e5b0d1064a54967387116e72bba9430d6c7807f3",
+  "pyropdf_commit": "d2715c85f175a30a44288ab344ff2290e22a9872",
   "runner_python": "3.14.8 (tags/v3.14.8:8e6e75d, Sep 30 2026, 18:19:33) [MSC v.1944 64 bit (AMD64)]",
   "pyropdf_python": "3.14.8 (tags/v3.14.8:8e6e75d, Sep 30 2026, 18:19:33) [MSC v.1944 64 bit (AMD64)]",
   "oracle_python": "3.14.8 (tags/v3.14.8:8e6e75d, Sep 30 2026, 18:19:33) [MSC v.1944 64 bit (AMD64)]",

@@ -1,6 +1,22 @@
 # The causes of measured differences; README.md explains each.
 
 [[cause]]
+id = "hayro-glyph-cache"
+outputs = ["render"]
+kinds = ["pixels", "close"]
+documents = [
+    "bill-hr815",
+    "f1040",
+    "mhlw-doc",
+    "nics-background-checks-2015-11",
+    "nonembedded-cjk",
+    "pdf20-simple",
+    "pdfium-links-highlights-annots",
+    "senate-expenditures",
+    "usrguide",
+]
+
+[[cause]]
 id = "heading-above-columns"
 outputs = ["text", "words", "words_exact", "layout", "search", "markdown", "document_markdown"]
 kinds = ["text"]
