@@ -8,7 +8,8 @@ use pyropdf_store::{Error, LimitExceeded, Result};
 
 use super::shapes::{LINE_ENDINGS, draw_ending, polyline};
 use super::{Canvas, KAPPA, Paint, Reader, Stroke, quarter_turn};
-use crate::forms::face::FaceText;
+use crate::fonts::shape::ShapeError;
+use crate::forms::face::{FaceText, Undrawable};
 use crate::forms::text_string;
 use crate::standard::{
     Align, Base14Font, DA_FONTS, DefaultAppearance, DeviceColor, FORM_LINE_HEIGHT, LayoutError,
@@ -37,6 +38,9 @@ pub enum TextFit {
     /// The text holds a character that the embedded face has no glyph
     /// for, and is not drawn.
     NoGlyph(char),
+    /// The text holds a character whose glyph in the embedded face is a
+    /// colour glyph with no outline, and is not drawn.
+    NoOutline(char),
 }
 
 /// The font that a drawing's text names: its resource name and the
@@ -244,8 +248,8 @@ pub(super) fn free_text(
 
 /// Draws `text` in embedded `face` in a box of `size` that `matrix`
 /// places, with the face's shaped glyphs, as form fields draw their values
-/// in it. Text with a character that the face lacks, or that does not fit,
-/// is left out.
+/// in it. Text with a character that the face cannot draw, or that does not
+/// fit, is left out.
 fn face_text(
     canvas: &mut Canvas<'_>,
     face: &mut FaceText<'_>,
@@ -261,10 +265,18 @@ fn face_text(
             _ => Ok((TextFit::Unfit, None)),
         }
     };
-    match face.missing(text) {
-        Ok(Some(character)) => return Ok((TextFit::NoGlyph(character), None)),
+    match face.undrawable(text) {
+        Ok(Some(Undrawable::NoGlyph(character))) => {
+            return Ok((TextFit::NoGlyph(character), None));
+        }
+        Ok(Some(Undrawable::NoOutline(character))) => {
+            return Ok((TextFit::NoOutline(character), None));
+        }
         Ok(None) => {}
-        Err(error) => return refused(error),
+        Err(ShapeError::Limit(refusal)) => return Err(refusal.into()),
+        Err(ShapeError::Font(reason)) => {
+            return Err(Error::malformed(format!("invalid font: {reason}")));
+        }
     }
     let layout = match face.layout(text, size, style.size, FORM_LINE_HEIGHT) {
         Ok(layout) => layout,

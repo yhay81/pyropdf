@@ -419,6 +419,18 @@ def test_fill_right_to_left_text_reads_in_logical_order() -> None:
     assert reopened.pages[0].text().split("\n")[0] == "שלום עולם basic"
 
 
+def test_saving_a_field_in_a_truetype_face_again_writes_the_same_bytes() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_HEBREW)
+    doc.form["customer"].value = "שלום עולם"
+
+    first = doc.to_bytes()
+
+    assert re.findall(rb"/CIDToGIDMap \d+ 0 R", first)
+    assert doc.to_bytes() == first
+    assert doc.to_bytes() == first
+
+
 def _field_in(face: pyropdf.Font, value: str, *, size: float = 14) -> pyropdf.Document:
     """Return a document whose one field holds ``value``, drawn in ``face``."""
     document = pyropdf.Document()
