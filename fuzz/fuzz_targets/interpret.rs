@@ -122,7 +122,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = render::raster(&bridged, &fallback, index, &options);
         let _ = render::svg(&bridged, &fallback, index, true);
         let budget = Budget::new(&DocumentLimits::web());
-        let _ = extract::page_content(&bridged, index, kinds, true, None, &budget);
+        let _ = extract::page_content(&bridged, &fallback, index, kinds, true, None, &budget);
         let options = TextOptions {
             styles: true,
             ..TextOptions::default()

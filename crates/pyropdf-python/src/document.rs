@@ -770,7 +770,8 @@ pub(crate) struct PageKey {
 }
 
 /// What is derived from a page, with its options. A box compares by the
-/// bits of its coordinates.
+/// bits of its coordinates. Content with text runs holds the fallback faces
+/// that describe them, and other content holds none.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) enum PageKind {
     Text(crate::text::TextKey),
@@ -779,6 +780,7 @@ pub(crate) enum PageKind {
         kinds: [bool; 3],
         annotations: bool,
         clip: Option<[u64; 4]>,
+        fallback: Fallback,
     },
 }
 

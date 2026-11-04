@@ -19,6 +19,7 @@ use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::Budget;
 
 use crate::bridge::Bridged;
+use crate::render::Fallback;
 
 mod font_guard;
 mod glyphs;
@@ -78,9 +79,11 @@ impl From<LimitExceeded> for Error {
 /// Returns the items of `kinds` that page `index`, counted from 0, paints,
 /// with annotation appearances when `annotations` is set. `clip` keeps the
 /// items whose box meets a display-space rectangle, after the budget has
-/// counted them all.
+/// counted them all. A text run describes a font that the document does not
+/// embed as the face of `fallback` that draws it.
 pub fn page_content(
     bridged: &Bridged,
+    fallback: &Fallback,
     index: usize,
     kinds: ItemKinds,
     annotations: bool,
@@ -89,6 +92,7 @@ pub fn page_content(
 ) -> Result<PageContent, Error> {
     let (content, model::NoSink) = page_content_into(
         bridged,
+        fallback,
         index,
         model::NoSink,
         kinds,
@@ -100,9 +104,12 @@ pub fn page_content(
 }
 
 /// Returns what [`page_content`] returns, and `sink` after it has seen every
-/// glyph and path of the page, whatever `kinds` records.
+/// glyph and path of the page without fallback faces, whatever `kinds`
+/// records.
+#[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
 pub fn page_content_into<S: ContentSink>(
     bridged: &Bridged,
+    fallback: &Fallback,
     index: usize,
     sink: S,
     kinds: ItemKinds,
@@ -113,16 +120,21 @@ pub fn page_content_into<S: ContentSink>(
     let pdf = bridged.pdf();
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(Error::NoPage(index))?;
-    let settings = InterpreterSettings {
-        render_content: if annotations {
-            RenderContent::all()
-        } else {
-            RenderContent::PAGE
-        },
-        ..InterpreterSettings::default()
+    let render_content = if annotations {
+        RenderContent::all()
+    } else {
+        RenderContent::PAGE
     };
-    let cache = InterpreterCache::new();
-    model::collect_page_content(pdf, page, settings, &cache, sink, kinds, clip, budget)
+    model::collect_page_content_on_faces(
+        pdf,
+        page,
+        fallback,
+        render_content,
+        sink,
+        kinds,
+        clip,
+        budget,
+    )
 }
 
 /// The resolution of an image without a JFIF header, as pymupdf reports it.
