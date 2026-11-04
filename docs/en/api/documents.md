@@ -106,9 +106,10 @@ them. Assigning a mapping of `FallbackFont` records replaces
 every language, so `{}` renders without fallback fonts, and `del`
 returns to the installed extras. The fonts belong to this
 `Document` object and are not saved. Rendering uses them, and so
-do the exact boxes of text, `exact_bboxes=True`, which measure what
-a rendering draws. Other text extraction, which reads the character
-collection's Unicode, does not.
+do what measures a rendering's glyphs: the exact boxes of text,
+`exact_bboxes=True`, and the text runs of `Page.content`. Other
+text extraction, which reads the character collection's Unicode, does
+not.
 
 Settable.
 

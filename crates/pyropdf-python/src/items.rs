@@ -14,6 +14,7 @@
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyropdf_engine::extract::{self, BBox, ContentItem, Error, ItemKinds, PageContent};
+use pyropdf_engine::render::Fallback;
 use pyropdf_store::budget::LimitCode;
 use pyropdf_store::value::Reference;
 
@@ -27,7 +28,9 @@ use crate::text::box_bits;
 /// `number` and `generation` paints, with the GIL released while hayro
 /// interprets it. `max_elements` bounds the glyphs, path and clip segments,
 /// dash lengths, and items with `content_element_count`; `None` lifts it.
-/// The content is memoized with what interpreting the page may read.
+/// The content is memoized with what interpreting the page may read, and
+/// with the fallback faces when it holds text runs, the only items that read
+/// them.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
 pub fn page_content(
@@ -110,6 +113,11 @@ fn with_content<T: Send>(
     let budget = document.call_budget(&[(LimitCode::ContentElementCount, max_elements)])?;
     let (version, index) = crate::pages::index_with(document, None, &budget)?;
     let (text_runs, paths, images) = kinds;
+    let fallback = if text_runs {
+        document.fallback()
+    } else {
+        Fallback::default()
+    };
     let kinds = ItemKinds {
         text_runs,
         paths,
@@ -131,6 +139,7 @@ fn with_content<T: Send>(
                 kinds: [text_runs, paths, images],
                 annotations,
                 clip: clip.map(box_bits),
+                fallback: fallback.clone(),
             },
         };
         let result = document.page_result(
@@ -151,14 +160,19 @@ fn with_content<T: Send>(
                     .map_err(|e| bridge_error(&e))?;
                 // The elements stay charged until the call ends.
                 let before = budget.used(LimitCode::ContentElementCount);
-                let content =
-                    extract::page_content(&bridged, at, kinds, annotations, clip, &budget)
-                        .map_err(|e| match e {
-                            Error::Limit(refusal) => limit_error(&refusal),
-                            Error::NoPage(_) | Error::Allocation(_) => {
-                                PdfError::new_err(e.to_string())
-                            }
-                        })?;
+                let content = extract::page_content(
+                    &bridged,
+                    &fallback,
+                    at,
+                    kinds,
+                    annotations,
+                    clip,
+                    &budget,
+                )
+                .map_err(|e| match e {
+                    Error::Limit(refusal) => limit_error(&refusal),
+                    Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
+                })?;
                 Ok(PageResult::Content {
                     content,
                     elements: budget.used(LimitCode::ContentElementCount) - before,

@@ -13,8 +13,8 @@ draws 日本語. Intended differences:
   face up front and shares it with text generation, do not apply: pyropdf
   draws generated text only in the fonts passed in;
 - text extraction reads the character collection's Unicode and does not use
-  the fallback faces, except for the exact boxes of text (#624), so other
-  text keeps its memo key.
+  the fallback faces, except for the exact boxes of text (#624) and the text
+  runs of ``Page.content`` (#658), so other text keeps its memo key.
 """
 
 from __future__ import annotations
@@ -48,6 +48,66 @@ PAGES = (
     ("SimHei", "CIDFontType2", "UniGB-UCS2-H", "GB1", "简体中文"),
     ("MingLiU", "CIDFontType2", "UniCNS-UCS2-H", "CNS1", "繁體中文"),
     ("Batang", "CIDFontType2", "UniKS-UCS2-H", "Korea1", "한국어"),
+)
+#: What frozen pylopdf with its CJK extras reads of the text run of each page of
+#: PAGES after a first rendering: its glyph IDs, its glyph boxes, and its box.
+#: It fills its faces at that rendering, and pyropdf when it opens a document.
+FROZEN_RUNS = (
+    (
+        [12066, 8774, 4007],
+        [(21.52, 36.52, 58.84, 73.2), (62.32, 39.0, 97.72, 73.2), (101.32, 36.4, 138.56, 72.28)],
+        (21.52, 36.4, 138.56, 73.2),
+    ),
+    (
+        [12066, 8774, 4007],
+        [(21.52, 36.52, 58.84, 73.2), (62.32, 39.0, 97.72, 73.2), (101.32, 36.4, 138.56, 72.28)],
+        (21.52, 36.4, 138.56, 73.2),
+    ),
+    (
+        [12066, 8774, 4007],
+        [(21.52, 36.52, 58.84, 73.2), (62.32, 39.0, 97.72, 73.2), (101.32, 36.4, 138.56, 72.28)],
+        (21.52, 36.4, 138.56, 73.2),
+    ),
+    (
+        [12078, 8782, 4007],
+        [(21.52, 36.52, 58.76, 73.16), (61.84, 36.72, 98.32, 73.08), (101.32, 36.56, 138.68, 71.76)],
+        (21.52, 36.52, 138.68, 73.16),
+    ),
+    (
+        [20352, 9099, 8805, 14750],
+        [
+            (21.96, 36.28, 57.2, 73.12),
+            (61.2, 36.52, 98.92, 73.12),
+            (103.84, 36.4, 136.08, 73.16),
+            (141.44, 36.12, 178.68, 73.12),
+        ],
+        (21.96, 36.12, 178.68, 73.16),
+    ),
+    (
+        [12103, 17260, 2794, 7214],
+        [
+            (21.64, 36.36, 58.32, 73.2),
+            (61.552041, 36.52, 98.72, 73.12),
+            (104.24, 36.48, 137.28, 73.12),
+            (141.64, 36.56, 178.76, 73.24),
+        ],
+        (21.64, 36.36, 178.76, 73.24),
+    ),
+    (
+        [20868, 10645, 16860],
+        [(20.945, 35.88, 58.404377, 73.12), (61.025, 38.22, 97.8, 74.68), (103.4, 35.88, 132.72, 74.32)],
+        (20.945, 35.88, 132.72, 74.68),
+    ),
+)
+#: What frozen pylopdf reads of the same runs without faces: glyph IDs and box.
+FROZEN_RUNS_WITHOUT_FACES = (
+    ([1837, 1384, 2957], (20.0, 70.0, 140.0, 70.0)),
+    ([1837, 1384, 2957], (20.0, 70.0, 140.0, 70.0)),
+    ([1837, 1384, 2957], (20.0, 70.0, 140.0, 70.0)),
+    ([1837, 1384, 2957], (20.0, 70.0, 140.0, 70.0)),
+    ([2149, 3640, 4559, 3795], (20.0, 70.0, 180.0, 70.0)),
+    ([5183, 5911, 661, 726], (20.0, 70.0, 180.0, 70.0)),
+    ([3296, 1204, 2479], (20.0, 70.0, 140.0, 70.0)),
 )
 #: A page of 日本語, which the subset face draws.
 JAPANESE = ("MS-Gothic", "CIDFontType2", "UniJIS-UCS2-H", "Japan1", "日本語")
@@ -538,6 +598,153 @@ def test_the_memo_of_other_text_keeps_its_key_when_the_fallback_fonts_change() -
     doc.fallback_fonts = {"ja": subset}
     assert (page.text(), page.words(), page.layout(chars=True).to_dict()) == before
     assert _counts(doc) == (hits + 3, computations)
+
+
+def _text_runs(page: pyropdf.Page) -> tuple[pyropdf.TextRun, ...]:
+    """Return the text runs of ``page``."""
+    return page.content(paths=False, images=False).text_runs
+
+
+def test_text_runs_read_as_frozen_pylopdf_reads_them_after_a_rendering() -> None:
+    doc = pyropdf.open(FIXTURE)
+    for page, (ids, boxes, box) in zip(doc.pages, FROZEN_RUNS, strict=True):
+        (run,) = _text_runs(page)
+        assert [glyph.glyph_id for glyph in run.glyphs] == ids
+        for glyph, expected in zip(run.glyphs, boxes, strict=True):
+            assert glyph.bbox is not None
+            assert tuple(glyph.bbox) == pytest.approx(expected, abs=1e-5)
+        assert tuple(run.bbox) == pytest.approx(box, abs=1e-5)
+        assert run.font.weight == 400
+
+
+def test_without_a_face_text_runs_lie_on_their_baselines() -> None:
+    doc = pyropdf.open(FIXTURE)
+    doc.fallback_fonts = {}
+    for page, (ids, box) in zip(doc.pages, FROZEN_RUNS_WITHOUT_FACES, strict=True):
+        (run,) = _text_runs(page)
+        assert [glyph.glyph_id for glyph in run.glyphs] == ids
+        assert [glyph.bbox for glyph in run.glyphs] == [None] * len(ids)
+        assert tuple(run.bbox) == box
+        assert run.font.weight is None
+
+
+def test_text_runs_measure_the_face_that_draws_the_font() -> None:
+    doc = pyropdf.open(nonembedded_cjk_pdf(JAPANESE))
+    page = doc.pages[0]
+    doc.fallback_fonts = {}
+    (plain,) = _text_runs(page)
+
+    doc.fallback_fonts = {"ja": FallbackFont(sans=Font.from_file(SUBSET))}
+    (run,) = _text_runs(page)
+    # The box is the one around what a rendering draws, within a pixel, and
+    # the exact boxes of text measure the same outlines.
+    assert tuple(run.bbox) == pytest.approx(_ink_box(page.pixmap(dpi=72)), abs=1)
+    assert _exact_words(page) == [(run.text, tuple(run.bbox))]
+    # The glyphs keep their text and places, and the font keeps its name.
+    assert [(glyph.text, glyph.matrix, glyph.advance) for glyph in run.glyphs] == [
+        (glyph.text, glyph.matrix, glyph.advance) for glyph in plain.glyphs
+    ]
+    assert run.font.name == plain.font.name
+    # A clip reads the faces too: this one meets the ink, above the baseline.
+    x0, y0, x1, y1 = run.bbox
+    clip = (x0, y0, x1, (y0 + y1) / 2)
+    assert len(page.content(clip=clip, paths=False, images=False).text_runs) == 1
+    doc.fallback_fonts = {}
+    assert page.content(clip=clip, paths=False, images=False).text_runs == ()
+
+
+def test_a_stretched_face_keeps_the_places_of_a_text_run() -> None:
+    # /W holds half the widths of the face's glyphs, which draw at half their width.
+    doc = pyropdf.open(nonembedded_cjk_pdf(JAPANESE, descendant=" /W [0 65535 500]"))
+    page = doc.pages[0]
+    doc.fallback_fonts = {}
+    (plain,) = _text_runs(page)
+    doc.fallback_fonts = {"ja": FallbackFont(sans=Font.from_file(SUBSET))}
+    (run,) = _text_runs(page)
+    assert [(glyph.matrix, glyph.advance) for glyph in run.glyphs] == [
+        (glyph.matrix, glyph.advance) for glyph in plain.glyphs
+    ]
+    assert run.bbox != plain.bbox
+
+
+def test_the_text_runs_of_an_annotation_read_the_faces_too() -> None:
+    doc = pyropdf.open(_annotated_pdf())
+    page = doc.pages[0]
+    doc.fallback_fonts = {"ja": FallbackFont(sans=Font.from_file(SUBSET))}
+    runs = _text_runs(page)
+    assert len(runs) == 2
+    assert all(glyph.bbox is not None for run in runs for glyph in run.glyphs)
+    # Leaving out the appearance leaves the content's run as it was.
+    (only,) = page.content(annotations=False, paths=False, images=False).text_runs
+    assert [glyph.bbox for glyph in only.glyphs] == [glyph.bbox for glyph in runs[0].glyphs]
+
+
+def _described_glyphs(page: pyropdf.Page) -> list[tuple[int | None, pyropdf.Rect | None]]:
+    """Return the ID and the box of each glyph of the text runs of ``page``."""
+    return [(glyph.glyph_id, glyph.bbox) for run in _text_runs(page) for glyph in run.glyphs]
+
+
+def test_editing_the_fallback_fonts_changes_the_text_runs_of_the_next_call() -> None:
+    subset = FallbackFont(sans=Font.from_file(SUBSET))
+    installed = pyropdf.open(FIXTURE).fallback_fonts["ja"]
+    assert installed.serif is not None
+    serif = FallbackFont(sans=installed.serif)
+    doc = pyropdf.open(nonembedded_cjk_pdf(JAPANESE))
+    page = doc.pages[0]
+
+    doc.fallback_fonts = {"ja": subset}
+    first = _described_glyphs(page)
+    hits, computations = _counts(doc)
+    # The same faces reuse the result, however they are assigned.
+    assert _described_glyphs(page) == first
+    doc.fallback_fonts = {"ja": subset}
+    assert _described_glyphs(page) == first
+    doc.fallback_fonts["ja"] = subset
+    assert _described_glyphs(page) == first
+    assert _counts(doc) == (hits + 3, computations)
+
+    # Other faces compute it again, and going back finds the first result.
+    doc.fallback_fonts["ja"] = serif
+    second = _described_glyphs(page)
+    assert second != first
+    assert _counts(doc) == (hits + 3, computations + 1)
+    doc.fallback_fonts = {}
+    assert _described_glyphs(page) not in (first, second)
+    assert _counts(doc) == (hits + 3, computations + 2)
+    doc.fallback_fonts = {"ja": subset}
+    assert _described_glyphs(page) == first
+    assert _counts(doc) == (hits + 4, computations + 2)
+
+
+def test_content_without_text_runs_keeps_its_memo_key_when_the_fallback_fonts_change() -> None:
+    doc = pyropdf.open(nonembedded_cjk_pdf(JAPANESE))
+    page = doc.pages[0]
+    before = page.content(text_runs=False)
+    hits, computations = _counts(doc)
+
+    doc.fallback_fonts = {"ja": FallbackFont(sans=Font.from_file(SUBSET))}
+    assert page.content(text_runs=False) == before
+    assert _counts(doc) == (hits + 1, computations)
+
+
+def test_other_fonts_read_as_without_fallback_fonts() -> None:
+    content = "BT /F1 24 Tf 10 60 Td (Helvetica) Tj ET"
+    data = build_raw_pdf({
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        3: (
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] "
+            "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"
+        ),
+        4: f"<< /Length {len(content)} >>\nstream\n{content}\nendstream",
+        5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    })  # fmt: skip
+    doc = pyropdf.open(data)
+    doc.fallback_fonts = {}
+    plain = _text_runs(doc.pages[0])
+    assert plain
+    doc.fallback_fonts = {language: FallbackFont(sans=Font.from_file(SUBSET)) for language in PACKAGES}
+    assert _text_runs(doc.pages[0]) == plain
 
 
 def test_fallback_fonts_survive_unlock() -> None:

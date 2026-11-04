@@ -643,11 +643,17 @@ class Page:
         visibility applied. Each carries its paints, its blend mode and soft
         mask, and the :class:`GraphicsContext` of clips, transparency groups,
         and marked content that encloses it. Glyph boxes are the exact boxes
-        of the glyph outlines. hayro paints every image inside a transparency
-        group that holds the graphics state's opacity, blend mode, and soft
-        mask, so an image's context ends with that group. A shading painted
-        with ``sh`` is a :class:`Path` that covers the clip region and fills
-        with a :class:`ShadingPattern`.
+        of the glyph outlines. A text run describes a CJK font that the
+        document does not embed as the face of
+        :attr:`Document.fallback_fonts` that draws it, in its glyph IDs, its
+        glyph and run boxes, and its :class:`FontRef`; a glyph's matrix and
+        advance stay what the page gives without a face. Without a face the
+        glyphs have no box, and the run's box spans their origins and advances.
+        hayro paints every image inside a transparency group that holds the
+        graphics state's opacity, blend mode, and soft mask, so an image's
+        context ends with that group. A shading painted with ``sh`` is a
+        :class:`Path` that covers the clip region and fills with a
+        :class:`ShadingPattern`.
 
         ``text_runs=False``, ``paths=False``, and ``images=False`` leave out
         that kind of item without building it. ``clip`` keeps the items whose
