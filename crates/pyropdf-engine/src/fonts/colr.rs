@@ -37,6 +37,7 @@ use skrifa::outline::{DrawSettings, OutlineGlyphCollection, OutlinePen};
 use skrifa::raw::TableProvider;
 use skrifa::{FontRef, GlyphId, MetadataProvider};
 
+use super::embed::Face;
 use super::type3::{Glyph, stream_with};
 use crate::content::shading::{Extend, Geometry, Gradient, ShadingError, Shadings, Stop};
 
@@ -154,13 +155,38 @@ pub struct Colr<'a> {
     outlines: OutlineGlyphCollection<'a>,
     /// What a paint that no clip bounds covers: the face's box.
     face_box: Bounds,
+    /// The instance whose paints and layers are drawn.
+    location: LocationRef<'a>,
 }
 
 impl<'a> Colr<'a> {
-    /// Reads the table of `font`: `None` when it has none, or no outlines for
-    /// its layers to take their shapes from.
+    /// Calls `paint` with the COLR glyphs of `face`, or with `None` when it
+    /// has none to paint. An instance of a variable face paints its source at
+    /// the instance's location, since a variable paint has no deltas in the
+    /// instance's program, and its glyphs keep their IDs there.
+    pub fn of_face<T>(face: &Face, paint: impl FnOnce(Option<&Colr<'_>>) -> T) -> T {
+        let Some(instance) = &face.instance else {
+            return paint(Colr::read(&face.font()).as_ref());
+        };
+        let Ok(source) = FontRef::new(&instance.source) else {
+            return paint(None);
+        };
+        let location = source
+            .axes()
+            .location([("wght", f32::from(instance.weight))]);
+        paint(Colr::read_at(&source, LocationRef::from(&location)).as_ref())
+    }
+
+    /// Reads the table of `font` at its default instance: `None` when it has
+    /// none, or no outlines for its layers to take their shapes from.
     #[must_use]
     pub fn read(font: &FontRef<'a>) -> Option<Self> {
+        Self::read_at(font, LocationRef::default())
+    }
+
+    /// Reads the table of `font`, as [`Colr::read`] does, at `location`.
+    #[must_use]
+    pub fn read_at(font: &FontRef<'a>, location: LocationRef<'a>) -> Option<Self> {
         font.colr().ok()?;
         let outlines = font.outline_glyphs();
         outlines.format()?;
@@ -177,6 +203,7 @@ impl<'a> Colr<'a> {
             palettes: font.color_palettes(),
             outlines,
             face_box,
+            location,
         })
     }
 
@@ -192,7 +219,7 @@ impl<'a> Colr<'a> {
             cannot: None,
             limit: None,
         };
-        let walked = colour.paint(LocationRef::default(), &mut checker);
+        let walked = colour.paint(self.location, &mut checker);
         if let Some(refusal) = checker.limit {
             return Err(refusal);
         }
@@ -241,7 +268,7 @@ impl<'a> Colr<'a> {
             clips,
             failed: None,
         };
-        let walked = colour.paint(LocationRef::default(), &mut painter);
+        let walked = colour.paint(self.location, &mut painter);
         if let Some(failure) = painter.failed {
             return Err(failure);
         }
@@ -554,6 +581,7 @@ impl<'b> Painter<'_, '_, 'b> {
         let Some(outline) = self.colr.outlines.get(glyph) else {
             return Ok(None);
         };
+        let settings = DrawSettings::unhinted(Size::unscaled(), self.colr.location);
         let frame = self.frame()?;
         let start = frame.content.len();
         let mut pen = PathPen {
@@ -563,7 +591,6 @@ impl<'b> Painter<'_, '_, 'b> {
             bounds: None,
             failed: None,
         };
-        let settings = DrawSettings::unhinted(Size::unscaled(), LocationRef::default());
         let drawn = outline.draw(settings, &mut pen);
         let (bounds, failed) = (pen.bounds, pen.failed);
         if let Some(failure) = failed {

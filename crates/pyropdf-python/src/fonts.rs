@@ -162,20 +162,22 @@ pub fn type3_draw(
             let Kind::Embedded(face) = &face.kind else {
                 return Err(PyValueError::new_err("a Standard 14 font has no glyph IDs"));
             };
-            let font = face.font();
-            let colr = Colr::read(&font)
-                .ok_or_else(|| PdfError::new_err("the face has no COLR table to paint"))?;
-            let mut table = shadings.lock();
             new.try_reserve(painted.len())
                 .map_err(|e| limit_error(&e))?;
-            for (name, width, glyph) in &painted {
-                let glyph_id = GlyphId::new(*glyph);
-                let name = Name::from(name.as_str());
-                let glyph = colr
-                    .paint(transaction, &mut table, glyph_id, name, *width, budget)
-                    .map_err(|error| colr_error(face, *glyph, &error))?;
-                new.try_push(glyph).map_err(|e| limit_error(&e))?;
-            }
+            Colr::of_face(face, |colr| {
+                let colr =
+                    colr.ok_or_else(|| PdfError::new_err("the face has no COLR table to paint"))?;
+                let mut table = shadings.lock();
+                for (name, width, glyph) in &painted {
+                    let glyph_id = GlyphId::new(*glyph);
+                    let name = Name::from(name.as_str());
+                    let glyph = colr
+                        .paint(transaction, &mut table, glyph_id, name, *width, budget)
+                        .map_err(|error| colr_error(face, *glyph, &error))?;
+                    new.try_push(glyph).map_err(|e| limit_error(&e))?;
+                }
+                Ok::<_, PyErr>(())
+            })?;
         }
         held.add(transaction, new.into_vec())
             .map_err(|e| store_error(&e))?;
@@ -722,14 +724,15 @@ impl _Font {
             let glyphs = shaped(face, text, budget)?;
             let font = face.font();
             let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
-            let colr = Colr::read(&font);
-            let painted = Painted {
-                colr: colr.as_ref(),
-                bitmaps: &bitmaps,
-            };
-            if let Some(refused) = refused_canvas_glyph(face, text, &glyphs, painted, budget)
-                .map_err(|error| shape_error(&error))?
-            {
+            let refused = Colr::of_face(face, |colr| {
+                let painted = Painted {
+                    colr,
+                    bitmaps: &bitmaps,
+                };
+                refused_canvas_glyph(face, text, &glyphs, painted, budget)
+            })
+            .map_err(|error| shape_error(&error))?;
+            if let Some(refused) = refused {
                 return Err(colour_refused(face, &refused));
             }
             Ok(glyphs
@@ -783,20 +786,28 @@ impl _Font {
         py.detach(|| {
             let font = face.font();
             let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
-            let colr = Colr::read(&font);
             let measure = Measure::new(face);
             let mut drawn = BudgetVec::new(budget);
             drawn
                 .try_reserve_exact(glyphs.len())
                 .map_err(|e| limit_error(&e))?;
-            for &glyph in &glyphs {
+            let verdicts = Colr::of_face(face, |colr| {
+                let mut verdicts = BudgetVec::new(budget);
+                verdicts.try_reserve_exact(glyphs.len())?;
+                for &glyph in &glyphs {
+                    let verdict = match colr {
+                        Some(colr) => colr.check(GlyphId::new(glyph), budget)?,
+                        None => None,
+                    };
+                    verdicts.try_push(verdict)?;
+                }
+                Ok(verdicts)
+            })
+            .map_err(|e| limit_error(&e))?;
+            for (&glyph, &verdict) in glyphs.iter().zip(&verdicts) {
                 budget.poll().map_err(|e| limit_error(&e))?;
                 let id = GlyphId::new(glyph);
                 let advance = measure.advance(id);
-                let verdict = match &colr {
-                    Some(colr) => colr.check(id, budget).map_err(|e| limit_error(&e))?,
-                    None => None,
-                };
                 let colour = if verdict == Some(Verdict::Paints) {
                     Some((format!("g{glyph}c"), advance, None))
                 } else {

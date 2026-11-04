@@ -176,8 +176,8 @@ default (`max_text_size`, `None` for trusted input), refused with
 A colour glyph that COLR paints or a PNG strike holds draws in its own
 colours, which `fill` and `stroke` do not change, except for a COLR layer
 in the text's colour, which takes the fill. Any other colour glyph with no
-outline in an OpenType face raises `PdfError`, naming the character, the
-glyph, and the paint; see `Font`.
+outline in an OpenType face raises `PdfError`, naming the character,
+the glyph, and the paint; see `Font`.
 
 ### `Canvas.textbox`
 

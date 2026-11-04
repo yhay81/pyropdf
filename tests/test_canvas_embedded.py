@@ -30,6 +30,7 @@ HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
 VARIABLE_LATIN = FONTS / "variable-latin.ttf"
 VARIABLE_COLOUR = FONTS / "variable-colour.ttf"
+VARIABLE_COLR = FONTS / "variable-colr.ttf"
 LINE = "AVA office 日本語、かな。"
 ARABIC_WORD = "مرحبا"
 #: The refusal of a colour glyph with no outline, for one character.
@@ -411,15 +412,27 @@ def test_undo_removes_a_drawing_of_an_instance_and_its_glyphs() -> None:
     assert _descriptor_programs(document) == set()
 
 
-def test_a_colour_glyph_with_no_outline_refuses_at_an_instance() -> None:
+def test_an_instance_paints_its_colr_glyphs() -> None:
     font = pyropdf.Font.from_file(VARIABLE_COLOUR, weight=700)
-    document, page = _new_page()
-    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")), page.draw() as canvas:
-        canvas.text("A", (20, 40), font=font, size=12)
-    assert _descriptor_programs(document) == set()
+    _document, page = _new_page(200, 60)
     with page.draw() as canvas:
-        canvas.text("B", (20, 40), font=font, size=12)
-    assert page.text().strip() == "B"
+        canvas.text("AB", (20, 50), font=font, size=24)
+
+    assert {font.subtype for font in page.fonts()} == {"Type3", "Type0"}
+    assert page.pixmap(dpi=72).pixel(32, 40)[:3] == BLUE
+    assert page.text().strip() == "AB"
+
+
+def test_a_variable_paint_draws_at_the_instance_that_the_face_loaded() -> None:
+    _document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("A", (20, 50), font=pyropdf.Font.from_file(VARIABLE_COLR), size=24)
+        canvas.text("A", (80, 50), font=pyropdf.Font.from_file(VARIABLE_COLR, weight=900), size=24)
+
+    pixmap = page.pixmap(dpi=72)
+    assert pixmap.pixel(32, 40)[:3] == BLUE
+    # At 900 the blue's alpha is half, over white.
+    assert pixmap.pixel(92, 40)[:3] == pytest.approx((127, 127, 255), abs=2)
 
 
 def test_drawing_after_a_save_keeps_the_earlier_content(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:

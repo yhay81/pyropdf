@@ -16,6 +16,8 @@ weight axis from 100 to 900 with its default at 400:
   variations move to 34000 at 900.
 - ``variable-colour.ttf``: ``A`` is a colour glyph with an empty outline, and
   ``B`` an ordinary glyph.
+- ``variable-colr.ttf``: ``A`` is a COLR v1 glyph with an empty outline that
+  paints a square in blue, whose alpha falls from 1 at the default to 0.5 at 900.
 - ``variable-bitmaps-sbix.ttf`` and ``variable-bitmaps-cbdt.ttf``: the
   ``colour-bitmaps-*`` faces of ``colour_faces.py``, with the axis added.
 
@@ -169,6 +171,21 @@ def colour() -> TTFont:
     return builder.font
 
 
+def colr() -> TTFont:
+    glyphs = {".notdef": _empty(), "A": _empty(), "layer": _polygon(SQUARE)}
+    builder = _builder("Variable COLR", glyphs, {0x41: "A"})
+    builder.setupFvar([AXIS], [])
+    # Blue whose alpha falls from 1 at the default to 0.5 at 900: -8192 in F2Dot14.
+    solid = {"Format": otTables.PaintFormat.PaintVarSolid, "PaletteIndex": 0, "Alpha": 1.0, "VarIndexBase": 0}
+    paint = {"Format": otTables.PaintFormat.PaintGlyph, "Paint": solid, "Glyph": "layer"}
+    store = buildVarStore(buildVarRegionList([UP], ["wght"]), [buildVarData([0], [[-8192]], optimize=False)])
+    builder.font["COLR"] = buildCOLR(
+        {"A": paint}, version=1, glyphMap=builder.font.getReverseGlyphMap(), varStore=store
+    )
+    builder.font["CPAL"] = buildCPAL([[(0.0, 0.0, 1.0, 1.0)]])
+    return builder.font
+
+
 def bitmaps(table: str) -> TTFont:
     font = TTFont(HERE / f"colour-bitmaps-{table}.ttf")
     addFvar(font, [AXIS], [])
@@ -203,6 +220,7 @@ def main() -> None:
         ("variable-composites", composites),
         ("variable-overflow", overflow),
         ("variable-colour", colour),
+        ("variable-colr", colr),
     ):
         build().save(HERE / f"{name}.ttf")
     for table in ("sbix", "cbdt"):
