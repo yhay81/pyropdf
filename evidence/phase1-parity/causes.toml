@@ -1,20 +1,11 @@
 # The causes of measured differences; README.md explains each.
 
 [[cause]]
-id = "hayro-glyph-cache"
+id = "hayro-table-edges"
 outputs = ["render"]
-kinds = ["pixels", "close"]
-documents = [
-    "bill-hr815",
-    "f1040",
-    "mhlw-doc",
-    "nics-background-checks-2015-11",
-    "nonembedded-cjk",
-    "pdf20-simple",
-    "pdfium-links-highlights-annots",
-    "senate-expenditures",
-    "usrguide",
-]
+kinds = ["close"]
+documents = ["nics-background-checks-2015-11"]
+pages = [0]
 
 [[cause]]
 id = "heading-above-columns"
