@@ -1,0 +1,15 @@
+{
+  "face": "C:/Windows/Fonts/seguiemj.ttf",
+  "glyphs": 64883,
+  "colour_glyphs": 3487,
+  "verdicts": {
+    "paints": 3487
+  },
+  "cannot_with_fallback_outline": 0, "cannot_without_outline": 0,
+  "painted": 3487,
+  "disagreements": [],
+  "objects": {"median": 214, "p95": 412, "max": 975, "sum": 770119},
+  "stream_bytes": {"median": 5903, "p95": 12616, "max": 170171, "sum": 22629046},
+  "micros": {"median": 5355, "p95": 14633, "max": 138131, "sum": 22320537},
+  "seconds": 29.59
+}

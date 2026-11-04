@@ -83,17 +83,34 @@ A Standard 14 font is drawn without embedding, so it prints WinAnsi
 (roughly Latin-1) text only, and measures with Adobe's AFM widths. An
 OpenType face is shaped with harfrust, in bidirectional and script runs,
 and a document embeds it once as a Type0 font whose program holds every
-glyph until a save. A glyph that a PNG strike of `sbix` or CBDT holds
-draws in its own colours on a canvas, whatever the fill, as a Type 3 font
-that reads back as text: a document holds each glyph of a strike once, and
-a drawing takes the smallest strike that reaches 300 pixels per inch at its
-size, else the largest. A face with bitmaps and no outlines loads and draws
-this way, and a glyph of it with no bitmap, such as a space, paints nothing.
-A CIDFont draws outlines, so any other colour glyph (COLR, a JPEG, TIFF or
-raw strike, or `SVG`), and any colour glyph in a form field or annotation,
-draws its monochrome fallback outline. Drawing one with no outline raises
-`PdfError`, rather than draw nothing under text that reads back,
-though it measures as any glyph does.
+glyph until a save. A glyph that COLR paints, or that a PNG strike of `sbix`
+or CBDT holds, draws in its own colours on a canvas, whatever the fill, as a
+Type 3 font that reads back as text. A document holds each glyph once, each
+of a strike once, however many drawings use it, and a drawing takes the
+smallest strike that reaches 300 pixels per inch at its size, else the
+largest. A face with bitmaps and no outlines loads and draws this way, and a
+glyph of it with no bitmap, such as a space, paints nothing.
+
+COLR v0 and v1 paint in the face's default palette, at the instance that the
+face loaded: solid colours, linear and radial gradients, transforms, clips,
+shared layers, `PaintColrGlyph`, and the `PaintComposite` modes that PDF's
+blend modes and soft masks express. A layer in the text's colour takes the
+fill. A glyph that needs anything else (a sweep gradient, a gradient stop in
+the text's colour, the modes `Plus`, `Xor`, `SrcAtop`, and `DestAtop`, or a
+palette entry that the default palette lacks) draws its fallback outline,
+and one whose paints form a cycle, or nest or number past skrifa's bounds,
+refuses with `PdfError` whatever its outline. What a glyph writes counts
+against the canvas's limits before it is written, so a glyph draws whole or
+raises. `tests/test_canvas_embedded.py` checks each kind of paint against a
+reference render to within 8 levels in each 8-bit channel, in hayro and in
+poppler.
+
+A CIDFont draws outlines, so any other colour glyph (a JPEG, TIFF or raw
+strike, or `SVG`), and any colour glyph in a form field or annotation, draws
+its monochrome fallback outline. Drawing one with no outline raises
+`PdfError`, naming the glyph and the paint that stands in the way, rather
+than draw nothing under text that reads back, though it measures as any
+glyph does.
 
 ### `Font.ascender`
 

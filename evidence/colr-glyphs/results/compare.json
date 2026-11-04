@@ -1,0 +1,162 @@
+{
+  "face": "Segoe UI Emoji",
+  "sample": {
+    "😀": {
+      "hayro": {
+        "mean": 6.2,
+        "within_8": 0.8351,
+        "within_32": 0.9398
+      },
+      "mupdf": {
+        "mean": 5.22,
+        "within_8": 0.841,
+        "within_32": 0.9845
+      },
+      "pdfium": {
+        "mean": 6.72,
+        "within_8": 0.8391,
+        "within_32": 0.986
+      }
+    },
+    "🎉": {
+      "hayro": {
+        "mean": 4.07,
+        "within_8": 0.9009,
+        "within_32": 0.9843
+      },
+      "mupdf": {
+        "mean": 3.58,
+        "within_8": 0.8975,
+        "within_32": 0.9911
+      },
+      "pdfium": {
+        "mean": 3.95,
+        "within_8": 0.8955,
+        "within_32": 0.9914
+      }
+    },
+    "👍": {
+      "hayro": {
+        "mean": 5.81,
+        "within_8": 0.7285,
+        "within_32": 0.9927
+      },
+      "mupdf": {
+        "mean": 5.21,
+        "within_8": 0.757,
+        "within_32": 0.9963
+      },
+      "pdfium": {
+        "mean": 7.36,
+        "within_8": 0.6754,
+        "within_32": 0.9966
+      }
+    },
+    "🚀": {
+      "hayro": {
+        "mean": 2.57,
+        "within_8": 0.9475,
+        "within_32": 0.9963
+      },
+      "mupdf": {
+        "mean": 2.21,
+        "within_8": 0.9601,
+        "within_32": 0.9991
+      },
+      "pdfium": {
+        "mean": 3.12,
+        "within_8": 0.9417,
+        "within_32": 0.9995
+      }
+    },
+    "🌸": {
+      "hayro": {
+        "mean": 5.05,
+        "within_8": 0.7638,
+        "within_32": 0.9975
+      },
+      "mupdf": {
+        "mean": 5.48,
+        "within_8": 0.7358,
+        "within_32": 0.999
+      },
+      "pdfium": {
+        "mean": 18.61,
+        "within_8": 0.0987,
+        "within_32": 0.9866
+      }
+    },
+    "🍣": {
+      "hayro": {
+        "mean": 4.27,
+        "within_8": 0.8569,
+        "within_32": 0.9918
+      },
+      "mupdf": {
+        "mean": 2.91,
+        "within_8": 0.9241,
+        "within_32": 0.9962
+      },
+      "pdfium": {
+        "mean": 3.05,
+        "within_8": 0.9295,
+        "within_32": 0.9964
+      }
+    },
+    "🐱": {
+      "hayro": {
+        "mean": 8.28,
+        "within_8": 0.5961,
+        "within_32": 0.9746
+      },
+      "mupdf": {
+        "mean": 7.06,
+        "within_8": 0.5951,
+        "within_32": 0.999
+      },
+      "pdfium": {
+        "mean": 10.97,
+        "within_8": 0.265,
+        "within_32": 0.9991
+      }
+    },
+    "🎌": {
+      "hayro": {
+        "mean": 2.17,
+        "within_8": 0.9161,
+        "within_32": 0.9979
+      },
+      "mupdf": {
+        "mean": 2.64,
+        "within_8": 0.9192,
+        "within_32": 0.9933
+      },
+      "pdfium": {
+        "mean": 3.99,
+        "within_8": 0.8893,
+        "within_32": 0.9938
+      }
+    }
+  },
+  "page": {
+    "glyphs": 100,
+    "text": "🌀🌁🌂🌃🌄🌅🌆🌇🌈🌉🌊🌋🌌🌍🌎🌏🌐🌑🌒🌓🌔🌕🌖🌗🌘🌙🌚🌛🌜🌝🌞🌟🌠🌡🌤🌥🌦🌧🌨🌩🌪🌫🌬🌭🌮🌯🌰🌱🌲🌳🌴🌵🌶🌷🌸🌹🌺🌻🌼🌽🌾🌿🍀🍁🍂🍃🍄🍅🍆🍇🍈🍉🍊🍋🍌🍍🍎🍏🍐🍑🍒🍓🍔🍕🍖🍗🍘🍙🍚🍛🍜🍝🍞🍟🍠🍡🍢🍣🍤🍥",
+    "draw_seconds": 0.515,
+    "objects": 12872,
+    "type3_fonts": 1,
+    "saved_bytes": 3178528,
+    "saved_dedupe_bytes": 3178528,
+    "saved_compressed_bytes": 1319863,
+    "render_seconds": {
+      "hayro": 4.205,
+      "mupdf": 0.663,
+      "pdfium": 0.735
+    },
+    "text_reads": {
+      "pyropdf": true,
+      "mupdf": true,
+      "pdfium": true,
+      "pdftotext": false
+    }
+  }
+}
