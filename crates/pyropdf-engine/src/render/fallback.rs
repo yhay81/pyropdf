@@ -7,11 +7,14 @@
 //!
 //! hayro asks its font resolver for a font that a document does not embed,
 //! and its default resolver answers with a Standard 14 font, which has no
-//! CJK glyphs. These faces answer first.
+//! CJK glyphs. These faces answer first, for a rendering and for the exact
+//! boxes of text, which measure what a rendering draws (yhay81/pyropdf#624).
 
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use hayro::hayro_interpret::InterpreterSettings;
@@ -168,11 +171,23 @@ impl Source {
             _ => false,
         }
     }
+
+    /// The address that tells this face or file from others.
+    fn address(&self) -> usize {
+        match self {
+            Self::Face(face) => Arc::as_ptr(face).addr(),
+            Self::File(file) => Arc::as_ptr(file).addr(),
+        }
+    }
 }
 
 /// The faces that draw the CJK fonts that a document does not embed: a
 /// sans and a serif face for each language, any of them absent. When one
 /// of a language's two is absent, the other draws both kinds of font.
+///
+/// Two are equal when they hold the same faces, so that they are the part
+/// of a memo key that names the faces (DESIGN.md section 5). The key keeps
+/// its faces alive, so their addresses cannot name other faces later.
 #[derive(Clone, Default)]
 pub struct Fallback {
     /// By language, in the order of [`Language`], then sans and serif.
@@ -253,6 +268,43 @@ impl Fallback {
             default(query)
         });
         settings
+    }
+
+    /// hayro's default settings, with a font resolver that answers as the
+    /// default one does and sets `asked` when these faces would draw the
+    /// font that hayro asks for. It reads no face.
+    pub(crate) fn watching(&self, asked: &Arc<AtomicBool>) -> InterpreterSettings {
+        let mut settings = InterpreterSettings::default();
+        if self.is_empty() {
+            return settings;
+        }
+        let (faces, asked) = (self.clone(), Arc::clone(asked));
+        let default = Arc::clone(&settings.font_resolver);
+        settings.font_resolver = Arc::new(move |query| {
+            if let FontQuery::Fallback(fallback) = query
+                && faces.choose(fallback).is_some()
+            {
+                asked.store(true, Ordering::Relaxed);
+            }
+            default(query)
+        });
+        settings
+    }
+}
+
+impl PartialEq for Fallback {
+    fn eq(&self, other: &Self) -> bool {
+        self.same(other)
+    }
+}
+
+impl Eq for Fallback {}
+
+impl Hash for Fallback {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for face in self.faces.iter().flatten() {
+            face.as_ref().map(Source::address).hash(state);
+        }
     }
 }
 
@@ -410,6 +462,49 @@ mod tests {
         again.set(Language::Korean, true, Some(file));
         assert!(files.same(&again));
         assert!(!files.same(&Fallback::default()));
+    }
+
+    #[test]
+    fn the_same_faces_hash_alike() {
+        let hash = |fallback: &Fallback| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            fallback.hash(&mut hasher);
+            hasher.finish()
+        };
+        let (fallback, _) = every_face();
+        assert_eq!(hash(&fallback), hash(&fallback.clone()));
+        assert_eq!(hash(&Fallback::default()), hash(&Fallback::default()));
+        let mut other = fallback.clone();
+        other.set(Language::Korean, true, None);
+        assert_ne!(hash(&fallback), hash(&other));
+    }
+
+    #[test]
+    fn watching_tells_of_a_font_that_a_face_would_draw_and_reads_no_face() {
+        let file = Arc::new(FontFile::new(PathBuf::from("absent"), None));
+        let mut fallback = Fallback::default();
+        fallback.set(
+            Language::Japanese,
+            false,
+            Some(Source::File(Arc::clone(&file))),
+        );
+        let resolve = |name, family| {
+            let asked = Arc::new(AtomicBool::new(false));
+            let settings = fallback.watching(&asked);
+            let answer = (settings.font_resolver)(&FontQuery::Fallback(query(name, family)));
+            (answer.is_some(), asked.load(Ordering::Relaxed))
+        };
+        // hayro's default resolver answers each with a Standard 14 font.
+        assert_eq!(
+            resolve("Batang", Some(CidFamily::AdobeKorea1)),
+            (true, false)
+        );
+        assert_eq!(resolve("Helvetica", None), (true, false));
+        assert_eq!(
+            resolve("MS-Gothic", Some(CidFamily::AdobeJapan1)),
+            (true, true)
+        );
+        assert!(file.data.get().is_none());
     }
 
     #[test]

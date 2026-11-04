@@ -16,6 +16,7 @@ mod tables;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
@@ -23,6 +24,7 @@ use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings, Re
 use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::{Affine, BezPath, Point, Rect};
+use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use unicode_bidi::{BidiClass, bidi_class};
 
@@ -39,6 +41,7 @@ use super::{BBox, ContentSink, Error, GlyphStyle, ItemKinds, RENDER_FILL, RENDER
 use crate::bridge::Bridged;
 use crate::content::PageContent;
 use crate::forms::append_text;
+use crate::render::Fallback;
 
 /// The name, style flags, and line metrics of a font.
 #[derive(Clone)]
@@ -300,7 +303,8 @@ pub struct TextOptions {
     /// Join a word that a hyphen splits at the end of a line.
     pub dehyphenate: bool,
     /// Box each glyph with its exact ink box instead of its advance and font
-    /// metrics.
+    /// metrics. [`page_layout`] and [`page_search`] measure a font that the
+    /// document does not embed on the fallback face that draws it.
     pub exact_bboxes: bool,
     /// Collect the page's vector rules and mark the glyphs that one
     /// underlines or strikes out.
@@ -365,8 +369,12 @@ struct GlyphRecord {
     /// Whether the glyph continues the word of the line before, which
     /// dehyphenation removed the hyphen of.
     joins_previous: bool,
-    /// Glyph callback order before geometric clustering.
+    /// The place of the glyph among those that the page showed, kept or
+    /// not, which is its order before geometric clustering.
     source_order: usize,
+    /// The place after the last shown glyph that the record spans: the next
+    /// one, unless `/ActualText` holds several glyphs in the record.
+    shown_until: usize,
     /// The place of the glyph run that showed the glyph among the page's runs.
     run: u32,
     /// The operation of the page's own content that showed the glyph, for
@@ -422,6 +430,8 @@ struct TextCollector<'b> {
     budget: &'b Budget,
     /// The first refusal, which stops the collection.
     error: Option<Error>,
+    /// The glyphs that the page has shown so far, kept or not.
+    shown: usize,
     /// Glyphs hayro delivered without any Unicode mapping, e.g. from a
     /// Type 3 font that has no ToUnicode CMap (LaurenzV/hayro#1331).
     skipped_no_unicode: usize,
@@ -498,6 +508,7 @@ impl ContentSink for TextCollector<'_> {
         {
             self.error = Some(error);
         }
+        self.shown += 1;
     }
 
     fn wants_ink(&self) -> bool {
@@ -556,6 +567,85 @@ impl ContentSink for TextCollector<'_> {
     }
 }
 
+/// The content model's sink that measures the glyphs of a page on the
+/// fallback faces: the ink box of each glyph that the page shows.
+struct FaceInk<'b> {
+    glyphs: BudgetVec<'b, Option<Rect>>,
+    refusal: Option<LimitExceeded>,
+}
+
+impl ContentSink for FaceInk<'_> {
+    fn glyph_run(&mut self, _: &GlyphStyle) {}
+
+    fn glyph(&mut self, _: &Glyph<'_>, _: Affine, ink: Option<Rect>) {
+        if self.refusal.is_none() {
+            self.refusal = self.glyphs.try_push(ink).err();
+        }
+    }
+
+    fn wants_ink(&self) -> bool {
+        true
+    }
+
+    fn stroke_completes_fill(&mut self) {}
+
+    fn path(&mut self, _: &BezPath, _: Affine, _: &DrawMode) {}
+
+    fn stopped(&self) -> bool {
+        self.refusal.is_some()
+    }
+}
+
+/// Measures `glyphs`, of the `shown` glyphs that the page showed without
+/// faces, on the faces of `fallback`, which draw the CJK fonts that the
+/// document does not embed.
+///
+/// hayro keeps the stretch of a face's glyph to its PDF width in the glyph's
+/// transform, where nothing tells it apart, so the records keep what the
+/// page gives without faces and take only their ink from this interpretation.
+/// A face that does not load leaves hayro another font, which shows other
+/// glyphs: the records then keep their boxes.
+fn measure_on_faces<'a>(
+    pdf: &'a Pdf,
+    page: &Page<'a>,
+    fallback: &Fallback,
+    glyphs: &mut [GlyphRecord],
+    shown: usize,
+    budget: &Budget,
+) -> Result<(), Error> {
+    let settings = InterpreterSettings {
+        render_content: RenderContent::all(),
+        ..fallback.settings()
+    };
+    let sink = FaceInk {
+        glyphs: BudgetVec::new(budget),
+        refusal: None,
+    };
+    let (_, sink) = super::model::collect_page_content(
+        pdf,
+        page,
+        settings,
+        &InterpreterCache::new(),
+        sink,
+        ItemKinds::NONE,
+        None,
+        budget,
+    )?;
+    if let Some(refusal) = sink.refusal {
+        return Err(refusal.into());
+    }
+    let measured = sink.glyphs;
+    if measured.len() == shown {
+        for glyph in glyphs {
+            glyph.ink = None;
+            for &ink in &measured[glyph.source_order..glyph.shown_until] {
+                widen_ink(&mut glyph.ink, ink);
+            }
+        }
+    }
+    Ok(())
+}
+
 impl TextCollector<'_> {
     /// Returns the text of the first glyph inside `/ActualText`.
     fn actual_glyph_text(&self) -> Result<Option<GlyphText>, Error> {
@@ -603,10 +693,8 @@ impl TextCollector<'_> {
             record.advance = to - from;
             record.zero_advance = false;
         }
-        if let Some((x0, y0, x1, y1)) = finite_ink(ink) {
-            let (left, top, right, bottom) = record.ink.unwrap_or((x0, y0, x1, y1));
-            record.ink = Some((left.min(x0), top.min(y0), right.max(x1), bottom.max(y1)));
-        }
+        widen_ink(&mut record.ink, ink);
+        record.shown_until = self.shown + 1;
     }
 
     /// Record one glyph whose combined transform maps glyph space to display space.
@@ -652,7 +740,7 @@ impl TextCollector<'_> {
             (1.0, 0.0)
         };
         // Advance is the glyph-space advance transformed by the x basis.
-        // Approximate missing fonts such as Type 3 as half the font size.
+        // Approximate a font that gives none as half the font size.
         let (advance_width, font_key, font) = match glyph {
             Glyph::Outline(g) => {
                 let key = self.style.font;
@@ -678,7 +766,7 @@ impl TextCollector<'_> {
                 };
                 (g.advance_width().map(f64::from), key, info)
             }
-            Glyph::Type3(_) => (None, 0, FontInfo::default()),
+            Glyph::Type3(g) => (g.advance_width().map(f64::from), 0, FontInfo::default()),
         };
         let zero_advance = advance_width == Some(0.0);
         let advance = advance_width
@@ -690,7 +778,7 @@ impl TextCollector<'_> {
             .unwrap_or(size * 0.5);
         // Context initial_transform already flips y and applies rotation, so
         // transformed coordinates are directly in top-left-origin display space.
-        let source_order = self.glyphs.len();
+        let source_order = self.shown;
         let bidi_flags = glyph_bidi_flags(&text);
         let mut record = GlyphRecord {
             text,
@@ -712,6 +800,7 @@ impl TextCollector<'_> {
             is_struck: false,
             joins_previous: false,
             source_order,
+            shown_until: source_order + 1,
             run: self.style.run,
             source: None,
         };
@@ -796,6 +885,14 @@ fn finite_ink(ink: Option<Rect>) -> Option<BBox> {
             .all(|value| value.is_finite())
     })
     .map(|ink| (ink.x0, ink.y0, ink.x1, ink.y1))
+}
+
+/// Widens the ink box `held` over the ink box of another glyph.
+fn widen_ink(held: &mut Option<BBox>, ink: Option<Rect>) {
+    if let Some((x0, y0, x1, y1)) = finite_ink(ink) {
+        let (left, top, right, bottom) = held.unwrap_or((x0, y0, x1, y1));
+        *held = Some((left.min(x0), top.min(y0), right.max(x1), bottom.max(y1)));
+    }
 }
 
 /// Converts a length to a budget amount.
@@ -2535,7 +2632,7 @@ pub fn page_text(
     budget: &Budget,
     out: &mut String,
 ) -> Result<(usize, TextPeak), Error> {
-    let viewed = viewed_page_lines(bridged, index, options, None, budget)?;
+    let viewed = viewed_page_lines(bridged, &Fallback::default(), index, options, None, budget)?;
     // The glyphs and their text give way to the text assembled from them.
     viewed.charge.release(budget);
     let lines = viewed.lines;
@@ -2603,12 +2700,13 @@ struct CollectedGlyphs {
 /// text options view them. A refusal releases every charge.
 fn viewed_page_lines(
     bridged: &Bridged,
+    fallback: &Fallback,
     index: usize,
     options: &TextOptions,
     content: Option<&PageContent>,
     budget: &Budget,
 ) -> Result<ViewedLines, Error> {
-    let collected = collect_page_glyphs(bridged, index, options, content, budget)?;
+    let collected = collect_page_glyphs(bridged, fallback, index, options, content, budget)?;
     let mut glyphs = collected.glyphs;
     if options.styles {
         layout::mark_styles(&mut glyphs, collected.rules);
@@ -2630,8 +2728,14 @@ fn viewed_page_lines(
 /// Collects the glyphs of a page in paint order, with the sources of
 /// `content`, and its rules with [`TextOptions::styles`]. A refusal releases
 /// every charge.
+///
+/// Only [`TextOptions::exact_bboxes`] reads the faces of `fallback`, to
+/// measure what a rendering draws, and only when one of them draws a font
+/// of the page. Other text is the same under any faces, so its memo key
+/// leaves them out (DESIGN.md section 5).
 fn collect_page_glyphs(
     bridged: &Bridged,
+    fallback: &Fallback,
     index: usize,
     options: &TextOptions,
     content: Option<&PageContent>,
@@ -2652,6 +2756,7 @@ fn collect_page_glyphs(
         text_size: 0,
         budget,
         error: None,
+        shown: 0,
         skipped_no_unicode: 0,
         style: RunStyle {
             color: None,
@@ -2669,9 +2774,14 @@ fn collect_page_glyphs(
     };
     // Text includes the annotations' appearances. The sources of a layout
     // with chars interpret the page again with the fonts of the first time.
+    let asked = Arc::new(AtomicBool::new(false));
     let settings = InterpreterSettings {
         render_content: RenderContent::all(),
-        ..InterpreterSettings::default()
+        ..if options.exact_bboxes {
+            fallback.watching(&asked)
+        } else {
+            InterpreterSettings::default()
+        }
     };
     let cache = InterpreterCache::new();
     let (_, mut collector) = super::model::collect_page_content(
@@ -2692,7 +2802,14 @@ fn collect_page_glyphs(
         charge.release(budget);
         return Err(error);
     }
+    let shown = collector.shown;
     let mut glyphs = collector.glyphs;
+    if asked.load(Ordering::Relaxed)
+        && let Err(error) = measure_on_faces(pdf, page, fallback, &mut glyphs, shown, budget)
+    {
+        charge.release(budget);
+        return Err(error);
+    }
     if let (Some(content), Some(checks)) = (content, &collector.checks)
         && let Err(error) = add_sources(
             pdf,
@@ -2855,6 +2972,7 @@ fn view_glyph(glyph: &GlyphRecord, view: &TextOptions) -> Result<GlyphRecord, Er
         is_struck: glyph.is_struck,
         joins_previous: glyph.joins_previous,
         source_order: glyph.source_order,
+        shown_until: glyph.shown_until,
         run: glyph.run,
         source: glyph.source,
     })

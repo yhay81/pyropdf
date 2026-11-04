@@ -108,6 +108,19 @@ class SoftMaskType(enum.StrEnum):
     LUMINOSITY = "luminosity"
 
 
+class GradientExtend(enum.StrEnum):
+    """What a gradient paints beyond the two ends of its line."""
+
+    PAD = "pad"
+    """The color at each end continues."""
+    NONE = "none"
+    """Nothing."""
+    REPEAT = "repeat"
+    """The line starts again."""
+    REFLECT = "reflect"
+    """The line runs back and forth."""
+
+
 class ImageMask(enum.StrEnum):
     """The kind of mask that an image dictionary names."""
 
@@ -195,7 +208,53 @@ class TilingPattern:
     """The opacity of the pattern cell as a whole."""
 
 
-Paint: TypeAlias = Color | ShadingPattern | TilingPattern
+@dataclass(frozen=True, slots=True)
+class ColorStop:
+    """A place on a gradient's line, and the color and alpha there."""
+
+    offset: float
+    """Where the stop is, from 0 at the line's start to 1 at its end."""
+    color: Color
+    """The color, whose alpha is the stop's."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LinearGradient:
+    """A paint for a :class:`Canvas` that changes color along a straight line.
+
+    The line runs from ``start`` to ``end``, in the space of what it paints,
+    so it moves with :meth:`Canvas.transform` as a path does. ``stops`` are
+    in order, and two at one offset make a sharp change. Before the first
+    stop and after the last, the color does not change. Color and alpha
+    interpolate apart, so a color is not premultiplied by its alpha.
+    """
+
+    start: Point
+    end: Point
+    stops: tuple[ColorStop, ...]
+    extend: GradientExtend = GradientExtend.PAD
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RadialGradient:
+    """A paint for a :class:`Canvas` that changes color between two circles.
+
+    The line runs from the circle at ``start`` to the circle at ``end``,
+    through the circles between them, in the space of what it paints. The
+    stops and ``extend`` are those of a :class:`LinearGradient`.
+    """
+
+    start: Point
+    start_radius: float
+    end: Point
+    end_radius: float
+    stops: tuple[ColorStop, ...]
+    extend: GradientExtend = GradientExtend.PAD
+
+
+Gradient: TypeAlias = LinearGradient | RadialGradient
+# What Page.content() reports is a Color or a pattern; what a Canvas draws is a Color or a Gradient.
+Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1101,6 +1160,7 @@ for _public in (
     TextRenderMode,
     ShadingType,
     SoftMaskType,
+    GradientExtend,
     ImageMask,
     MoveTo,
     LineTo,
@@ -1109,6 +1169,9 @@ for _public in (
     Color,
     ShadingPattern,
     TilingPattern,
+    ColorStop,
+    LinearGradient,
+    RadialGradient,
     Stroke,
     SoftMask,
     Clip,
