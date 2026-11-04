@@ -31,17 +31,36 @@ const ENDCHAR: &[u8] = &[14];
 const PREDEFINED_CHARSET: i32 = 2;
 const PREDEFINED_ENCODING: i32 = 1;
 
-/// One DICT entry: its operator, the bytes of its operands, and their
-/// values when they are integers.
+/// One DICT entry: its operator, the bytes of its operands, their values
+/// when they are integers, and their numbers when they read as integers or
+/// reals.
 struct Entry {
     op: u16,
     operands: Vec<u8>,
     values: Vec<Option<i32>>,
+    numbers: Vec<Option<f64>>,
+}
+
+/// The value of the nibbles of a real operand (5176, table 5).
+fn real(bytes: &[u8]) -> Option<f64> {
+    let mut text = String::new();
+    for nibble in bytes.iter().flat_map(|byte| [byte >> 4, byte & 0x0f]) {
+        match nibble {
+            0..=9 => text.push(char::from(b'0' + nibble)),
+            0x0a => text.push('.'),
+            0x0b => text.push('E'),
+            0x0c => text.push_str("E-"),
+            0x0e => text.push('-'),
+            0x0f => return text.parse().ok(),
+            _ => return None,
+        }
+    }
+    None
 }
 
 fn dict(data: &[u8]) -> Option<Vec<Entry>> {
     let mut entries = Vec::new();
-    let (mut start, mut values, mut at) = (0, Vec::new(), 0);
+    let (mut start, mut values, mut numbers, mut at) = (0, Vec::new(), Vec::new(), 0);
     while let Some(&b0) = data.get(at) {
         let (value, size) = match b0 {
             0..=21 => {
@@ -57,6 +76,7 @@ fn dict(data: &[u8]) -> Option<Vec<Entry>> {
                         .get(start..at.checked_sub(usize::from(op >= 1200))?)?
                         .to_vec(),
                     values: std::mem::take(&mut values),
+                    numbers: std::mem::take(&mut numbers),
                 });
                 at += 1;
                 start = at;
@@ -100,6 +120,11 @@ fn dict(data: &[u8]) -> Option<Vec<Entry>> {
             return None;
         }
         values.push(value);
+        numbers.push(
+            value
+                .map(f64::from)
+                .or_else(|| data.get(at + 1..at + size).and_then(real)),
+        );
         at += size;
     }
     Some(entries)
@@ -133,13 +158,17 @@ fn write_dict(entries: &[Entry], replace: &[(u16, &[i32])]) -> Vec<u8> {
             }
             None => out.extend_from_slice(&entry.operands),
         }
-        if entry.op >= 1200 {
-            out.extend_from_slice(&[12, u8::try_from(entry.op - 1200).unwrap_or(0)]);
-        } else {
-            out.push(u8::try_from(entry.op).unwrap_or(0));
-        }
+        push_operator(&mut out, entry.op);
     }
     out
+}
+
+fn push_operator(out: &mut Vec<u8>, op: u16) {
+    if op >= 1200 {
+        out.extend_from_slice(&[12, u8::try_from(op - 1200).unwrap_or(0)]);
+    } else {
+        out.push(u8::try_from(op).unwrap_or(0));
+    }
 }
 
 /// Returns the items of the INDEX at `at` and where it ends.
@@ -651,6 +680,9 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
 const FIRST_STRING: i32 = 391;
 const CID_COUNT: u16 = 1234;
 const DEFAULT_WIDTH: u16 = 20;
+const BLUE_SCALE: u16 = 1209;
+const BLUE_SHIFT: u16 = 1210;
+const BLUE_FUZZ: u16 = 1211;
 
 /// Appends a DICT entry of `op` with `operands`, each in the five-byte
 /// integer form, so that an offset's length does not depend on its value.
@@ -659,28 +691,123 @@ fn push_entry(out: &mut Vec<u8>, op: u16, operands: &[i32]) {
         out.push(29);
         out.extend_from_slice(&operand.to_be_bytes());
     }
-    if op >= 1200 {
-        out.extend_from_slice(&[12, u8::try_from(op - 1200).unwrap_or(0)]);
-    } else {
-        out.push(u8::try_from(op).unwrap_or(0));
+    push_operator(out, op);
+}
+
+/// Appends `value` as a real operand (5176, table 5), to the millionth, which
+/// is finer than the 16.16 that readers keep of a value and of `BlueScale`'s
+/// thousandfold.
+fn push_real(out: &mut Vec<u8>, value: f64) {
+    let text = format!("{value:.6}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    let mut nibbles: Vec<u8> = text
+        .bytes()
+        .map(|byte| match byte {
+            b'.' => 0x0a,
+            b'-' => 0x0e,
+            digit => digit - b'0',
+        })
+        .collect();
+    nibbles.push(0x0f);
+    if !nibbles.len().is_multiple_of(2) {
+        nibbles.push(0x0f);
     }
+    out.push(30);
+    out.extend(nibbles.chunks(2).map(|pair| pair[0] << 4 | pair[1]));
+}
+
+/// The bytes of the Private DICT of font DICT `fd`, which is the Top DICT's
+/// own when the font is name-keyed.
+fn private_dict(data: &[u8], fd: usize) -> Option<&[u8]> {
+    let header = usize::from(*data.get(2)?);
+    let (_, names_end) = index(data, header)?;
+    let (tops, _) = index(data, names_end)?;
+    let top = dict(data.get(tops.first()?.clone())?)?;
+    let entries = if top.iter().any(|entry| entry.op == ROS) {
+        let (dicts, _) = index(data, offset(&top, FD_ARRAY, 0)?)?;
+        dict(data.get(dicts.get(fd)?.clone())?)?
+    } else {
+        top
+    };
+    let (size, at) = (offset(&entries, PRIVATE, 0)?, offset(&entries, PRIVATE, 1)?);
+    data.get(at..at.checked_add(size)?)
+}
+
+/// Returns the hint values of the Private DICT of font DICT `fd` of the CFF
+/// `data` (5176, table 23), as DICT entries, for charstrings whose units
+/// `scale` scales; the bytes of each operand stay as they are at a scale of
+/// one.
+pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>> {
+    let entries = dict(private_dict(data, fd)?)?;
+    let unscaled = |by: f64| (by - 1.0).abs() < f64::EPSILON;
+    let mut out = Vec::new();
+    for entry in &entries {
+        let by = match entry.op {
+            // Lengths: BlueValues, OtherBlues, FamilyBlues, FamilyOtherBlues,
+            // StdHW, StdVW; and BlueShift, BlueFuzz, StemSnapH, StemSnapV.
+            // The arrays among them hold deltas, which scale alike.
+            6..=11 | BLUE_SHIFT | BLUE_FUZZ | 1212 | 1213 => scale,
+            // In pixels per unit.
+            BLUE_SCALE => 1.0 / scale,
+            // ForceBold, LanguageGroup, ExpansionFactor.
+            1214 | 1217 | 1218 => 1.0,
+            _ => continue,
+        };
+        if unscaled(by) {
+            out.extend_from_slice(&entry.operands);
+        } else {
+            for number in &entry.numbers {
+                push_real(&mut out, number.filter(|number| number.is_finite())? * by);
+            }
+        }
+        push_operator(&mut out, entry.op);
+    }
+    if !unscaled(scale) {
+        // The defaults hold in the units of the face, not in the result's.
+        let defaults = [
+            (BLUE_SCALE, 0.039625 / scale),
+            (BLUE_SHIFT, 7.0 * scale),
+            (BLUE_FUZZ, scale),
+        ];
+        for (op, value) in defaults {
+            if !entries.iter().any(|entry| entry.op == op) {
+                push_real(&mut out, value);
+                push_operator(&mut out, op);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// Writes a CID-keyed CFF named `name` whose glyphs are `charstrings`, in
-/// the order of `cids`, their CIDs (5176): one Font DICT, no
-/// subroutines, and a Private DICT whose default width is zero, since the
-/// PDF's `W` array gives the widths.
-pub(super) fn cid_keyed(name: &str, charstrings: &[Vec<u8>], cids: &[u16]) -> Option<Vec<u8>> {
-    if charstrings.len() != cids.len() || cids.first() != Some(&0) {
+/// the order of `cids`, their CIDs (5176): no subroutines, and one Font DICT
+/// per item of `privates`, the entries of its Private DICT, which `fds`
+/// selects for each glyph. Each Private DICT adds a default width of zero,
+/// since the PDF's `W` array gives the widths.
+pub(super) fn cid_keyed(
+    name: &str,
+    charstrings: &[Vec<u8>],
+    cids: &[u16],
+    fds: &[u8],
+    privates: &[Vec<u8>],
+) -> Option<Vec<u8>> {
+    if charstrings.len() != cids.len()
+        || fds.len() != cids.len()
+        || cids.first() != Some(&0)
+        || fds.iter().any(|&fd| usize::from(fd) >= privates.len())
+    {
         return None;
     }
     let glyphs = u16::try_from(cids.len()).ok()?;
     let cid_count = i32::from(*cids.iter().max()?) + 1;
-    let private: Vec<u8> = {
-        let mut out = Vec::new();
-        push_entry(&mut out, DEFAULT_WIDTH, &[0]);
-        out
-    };
+    let privates: Vec<Vec<u8>> = privates
+        .iter()
+        .map(|entries| {
+            let mut out = entries.clone();
+            push_entry(&mut out, DEFAULT_WIDTH, &[0]);
+            out
+        })
+        .collect();
     let top = |charset: i32, fd_select: i32, charstrings: i32, fd_array: i32| {
         let mut out = Vec::new();
         push_entry(&mut out, ROS, &[FIRST_STRING, FIRST_STRING + 1, 0]);
@@ -696,7 +823,19 @@ pub(super) fn cid_keyed(name: &str, charstrings: &[Vec<u8>], cids: &[u16]) -> Op
     for cid in &cids[1..] {
         charset.extend_from_slice(&cid.to_be_bytes());
     }
-    let mut fd_select = vec![3, 0, 1, 0, 0, 0];
+    // Format 3: the ranges of glyphs of one Font DICT, then the sentinel.
+    let mut fd_select = vec![3, 0, 0];
+    let mut ranges = 0_u16;
+    let mut previous = None;
+    for (glyph, &fd) in fds.iter().enumerate() {
+        if previous != Some(fd) {
+            fd_select.extend_from_slice(&u16::try_from(glyph).ok()?.to_be_bytes());
+            fd_select.push(fd);
+            ranges += 1;
+            previous = Some(fd);
+        }
+    }
+    fd_select[1..3].copy_from_slice(&ranges.to_be_bytes());
     fd_select.extend_from_slice(&glyphs.to_be_bytes());
     let items: Vec<&[u8]> = charstrings.iter().map(Vec::as_slice).collect();
     let charstrings = write_index(&items)?;
@@ -710,22 +849,27 @@ pub(super) fn cid_keyed(name: &str, charstrings: &[Vec<u8>], cids: &[u16]) -> Op
     let fd_select_at = charset_at + charset.len();
     let charstrings_at = fd_select_at + fd_select.len();
     let fd_array_at = charstrings_at + charstrings.len();
-    let font_dict = |private_at: i32| {
-        let mut out = Vec::new();
-        push_entry(
-            &mut out,
-            PRIVATE,
-            &[i32::try_from(private.len()).unwrap_or(0), private_at],
-        );
-        out
+    // The Font DICTs, with the Private DICTs in order from `private_at`.
+    let font_dicts = |mut private_at: i32| -> Option<Vec<u8>> {
+        let mut dicts = Vec::new();
+        for private in &privates {
+            let size = i32::try_from(private.len()).ok()?;
+            let mut dict = Vec::new();
+            push_entry(&mut dict, PRIVATE, &[size, private_at]);
+            dicts.push(dict);
+            private_at = private_at.checked_add(size)?;
+        }
+        let dicts: Vec<&[u8]> = dicts.iter().map(Vec::as_slice).collect();
+        write_index(&dicts)
     };
-    let fd_array_len = write_index(&[&font_dict(0)])?.len();
-    let private_at = i32::try_from(fd_array_at + fd_array_len).ok()?;
+    let private_at = i32::try_from(fd_array_at + font_dicts(0)?.len()).ok()?;
     let at = |offset: usize| i32::try_from(offset).ok();
 
     let mut out = Vec::new();
-    out.try_reserve(usize::try_from(private_at).ok()? + private.len())
-        .ok()?;
+    out.try_reserve(
+        usize::try_from(private_at).ok()? + privates.iter().map(Vec::len).sum::<usize>(),
+    )
+    .ok()?;
     out.extend_from_slice(&header);
     out.extend_from_slice(&names);
     out.extend_from_slice(&write_index(&[&top(
@@ -739,7 +883,9 @@ pub(super) fn cid_keyed(name: &str, charstrings: &[Vec<u8>], cids: &[u16]) -> Op
     out.extend_from_slice(&charset);
     out.extend_from_slice(&fd_select);
     out.extend_from_slice(&charstrings);
-    out.extend_from_slice(&write_index(&[&font_dict(private_at)])?);
-    out.extend_from_slice(&private);
+    out.extend_from_slice(&font_dicts(private_at)?);
+    for private in &privates {
+        out.extend_from_slice(private);
+    }
     Some(out)
 }
