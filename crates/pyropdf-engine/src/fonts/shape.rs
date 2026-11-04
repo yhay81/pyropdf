@@ -20,6 +20,8 @@ use skrifa::raw::TableProvider;
 use unicode_bidi::BidiInfo;
 use unicode_script::{Script as UnicodeScript, UnicodeScript as _};
 
+use super::embed::Face;
+
 #[cfg(test)]
 mod tests;
 
@@ -72,7 +74,8 @@ pub struct ShapedGlyph {
     pub rtl: bool,
 }
 
-/// An OpenType face ready to shape, at its default instance.
+/// An OpenType face ready to shape, at its default instance or, read with
+/// [`ShapingFace::of`], at the instance of a [`Face`].
 pub struct ShapingFace {
     font: Font,
 }
@@ -87,6 +90,21 @@ impl ShapingFace {
         if font.tables().head().is_err() {
             return Err(ShapeError::Font("the face has no head table".into()));
         }
+        Ok(Self { font })
+    }
+
+    /// Reads `face` to shape: its own program, or for an instance the source
+    /// at the instance's weight, since kerning has variation deltas that a
+    /// static program cannot hold (DESIGN.md section 7).
+    pub fn of(face: &Face) -> Result<Self, ShapeError> {
+        let Some(instance) = &face.instance else {
+            return Self::new(Arc::clone(&face.program), 0);
+        };
+        let Self { font } = Self::new(Arc::clone(&instance.source), 0)?;
+        let font = font
+            .instance_builder()
+            .variations([(Tag::new(b"wght"), f32::from(instance.weight))])
+            .build();
         Ok(Self { font })
     }
 

@@ -1,0 +1,22 @@
+--- a/crates/pyropdf-engine/src/extract/stretch.rs
++++ b/crates/pyropdf-engine/src/extract/stretch.rs
+@@ -44,6 +44,19 @@ impl<'a> Stretches<'a> {
+     /// font, which has no PDF widths to stretch to.
+     pub(super) fn font_of(&self, run: &GlyphRun<'_, 'a>) -> Option<Font<'a>> {
+         let dict = run.font_dict()?;
++        // SCRATCH: a toggle for timing, never committed.
++        static MODE: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
++        let mode = *MODE.get_or_init(|| match std::env::var("PYROPDF_SCRATCH_STRETCH").as_deref() {
++            Ok("off") => 0,
++            Ok("always") => 2,
++            _ => 1,
++        });
++        if mode == 0 {
++            return None;
++        }
++        if mode == 2 {
++            return self.cache.font(dict, &self.font_resolver, &self.cmap_resolver);
++        }
+         run.glyphs()
+             .iter()
+             .any(|glyph| {
