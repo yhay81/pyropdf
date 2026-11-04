@@ -1,0 +1,16 @@
+# The prototype instancer of issue #598: writes a static TrueType program for
+# one instance of a variable face with the skrifa and harfrust that pyropdf
+# already builds against. The empty table below makes this directory a
+# workspace of its own.
+[workspace]
+
+[package]
+name = "font-instances"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+skrifa = "=0.49.0"
+harfrust = "=0.15.0"
