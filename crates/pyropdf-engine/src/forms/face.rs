@@ -57,7 +57,7 @@ impl<'f> FaceText<'f> {
         font: Option<FaceFont<'f>>,
         budget: &'f Budget,
     ) -> Result<Self, WidgetError> {
-        let shaper = ShapingFace::new(face.program.clone(), 0)
+        let shaper = ShapingFace::of(face)
             .map_err(|error| WidgetError::Malformed(format!("invalid font: {error}").into()))?;
         Ok(Self {
             face,
