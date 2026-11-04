@@ -245,6 +245,36 @@ def test_type3_glyphs_without_unicode_have_no_glyph_id() -> None:
     assert set(page.text(unmapped="replacement")) <= {"�", " ", "\n"}
 
 
+def _type3_page(content: str, em: int) -> pyropdf.Page:
+    """Open a page whose /T3 is a Type 3 font of ``em`` units, whose codes A and B advance one em."""
+
+    def stream(data: str) -> str:
+        return f"<< /Length {len(data)} >>\nstream\n{data}\nendstream"
+
+    objects: dict[int, str | bytes] = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+        3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /T3 5 0 R >> >> >>",
+        4: stream(content),
+        5: (
+            f"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 {em} {em}] /FontMatrix [{1 / em} 0 0 {1 / em} 0 0] "
+            "/CharProcs << /a 6 0 R /b 6 0 R >> /Encoding << /Type /Encoding /Differences [65 /a /b] >> "
+            f"/FirstChar 65 /LastChar 66 /Widths [{em} {em}] /ToUnicode 7 0 R >>"
+        ),
+        6: stream(f"{em} 0 d0"),
+        7: stream(_to_unicode({0x41: "A", 0x42: "B"})),
+    }
+    return pyropdf.open(build_raw_pdf(objects)).pages[0]
+
+
+@pytest.mark.parametrize("em", [1000, 2048])
+def test_type3_glyphs_read_by_the_advance_that_their_font_gives(em: int) -> None:
+    # Half the font size, the estimate for a font that gives no advance, would
+    # leave a gap as wide as a space between these glyphs.
+    assert _type3_page("BT /T3 24 Tf 20 50 Td <4142> Tj ET", em).text().strip() == "AB"
+    assert _type3_page("BT /T3 24 Tf 20 50 Td [<41> -1500 <42>] TJ ET", em).text().strip() == "A B"
+
+
 def test_document_text_applies_the_options_to_every_page() -> None:
     stream = "BT /F1 20 Tf 72 700 Td (AB) Tj ET"
     document = pyropdf.open(build_text_pdf(stream, stream, to_unicode={0x41: "ﬁ", 0x42: "x"}))

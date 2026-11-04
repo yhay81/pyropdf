@@ -8,9 +8,14 @@ test_canvas_text.py and in embedded faces in test_canvas_embedded.py.
 from __future__ import annotations
 
 import itertools
+import math
+import os
 import random
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import zlib
 from typing import TYPE_CHECKING
@@ -18,10 +23,29 @@ from typing import TYPE_CHECKING
 import pytest
 
 import pyropdf
-from pyropdf import BlendMode, Color, FillRule, Matrix, Name, PathBuilder, Rect, Stroke, _core
+from pyropdf import (
+    BlendMode,
+    Color,
+    ColorStop,
+    FillRule,
+    GradientExtend,
+    LinearGradient,
+    Matrix,
+    Name,
+    PathBuilder,
+    Point,
+    RadialGradient,
+    Rect,
+    ShadingPattern,
+    ShadingType,
+    Stroke,
+    _core,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+    from typing import TypeAlias
 
 RED = Color(1, 0, 0)
 BLUE = Color(0, 0, 1)
@@ -863,3 +887,601 @@ def test_pixmap_png_counts_encoded_output_in_memory_budget() -> None:
     with pytest.raises(pyropdf.LimitError) as raised:
         _core.pixmap_png(document._core(), pixmap)  # noqa: SLF001
     assert raised.value.code == "memory_size"
+
+
+# Gradients.
+
+# The largest difference of one channel, in levels of 255, between a gradient
+# and its formula at 72 dpi, away from what it paints's edges. The documentation
+# of `Canvas` publishes the same tolerances.
+GRADIENT_TOLERANCE = 8
+REPEATING_TOLERANCE = 16
+
+WHITE = Color(1, 1, 1)
+RED_BLUE = (ColorStop(0, RED), ColorStop(1, BLUE))
+FADING_RED = (ColorStop(0, RED), ColorStop(1, Color(1, 0, 0, 0)))
+
+_Pixels: TypeAlias = "tuple[int, bytes]"
+
+
+def _hayro(data: bytes) -> _Pixels:
+    """Return the RGB samples and their row size of hayro's render of the first page at 72 dpi."""
+    pixmap = pyropdf.open(data).pages[0].pixmap(dpi=72)
+    return pixmap.stride, bytes(pixmap)
+
+
+def _poppler(data: bytes) -> _Pixels:
+    """Return the RGB samples and their row size of poppler's render of the first page at 72 dpi."""
+    tool = shutil.which("pdftoppm")
+    if tool is None:
+        pytest.skip("poppler's pdftoppm is not installed")
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, "page.pdf")  # noqa: PTH118 - the module's Path is a type only.
+        with open(path, "wb") as file:  # noqa: PTH123 - as above.
+            file.write(data)
+        ppm = subprocess.run(  # noqa: S603 - a fixed tool on a file of the test's own.
+            [tool, "-r", "72", "-singlefile", path],
+            check=True,
+            capture_output=True,
+        ).stdout
+    # A binary PPM: "P6", the width and height, the maximum, then the samples.
+    header = ppm.split(maxsplit=4)
+    width, height = int(header[1]), int(header[2])
+    return width * 3, ppm[len(ppm) - width * height * 3 :]
+
+
+RENDERERS = pytest.mark.parametrize("render", [_hayro, _poppler], ids=["hayro", "poppler"])
+
+
+def _mix(first: Color, second: Color, at: float) -> tuple[float, float, float]:
+    """Return the levels of 255 of two colors' mix, the place on the line held to its ends."""
+    at = max(0.0, min(1.0, at))
+    red, green, blue = (255 * (a + at * (b - a)) for a, b in zip(first.rgb, second.rgb, strict=True))
+    return red, green, blue
+
+
+def _largest_error(
+    render: Callable[[bytes], _Pixels],
+    data: bytes,
+    box: tuple[int, int, int, int],
+    expected: Callable[[float, float], tuple[float, float, float] | None],
+) -> float:
+    """Return the largest difference of a channel from ``expected`` at the pixel centres of ``box``."""
+    stride, samples = render(data)
+    x0, y0, x1, y1 = box
+    largest = 0.0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            wanted = expected(x + 0.5, y + 0.5)
+            if wanted is not None:
+                at = y * stride + x * 3
+                largest = max(largest, *(abs(samples[at + i] - wanted[i]) for i in range(3)))
+    return largest
+
+
+def _drawn(
+    draw: Callable[[pyropdf.Canvas], None], size: tuple[float, float] = (200, 200), rotation: int = 0
+) -> pyropdf.Document:
+    doc = pyropdf.Document()
+    page = doc.pages.new(size)
+    if rotation:
+        page.rotation = rotation
+    with page.draw() as canvas:
+        draw(canvas)
+    return doc
+
+
+def _objects_with(doc: pyropdf.Document, key: str) -> list[int]:
+    return [number for number in doc.objects if key in doc.objects[number]]
+
+
+def _linear(*stops: ColorStop, extend: GradientExtend = GradientExtend.PAD) -> LinearGradient:
+    return LinearGradient(start=Point(20, 0), end=Point(180, 0), stops=stops, extend=extend)
+
+
+def _rings(*stops: ColorStop, extend: GradientExtend = GradientExtend.PAD) -> RadialGradient:
+    center = Point(100, 100)
+    return RadialGradient(start=center, start_radius=10, end=center, end_radius=90, stops=stops, extend=extend)
+
+
+def _along_the_line(x: float, _y: float) -> tuple[float, float, float]:
+    return _mix(RED, BLUE, (x - 20) / 160)
+
+
+def _around_the_centre(x: float, y: float) -> tuple[float, float, float]:
+    return _mix(RED, BLUE, (math.hypot(x - 100, y - 100) - 10) / 80)
+
+
+WHOLE_PAGE = (0, 0, 200, 200)
+MOVED = Matrix(1, 0, 0, 1, 10, 0)
+INSIDE_THE_PAGE = (2, 2, 198, 198)
+
+
+@RENDERERS
+def test_a_linear_gradient_fills_within_the_tolerance(render: Callable[[bytes], _Pixels]) -> None:
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))).to_bytes()
+    assert _largest_error(render, data, INSIDE_THE_PAGE, _along_the_line) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+def test_a_radial_gradient_fills_within_the_tolerance(render: Callable[[bytes], _Pixels]) -> None:
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_rings(*RED_BLUE))).to_bytes()
+    assert _largest_error(render, data, INSIDE_THE_PAGE, _around_the_centre) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+def test_a_linear_gradient_strokes_within_the_tolerance(render: Callable[[bytes], _Pixels]) -> None:
+    line = Stroke(paint=_linear(*RED_BLUE), width=40)
+    data = _drawn(lambda canvas: canvas.line((0, 100), (200, 100), stroke=line)).to_bytes()
+    assert _largest_error(render, data, (2, 85, 198, 115), _along_the_line) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+def test_a_radial_gradient_strokes_within_the_tolerance(render: Callable[[bytes], _Pixels]) -> None:
+    line = Stroke(paint=_rings(*RED_BLUE), width=40)
+    data = _drawn(lambda canvas: canvas.line((0, 100), (200, 100), stroke=line)).to_bytes()
+    assert _largest_error(render, data, (2, 85, 198, 115), _around_the_centre) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+def test_stops_between_the_ends_and_a_sharp_change_are_drawn(render: Callable[[bytes], _Pixels]) -> None:
+    stops = (ColorStop(0.25, RED), ColorStop(0.5, BLUE), ColorStop(0.5, BLACK), ColorStop(0.75, WHITE))
+    gradient = LinearGradient(start=Point(0, 0), end=Point(200, 0), stops=stops)
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=gradient)).to_bytes()
+
+    def expected(x: float, _y: float) -> tuple[float, float, float] | None:
+        if abs(x - 100) < 2:
+            return None
+        return _mix(RED, BLUE, (x - 50) / 50) if x < 100 else _mix(BLACK, WHITE, (x - 100) / 50)
+
+    assert _largest_error(render, data, INSIDE_THE_PAGE, expected) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+@pytest.mark.parametrize("radial", [False, True], ids=["linear", "radial"])
+def test_stops_with_alpha_match_the_same_colors_composited_on_white(
+    render: Callable[[bytes], _Pixels], *, radial: bool
+) -> None:
+    gradient = _rings(*FADING_RED) if radial else _linear(*FADING_RED)
+    doc = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=gradient))
+    # A soft mask, not a shading in another colour.
+    assert len(_objects_with(doc, "SMask")) == 1
+
+    def expected(x: float, y: float) -> tuple[float, float, float]:
+        at = (math.hypot(x - 100, y - 100) - 10) / 80 if radial else (x - 20) / 160
+        return _mix(RED, WHITE, at)
+
+    assert _largest_error(render, doc.to_bytes(), INSIDE_THE_PAGE, expected) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+def test_a_stroke_with_alpha_paints_through_a_mask_that_holds_the_whole_line(
+    render: Callable[[bytes], _Pixels],
+) -> None:
+    line = Stroke(paint=_linear(*FADING_RED), width=40)
+    data = _drawn(lambda canvas: canvas.line((0, 100), (200, 100), stroke=line)).to_bytes()
+    assert _largest_error(render, data, (2, 85, 198, 115), lambda x, _y: _mix(RED, WHITE, (x - 20) / 160)) <= (
+        GRADIENT_TOLERANCE
+    )
+
+
+def test_a_fill_and_a_stroke_that_need_masks_paint_apart() -> None:
+    fading_blue = (ColorStop(0, BLUE), ColorStop(1, Color(0, 0, 1, 0)))
+    line = Stroke(paint=_linear(*fading_blue), width=10)
+    doc = _drawn(lambda canvas: canvas.rect((50, 50, 150, 150), fill=_linear(*FADING_RED), stroke=line))
+    assert len(_objects_with(doc, "SMask")) == 2
+    page = doc.pages[0]
+    paints = [operation.operator for operation in page.operations if operation.operator in ("f", "S", "B")]
+    assert paints == ["f", "S"]
+    # The stroke's mask holds what lies outside the path, as the fill's need not.
+    outside = page.pixmap(dpi=72).pixel(46, 100)
+    assert outside[2] > outside[0]
+
+
+def test_stops_of_one_alpha_paint_through_the_graphics_state() -> None:
+    half = (ColorStop(0, Color(1, 0, 0, 0.5)), ColorStop(1, Color(0, 0, 1, 0.5)))
+    doc = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_linear(*half)))
+    assert _objects_with(doc, "SMask") == []
+    fill = doc.pages[0].content().paths[0].fill
+    assert isinstance(fill, ShadingPattern)
+    assert fill.opacity == 0.5
+
+
+@RENDERERS
+def test_a_gradient_moves_with_the_canvas_transform(render: Callable[[bytes], _Pixels]) -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        with canvas.transform(Matrix(0.5, 0, 0, 0.5, 50, 50)):
+            canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))
+
+    data = _drawn(draw).to_bytes()
+
+    def expected(x: float, _y: float) -> tuple[float, float, float]:
+        return _along_the_line((x - 50) * 2, 0)
+
+    assert _largest_error(render, data, (52, 52, 148, 148), expected) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+@pytest.mark.parametrize("stops", [RED_BLUE, FADING_RED], ids=["opaque", "alpha"])
+def test_a_gradient_in_an_opacity_group_under_a_transform(
+    render: Callable[[bytes], _Pixels], stops: tuple[ColorStop, ...]
+) -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        # A group's Form has a space of its own, in which a pattern's matrix starts again.
+        scopes = canvas.transform(Matrix(0.5, 0, 0, 0.5, 50, 50)), canvas.opacity(0.5), canvas.transform(MOVED)
+        with scopes[0], scopes[1], scopes[2]:
+            canvas.rect((-10, 0, 190, 200), fill=_linear(*stops))
+
+    data = _drawn(draw).to_bytes()
+    second = BLUE if stops is RED_BLUE else WHITE
+
+    def expected(x: float, _y: float) -> tuple[float, float, float]:
+        red, green, blue = _mix(RED, second, ((x - 50) * 2 - 30) / 160)
+        return (red + 255) / 2, (green + 255) / 2, (blue + 255) / 2
+
+    assert _largest_error(render, data, (52, 52, 142, 148), expected) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_a_gradient_stays_in_display_space_on_a_turned_page(render: Callable[[bytes], _Pixels], rotation: int) -> None:
+    size = (200, 200)
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE)), size, rotation).to_bytes()
+    assert _largest_error(render, data, INSIDE_THE_PAGE, _along_the_line) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+def test_a_gradient_in_a_tag_scope_or_under_the_page_keeps_its_place(render: Callable[[bytes], _Pixels]) -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    with page.draw(underlay=True) as canvas, canvas.tag(pyropdf.TagRole.FIGURE, alt="A gradient"):
+        canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))
+    assert _largest_error(render, doc.to_bytes(), INSIDE_THE_PAGE, _along_the_line) <= GRADIENT_TOLERANCE
+
+
+@RENDERERS
+@pytest.mark.parametrize("extend", [GradientExtend.REPEAT, GradientExtend.REFLECT])
+def test_a_repeating_linear_gradient_runs_over_what_it_paints(
+    render: Callable[[bytes], _Pixels], extend: GradientExtend
+) -> None:
+    gradient = LinearGradient(start=Point(10, 0), end=Point(60, 0), stops=RED_BLUE, extend=extend)
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=gradient)).to_bytes()
+
+    def expected(x: float, _y: float) -> tuple[float, float, float] | None:
+        cycle, at = divmod((x - 10) / 50, 1)
+        # A cycle's edges are too sharp to compare where it restarts.
+        if extend is GradientExtend.REPEAT and not 0.1 < at < 0.9:
+            return None
+        return _mix(RED, BLUE, 1 - at if extend is GradientExtend.REFLECT and cycle % 2 else at)
+
+    assert _largest_error(render, data, INSIDE_THE_PAGE, expected) <= REPEATING_TOLERANCE
+
+
+@RENDERERS
+@pytest.mark.parametrize("extend", [GradientExtend.REPEAT, GradientExtend.REFLECT])
+def test_a_repeating_radial_gradient_runs_over_what_it_paints(
+    render: Callable[[bytes], _Pixels], extend: GradientExtend
+) -> None:
+    gradient = RadialGradient(
+        start=Point(100, 100), start_radius=20, end=Point(100, 100), end_radius=50, stops=RED_BLUE, extend=extend
+    )
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=gradient)).to_bytes()
+
+    def expected(x: float, y: float) -> tuple[float, float, float] | None:
+        cycle, at = divmod((math.hypot(x - 100, y - 100) - 20) / 30, 1)
+        if not 0.15 < at < 0.85:
+            return None
+        return _mix(RED, BLUE, 1 - at if extend is GradientExtend.REFLECT and cycle % 2 else at)
+
+    assert _largest_error(render, data, INSIDE_THE_PAGE, expected) <= REPEATING_TOLERANCE
+
+
+@RENDERERS
+def test_a_repeating_gradient_with_alpha_repeats_its_mask(render: Callable[[bytes], _Pixels]) -> None:
+    gradient = LinearGradient(start=Point(0, 0), end=Point(50, 0), stops=FADING_RED, extend=GradientExtend.REFLECT)
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=gradient)).to_bytes()
+
+    def expected(x: float, _y: float) -> tuple[float, float, float]:
+        cycle, at = divmod(x / 50, 1)
+        return _mix(RED, WHITE, 1 - at if cycle % 2 else at)
+
+    assert _largest_error(render, data, INSIDE_THE_PAGE, expected) <= REPEATING_TOLERANCE
+
+
+@RENDERERS
+def test_a_gradient_that_does_not_extend_paints_nothing_past_its_ends(render: Callable[[bytes], _Pixels]) -> None:
+    gradient = _linear(*RED_BLUE, extend=GradientExtend.NONE)
+    data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=gradient)).to_bytes()
+
+    def expected(x: float, _y: float) -> tuple[float, float, float] | None:
+        if abs(x - 20) < 2 or abs(x - 180) < 2:
+            return None
+        return (255, 255, 255) if x < 20 or x > 180 else _along_the_line(x, 0)
+
+    assert _largest_error(render, data, INSIDE_THE_PAGE, expected) <= GRADIENT_TOLERANCE
+
+
+def test_equal_function_and_shading_objects_are_shared_within_a_canvas() -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        for y in (0, 50, 100):
+            canvas.rect((0, y, 200, y + 40), fill=_linear(*RED_BLUE))
+        # Another line of the same colors shares the function.
+        canvas.rect((0, 150, 200, 190), fill=_rings(*RED_BLUE))
+        # A stroke of the same gradient shares everything.
+        canvas.line((0, 0), (200, 200), stroke=_linear(*RED_BLUE))
+
+    doc = _drawn(draw)
+    assert len(_objects_with(doc, "FunctionType")) == 1
+    assert len(_objects_with(doc, "ShadingType")) == 2
+    assert len(_objects_with(doc, "PatternType")) == 2
+
+
+def test_equal_masks_are_shared_and_each_box_has_its_own() -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        canvas.rect((0, 0, 200, 40), fill=_linear(*FADING_RED))
+        canvas.rect((0, 0, 200, 40), fill=_linear(*FADING_RED))
+        canvas.rect((0, 50, 200, 90), fill=_linear(*FADING_RED))
+
+    doc = _drawn(draw)
+    # The color and the alpha, each with one shading.
+    assert len(_objects_with(doc, "FunctionType")) == 2
+    assert len(_objects_with(doc, "ShadingType")) == 2
+    assert len(_objects_with(doc, "SMask")) == 2
+
+
+def test_a_canvas_does_not_share_objects_with_another_canvas() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    with page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))
+    with page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))
+    assert len(_objects_with(doc, "ShadingType")) == 2
+
+
+@RENDERERS
+def test_a_second_canvas_renames_its_resources_and_keeps_its_gradient(render: Callable[[bytes], _Pixels]) -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    with page.draw() as canvas:
+        canvas.rect((0, 0, 100, 100), fill=_linear(*RED_BLUE))
+        canvas.rect((0, 100, 100, 200), fill=_linear(*FADING_RED))
+    # The names of its pattern and its mask are the first canvas's, for other objects.
+    down, fading_down = (LinearGradient(start=Point(0, 0), end=Point(0, 200), stops=s) for s in (RED_BLUE, FADING_RED))
+    with page.draw() as canvas:
+        canvas.rect((100, 0, 200, 100), fill=down)
+        canvas.rect((100, 100, 200, 200), fill=fading_down)
+    assert {"PyroP1", "PyroP1_1", "PyroM1", "PyroM1_1"} <= {
+        *page.obj["Resources"]["Pattern"].keys(),
+        *page.obj["Resources"]["ExtGState"].keys(),
+    }
+
+    def expected(x: float, y: float) -> tuple[float, float, float] | None:
+        if abs(x - 100) < 2 or abs(y - 100) < 2:
+            return None
+        along = (x - 20) / 160 if x < 100 else y / 200
+        return _mix(RED, BLUE if y < 100 else WHITE, along)
+
+    assert _largest_error(render, doc.to_bytes(), INSIDE_THE_PAGE, expected) <= GRADIENT_TOLERANCE
+
+
+def test_a_limit_refuses_a_gradient_without_writing() -> None:
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=64 * 1024))
+    page = doc.pages.new((200, 200))
+    before = doc.to_bytes(), doc.history.steps
+    many = tuple(ColorStop(index / 1000, Color(index / 1000, 0, 0)) for index in range(1001))
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=_linear(*many))
+    assert raised.value.code == "memory_size"
+    assert (doc.to_bytes(), doc.history.steps) == before
+
+
+def test_a_gradient_charges_the_operation_before_it_allocates() -> None:
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=50_000_000))
+    page = doc.pages.new((200, 200))
+    many = tuple(ColorStop(index / 100, Color(index / 100, 0, 0)) for index in range(101))
+    with page.draw() as canvas:
+        operation = canvas._active  # noqa: SLF001
+        before = operation.used("memory_size")
+        canvas.rect(WHOLE_PAGE, fill=_linear(*many))
+        # What the store holds, and the table's keys, stay charged.
+        used = operation.used("memory_size")
+        assert used > before + 5_000
+        # What is shared costs only its buffered content.
+        canvas.rect(WHOLE_PAGE, fill=_linear(*many))
+        assert operation.used("memory_size") < used + 5_000
+
+
+def test_a_cancelled_canvas_writes_no_gradient() -> None:
+    token = pyropdf.CancellationToken()
+    doc = pyropdf.Document(limits=pyropdf.DocumentLimits(cancellation=token))
+    page = doc.pages.new((200, 200))
+    steps = doc.history.steps
+
+    def draw_after_cancelling(canvas: pyropdf.Canvas) -> None:
+        token.cancel()
+        canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))
+
+    with pytest.raises(pyropdf.LimitError), page.draw() as canvas:
+        draw_after_cancelling(canvas)
+    assert doc.history.steps == steps
+
+
+def test_too_many_cycles_or_stops_refuse_with_a_limit_and_write_nothing() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    before = doc.to_bytes(), doc.history.steps
+    thin = LinearGradient(start=Point(0, 0), end=Point(0.001, 0), stops=RED_BLUE, extend=GradientExtend.REPEAT)
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=thin)
+    assert raised.value.code == "content_element_count"
+    many = (ColorStop(0, RED),) * 1_048_577
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=_linear(*many))
+    assert raised.value.code == "content_element_count"
+    assert (doc.to_bytes(), doc.history.steps) == before
+
+
+def test_an_exception_discards_the_objects_and_undo_removes_them() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+
+    def draw_and_raise(canvas: pyropdf.Canvas) -> None:
+        canvas.rect(WHOLE_PAGE, fill=_linear(*FADING_RED))
+        raise RuntimeError
+
+    with pytest.raises(RuntimeError), page.draw() as canvas:
+        draw_and_raise(canvas)
+    assert _objects_with(doc, "ShadingType") == []
+    with page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=_linear(*FADING_RED))
+    drawn = _objects_with(doc, "ShadingType")
+    assert len(drawn) == 2
+    doc.history.undo()
+    assert _objects_with(doc, "ShadingType") == []
+    assert _objects_with(doc, "SMask") == []
+    doc.history.redo()
+    assert _objects_with(doc, "ShadingType") == drawn
+
+
+def test_page_content_reads_a_drawn_gradient_back() -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        canvas.rect((10, 20, 110, 70), fill=_linear(*RED_BLUE), stroke=Stroke(paint=_rings(*RED_BLUE), width=3))
+        canvas.circle((100, 150), 30, fill=_linear(*FADING_RED))
+        with canvas.transform(Matrix(2, 0, 0, 2, 5, 6)):
+            canvas.rect((0, 0, 10, 10), fill=_linear(*RED_BLUE))
+
+    page = _drawn(draw).pages[0]
+    both, masked, moved = page.content().paths
+    assert isinstance(both.fill, ShadingPattern)
+    assert both.fill.shading_type is ShadingType.AXIAL
+    assert both.stroke is not None
+    assert isinstance(both.stroke.paint, ShadingPattern)
+    assert both.stroke.paint.shading_type is ShadingType.RADIAL
+    assert both.stroke.width == 3
+    assert both.soft_mask is None
+    _assert_rect(both.bbox, (10, 20, 110, 70))
+    # The transform from shading space to display space.
+    assert tuple(both.fill.matrix) == pytest.approx((1, 0, 0, 1, 0, 0))
+    assert isinstance(masked.fill, ShadingPattern)
+    assert masked.soft_mask == pyropdf.SoftMask(subtype=pyropdf.SoftMaskType.LUMINOSITY)
+    assert isinstance(moved.fill, ShadingPattern)
+    assert tuple(moved.fill.matrix) == pytest.approx((2, 0, 0, 2, 5, 6))
+    # The columns hold the same paint.
+    pattern = page.paths().patterns[0]
+    assert isinstance(pattern, ShadingPattern)
+    assert pattern.shading_type is ShadingType.AXIAL
+
+
+def test_a_saved_gradient_opens_with_the_same_render_and_a_clean_check() -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        canvas.rect((0, 0, 200, 60), fill=_linear(*RED_BLUE), stroke=Stroke(paint=_linear(*FADING_RED), width=4))
+        canvas.circle((100, 130), 50, fill=_rings(ColorStop(0, RED), ColorStop(0.5, BLUE), ColorStop(1, BLACK)))
+        canvas.rect((0, 180, 200, 200), fill=_linear(*RED_BLUE, extend=GradientExtend.REFLECT))
+
+    doc = _drawn(draw)
+    reopened = pyropdf.open(doc.to_bytes())
+    assert bytes(reopened.pages[0].pixmap(dpi=72)) == bytes(doc.pages[0].pixmap(dpi=72))
+    # The check reads every shading dictionary as type 1 (#643).
+    assert [defect for defect in reopened.check().defects if defect.clause != "ShadingType1/ShadingType"] == []
+
+
+def test_gradients_that_cannot_be_drawn_raise_and_draw_nothing() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((200, 200))
+    before = doc.to_bytes(), doc.history.steps
+    point = Point(1, 2)
+    cases: list[tuple[object, type[Exception]]] = [
+        (LinearGradient(start=point, end=point, stops=RED_BLUE), ValueError),
+        (RadialGradient(start=point, start_radius=3, end=point, end_radius=3, stops=RED_BLUE), ValueError),
+        (RadialGradient(start=point, start_radius=0, end=Point(3, 4), end_radius=0, stops=RED_BLUE), ValueError),
+        (RadialGradient(start=point, start_radius=-1, end=point, end_radius=3, stops=RED_BLUE), ValueError),
+        (_linear(), ValueError),
+        (_linear(ColorStop(0.5, RED), ColorStop(0.25, BLUE)), ValueError),
+        (_linear(ColorStop(-0.5, RED)), ValueError),
+        (_linear(ColorStop(1.5, RED)), ValueError),
+        (_linear(ColorStop(float("nan"), RED)), ValueError),
+        (_linear(ColorStop(0, Color(2, 0, 0))), ValueError),
+        (_linear(ColorStop(0, "red")), TypeError),  # ty: ignore[invalid-argument-type]
+        (_linear("red"), TypeError),  # ty: ignore[invalid-argument-type]
+        (LinearGradient(start=Point(1e39, 0), end=point, stops=RED_BLUE), ValueError),
+        (_linear(ColorStop(0, RED), extend="sideways"), ValueError),  # ty: ignore[invalid-argument-type]
+        (LinearGradient(start=point, end=Point(5, 5), stops=iter(RED_BLUE)), TypeError),  # ty: ignore[invalid-argument-type]
+    ]
+    for gradient, error in cases:
+        with pytest.raises(error), page.draw() as canvas:
+            canvas.rect(WHOLE_PAGE, fill=gradient)  # ty: ignore[invalid-argument-type]
+        with pytest.raises(error), page.draw() as canvas:
+            canvas.line((0, 0), (9, 9), stroke=gradient)  # ty: ignore[invalid-argument-type]
+    assert (doc.to_bytes(), doc.history.steps) == before
+
+
+def test_text_and_read_back_patterns_refuse_a_gradient() -> None:
+    doc = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE)))
+    page = doc.pages[0]
+    read_back = page.content().paths[0].fill
+    assert isinstance(read_back, ShadingPattern)
+    with pytest.raises(TypeError, match="Color"), page.draw() as canvas:
+        canvas.text("Hello", (10, 10), fill=_linear(*RED_BLUE))  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="Color"), page.draw() as canvas:
+        canvas.text("Hello", (10, 10), stroke=_linear(*RED_BLUE))  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="ShadingPattern"), page.draw() as canvas:
+        canvas.rect(WHOLE_PAGE, fill=read_back)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="ShadingPattern"), page.draw() as canvas:
+        canvas.line((0, 0), (9, 9), stroke=Stroke(paint=read_back))
+
+
+def test_a_degenerate_transform_paints_a_gradient_as_nothing_without_a_panic() -> None:
+    def draw(canvas: pyropdf.Canvas) -> None:
+        with canvas.transform(Matrix(0, 0, 0, 0, 0, 0)):
+            canvas.rect(WHOLE_PAGE, fill=_linear(*FADING_RED), stroke=_rings(*RED_BLUE))
+
+    assert _drawn(draw).pages[0].pixmap(dpi=72).pixel(100, 100)[:3] == (255, 255, 255)
+
+
+def test_arbitrary_gradients_draw_or_refuse_and_a_render_survives_them() -> None:
+    rng = random.Random(632)  # noqa: S311 - reproducible inputs, not secrets.
+    extremes = (0.0, 1.0, -1.0, 1e-30, 1e30, 3.4e38, -3.4e38, 200.0)
+
+    def number() -> float:
+        return rng.choice(extremes) if rng.random() < 0.3 else rng.uniform(-500, 500)
+
+    def stops() -> tuple[ColorStop, ...]:
+        offsets = sorted(rng.random() for _ in range(rng.randrange(1, 7)))
+        return tuple(
+            ColorStop(offset, Color(rng.random(), rng.random(), rng.random(), rng.choice((1.0, rng.random()))))
+            for offset in offsets
+        )
+
+    drawn = 0
+    for _ in range(200):
+        extend = rng.choice(tuple(GradientExtend))
+        gradient: LinearGradient | RadialGradient
+        if rng.random() < 0.5:
+            gradient = LinearGradient(
+                start=Point(number(), number()), end=Point(number(), number()), stops=stops(), extend=extend
+            )
+        else:
+            gradient = RadialGradient(
+                start=Point(number(), number()),
+                start_radius=abs(number()),
+                end=Point(number(), number()),
+                end_radius=abs(number()),
+                stops=stops(),
+                extend=extend,
+            )
+        doc = pyropdf.Document()
+        page = doc.pages.new((60, 60))
+        try:
+            with page.draw() as canvas:
+                canvas.rect((5, 5, 55, 55), fill=gradient, stroke=Stroke(paint=gradient, width=2))
+        except (ValueError, pyropdf.LimitError):
+            assert _objects_with(doc, "ShadingType") == []
+            continue
+        drawn += 1
+        for number_ in doc.objects:
+            assert "nan" not in repr(doc.objects[number_]).lower()
+            assert "inf " not in repr(doc.objects[number_]).lower()
+        page.pixmap(dpi=36)
+        pyropdf.open(doc.to_bytes()).pages[0].content()
+    assert drawn > 20
