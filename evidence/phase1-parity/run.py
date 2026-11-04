@@ -9,9 +9,10 @@ commit, from a copy outside this Cargo workspace, into
 ``target/parity/pylopdf-env``, with the CJK font extras, whose packages
 pyropdf's dev group installs too. It then dumps pylopdf with that environment
 and pyropdf with ``uv run``, into ``target/parity/pylopdf`` and
-``target/parity/pyropdf``: the corpus without fallback fonts, and the pages in
-CJK fonts that the files do not embed with the faces of the extras. Last, it
-runs ``compare.py`` on the two.
+``target/parity/pyropdf``: the corpus and the pages in Latin fonts that the
+file does not embed without fallback fonts, and the pages in CJK fonts that
+the files do not embed with the faces of the extras. Last, it runs
+``compare.py`` on the two.
 """
 
 from __future__ import annotations
@@ -36,6 +37,9 @@ CORPUS = sorted((ROOT / "tests" / "assets" / "real_world").glob("*.pdf"))
 #: Pages in CJK fonts that the files do not embed, which both engines render
 #: with the faces of the font extras (#600).
 FALLBACK = [ROOT / "tests" / "assets" / "text" / "nonembedded-cjk.pdf"]
+#: Pages in Latin fonts that the file does not embed, which hayro draws in
+#: Standard 14 substitutes that it stretches to the PDF's widths (#656).
+SUBSTITUTED = [ROOT / "tests" / "assets" / "text" / "nonembedded-latin.pdf"]
 #: The extras of pylopdf whose packages render FALLBACK.
 EXTRAS = "jp,ko,zh-cn,zh-tw"
 
@@ -76,9 +80,9 @@ def main() -> None:
     (checkout,) = sys.argv[1:]
     python = _install_pylopdf(Path(checkout))
     ours = ("uv", "run", "--no-sync", "python")
-    _run(python, HERE / "dump.py", "pylopdf", TARGET / "pylopdf", *CORPUS)
+    _run(python, HERE / "dump.py", "pylopdf", TARGET / "pylopdf", *CORPUS, *SUBSTITUTED)
     _run(python, HERE / "dump.py", "pylopdf", TARGET / "pylopdf", "--fallback-fonts", *FALLBACK)
-    _run(*ours, HERE / "dump.py", "pyropdf", TARGET / "pyropdf", *CORPUS)
+    _run(*ours, HERE / "dump.py", "pyropdf", TARGET / "pyropdf", *CORPUS, *SUBSTITUTED)
     _run(*ours, HERE / "dump.py", "pyropdf", TARGET / "pyropdf", "--fallback-fonts", *FALLBACK)
     _run("uv", "run", "--no-sync", "python", HERE / "compare.py", TARGET / "pylopdf", TARGET / "pyropdf")
     _run("uv", "run", "--no-sync", "python", HERE / "diagnose_annotations.py", python)
@@ -96,6 +100,7 @@ def main() -> None:
         "oracle_python": subprocess.check_output([python, "-c", "import sys; print(sys.version)"], text=True).strip(),  # noqa: S603
         "corpus_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in CORPUS},
         "fallback_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in FALLBACK},
+        "substituted_sha256": {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in SUBSTITUTED},
     }
     (HERE / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 
