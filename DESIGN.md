@@ -452,8 +452,12 @@ descriptor, program, and ToUnicode CMap, serves every drawing in the face.
 A drawing adds the glyphs it uses to the widths and to the ToUnicode CMap in
 its own transaction, so undoing the drawing removes them. A glyph maps to
 its own character, or to its whole cluster when the shaper merged
-characters into it; a glyph that the CMap already maps to other text is
-drawn inside a marked-content sequence with `/ActualText`.
+characters into it. A cluster whose glyphs do not read as its text is drawn
+inside one marked-content sequence with `/ActualText` of the whole cluster,
+with a glyph that has a width first and the text position left at the
+cluster's end. A glyph without text of its own maps to U+2060 until the
+document draws it for real text. Text extraction honours `/ActualText` of the
+outermost sequence (`evidence/cluster-text`, #637).
 
 Until a save, a face in use is a provisional object with all its glyphs, so
 rendering and extraction see the right glyphs. For a CID-keyed CFF program,
@@ -490,9 +494,8 @@ under text that reads back, and a face with no outlines refuses at load.
 Colour itself is drawn as a Type 3 font whose glyph procedures paint the layers
 or the image, with a ToUnicode CMap, because that is the form that reads as
 text. `/ActualText` over paths or a Form XObject reads as nothing in pyropdf,
-xpdf, MuPDF, and PDFium: the last three honour it only over a shown glyph, and
-pyropdf does not read it. Bitmaps need the Type 3 writer and the image objects
-that the canvas has. COLR also needs a writer for shadings and soft masks, since
+xpdf, MuPDF, and PDFium, which honour it only over a shown glyph. Bitmaps need
+the Type 3 writer and the image objects that the canvas has. COLR also needs a writer for shadings and soft masks, since
 97.7% of Segoe UI Emoji's colour glyphs use alpha in their gradients. The `SVG `
 table is not drawn: a renderer adds 23 crates and parses XML from the input with
 no hook for the budget.
