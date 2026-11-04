@@ -479,7 +479,7 @@ impl ContentSink for TextCollector<'_> {
             && let Err(refusal) = checks.try_push(RunCheck {
                 run: style.run,
                 glyphs: 0,
-                first: [0; 6],
+                first: style.first.as_coeffs().map(f64::to_bits),
             })
         {
             self.error = Some(refusal.into());
@@ -488,9 +488,6 @@ impl ContentSink for TextCollector<'_> {
 
     fn glyph(&mut self, glyph: &Glyph<'_>, transform: Affine, ink: Option<Rect>) {
         if let Some(check) = self.checks.as_mut().and_then(|checks| checks.last_mut()) {
-            if check.glyphs == 0 {
-                check.first = transform.as_coeffs().map(f64::to_bits);
-            }
             check.glyphs = check.glyphs.saturating_add(1);
         }
         if self.error.is_none()
@@ -502,6 +499,10 @@ impl ContentSink for TextCollector<'_> {
 
     fn wants_ink(&self) -> bool {
         self.options.exact_bboxes
+    }
+
+    fn wants_advances(&self) -> bool {
+        true
     }
 
     fn stroke_completes_fill(&mut self) {
