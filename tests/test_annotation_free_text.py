@@ -12,6 +12,11 @@ text needs an embedded ``Font`` (the tests from
 
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
+import tempfile
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -19,13 +24,17 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 import pyropdf
-from pyropdf import Border, Color, Font, FreeText, LineEnding, Point, Rect, _core
+from pyropdf import Border, Color, Font, FreeText, LineEnding, Point, Rect, _core, _fonts
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 WHITE = (255, 255, 255)
-JAPANESE = Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata/NotoSansJP-subset.otf"
+FONTS = Path(__file__).resolve().parent.parent / "crates/pyropdf-engine/src/fonts/testdata"
+JAPANESE = FONTS / "NotoSansJP-subset.otf"
+ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
+HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
+ARABIC_WORD = "مرحبا"
 
 
 def test_callout_stops_after_four_points_even_when_sequence_misreports_length() -> None:
@@ -402,6 +411,101 @@ def test_a_face_without_a_glyph_for_the_text_changes_nothing() -> None:
         annotation.contents = "日本語" * 100
     assert annotation.contents == "日本"
     assert doc.to_bytes() == before
+
+
+def _free_text_in(face: Font, text: str, *, size: float = 14) -> pyropdf.Page:
+    """Return a new page with one free text that holds ``text``, drawn in ``face``."""
+    page = pyropdf.Document().pages.new((300, 100))
+    page.annotations.add(FreeText((20, 20, 280, 60), text, font=face, size=size))
+    return page
+
+
+def test_a_free_text_in_an_arabic_face_has_no_unmapped_glyph() -> None:
+    face = Font.from_file(ARABIC)
+    # The shaper splits the letter beh into a base and a dot in one cluster.
+    dot = next(glyph[0] for glyph in face._font.shape(ARABIC_WORD) if glyph[5] == glyph[6])  # noqa: SLF001
+    reopened = pyropdf.open(_free_text_in(face, ARABIC_WORD).document.to_bytes())
+    page = reopened.pages[0]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pyropdf.PyropdfWarning)
+        assert page.text().strip() == ARABIC_WORD
+    assert page.text(unmapped="replacement").strip() == ARABIC_WORD
+    (annotation,) = page.annotations
+    type0 = annotation.obj["AP"]["N"]["Resources"]["Font"]["PyroFreeText"]
+    mapped = _fonts._mapped(type0["ToUnicode"], face.glyph_count)  # noqa: SLF001
+    drawn = _fonts._widths(type0["DescendantFonts"][0], face.glyph_count)  # noqa: SLF001
+    assert dot in drawn
+    assert set(drawn) <= set(mapped)
+    assert mapped[dot] == _fonts._NO_TEXT  # noqa: SLF001
+
+
+def test_a_free_texts_cluster_is_one_actual_text_and_its_glyphs_stay_where_the_shaper_put_them() -> None:
+    size = 14.0
+    face = Font.from_file(ARABIC)
+    page = _free_text_in(face, ARABIC_WORD, size=size)
+
+    scale = size / face._font.units_per_em  # noqa: SLF001
+    pen = 0.0
+    expected = {}
+    for glyph, advance, _y_advance, x_offset, y_offset, *_ in face._font.shape(ARABIC_WORD):  # noqa: SLF001
+        expected[glyph] = (pen + x_offset * scale, -y_offset * scale)
+        pen += advance * scale
+    glyphs = [glyph for run in page.content(paths=False, images=False).text_runs for glyph in run.glyphs]
+    assert {glyph.glyph_id for glyph in glyphs} == set(expected)
+    first = glyphs[0].origin
+    for glyph in glyphs:
+        assert glyph.glyph_id is not None
+        moved = (glyph.origin.x - first.x, glyph.origin.y - first.y)
+        assert moved == pytest.approx(expected[glyph.glyph_id], abs=1e-2)
+
+    # Only the letter that the face splits needs ActualText, and its glyphs lie inside.
+    (annotation,) = page.annotations
+    appearance = annotation.obj["AP"]["N"].read()
+    assert re.findall(rb"/ActualText <FEFF([0-9A-F]*)>", appearance) == [b"0628"]
+    assert (appearance.count(b"BDC"), appearance.count(b"EMC")) == (1, 1)
+    inside = appearance[appearance.index(b"BDC") : appearance.index(b"EMC")]
+    assert len(re.findall(rb"<[0-9A-F]{4}>", inside)) == 2
+
+
+def _shown(stream: bytes) -> list[bytes | float]:
+    """Return what shows the text, from its matrix to the end of its object, with each number as a float."""
+    start = stream.index(b" Tm") + 3
+    tokens = re.findall(rb"<[0-9A-F]+>|[^\s\[\]<>]+", stream[start : stream.index(b"ET", start)])
+    return [float(token) if re.fullmatch(rb"-?[0-9.]+", token) else token for token in tokens]
+
+
+@pytest.mark.parametrize(
+    ("path", "text"),
+    [(ARABIC, ARABIC_WORD), (ARABIC, "عالم مرحبا"), (HEBREW, "שָׁלוֹם עולם"), (JAPANESE, "AVA 日本語、かな。")],
+    ids=["arabic", "arabic-words", "hebrew", "japanese"],
+)
+def test_a_free_text_writes_its_text_as_canvas_text_does(path: Path, text: str) -> None:
+    # The rule of a cluster lives in two writers, the canvas's in Python and this one in Rust.
+    size = 14.0
+    face = Font.from_file(path)
+    (annotation,) = _free_text_in(face, text, size=size).annotations
+    page = pyropdf.Document().pages.new((300, 100))
+    with page.draw() as canvas:
+        canvas.text(text, (20, 60), font=face, size=size)
+
+    written = _shown(annotation.obj["AP"]["N"].read())
+    contents = b"\n".join(part.read() for part in page.obj["Contents"])
+    assert written == pytest.approx(_shown(contents), abs=1e-3)
+
+
+@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is not installed")
+def test_pdftotext_reads_a_free_texts_cluster_as_its_text() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "page.pdf"
+        path.write_bytes(_free_text_in(Font.from_file(ARABIC), ARABIC_WORD).document.to_bytes())
+        read = subprocess.run(  # noqa: S603 - a fixed tool on a file of the test's own.
+            [shutil.which("pdftotext") or "pdftotext", "-enc", "UTF-8", str(path), "-"],
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8")
+    # Xpdf marks the direction of a run with embedding controls.
+    assert read.translate(dict.fromkeys(map(ord, "\u202a\u202b\u202c"))).strip() == ARABIC_WORD
 
 
 def test_a_later_session_redraws_in_the_default_appearance_font() -> None:
