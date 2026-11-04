@@ -487,18 +487,32 @@ Drawing the instance's glyphs as paths in `/ActualText` is not an option, for
 the reason below (`evidence/font-instances-colour`, #598).
 
 A CIDFont draws a glyph's outline (ISO 32000-2 section 9.7), so a colour glyph
-(COLR, `sbix`, CBDT, or `SVG `) draws its monochrome fallback outline and reads
-as text. A colour glyph whose outline is empty refuses, rather than draw nothing
-under text that reads back, and a face with no outlines refuses at load.
+that a drawing cannot paint draws its monochrome fallback outline and reads as
+text: any in a form field or an annotation, and on the canvas COLR, the `SVG `
+table, and a strike that is not PNG. One whose outline is empty refuses, rather
+than draw nothing under text that reads back, and a face with neither outlines
+nor colour bitmaps refuses at load.
 
 Colour itself is drawn as a Type 3 font whose glyph procedures paint the layers
 or the image, with a ToUnicode CMap, because that is the form that reads as
 text. `/ActualText` over paths or a Form XObject reads as nothing in pyropdf,
-xpdf, MuPDF, and PDFium, which honour it only over a shown glyph. Bitmaps need
-the Type 3 writer and the image objects that the canvas has. COLR also needs a writer for shadings and soft masks, since
-97.7% of Segoe UI Emoji's colour glyphs use alpha in their gradients. The `SVG `
-table is not drawn: a renderer adds 23 crates and parses XML from the input with
-no hook for the budget.
+xpdf, MuPDF, and PDFium, which honour it only over a shown glyph.
+
+A Type 3 font holds 256 glyphs, one for each one-byte code, and a document holds
+as many fonts of a face as its drawn glyphs need. What they hold is read from the
+document, so a drawing adds its glyphs in its own transaction, undoing it removes
+them, and only what the document draws is ever written. A line selects these fonts
+and the face's Type0 font with `Tf` as its glyphs ask, and a drawing with no
+outline glyphs writes no Type0 font.
+
+The canvas paints the PNG strikes of `sbix` and CBDT this way, through the image
+objects that it has (`evidence/colour-bitmaps`, #631). A drawing takes the smallest
+strike that holds the glyph at 300 pixels per inch at its size, else the largest,
+so a glyph holds one procedure and one image per strike. A face with bitmaps and
+no outlines draws only on the canvas. COLR also needs a writer for shadings and
+soft masks, since 97.7% of Segoe UI Emoji's colour glyphs use alpha in their
+gradients. The `SVG ` table is not drawn: a renderer adds 23 crates and parses XML
+from the input with no hook for the budget.
 
 Dependent structures are settled rather than rebuilt by every call. A
 transaction marks what its writes make stale: appearance streams, outline
