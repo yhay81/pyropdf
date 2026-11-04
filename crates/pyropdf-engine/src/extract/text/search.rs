@@ -10,6 +10,7 @@ use super::{
     try_push_text, viewed_page_lines,
 };
 use crate::bridge::Bridged;
+use crate::render::Fallback;
 
 /// The matches of one search.
 pub enum SearchHits {
@@ -28,15 +29,18 @@ pub enum SearchHits {
 /// lines that dehyphenation joins. Each match counts against
 /// `search_hit_count`, and the page's glyphs against the budgets of
 /// [`super::page_text`] while the search runs. A refusal keeps nothing.
+/// `fallback` draws the CJK fonts that the document does not embed, for
+/// [`TextOptions::exact_bboxes`] alone.
 pub fn page_search(
     bridged: &Bridged,
+    fallback: &Fallback,
     index: usize,
     options: &TextOptions,
     needle: &str,
     quads: bool,
     budget: &Budget,
 ) -> Result<(SearchHits, usize), Error> {
-    let viewed = viewed_page_lines(bridged, index, options, None, budget)?;
+    let viewed = viewed_page_lines(bridged, fallback, index, options, None, budget)?;
     let mut hits = if quads {
         SearchHits::Quads(Vec::new())
     } else {

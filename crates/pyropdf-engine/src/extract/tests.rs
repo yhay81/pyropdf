@@ -15,6 +15,8 @@ use pyropdf_store::value::Bytes;
 use pyropdf_store::version::Document;
 
 use super::*;
+use crate::fonts::embed::Face;
+use crate::render::{Fallback, FontFile, Language, Source};
 
 /// Returns a one-page PDF that paints `content`, with Helvetica as `/F1`.
 fn pdf_with(content: &str) -> Vec<u8> {
@@ -507,4 +509,193 @@ fn a_page_read_set_fits_a_small_budget_with_sparse_object_numbers() {
     let mut reads = Reads::new(&version, &small);
     read_page(&mut reads, pages.get(0).unwrap()).unwrap();
     assert_eq!(reads.finish().unwrap().objects(), [1, 2, 3, 4, 5]);
+}
+
+/// The content that shows 日本語 at 40 points.
+const SHOWN: &str = "BT /F1 40 Tf 20 30 Td <65E5672C8A9E> Tj ET";
+
+/// Returns a page that shows 日本語 at 40 points in MS-Gothic, which the file
+/// does not embed, with these entries in its descendant font.
+fn nonembedded_japanese(descendant: &str) -> Vec<u8> {
+    nonembedded_page(SHOWN, descendant)
+}
+
+/// Returns a page of `content` with MS-Gothic, which the file does not embed,
+/// as `/F1`, with these entries in its descendant font.
+fn nonembedded_page(content: &str, descendant: &str) -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /Contents 4 0 R \
+         /Resources << /Font << /F1 5 0 R >> >> >>"
+            .to_owned(),
+        format!(
+            "<< /Length {} >>\nstream\n{content}\nendstream",
+            content.len()
+        ),
+        "<< /Type /Font /Subtype /Type0 /BaseFont /MS-Gothic /Encoding /UniJIS-UCS2-H \
+         /DescendantFonts [6 0 R] >>"
+            .to_owned(),
+        format!(
+            "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /MS-Gothic /CIDSystemInfo \
+             << /Registry (Adobe) /Ordering (Japan1) /Supplement 2 >> /DW 1000 {descendant} >>"
+        ),
+    ];
+    pdf_of(&objects)
+}
+
+/// A subset of Noto Sans JP, which draws 日本語.
+const SUBSET: &[u8] = include_bytes!("../fonts/testdata/NotoSansJP-subset.otf");
+
+const EXACT: TextOptions = TextOptions {
+    clip: None,
+    keep_clipped: false,
+    unmapped: Unmapped::Skip,
+    expand_ligatures: false,
+    normalize_whitespace: false,
+    dehyphenate: false,
+    exact_bboxes: true,
+    styles: false,
+};
+
+/// Returns faces that draw Japanese in `source`.
+fn japanese(source: Source) -> Fallback {
+    let mut fallback = Fallback::default();
+    fallback.set(Language::Japanese, false, Some(source));
+    fallback
+}
+
+/// Returns the subset as the face of Japanese, as a program loads it.
+fn loaded_japanese() -> Fallback {
+    japanese(Source::Face(Arc::new(Face::read(SUBSET, 0).unwrap())))
+}
+
+/// Returns the box and the ascender of the first span of page 0, as the
+/// text options view it, in a layout through `fallback`.
+fn first_span(bridged: &Bridged, fallback: &Fallback, options: &TextOptions) -> (BBox, f64) {
+    let layout = page_layout(
+        bridged,
+        fallback,
+        0,
+        options,
+        false,
+        None,
+        &Budget::default(),
+    )
+    .unwrap();
+    let span = &layout.blocks[0].1[0].1[0];
+    (span.0, span.6.3)
+}
+
+#[test]
+fn exact_boxes_measure_a_font_that_a_document_does_not_embed_on_its_face() {
+    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    let none = Fallback::default();
+    let face = loaded_japanese();
+    let plain = TextOptions::default();
+
+    // Without a face the glyphs have no outline, so they keep the font's box.
+    let (font_box, ascender) = first_span(&bridged, &none, &plain);
+    assert_eq!(first_span(&bridged, &none, &EXACT), (font_box, ascender));
+    // A face moves the box to the outlines of the glyphs that it draws, inside
+    // the three glyphs' 120 points. It describes no font of the PDF, so the
+    // font keeps its metrics.
+    let (ink, measured) = first_span(&bridged, &face, &EXACT);
+    assert_ne!(ink, font_box);
+    assert_eq!(measured, ascender);
+    assert!(ink.0 > 20.0 && ink.2 < 140.0, "{ink:?}");
+    // Other text is the same under any faces.
+    assert_eq!(first_span(&bridged, &face, &plain), (font_box, ascender));
+    // A search of exact boxes finds the same box.
+    let (hits, _) = page_search(
+        &bridged,
+        &face,
+        0,
+        &EXACT,
+        "日本語",
+        false,
+        &Budget::default(),
+    )
+    .unwrap();
+    let SearchHits::Boxes(hits) = hits else {
+        panic!("the search asked for boxes");
+    };
+    assert_eq!(hits, [ink]);
+}
+
+#[test]
+fn only_exact_boxes_of_a_font_that_is_not_embedded_read_a_face() {
+    let name = format!("pyropdf-extract-face-{}.otf", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, SUBSET).unwrap();
+    let file = || Source::File(Arc::new(FontFile::new(path.clone(), None)));
+    let nonembedded = Bridged::of_bytes(nonembedded_japanese(""));
+    let helvetica = Bridged::of_bytes(pdf_with("BT /F1 12 Tf 10 50 Td (Hi there) Tj ET"));
+
+    // A face is read once, so one that these calls had read would still draw
+    // after its file is gone.
+    let unread = japanese(file());
+    let read = japanese(file());
+    first_span(&helvetica, &unread, &EXACT);
+    first_span(&nonembedded, &unread, &TextOptions::default());
+    let (ink, _) = first_span(&nonembedded, &read, &EXACT);
+    std::fs::remove_file(&path).unwrap();
+
+    let none = Fallback::default();
+    assert_eq!(
+        first_span(&nonembedded, &unread, &EXACT),
+        first_span(&nonembedded, &none, &EXACT)
+    );
+    assert_eq!(first_span(&nonembedded, &read, &EXACT).0, ink);
+    assert_ne!(ink, first_span(&nonembedded, &none, &EXACT).0);
+}
+
+#[test]
+fn a_stretched_face_keeps_the_advances_and_the_words_of_the_page() {
+    // Half the widths of the face's glyphs, which hayro draws at half their
+    // width, by a transform that would halve their advances too.
+    let bridged = Bridged::of_bytes(nonembedded_japanese("/W [0 65535 500]"));
+    let layout = page_layout(
+        &bridged,
+        &loaded_japanese(),
+        0,
+        &EXACT,
+        false,
+        None,
+        &Budget::default(),
+    )
+    .unwrap();
+    let line = &layout.blocks[0].1[0];
+    assert_eq!(line.2.len(), 1);
+    assert_eq!(line.2[0].1, "日本語");
+    // The ink of the three glyphs fills most of the 60 points of their widths.
+    let ink = line.2[0].0;
+    assert!(ink.0 > 20.0 && ink.2 < 80.0 && ink.2 > 70.0, "{ink:?}");
+}
+
+#[test]
+fn actual_text_spans_the_ink_of_its_glyphs_on_the_face() {
+    let plain = Bridged::of_bytes(nonembedded_japanese(""));
+    let marked = format!("/Span << /ActualText (word) >> BDC {SHOWN} EMC");
+    let marked = Bridged::of_bytes(nonembedded_page(&marked, ""));
+    let face = loaded_japanese();
+
+    let (whole, _) = first_span(&plain, &face, &EXACT);
+    let layout = page_layout(&marked, &face, 0, &EXACT, true, None, &Budget::default()).unwrap();
+    let span = &layout.blocks[0].1[0].1[0];
+    assert_eq!(span.1.0, "word");
+    assert_eq!(span.0, whole);
+}
+
+#[test]
+fn a_face_that_does_not_load_leaves_the_boxes_that_the_page_gives() {
+    let bridged = Bridged::of_bytes(nonembedded_japanese(""));
+    // hayro then shows these codes in no font at all.
+    let name = format!("pyropdf-extract-no-face-{}.otf", std::process::id());
+    let path = std::env::temp_dir().join(name);
+    std::fs::write(&path, b"no font").unwrap();
+    let broken = japanese(Source::File(Arc::new(FontFile::new(path.clone(), None))));
+    let measured = first_span(&bridged, &broken, &EXACT);
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(measured, first_span(&bridged, &Fallback::default(), &EXACT));
 }
