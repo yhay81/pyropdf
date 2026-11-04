@@ -9,6 +9,7 @@ use super::{
     try_push_text, viewed_page_lines,
 };
 use crate::bridge::Bridged;
+use crate::render::Fallback;
 
 /// Returns the text of the page at `index` in reading order from the glyph
 /// nearest `start` to the one nearest `end`, as a viewer selects it: the
@@ -26,7 +27,7 @@ pub fn page_selection(
     end: (f64, f64),
     budget: &Budget,
 ) -> Result<(String, usize), Error> {
-    let viewed = viewed_page_lines(bridged, index, options, None, budget)?;
+    let viewed = viewed_page_lines(bridged, &Fallback::default(), index, options, None, budget)?;
     // The glyphs and their text give way to the text assembled from them.
     viewed.charge.release(budget);
     let lines = &viewed.lines;

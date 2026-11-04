@@ -165,5 +165,6 @@ with pyropdf.open("input.pdf") as doc:
 ```
 
 The fonts belong to the `Document` object and are not saved. Text
-extraction does not need them: it reads the text from the character
-collection.
+extraction reads the text from the character collection without them. Only
+the exact boxes of `exact_bboxes=True` use them, to measure what a rendering
+draws.

@@ -576,7 +576,9 @@ Return the words of the current version of the page in reading order, as `Word` 
 
 Boxes are in display space and span the glyphs' advances and the
 font's ascender and descender, or their outlines with
-`exact_bboxes=True`. The other options are those of `text`; a
+`exact_bboxes=True`, which depend on `Document.fallback_fonts`
+for a CJK font that the document does not embed: they are the outlines
+of the face that draws it. The other options are those of `text`; a
 word that dehyphenation joins is one `Word` on its first line
 whose box spans both parts.
 
@@ -610,7 +612,9 @@ the index in `operations` of the operation that showed it, in
 `Char.stream` and `Char.operation`, which a second interpretation
 of the content finds. Boxes are in display space and span the glyphs' advances and the
 font's ascender and descender, or their outlines with
-`exact_bboxes=True`. Dehyphenation removes the hyphen from the end
+`exact_bboxes=True`, which depend on `Document.fallback_fonts`
+for a CJK font that the document does not embed: they are the outlines
+of the face that draws it. Dehyphenation removes the hyphen from the end
 of the line and keeps both lines. `styles=True` also reads the
 page's vector rules and sets `Span.is_underlined` and
 `Span.is_struck` where a horizontal rule underlines or strikes

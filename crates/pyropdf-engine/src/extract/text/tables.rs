@@ -12,6 +12,7 @@ use super::{
     try_push_glyph_text, try_push_str_text, try_push_text,
 };
 use crate::bridge::Bridged;
+use crate::render::Fallback;
 
 /// Fewest rows that a borderless text table holds.
 const MIN_TEXT_TABLE_ROWS: usize = 3;
@@ -66,7 +67,8 @@ pub fn page_tables(
         styles: !text_strategy,
         ..TextOptions::default()
     };
-    let collected = collect_page_glyphs(bridged, index, &options, None, budget)?;
+    let collected =
+        collect_page_glyphs(bridged, &Fallback::default(), index, &options, None, budget)?;
     let charge = collected.charge;
     let detected = cluster_lines(collected.glyphs).and_then(|lines| {
         if text_strategy {
