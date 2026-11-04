@@ -5,9 +5,9 @@ advance (#656). Only `hayro_font::Font::glyph_stretch` tells the stretch, of a
 font that `hayro-font` loads, and `hayro_interpret` does not share the font it
 loaded, so `crates/pyropdf-engine/src/extract/stretch.rs` loads it again.
 
-`#656`'s notes proposed loading a font again only when its dictionary names no
-font program. That misses a program that hayro does not read: hayro then draws
-the same stretched substitute, and pages 9 to 11 of
+The notes of #656 proposed loading a font again only when its dictionary names
+no font program. That misses a program that hayro does not read: hayro then
+draws the same stretched substitute, and pages 9 and 10 of
 `tests/assets/text/nonembedded-latin.pdf` read with stretched advances. So a
 run's glyphs decide instead: a font loads when the x basis of a glyph's
 transform is not the length of its y basis, which a stretch leaves, and which
@@ -41,7 +41,14 @@ each page loads its fonts again.
 
 ## What it does not show
 
-No corpus document sets text in an embedded font with `Tz` or an anisotropic
-text matrix across its pages at a scale where the load would show. Such a
+`count_runs.py` writes `runs.txt`, which counts the runs that pass the filter.
+Of the documents with embedded programs, `bill-hr815` and `f1040` pass on nearly
+every page, with 1038 of 8163 and 367 of 1976 runs under `Tz` or an anisotropic
+text matrix. Their programs are CFF subsets, whose load does not show even in
+the `always` column. The three documents where a load does show, with Type 1
+programs in `usrguide` and TrueType programs in `mhlw-doc` and
+`nics-background-checks-2015-11`, have no passing run.
+
+So the corpus does not measure a Type 1 or TrueType program under `Tz`. Such a
 document would pay about what `always` pays, once per font and page. That is an
 estimate from the `always` column, not a measurement.

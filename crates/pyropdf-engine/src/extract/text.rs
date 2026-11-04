@@ -602,10 +602,10 @@ impl ContentSink for FaceInk<'_> {
 /// document does not embed.
 ///
 /// hayro keeps the stretch of a face's glyph to its PDF width in the glyph's
-/// transform, where nothing tells it apart, so the records keep what the
-/// page gives without faces and take only their ink from this interpretation.
-/// A face that does not load leaves hayro another font, which shows other
-/// glyphs: the records then keep their boxes.
+/// transform, so the records keep what the page gives without faces and take
+/// only their ink from this interpretation. A face that does not load leaves
+/// hayro another font, which shows other glyphs: the records then keep their
+/// boxes.
 fn measure_on_faces<'a>(
     pdf: &'a Pdf,
     page: &Page<'a>,

@@ -51,11 +51,13 @@ def test_the_report_covers_the_corpus_and_explains_every_difference() -> None:
     report = (HARNESS / "report.md").read_text()
 
     measured = sorted(NAMES)
-    assert sorted(results) == sorted([
-        *(name.removesuffix(".pdf") for name in measured),
-        FALLBACK.stem,
-        SUBSTITUTED.stem,
-    ])
+    assert sorted(results) == sorted(
+        [
+            *(name.removesuffix(".pdf") for name in measured),
+            FALLBACK.stem,
+            SUBSTITUTED.stem,
+        ]
+    )
     compare = _compare()
     metadata = json.loads((HARNESS / "metadata.json").read_text())
     assert metadata["pylopdf_commit"] == "ebb01d3c4c742046e8ce7fd72957cd15a2933321"
