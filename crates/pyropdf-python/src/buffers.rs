@@ -5,7 +5,6 @@
 //! (DESIGN.md section 10).
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::ptr;
 use std::sync::Arc;
@@ -15,11 +14,9 @@ use pyo3::ffi;
 use pyo3::prelude::*;
 use pyo3::types::PyCapsule;
 use pyropdf_engine::extract::{
-    BBox, BlockTuple, ClipTuple, ContentItem, GroupTuple, MarkTuple, PageContent, PaintTuple,
-    PathTuple, StateTuple,
+    BBox, BlockTuple, ClipTuple, Contexts, GroupTuple, MarkTuple, PageContent, PaintColumns,
+    PaintTuple, PathTable, StateTuple,
 };
-
-use crate::errors::PdfError;
 
 /// A table whose columns a [`Column`] exposes.
 trait Columns: Send + Sync {
@@ -289,12 +286,6 @@ impl CharColumns {
     }
 }
 
-/// The verbs of the segment columns: the PDF path operators that the
-/// content model records, `h` closing the subpath.
-const MOVE: u8 = b'm';
-const LINE: u8 = b'l';
-const CURVE: u8 = b'c';
-
 /// One path as `python/pyropdf/_content.py` builds a `Path` from it:
 /// `(verbs, coordinates, bbox, fill, even_odd, stroke, context, blend mode,
 /// soft mask)`, with the verbs, the coordinates, and the type of the soft
@@ -319,196 +310,43 @@ type PaintRow = (i32, (f64, f64, f64, f64));
 /// lengths, and dash offset.
 type StrokeRow<'a> = (PaintRow, f64, u8, u8, f64, &'a [f64], f64);
 
-/// Returns an empty column that holds `capacity` items without growing.
-fn column<T>(capacity: usize) -> PyResult<Vec<T>> {
-    let mut items = Vec::new();
-    items
-        .try_reserve_exact(capacity)
-        .map_err(|error| PdfError::new_err(format!("cannot hold the path columns: {error}")))?;
-    Ok(items)
-}
-
-/// Returns an Arrow bitmap of `rows` clear bits.
-fn bitmap(rows: usize) -> PyResult<Vec<u8>> {
-    let mut bits = column(rows.div_ceil(8))?;
-    bits.resize(rows.div_ceil(8), 0);
-    Ok(bits)
-}
-
-/// Returns a count as an Arrow `list` offset.
-fn offset(count: usize) -> PyResult<i32> {
-    i32::try_from(count).map_err(|_| PyValueError::new_err("the paths have too many segments"))
-}
-
-/// The distinct pattern paints of the paths, in the order in which the paths
-/// first use them.
-#[derive(Default)]
-struct Patterns {
-    paints: Vec<PaintTuple>,
-    /// The index of each paint, by its kind and the bits of its values.
-    indexes: HashMap<(u8, Vec<u64>), i32>,
-}
-
-impl Patterns {
-    /// Returns the index of `paint`, adding it when it is new.
-    fn index(&mut self, paint: &PaintTuple) -> PyResult<i32> {
-        let bits: Vec<u64> = paint.1.iter().map(|&value| value_bits(value)).collect();
-        let key = (paint.0, bits);
-        if let Some(&index) = self.indexes.get(&key) {
-            return Ok(index);
-        }
-        let index = offset(self.paints.len())?;
-        self.paints.push(paint.clone());
-        self.indexes.insert(key, index);
-        Ok(index)
-    }
-}
-
-/// Returns the bits of a pattern's value, with -0.0 read as 0.0, as Python
-/// compares them.
-fn value_bits(value: f64) -> u64 {
-    if value == 0.0 { 0 } else { value.to_bits() }
-}
-
-/// The kind of a color paint in the content model's paint tuples.
-const COLOR: u8 = 0;
-
-/// One paint of every path, its fill or its stroke.
-struct PaintColumns {
-    /// Whether the path has the paint, 0 or 1.
-    present: Vec<u8>,
-    /// A color's sRGB components and alpha, NaN for a pattern or no paint.
-    red: Vec<f32>,
-    green: Vec<f32>,
-    blue: Vec<f32>,
-    alpha: Vec<f32>,
-    /// A pattern's index in [`PathTable::patterns`], -1 for a color or no
-    /// paint.
-    pattern: Vec<i32>,
-    /// Arrow bitmaps, least significant bit first: whether a row has the
-    /// paint, whether it is a color, and whether it is a pattern.
-    present_bits: Vec<u8>,
-    color_bits: Vec<u8>,
-    pattern_bits: Vec<u8>,
-}
-
-impl PaintColumns {
-    fn new(rows: usize) -> PyResult<Self> {
-        Ok(Self {
-            present: column(rows)?,
-            red: column(rows)?,
-            green: column(rows)?,
-            blue: column(rows)?,
-            alpha: column(rows)?,
-            pattern: column(rows)?,
-            present_bits: bitmap(rows)?,
-            color_bits: bitmap(rows)?,
-            pattern_bits: bitmap(rows)?,
-        })
-    }
-
-    /// Appends the paint of `row`.
-    fn push(
-        &mut self,
-        row: usize,
-        paint: Option<&PaintTuple>,
-        patterns: &mut Patterns,
-    ) -> PyResult<()> {
-        let (rgba, pattern) = match paint {
-            None => ([f32::NAN; 4], -1),
-            Some((COLOR, values)) => {
-                let &[red, green, blue, alpha] = values.as_slice() else {
-                    return Err(PdfError::new_err("a color paint holds four values"));
-                };
-                set_bit(&mut self.color_bits, row);
-                // hayro computes colors as f32, which the f64 values hold
-                // exactly.
-                ([red, green, blue, alpha].map(|value| value as f32), -1)
-            }
-            Some(paint) => {
-                set_bit(&mut self.pattern_bits, row);
-                ([f32::NAN; 4], patterns.index(paint)?)
-            }
-        };
-        if paint.is_some() {
-            set_bit(&mut self.present_bits, row);
-        }
-        self.present.push(u8::from(paint.is_some()));
-        self.red.push(rgba[0]);
-        self.green.push(rgba[1]);
-        self.blue.push(rgba[2]);
-        self.alpha.push(rgba[3]);
-        self.pattern.push(pattern);
-        Ok(())
-    }
-
-    fn row(&self, row: usize) -> PaintRow {
+/// Returns the paint of `row` in the form of a [`PathRow`].
+fn paint_row(paint: &PaintColumns, row: usize) -> PaintRow {
+    (
+        paint.pattern[row],
         (
-            self.pattern[row],
-            (
-                f64::from(self.red[row]),
-                f64::from(self.green[row]),
-                f64::from(self.blue[row]),
-                f64::from(self.alpha[row]),
-            ),
-        )
-    }
+            f64::from(paint.red[row]),
+            f64::from(paint.green[row]),
+            f64::from(paint.blue[row]),
+            f64::from(paint.alpha[row]),
+        ),
+    )
 }
 
-/// The paths of a page's content, one row per path in paint order, each
-/// field in its own column, with the segments of every path and the dash
-/// lengths of every stroke in columns of their own, which offsets index.
-struct PathTable {
-    x0: Vec<f64>,
-    y0: Vec<f64>,
-    x1: Vec<f64>,
-    y1: Vec<f64>,
-    /// Arrow `list` offsets into the segment columns, one more than the rows.
-    segment_offsets: Vec<i32>,
-    fill: PaintColumns,
-    /// 1 for the even-odd rule, 0 for the nonzero rule.
-    fill_rule: Vec<u8>,
-    stroke: PaintColumns,
-    /// The stroke's style, NaN or 0 without a stroke.
-    stroke_width: Vec<f64>,
-    stroke_cap: Vec<u8>,
-    stroke_join: Vec<u8>,
-    stroke_miter_limit: Vec<f64>,
-    /// Arrow `list` offsets into `stroke_dashes`, one more than the rows.
-    stroke_dashes_offsets: Vec<i32>,
-    stroke_dash_offset: Vec<f64>,
-    /// The index of the path's graphics context in `states`.
-    context: Vec<u32>,
-    blend_mode: Vec<u8>,
-    /// The position of the type of the path's soft mask in `SoftMaskType`,
-    /// or -1.
-    soft_mask: Vec<i8>,
-    /// Arrow bitmap: whether a row has a soft mask.
-    soft_mask_bits: Vec<u8>,
-    /// Each segment's path, verb, end point, and a curve's control points,
-    /// NaN for the other verbs; a closing segment ends where its subpath
-    /// starts.
-    path: Vec<u32>,
-    verb: Vec<u8>,
-    to_x: Vec<f64>,
-    to_y: Vec<f64>,
-    c1_x: Vec<f64>,
-    c1_y: Vec<f64>,
-    c2_x: Vec<f64>,
-    c2_y: Vec<f64>,
-    /// Arrow bitmap: whether a segment is a curve, and how many are.
-    curve_bits: Vec<u8>,
-    curves: usize,
-    /// The dash lengths of every stroke.
-    stroke_dashes: Vec<f64>,
-    /// The distinct pattern paints that the pattern columns index.
-    patterns: Vec<PaintTuple>,
-    /// The content's graphics contexts, with the clips, groups, and marked
-    /// content that they index, as `page_content` hands them out.
-    clips: Vec<ClipTuple>,
-    groups: Vec<GroupTuple>,
-    marks: Vec<MarkTuple>,
-    states: Vec<StateTuple>,
+/// Returns `row` of `table` in the tuple form that `Path` records are built
+/// from.
+fn path_row(table: &PathTable, row: usize) -> PathRow<'_> {
+    (
+        &table.verb[table.segments_of(row)],
+        table.coordinates(row),
+        (table.x0[row], table.y0[row], table.x1[row], table.y1[row]),
+        (table.fill.present[row] != 0).then(|| paint_row(&table.fill, row)),
+        table.fill_rule[row] != 0,
+        (table.stroke.present[row] != 0).then(|| {
+            (
+                paint_row(&table.stroke, row),
+                table.stroke_width[row],
+                table.stroke_cap[row],
+                table.stroke_join[row],
+                table.stroke_miter_limit[row],
+                &table.stroke_dashes[table.dashes_of(row)],
+                table.stroke_dash_offset[row],
+            )
+        }),
+        table.context[row],
+        table.blend_mode[row],
+        u8::try_from(table.soft_mask[row]).ok(),
+    )
 }
 
 /// The columns that `Paths.column` names, in the order of `Paths.names`.
@@ -550,207 +388,6 @@ const PATH_COLUMNS: [&str; 36] = [
     "blend_mode",
     "soft_mask",
 ];
-
-impl PathTable {
-    /// Returns the columns of the paths of `content`, in paint order.
-    fn new(content: &PageContent) -> PyResult<Self> {
-        let paths = || {
-            content.items.iter().filter_map(|item| match item {
-                ContentItem::Path(path) => Some(path),
-                ContentItem::Text(_) | ContentItem::Image(_) => None,
-            })
-        };
-        let (mut rows, mut segments, mut dashes) = (0, 0, 0);
-        for (verbs, _, _, _, _, stroke, _) in paths() {
-            rows += 1;
-            segments += verbs.len();
-            dashes += stroke.as_ref().map_or(0, |stroke| stroke.5.len());
-        }
-        let mut table = Self {
-            x0: column(rows)?,
-            y0: column(rows)?,
-            x1: column(rows)?,
-            y1: column(rows)?,
-            segment_offsets: column(rows + 1)?,
-            fill: PaintColumns::new(rows)?,
-            fill_rule: column(rows)?,
-            stroke: PaintColumns::new(rows)?,
-            stroke_width: column(rows)?,
-            stroke_cap: column(rows)?,
-            stroke_join: column(rows)?,
-            stroke_miter_limit: column(rows)?,
-            stroke_dashes_offsets: column(rows + 1)?,
-            stroke_dash_offset: column(rows)?,
-            context: column(rows)?,
-            blend_mode: column(rows)?,
-            soft_mask: column(rows)?,
-            soft_mask_bits: bitmap(rows)?,
-            path: column(segments)?,
-            verb: column(segments)?,
-            to_x: column(segments)?,
-            to_y: column(segments)?,
-            c1_x: column(segments)?,
-            c1_y: column(segments)?,
-            c2_x: column(segments)?,
-            c2_y: column(segments)?,
-            curve_bits: bitmap(segments)?,
-            curves: 0,
-            stroke_dashes: column(dashes)?,
-            patterns: Vec::new(),
-            clips: content.clips.clone(),
-            groups: content.groups.clone(),
-            marks: content.marks.clone(),
-            states: content.states.clone(),
-        };
-        table.segment_offsets.push(0);
-        table.stroke_dashes_offsets.push(0);
-        let mut patterns = Patterns::default();
-        for path in paths() {
-            table.push(path, &mut patterns)?;
-        }
-        table.patterns = patterns.paints;
-        Ok(table)
-    }
-
-    /// Appends one path of the content model.
-    fn push(&mut self, path: &PathTuple, patterns: &mut Patterns) -> PyResult<()> {
-        let (verbs, coords, (x0, y0, x1, y1), fill, even_odd, stroke, (state, blend, mask)) = path;
-        let row = self.x0.len();
-        self.x0.push(*x0);
-        self.y0.push(*y0);
-        self.x1.push(*x1);
-        self.y1.push(*y1);
-        let path_row =
-            u32::try_from(row).map_err(|_| PyValueError::new_err("the page has too many paths"))?;
-        self.push_segments(path_row, verbs, coords)?;
-        self.segment_offsets.push(offset(self.verb.len())?);
-        self.fill.push(row, fill.as_ref(), patterns)?;
-        self.fill_rule.push(u8::from(*even_odd));
-        match stroke {
-            Some((paint, width, cap, join, miter_limit, dashes, dash_offset)) => {
-                self.stroke.push(row, Some(paint), patterns)?;
-                self.stroke_width.push(*width);
-                self.stroke_cap.push(*cap);
-                self.stroke_join.push(*join);
-                self.stroke_miter_limit.push(*miter_limit);
-                self.stroke_dashes.extend_from_slice(dashes);
-                self.stroke_dash_offset.push(*dash_offset);
-            }
-            None => {
-                self.stroke.push(row, None, patterns)?;
-                self.stroke_width.push(f64::NAN);
-                self.stroke_cap.push(0);
-                self.stroke_join.push(0);
-                self.stroke_miter_limit.push(f64::NAN);
-                self.stroke_dash_offset.push(f64::NAN);
-            }
-        }
-        self.stroke_dashes_offsets
-            .push(offset(self.stroke_dashes.len())?);
-        self.context.push(*state);
-        self.blend_mode.push(*blend);
-        if mask.is_some() {
-            set_bit(&mut self.soft_mask_bits, row);
-        }
-        // The content model's types, 0 for alpha and 1 for luminosity, are the
-        // positions in `SoftMaskType`.
-        self.soft_mask.push(mask.map_or(-1, |mask| mask as i8));
-        Ok(())
-    }
-
-    /// Appends the segments of the path at row `path`, from the verbs and
-    /// coordinates of the content model.
-    fn push_segments(&mut self, path: u32, verbs: &[u8], coords: &[f64]) -> PyResult<()> {
-        let mut values = coords.iter().copied();
-        let mut point = || -> PyResult<(f64, f64)> {
-            match (values.next(), values.next()) {
-                (Some(x), Some(y)) => Ok((x, y)),
-                _ => Err(PdfError::new_err(
-                    "a path holds fewer coordinates than its segments need",
-                )),
-            }
-        };
-        let none = (f64::NAN, f64::NAN);
-        let mut start = none;
-        for &verb in verbs {
-            let (to, controls) = match verb {
-                MOVE => {
-                    start = point()?;
-                    (start, None)
-                }
-                LINE => (point()?, None),
-                CURVE => {
-                    let (c1, c2) = (point()?, point()?);
-                    (point()?, Some((c1, c2)))
-                }
-                _ => (start, None),
-            };
-            if controls.is_some() {
-                set_bit(&mut self.curve_bits, self.verb.len());
-                self.curves += 1;
-            }
-            let (c1, c2) = controls.unwrap_or((none, none));
-            self.path.push(path);
-            self.verb.push(verb);
-            self.to_x.push(to.0);
-            self.to_y.push(to.1);
-            self.c1_x.push(c1.0);
-            self.c1_y.push(c1.1);
-            self.c2_x.push(c2.0);
-            self.c2_y.push(c2.1);
-        }
-        Ok(())
-    }
-
-    fn len(&self) -> usize {
-        self.x0.len()
-    }
-
-    /// Returns `row` in the tuple form that `Path` records are built from.
-    fn row(&self, row: usize) -> PathRow<'_> {
-        let segments = self.segment_offsets[row] as usize..self.segment_offsets[row + 1] as usize;
-        let mut coords = Vec::new();
-        for segment in segments.clone() {
-            let to = [self.to_x[segment], self.to_y[segment]];
-            match self.verb[segment] {
-                MOVE | LINE => coords.extend(to),
-                CURVE => {
-                    coords.extend([
-                        self.c1_x[segment],
-                        self.c1_y[segment],
-                        self.c2_x[segment],
-                        self.c2_y[segment],
-                    ]);
-                    coords.extend(to);
-                }
-                _ => {}
-            }
-        }
-        let dashes =
-            self.stroke_dashes_offsets[row] as usize..self.stroke_dashes_offsets[row + 1] as usize;
-        (
-            &self.verb[segments],
-            coords,
-            (self.x0[row], self.y0[row], self.x1[row], self.y1[row]),
-            (self.fill.present[row] != 0).then(|| self.fill.row(row)),
-            self.fill_rule[row] != 0,
-            (self.stroke.present[row] != 0).then(|| {
-                (
-                    self.stroke.row(row),
-                    self.stroke_width[row],
-                    self.stroke_cap[row],
-                    self.stroke_join[row],
-                    self.stroke_miter_limit[row],
-                    &self.stroke_dashes[dashes],
-                    self.stroke_dash_offset[row],
-                )
-            }),
-            self.context[row],
-            self.blend_mode[row],
-            u8::try_from(self.soft_mask[row]).ok(),
-        )
-    }
-}
 
 impl Columns for PathTable {
     /// Returns the bytes of the column `name` for the rows `start..stop`,
@@ -800,38 +437,43 @@ impl Columns for PathTable {
     }
 }
 
-/// The columns of the paths of a page's content, which `Paths` views.
+/// The columns of the paths of a page's content, which `Paths` views: the
+/// buffers that the content holds, without a copy.
 #[pyclass(frozen, module = "pyropdf._core")]
 pub struct PathColumns {
     table: Arc<PathTable>,
+    contexts: Arc<Contexts>,
 }
 
 impl PathColumns {
     /// Returns the columns of the paths of `content`.
-    pub(crate) fn new(content: &PageContent) -> PyResult<Self> {
-        Ok(Self {
-            table: Arc::new(PathTable::new(content)?),
-        })
+    pub(crate) fn new(content: &PageContent) -> Self {
+        Self {
+            table: Arc::clone(&content.paths),
+            contexts: Arc::clone(&content.contexts),
+        }
     }
 }
 
 #[pymethods]
 impl PathColumns {
     fn __len__(&self) -> usize {
-        self.table.len()
+        self.table.rows()
     }
 
     /// Returns the rows `start..stop` as the tuples that `Path` records are
     /// built from.
     fn rows(&self, start: usize, stop: usize) -> PyResult<Vec<PathRow<'_>>> {
-        rows_of(start, stop, self.table.len())?;
-        Ok((start..stop).map(|row| self.table.row(row)).collect())
+        rows_of(start, stop, self.table.rows())?;
+        Ok((start..stop)
+            .map(|row| path_row(&self.table, row))
+            .collect())
     }
 
     /// Returns the column `name` for the rows `start..stop`, which
     /// `memoryview` reads without a copy.
     fn column(&self, name: &str, start: usize, stop: usize) -> PyResult<Column> {
-        rows_of(start, stop, self.table.len())?;
+        rows_of(start, stop, self.table.rows())?;
         let Some(at) = PATH_COLUMNS.iter().position(|column| *column == name) else {
             return Err(PyValueError::new_err(format!(
                 "Paths has no column {name:?}"
@@ -847,27 +489,20 @@ impl PathColumns {
 
     /// Returns the graphics contexts that the `context` column indexes, as
     /// `(clips, groups, marks, states)` in the tuple forms of `page_content`.
-    fn contexts(
-        &self,
-    ) -> (
-        Vec<ClipTuple>,
-        Vec<GroupTuple>,
-        Vec<MarkTuple>,
-        Vec<StateTuple>,
-    ) {
-        let table = &self.table;
+    fn contexts(&self) -> (&[ClipTuple], &[GroupTuple], &[MarkTuple], &[StateTuple]) {
+        let contexts = &*self.contexts;
         (
-            table.clips.clone(),
-            table.groups.clone(),
-            table.marks.clone(),
-            table.states.clone(),
+            &contexts.clips,
+            &contexts.groups,
+            &contexts.marks,
+            &contexts.states,
         )
     }
 
     /// Returns the pattern paints that the pattern columns index, in the
     /// tuple form of `page_content`.
-    fn patterns(&self) -> Vec<PaintTuple> {
-        self.table.patterns.clone()
+    fn patterns(&self) -> &[PaintTuple] {
+        &self.table.patterns
     }
 
     /// Returns the Arrow schema of the rows as a PyCapsule.
@@ -883,7 +518,7 @@ impl PathColumns {
         start: usize,
         stop: usize,
     ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
-        rows_of(start, stop, self.table.len())?;
+        rows_of(start, stop, self.table.rows())?;
         let array = path_array(&self.table, start, stop);
         Ok((schema_capsule(py, &PATH_STRUCT)?, array_capsule(py, array)?))
     }
