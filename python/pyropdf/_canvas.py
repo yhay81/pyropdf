@@ -69,7 +69,7 @@ if TYPE_CHECKING:
     PathLike: TypeAlias = "PathBuilder | Path | Iterable[Segment]"
     _Affine: TypeAlias = tuple[float, float, float, float, float, float]
     # How text draws a glyph in a Type 3 font: its name, advance, and strike, from ``_Font.colour_glyphs``.
-    _ColourGlyph: TypeAlias = tuple[str, float, int]
+    _ColourGlyph: TypeAlias = tuple[str, float, int | None]
 
 #: The control-point factor that approximates a quarter circle with a cubic curve.
 _KAPPA = 4 * (math.sqrt(2) - 1) / 3
@@ -867,12 +867,14 @@ class _TagScope(AbstractContextManager[None]):
 class _Images:
     """The images and pages that a document's canvases wrote, keyed by their content."""
 
-    __slots__ = ("colour", "faces", "fonts", "forms", "images")
+    __slots__ = ("colour", "faces", "fonts", "forms", "images", "shadings")
 
     def __init__(self) -> None:
         self.fonts: dict[bytes, int] = {}
         # The Type 3 fonts of the faces that text drew in colour, by program digest.
         self.colour: dict[bytes, list[int]] = {}
+        # The shading objects that those fonts' COLR glyphs share.
+        self.shadings = _core._Shadings()  # noqa: SLF001
         # The faces of the Type0 fonts that free text was drawn in, by font object.
         self.faces: dict[int, Font] = {}
         self.images: dict[bytes, int] = {}
@@ -1574,10 +1576,11 @@ class Canvas:
         is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
         default (``max_text_size``, ``None`` for trusted input), refused with
         :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
-        A colour glyph that a PNG strike holds draws in its own colours, which
-        ``fill`` and ``stroke`` do not change. Any other colour glyph with no
-        outline in an OpenType face raises :class:`PdfError`, naming the
-        character; see :class:`Font`.
+        A colour glyph that COLR paints or a PNG strike holds draws in its own
+        colours, which ``fill`` and ``stroke`` do not change, except for a COLR layer
+        in the text's colour, which takes the fill. Any other colour glyph with no
+        outline in an OpenType face raises :class:`PdfError`, naming the character,
+        the glyph, and the paint; see :class:`Font`.
         """
         self._check_open()
         checked = _text_input(text, max_text_size)
@@ -1757,9 +1760,9 @@ class Canvas:
     def _shown_glyphs(self, font: Font, size: float, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
         """Return the operators that show each line in an embedded face.
 
-        The glyphs are shaped in visual order. One that a strike holds is
-        shown as a one-byte code of a Type 3 font, and any other as an
-        Identity-H code, its glyph ID, after their widths and texts are added
+        The glyphs are shaped in visual order. One that COLR or a strike
+        paints is shown as a one-byte code of a Type 3 font, and any other as
+        an Identity-H code, its glyph ID, after their widths and texts are added
         to the fonts. Those writes are one nested transaction, so a refusal
         that the canvas's block catches leaves nothing of them.
         """
@@ -1803,9 +1806,9 @@ class Canvas:
     ) -> dict[str, tuple[int, int, str | None]]:
         """Add what ``font``'s Type 3 fonts lack of ``colour``, and return each glyph's font, code, and CMap text.
 
-        ``painted`` holds each drawn glyph's name with its text. Each glyph
-        of a strike has one procedure and one image in the document, however
-        many drawings use it.
+        ``painted`` holds each drawn glyph's name with its text. A glyph has
+        one procedure in the document, however many drawings use it, with one
+        image for each of its strikes, or one group of its COLR paints.
         """
         document = self._page.document
         core = document._core()  # noqa: SLF001
@@ -1815,8 +1818,12 @@ class Canvas:
         wanted = [(glyph, entry) for glyph, entry in colour.items() if entry is not None]
         held = _core.type3_codes(core, fonts, em, [entry[0] for _, entry in wanted])
         new: list[tuple[str, float, tuple[float, float, float, float] | None, int | None]] = []
+        layered: list[tuple[str, float, int]] = []
         for (glyph, (name, advance, ppem)), found in zip(wanted, held, strict=True):
             if found is not None:
+                continue
+            if ppem is None:
+                layered.append((name, advance, glyph))
                 continue
             if not ppem:
                 new.append((name, advance, None, None))
@@ -1826,7 +1833,8 @@ class Canvas:
                 image = self._glyph_image(font, glyph, png)
             new.append((name, advance, (rect[0], rect[1], rect[2], rect[3]), image))
         pairs = list(dict.fromkeys(painted))
-        placed = _core.type3_draw(core, fonts, em, new, pairs)
+        shadings = _cache(document).shadings
+        placed = _core.type3_draw(core, fonts, em, new, pairs, face=face, shadings=shadings, painted=layered)
         fonts.extend(dict.fromkeys(number for number, _, _ in placed if number not in fonts))
         return {name: result for (name, _), result in zip(pairs, placed, strict=True)}
 

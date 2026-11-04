@@ -15,7 +15,35 @@ The faces are committed, so the tests do not need fontTools. Each draws:
 In ``eblc``, the table is a monochrome bitmap table, which is not a colour
 table, and ``eblc-only`` has that table and no outlines, which a load refuses.
 ``sbix-jpeg`` and ``cbdt-raw`` hold strikes that drawing does not read, and
-``sbix-damaged`` PNGs that do not decode.
+``sbix-damaged`` PNGs that do not decode. ``colr0`` and ``colr1`` paint the
+square in red, which the canvas draws; ``colr-sweep`` paints it with a sweep
+gradient, which it does not.
+
+``colr-paints`` is for drawing COLR v1 in colour. Its em is 1000, and each
+glyph's layers are a square from (100, 0) to (900, 800), or its left or right
+half. Its palette is red, blue, green, and cyan. It draws:
+
+- ``L``: a linear gradient from red at x = 100 to blue at x = 900;
+- ``R``: a radial gradient from green at (500, 400) to blue 400 units out;
+- ``T``: green, through a transform that halves it toward the origin;
+- ``K``: blue, in a clip box of the left half;
+- ``M``: cyan multiplied over red on the right half, which is black;
+- ``I``: blue in the alpha of red's left half (``SrcIn``);
+- ``O``: red, with blue's left half cut out (``DestOut``);
+- ``P``: blue and red in ``Xor``, which the canvas does not draw;
+- ``G``: ``PaintColrGlyph`` of ``L``;
+- ``Y`` and ``J``: red, then blue at half alpha on the right half, layers that
+  the two glyphs share;
+- ``A``: red, from opaque at x = 100 to clear at x = 900, and ``F``: the same
+  to clear blue, which in premultiplied alpha never shows;
+- ``N``: the text's colour, and ``Q``: a gradient stop in it, which the canvas
+  does not draw, and ``U``: the same gradient clipped to the space's empty
+  outline, which shows nothing and still refuses;
+- ``W``: a sweep gradient, with a fallback outline, and ``V``: the same paint
+  with none;
+- ``X``: ``PaintColrGlyph`` of itself, a cycle, with a fallback outline;
+- ``Z``: green, under ``DEEP`` nested transforms, past skrifa's depth;
+- ``H``: ``HEAVY`` layers, each its own gradient with alpha.
 
 The ``bitmaps-*`` faces are for drawing in colour, with solid images that a
 render can tell apart. Their em is 1000, and a strike's image covers one em
@@ -151,17 +179,23 @@ def _svg(font: TTFont) -> None:
     font["SVG "] = table
 
 
-def _colr(font: TTFont, version: int) -> None:
+def _colr(font: TTFont, kind: str) -> None:
     font["CPAL"] = buildCPAL([[(1.0, 0.0, 0.0, 1.0)]])
-    if version == 0:
+    if kind == "colr0":
         glyphs = {name: [("layer", 0)] for name in COVERED}
     else:
-        paint = {
-            "Format": otTables.PaintFormat.PaintGlyph,
-            "Paint": {"Format": otTables.PaintFormat.PaintSolid, "PaletteIndex": 0, "Alpha": 1.0},
-            "Glyph": "layer",
-        }
-        glyphs = dict.fromkeys(COVERED, paint)
+        paint = {"Format": otTables.PaintFormat.PaintSolid, "PaletteIndex": 0, "Alpha": 1.0}
+        if kind == "colr-sweep":
+            paint = {
+                "Format": otTables.PaintFormat.PaintSweepGradient,
+                "ColorLine": _line((0, 0, 1.0), (1, 0, 0.5)),
+                "centerX": 500,
+                "centerY": 400,
+                "startAngle": 0,
+                "endAngle": 360,
+            }
+        glyphs = dict.fromkeys(COVERED, _glyph("layer", paint))
+    version = 0 if kind == "colr0" else 1
     font["COLR"] = buildCOLR(glyphs, version=version, glyphMap=font.getReverseGlyphMap())
 
 
@@ -179,8 +213,8 @@ def face(kind: str) -> bytes:
     builder.setupOS2()
     builder.setupPost()
     font = builder.font
-    if kind in {"colr0", "colr1"}:
-        _colr(font, int(kind[-1]))
+    if kind in {"colr0", "colr1", "colr-sweep"}:
+        _colr(font, kind)
     elif kind == "sbix":
         font["sbix"] = _sbix()
     elif kind == "sbix-jpeg":
@@ -343,9 +377,176 @@ def bitmap_face(
     return out.getvalue()
 
 
+#: The palette of ``colr-paints``: red, blue, green, and cyan.
+PALETTE = ((1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0), (0.0, 1.0, 0.0, 1.0), (0.0, 1.0, 1.0, 1.0))
+RED, BLUE, GREEN, CYAN = range(4)
+#: The palette index of the text's colour.
+TEXT_COLOUR = 0xFFFF
+#: The shapes of ``colr-paints``' layers, which no character maps.
+LAYERS = {
+    "square": SQUARE,
+    "left": ((100, 0), (100, 800), (500, 800), (500, 0)),
+    "right": ((500, 0), (500, 800), (900, 800), (900, 0)),
+}
+#: The layers of the glyph ``H``, each its own gradient.
+HEAVY = 200
+#: How deep ``Z`` nests its transforms, past skrifa's 64.
+DEEP = 70
+
+
+def _solid(index: int, alpha: float = 1.0) -> dict[str, object]:
+    return {"Format": otTables.PaintFormat.PaintSolid, "PaletteIndex": index, "Alpha": alpha}
+
+
+def _glyph(shape: str, paint: dict[str, object]) -> dict[str, object]:
+    return {"Format": otTables.PaintFormat.PaintGlyph, "Paint": paint, "Glyph": shape}
+
+
+def _line(*stops: tuple[float, int, float], extend: str = "pad") -> dict[str, object]:
+    return {
+        "Extend": extend,
+        "ColorStop": [{"StopOffset": offset, "PaletteIndex": index, "Alpha": alpha} for offset, index, alpha in stops],
+    }
+
+
+def _linear(line: dict[str, object], x0: float = 100, x1: float = 900) -> dict[str, object]:
+    return {
+        "Format": otTables.PaintFormat.PaintLinearGradient,
+        "ColorLine": line,
+        "x0": x0,
+        "y0": 0,
+        "x1": x1,
+        "y1": 0,
+        "x2": x0,
+        "y2": 800,
+    }
+
+
+def _layers(*layers: dict[str, object]) -> dict[str, object]:
+    return {"Format": otTables.PaintFormat.PaintColrLayers, "Layers": list(layers)}
+
+
+def _composite(mode: str, source: dict[str, object], backdrop: dict[str, object]) -> dict[str, object]:
+    return {
+        "Format": otTables.PaintFormat.PaintComposite,
+        "SourcePaint": source,
+        "CompositeMode": mode,
+        "BackdropPaint": backdrop,
+    }
+
+
+def _transform(paint: dict[str, object], scale: float = 1.0, dx: float = 0.0) -> dict[str, object]:
+    return {
+        "Format": otTables.PaintFormat.PaintTransform,
+        "Paint": paint,
+        "Transform": {"xx": scale, "yx": 0, "xy": 0, "yy": scale, "dx": dx, "dy": 0},
+    }
+
+
+def _paints() -> dict[str, object]:
+    """Return the root paint of each colour glyph of ``colr-paints``."""
+    red_to_blue = _glyph("square", _linear(_line((0, RED, 1.0), (1, BLUE, 1.0))))
+    deep = _glyph("square", _solid(GREEN))
+    for _ in range(DEEP):
+        deep = _transform(deep)
+    return {
+        "L": red_to_blue,
+        "R": _glyph(
+            "square",
+            {
+                "Format": otTables.PaintFormat.PaintRadialGradient,
+                "ColorLine": _line((0, GREEN, 1.0), (1, BLUE, 1.0)),
+                "x0": 500,
+                "y0": 400,
+                "r0": 0,
+                "x1": 500,
+                "y1": 400,
+                "r1": 400,
+            },
+        ),
+        "T": _transform(_glyph("square", _solid(GREEN)), scale=0.5),
+        "K": _glyph("square", _solid(BLUE)),
+        "M": _composite("multiply", _glyph("right", _solid(CYAN)), _glyph("square", _solid(RED))),
+        "I": _composite("src_in", _glyph("square", _solid(BLUE)), _glyph("left", _solid(RED))),
+        "O": _composite("dest_out", _glyph("left", _solid(BLUE)), _glyph("square", _solid(RED))),
+        "P": _composite("xor", _glyph("left", _solid(BLUE)), _glyph("square", _solid(RED))),
+        "G": {"Format": otTables.PaintFormat.PaintColrGlyph, "Glyph": "L"},
+        # Layers that ``J`` shares with ``Y``, which fontTools writes once.
+        "Y": _layers(_glyph("square", _solid(RED)), _glyph("right", _solid(BLUE, 0.5))),
+        "J": _layers(_glyph("square", _solid(RED)), _glyph("right", _solid(BLUE, 0.5))),
+        "A": _glyph("square", _linear(_line((0, RED, 1.0), (1, RED, 0.0)))),
+        "F": _glyph("square", _linear(_line((0, RED, 1.0), (1, BLUE, 0.0)))),
+        "N": _glyph("square", _solid(TEXT_COLOUR)),
+        "Q": _glyph("square", _linear(_line((0, TEXT_COLOUR, 1.0), (1, RED, 1.0)))),
+        "W": _glyph(
+            "square",
+            {
+                "Format": otTables.PaintFormat.PaintSweepGradient,
+                "ColorLine": _line((0, RED, 1.0), (1, BLUE, 1.0)),
+                "centerX": 500,
+                "centerY": 400,
+                "startAngle": 0,
+                "endAngle": 360,
+            },
+        ),
+        "X": {"Format": otTables.PaintFormat.PaintColrGlyph, "Glyph": "X"},
+        "Z": deep,
+        "H": _layers(
+            *(
+                _glyph("square", _linear(_line((0, RED, 1.0), (1, BLUE, 0.5)), x0=100 + layer, x1=900 - layer))
+                for layer in range(HEAVY)
+            )
+        ),
+    }
+
+
+def paints_face() -> bytes:
+    """Return ``colr-paints``, whose COLR v1 glyphs each take one kind of paint, as ``_paints`` lists them."""
+    paints = _paints()
+    names = list(paints)
+    # Each fallback outline is a square: W, a paint that the canvas does not
+    # draw, and X, a cycle, which refuses all the same.
+    fallbacks = {"W", "X"}
+    # U is last, so that the glyphs before it keep their IDs.
+    order = [".notdef", *names, "V", "space", *LAYERS, "U"]
+    paints["V"] = paints["W"]
+    paints["U"] = _glyph("space", _linear(_line((0, TEXT_COLOUR, 1.0), (1, RED, 1.0))))
+    cmap = {ord(name): name for name in [*names, "V", "U"]} | {0x20: "space"}
+    builder = FontBuilder(1000, isTTF=True)
+    builder.setupHead(unitsPerEm=1000, created=0, modified=0)
+    builder.setupGlyphOrder(order)
+    builder.setupCharacterMap(cmap)
+    shapes = {name: LAYERS.get(name, SQUARE if name in fallbacks else None) for name in order}
+    glyphs = {}
+    for name, shape in shapes.items():
+        pen = TTGlyphPen(None)
+        if shape:
+            _draw(pen, shape)
+        glyphs[name] = pen.glyph()
+    builder.setupGlyf(glyphs)
+    # A side bearing that is the outline's own keeps it where it was drawn.
+    metrics = {name: (1000, min(x for x, _ in shape) if shape else 0) for name, shape in shapes.items()}
+    builder.setupHorizontalMetrics(metrics | {"space": (300, 0)})
+    builder.setupHorizontalHeader(ascent=800, descent=-200)
+    builder.setupNameTable({"familyName": "Colour colr-paints", "styleName": "Regular"})
+    builder.setupOS2()
+    builder.setupPost()
+    font = builder.font
+    font["CPAL"] = buildCPAL([list(PALETTE)])
+    font["COLR"] = buildCOLR(
+        paints,
+        version=1,
+        glyphMap=font.getReverseGlyphMap(),
+        clipBoxes={"K": (100, 0, 500, 800)},
+    )
+    out = io.BytesIO()
+    font.save(out)
+    return out.getvalue()
+
+
 def main() -> None:
     """Write every face next to this script."""
-    kinds = ("colr0", "colr1", "sbix", "cbdt", "eblc", "svg", "svg-cff")
+    kinds = ("colr0", "colr1", "colr-sweep", "sbix", "cbdt", "eblc", "svg", "svg-cff")
     for kind in (*kinds, "sbix-jpeg", "cbdt-raw", "sbix-damaged", "eblc-only"):
         suffix = "otf" if kind == "svg-cff" else "ttf"
         (HERE / f"colour-{kind}.{suffix}").write_bytes(face(kind))
@@ -353,6 +554,7 @@ def main() -> None:
         (HERE / f"colour-bitmaps-{table}.ttf").write_bytes(bitmap_face(table, outlines=True))
         (HERE / f"colour-bitmaps-{table}-only.ttf").write_bytes(bitmap_face(table, outlines=False))
     (HERE / "colour-bitmaps-sbix-2048.ttf").write_bytes(bitmap_face("sbix", outlines=True, em=2048, many=0))
+    (HERE / "colour-colr-paints.ttf").write_bytes(paints_face())
 
 
 if __name__ == "__main__":

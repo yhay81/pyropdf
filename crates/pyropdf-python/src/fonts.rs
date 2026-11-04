@@ -11,7 +11,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyFloat, PyList, PyString, PyTuple};
 use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::bitmap::{self, Bitmaps, DRAWING_PPI};
-use pyropdf_engine::fonts::colour::refused_canvas_glyph;
+use pyropdf_engine::fonts::colour::{Painted, Refused, refused_canvas_glyph};
+use pyropdf_engine::fonts::colr::{Colr, ColrError, Verdict};
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
 use pyropdf_engine::fonts::instance::InstanceError;
 use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
@@ -27,6 +28,7 @@ use crate::document::_Document;
 use crate::errors::{LimitError, PdfError, limit_error, store_error};
 use crate::history::OperationBudget;
 use crate::pixmap::bridge_error;
+use crate::shadings::CanvasShadings;
 
 /// Returns, for each font dictionary of `fonts`, by object number and
 /// generation, the sorted glyph IDs that the pages and their annotation
@@ -117,12 +119,19 @@ pub fn type3_codes(
         .collect())
 }
 
-/// Adds the bitmap glyphs `glyphs` to the Type 3 fonts `fonts` of a face of
-/// `units_per_em`, in this thread's open transaction or in one of its own,
+/// Adds the bitmap glyphs `glyphs` and the COLR glyphs `painted`, each a name,
+/// an advance, and a glyph ID of `face`, to the Type 3 fonts `fonts` of a face
+/// of `units_per_em`, in this thread's open transaction or in one of its own,
 /// and maps the glyph of each of `drawn`, a name with a text, to that text.
 /// Returns the font, the code, and the text that the CMap maps of each of
-/// `drawn`. Writes only what changed (DESIGN.md section 7).
+/// `drawn`. Writes only what changed (DESIGN.md section 7). `shadings` shares
+/// the document's shading objects.
 #[pyfunction]
+#[pyo3(signature = (document, fonts, units_per_em, glyphs, drawn, *, face=None, shadings=None, painted=Vec::new()))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what a drawing adds to the fonts"
+)]
 pub fn type3_draw(
     py: Python<'_>,
     document: &_Document,
@@ -130,6 +139,9 @@ pub fn type3_draw(
     units_per_em: u16,
     glyphs: Vec<NewBitmap>,
     drawn: Vec<(String, String)>,
+    face: Option<PyRef<'_, _Font>>,
+    shadings: Option<PyRef<'_, CanvasShadings>>,
+    painted: Vec<(String, f64, u32)>,
 ) -> PyResult<Vec<(u32, u8, Option<String>)>> {
     document.edit(py, |transaction, budget| {
         let mut held = Fonts::read(transaction.version(), &fonts, units_per_em, budget)
@@ -140,6 +152,32 @@ pub fn type3_draw(
         for (name, width, rect, image) in &glyphs {
             new.try_push(bitmap_glyph(name, *width, *rect, *image))
                 .map_err(|e| limit_error(&e))?;
+        }
+        if !painted.is_empty() {
+            let (Some(face), Some(shadings)) = (face.as_deref(), shadings.as_deref()) else {
+                return Err(PyValueError::new_err(
+                    "a COLR glyph needs its face and shadings",
+                ));
+            };
+            let Kind::Embedded(face) = &face.kind else {
+                return Err(PyValueError::new_err("a Standard 14 font has no glyph IDs"));
+            };
+            new.try_reserve(painted.len())
+                .map_err(|e| limit_error(&e))?;
+            Colr::of_face(face, |colr| {
+                let colr =
+                    colr.ok_or_else(|| PdfError::new_err("the face has no COLR table to paint"))?;
+                let mut table = shadings.lock();
+                for (name, width, glyph) in &painted {
+                    let glyph_id = GlyphId::new(*glyph);
+                    let name = Name::from(name.as_str());
+                    let glyph = colr
+                        .paint(transaction, &mut table, glyph_id, name, *width, budget)
+                        .map_err(|error| colr_error(face, *glyph, &error))?;
+                    new.try_push(glyph).map_err(|e| limit_error(&e))?;
+                }
+                Ok::<_, PyErr>(())
+            })?;
         }
         held.add(transaction, new.into_vec())
             .map_err(|e| store_error(&e))?;
@@ -201,8 +239,8 @@ enum Kind {
 
 /// How canvas text draws a glyph in a Type 3 font: the glyph's name there, its
 /// advance in font units, and the pixels per em of its strike, 0 for a glyph
-/// that paints nothing.
-type ColourGlyph = (String, f64, u16);
+/// that paints nothing and `None` for one that COLR paints.
+type ColourGlyph = (String, f64, Option<u16>);
 
 /// A glyph that shaping placed, as Python receives it: the glyph ID, its
 /// advance and offsets in font units, the range of the characters that it
@@ -686,10 +724,16 @@ impl _Font {
             let glyphs = shaped(face, text, budget)?;
             let font = face.font();
             let bitmaps = Bitmaps::read(&font).map_err(|error| shape_error(&error))?;
-            if let Some(character) = refused_canvas_glyph(face, text, &glyphs, &bitmaps, budget)
-                .map_err(|error| shape_error(&error))?
-            {
-                return Err(colour_refused(face, character));
+            let refused = Colr::of_face(face, |colr| {
+                let painted = Painted {
+                    colr,
+                    bitmaps: &bitmaps,
+                };
+                refused_canvas_glyph(face, text, &glyphs, painted, budget)
+            })
+            .map_err(|error| shape_error(&error))?;
+            if let Some(refused) = refused {
+                return Err(colour_refused(face, &refused));
             }
             Ok(glyphs
                 .into_iter()
@@ -713,9 +757,9 @@ impl _Font {
 
     /// Returns how a drawing at `size` points paints each of `glyphs` of an
     /// embedded face in a Type 3 font: `None` for a glyph that a CIDFont
-    /// draws. A strike holds the glyph at [`DRAWING_PPI`] when it can, and a
-    /// face with no outlines draws in Type 3 fonts alone. With `operation`,
-    /// as for [`_Font::encode`].
+    /// draws. COLR paints what it can, then a strike holds the glyph at
+    /// [`DRAWING_PPI`] when it can, and a face with no outlines draws in
+    /// Type 3 fonts alone. With `operation`, as for [`_Font::encode`].
     #[pyo3(signature = (glyphs, size, *, operation=None))]
     fn colour_glyphs(
         &self,
@@ -747,17 +791,34 @@ impl _Font {
             drawn
                 .try_reserve_exact(glyphs.len())
                 .map_err(|e| limit_error(&e))?;
-            for &glyph in &glyphs {
+            let verdicts = Colr::of_face(face, |colr| {
+                let mut verdicts = BudgetVec::new(budget);
+                verdicts.try_reserve_exact(glyphs.len())?;
+                for &glyph in &glyphs {
+                    let verdict = match colr {
+                        Some(colr) => colr.check(GlyphId::new(glyph), budget)?,
+                        None => None,
+                    };
+                    verdicts.try_push(verdict)?;
+                }
+                Ok(verdicts)
+            })
+            .map_err(|e| limit_error(&e))?;
+            for (&glyph, &verdict) in glyphs.iter().zip(&verdicts) {
                 budget.poll().map_err(|e| limit_error(&e))?;
                 let id = GlyphId::new(glyph);
                 let advance = measure.advance(id);
-                let colour = match bitmaps.best(id, ppem) {
-                    Some(found) => {
-                        let ppem = found.ppem;
-                        Some((format!("g{glyph}s{ppem}"), advance, ppem))
+                let colour = if verdict == Some(Verdict::Paints) {
+                    Some((format!("g{glyph}c"), advance, None))
+                } else {
+                    match bitmaps.best(id, ppem) {
+                        Some(found) => {
+                            let ppem = found.ppem;
+                            Some((format!("g{glyph}s{ppem}"), advance, Some(ppem)))
+                        }
+                        None if face.outlines => None,
+                        None => Some((format!("g{glyph}"), advance, Some(0))),
                     }
-                    None if face.outlines => None,
-                    None => Some((format!("g{glyph}"), advance, 0)),
                 };
                 drawn.try_push(colour).map_err(|e| limit_error(&e))?;
             }
@@ -1137,13 +1198,41 @@ fn embedded_missing(face: &Face, character: char) -> PyErr {
     ))
 }
 
-/// Refuses a character whose glyph is a colour glyph with no outline, naming it.
-fn colour_refused(face: &Face, character: char) -> PyErr {
-    PdfError::new_err(format!(
-        "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
-        face.full_name,
-        u32::from(character)
-    ))
+/// Refuses a character whose glyph is a colour glyph with no outline, or whose
+/// COLR paints do not read, naming it and the paint that stands in the way.
+fn colour_refused(face: &Face, refused: &Refused) -> PyErr {
+    let Refused {
+        character,
+        glyph,
+        verdict,
+    } = *refused;
+    let name = &face.full_name;
+    let code = u32::from(character);
+    let no_outline = format!(
+        "{name} cannot draw U+{code:04X} ({character:?}): its glyph is a colour glyph with no outline"
+    );
+    PdfError::new_err(match verdict {
+        Some(Verdict::Damaged(reason)) => format!(
+            "{name} cannot draw U+{code:04X} ({character:?}): its colour glyph {glyph} does not paint: {reason}"
+        ),
+        Some(Verdict::Cannot(paint)) => {
+            format!(
+                "{no_outline}, and colour glyph {glyph} needs {paint}, which the canvas does not paint"
+            )
+        }
+        Some(Verdict::Paints) | None => no_outline,
+    })
+}
+
+/// Maps a refused COLR glyph, naming it, or what the budget refused.
+fn colr_error(face: &Face, glyph: u32, error: &ColrError) -> PyErr {
+    match error {
+        ColrError::Store(error) => store_error(error),
+        _ => PdfError::new_err(format!(
+            "{} cannot draw its colour glyph {glyph}: {error}",
+            face.full_name,
+        )),
+    }
 }
 
 /// Maps a refused layout: too many lines is the limit `text_line_count`.

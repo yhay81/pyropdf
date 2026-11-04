@@ -1,7 +1,7 @@
 //! The gradients of `python/pyropdf/_canvas.py`: its calls of the engine's
 //! shading writer, under the canvas's operation.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -12,8 +12,9 @@ use crate::document::_Document;
 use crate::errors::store_error;
 use crate::history::OperationBudget;
 
-/// The shading objects that one canvas has written, which later drawings of
-/// the canvas share. Its operation charged what it holds.
+/// The shading objects that one canvas, or a document's colour glyphs, have
+/// written, which later drawings share. The operation that wrote them charged
+/// what it holds.
 #[pyclass(frozen, name = "_Shadings", module = "pyropdf._core")]
 #[derive(Default)]
 pub(crate) struct CanvasShadings {
@@ -25,6 +26,13 @@ impl CanvasShadings {
     #[new]
     fn new() -> Self {
         Self::default()
+    }
+}
+
+impl CanvasShadings {
+    /// Returns the table.
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Shadings> {
+        self.table.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

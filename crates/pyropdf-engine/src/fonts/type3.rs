@@ -438,7 +438,11 @@ fn number(value: f64) -> Value {
 
 /// Returns the stream of `data`, compressed when that is shorter.
 fn stream_of(data: &[u8], budget: &Budget) -> Result<Stream> {
-    let mut dict = Dict::new();
+    stream_with(Dict::new(), data, budget)
+}
+
+/// Returns the stream of `dict` and `data`, compressed when that is shorter.
+pub(super) fn stream_with(mut dict: Dict, data: &[u8], budget: &Budget) -> Result<Stream> {
     let encoded = deflate(data, 6, data.len().saturating_sub(1), budget)?;
     let data = match encoded {
         Some(encoded) => {

@@ -10,6 +10,7 @@ subsetting at save (#482), which compacts it to the drawn glyphs.
 
 from __future__ import annotations
 
+import math
 import re
 import shutil
 import subprocess
@@ -33,6 +34,7 @@ HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
 VARIABLE_LATIN = FONTS / "variable-latin.ttf"
 VARIABLE_COLOUR = FONTS / "variable-colour.ttf"
+VARIABLE_COLR = FONTS / "variable-colr.ttf"
 LINE = "AVA office 日本語、かな。"
 ARABIC_WORD = "مرحبا"
 #: The refusal of a colour glyph with no outline, for one character.
@@ -60,8 +62,8 @@ def arabic_bold() -> pyropdf.Font:
 
 
 @pytest.fixture(
-    params=["colr0.ttf", "colr1.ttf", "sbix-jpeg.ttf", "cbdt-raw.ttf", "svg.ttf", "svg-cff.otf"],
-    ids=["colr0", "colr1", "sbix-jpeg", "cbdt-raw", "svg", "svg-cff"],
+    params=["colr-sweep.ttf", "sbix-jpeg.ttf", "cbdt-raw.ttf", "svg.ttf", "svg-cff.otf"],
+    ids=["colr-sweep", "sbix-jpeg", "cbdt-raw", "svg", "svg-cff"],
 )
 def colour(request: pytest.FixtureRequest) -> pyropdf.Font:
     """Return a face of ``colour_faces.py`` whose colour glyphs a canvas cannot paint, as its docstring says."""
@@ -602,15 +604,27 @@ def test_undo_removes_a_drawing_of_an_instance_and_its_glyphs() -> None:
     assert _descriptor_programs(document) == set()
 
 
-def test_a_colour_glyph_with_no_outline_refuses_at_an_instance() -> None:
+def test_an_instance_paints_its_colr_glyphs() -> None:
     font = pyropdf.Font.from_file(VARIABLE_COLOUR, weight=700)
-    document, page = _new_page()
-    with pytest.raises(pyropdf.PdfError, match=NO_OUTLINE.format(ord("A"), "A")), page.draw() as canvas:
-        canvas.text("A", (20, 40), font=font, size=12)
-    assert _descriptor_programs(document) == set()
+    _document, page = _new_page(200, 60)
     with page.draw() as canvas:
-        canvas.text("B", (20, 40), font=font, size=12)
-    assert page.text().strip() == "B"
+        canvas.text("AB", (20, 50), font=font, size=24)
+
+    assert {font.subtype for font in page.fonts()} == {"Type3", "Type0"}
+    assert page.pixmap(dpi=72).pixel(32, 40)[:3] == BLUE
+    assert page.text().strip() == "AB"
+
+
+def test_a_variable_paint_draws_at_the_instance_that_the_face_loaded() -> None:
+    _document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("A", (20, 50), font=pyropdf.Font.from_file(VARIABLE_COLR), size=24)
+        canvas.text("A", (80, 50), font=pyropdf.Font.from_file(VARIABLE_COLR, weight=900), size=24)
+
+    pixmap = page.pixmap(dpi=72)
+    assert pixmap.pixel(32, 40)[:3] == BLUE
+    # At 900 the blue's alpha is half, over white.
+    assert pixmap.pixel(92, 40)[:3] == pytest.approx((127, 127, 255), abs=2)
 
 
 def test_drawing_after_a_save_keeps_the_earlier_content(japanese: pyropdf.Font, hebrew: pyropdf.Font) -> None:
@@ -1309,3 +1323,284 @@ def test_a_bitmap_glyph_measures_by_its_image(bitmaps: pyropdf.Font) -> None:
     # A glyph with no bitmap keeps its outline's box.
     assert bitmaps.char_bbox("O") == pytest.approx((0, 0, 0.8, 0.8))
     assert bitmaps.text_width("RO", 10) == pytest.approx(17)
+
+
+#: How far, in each 8-bit channel, a render of a COLR glyph may be from the reference that ``_colr_reference`` gives.
+COLR_TOLERANCE = 8
+#: The edges of ``colr-paints``' layers, in font units: a render smooths them, and the reference does not.
+COLR_EDGES = ((50, 100, 450, 500, 900), (0, 400, 800))
+#: Where each glyph of ``_colr_page`` starts, and its baseline: at 100 points, a point is ten font units.
+COLR_PITCH, COLR_BASELINE = 120, 90
+WHITE = (255, 255, 255)
+BLUE = (0, 0, 255)
+#: The glyphs of ``colr-paints`` that the canvas paints, which ``_colr_reference`` describes.
+COLR_PAINTED = "LRTKMIOGYJAFN"
+
+
+@pytest.fixture(scope="module")
+def paints() -> pyropdf.Font:
+    """Return ``colr-paints`` of ``colour_faces.py``, whose docstring says what its glyphs paint."""
+    return pyropdf.Font.from_file(FONTS / "colour-colr-paints.ttf")
+
+
+@pytest.fixture(params=["colr0", "colr1"])
+def colr(request: pytest.FixtureRequest) -> pyropdf.Font:
+    """Return a face whose COLR glyphs ``A``, ``B``, and ``D`` paint a red square, the first with no outline."""
+    return pyropdf.Font.from_file(FONTS / f"colour-{request.param}.ttf")
+
+
+def _mix(a: tuple[float, ...], b: tuple[float, ...], t: float) -> tuple[float, ...]:
+    t = min(max(t, 0.0), 1.0)
+    return tuple(x + (y - x) * t for x, y in zip(a, b, strict=True))
+
+
+def _colr_reference(letter: str, u: float, v: float) -> tuple[float, ...]:
+    """Return the colour of the point ``(u, v)`` of ``colr-paints``' glyph ``letter``, over white, filled in blue."""
+
+    def inside(x0: float, x1: float, y1: float = 800) -> bool:
+        return x0 < u < x1 and 0 < v < y1
+
+    left, right, square = inside(100, 500), inside(500, 900), inside(100, 900)
+    if letter == "T":
+        return GREEN if inside(50, 450, 400) else WHITE
+    if not square:
+        return WHITE
+    across = (u - 100) / 800
+    colours = {
+        "L": _mix(RED, BLUE, across),
+        "G": _mix(RED, BLUE, across),
+        "R": _mix(GREEN, BLUE, math.hypot(u - 500, v - 400) / 400),
+        "K": BLUE if left else WHITE,
+        "I": BLUE if left else WHITE,
+        "M": RED if left else (0, 0, 0),
+        "O": RED if right else WHITE,
+        "Y": RED if left else _mix(RED, BLUE, 0.5),
+        "J": RED if left else _mix(RED, BLUE, 0.5),
+        # Red over white at the gradient's alpha, which falls from 1 to 0.
+        "A": _mix(RED, WHITE, across),
+        "F": _mix(RED, WHITE, across),
+        "N": BLUE,
+    }
+    return colours[letter]
+
+
+def _colr_page(face: pyropdf.Font, letters: str) -> tuple[pyropdf.Document, pyropdf.Page]:
+    """Return a page that draws each of ``letters`` at 100 points, in blue, ``COLR_PITCH`` apart."""
+    document, page = _new_page(COLR_PITCH * len(letters), 100)
+    blue = pyropdf.Color(0, 0, 1)
+    with page.draw() as canvas:
+        for index, letter in enumerate(letters):
+            canvas.text(letter, (10 + COLR_PITCH * index, COLR_BASELINE), font=face, size=100, fill=blue)
+    return document, page
+
+
+def _off_reference(samples: bytes, width: int, letters: str) -> list[tuple[str, int, int]]:
+    """Return the pixels of an RGB render of ``_colr_page`` further from the reference than the tolerance."""
+    off = []
+    for index, letter in enumerate(letters):
+        start = 10 + COLR_PITCH * index
+        for y in range(100):
+            for x in range(start - 5, start + 100):
+                u, v = (x + 0.5 - start) * 10, (COLR_BASELINE - y - 0.5) * 10
+                near_x = any(abs(u - edge) < 20 for edge in COLR_EDGES[0])
+                if near_x or any(abs(v - edge) < 20 for edge in COLR_EDGES[1]):
+                    continue
+                at = 3 * (y * width + x)
+                expected = _colr_reference(letter, u, v)
+                if any(abs(a - b) > COLR_TOLERANCE for a, b in zip(samples[at : at + 3], expected, strict=True)):
+                    off.append((letter, x, y))
+    return off
+
+
+def _rgb(page: pyropdf.Page) -> tuple[bytes, int]:
+    pixmap = page.pixmap(dpi=72).to_rgb()
+    assert pixmap.stride == 3 * pixmap.width
+    return bytes(pixmap), pixmap.width
+
+
+def _shadings(document: pyropdf.Document) -> list[pyropdf.Dictionary]:
+    return [value for value in _objects(document) if isinstance(value, pyropdf.Dictionary) and "ShadingType" in value]
+
+
+def test_colr_glyphs_draw_in_colour_in_hayro(colr: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("AB", (20, 50), font=colr, size=24, fill=pyropdf.Color(0, 0, 1))
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        pixmap = drawn.pixmap(dpi=72)
+        # Each square is red, whatever the fill, with or without a fallback outline.
+        assert pixmap.pixel(32, 38)[:3] == RED
+        assert pixmap.pixel(56, 38)[:3] == RED
+        assert pixmap.pixel(100, 38)[:3] == WHITE
+        assert drawn.text().strip() == "AB"
+
+
+def test_colr_v1_paints_draw_within_the_tolerance_of_the_reference(paints: pyropdf.Font) -> None:
+    document, page = _colr_page(paints, COLR_PAINTED)
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        assert _off_reference(*_rgb(drawn), COLR_PAINTED) == []
+
+
+@pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
+def test_poppler_draws_colr_glyphs_within_the_tolerance_of_the_reference(paints: pyropdf.Font) -> None:
+    document, _page = _colr_page(paints, COLR_PAINTED)
+
+    assert _off_reference(*_poppler_rgb(document.to_bytes()), COLR_PAINTED) == []
+
+
+@pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
+def test_poppler_draws_colr_glyphs_in_colour(colr: pyropdf.Font) -> None:
+    document, page = _new_page(200, 60)
+    with page.draw() as canvas:
+        canvas.text("AB", (20, 50), font=colr, size=24)
+
+    samples, width = _poppler_rgb(document.to_bytes())
+    for x, y in ((32, 38), (56, 38)):
+        at = 3 * (y * width + x)
+        assert tuple(samples[at : at + 3]) == pytest.approx(RED, abs=2)
+
+
+def test_colr_text_reads_back_as_text_runs(paints: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("LW G", (20, 80), font=paints, size=24)
+
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        assert drawn.text().strip() == "LW G"
+        runs = drawn.content(paths=False, images=False).text_runs
+        # W draws its fallback outline in the face's Type0 font.
+        assert {run.font.is_type3 for run in runs} == {True, False}
+        assert "".join(glyph.text or "" for run in runs for glyph in run.glyphs) == "LW G"
+
+
+def test_a_layer_in_the_text_colour_takes_the_fill(paints: pyropdf.Font) -> None:
+    _document, page = _new_page(240, 100)
+    with page.draw() as canvas:
+        canvas.text("N", (10, 90), font=paints, size=100, fill=pyropdf.Color(0, 0, 1))
+        canvas.text("N", (130, 90), font=paints, size=100, fill=pyropdf.Color(0, 1, 0))
+
+    pixmap = page.pixmap(dpi=72)
+    assert pixmap.pixel(50, 50)[:3] == BLUE
+    assert pixmap.pixel(170, 50)[:3] == GREEN
+
+
+def test_a_glyph_that_the_canvas_does_not_paint_draws_its_fallback_outline(paints: pyropdf.Font) -> None:
+    document, page = _new_page(120, 100)
+    with page.draw() as canvas:
+        canvas.text("W", (10, 90), font=paints, size=100, fill=pyropdf.Color(0, 0, 1))
+
+    assert _type3_fonts(document) == []
+    assert page.pixmap(dpi=72).pixel(50, 50)[:3] == BLUE
+    assert page.text().strip() == "W"
+
+
+@pytest.mark.parametrize(
+    ("letter", "glyph", "paint"),
+    [
+        ("V", 20, "PaintSweepGradient"),
+        ("P", 8, "PaintComposite in the mode Xor"),
+        ("Q", 15, "a gradient stop in the text's colour"),
+        ("U", 25, "a gradient stop in the text's colour"),
+    ],
+    ids=["sweep", "xor", "text-colour-stop", "text-colour-stop-that-shows-nothing"],
+)
+def test_a_glyph_that_neither_paints_nor_has_an_outline_refuses_naming_the_paint(
+    paints: pyropdf.Font, letter: str, glyph: int, paint: str
+) -> None:
+    document, page = _new_page()
+    steps = document.history.steps
+    expected = NO_OUTLINE.format(ord(letter), letter) + f", and colour glyph {glyph} needs {paint}"
+
+    with pytest.raises(pyropdf.PdfError, match=expected), page.draw() as canvas:
+        canvas.text(f"L{letter}", (20, 80), font=paints, size=24)
+
+    assert document.history.steps == steps
+    assert _type3_fonts(document) == []
+    assert page.text().strip() == ""
+
+
+@pytest.mark.parametrize(
+    ("letter", "glyph", "reason"),
+    [("X", 17, "its paints form a cycle"), ("Z", 18, "its paints nest too deep or are too many")],
+    ids=["cycle", "depth"],
+)
+def test_paints_that_skrifa_refuses_refuse_even_with_an_outline(
+    paints: pyropdf.Font, letter: str, glyph: int, reason: str
+) -> None:
+    document, page = _new_page()
+    message = rf"cannot draw U\+{ord(letter):04X} \('{letter}'\): its colour glyph {glyph} does not paint: {reason}"
+    with page.draw() as canvas:
+        canvas.text("L", (20, 40), font=paints, size=24)
+        numbers = set(document.objects)
+        with pytest.raises(pyropdf.PdfError, match=message):
+            canvas.text(f"L{letter}", (20, 80), font=paints, size=24)
+        assert set(document.objects) == numbers
+
+    assert page.text().strip() == "L"
+
+
+def test_a_limit_refuses_a_colr_glyph_and_writes_nothing(paints: pyropdf.Font) -> None:
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=200_000))
+    page = document.pages.new((400, 100))
+    with page.draw() as canvas:
+        canvas.text("L", (10, 40), font=paints, size=24)
+    numbers = set(document.objects)
+    steps = document.history.steps
+
+    # H's layers, each its own gradient with a soft mask, write more than the limit allows.
+    with pytest.raises(pyropdf.LimitError) as raised, page.draw() as canvas:
+        canvas.text("H", (10, 80), font=paints, size=24)
+
+    assert raised.value.code == "memory_size"
+    assert set(document.objects) == numbers
+    assert document.history.steps == steps
+    assert page.text().strip() == "L"
+
+
+def test_a_document_repeats_no_colr_glyph_procedure(paints: pyropdf.Font) -> None:
+    document = pyropdf.Document()
+    for text in ("LGY", "JLL", "GYJ", "LGYJ"):
+        page = document.pages.new((400, 100))
+        with page.draw() as canvas:
+            canvas.text(text, (10, 40), font=paints, size=24)
+            canvas.text(text, (10, 80), font=paints, size=12)
+
+    for held in (document, pyropdf.open(document.to_bytes())):
+        assert set(_procedures(held)) == {"g1c", "g9c", "g10c", "g11c"}
+        procedure_objects = {font["CharProcs"][name].xref for font in _type3_fonts(held) for name in font["CharProcs"]}
+        assert len(procedure_objects) == 4
+        # Each glyph's group once, which the font's resources name.
+        (font,) = _type3_fonts(held)
+        assert len(font["Resources"]["XObject"]) == 4
+        assert held.pages[3].text().split() == ["LGYJ", "LGYJ"]
+
+
+def test_glyphs_share_equal_shadings(paints: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("L", (10, 40), font=paints, size=24)
+    shadings = len(_shadings(document))
+    with page.draw() as canvas:
+        # G paints L through PaintColrGlyph, with the same gradient.
+        canvas.text("G", (10, 80), font=paints, size=24)
+
+    assert len(_procedures(document)) == 2
+    assert shadings == 1
+    assert len(_shadings(document)) == 1
+
+
+def test_undo_removes_what_a_colr_drawing_added(paints: pyropdf.Font) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text("L", (10, 40), font=paints, size=24)
+    before = set(document.objects)
+    with page.draw() as canvas:
+        canvas.text("AY", (10, 80), font=paints, size=24)
+
+    document.history.undo()
+    assert set(document.objects) == before
+    assert set(_procedures(document)) == {"g1c"}
+    document.history.redo()
+    assert document.pages[0].text().split() == ["L", "AY"]

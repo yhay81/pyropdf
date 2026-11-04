@@ -5,9 +5,11 @@
 //! nothing under text that reads back, so drawing refuses it. Measuring does
 //! not: a face may hold glyphs with outlines too, and the text may never be
 //! drawn. `ColourTables::covers` is the one place that says which tables
-//! count. Canvas text paints the PNG strikes ([`bitmap`](super::bitmap)) as
-//! a Type 3 font, so it refuses only what is left; a form field or an
-//! annotation writes a CIDFont, and refuses those glyphs too.
+//! count. Canvas text paints COLR ([`colr`](super::colr)) and the PNG strikes
+//! ([`bitmap`](super::bitmap)) as a Type 3 font, so it refuses only what is
+//! left; a form field or an annotation has no Type 3 path, writes a CIDFont,
+//! and refuses those glyphs too, so `covers` stays wider than what the canvas
+//! paints.
 
 use skrifa::color::ColorGlyphCollection;
 use skrifa::instance::{LocationRef, Size};
@@ -19,6 +21,7 @@ use skrifa::{FontRef, GlyphId, MetadataProvider};
 use pyropdf_store::budget::Budget;
 
 use super::bitmap::Bitmaps;
+use super::colr::{Colr, Verdict};
 use super::embed::Face;
 use super::shape::{ShapeError, ShapedGlyph};
 
@@ -114,6 +117,28 @@ pub(super) fn check_lookups(font: &FontRef<'_>) -> Result<(), ShapeError> {
     ColourTables::read(font).map(|_| ())
 }
 
+/// What a drawing refuses of a text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Refused {
+    /// The first character that the glyph stands for.
+    pub character: char,
+    /// The glyph.
+    pub glyph: u32,
+    /// What its COLR table says of it: a paint that nothing draws, or what is
+    /// wrong with its paints. `None` for a table that the drawing does not
+    /// read.
+    pub verdict: Option<Verdict>,
+}
+
+/// What a canvas paints in a Type 3 font.
+#[derive(Clone, Copy)]
+pub struct Painted<'p, 'a> {
+    /// The face's COLR table, if it has one that can paint.
+    pub colr: Option<&'p Colr<'a>>,
+    /// The face's strikes.
+    pub bitmaps: &'p Bitmaps<'a>,
+}
+
 /// Returns the first character, in the order of `glyphs`, whose glyph is a
 /// colour glyph with no outline: what a drawing of `text` in a CIDFont must
 /// refuse.
@@ -128,19 +153,21 @@ pub fn refused_colour_glyph(
     glyphs: &[ShapedGlyph],
     budget: &Budget,
 ) -> Result<Option<char>, ShapeError> {
-    refused(face, text, glyphs, budget, None)
+    let refusal = refused(face, text, glyphs, budget, None)?;
+    Ok(refusal.map(|refusal| refusal.character))
 }
 
 /// Returns what [`refused_colour_glyph`] does for a drawing on the canvas,
-/// which paints the glyphs that `bitmaps` holds.
+/// which paints what `painted` can. A COLR glyph whose paints skrifa cannot
+/// walk refuses even with an outline, since the font is damaged there.
 pub fn refused_canvas_glyph(
     face: &Face,
     text: &str,
     glyphs: &[ShapedGlyph],
-    bitmaps: &Bitmaps<'_>,
+    painted: Painted<'_, '_>,
     budget: &Budget,
-) -> Result<Option<char>, ShapeError> {
-    refused(face, text, glyphs, budget, Some(bitmaps))
+) -> Result<Option<Refused>, ShapeError> {
+    refused(face, text, glyphs, budget, Some(painted))
 }
 
 fn refused(
@@ -148,8 +175,8 @@ fn refused(
     text: &str,
     glyphs: &[ShapedGlyph],
     budget: &Budget,
-    bitmaps: Option<&Bitmaps<'_>>,
-) -> Result<Option<char>, ShapeError> {
+    painted: Option<Painted<'_, '_>>,
+) -> Result<Option<Refused>, ShapeError> {
     let font = face.font();
     let Some(tables) = ColourTables::read(&font)? else {
         return Ok(None);
@@ -168,11 +195,19 @@ fn refused(
         }
         budget.poll()?;
         let glyph = GlyphId::from(id);
-        if id == 0
-            || space == Some(glyph)
-            || !tables.covers(glyph)
-            || bitmaps.is_some_and(|bitmaps| bitmaps.has(glyph))
-            || paints(&outlines, glyph)
+        if id == 0 || space == Some(glyph) || !tables.covers(glyph) {
+            passed[word] |= bit;
+            continue;
+        }
+        let verdict = match painted.and_then(|painted| painted.colr) {
+            Some(colr) => colr.check(glyph, budget)?,
+            None => None,
+        };
+        let damaged = matches!(verdict, Some(Verdict::Damaged(_)));
+        if !damaged
+            && (verdict == Some(Verdict::Paints)
+                || painted.is_some_and(|painted| painted.bitmaps.has(glyph))
+                || paints(&outlines, glyph))
         {
             passed[word] |= bit;
             continue;
@@ -185,8 +220,12 @@ fn refused(
         let character = text[stands_for.clone()]
             .chars()
             .find(|character| !character.is_whitespace() && !character.is_control());
-        if character.is_some() {
-            return Ok(character);
+        if let Some(character) = character {
+            return Ok(Some(Refused {
+                character,
+                glyph: u32::from(id),
+                verdict,
+            }));
         }
     }
     Ok(None)

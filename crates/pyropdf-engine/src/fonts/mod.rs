@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 pub mod bitmap;
 mod cff;
 pub mod colour;
+pub mod colr;
 pub mod compact;
 pub mod embed;
 pub mod instance;
