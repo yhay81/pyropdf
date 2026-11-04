@@ -11,6 +11,7 @@ mod cff;
 pub mod colour;
 pub mod compact;
 pub mod embed;
+pub mod instance;
 pub mod settle;
 mod sfnt;
 pub mod shape;

@@ -12,6 +12,7 @@ use pyo3::types::{PyBytes, PyFloat, PyList, PyString, PyTuple};
 use pyropdf_engine::extract::{self, Error};
 use pyropdf_engine::fonts::colour::refused_colour_glyph;
 use pyropdf_engine::fonts::embed::{Face, FaceError, GlyphId, Measure};
+use pyropdf_engine::fonts::instance::InstanceError;
 use pyropdf_engine::fonts::shape::{ShapeError, ShapedGlyph, ShapingFace};
 use pyropdf_engine::fonts::{self, Format};
 use pyropdf_engine::render::{Fallback, FontFile, Language, Source};
@@ -144,7 +145,7 @@ impl _Font {
 
 /// Shapes `text` in `face` and refuses a character that it has no glyph for.
 fn shaped(face: &Face, text: &str, budget: &Budget) -> PyResult<Vec<ShapedGlyph>> {
-    let shaper = ShapingFace::new(face.program.clone(), 0).map_err(|error| shape_error(&error))?;
+    let shaper = ShapingFace::of(face).map_err(|error| shape_error(&error))?;
     let glyphs = shaper
         .shape(text, budget)
         .map_err(|error| shape_error(&error))?
@@ -162,6 +163,15 @@ fn shaped(face: &Face, text: &str, budget: &Budget) -> PyResult<Vec<ShapedGlyph>
         )));
     }
     Ok(glyphs)
+}
+
+fn face_error(error: &FaceError) -> PyErr {
+    match error {
+        FaceError::Font(message) => PdfError::new_err(format!("invalid font: {message}")),
+        FaceError::Unsupported(message) => {
+            PdfError::new_err(format!("unsupported font: {message}"))
+        }
+    }
 }
 
 fn shape_error(error: &ShapeError) -> PyErr {
@@ -198,14 +208,35 @@ impl _Font {
     fn from_bytes(py: Python<'_>, data: &[u8], index: u32) -> PyResult<Self> {
         let face = py
             .detach(|| Face::read(data, index))
-            .map_err(|error| match error {
-                FaceError::Font(message) => PdfError::new_err(format!("invalid font: {message}")),
-                FaceError::Unsupported(message) => {
-                    PdfError::new_err(format!("unsupported font: {message}"))
-                }
-            })?;
+            .map_err(|error| face_error(&error))?;
         Ok(Self {
             kind: Kind::Embedded(Arc::new(face)),
+        })
+    }
+
+    /// Returns the instance at `weight` on an embedded face's weight axis,
+    /// whose static program stays within `max_size` bytes.
+    fn at_weight(&self, py: Python<'_>, weight: u16, max_size: Option<u64>) -> PyResult<Self> {
+        let Kind::Embedded(face) = &self.kind else {
+            return Err(PyValueError::new_err("a Standard 14 font has no instances"));
+        };
+        let budget = Budget::default().with_limit(LimitCode::FontInputSize, max_size);
+        let instance =
+            py.detach(|| face.at_weight(weight, &budget))
+                .map_err(|error| match error {
+                    InstanceError::Refused(message) => PdfError::new_err(message),
+                    InstanceError::Font(error) => face_error(&error),
+                    // The file passed its limit already; what it flattens to did not.
+                    InstanceError::Limit(refusal) => LimitError::new_err((
+                        refusal.code().as_str(),
+                        format!(
+                            "the program of this instance is over the {}-byte limit",
+                            refusal.limit().unwrap_or_default()
+                        ),
+                    )),
+                })?;
+        Ok(Self {
+            kind: Kind::Embedded(Arc::new(instance)),
         })
     }
 
@@ -282,7 +313,8 @@ impl _Font {
         }
     }
 
-    /// The minimum, default, and maximum of an embedded face's weight axis.
+    /// The minimum, default, and maximum of an embedded face's weight axis;
+    /// `None` for an instance, whose program has no axes.
     #[getter]
     fn weight_axis(&self) -> Option<(f32, f32, f32)> {
         match &self.kind {

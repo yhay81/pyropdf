@@ -19,8 +19,8 @@ The faces that render the CJK fonts of one language that a document does not emb
 Rendering draws a font whose name marks it as serif, such as a Mincho,
 Song, Ming, or Batang face, in `serif`, and any other in `sans`;
 when one of them is `None`, the other draws both. A variable face
-renders at its default instance. `Document.fallback_fonts` maps
-each language to one.
+renders at its default instance, or the instance that `weight` selected
+when it loaded. `Document.fallback_fonts` maps each language to one.
 
 ## `FallbackFonts`
 
@@ -206,14 +206,17 @@ Font.from_file(
 Load an OpenType face (TrueType or CFF outlines) from a font file.
 
 `index` selects a face in a collection such as a `.ttc` file. A
-variable face is drawn at its default instance. `weight`, a weight
-class from 1 through 1000, must be the face's own weight: pyropdf
-never imitates a weight that the font does not define, and refuses
-other instances of a variable face. Invalid or unsupported font data
-raises `PdfError`; a missing file raises
-`FileNotFoundError`. The file is limited to 64 MiB by default
-(`max_size`, `None` for trusted input), refused with
-`LimitError` code `font_input_size`.
+variable face is drawn at its default instance, which need not be
+regular: the variable Noto Sans JP defaults to Thin. `weight`, a
+weight class from 1 through 1000, selects the instance at that weight
+on a TrueType face's weight axis, as a static program written at load,
+and refuses a weight outside the axis. Any other face must already
+have that weight: pyropdf never imitates a weight that the font does
+not define. Invalid or unsupported font data raises `PdfError`;
+a missing file raises `FileNotFoundError`. The file, and the
+program of an instance, are limited to 64 MiB by default (`max_size`,
+`None` for trusted input), refused with `LimitError` code
+`font_input_size`.
 
 ### `Font.glyph_count`
 
@@ -352,7 +355,7 @@ The design units per em of the face; 1000 for Standard 14 fonts.
 Font.weight: int
 ```
 
-The weight: 400 for regular and 700 for bold faces.
+The weight class, such as 400 for a regular and 700 for a bold face, of the instance that it draws.
 
 ## `FontInfo`
 
