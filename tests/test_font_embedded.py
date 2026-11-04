@@ -3,9 +3,8 @@
 Ported from pylopdf ebb01d3c ``tests/test_font.py`` (the OpenType cases)
 with the subset faces of ``crates/pyropdf-engine/src/fonts/testdata``.
 Intended differences: the subset faces cover only a few characters, so the
-texts differ; a variable face is drawn at its default instance only, so a
-weight other than its default is refused rather than instanced; and canvas
-text, installed font extras, and subsetting at save belong to later issues.
+texts differ; and canvas text, installed font extras, and subsetting at save
+belong to later issues.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from __future__ import annotations
 import os
 import struct
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -23,6 +23,9 @@ FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "
 JAPANESE = FONTS / "NotoSansJP-subset.otf"
 HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
+VARIABLE_LATIN = FONTS / "variable-latin.ttf"
+VARIABLE_COMPOSITES = FONTS / "variable-composites.ttf"
+VARIABLE_OVERFLOW = FONTS / "variable-overflow.ttf"
 LINE = "AVA office 日本語、かな。"
 
 
@@ -194,10 +197,107 @@ def test_an_explicit_weight_must_match_the_face() -> None:
     assert pyropdf.Font.from_bytes(bold, weight=700).is_bold
     with pytest.raises(pyropdf.PdfError, match="its only face is bold, not regular"):
         pyropdf.Font.from_bytes(bold, weight=400)
-    # A variable face is drawn at its default instance only.
-    assert pyropdf.Font.from_file(ARABIC, weight=400).weight == 400
-    with pytest.raises(pyropdf.PdfError, match="default instance"):
-        pyropdf.Font.from_file(ARABIC, weight=700)
+
+
+def test_a_weight_on_the_axis_draws_that_instance() -> None:
+    default = pyropdf.Font.from_file(ARABIC)
+    assert pyropdf.Font.from_file(ARABIC, weight=400).program() == default.program()
+    data = ARABIC.read_bytes()
+    bold = pyropdf.Font.from_bytes(data, weight=700)
+    assert bold.weight == 700
+    assert bold.is_bold
+    assert pyropdf.Font.from_file(ARABIC, weight=700).program() == bold.program()
+    assert bold.glyph_count == default.glyph_count
+    assert bold.chars() == default.chars()
+    assert bold.char_widths("H", 1000) > default.char_widths("H", 1000)
+    light = pyropdf.Font.from_bytes(data, weight=100)
+    assert light.weight == 100
+    assert not light.is_bold
+    assert light.char_widths("H", 1000) < default.char_widths("H", 1000)
+
+
+def test_a_weight_outside_the_axis_refuses() -> None:
+    for weight in (99, 901):
+        with pytest.raises(pyropdf.PdfError, match="weight axis, which runs from 100 through 900"):
+            pyropdf.Font.from_file(ARABIC, weight=weight)
+
+
+def test_an_instance_measures_as_it_draws() -> None:
+    font = pyropdf.Font.from_file(VARIABLE_LATIN, weight=900)
+    default = pyropdf.Font.from_file(VARIABLE_LATIN)
+    # The advances that ``MVAR`` and ``gvar`` vary, and the box of the outlines.
+    assert font.char_widths("A", 1000) == (1100,)
+    assert default.char_widths("A", 1000) == (1000,)
+    assert font.char_widths("V", 1000) == (1000,)
+    assert font.ascender == pytest.approx(0.85)
+    assert default.ascender == pytest.approx(0.8)
+    assert font.bbox.x1 == pytest.approx(1.0)
+    assert font.char_bbox("A").x1 == pytest.approx(1.0)
+    assert default.char_bbox("A").x1 == pytest.approx(0.9)
+
+
+def test_the_source_kerns_at_the_instance() -> None:
+    # Each weight has its own kerning, which a static program cannot hold.
+    kerning = {100: -50, 400: -100, 650: -200, 900: -300}
+    for weight, kern in kerning.items():
+        font = pyropdf.Font.from_file(VARIABLE_LATIN, weight=weight)
+        alone = sum(font.char_widths("AV", 1000))
+        assert font.text_width("AV", 1000) == pytest.approx(alone + kern), weight
+        assert font.text_width("A", 1000) == pytest.approx(font.char_widths("A", 1000)[0]), weight
+
+
+def test_an_instance_names_itself() -> None:
+    named = pyropdf.Font.from_file(VARIABLE_LATIN, weight=700)
+    assert named.name == "Variable Latin Bold"
+    assert named.family == "Variable Latin"
+    unnamed = pyropdf.Font.from_file(VARIABLE_LATIN, weight=650)
+    assert unnamed.name == "Variable Latin 650wght"
+    # Its program reads as the same face, with the source's other instances gone.
+    alone = pyropdf.Font.from_bytes(cast("bytes", named.program()))
+    assert alone.name == named.name
+    assert alone.weight == 700
+    assert alone.is_bold
+    assert alone.char_widths("A", 1000) == named.char_widths("A", 1000)
+    with pytest.raises(pyropdf.PdfError, match="no weight axis"):
+        pyropdf.Font.from_bytes(cast("bytes", named.program()), weight=900)
+
+
+def test_an_instance_does_not_inherit_a_bold_default() -> None:
+    data = bytearray(ARABIC.read_bytes())
+    for index in range(struct.unpack_from(">H", data, 4)[0]):
+        record = 12 + 16 * index
+        tag, _, offset = struct.unpack_from(">4sLL", data, record)
+        if tag == b"OS/2":
+            struct.pack_into(">H", data, offset + 62, 0x20)
+    assert pyropdf.Font.from_bytes(bytes(data)).is_bold
+    instance = pyropdf.Font.from_bytes(bytes(data), weight=500)
+    assert not instance.is_bold
+    assert instance.weight == 500
+
+
+def test_composites_that_flatten_past_the_limit_refuse() -> None:
+    data = VARIABLE_COMPOSITES.read_bytes()
+    size = len(data)
+    assert pyropdf.Font.from_bytes(data, max_size=size).glyph_count == 18
+    with pytest.raises(pyropdf.LimitError, match=rf"this instance is over the {size}-byte limit") as caught:
+        pyropdf.Font.from_bytes(data, weight=700, max_size=size)
+    assert caught.value.code == "font_input_size"
+    with pytest.raises(pyropdf.LimitError, match="this instance"):
+        pyropdf.Font.from_file(VARIABLE_COMPOSITES, weight=700, max_size=size)
+    # The default limit holds this one, and None trusts the input.
+    program = cast("bytes", pyropdf.Font.from_bytes(data, weight=700).program())
+    assert len(program) > 50 * size
+    trusted = cast("bytes", pyropdf.Font.from_bytes(data, weight=700, max_size=None).program())
+    assert trusted == program
+    assert pyropdf.Font.from_bytes(data, weight=700, max_size=len(program)).program() == program
+    with pytest.raises(pyropdf.LimitError):
+        pyropdf.Font.from_bytes(data, weight=700, max_size=len(program) - 1)
+
+
+def test_a_coordinate_outside_16_bits_refuses() -> None:
+    assert pyropdf.Font.from_file(VARIABLE_OVERFLOW, weight=500).char_bbox("A").x1 == pytest.approx(32.4)
+    with pytest.raises(pyropdf.PdfError, match=r"glyph 1 cannot be written at this weight: .* 16 bits"):
+        pyropdf.Font.from_file(VARIABLE_OVERFLOW, weight=900)
 
 
 def test_font_input_is_bounded() -> None:
