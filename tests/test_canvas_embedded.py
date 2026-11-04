@@ -13,6 +13,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -26,6 +27,7 @@ JAPANESE = FONTS / "NotoSansJP-subset.otf"
 HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
 ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
 LINE = "AVA office 日本語、かな。"
+ARABIC_WORD = "مرحبا"
 #: The refusal of a colour glyph with no outline, for one character.
 NO_OUTLINE = r"cannot draw U\+{:04X} \('{}'\): its glyph is a colour glyph with no outline"
 
@@ -61,6 +63,12 @@ def _new_page(width: float = 400, height: float = 200) -> tuple[pyropdf.Document
 
 def _glyphs(page: pyropdf.Page) -> list[pyropdf.Glyph]:
     return [glyph for run in page.content(paths=False, images=False).text_runs for glyph in run.glyphs]
+
+
+def _text_without_warning(page: pyropdf.Page) -> str:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pyropdf.PyropdfWarning)
+        return page.text()
 
 
 def _descriptor_programs(document: pyropdf.Document) -> set[int]:
@@ -138,17 +146,91 @@ def test_drawn_text_extracts_in_logical_order(font: str, text: str, request: pyt
         canvas.text(text, (20, 60), font=face, size=14)
 
     reopened = pyropdf.open(document.to_bytes())
-    # A dot that the Arabic face draws apart from its letter maps to no text.
-    with pytest.warns(pyropdf.PyropdfWarning) if font == "arabic" else _no_warning():
-        assert reopened.pages[0].text().strip() == text
+    assert _text_without_warning(reopened.pages[0]).strip() == text
 
 
-class _no_warning:  # noqa: N801 - a context manager used like a function.
-    def __enter__(self) -> None:
-        return None
+def _arabic_word(arabic: pyropdf.Font, *, at: tuple[float, float] = (20, 60), size: float = 14) -> pyropdf.Document:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text(ARABIC_WORD, at, font=arabic, size=size)
+    return document
 
-    def __exit__(self, *_args: object) -> None:
-        return None
+
+def test_a_saved_arabic_word_has_no_unmapped_glyph(arabic: pyropdf.Font) -> None:
+    # The shaper splits the letter beh into a base and a dot in one cluster.
+    shaped = arabic._font.shape(ARABIC_WORD)  # noqa: SLF001
+    dot = next(glyph[0] for glyph in shaped if glyph[5] == glyph[6])
+    reopened = pyropdf.open(_arabic_word(arabic).to_bytes())
+    page = reopened.pages[0]
+
+    assert _text_without_warning(page).strip() == ARABIC_WORD
+    assert page.text(unmapped="replacement").strip() == ARABIC_WORD
+    type0 = next(
+        value
+        for number in reopened.objects
+        if isinstance(value := reopened.objects[number], pyropdf.Dictionary) and value.get("Subtype") == "Type0"
+    )
+    mapped = _fonts._mapped(type0["ToUnicode"], arabic.glyph_count)  # noqa: SLF001
+    drawn = _fonts._widths(type0["DescendantFonts"][0], arabic.glyph_count)  # noqa: SLF001
+    assert dot in drawn
+    assert set(drawn) <= set(mapped)
+    assert mapped[dot] == _fonts._NO_TEXT  # noqa: SLF001
+
+
+def test_a_cluster_is_one_actual_text_and_its_glyphs_stay_where_the_shaper_put_them(arabic: pyropdf.Font) -> None:
+    x, y, size = 20.25, 60.0, 14.0
+    document = _arabic_word(arabic, at=(x, y), size=size)
+    page = document.pages[0]
+
+    scale = size / arabic._font.units_per_em  # noqa: SLF001
+    pen = x
+    expected = {}
+    for glyph, advance, _y_advance, x_offset, y_offset, *_ in arabic._font.shape(ARABIC_WORD):  # noqa: SLF001
+        expected[glyph] = (pen + x_offset * scale, y - y_offset * scale)
+        pen += advance * scale
+    glyphs = _glyphs(page)
+    assert {glyph.glyph_id for glyph in glyphs} == set(expected)
+    for glyph in glyphs:
+        assert glyph.glyph_id is not None
+        assert (glyph.origin.x, glyph.origin.y) == pytest.approx(expected[glyph.glyph_id], abs=1e-2)
+
+    # Only the letter that the face splits needs ActualText, and its glyphs lie inside.
+    operators = [operation.operator for operation in page.operations]
+    spans = [operation.operands[1]["ActualText"].text for operation in page.operations if operation.operator == "BDC"]
+    assert spans == ["\u0628"]
+    inside = page.operations[operators.index("BDC") : operators.index("EMC")]
+    shown = [
+        item
+        for operation in inside
+        if operation.operator == "TJ"
+        for item in operation.operands[0]
+        if isinstance(item, pyropdf.String)
+    ]
+    assert len(shown) == 2
+
+
+def test_the_word_of_a_cluster_covers_its_glyphs(arabic: pyropdf.Font) -> None:
+    x, size = 20.0, 14.0
+    page = pyropdf.open(_arabic_word(arabic, at=(x, 60), size=size).to_bytes()).pages[0]
+
+    words = page.words()
+    assert [word.text for word in words] == [ARABIC_WORD]
+    assert words[0].bbox.x0 == pytest.approx(x, abs=1e-2)
+    assert words[0].bbox.x1 == pytest.approx(x + arabic.text_width(ARABIC_WORD, size), abs=1e-2)
+
+
+@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is not installed")
+def test_pdftotext_reads_a_cluster_as_its_text(arabic: pyropdf.Font) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "page.pdf"
+        path.write_bytes(_arabic_word(arabic).to_bytes())
+        read = subprocess.run(  # noqa: S603 - a fixed tool on a file of the test's own.
+            [shutil.which("pdftotext") or "pdftotext", "-enc", "UTF-8", str(path), "-"],
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8")
+    # Xpdf marks the direction of a run with embedding controls.
+    assert read.translate(dict.fromkeys(map(ord, "\u202a\u202b\u202c"))).strip() == ARABIC_WORD
 
 
 def test_the_font_is_a_type0_font_with_identity_h(hebrew: pyropdf.Font) -> None:
@@ -481,7 +563,9 @@ def test_a_cff_face_hints_the_same_before_and_after_a_save(japanese: pyropdf.Fon
 
 
 @pytest.mark.skipif(shutil.which("pdftoppm") is None, reason="poppler's pdftoppm is not installed")
-@pytest.mark.parametrize(("font", "text"), [("japanese", "日本語、かな。"), ("hebrew", "שָׁלוֹם עולם")])
+@pytest.mark.parametrize(
+    ("font", "text"), [("japanese", "日本語、かな。"), ("hebrew", "שָׁלוֹם עולם"), ("arabic", ARABIC_WORD)]
+)
 def test_poppler_draws_the_saved_subset_where_hayro_does(font: str, text: str, request: pytest.FixtureRequest) -> None:
     document, page = _new_page(300, 80)
     with page.draw() as canvas:

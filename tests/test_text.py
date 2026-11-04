@@ -137,6 +137,89 @@ def _unmapped_document() -> pyropdf.Document:
     return document
 
 
+@pytest.mark.parametrize(
+    ("stream", "expected"),
+    [
+        pytest.param("/Span <</ActualText (A)>> BDC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC", "A\n", id="one glyph"),
+        pytest.param(
+            "/Span <</ActualText <FEFF00C4>>> BDC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC", "\u00c4\n", id="utf-16"
+        ),
+        pytest.param(
+            "BT /F1 20 Tf 72 700 Td (a) Tj /Span <</ActualText (BC)>> BDC (xyz) Tj EMC (d) Tj ET",
+            "aBCd\n",
+            id="several",
+        ),
+        pytest.param(
+            "BT /F1 20 Tf 72 700 Td (a) Tj /Span <</ActualText (B)>> BDC (x) Tj EMC "
+            "/Span <</ActualText (C)>> BDC (y) Tj EMC (d) Tj ET",
+            "aBCd\n",
+            id="in turn",
+        ),
+        pytest.param(
+            "/Span <</ActualText (A)>> BDC /Span <</ActualText (B)>> BDC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC EMC",
+            "A\n",
+            id="the outermost wins",
+        ),
+        pytest.param(
+            "/Span <</ActualText (A)>> BDC /P BMC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC "
+            "BT /F1 20 Tf 83 700 Td (y) Tj ET EMC BT /F1 20 Tf 94 700 Td (z) Tj ET",
+            "Az\n",
+            id="an inner sequence ends without it",
+        ),
+        pytest.param(
+            "BT /F1 20 Tf 72 700 Td (a) Tj /Span <</ActualText ()>> BDC (x) Tj EMC (b) Tj ET", "a b\n", id="empty"
+        ),
+        pytest.param("/Span <</ActualText (A)>> BDC EMC BT /F1 20 Tf 72 700 Td (b) Tj ET", "b\n", id="no glyph"),
+        pytest.param("/Span <</MCID 0>> BDC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC", "x\n", id="without it"),
+        pytest.param("EMC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC", "x\n", id="unbalanced"),
+    ],
+)
+def test_actual_text_replaces_the_text_of_the_glyphs_inside(stream: str, expected: str) -> None:
+    assert pyropdf.open(build_text_pdf(stream)).pages[0].text() == expected
+
+
+def test_actual_text_holds_for_a_glyph_outside_the_clip_or_without_a_mapping() -> None:
+    # The first glyph lies off the page, so the second one holds the text.
+    stream = "/Span <</ActualText (A)>> BDC BT /F1 20 Tf 700 700 Td (x) Tj ET BT /F1 20 Tf 72 700 Td (y) Tj ET EMC"
+    assert pyropdf.open(build_text_pdf(stream)).pages[0].text() == "A\n"
+
+    # A mapping that a CMap lacks raises no warning inside the sequence.
+    stream = "/Span <</ActualText (A)>> BDC BT /F1 20 Tf 72 700 Td <01> Tj ET EMC"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pyropdf.PyropdfWarning)
+        assert pyropdf.open(build_text_pdf(stream, to_unicode={0x41: "A"})).pages[0].text() == "A\n"
+
+
+def test_actual_text_is_found_through_the_properties_of_the_resources() -> None:
+    stream = "/Span /MC0 BDC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC"
+    data = build_text_pdf(stream).replace(
+        b"/Resources << ", b"/Resources << /Properties << /MC0 << /ActualText (A) >> >> "
+    )
+
+    assert pyropdf.open(data).pages[0].text() == "A\n"
+
+
+def test_a_word_of_actual_text_spans_the_glyphs_inside() -> None:
+    page = pyropdf.open(build_text_pdf("BT /F1 20 Tf 72 700 Td /Span <</ActualText (AB)>> BDC (xyz) Tj EMC ET")).pages[
+        0
+    ]
+    # Helvetica's x, y, and z are 500 units wide.
+    word = page.words()[0]
+    assert word.text == "AB"
+    assert word.bbox.x0 == pytest.approx(72, abs=1e-2)
+    assert word.bbox.x1 == pytest.approx(72 + 3 * 10, abs=1e-2)
+
+
+def test_the_budget_counts_actual_text() -> None:
+    stream = f"/Span <</ActualText ({'A' * 2000})>> BDC BT /F1 20 Tf 72 700 Td (x) Tj ET EMC"
+    page = pyropdf.open(build_text_pdf(stream)).pages[0]
+
+    assert page.text() == "A" * 2000 + "\n"
+    with pytest.raises(pyropdf.LimitError) as refused:
+        page.text(max_size=100)
+    assert refused.value.code == "text_size"
+
+
 @pytest.mark.spec("text-extraction", "read")
 def test_unmapped_glyphs_are_skipped_or_stand_for_a_placeholder() -> None:
     page = _unmapped_document().pages[0]
@@ -160,6 +243,36 @@ def test_type3_glyphs_without_unicode_have_no_glyph_id() -> None:
         assert page.text() == ""
     assert page.text(unmapped="glyph_id") == page.text(unmapped="replacement")
     assert set(page.text(unmapped="replacement")) <= {"�", " ", "\n"}
+
+
+def _type3_page(content: str, em: int) -> pyropdf.Page:
+    """Open a page whose /T3 is a Type 3 font of ``em`` units, whose codes A and B advance one em."""
+
+    def stream(data: str) -> str:
+        return f"<< /Length {len(data)} >>\nstream\n{data}\nendstream"
+
+    objects: dict[int, str | bytes] = {
+        1: "<< /Type /Catalog /Pages 2 0 R >>",
+        2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>",
+        3: "<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Resources << /Font << /T3 5 0 R >> >> >>",
+        4: stream(content),
+        5: (
+            f"<< /Type /Font /Subtype /Type3 /FontBBox [0 0 {em} {em}] /FontMatrix [{1 / em} 0 0 {1 / em} 0 0] "
+            "/CharProcs << /a 6 0 R /b 6 0 R >> /Encoding << /Type /Encoding /Differences [65 /a /b] >> "
+            f"/FirstChar 65 /LastChar 66 /Widths [{em} {em}] /ToUnicode 7 0 R >>"
+        ),
+        6: stream(f"{em} 0 d0"),
+        7: stream(_to_unicode({0x41: "A", 0x42: "B"})),
+    }
+    return pyropdf.open(build_raw_pdf(objects)).pages[0]
+
+
+@pytest.mark.parametrize("em", [1000, 2048])
+def test_type3_glyphs_read_by_the_advance_that_their_font_gives(em: int) -> None:
+    # Half the font size, the estimate for a font that gives no advance, would
+    # leave a gap as wide as a space between these glyphs.
+    assert _type3_page("BT /T3 24 Tf 20 50 Td <4142> Tj ET", em).text().strip() == "AB"
+    assert _type3_page("BT /T3 24 Tf 20 50 Td [<41> -1500 <42>] TJ ET", em).text().strip() == "A B"
 
 
 def test_document_text_applies_the_options_to_every_page() -> None:
