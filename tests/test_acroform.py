@@ -419,6 +419,18 @@ def test_fill_right_to_left_text_reads_in_logical_order() -> None:
     assert reopened.pages[0].text().split("\n")[0] == "שלום עולם basic"
 
 
+def test_saving_a_field_in_a_truetype_face_again_writes_the_same_bytes() -> None:
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_HEBREW)
+    doc.form["customer"].value = "שלום עולם"
+
+    first = doc.to_bytes()
+
+    assert re.findall(rb"/CIDToGIDMap \d+ 0 R", first)
+    assert doc.to_bytes() == first
+    assert doc.to_bytes() == first
+
+
 def _field_in(face: pyropdf.Font, value: str, *, size: float = 14) -> pyropdf.Document:
     """Return a document whose one field holds ``value``, drawn in ``face``."""
     document = pyropdf.Document()
@@ -538,6 +550,16 @@ def test_form_font_draws_the_same_bytes_as_font_input() -> None:
     fields = _values(reopened)
     assert (fields["customer"], fields["code"]) == ("日本語のテキスト", "日A")
     assert _opaque_pixels(reopened, (45, 67, 255, 97)) > 0
+
+
+def test_form_font_shapes_an_instance_at_its_weight() -> None:
+    """A static program has no kerning of its own, so the source kerns the instance."""
+    doc = pyropdf.open(_build_form_pdf())
+    doc.form.font = pyropdf.Font.from_file(FONTS / "variable-latin.ttf", weight=900)
+    doc.form["customer"].value = "AV"
+    widget = doc.objects[_widget_xrefs(doc.form["customer"])[0]]
+    assert b"[<0001> 300 <0002>] TJ" in widget["AP"]["N"].read()
+    assert _values(pyropdf.open(doc.to_bytes()))["customer"] == "AV"
 
 
 def test_form_font_fills_buttons_and_empty_values() -> None:

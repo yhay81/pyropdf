@@ -617,25 +617,23 @@ def _describe_weight(weight: int) -> str:
     return {400: "regular", _BOLD_FONT_WEIGHT: "bold"}.get(weight, f"weight-{weight}")
 
 
-def _at_weight(face: _core._Font, weight: int | None) -> _core._Font:
-    """Return ``face`` when it is drawn at ``weight``.
+def _at_weight(face: _core._Font, weight: int | None, max_size: int | None) -> _core._Font:
+    """Return ``face`` at ``weight``.
 
-    pyropdf draws a face's default instance only, and never imitates a
-    weight that the font does not define.
+    A variable face provides the instance at any weight on its weight axis and
+    refuses a weight outside it. Any other face has one weight, its OS/2 weight
+    class, which must be the one requested: pyropdf never imitates a weight
+    that the font does not define.
     """
     if weight is None:
         return face
     axis = face.weight_axis
-    current = face.weight if axis is None else round(axis[1])
+    if axis is not None:
+        return face if weight == axis[1] else face.at_weight(weight, max_size)
+    current = face.weight
     if weight == current:
         return face
     requested = _describe_weight(weight)
-    if axis is not None:
-        msg = (
-            f"the font's default instance has weight {current}, not {weight}; "
-            "pyropdf draws a variable font at its default instance only"
-        )
-        raise PdfError(msg)
     msg = (
         f"the font has no weight axis, and its only face is {_describe_weight(current)}, not {requested}; "
         f"load the {requested} face's file instead"
@@ -712,14 +710,17 @@ class Font:
         """Load an OpenType face (TrueType or CFF outlines) from a font file.
 
         ``index`` selects a face in a collection such as a ``.ttc`` file. A
-        variable face is drawn at its default instance. ``weight``, a weight
-        class from 1 through 1000, must be the face's own weight: pyropdf
-        never imitates a weight that the font does not define, and refuses
-        other instances of a variable face. Invalid or unsupported font data
-        raises :class:`PdfError`; a missing file raises
-        :class:`FileNotFoundError`. The file is limited to 64 MiB by default
-        (``max_size``, ``None`` for trusted input), refused with
-        :class:`LimitError` code ``font_input_size``.
+        variable face is drawn at its default instance, which need not be
+        regular: the variable Noto Sans JP defaults to Thin. ``weight``, a
+        weight class from 1 through 1000, selects the instance at that weight
+        on a TrueType face's weight axis, as a static program written at load,
+        and refuses a weight outside the axis. Any other face must already
+        have that weight: pyropdf never imitates a weight that the font does
+        not define. Invalid or unsupported font data raises :class:`PdfError`;
+        a missing file raises :class:`FileNotFoundError`. The file, and the
+        program of an instance, are limited to 64 MiB by default (``max_size``,
+        ``None`` for trusted input), refused with :class:`LimitError` code
+        ``font_input_size``.
         """
         _validate_optional_positive_int("max_size", max_size)
         resolved = _font_weight(weight)
@@ -734,7 +735,7 @@ class Font:
             data = file.read() if max_size is None else file.read(max_size + 1)
         if max_size is not None and len(data) > max_size:
             raise _font_input_limit(len(data), max_size)
-        return cls._wrap(_at_weight(_core._Font.from_bytes(data, face_index), resolved))  # noqa: SLF001
+        return cls._wrap(_at_weight(_core._Font.from_bytes(data, face_index), resolved, max_size))  # noqa: SLF001
 
     @classmethod
     def from_bytes(
@@ -759,7 +760,8 @@ class Font:
         size = memoryview(data).nbytes
         if max_size is not None and size > max_size:
             raise _font_input_limit(size, max_size)
-        return cls._wrap(_at_weight(_core._Font.from_bytes(bytes(data), face_index), resolved))  # noqa: SLF001
+        face = _core._Font.from_bytes(bytes(data), face_index)  # noqa: SLF001
+        return cls._wrap(_at_weight(face, resolved, max_size))
 
     @classmethod
     def standard(cls, name: StandardFontName) -> Font:
@@ -790,7 +792,7 @@ class Font:
 
     @property
     def weight(self) -> int:
-        """The weight: 400 for regular and 700 for bold faces."""
+        """The weight class, such as 400 for a regular and 700 for a bold face, of the instance that it draws."""
         return self._font.weight
 
     @property
@@ -975,8 +977,8 @@ class FallbackFont:
     Rendering draws a font whose name marks it as serif, such as a Mincho,
     Song, Ming, or Batang face, in ``serif``, and any other in ``sans``;
     when one of them is ``None``, the other draws both. A variable face
-    renders at its default instance. :attr:`Document.fallback_fonts` maps
-    each language to one.
+    renders at its default instance, or the instance that ``weight`` selected
+    when it loaded. :attr:`Document.fallback_fonts` maps each language to one.
     """
 
     sans: Font | None = None

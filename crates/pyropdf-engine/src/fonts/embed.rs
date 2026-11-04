@@ -17,6 +17,7 @@ use skrifa::raw::types::Tag;
 use skrifa::raw::{FileRef, TableProvider};
 use skrifa::{FontRef, MetadataProvider, string::StringId};
 
+use super::instance::Instance;
 use super::{cff, sfnt};
 
 #[cfg(test)]
@@ -88,6 +89,9 @@ pub struct Face {
     /// The minimum, default, and maximum of a weight axis; the program is
     /// drawn at its default instance.
     pub weight_axis: Option<[f32; 3]>,
+    /// The source and the weight of an instance that [`Face::at_weight`]
+    /// wrote, whose static program does not shape.
+    pub instance: Option<Instance>,
 }
 
 /// The tables that a face needs to measure and draw text.
@@ -226,6 +230,7 @@ impl Face {
             cap_height,
             italic_angle: f64::from(metrics.italic_angle),
             weight_axis,
+            instance: None,
         })
     }
 
@@ -339,7 +344,7 @@ impl OutlinePen for BoundsPen {
     fn close(&mut self) {}
 }
 
-fn name(font: &FontRef<'_>, id: StringId) -> Option<String> {
+pub(super) fn name(font: &FontRef<'_>, id: StringId) -> Option<String> {
     font.localized_strings(id)
         .english_or_first()
         .map(|name| name.to_string())
@@ -348,7 +353,7 @@ fn name(font: &FontRef<'_>, id: StringId) -> Option<String> {
 
 /// A PDF name for the font: printable ASCII without spaces or delimiters,
 /// at most 63 bytes as a PostScript name is.
-fn sanitized_name(name: &str) -> String {
+pub(super) fn sanitized_name(name: &str) -> String {
     name.chars()
         .filter(|character| character.is_ascii_graphic() && !"()<>[]{}/%#".contains(*character))
         .take(63)
