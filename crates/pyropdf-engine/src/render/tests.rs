@@ -116,14 +116,49 @@ fn pdf20_simple() -> Arc<Bridged> {
 }
 
 #[test]
-fn hinting_renders_as_hayro_renders_with_its_default_settings() {
+fn a_render_fills_glyphs_without_the_glyph_cache() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/real_world/f1040.pdf");
+    let bridged = Arc::new(Bridged::of_bytes(fs::read(path).unwrap()));
+    let pages = bridged.pdf().pages();
+    let theirs = |glyph_caching| -> Vec<u8> {
+        hayro::render(
+            pages.first().unwrap(),
+            &RenderCache::new(),
+            &InterpreterSettings::default(),
+            &RenderSettings {
+                hinting: false,
+                glyph_caching,
+                ..RenderSettings::default()
+            },
+            &PixmapSettings {
+                x_scale: 1.0,
+                y_scale: 1.0,
+                bg_color: AlphaColor::WHITE,
+            },
+        )
+        .data()
+        .iter()
+        .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
+        .collect()
+    };
+    let ours = raster(&bridged, &Fallback::default(), 0, &hinted_options(false)).unwrap();
+    assert!(ours.data == theirs(false));
+    assert!(ours.data != theirs(true));
+}
+
+#[test]
+fn hinting_renders_as_hayro_hints_without_its_glyph_cache() {
     let bridged = pdf20_simple();
     let pages = bridged.pdf().pages();
     let theirs = hayro::render(
         pages.first().unwrap(),
         &RenderCache::new(),
         &InterpreterSettings::default(),
-        &RenderSettings::default(),
+        &RenderSettings {
+            glyph_caching: false,
+            ..RenderSettings::default()
+        },
         &PixmapSettings {
             x_scale: 1.0,
             y_scale: 1.0,
