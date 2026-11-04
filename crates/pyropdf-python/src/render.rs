@@ -21,6 +21,7 @@ pub fn render_page_svg(
     max_size: Option<usize>,
 ) -> PyResult<String> {
     let (version, index, budget) = crate::pages::index(document)?;
+    let fallback = document.fallback();
     py.detach(|| {
         let at = index
             .index_of(Reference::new(number, generation))
@@ -33,8 +34,8 @@ pub fn render_page_svg(
             .bridge
             .get_for_render(&version, &index, &budget, annotations)
             .map_err(|e| bridge_error(&e))?;
-        let svg =
-            render::svg(&bridged, at, annotations).map_err(|e| PdfError::new_err(e.to_string()))?;
+        let svg = render::svg(&bridged, &fallback, at, annotations)
+            .map_err(|e| PdfError::new_err(e.to_string()))?;
         if let Some(limit) = max_size
             && svg.len() > limit
         {

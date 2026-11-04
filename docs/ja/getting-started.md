@@ -19,6 +19,9 @@ wheel は Linux・macOS・Windows の CPython 3.11〜3.15 に対応し、free-th
 pip install "pyropdf[ocr]"
 ```
 
+`jp`・`ko`・`zh-cn`・`zh-tw` の extra は、文書が埋め込んでいない日本語・韓国語・中国語の
+フォントを描く書体を入れます。[描画](rendering.md#fonts-that-a-document-does-not-embed)を参照してください。
+
 ## 開いて閉じる
 
 `pyropdf.open` はパスか文書のバイト列を受け取ります。文書は context manager で、

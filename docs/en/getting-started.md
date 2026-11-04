@@ -19,6 +19,10 @@ dependencies. Offline OCR needs its models, which an extra installs:
 pip install "pyropdf[ocr]"
 ```
 
+The `jp`, `ko`, `zh-cn`, and `zh-tw` extras install the faces that render
+Japanese, Korean, and Chinese fonts that a document does not embed; see
+[Rendering](rendering.md#fonts-that-a-document-does-not-embed).
+
 ## Open and close
 
 `pyropdf.open` takes a path or the bytes of a document. A document is a

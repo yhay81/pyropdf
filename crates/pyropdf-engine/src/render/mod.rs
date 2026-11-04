@@ -13,11 +13,13 @@ use hayro::hayro_syntax::Pdf;
 use crate::bridge::{Bridged, Error, Result};
 
 mod batch;
+mod fallback;
 mod svg;
 #[cfg(test)]
 mod tests;
 
 pub use batch::{MAX_WORKERS, batch};
+pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::svg;
 
 /// What hayro renders with: its defaults, with text hinted only on request.
@@ -187,11 +189,14 @@ impl std::error::Error for RasterError {}
 /// images, and glyph outlines, which every page of one version shares, as
 /// pylopdf keeps one cache per snapshot. hayro's cache is not `Send`, so
 /// each thread keeps its own, and the bridge that it borrows from, until it
-/// renders another version.
+/// renders another version. The fonts that it holds were resolved through
+/// the fallback faces, so other faces start another cache too (DESIGN.md
+/// section 5).
 struct Cached {
     // Declared first, so that it drops before the bridge that it borrows.
     cache: RenderCache<'static>,
     bridged: Arc<Bridged>,
+    fallback: Fallback,
 }
 
 thread_local! {
@@ -199,22 +204,23 @@ thread_local! {
 }
 
 /// Runs `render` with hayro's document of `bridged` and this thread's cache
-/// for it.
+/// for it and `fallback`.
 fn with_cache<T>(
     bridged: &Arc<Bridged>,
+    fallback: &Fallback,
     render: impl FnOnce(&'static Pdf, &RenderCache<'static>) -> T,
 ) -> T {
     CACHE.with(|cell| {
         let mut held = cell.borrow_mut();
-        if !held
-            .as_ref()
-            .is_some_and(|cached| Arc::ptr_eq(&cached.bridged, bridged))
-        {
+        if !held.as_ref().is_some_and(|cached| {
+            Arc::ptr_eq(&cached.bridged, bridged) && cached.fallback.same(fallback)
+        }) {
             // Drop the old cache before its bridge, then start one for this bridge.
             *held = None;
             *held = Some(Cached {
                 cache: RenderCache::new(),
                 bridged: Arc::clone(bridged),
+                fallback: fallback.clone(),
             });
         }
         let cached = held.as_ref().expect("the cache was just set");
@@ -228,13 +234,17 @@ fn with_cache<T>(
 
 /// Renders page `index` as pylopdf's `page.pixmap` renders it: the raster
 /// covers the whole pixels inside the page transformed by the matrix, or
-/// those of them inside the clip.
+/// those of them inside the clip. `fallback` draws the CJK fonts that the
+/// document does not embed.
 pub fn raster(
     bridged: &Arc<Bridged>,
+    fallback: &Fallback,
     index: usize,
     options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
-    with_cache(bridged, |pdf, cache| draw(pdf, cache, index, options))
+    with_cache(bridged, fallback, |pdf, cache| {
+        draw(pdf, cache, fallback, index, options)
+    })
 }
 
 /// The smallest rectangle `(x0, y0, x1, y1)` holding `corners`.
@@ -372,6 +382,7 @@ fn extent(
 fn draw<'a>(
     pdf: &'a Pdf,
     cache: &RenderCache<'a>,
+    fallback: &Fallback,
     index: usize,
     options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
@@ -392,7 +403,7 @@ fn draw<'a>(
         } else {
             RenderContent::PAGE
         },
-        ..InterpreterSettings::default()
+        ..fallback.settings()
     };
     let mut context = RenderContext::new(raster_width, raster_height);
     hayro::render_into(

@@ -83,6 +83,34 @@ before that nothing else refers to.
 
 Settable.
 
+### `Document.fallback_fonts`
+
+```python
+Document.fallback_fonts: FallbackFonts
+```
+
+The fonts that render the CJK fonts that the document does not embed, by language.
+
+hayro draws a font that a document does not embed in a Standard 14
+font, which has no CJK glyphs, so such text renders blank. A
+`FallbackFont` draws it instead: a font of the Adobe-Japan1,
+Korea1, GB1, or CNS1 character collection takes the faces of
+`"ja"`, `"ko"`, `"zh-CN"`, or `"zh-TW"`, and an
+Adobe-Identity font those of the language that its name suggests,
+such as MS-Gothic for `"ja"` or SimSun for `"zh-CN"`.
+
+Until it is edited, the mapping holds the faces of the installed
+font extras, `pyropdf[jp]`, `[ko]`, `[zh-cn]`, and
+`[zh-tw]`, which rendering reads the first time that a page needs
+them. Assigning a mapping of `FallbackFont` records replaces
+every language, so `{}` renders without fallback fonts, and `del`
+returns to the installed extras. The fonts belong to this
+`Document` object and are not saved; rendering uses them, and text
+extraction, which reads the character collection's Unicode, does
+not.
+
+Settable.
+
 ### `Document.trailer`
 
 ```python

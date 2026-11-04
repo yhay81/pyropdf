@@ -116,3 +116,39 @@ from pathlib import Path
 with pyropdf.open("input.pdf") as doc:
     Path("page-1.svg").write_text(doc.pages[0].svg(), encoding="utf-8")
 ```
+
+## 埋め込まれていないフォント {#fonts-that-a-document-does-not-embed}
+
+PDF はフォントのプログラムを埋め込まずに名前だけで指定することがあり、日本語・中国語・
+韓国語の文書の MS ゴシック、MS 明朝、SimSun、Batang などによく見られます。hayro は
+そうしたフォントを標準 14 フォントで描きますが、標準 14 フォントには CJK のグリフがないので、
+`page.text()` では読めるテキストが描画では空白になります。フォントの extra を入れると、
+代わりに描く書体が入ります。
+
+```bash
+pip install "pyropdf[jp]"
+```
+
+`jp`・`ko`・`zh-cn`・`zh-tw` は、日本語・韓国語・簡体字中国語・繁体字中国語の Noto Sans と
+Noto Serif を入れます。すると `page.pixmap()`・`page.svg()`・`doc.render()`・
+`annotation.pixmap()` のどの描画も、Adobe-Japan1・Korea1・GB1・CNS1 の文字コレクションの
+フォントをその言語の書体で描き、明朝体のように名前がセリフを示すフォントはセリフ体で描きます。
+書体はページが初めて必要としたときに読み込まれます。
+
+`doc.fallback_fonts` は言語 `"ja"`・`"ko"`・`"zh-CN"`・`"zh-TW"` から `FallbackFont` への
+マッピングで、編集するまではインストール済みの extra を並べます。`Font.from_file` で読み込んだ
+書体で `FallbackFont(sans=..., serif=...)` を代入するとその言語を別の書体で描き、言語を `del`
+するとその言語を代替なしで描き、`{}` を代入するとどの言語も代替なしで描きます。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    print(list(doc.fallback_fonts))  # インストール済みの extra（例: ['ja']）
+    doc.fallback_fonts = {}  # 代替フォントなしで描く
+    plain = doc.pages[0].pixmap()
+    del doc.fallback_fonts  # インストール済みの extra に戻す
+```
+
+これらのフォントは `Document` オブジェクトの設定で、保存されません。テキスト抽出には不要で、
+文字コレクションから文字を読みます。

@@ -7,8 +7,9 @@ quads of matches are in ``tests/test_text_quads.py``. The differences:
 - pylopdf draws its pages with ``page.draw``; these tests write content
   streams.
 - pylopdf selects pages with ``doc.pages.select``; pyropdf deletes one.
-- pylopdf turns its CJK fallback fonts off with ``doc.fallback_fonts``,
-  which pyropdf does not have; text from a CMap needs no font program.
+- pylopdf turns its CJK fallback fonts off with ``doc.fallback_fonts``;
+  pyropdf's text extraction does not use them, and text from a CMap needs
+  no font program.
 - ``Page.search`` also takes the ``max_glyphs`` and ``max_size`` budgets of
   the other text views.
 """

@@ -127,3 +127,43 @@ from pathlib import Path
 with pyropdf.open("input.pdf") as doc:
     Path("page-1.svg").write_text(doc.pages[0].svg(), encoding="utf-8")
 ```
+
+## Fonts that a document does not embed
+
+A PDF may name a font without embedding its program, as many Japanese,
+Chinese, and Korean documents do with MS-Gothic, MS-Mincho, SimSun, or
+Batang. hayro draws such a font in a Standard 14 font, which has no CJK
+glyphs, so its text renders blank, although `page.text()` reads it. The
+font extras install faces that draw it instead:
+
+```bash
+pip install "pyropdf[jp]"
+```
+
+`jp`, `ko`, `zh-cn`, and `zh-tw` install the Noto Sans and Noto Serif faces
+of Japanese, Korean, Simplified Chinese, and Traditional Chinese. Every
+rendering, `page.pixmap()`, `page.svg()`, `doc.render()`, and
+`annotation.pixmap()`, then draws a font of the Adobe-Japan1, Korea1, GB1,
+or CNS1 character collection in the faces of its language, and a font whose
+name marks it as serif, such as a Mincho, in the serif face. A face is read
+the first time that a page needs it.
+
+`doc.fallback_fonts` maps the languages `"ja"`, `"ko"`, `"zh-CN"`, and
+`"zh-TW"` to `FallbackFont` records, and lists the installed extras until it
+is edited. Assign `FallbackFont(sans=..., serif=...)` with faces that
+`Font.from_file` loads to draw a language in other faces, `del` a language
+to draw it without, and assign `{}` to draw every language without:
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    print(list(doc.fallback_fonts))  # the installed extras, such as ['ja']
+    doc.fallback_fonts = {}  # render without fallback fonts
+    plain = doc.pages[0].pixmap()
+    del doc.fallback_fonts  # back to the installed extras
+```
+
+The fonts belong to the `Document` object and are not saved. Text
+extraction does not need them: it reads the text from the character
+collection.

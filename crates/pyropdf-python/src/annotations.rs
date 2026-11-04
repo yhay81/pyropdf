@@ -2588,10 +2588,11 @@ pub fn annotation_pixmap(
         annotations: false,
         hinting: false,
     };
+    let fallback = document.fallback();
     let raster = py.detach(|| -> PyResult<Raster> {
         let bridged =
             Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
-        render::raster(&bridged, at, &options).map_err(raster_error)
+        render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
     })?;
     Ok(Some(Pixmap::from(raster)))
 }
