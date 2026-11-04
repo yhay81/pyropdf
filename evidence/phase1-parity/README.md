@@ -80,9 +80,8 @@ vertically. hayro 0.8 filled every glyph where it lies, through vello_cpu. The
 run of 2026-11-03, with the cache on, found 11 rasters equal, 7 close, and 145
 beyond the tolerance; the worst, `f1040.pdf` page 1, had 8.1% of its pixels
 more than 16 away in a channel. The owner chose on #622 that 0.2.2 renders
-without the cache, so that a patch release moves no text, which makes
-`render::raster` about 1.8 times as slow over these pages: a rough ratio on one
-thread in the engine's test profile, not a benchmark. The engine's test
+without the cache, so that a patch release moves no text; #622 records a rough
+cost, and #640 is to measure it and decide on a later release. The engine's test
 `a_render_fills_glyphs_without_the_glyph_cache` guards the setting.
 
 ### Table edges on hayro 0.9

@@ -34,8 +34,7 @@ pub use svg::svg;
 /// hayro 0.9 also reuses a rasterized glyph by default (LaurenzV/hayro#1706),
 /// placed at a quarter of a pixel horizontally and at a whole pixel
 /// vertically, which changes most pages of the corpus. pyropdf fills each
-/// glyph where it lies, as it did with hayro 0.8, at about 1.8 times the time
-/// (#622).
+/// glyph where it lies, as it did with hayro 0.8 (#622).
 fn render_settings(hinting: bool) -> RenderSettings {
     RenderSettings {
         hinting,
