@@ -5,7 +5,9 @@
 //! nothing under text that reads back, so drawing refuses it. Measuring does
 //! not: a face may hold glyphs with outlines too, and the text may never be
 //! drawn. `ColourTables::covers` is the one place that says which tables
-//! count; a table that canvas text learns to draw in colour leaves it.
+//! count. Canvas text paints the PNG strikes ([`bitmap`](super::bitmap)) as
+//! a Type 3 font, so it refuses only what is left; a form field or an
+//! annotation writes a CIDFont, and refuses those glyphs too.
 
 use skrifa::color::ColorGlyphCollection;
 use skrifa::instance::{LocationRef, Size};
@@ -16,6 +18,7 @@ use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 use pyropdf_store::budget::Budget;
 
+use super::bitmap::Bitmaps;
 use super::embed::Face;
 use super::shape::{ShapeError, ShapedGlyph};
 
@@ -106,8 +109,14 @@ impl<'a> ColourTables<'a> {
     }
 }
 
+/// Refuses a font whose colour tables would make a lookup walk too far.
+pub(super) fn check_lookups(font: &FontRef<'_>) -> Result<(), ShapeError> {
+    ColourTables::read(font).map(|_| ())
+}
+
 /// Returns the first character, in the order of `glyphs`, whose glyph is a
-/// colour glyph with no outline: what a drawing of `text` must refuse.
+/// colour glyph with no outline: what a drawing of `text` in a CIDFont must
+/// refuse.
 ///
 /// A glyph that stands only for white space or control characters asks for
 /// no ink, and neither does the face's space glyph, which also stands for
@@ -118,6 +127,28 @@ pub fn refused_colour_glyph(
     text: &str,
     glyphs: &[ShapedGlyph],
     budget: &Budget,
+) -> Result<Option<char>, ShapeError> {
+    refused(face, text, glyphs, budget, None)
+}
+
+/// Returns what [`refused_colour_glyph`] does for a drawing on the canvas,
+/// which paints the glyphs that `bitmaps` holds.
+pub fn refused_canvas_glyph(
+    face: &Face,
+    text: &str,
+    glyphs: &[ShapedGlyph],
+    bitmaps: &Bitmaps<'_>,
+    budget: &Budget,
+) -> Result<Option<char>, ShapeError> {
+    refused(face, text, glyphs, budget, Some(bitmaps))
+}
+
+fn refused(
+    face: &Face,
+    text: &str,
+    glyphs: &[ShapedGlyph],
+    budget: &Budget,
+    bitmaps: Option<&Bitmaps<'_>>,
 ) -> Result<Option<char>, ShapeError> {
     let font = face.font();
     let Some(tables) = ColourTables::read(&font)? else {
@@ -137,7 +168,12 @@ pub fn refused_colour_glyph(
         }
         budget.poll()?;
         let glyph = GlyphId::from(id);
-        if id == 0 || space == Some(glyph) || !tables.covers(glyph) || paints(&outlines, glyph) {
+        if id == 0
+            || space == Some(glyph)
+            || !tables.covers(glyph)
+            || bitmaps.is_some_and(|bitmaps| bitmaps.has(glyph))
+            || paints(&outlines, glyph)
+        {
             passed[word] |= bit;
             continue;
         }

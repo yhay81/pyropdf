@@ -86,3 +86,10 @@ path = "fuzz_targets/fonts.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "bitmaps"
+path = "fuzz_targets/bitmaps.rs"
+test = false
+doc = false
+bench = false
