@@ -1,6 +1,7 @@
 //! Transactions (DESIGN.md section 4.1).
 
 use std::fmt;
+use std::ops::Range;
 use std::sync::Arc;
 
 use super::document::WriterLock;
@@ -36,6 +37,28 @@ pub struct Transaction {
     /// One transient snapshot anchoring a derived result while this
     /// transaction is open. It is discarded when the transaction ends.
     derived_anchor: Option<Arc<Version>>,
+    save: SaveNumbers,
+}
+
+/// Where settling for a save takes the numbers of the objects that it adds
+/// ([`Transaction::number_for_save`]).
+#[derive(Debug, Default)]
+struct SaveNumbers {
+    /// The numbers that a save took after the transaction had written. The
+    /// save's own writes are the only ones that ever received them, and a
+    /// rollback keeps them reserved.
+    taken: Range<u64>,
+    /// How the save being settled takes them, or `None` outside one.
+    settling: Option<Settling>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Settling {
+    /// The transaction had written nothing: the numbers from its draft's
+    /// next number, which is its parent's.
+    Unwritten,
+    /// The numbers of [`SaveNumbers::taken`] from this one, then new ones.
+    Taken(u64),
 }
 
 /// Releases a pending allocation's charge if its write is refused.
@@ -73,6 +96,7 @@ impl Transaction {
             draft,
             settlers,
             derived_anchor: None,
+            save: SaveNumbers::default(),
         }
     }
 
@@ -97,14 +121,57 @@ impl Transaction {
     /// Refuses with a malformed input error when the document uses the
     /// largest object number, 4294967295, so that no number is left.
     pub fn allocate(&mut self) -> Result<Reference> {
-        let number = u32::try_from(self.draft.next).map_err(|_| {
-            Error::malformed(
-                "the document uses object number 4294967295, so no number is left for a new object",
-            )
-        })?;
-        self.draft.next += 1;
+        // A save's settling may measure the draft below the high-water mark.
+        let next = self.draft.next.max(self.lock.next_number());
+        let number = object_number(next)?;
+        self.draft.next = next + 1;
         self.lock.reserve_through(self.draft.next);
         Ok(Reference::new(number, 0))
+    }
+
+    /// Returns the number for a new object that settling for a save writes,
+    /// such as a font's `CIDToGIDMap` (DESIGN.md section 7), so that two
+    /// saves of one version write the same bytes. Outside a save's settling,
+    /// it allocates.
+    ///
+    /// A save settles in a transaction that it then discards, and the
+    /// document never issues a number twice, so an allocation would take a
+    /// new number at each save, and the save would write it. Instead:
+    ///
+    /// - A transaction that had written nothing when the save began takes
+    ///   the numbers after its parent's next number, which depend only on
+    ///   that version. They are no allocation: an earlier transaction may
+    ///   have taken and discarded them. The version names none of them,
+    ///   since it was written above every number issued before it.
+    /// - A transaction that has written takes again the numbers that an
+    ///   earlier save took in it, while it holds nothing under them and no
+    ///   number above them has been taken since, and new ones beyond them.
+    ///   Its writes may name a number that a rollback discarded, so its
+    ///   parent's numbers are not free there; the numbers of a save are,
+    ///   since only the save's own writes ever received them.
+    ///
+    /// Either way the number stays reserved, so no allocation issues it
+    /// later. Refuses as [`Transaction::allocate`] does when no number is
+    /// left.
+    pub fn number_for_save(&mut self) -> Result<u32> {
+        let next = match self.save.settling {
+            None => return Ok(self.allocate()?.number()),
+            Some(Settling::Unwritten) => self.draft.next,
+            Some(Settling::Taken(next)) if next < self.save.taken.end => next,
+            Some(Settling::Taken(_)) => self.draft.next.max(self.lock.next_number()),
+        };
+        let number = object_number(next)?;
+        if let Some(Settling::Taken(at)) = &mut self.save.settling {
+            if next == self.save.taken.end {
+                self.save.taken.end += 1;
+            } else if next > self.save.taken.end {
+                self.save.taken = next..next + 1;
+            }
+            *at = next + 1;
+        }
+        self.draft.next = self.draft.next.max(next + 1);
+        self.lock.reserve_through(self.draft.next);
+        Ok(number)
     }
 
     /// Writes `value` as object `number`, and returns the reference that
@@ -230,21 +297,66 @@ impl Transaction {
     /// is registered for. A read that depends on a structure calls this
     /// with [`Scope::One`] first; a commit settles [`Scope::Commit`].
     ///
+    /// A save settles [`Scope::Save`] in a transaction that it then
+    /// discards, and writes what the transaction then holds, so the bytes of
+    /// a save depend on the version that it saves. Settling for it gives new
+    /// objects the numbers of [`Transaction::number_for_save`]. In a
+    /// transaction that had written nothing, it measures the next number
+    /// from the parent's instead of the document's high-water mark, so that
+    /// the numbers that the document discarded before the save do not reach
+    /// `/Size`. It does so even with nothing to settle.
+    ///
     /// Refuses with what a settler refuses, and with a malformed input error
     /// when the settlers keep marking one another's structures. The
     /// transaction restores its writes and marks to before the call on any
     /// error, so a read may retry without observing a partial settlement.
     pub fn settle(&mut self, scope: Scope, budget: &Budget) -> Result<()> {
-        if !self.draft.stale.any(scope) {
+        let save = scope == Scope::Save;
+        if !save && !self.draft.stale.any(scope) {
             return Ok(());
         }
         let settlers = self.settlers.clone();
         let savepoint = self.savepoint();
-        let result = settle::settle(self, &settlers, scope, budget);
+        let mut result = if save {
+            self.start_save(budget)
+        } else {
+            Ok(())
+        };
+        if result.is_ok() && self.draft.stale.any(scope) {
+            result = settle::settle(self, &settlers, scope, budget);
+        }
+        self.save.settling = None;
         if result.is_err() {
             self.rollback(savepoint);
         }
         result
+    }
+
+    /// Decides where settling for a save takes the numbers of new objects
+    /// ([`Transaction::number_for_save`]).
+    fn start_save(&mut self, budget: &Budget) -> Result<()> {
+        let unwritten = difference(&self.parent, &self.draft, budget)?
+            .changes
+            .is_empty();
+        let settling = if unwritten {
+            // The draft holds what its parent holds, which names no number
+            // from the parent's next number on.
+            self.draft.next = self.parent.next;
+            Settling::Unwritten
+        } else {
+            let next = self.lock.next_number();
+            let taken = &self.save.taken;
+            let free = taken.end == next
+                && taken.clone().all(|number| {
+                    u32::try_from(number).is_ok_and(|number| self.draft.table.get(number).is_none())
+                });
+            if !free {
+                self.save.taken = next..next;
+            }
+            Settling::Taken(self.save.taken.start)
+        };
+        self.save.settling = Some(settling);
+        Ok(())
     }
 
     /// Removes the marks of `structure` for a settler, and returns the
@@ -310,7 +422,11 @@ impl Transaction {
             mut draft,
             settlers: _,
             derived_anchor: _,
+            save: _,
         } = self;
+        // A save's settling may have measured the draft below the mark, and
+        // a published version covers every number issued before it.
+        draft.next = draft.next.max(lock.next_number());
         let difference = difference(&parent, &draft, budget)?;
         if difference.changes.is_empty() && !difference.stale {
             return Ok(parent);
@@ -321,6 +437,15 @@ impl Transaction {
         lock.publish(Arc::clone(&version), difference.second, difference.first);
         Ok(version)
     }
+}
+
+/// Returns `next` as an object number, or refuses when no number is left.
+fn object_number(next: u64) -> Result<u32> {
+    u32::try_from(next).map_err(|_| {
+        Error::malformed(
+            "the document uses object number 4294967295, so no number is left for a new object",
+        )
+    })
 }
 
 /// A point of a transaction to roll back to: [`Transaction::savepoint`].

@@ -18,12 +18,15 @@ import tempfile
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
 import pyropdf
 from pyropdf import FreeText, _fonts
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 JAPANESE = FONTS / "NotoSansJP-subset.otf"
@@ -409,6 +412,66 @@ def test_saves_repeat_in_a_transaction_that_has_written_nothing(hebrew: pyropdf.
     with document.transaction():
         assert document.to_bytes() == first
         assert document.to_bytes() == first
+
+
+def _size(data: bytes) -> int:
+    """Return the ``/Size`` of the trailer of saved ``data``."""
+    (size,) = re.findall(rb"/Size (\d+)", data)
+    return int(size)
+
+
+def _drop_an_added_object(document: pyropdf.Document) -> int:
+    """Add an object in a transaction that raises, and return its number."""
+    added = []
+
+    def drop() -> None:
+        with document.transaction():
+            added.append(document.objects.add({"Dropped": True}))
+            raise RuntimeError
+
+    with pytest.raises(RuntimeError):
+        drop()
+    return added[0]
+
+
+def _undo_an_added_object(document: pyropdf.Document) -> int:
+    """Add an object, undo the addition, and return its number."""
+    added = document.objects.add({"Undone": True})
+    document.history.undo()
+    return added
+
+
+@pytest.mark.parametrize("discard", [_drop_an_added_object, _undo_an_added_object], ids=["dropped", "undone"])
+@pytest.mark.parametrize(("face", "text"), [("hebrew", "שלום"), ("japanese", LINE)])
+def test_a_discarded_edit_between_two_saves_leaves_the_bytes_unchanged(
+    face: str, text: str, discard: Callable[[pyropdf.Document], int], request: pytest.FixtureRequest
+) -> None:
+    document, page = _new_page()
+    with page.draw() as canvas:
+        canvas.text(text, (72, 100), font=request.getfixturevalue(face), size=20)
+    first = document.to_bytes()
+
+    discarded = discard(document)
+
+    assert document.to_bytes() == first
+    added = document.objects.add({"Added": True})
+    assert added not in {discarded, *_map_numbers(first)}
+    assert added >= _size(first)
+
+
+@pytest.mark.parametrize(("face", "text"), [("hebrew", "שלום"), ("japanese", LINE)])
+def test_saves_repeat_in_a_transaction_that_has_written(face: str, text: str, request: pytest.FixtureRequest) -> None:
+    document, page = _new_page()
+    with document.transaction():
+        with page.draw() as canvas:
+            canvas.text(text, (72, 100), font=request.getfixturevalue(face), size=20)
+        first = document.to_bytes()
+
+        assert document.to_bytes() == first
+        assert document.to_bytes() == first
+        added = document.objects.add({"Added": True})
+        assert added not in _map_numbers(first)
+        assert added >= _size(first)
 
 
 def test_a_reference_to_a_discarded_object_stays_missing_in_a_save(hebrew: pyropdf.Font) -> None:
