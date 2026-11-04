@@ -737,7 +737,9 @@ class Page:
         Reading order follows the geometry and script heuristics described in
         the documentation rather than the document's semantic order. Spaces
         between words are inferred from glyph positions, and lines end with a
-        newline. Annotation appearances count as page content.
+        newline. Annotation appearances count as page content. The
+        ``/ActualText`` of a marked-content sequence replaces the text of the
+        glyphs inside it.
 
         ``clip`` keeps the glyphs whose box's center lies inside a
         display-space rectangle, in the page's reading order, which gives the

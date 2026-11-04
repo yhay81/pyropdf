@@ -26,8 +26,8 @@ use hayro::hayro_interpret::{
     BlendMode, CacheKey, ClipPath, Device, DrawMode, DrawProps, FillRule, Image, ImageDrawProps,
     InterpreterCache, InterpreterSettings, MaskType, Paint, SoftMask, StrokeProps, interpret_page,
 };
-use hayro::hayro_syntax::object::dict::keys::MCID;
-use hayro::hayro_syntax::object::{Array, Dict, Stream};
+use hayro::hayro_syntax::object::dict::keys::{ACTUAL_TEXT, MCID};
+use hayro::hayro_syntax::object::{Array, Dict, Stream, String as PdfString};
 use hayro::hayro_syntax::page::Page;
 use hayro::hayro_syntax::{Filter, Pdf};
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
@@ -1159,6 +1159,10 @@ pub trait ContentSink {
     fn image(&mut self, _ordinal: usize, _image: &Image<'_, '_>) -> Result<(), Error> {
         Ok(())
     }
+    /// Receive the start of a marked-content sequence and its `/ActualText`.
+    fn begin_marked_content(&mut self, _actual_text: Option<&[u8]>) {}
+    /// Receive the end of a marked-content sequence.
+    fn end_marked_content(&mut self) {}
 }
 
 /// The sink of `Page.content()`, which reads only the items.
@@ -2029,6 +2033,10 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
         if self.kinds.any() {
             self.run(|this| this.begin_mark(tag, mcid));
         }
+        let actual_text =
+            properties.and_then(|properties| properties.get::<PdfString>(ACTUAL_TEXT));
+        self.sink
+            .begin_marked_content(actual_text.as_ref().map(PdfString::as_bytes));
     }
 
     fn end_marked_content(&mut self) {
@@ -2036,6 +2044,7 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'_, S> {
         if self.mark_stack.pop().is_some() {
             self.state = None;
         }
+        self.sink.end_marked_content();
     }
 }
 

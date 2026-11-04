@@ -511,10 +511,18 @@ fn a_page_read_set_fits_a_small_budget_with_sparse_object_numbers() {
     assert_eq!(reads.finish().unwrap().objects(), [1, 2, 3, 4, 5]);
 }
 
+/// The content that shows 日本語 at 40 points.
+const SHOWN: &str = "BT /F1 40 Tf 20 30 Td <65E5672C8A9E> Tj ET";
+
 /// Returns a page that shows 日本語 at 40 points in MS-Gothic, which the file
 /// does not embed, with these entries in its descendant font.
 fn nonembedded_japanese(descendant: &str) -> Vec<u8> {
-    let content = "BT /F1 40 Tf 20 30 Td <65E5672C8A9E> Tj ET";
+    nonembedded_page(SHOWN, descendant)
+}
+
+/// Returns a page of `content` with MS-Gothic, which the file does not embed,
+/// as `/F1`, with these entries in its descendant font.
+fn nonembedded_page(content: &str, descendant: &str) -> Vec<u8> {
     let objects = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 100] >>".to_owned(),
@@ -663,6 +671,20 @@ fn a_stretched_face_keeps_the_advances_and_the_words_of_the_page() {
     // The ink of the three glyphs fills most of the 60 points of their widths.
     let ink = line.2[0].0;
     assert!(ink.0 > 20.0 && ink.2 < 80.0 && ink.2 > 70.0, "{ink:?}");
+}
+
+#[test]
+fn actual_text_spans_the_ink_of_its_glyphs_on_the_face() {
+    let plain = Bridged::of_bytes(nonembedded_japanese(""));
+    let marked = format!("/Span << /ActualText (word) >> BDC {SHOWN} EMC");
+    let marked = Bridged::of_bytes(nonembedded_page(&marked, ""));
+    let face = loaded_japanese();
+
+    let (whole, _) = first_span(&plain, &face, &EXACT);
+    let layout = page_layout(&marked, &face, 0, &EXACT, true, None, &Budget::default()).unwrap();
+    let span = &layout.blocks[0].1[0].1[0];
+    assert_eq!(span.1.0, "word");
+    assert_eq!(span.0, whole);
 }
 
 #[test]
