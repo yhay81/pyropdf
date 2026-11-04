@@ -1439,8 +1439,9 @@ def test_a_glyph_that_the_canvas_does_not_paint_draws_its_fallback_outline(paint
         ("V", 20, "PaintSweepGradient"),
         ("P", 8, "PaintComposite in the mode Xor"),
         ("Q", 15, "a gradient stop in the text's colour"),
+        ("U", 25, "a gradient stop in the text's colour"),
     ],
-    ids=["sweep", "xor", "text-colour-stop"],
+    ids=["sweep", "xor", "text-colour-stop", "text-colour-stop-that-shows-nothing"],
 )
 def test_a_glyph_that_neither_paints_nor_has_an_outline_refuses_naming_the_paint(
     paints: pyropdf.Font, letter: str, glyph: int, paint: str

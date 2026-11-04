@@ -37,7 +37,8 @@ half. Its palette is red, blue, green, and cyan. It draws:
 - ``A``: red, from opaque at x = 100 to clear at x = 900, and ``F``: the same
   to clear blue, which in premultiplied alpha never shows;
 - ``N``: the text's colour, and ``Q``: a gradient stop in it, which the canvas
-  does not draw;
+  does not draw, and ``U``: the same gradient clipped to the space's empty
+  outline, which shows nothing and still refuses;
 - ``W``: a sweep gradient, with a fallback outline, and ``V``: the same paint
   with none;
 - ``X``: ``PaintColrGlyph`` of itself, a cycle, with a fallback outline;
@@ -506,9 +507,11 @@ def paints_face() -> bytes:
     # Each fallback outline is a square: W, a paint that the canvas does not
     # draw, and X, a cycle, which refuses all the same.
     fallbacks = {"W", "X"}
-    order = [".notdef", *names, "V", "space", *LAYERS]
+    # U is last, so that the glyphs before it keep their IDs.
+    order = [".notdef", *names, "V", "space", *LAYERS, "U"]
     paints["V"] = paints["W"]
-    cmap = {ord(name): name for name in [*names, "V"]} | {0x20: "space"}
+    paints["U"] = _glyph("space", _linear(_line((0, TEXT_COLOUR, 1.0), (1, RED, 1.0))))
+    cmap = {ord(name): name for name in [*names, "V", "U"]} | {0x20: "space"}
     builder = FontBuilder(1000, isTTF=True)
     builder.setupHead(unitsPerEm=1000, created=0, modified=0)
     builder.setupGlyphOrder(order)

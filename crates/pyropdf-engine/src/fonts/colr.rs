@@ -138,6 +138,37 @@ fn crosses_zero(brush: &Brush<'_>) -> bool {
     )
 }
 
+/// Returns what PDF or the writer does not draw of `brush`, `None` for one
+/// that it paints. The check and the painter both ask, the painter before it
+/// finds that a brush shows nothing, so that the two agree.
+fn unpainted(colr: &Colr<'_>, brush: &Brush<'_>) -> Option<&'static str> {
+    let stops = match brush {
+        Brush::Solid { palette_index, .. } => {
+            let missing = *palette_index != TEXT_COLOUR && colr.colour(*palette_index).is_none();
+            return missing.then_some(MISSING_ENTRY);
+        }
+        Brush::LinearGradient { color_stops, .. } | Brush::RadialGradient { color_stops, .. } => {
+            color_stops
+        }
+        Brush::SweepGradient { .. } => return Some("PaintSweepGradient"),
+    };
+    for stop in *stops {
+        if stop.palette_index == TEXT_COLOUR {
+            return Some(TEXT_STOP);
+        }
+        if colr.colour(stop.palette_index).is_none() {
+            return Some(MISSING_ENTRY);
+        }
+    }
+    crosses_zero(brush).then_some(REPEATS_PAST_ZERO)
+}
+
+/// What a refusal names a palette index that the default palette lacks.
+const MISSING_ENTRY: &str = "a palette entry that the default palette does not hold";
+
+/// What a refusal names a gradient stop in the text's colour.
+const TEXT_STOP: &str = "a gradient stop in the text's colour";
+
 /// Says what skrifa's error means for the reader of a refusal.
 fn damage(error: &PaintError) -> &'static str {
     match error {
@@ -412,16 +443,6 @@ impl Checker<'_, '_, '_> {
     fn cannot(&mut self, paint: &'static str) {
         self.cannot.get_or_insert(paint);
     }
-
-    fn stops(&mut self, stops: &[ColorStop]) {
-        for stop in stops {
-            if stop.palette_index == TEXT_COLOUR {
-                self.cannot("a gradient stop in the text's colour");
-            } else if self.colr.colour(stop.palette_index).is_none() {
-                self.cannot("a palette entry that the default palette does not hold");
-            }
-        }
-    }
 }
 
 impl ColorPainter for Checker<'_, '_, '_> {
@@ -438,20 +459,8 @@ impl ColorPainter for Checker<'_, '_, '_> {
     fn pop_clip(&mut self) {}
     fn fill(&mut self, brush: Brush<'_>) {
         self.poll();
-        match brush {
-            Brush::Solid { palette_index, .. } => {
-                if palette_index != TEXT_COLOUR && self.colr.colour(palette_index).is_none() {
-                    self.cannot("a palette entry that the default palette does not hold");
-                }
-            }
-            Brush::LinearGradient { color_stops, .. }
-            | Brush::RadialGradient { color_stops, .. } => {
-                self.stops(color_stops);
-                if crosses_zero(&brush) {
-                    self.cannot(REPEATS_PAST_ZERO);
-                }
-            }
-            Brush::SweepGradient { .. } => self.cannot("PaintSweepGradient"),
+        if let Some(paint) = unpainted(self.colr, &brush) {
+            self.cannot(paint);
         }
     }
     fn push_layer(&mut self, mode: CompositeMode) {
@@ -614,6 +623,9 @@ impl<'b> Painter<'_, '_, 'b> {
         brush_transform: Option<Transform>,
         brush: &Brush<'_>,
     ) -> Result<(), ColrError> {
+        if let Some(paint) = unpainted(self.colr, brush) {
+            return Err(ColrError::Refused(paint));
+        }
         if self.clip().nothing {
             return Ok(());
         }
@@ -680,9 +692,7 @@ impl<'b> Painter<'_, '_, 'b> {
             return Ok((scale > 0.0).then_some((None, scale)));
         }
         let Some(colour) = self.colr.colour(palette_index) else {
-            return Err(ColrError::Refused(
-                "a palette entry that the default palette does not hold",
-            ));
+            return Err(ColrError::Refused(MISSING_ENTRY));
         };
         let (components, own) = components(colour);
         let alpha = own * scale;
@@ -874,12 +884,10 @@ impl<'b> Painter<'_, '_, 'b> {
         let mut last: Option<Stop> = None;
         for font_stop in font_stops {
             if font_stop.palette_index == TEXT_COLOUR {
-                return Err(ColrError::Refused("a gradient stop in the text's colour"));
+                return Err(ColrError::Refused(TEXT_STOP));
             }
             let Some(colour) = self.colr.colour(font_stop.palette_index) else {
-                return Err(ColrError::Refused(
-                    "a palette entry that the default palette does not hold",
-                ));
+                return Err(ColrError::Refused(MISSING_ENTRY));
             };
             let (color, own) = components(colour);
             let offset = f64::from(font_stop.offset).clamp(0.0, 1.0);

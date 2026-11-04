@@ -81,6 +81,7 @@ fn a_check_says_what_each_glyph_needs() {
         ('Q', "a gradient stop in the text's colour"),
         ('W', "PaintSweepGradient"),
         ('V', "PaintSweepGradient"),
+        ('U', "a gradient stop in the text's colour"),
     ];
     for (character, paint) in cannot {
         assert_eq!(check(&colr, &font, character), Some(Verdict::Cannot(paint)));
@@ -148,6 +149,31 @@ fn every_glyph_paints_whole_as_the_check_says_or_refuses() {
             None => assert!(matches!(painted, Err(ColrError::Refused(_)))),
         }
     }
+}
+
+#[test]
+fn a_brush_that_shows_nothing_refuses_as_the_check_does() {
+    // U's gradient, clipped to an empty outline, would paint nothing; the
+    // fuzz target found the painter passing what the check refused.
+    let font = FontRef::new(PAINTS).unwrap();
+    let colr = Colr::read(&font).unwrap();
+    let document = document();
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    let mut shadings = Shadings::new();
+    let glyph = glyph(&font, 'U');
+    let painted = colr.paint(
+        &mut transaction,
+        &mut shadings,
+        glyph,
+        Name::from("u"),
+        1000.0,
+        &budget,
+    );
+    assert!(matches!(
+        painted,
+        Err(ColrError::Refused("a gradient stop in the text's colour"))
+    ));
 }
 
 #[test]
