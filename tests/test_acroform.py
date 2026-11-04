@@ -30,15 +30,18 @@ Intended differences:
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeAlias
 
 import pytest
 
 import pyropdf
-from pyropdf import _core, _form
+from pyropdf import _core, _fonts, _form
 from pyropdf._canvas import _cache
 
 if TYPE_CHECKING:
@@ -47,6 +50,8 @@ if TYPE_CHECKING:
 FONTS = Path(__file__).resolve().parent.parent / "crates" / "pyropdf-engine" / "src" / "fonts" / "testdata"
 NOTO_SANS_JP = FONTS / "NotoSansJP-subset.otf"
 NOTO_SANS_HEBREW = FONTS / "NotoSansHebrew-subset.ttf"
+NOTO_SANS_ARABIC = FONTS / "NotoSansArabic-Variable-subset.ttf"
+ARABIC_WORD = "مرحبا"
 #: The refusal of a colour glyph with no outline, for one character.
 NO_OUTLINE = r"cannot draw U\+{:04X} \('{}'\): its glyph is a colour glyph with no outline"
 
@@ -424,6 +429,98 @@ def test_saving_a_field_in_a_truetype_face_again_writes_the_same_bytes() -> None
     assert re.findall(rb"/CIDToGIDMap \d+ 0 R", first)
     assert doc.to_bytes() == first
     assert doc.to_bytes() == first
+
+
+def _field_in(face: pyropdf.Font, value: str, *, size: float = 14) -> pyropdf.Document:
+    """Return a document whose one field holds ``value``, drawn in ``face``."""
+    document = pyropdf.Document()
+    document.pages.new((300, 100)).widgets.add(pyropdf.TextField("name", (20, 20, 280, 60), font_size=size))
+    document.form.font = face
+    document.form["name"].value = value
+    return document
+
+
+def _appearance(document: pyropdf.Document) -> bytes:
+    (widget,) = document.form["name"].widgets
+    return widget.obj["AP"]["N"].read()
+
+
+def test_a_field_in_an_arabic_face_has_no_unmapped_glyph() -> None:
+    face = pyropdf.Font.from_file(NOTO_SANS_ARABIC)
+    # The shaper splits the letter beh into a base and a dot in one cluster.
+    dot = next(glyph[0] for glyph in face._font.shape(ARABIC_WORD) if glyph[5] == glyph[6])  # noqa: SLF001
+    reopened = pyropdf.open(_field_in(face, ARABIC_WORD).to_bytes())
+    page = reopened.pages[0]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pyropdf.PyropdfWarning)
+        assert page.text().strip() == ARABIC_WORD
+    assert page.text(unmapped="replacement").strip() == ARABIC_WORD
+    type0 = next(
+        value
+        for number in reopened.objects
+        if isinstance(value := reopened.objects[number], pyropdf.Dictionary) and value.get("Subtype") == "Type0"
+    )
+    mapped = _fonts._mapped(type0["ToUnicode"], face.glyph_count)  # noqa: SLF001
+    drawn = _fonts._widths(type0["DescendantFonts"][0], face.glyph_count)  # noqa: SLF001
+    assert dot in drawn
+    assert set(drawn) <= set(mapped)
+    assert mapped[dot] == _fonts._NO_TEXT  # noqa: SLF001
+
+
+def test_a_fields_cluster_is_one_actual_text_and_its_glyphs_stay_where_the_shaper_put_them() -> None:
+    size = 14.0
+    face = pyropdf.Font.from_file(NOTO_SANS_ARABIC)
+    document = _field_in(face, ARABIC_WORD, size=size)
+
+    scale = size / face._font.units_per_em  # noqa: SLF001
+    pen = 0.0
+    expected = {}
+    for glyph, advance, _y_advance, x_offset, y_offset, *_ in face._font.shape(ARABIC_WORD):  # noqa: SLF001
+        expected[glyph] = (pen + x_offset * scale, -y_offset * scale)
+        pen += advance * scale
+    runs = document.pages[0].content(paths=False, images=False).text_runs
+    glyphs = [glyph for run in runs for glyph in run.glyphs]
+    assert {glyph.glyph_id for glyph in glyphs} == set(expected)
+    first = glyphs[0].origin
+    for glyph in glyphs:
+        assert glyph.glyph_id is not None
+        moved = (glyph.origin.x - first.x, glyph.origin.y - first.y)
+        assert moved == pytest.approx(expected[glyph.glyph_id], abs=1e-2)
+
+    # Only the letter that the face splits needs ActualText, and its glyphs lie inside.
+    appearance = _appearance(document)
+    assert re.findall(rb"/ActualText <FEFF([0-9A-F]*)>", appearance) == [b"0628"]
+    assert (appearance.count(b"BDC"), appearance.count(b"EMC")) == (1, 1)
+    inside = appearance[appearance.index(b"BDC") : appearance.index(b"EMC")]
+    assert len(re.findall(rb"<[0-9A-F]{4}>", inside)) == 2
+
+
+def test_a_fields_points_in_another_canonical_order_need_no_actual_text() -> None:
+    face = pyropdf.Font.from_file(NOTO_SANS_HEBREW)
+    value = "שָׁלוֹם"
+    shaped = face._font.shape(value)  # noqa: SLF001
+    # Right to left, so logical order is the reverse of the glyphs': the shaper swapped the points.
+    assert [value[glyph[5] : glyph[6]] for glyph in reversed(shaped)][:3] == ["ש", "ׁ", "ָ"]
+    document = _field_in(face, value)
+
+    assert b"BDC" not in _appearance(document)
+    assert pyropdf.open(document.to_bytes()).pages[0].text().strip() == value
+
+
+@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is not installed")
+def test_pdftotext_reads_a_fields_cluster_as_its_text() -> None:
+    face = pyropdf.Font.from_file(NOTO_SANS_ARABIC)
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "page.pdf"
+        path.write_bytes(_field_in(face, ARABIC_WORD).to_bytes())
+        read = subprocess.run(  # noqa: S603 - a fixed tool on a file of the test's own.
+            [shutil.which("pdftotext") or "pdftotext", "-enc", "UTF-8", str(path), "-"],
+            check=True,
+            capture_output=True,
+        ).stdout.decode("utf-8")
+    # Xpdf marks the direction of a run with embedding controls.
+    assert read.translate(dict.fromkeys(map(ord, "\u202a\u202b\u202c"))).strip() == ARABIC_WORD
 
 
 def test_invalid_embedded_font_does_not_partially_update_field() -> None:
