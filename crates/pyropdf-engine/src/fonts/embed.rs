@@ -177,6 +177,10 @@ impl Face {
             .map(|name| sanitized_name(&name))
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| sanitized_name(&family));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a PANOSE classification is ten bytes"
+        )]
         let panose = os2.as_ref().map(|os2| os2.panose_10().to_vec());
         let serif = match panose.as_deref() {
             // A Latin text face: serif styles 2 to 10 have serifs, 11 to 13
@@ -353,6 +357,10 @@ pub(super) fn name(font: &FontRef<'_>, id: StringId) -> Option<String> {
 
 /// A PDF name for the font: printable ASCII without spaces or delimiters,
 /// at most 63 bytes as a PostScript name is.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "63 characters at most, as a PostScript name"
+)]
 pub(super) fn sanitized_name(name: &str) -> String {
     name.chars()
         .filter(|character| character.is_ascii_graphic() && !"()<>[]{}/%#".contains(*character))
@@ -383,6 +391,10 @@ fn standalone(font: &FontRef<'_>, cff: bool, input_len: usize) -> Result<Vec<u8>
             .ok_or_else(|| FaceError::Font("the face's tables are too large".into()))?;
     }
     let mut tables = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "4,095 table records at most, checked above"
+    )]
     tables
         .try_reserve(records.len())
         .map_err(|_| FaceError::Font("the table directory is too large".into()))?;
@@ -391,6 +403,10 @@ fn standalone(font: &FontRef<'_>, cff: bool, input_len: usize) -> Result<Vec<u8>
         let Some(data) = font.table_data(tag) else {
             return Err(FaceError::Font(format!("the {tag} table is out of bounds")));
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the tables copy `input_len` bytes at most together, checked above"
+        )]
         let mut data = data.as_bytes().to_vec();
         if tag == Tag::new(b"CFF ") {
             match cff::identity_charset(&data) {
@@ -399,6 +415,10 @@ fn standalone(font: &FontRef<'_>, cff: bool, input_len: usize) -> Result<Vec<u8>
                 Err(()) => return Err(FaceError::Font("the CFF table cannot be read".into())),
             }
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "within the capacity reserved above"
+        )]
         tables.push((tag.to_be_bytes(), data));
     }
     let version: &[u8] = if cff { b"OTTO" } else { &[0, 1, 0, 0] };
