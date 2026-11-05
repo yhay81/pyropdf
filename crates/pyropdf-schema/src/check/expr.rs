@@ -125,6 +125,10 @@ fn tokens(source: &str) -> Option<Vec<Token<'_>>> {
             }
             _ => return None,
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the tokens of one predicate of the generated model, never of the document"
+        )]
         out.push(token);
         at += width;
     }
@@ -222,6 +226,10 @@ impl<'s> Parser<'s> {
                     let mut args = Vec::new();
                     if !self.eat(Token::Close) {
                         loop {
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "the arguments of one call in a predicate of the generated model"
+                            )]
                             args.push(self.or()?);
                             if self.eat(Token::Close) {
                                 break;
@@ -269,6 +277,10 @@ pub(super) fn scalar(view: &View<'_>) -> Val {
         #[expect(clippy::cast_precision_loss, reason = "compared as numbers")]
         View::Integer(value) => Val::Num(*value as f64),
         View::Real(value) => Val::Num(*value),
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "copies one name or string that the graph read within the budget, for one comparison"
+        )]
         View::Name(bytes) | View::String(bytes) => Val::Name(bytes.to_vec()),
         _ => Val::Present,
     }
@@ -279,6 +291,10 @@ impl<G: Graph> Scope<'_, '_, G> {
         Ok(match expr {
             Expr::Word("true") => Val::Bool(true),
             Expr::Word("false") => Val::Bool(false),
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "copies one word of a predicate of the generated model"
+            )]
             Expr::Word(word) => word
                 .parse::<f64>()
                 .map_or_else(|_| Val::Name(word.as_bytes().to_vec()), Val::Num),
@@ -477,6 +493,10 @@ impl<G: Graph> Scope<'_, '_, G> {
         path: &str,
         then: impl FnOnce(Option<&G::Value>) -> Val,
     ) -> Result<Val, G::Error> {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the segments of one path in a predicate of the generated model"
+        )]
         let mut segments: Vec<&str> = path.split("::").collect();
         let start = match segments.first() {
             Some(&"trailer") => {

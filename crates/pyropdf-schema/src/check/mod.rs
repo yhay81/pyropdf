@@ -192,6 +192,10 @@ pub fn check<G: Graph>(graph: &G) -> Result<Report, G::Error> {
         _ => None,
     };
     while let Some((number, target)) = walk.queue.pop() {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one number per object visited, and the graph charges each first visit below"
+        )]
         let first = met.insert(number);
         if first
             && let Some(size) = size
@@ -247,12 +251,28 @@ struct Walk<'g, G: Graph> {
 type Frame<'v, V> = (&'v V, Target, String);
 
 impl<'g, G: Graph> Walk<'g, G> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each call follows a reference of a value that the graph read within the budget, \
+                  and an object is queued as MAX_TARGETS types at most"
+    )]
     fn enqueue(&mut self, number: u32, target: Target) {
         let count = self.targets.entry(number).or_default();
         if *count < MAX_TARGETS && self.visited.insert((number, target.id())) {
             *count += 1;
             self.queue.push((number, target));
         }
+    }
+
+    /// Whether object `number` is new to `counted`, which it joins: the walk
+    /// checks a node's kids once, although it checks the node as more than
+    /// one type.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one number per object visited, and the graph charges each first visit"
+    )]
+    fn first_count(&mut self, number: u32) -> bool {
+        self.counted.insert(number)
     }
 
     fn scope<'v>(&self, dict: &'v G::Value, subject: Option<&'v G::Value>) -> Scope<'g, 'v, G> {
@@ -299,6 +319,10 @@ impl<'g, G: Graph> Walk<'g, G> {
         } else {
             key.note
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the report keeps MAX_DEFECTS defects at most, checked above"
+        )]
         self.report.defects.push(Defect {
             object,
             path: path.to_owned(),
@@ -357,21 +381,21 @@ impl<'g, G: Graph> Walk<'g, G> {
         if described.name.starts_with("PageTreeNode")
             && let Some(number) = object
             && path.is_empty()
-            && self.counted.insert(number)
+            && self.first_count(number)
         {
             self.pages(number, dict)?;
         }
         if described.name.starts_with("Annot")
             && let Some(number) = object
             && path.is_empty()
-            && self.counted.insert(number)
+            && self.first_count(number)
         {
             self.appearance_state(number, dict, described.name);
         }
         if matches!(described.name, "StructTreeRoot" | "StructElem")
             && let Some(number) = object
             && path.is_empty()
-            && self.counted.insert(number)
+            && self.first_count(number)
         {
             self.structure(number, dict, described.name)?;
         }
@@ -400,6 +424,10 @@ impl<'g, G: Graph> Walk<'g, G> {
         stack: &mut Vec<Frame<'v, G::Value>>,
     ) -> Result<(), G::Error> {
         let items = self.graph.elements(array);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the repeating keys of one descriptor of the generated model"
+        )]
         let repeating: Vec<&'static Key> = described
             .keys
             .iter()
@@ -530,12 +558,20 @@ impl<'g, G: Graph> Walk<'g, G> {
             );
             self.defect(object, path, described, key, DefectKind::Version, message);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the types of one key of the generated model"
+        )]
         let matching: Vec<&'static Typed> = key
             .types
             .iter()
             .filter(|typed| matches(typed.kind, &view))
             .collect();
         if matching.is_empty() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the types of one key of the generated model"
+            )]
             let kinds: Vec<&str> = key.types.iter().map(|typed| typed.kind.name()).collect();
             let message = format!(
                 "{} is a {}; expected {}",
@@ -589,6 +625,10 @@ impl<'g, G: Graph> Walk<'g, G> {
         };
         match (target, reference) {
             (Some(target), Some(number)) => self.enqueue(number, target),
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one frame per direct value of the object, which the graph read within the budget"
+            )]
             (Some(target), None) => stack.push((raw, target, path.to_owned())),
             (None, _) => {}
         }
@@ -724,6 +764,10 @@ impl<'g, G: Graph> Walk<'g, G> {
     fn score(&self, described: &Object, dict: &G::Value) -> Option<usize> {
         let mut score = 0;
         for key in described.keys {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the values of one key of the generated model"
+            )]
             let names: Option<Vec<&str>> = key
                 .types
                 .iter()
@@ -767,6 +811,10 @@ impl<'g, G: Graph> Walk<'g, G> {
             for item in self.items(kids, &join(path, "Kids"))? {
                 match item {
                     Item::Reference(_, number) => self.enqueue(number, Target::Tree(typed)),
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "one frame per direct value of the object, which the graph read within the budget"
+                    )]
                     Item::Direct(_, value, at) => stack.push((value, Target::Tree(typed), at)),
                 }
             }
@@ -795,6 +843,10 @@ impl<'g, G: Graph> Walk<'g, G> {
                 }
                 Item::Direct(at, value, path) if at % 2 == 1 => {
                     match self.choose(typed.links, value) {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "one frame per direct value of the object, which the graph read within the budget"
+                        )]
                         Some(chosen) => stack.push((value, Target::Object(chosen), path)),
                         None => self.report.unchecked += 1,
                     }
@@ -817,6 +869,10 @@ impl<'g, G: Graph> Walk<'g, G> {
             self.report.truncated = true;
             return;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the report keeps MAX_DEFECTS defects at most, checked above"
+        )]
         self.report.defects.push(Defect {
             object,
             path: path.to_owned(),
@@ -1037,6 +1093,10 @@ impl<'g, G: Graph> Walk<'g, G> {
         if !matches!(self.graph.view(array), View::Array(_)) {
             return Ok(());
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "half the elements of one array that the graph read within the budget"
+        )]
         let keys: Vec<View<'_>> = self
             .graph
             .elements(array)
@@ -1084,6 +1144,10 @@ impl<'g, G: Graph> Walk<'g, G> {
         match self.graph.view(array) {
             View::Array(_) => {
                 for (at, item) in self.graph.elements(array).iter().enumerate() {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "one item per element of an array that the graph read within the budget"
+                    )]
                     out.push(match self.graph.view(item) {
                         View::Reference(number) => Item::Reference(at, number),
                         _ => Item::Direct(at, item, join(path, &at.to_string())),
@@ -1096,6 +1160,10 @@ impl<'g, G: Graph> Walk<'g, G> {
                 {
                     for (at, item) in self.graph.elements(&resolved).iter().enumerate() {
                         if let View::Reference(number) = self.graph.view(item) {
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "one item per element of an array that the graph read within the budget"
+                            )]
                             out.push(Item::Reference(at, number));
                         }
                     }

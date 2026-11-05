@@ -1,0 +1,5 @@
+# pyropdf-python is not bound by `crates/clippy.toml` yet. Clippy reads the
+# first `clippy.toml` that it meets going up from a crate's manifest, so
+# this file, which sets nothing, keeps the shared configuration from this
+# crate until #677 budgets each use that the configuration refuses, or
+# expects the lint with its bound, and deletes this file.
