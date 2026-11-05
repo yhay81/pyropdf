@@ -34,8 +34,8 @@ the two builds in turn for five rounds. For each face the harness keeps the
 first 256 glyphs, as Latin text draws, and every 16th glyph after them, and
 times `fonts::subset` and `fonts::compact::compact` with that set: at least
 15 runs and half a second each, of which it reports the median. The table
-gives the median of the five rounds' medians, and the result's bytes, which
-are the same before and after for every face here.
+gives the median of the five rounds' medians, and the result's byte count,
+which is the same before and after for every face here.
 
 The faces are two of pyropdf's test faces, four from the measuring
 machine's `C:\Windows\Fonts`, and pylopdf-fonts-jp's
@@ -74,6 +74,71 @@ AMD Ryzen 5 3600XT, Windows 11, 2026-11-05, base 0bae7fd and head
 
 No face is more than 4.4% slower, and the differences fall on both sides
 of zero: the added sums and presence checks cost no more than this
-measurement resolves. Every result has the same bytes before and after.
+measurement resolves. The original harness compared result lengths;
+the review follow-up below also verifies SHA-256 digests.
 The largest absolute difference is 74 µs, `NotoSansJP-Regular.otf`'s
 subset, which is faster after.
+
+## Review follow-up
+
+Review of #686 found two remaining ways to grow beyond the stated bound:
+
+- Empty duplicate sfnt table records pass the sum of input table lengths,
+  but subsetting replaced each duplicate `glyf`, `loca`, or `CFF ` record
+  with the first rebuilt table. `sfnt::tables` now refuses duplicate tags
+  before rewriting. The tag set holds one entry per present directory
+  record, and compacting no longer needs to check duplicates again.
+- A CFF charstring that reached its byte limit still appended stem-operator
+  positions after `put` stopped writing. It now records a position only
+  after the operator fits, so later callbacks cannot grow this bookkeeping.
+
+`duplicate_table_tags_cannot_multiply_rebuilt_tables` and
+`an_overflowing_charstring_stops_recording_stem_operators` both fail on
+the original PR head, a0f50a5; all 100 font tests pass with the corrections.
+
+The harness now prints each result's SHA-256 outside the timed loop, and
+`run.py` rejects differing digests or lengths in every round. This checks
+byte identity instead of inferring it from matching sizes. Repeat the
+comparison against the original PR head with:
+
+```bash
+uv run python evidence/font-growth-676/run.py --base a0f50a5 FACE...
+```
+
+Alternatively, build the updated harness against each source version with
+`cargo build --release --locked --manifest-path evidence/font-growth-676/Cargo.toml`,
+save each executable, and pass `--binaries BASE_EXE HEAD_EXE --base a0f50a5`.
+This reuses existing builds without creating another worktree. The same
+seven faces and five alternating rounds are used for the review result
+in `results/windows-x86_64-review.md`.
+
+Against a0f50a5, the corrected engine at ec99091 writes matching SHA-256
+digests for all 14 font/operation pairs in every round. Timing changes
+range from -14.8% to +5.0%, with a largest slowdown of 51 microseconds.
+These small measurements include run variation; they do not establish a
+speedup from the additional checks.
+
+## Ruled-table extraction
+
+`tables.py` measures the cell-text charge added by #676, using installed
+builds before the PR (ccf8341) and after the corrections (ec99091):
+
+```bash
+python evidence/font-growth-676/tables.py --pythons BASE_PYTHON HEAD_PYTHON \
+  --base ccf8341 --head ec99091
+```
+
+Prepare both interpreters with `uv sync --locked` in their checkouts. The
+script uses the existing PDF fixture builder from `tests/test_tables.py`
+to make complete 2-by-2 and 10-by-4 grids, with distinct labels in every
+cell. Each extraction starts with a fresh document, so the derived-result
+cache cannot hide the changed path. Opening, closing, validation, and
+hashing are outside the timed interval. Each sample makes at least 25
+extractions and runs for at least half a second; five rounds alternate
+the two interpreters. Every result is checked for all expected labels,
+and hashes of the extracted text and geometry must agree.
+
+`results/windows-x86_64-tables.md` records 91.5 to 93.0 microseconds for
+the 2-by-2 grid (+1.6%) and 263.9 to 262.9 microseconds for the 10-by-4
+grid (-0.4%). The digests match in every round. This measures complete
+table extraction, not the isolated cost of one budget charge.

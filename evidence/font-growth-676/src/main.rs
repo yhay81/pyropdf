@@ -70,7 +70,11 @@ fn main() {
             .collect();
         let subset = fonts::subset(&data, Format::Sfnt, &keep);
         let (median, min, runs) = time(|| {
-            black_box(fonts::subset(black_box(&data), Format::Sfnt, black_box(&keep)));
+            black_box(fonts::subset(
+                black_box(&data),
+                Format::Sfnt,
+                black_box(&keep),
+            ));
         });
         let hash = digest(subset.as_ref().map(|subset| subset.data.as_slice()));
         let out = subset.map_or(0, |subset| subset.data.len());
@@ -85,7 +89,11 @@ fn main() {
         let (median, min, runs) = time(|| {
             black_box(compact::compact(black_box(&data), black_box(&keep), "Face"));
         });
-        let hash = digest(compacted.as_ref().map(|compacted| compacted.data.as_slice()));
+        let hash = digest(
+            compacted
+                .as_ref()
+                .map(|compacted| compacted.data.as_slice()),
+        );
         let out = compacted.map_or(0, |compacted| compacted.data.len());
         println!(
             "{face}\tcompact\t{count}\t{}\t{}\t{out}\t{}\t{}\t{runs}\t{hash}",
