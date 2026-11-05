@@ -616,6 +616,20 @@ fn a_charstring_overflows_at_its_limit() {
 }
 
 #[test]
+fn an_overflowing_charstring_stops_recording_stem_operators() {
+    // Two stem operands fit, but their operator does not. Later callbacks
+    // must not grow the bookkeeping after the byte limit has refused it.
+    let mut pen = Charstring::new(1.0, true, 2);
+    for _ in 0..100 {
+        pen.hstem(units(0), units(1));
+        pen.move_to(units(0), units(0));
+    }
+    assert!(pen.overflow);
+    assert!(pen.stem_operators.is_empty());
+    assert_eq!(pen.finish_glyph(), None);
+}
+
+#[test]
 fn charstrings_that_outgrow_the_program_leave_it_whole() {
     // Each `seac` glyph draws the long outline of "A" again, so a few bytes
     // of the program become thousands in the result.

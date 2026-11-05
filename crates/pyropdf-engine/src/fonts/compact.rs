@@ -372,12 +372,15 @@ impl Charstring {
     /// starts counting from zero again.
     fn end_stems(&mut self) {
         if self.stems > 0 {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "one entry per stem operator that `data` holds, which stops at `limit`"
-            )]
-            self.stem_operators.push(self.data.len());
+            let at = self.data.len();
             self.put(&[if self.vertical { VSTEM } else { HSTEM }]);
+            if !self.overflow {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one entry per stem operator written to `data`, which stops at `limit`"
+                )]
+                self.stem_operators.push(at);
+            }
             self.stems = 0;
             self.stem_at = 0;
         }

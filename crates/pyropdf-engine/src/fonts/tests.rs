@@ -257,6 +257,19 @@ fn a_program_whose_tables_overlap_is_left_whole() {
 }
 
 #[test]
+fn duplicate_table_tags_cannot_multiply_rebuilt_tables() {
+    // Empty duplicate records pass the sum of input table lengths, but a
+    // rewrite used to replace each of them with the first table's bytes.
+    let mut tables = truetype_tables(2, 4096, |at| if at == 0 { 0 } else { 4096 });
+    let whole = super::sfnt::write(&[0, 1, 0, 0], &tables).unwrap();
+    assert!(subset(&whole, Format::Sfnt, &[1]).is_some());
+    tables.extend(std::iter::repeat_n((*b"glyf", Vec::new()), 32));
+    let data = super::sfnt::write(&[0, 1, 0, 0], &tables).unwrap();
+    assert!(subset(&data, Format::Sfnt, &[1]).is_none());
+    assert!(super::sfnt::compact(&data, &[1].into_iter().collect()).is_none());
+}
+
+#[test]
 fn a_program_whose_glyphs_overlap_is_left_whole() {
     // Offsets that return to the start give every other glyph the whole
     // outline, which a rewrite would copy once for each.

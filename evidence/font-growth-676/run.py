@@ -11,7 +11,8 @@ The script builds it twice in release: in a temporary worktree of the base
 commit (``--base``, by default the merge base with ``origin/main``) and in
 this checkout. It runs the two builds in turn for ``--rounds`` rounds, takes
 each one's median over the rounds, checks that both write results of the
-same size, and prints Markdown.
+same size and SHA-256, and prints Markdown. ``--binaries BASE HEAD`` reuses
+two existing builds without creating a worktree.
 """
 
 from __future__ import annotations
@@ -52,8 +53,28 @@ def run(binary: Path, faces: list[str]) -> dict[tuple[str, str], tuple[list[str]
     rows = {}
     for line in out.splitlines():
         fields = line.split("\t")
-        rows[fields[0], fields[1]] = (fields[2:6], int(fields[6]))
+        rows[fields[0], fields[1]] = ([*fields[2:6], fields[9]], int(fields[6]))
     return rows
+
+
+def measure(
+    binaries: dict[str, Path], faces: list[str], rounds: int
+) -> tuple[dict[str, dict[tuple[str, str], list[int]]], dict[str, dict[tuple[str, str], list[str]]]]:
+    """Alternate the builds and reject any change in output size or digest."""
+    times: dict[str, dict[tuple[str, str], list[int]]] = {"base": {}, "head": {}}
+    fields: dict[str, dict[tuple[str, str], list[str]]] = {"base": {}, "head": {}}
+    for _ in range(rounds):
+        for name, binary in binaries.items():
+            for key, (row, median) in run(binary, faces).items():
+                previous = fields[name].setdefault(key, row)
+                if previous != row:
+                    msg = f"{name}: unstable output for {key}"
+                    raise RuntimeError(msg)
+                times[name].setdefault(key, []).append(median)
+        if fields["base"] != fields["head"]:
+            msg = "The builds produce different result sizes or SHA-256 digests"
+            raise RuntimeError(msg)
+    return times, fields
 
 
 def main() -> None:
@@ -61,38 +82,40 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("faces", nargs="+")
     parser.add_argument("--base", default=None, help="the commit before the change")
+    parser.add_argument(
+        "--binaries", nargs=2, type=Path, metavar=("BASE", "HEAD"), help="use existing harness binaries"
+    )
     parser.add_argument("--rounds", type=int, default=5)
     args = parser.parse_args()
+    if args.rounds < 1:
+        parser.error("--rounds must be positive")
     faces = [str(Path(face).resolve()) for face in args.faces]
     base = args.base or git("merge-base", "HEAD", "origin/main")
     head = git("rev-parse", "HEAD")
-    scratch = Path(tempfile.mkdtemp(prefix="font-growth-676-"))
-    checkout = scratch / "base"
-    git("worktree", "add", "--detach", str(checkout), base)
-    try:
-        shutil.copytree(HERE, checkout / HARNESS, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target"))
-        binaries = {
-            "base": build(checkout, scratch / "target-base"),
-            "head": build(ROOT, scratch / "target-head"),
-        }
-        times: dict[str, dict[tuple[str, str], list[int]]] = {"base": {}, "head": {}}
-        fields: dict[str, dict[tuple[str, str], list[str]]] = {"base": {}, "head": {}}
-        for _ in range(args.rounds):
-            for name, binary in binaries.items():
-                for key, (row, median) in run(binary, faces).items():
-                    times[name].setdefault(key, []).append(median)
-                    fields[name][key] = row
-    finally:
-        git("worktree", "remove", "--force", str(checkout))
-        shutil.rmtree(scratch, ignore_errors=True)
+    if args.binaries:
+        binaries = dict(zip(("base", "head"), (path.resolve() for path in args.binaries), strict=True))
+        times, fields = measure(binaries, faces, args.rounds)
+    else:
+        scratch = Path(tempfile.mkdtemp(prefix="font-growth-676-"))
+        checkout = scratch / "base"
+        git("worktree", "add", "--detach", str(checkout), base)
+        try:
+            shutil.copytree(HERE, checkout / HARNESS, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target"))
+            binaries = {
+                "base": build(checkout, scratch / "target-base"),
+                "head": build(ROOT, scratch / "target-head"),
+            }
+            times, fields = measure(binaries, faces, args.rounds)
+        finally:
+            git("worktree", "remove", "--force", str(checkout))
+            shutil.rmtree(scratch, ignore_errors=True)
     print(f"Base {base[:7]}, head {head[:7]}, {args.rounds} rounds, {platform.platform()}, {platform.processor()}.")
     print()
     print("| Face | Operation | Glyphs | Kept | Face bytes | Result bytes | Base µs | Head µs | Change |")
     print("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for key in fields["base"]:
-        glyphs, kept, size, out = fields["base"][key]
-        changed = fields["head"][key][3]
-        out = f"{int(out):,}" if changed == out else f"{int(out):,} → {int(changed):,}"
+        glyphs, kept, size, out, _digest = fields["base"][key]
+        out = f"{int(out):,}"
         before = statistics.median(times["base"][key])
         after = statistics.median(times["head"][key])
         change = f"{(after - before) / before:+.1%}" if before else "-"
@@ -100,6 +123,7 @@ def main() -> None:
             f"| {key[0]} | {key[1]} | {int(glyphs):,} | {int(kept):,} | {int(size):,} | {out} "
             f"| {before:,.0f} | {after:,.0f} | {change} |"
         )
+    print(f"\nAll {len(fields['base'])} result sizes and SHA-256 digests match in every round.")
 
 
 if __name__ == "__main__":

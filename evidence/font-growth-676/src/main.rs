@@ -4,7 +4,7 @@
 //! workload. It prints one tab-separated line per face and operation: the
 //! face, the operation, its glyphs, the glyphs kept, the bytes of the face
 //! and of the result, and the median, minimum, and count of the timed runs
-//! in microseconds.
+//! in microseconds, then the result's SHA-256 (or `none`).
 
 use std::hint::black_box;
 use std::time::{Duration, Instant};
@@ -43,6 +43,20 @@ fn time(mut operation: impl FnMut()) -> (Duration, Duration, usize) {
     (runs[runs.len() / 2], runs[0], runs.len())
 }
 
+/// Identify the result outside the timed loop, including absence.
+fn digest(data: Option<&[u8]>) -> String {
+    data.map_or_else(
+        || "none".to_owned(),
+        |data| {
+            pyropdf_engine::sign::digest_named("sha256", &[data])
+                .unwrap()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        },
+    )
+}
+
 fn main() {
     for path in std::env::args().skip(1) {
         let data = std::fs::read(&path).unwrap_or_else(|error| panic!("{path}: {error}"));
@@ -58,9 +72,10 @@ fn main() {
         let (median, min, runs) = time(|| {
             black_box(fonts::subset(black_box(&data), Format::Sfnt, black_box(&keep)));
         });
+        let hash = digest(subset.as_ref().map(|subset| subset.data.as_slice()));
         let out = subset.map_or(0, |subset| subset.data.len());
         println!(
-            "{face}\tsubset\t{count}\t{}\t{}\t{out}\t{}\t{}\t{runs}",
+            "{face}\tsubset\t{count}\t{}\t{}\t{out}\t{}\t{}\t{runs}\t{hash}",
             keep.len(),
             data.len(),
             median.as_micros(),
@@ -70,9 +85,10 @@ fn main() {
         let (median, min, runs) = time(|| {
             black_box(compact::compact(black_box(&data), black_box(&keep), "Face"));
         });
+        let hash = digest(compacted.as_ref().map(|compacted| compacted.data.as_slice()));
         let out = compacted.map_or(0, |compacted| compacted.data.len());
         println!(
-            "{face}\tcompact\t{count}\t{}\t{}\t{out}\t{}\t{}\t{runs}",
+            "{face}\tcompact\t{count}\t{}\t{}\t{out}\t{}\t{}\t{runs}\t{hash}",
             keep.len(),
             data.len(),
             median.as_micros(),

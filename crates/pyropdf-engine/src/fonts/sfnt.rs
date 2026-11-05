@@ -30,8 +30,8 @@ struct Table<'a> {
 }
 
 /// Returns the tables of the sfnt `data`; `None` when its records do not
-/// read, or when its tables add up to more than `data` holds, as tables
-/// that overlap do, since a rewrite would copy each of them in full.
+/// read, repeat a tag, or when its tables add up to more than `data` holds,
+/// as tables that overlap do, since a rewrite would copy each in full.
 fn tables(data: &[u8]) -> Option<Vec<Table<'_>>> {
     let count = usize::from(be16(data, 4)?);
     // The records are present, so a claimed count sizes nothing past `data`.
@@ -42,10 +42,20 @@ fn tables(data: &[u8]) -> Option<Vec<Table<'_>>> {
         reason = "one table per record, which `data` holds, checked above"
     )]
     tables.try_reserve(count).ok()?;
+    let mut tags = BTreeSet::new();
     let mut total = 0_usize;
     for at in 0..count {
         let record = 12 + 16 * at;
         let tag: [u8; 4] = data.get(record..record + 4)?.try_into().ok()?;
+        // A rewrite replaces every record of a rewritten tag with its
+        // first table. Even empty duplicates could multiply that result.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one tag per table record, whose bytes are present, checked above"
+        )]
+        if !tags.insert(tag) {
+            return None;
+        }
         let offset = usize::try_from(be32(data, record + 8)?).ok()?;
         let length = usize::try_from(be32(data, record + 12)?).ok()?;
         let table = data.get(offset..offset.checked_add(length)?)?;
@@ -430,7 +440,7 @@ pub(super) fn compact(data: &[u8], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec
         reason = "the nine EMBEDDED tables at most, each once, as read or rebuilt"
     )]
     for table in &tables {
-        if !EMBEDDED.contains(&table.tag) || written.iter().any(|(tag, _)| *tag == table.tag) {
+        if !EMBEDDED.contains(&table.tag) {
             continue;
         }
         let data = match table.tag {
