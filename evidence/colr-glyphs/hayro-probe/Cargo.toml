@@ -1,0 +1,10 @@
+[package]
+name = "colr-rendering-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+hayro = { git = "https://github.com/LaurenzV/hayro", rev = "3de8bb0401f0410b71f37a52524b7607433ace13" }

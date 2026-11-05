@@ -1,0 +1,12 @@
+--- a/hayro/src/mask.rs
++++ b/hayro/src/mask.rs
+@@ -64,6 +64,9 @@
+     height: u16,
+     global: &GlobalState,
+ ) -> Mask {
++    if std::env::var_os("COLR_TRACE_MASKS").is_some() {
++        eprintln!("MASK {width} {height}");
++    }
+     let mut ctx = vello_cpu::RenderContext::new_with(width, height, derive_settings(&settings));
+     ctx.set_aliasing_threshold(global.aliasing_threshold);
+     let mut renderer = Renderer::new(&mut ctx, global);

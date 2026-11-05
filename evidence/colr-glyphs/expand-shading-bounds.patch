@@ -1,0 +1,11 @@
+--- a/hayro-interpret/src/interpret/mod.rs
++++ b/hayro-interpret/src/interpret/mod.rs
+@@ -732,7 +732,7 @@
+                     }));
+                     paint.color_space = ColorSpace::pattern();
+ 
+-                    let bbox = bbox.to_path(0.1);
++                    let bbox = bbox.expand().to_path(0.1);
+                     let inverted_bbox = context.ctm().inverse() * bbox;
+                     fill_path_impl(context, device, FillRule::NonZero, Some(&inverted_bbox));
+ 
