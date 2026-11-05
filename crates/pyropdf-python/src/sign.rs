@@ -76,6 +76,10 @@ impl _Signer {
     /// Wraps `sign`, which signs bytes with the key of the first of the DER
     /// `certificates`.
     #[staticmethod]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one borrowed slice per DER certificate already supplied by the caller, as Chain::from_der"
+    )]
     fn callback(certificates: Vec<Vec<u8>>, sign: Py<PyAny>) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let certificates: Vec<&[u8]> = certificates.iter().map(Vec::as_slice).collect();
@@ -88,6 +92,10 @@ impl _Signer {
 
     /// Returns the DER certificates, the signer's first.
     #[getter]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one encoding per certificate already held by the signer chain"
+    )]
     fn certificates(&self) -> PyResult<Vec<Cow<'static, [u8]>>> {
         crate::errors::boundary(|| {
             self.chain
@@ -251,6 +259,10 @@ fn check_data<'py>(py: Python<'py>, check: &sign::verify::Check) -> CheckData<'p
     )
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "verification caps the certificate list at verify::MAX_CERTIFICATES (64)"
+)]
 fn signed_tuple<'py>(py: Python<'py>, signed: &sign::verify::Signed) -> SignedTuple<'py> {
     (
         signed.digest.clone(),
@@ -339,6 +351,10 @@ type FileData<'py> = (Bound<'py, PyBytes>, usize, Vec<(Option<usize>, Vec<u32>)>
 /// first; `None` for a document not read from a file or one whose index
 /// was rebuilt.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one result per revision and index listing, whose growth the store charged when opening"
+)]
 pub fn document_file<'py>(
     py: Python<'py>,
     document: &_Document,
