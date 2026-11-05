@@ -571,14 +571,15 @@ def _candidates(
     """Return each image object that the pages place, with its largest placement, or ``None`` when not selected.
 
     One record per object, so memory grows with the objects, not the
-    placements; ``inline`` gains each page's count of inline images.
+    placements; ``inline`` gains each page's count of inline images and
+    stencils, which use their own stream rewriting below.
     """
     candidates: dict[int, _Candidate | None] = {}
     for page in document.pages:
         inline.append(0)
         for image in page.images(annotations=True):
             item = image.item
-            if item.xref == 0:
+            if item.xref == 0 or item.is_stencil:
                 inline[-1] += 1
                 continue
             if item.xref not in candidates:
@@ -1086,7 +1087,7 @@ def _rewrite_page_inline(page: Page, options: _Options, tally: _Tally, nested: _
     """Rewrite the inline images of a page's own content, which the page then writes as one new stream.
 
     ``nested`` reads the Form XObjects and appearances that the page draws.
-    Return how many inline images the page paints that a rewrite reaches.
+    Return how many inline and stencil images the page paints that a rewrite reaches.
     """
     operations = page.operations
     out: list[Operation | InlineImage] = []
@@ -1181,7 +1182,7 @@ class _Nested:
         ``scope`` holds the resources that name its drawings and the forms
         drawn through them that hold inline images. ``sinks`` take each
         inline image with its matrix, and each operation. Return how many
-        inline images the forms that it draws hold, counted per drawing.
+        inline and stencil images the forms that it draws hold, counted per drawing.
         """
         resources, drawn = scope
         visit, emit = sinks
@@ -1214,12 +1215,11 @@ class _Nested:
         matrix: tuple[float, ...],
         depth: int,
     ) -> int:
-        """Follow a ``Do``; return how many images that hayro lists as inline it paints."""
+        """Follow a ``Do``; return how many inline and stencil images it paints."""
         xobject = xobjects.get(str(name)) if isinstance(name, Name) else None
         if not isinstance(xobject, Stream):
             return 0
         if xobject.get("Subtype") == "Image" and xobject.get("ImageMask") is True:
-            # hayro lists a stencil mask image without its object, as an inline image.
             self.stencil(xobject, matrix)
             return 1
         if xobject.get("Subtype") != "Form":
@@ -1286,7 +1286,7 @@ class _Nested:
         return self.parsed[number]
 
     def annotations(self, page: Page) -> int:
-        """Follow the normal appearances of a page's annotations; return how many inline images they paint."""
+        """Follow the normal appearances of a page's annotations; count their inline and stencil images."""
         annotations = page.obj.get("Annots")
         reached = 0
         for annotation in annotations if isinstance(annotations, Array) else ():
@@ -1431,7 +1431,9 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
         for index, (page, count) in enumerate(zip(document.pages, inline, strict=False)):
             missed = count - (_rewrite_page_inline(page, options, tally, nested) if count else 0)
             if missed > 0:
-                tally.report(f"page {index}: {missed} inline images that a rewrite does not reach, as in patterns")
+                tally.report(
+                    f"page {index}: {missed} inline or stencil images that a rewrite does not reach, as in patterns"
+                )
         nested.write(document, options)
     return ImageRewriteReport(
         tally.considered, tally.rewritten, tally.before, tally.after, tuple(tally.unsupported or ())

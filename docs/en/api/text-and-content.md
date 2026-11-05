@@ -421,6 +421,11 @@ Image(
 
 An image painted on the page.
 
+`xref` is the object number, including for stencil masks, or zero for
+an inline image. `encoded_size` is the byte length reported by the
+interpreter before decoding image filters; for inline images, it can
+include whitespace before `EI`.
+
 ## `ImageMask`
 
 The kind of mask that an image dictionary names.

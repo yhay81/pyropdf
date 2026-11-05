@@ -6,6 +6,7 @@ import zlib
 from pathlib import Path
 
 import pytest
+from test_content_model import stencil_page
 
 import pyropdf
 from pyropdf import Name, StoredImage
@@ -141,6 +142,26 @@ def test_an_inline_image_decodes() -> None:
     assert image.item.xref == 0
     assert image.stored() is None
     assert bytes(image.pixmap()) == data
+
+
+@pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+def test_stencil_images_retain_metadata_and_decode_as_alpha(*, inline: bool, nested: bool) -> None:
+    page = stencil_page(inline=inline, nested=nested)
+    images = page.images()
+    assert [image.item for image in images] == list(page.content().images)
+    for image in images:
+        assert image.item.xref == (0 if inline else 6)
+        assert image.item.encoded_size == (3 if inline else 2)
+        assert image.stored() is None  # Unfiltered samples have no file format.
+        pixmap = image.pixmap()
+        assert (pixmap.width, pixmap.height, pixmap.alpha) == (2, 2, True)
+        assert [pixmap.pixel(x, y) for y in range(2) for x in range(2)] == [(0, 255), (0, 0), (0, 255), (0, 255)]
+    rendered = page.pixmap(dpi=72)
+    for x in (10, 40):
+        assert rendered.pixel(x + 2, 72) == (0, 0, 255)
+        assert rendered.pixel(x + 15, 72) == (255, 255, 255)
+        assert rendered.pixel(x + 2, 85) == rendered.pixel(x + 15, 85) == (0, 0, 255)
 
 
 def test_replacing_a_shared_image_updates_every_page_in_one_transaction() -> None:
