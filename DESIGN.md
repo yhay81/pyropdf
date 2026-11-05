@@ -569,8 +569,9 @@ rules instead of revisiting every structural operation.
   options. It counts allocated bytes, elements, decoded bytes, and
   interpreter fuel, and checks a deadline and a cancellation token. A
   collection that grows from input grows through the budget (`BudgetVec`),
-  so fallible growth is the default; the store's `clippy.toml` refuses the
-  growth of the standard collections.
+  so fallible growth is the default; `crates/clippy.toml` refuses the
+  growth of the standard collections and of the store's values in every
+  crate under `crates/` that has no `clippy.toml` of its own.
 - An operation can span several calls, as a canvas does (section 7). Its
   budget is then shared, and its configuration fixed, so that a call that
   reads a limit once never misses a later change. A call that needs a lower
