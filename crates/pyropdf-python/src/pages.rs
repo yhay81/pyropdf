@@ -71,6 +71,10 @@ pub(crate) fn index_with(
 /// Resolves the page entries of a batch, such as the `pages` of
 /// `doc.render`, to indexes: every page for `None`, negative entries counted
 /// from the end.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one selected index per already materialized Python index, or per page in the budgeted page index"
+)]
 pub(crate) fn entries(pages: Option<Vec<i64>>, count: usize) -> PyResult<Vec<usize>> {
     let Some(pages) = pages else {
         return Ok((0..count).collect());
@@ -124,6 +128,10 @@ pub fn page_index(document: &_Document, number: u32, generation: u16) -> PyResul
 
 /// Returns the objects of every page, in order.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one object identity per page in the budgeted page index"
+)]
 pub fn page_objects(document: &_Document) -> PyResult<Vec<(u32, u16)>> {
     crate::errors::boundary(|| {
         let (_, index, _) = index(document)?;
@@ -521,6 +529,10 @@ impl PageForms {
 /// source's limits too. `None` when the snapshot no longer lists the page.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the private canvas binding")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the cache is capped at PAGE_FORMS, the form dictionary has fixed entries, and the reachability roots mirror budgeted content"
+)]
 pub fn canvas_page_form(
     py: Python<'_>,
     forms: &PageForms,
@@ -710,6 +722,10 @@ pub fn set_page_rotation(
             return Ok(false);
         };
         let mut dict = index.pages()[at].dict().clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Rotate key"
+        )]
         dict.insert(Name::from("Rotate"), Value::Integer(rotation));
         document.edit(py, |transaction, budget| {
             transaction
@@ -758,6 +774,10 @@ fn display_rect(frame: [f64; 4], rotation: i64, (x0, y0, x1, y1): Box4) -> Box4 
 /// Returns the media, crop, bleed, trim, and art boxes of a page in display
 /// space, as [`user_boxes`] resolves them, or `None` for a stale page.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "user_boxes returns the fixed five page boxes"
+)]
 pub fn page_boxes(
     document: &_Document,
     number: u32,
@@ -785,6 +805,10 @@ pub fn page_boxes(
 /// media box must hold the boxes that the page sets; otherwise nothing is
 /// written and `ValueError` is raised. Returns `false` for a stale page.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "exactly four coordinates and one key chosen from the fixed BOXES array"
+)]
 pub fn set_page_box(
     py: Python<'_>,
     document: &_Document,
@@ -934,6 +958,10 @@ pub fn set_pages(
 /// in one transaction. Links between the imported pages keep leading to
 /// them; other links within `source` go.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "only the fixed INHERITABLE keys and their defaults are inserted"
+)]
 pub fn import_pages(
     py: Python<'_>,
     document: &_Document,
@@ -1029,6 +1057,10 @@ pub fn import_pages(
                         dict.remove("Annots");
                     }
                     Some(annots) => {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "this call inserts only the fixed /Annots key"
+                        )]
                         dict.insert(Name::from("Annots"), Value::Array(annots));
                     }
                     None => {}
@@ -1336,10 +1368,22 @@ impl Links<'_, '_> {
         charge_copy(CopyPart::Dict(link), self.budget)?;
         let mut link = link.clone();
         if let Some(Value::Dict(mut action)) = self.resolved(link.get("A"))? {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /D key"
+            )]
             action.insert(Name::from("D"), array);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /A key"
+            )]
             link.insert(Name::from("A"), Value::Dict(action));
             link.remove("Dest");
         } else {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Dest key"
+            )]
             link.insert(Name::from("Dest"), array);
             link.remove("A");
         }
@@ -1383,6 +1427,10 @@ fn not_a_page(page: Reference) -> PyErr {
 
 /// Writes a copy of each page of `order` that `copies` marks and puts it
 /// in its place, and returns the copies.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "only the fixed INHERITABLE keys are inserted, with values copied through the budget"
+)]
 fn copy_pages(
     transaction: &mut Transaction,
     index: &PageIndex,
@@ -1414,6 +1462,10 @@ fn copy_pages(
                 ));
             }
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Parent key"
+        )]
         dict.insert(Name::from("Parent"), Value::Reference(root));
         for key in INHERITABLE {
             match page.inherited(key) {
@@ -1535,6 +1587,10 @@ fn remove_pages(
 /// 0 and at most the page count, in one transaction, and returns its
 /// object.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one reference is inserted into the order of the budgeted page index"
+)]
 pub fn new_page(
     py: Python<'_>,
     document: &_Document,
@@ -1546,7 +1602,15 @@ pub fn new_page(
         let (version, index, budget) = index(document)?;
         let (root, root_dict) = root(&version, &budget)?;
         let mut page = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Type key"
+        )]
         page.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Parent key"
+        )]
         page.insert(Name::from("Parent"), Value::Reference(root));
         let media = Value::Array(Array::from(vec![
             Value::Integer(0),
@@ -1554,14 +1618,30 @@ pub fn new_page(
             number(width),
             number(height),
         ]));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /MediaBox key"
+        )]
         page.insert(Name::from("MediaBox"), media.clone());
         // What the page would otherwise inherit from the root.
         if root_dict.get("CropBox").is_some() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /CropBox key"
+            )]
             page.insert(Name::from("CropBox"), media);
         }
         if root_dict.get("Rotate").is_some() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rotate key"
+            )]
             page.insert(Name::from("Rotate"), Value::Integer(0));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Resources key"
+        )]
         page.insert(Name::from("Resources"), Value::Dict(Dict::new()));
         let mut order = current_order(&index)?;
         document.edit(py, |transaction, budget| {
@@ -1578,6 +1658,10 @@ pub fn new_page(
     })?
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one reference per page of the budgeted page index"
+)]
 fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {
     index
         .pages()
@@ -1658,6 +1742,10 @@ fn target(
 /// Writes the root node with `order` as its kids, and each page that the
 /// flattening changes. `added` are pages that the transaction wrote, which
 /// the index does not list yet.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the resolved entries and inserted keys are bounded by the fixed INHERITABLE array"
+)]
 fn rewrite_with(
     transaction: &mut Transaction,
     version: &Version,
@@ -1704,6 +1792,10 @@ fn rewrite_with(
                 ));
             }
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Parent key"
+        )]
         dict.insert(Name::from("Parent"), Value::Reference(root));
         for key in INHERITABLE {
             match page.inherited(key) {
@@ -1728,10 +1820,18 @@ fn rewrite_with(
     let mut kids = BudgetVec::new(budget);
     kids.try_extend(order.iter().copied().map(Value::Reference))
         .map_err(|e| store_error(&e.into()))?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Kids key"
+    )]
     root_dict.insert(
         Name::from("Kids"),
         Value::Array(Array::from(kids.into_vec())),
     );
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Count key"
+    )]
     root_dict.insert(Name::from("Count"), Value::Integer(order.len() as i64));
     transaction
         .write(root.number(), &Value::Dict(root_dict), budget)
