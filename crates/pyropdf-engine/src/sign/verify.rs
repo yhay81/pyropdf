@@ -196,7 +196,15 @@ fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
             break;
         }
         if let CertificateChoices::Certificate(certificate) = choice {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the chain keeps MAX_CERTIFICATES certificates at most, checked above"
+            )]
             certificates.push(certificate.to_der().map_err(invalid("a certificate"))?);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the chain keeps MAX_CERTIFICATES certificates at most, checked above"
+            )]
             parsed.push(certificate.clone());
         }
     }
@@ -216,7 +224,12 @@ fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
                 let value = value
                     .decode_as::<OctetString>()
                     .map_err(invalid("the message digest"))?;
-                message_digest = Some(value.as_bytes().to_vec());
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "a copy of an attribute of the SignedData, which the caller holds"
+                )]
+                let digest = value.as_bytes().to_vec();
+                message_digest = Some(digest);
             } else if attribute.oid == SIGNING_TIME {
                 signing_time = value.decode_as::<Time>().ok().map(seconds);
             }
@@ -232,6 +245,10 @@ fn signed_data(data: &[u8], outer: bool) -> Result<Signed, Error> {
                 .map_err(invalid("the signed attributes"))?,
         );
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a copy of the signature value of the SignedData, which the caller holds"
+    )]
     let signature = signer_info.signature.as_bytes().to_vec();
     let check = signer.map(|index| {
         let (scheme, digest) = scheme(signer_info.signature_algorithm.oid, &digest);
@@ -293,6 +310,10 @@ fn token(signer_info: &SignerInfo) -> Result<Option<TimeStamp>, Error> {
             "the time-stamp token holds no TSTInfo".to_owned(),
         ));
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a copy of the TSTInfo of the token, which the caller holds"
+    )]
     let tst_info = econtent
         .decode_as::<OctetString>()
         .map_err(invalid("the TSTInfo"))?
@@ -303,6 +324,10 @@ fn token(signer_info: &SignerInfo) -> Result<Option<TimeStamp>, Error> {
     let imprint = fields
         .get(2)
         .ok_or_else(|| Error::Invalid("the TSTInfo holds no message imprint".to_owned()))?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a copy of the message imprint of the TSTInfo, which the caller holds"
+    )]
     let (algorithm, hashed) =
         Vec::<Any>::from_der(&imprint.to_der().map_err(invalid("the imprint"))?)
             .ok()
@@ -397,6 +422,10 @@ pub fn certificate(data: &[u8]) -> Result<CertificateInfo, Error> {
             key: Vec::new(),
             scheme,
             digest,
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a copy of the signature value of the certificate, which the caller holds"
+            )]
             signature: certificate.signature().raw_bytes().to_vec(),
             message: Some(tbs.to_der().map_err(invalid("a certificate"))?),
         },

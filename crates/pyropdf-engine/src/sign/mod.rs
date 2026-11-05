@@ -147,6 +147,10 @@ pub fn digest_named(name: &str, parts: &[&[u8]]) -> Option<Vec<u8>> {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a SHA-2 digest holds 64 bytes at most"
+)]
 fn digest_parts<D: Digest>(parts: &[&[u8]]) -> Vec<u8> {
     let mut hasher = D::new();
     for part in parts {
@@ -232,6 +236,10 @@ impl Chain {
     ///
     /// As [`Chain::new`], and for a certificate that is not DER.
     pub fn from_der(certificates: &[&[u8]]) -> Result<Self, Error> {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one certificate per DER certificate that the caller holds"
+        )]
         let parsed = certificates
             .iter()
             .map(|der| Certificate::from_der(der))
