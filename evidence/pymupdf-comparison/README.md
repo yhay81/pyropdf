@@ -43,6 +43,11 @@ release-wheel comparison and a separate opt-in glyph-cache experiment.
 option order. It does not change the shipped defaults or establish the
 1.5 rendering target; see the report's variability and quality limitations.
 
+[Windows native samples](results/profile-windows-amd64.md) identify the current
+rasterization hot functions with a separate PDB-enabled release wheel.
+`profile_windows.py` and `sample_windows.cpp` reproduce those main-thread
+leaf samples without changing product code; they are not benchmark timings.
+
 PyMuPDF is AGPL. It runs only here, as a separate program in its own
 environment, and is never a dependency of pyropdf.
 

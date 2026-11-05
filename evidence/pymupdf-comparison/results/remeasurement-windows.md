@@ -55,10 +55,9 @@ not establish pixel equivalence or justify changing the shipped default.
 
 ## Next evidence needed
 
-Repeat a controlled comparison with native stack sampling of bill-hr815
-and usrguide. The existing `profile.py` uses macOS `sample`; it cannot run
-unchanged on this Windows host. Determine which remaining time is in
-glyph rasterization, interpretation, or pixel extraction before drafting
-another optimization. #365 stays open until the shipped configuration
-meets its acceptance criterion. No upstream report is published by this
-measurement.
+The subsequent [Windows native samples](profile-windows-amd64.md) identify
+current rasterization hot functions. They also find significant `memmove`
+work whose callers still need to be identified before choosing a copy or
+allocation optimization. Repeat a controlled comparison after that work.
+#365 stays open until the shipped configuration meets its acceptance
+criterion. No upstream report is published by these measurements.
