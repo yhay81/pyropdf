@@ -73,7 +73,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
     );
     #[expect(
         clippy::disallowed_methods,
-        reason = "four bytes per pixel of hayro's pixmap, whose sides are 16-bit"
+        reason = "the four bytes of each pixel of hayro's pixmap, which holds as many already"
     )]
     let data = pixmap
         .data()
