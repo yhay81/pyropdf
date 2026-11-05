@@ -339,6 +339,10 @@ fn callout(
     if !matches!(values.len(), 4 | 6) {
         return Ok(());
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the callout line has 4 or 6 numbers, checked above"
+    )]
     let points: Vec<(f64, f64)> = values
         .as_chunks::<2>()
         .0

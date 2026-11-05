@@ -11,6 +11,10 @@ const BLACK: (f64, f64, f64) = (0.0, 0.0, 0.0);
 pub(super) fn draw(canvas: &mut Canvas, paint: &Paint, icon: &[u8], size: (f64, f64)) {
     let (sx, sy) = (size.0 / 20.0, size.1 / 20.0);
     let mut shape = |operators: &str, coordinates: &[f64], filled: bool, outline: Option<f64>| {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the coordinates of one of the constant shapes of an icon"
+        )]
         let scaled: Vec<f64> = coordinates
             .iter()
             .enumerate()
@@ -56,6 +60,10 @@ pub(super) fn draw(canvas: &mut Canvas, paint: &Paint, icon: &[u8], size: (f64, 
                 Some(1.5),
             );
             // The dot is black, not the annotation's color.
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the coordinates of one constant ellipse"
+            )]
             let dot: Vec<f64> = ellipse(9.0, 14.5, 11.0, 16.5)
                 .iter()
                 .enumerate()
@@ -163,6 +171,10 @@ pub(super) fn file(canvas: &mut Canvas, paint: &Paint, icon: &[u8], size: (f64, 
                      coordinates: &[f64],
                      fill: Option<(f64, f64, f64)>,
                      outline: Option<f64>| {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the coordinates of one of the constant shapes of an icon"
+        )]
         let scaled: Vec<f64> = coordinates
             .as_chunks::<2>()
             .0
