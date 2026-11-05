@@ -1,6 +1,14 @@
 //! The PyO3 binding, the only crate that depends on PyO3 (DESIGN.md section
 //! 11). It builds the extension module `pyropdf._core`.
 
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "tests grow standard collections freely; F6 binds the binding's own code"
+    )
+)]
+
 use pyo3::prelude::*;
 
 mod annotations;
