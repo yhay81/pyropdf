@@ -23,7 +23,7 @@ from pyropdf._geometry import Matrix, Point, Rect
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from pyropdf._core import PathColumns, _PathPaint, _PathRow, _PathStroke
+    from pyropdf._core import PathColumns, _OperationBudget, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
 
 
@@ -113,6 +113,10 @@ class GradientExtend(enum.StrEnum):
 
     PAD = "pad"
     """The color at each end continues."""
+    PAD_START = "pad_start"
+    """Only the color at the start continues."""
+    PAD_END = "pad_end"
+    """Only the color at the end continues."""
     NONE = "none"
     """Nothing."""
     REPEAT = "repeat"
@@ -184,7 +188,11 @@ class Color:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ShadingPattern:
-    """A paint that a shading fills, from a shading pattern or ``sh``."""
+    """A paint that a shading fills, from a shading pattern or ``sh``.
+
+    Read axial and radial paints retain their color function without sampling
+    it during extraction. :meth:`Canvas.draw` samples it when repainting.
+    """
 
     shading_type: ShadingType | None
     """The shading type, or ``None`` for a shading that hayro could not
@@ -192,6 +200,7 @@ class ShadingPattern:
     matrix: Matrix
     """The transform from shading space to display space."""
     opacity: float
+    _source: _ShadingSource | None = field(default=None, init=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -253,8 +262,85 @@ class RadialGradient:
 
 
 Gradient: TypeAlias = LinearGradient | RadialGradient
-# What Page.content() reports is a Color or a pattern; what a Canvas draws is a Color or a Gradient.
+_ReadGradient: TypeAlias = tuple[
+    Gradient, tuple[float, float, float, float] | None, tuple[float, float, float, float] | None
+]
+# A canvas also repaints an axial/radial ShadingPattern retained by extraction.
 Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
+
+
+class _ShadingSource:
+    """A shared, version-stable paint, sampled once on its first drawing."""
+
+    __slots__ = ("_background", "_bbox", "_columns", "_gradient", "_index", "_lock")
+
+    def __init__(
+        self,
+        columns: PathColumns | None,
+        index: int,
+        gradient: Gradient | None = None,
+        bbox: tuple[float, float, float, float] | None = None,
+        background: tuple[float, float, float, float] | None = None,
+    ) -> None:
+        self._columns = columns
+        self._index = index
+        self._gradient = gradient
+        self._bbox = bbox
+        self._background = background
+        self._lock = threading.Lock()
+
+    def __reduce__(
+        self,
+    ) -> tuple[
+        type[_ShadingSource],
+        tuple[
+            None,
+            int,
+            Gradient | None,
+            tuple[float, float, float, float] | None,
+            tuple[float, float, float, float] | None,
+        ],
+    ]:
+        # Like an Image's source, the native owner is not a pickle value.
+        return _ShadingSource, (None, self._index, self._gradient, self._bbox, self._background)
+
+    def gradient(self, operation: _OperationBudget) -> _ReadGradient:
+        """Return its RGB approximation under the active canvas's budget."""
+        operation.check("content_element_count", 0)
+        with self._lock:
+            if self._gradient is not None:
+                return self._gradient, self._bbox, self._background
+            raw = None if self._columns is None else self._columns.sample_shading(self._index, operation)
+            if raw is None:
+                msg = "the ShadingPattern does not retain an axial or radial paint; draw one read from Page.content()"
+                raise TypeError(msg)
+            axial, coords, ends, samples, self._bbox, background = raw
+            if background is not None:
+                r, g, b, a = background
+                self._background = (r, g, b, a)
+            extend = {
+                (False, False): GradientExtend.NONE,
+                (True, True): GradientExtend.PAD,
+                (True, False): GradientExtend.PAD_START,
+                (False, True): GradientExtend.PAD_END,
+            }[(ends[0], ends[1])]
+            stops = tuple(ColorStop(offset, Color(r, g, b, a)) for offset, r, g, b, a in samples)
+            if axial:
+                gradient: Gradient = LinearGradient(
+                    start=Point(coords[0], coords[1]), end=Point(coords[2], coords[3]), stops=stops, extend=extend
+                )
+            else:
+                gradient = RadialGradient(
+                    start=Point(coords[0], coords[1]),
+                    start_radius=coords[2],
+                    end=Point(coords[3], coords[4]),
+                    end_radius=coords[5],
+                    stops=stops,
+                    extend=extend,
+                )
+            self._gradient = gradient
+            self._columns = None
+            return gradient, self._bbox, self._background
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -881,15 +967,19 @@ def _soft_mask(code: int | None) -> SoftMask | None:
     return None if code is None else SoftMask(subtype=_SOFT_MASK_TYPES[code])
 
 
-def _pattern(kind: int, values: Sequence[float]) -> ShadingPattern | TilingPattern:
+def _pattern(
+    kind: int, values: Sequence[float], source: _ShadingSource | None = None
+) -> ShadingPattern | TilingPattern:
     """Build the pattern paint of one of the core's paint tuples."""
     if kind == _SHADING:
         shading_type = int(values[0])
-        return ShadingPattern(
+        pattern = ShadingPattern(
             shading_type=ShadingType(shading_type) if shading_type else None,
             matrix=_matrix(values[1:7]),
             opacity=values[7],
         )
+        object.__setattr__(pattern, "_source", source)
+        return pattern
     return TilingPattern(
         bbox=_rect(values[0:4]),
         x_step=values[4],
@@ -902,7 +992,9 @@ def _pattern(kind: int, values: Sequence[float]) -> ShadingPattern | TilingPatte
 class _Converter:
     """Turn the core's tuples into values, sharing equal paints."""
 
-    def __init__(self, fonts: list[Any], states: _Contexts, source: _Source | None = None) -> None:
+    def __init__(
+        self, fonts: list[Any], states: _Contexts, columns: PathColumns, source: _Source | None = None
+    ) -> None:
         self.source = source
         self.fonts = [
             FontRef(
@@ -916,7 +1008,10 @@ class _Converter:
             for name, is_type3, weight, is_italic, is_serif, is_monospace in fonts
         ]
         self.states = states
-        self.paints: dict[tuple[int, tuple[float, ...]], Paint] = {}
+        self.paints: dict[tuple[int, tuple[float, ...]], Paint] = {
+            (kind, tuple(values)): _pattern(kind, values, _ShadingSource(columns, index))
+            for index, (kind, values) in enumerate(columns.patterns())
+        }
 
     def paint(self, raw: tuple[int, list[float]]) -> Paint:
         kind, values = raw
@@ -1093,7 +1188,10 @@ class _PathValues:
                     contexts = _Contexts(clips, groups, marks, states)
                     shared = self._shared = (
                         tuple(contexts[index] for index in range(len(states))),
-                        tuple(_pattern(kind, values) for kind, values in self._columns.patterns()),
+                        tuple(
+                            _pattern(kind, values, _ShadingSource(self._columns, index))
+                            for index, (kind, values) in enumerate(self._columns.patterns())
+                        ),
                     )
         return shared
 
@@ -1137,9 +1235,9 @@ class _PathValues:
 
 def _content_from_core(raw: Any, document: Document | None = None) -> Content:  # noqa: ANN401 - the core's nested tuples.
     """Build a :class:`Content` from ``_core.page_content``; its images name ``document``."""
-    items, fonts, clips, groups, marks, states = raw
+    items, fonts, clips, groups, marks, states, columns = raw
     source = None if document is None else _Source(document)
-    converter = _Converter(fonts, _Contexts(clips, groups, marks, states), source)
+    converter = _Converter(fonts, _Contexts(clips, groups, marks, states), columns, source)
     converted: list[ContentItem] = []
     for kind, item in items:
         if kind == _TEXT_RUN:

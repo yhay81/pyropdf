@@ -136,6 +136,19 @@ class PathColumns:
     def column(self, name: str, start: int, stop: int, /) -> Column: ...
     def contexts(self) -> tuple[list[Any], list[Any], list[Any], list[Any]]: ...
     def patterns(self) -> list[tuple[int, list[float]]]: ...
+    def sample_shading(
+        self, pattern: int, operation: _OperationBudget
+    ) -> (
+        tuple[
+            bool,
+            list[float],
+            list[bool],
+            list[list[float]],
+            tuple[float, float, float, float] | None,
+            list[float] | None,
+        ]
+        | None
+    ): ...
     def arrow_schema(self) -> object: ...
     def arrow_array(self, start: int, stop: int, /) -> tuple[object, object]: ...
 
@@ -442,6 +455,9 @@ def canvas_gradient(
     stops: list[tuple[float, float, float, float, float]],
     extend: str,
     area: tuple[float, float, float, float],
+    bbox: tuple[float, float, float, float] | None,
+    background: tuple[float, float, float, float] | None,
+    sampled: bool,
     operation: _OperationBudget,
     /,
 ) -> tuple[int, int | None, float]: ...
@@ -669,7 +685,7 @@ def page_content(
     clip: tuple[float, float, float, float] | None,
     max_elements: int | None,
     /,
-) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any]]: ...
+) -> tuple[list[Any], list[Any], list[Any], list[Any], list[Any], list[Any], PathColumns]: ...
 def page_paths(
     document: _Document,
     number: int,

@@ -662,7 +662,9 @@ def test_gradient_text_paints_and_reads_once(
         assert first.soft_mask is not None
         assert second.soft_mask is not None
         assert sum(operation.operator == "BT" for operation in drawn.operations) == 2
-        if extend is not pyropdf.GradientExtend.NONE:
+        # One-sided or absent extension can leave every glyph outside the
+        # painted span, depending on its position and rotation.
+        if extend in (pyropdf.GradientExtend.PAD, pyropdf.GradientExtend.REPEAT, pyropdf.GradientExtend.REFLECT):
             assert min(bytes(drawn.pixmap(dpi=72))) < 240
 
 

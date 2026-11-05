@@ -363,7 +363,7 @@ The display-space font size.
 
 What a gradient paints beyond the two ends of its line.
 
-Members: `PAD`, `NONE`, `REPEAT`, `REFLECT`.
+Members: `PAD`, `PAD_START`, `PAD_END`, `NONE`, `REPEAT`, `REFLECT`.
 
 ## `GraphicsContext`
 
@@ -735,6 +735,9 @@ ShadingPattern(*, shading_type: ShadingType | None, matrix: Matrix, opacity: flo
 ```
 
 A paint that a shading fills, from a shading pattern or `sh`.
+
+Read axial and radial paints retain their color function without sampling
+it during extraction. `Canvas.draw` samples it when repainting.
 
 ## `ShadingType`
 
