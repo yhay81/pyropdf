@@ -255,28 +255,29 @@ def test_transparency_groups_carry_opacity_and_soft_masks(subtype: SoftMaskType)
     outer = path.context.groups[0]
     assert outer.opacity == pytest.approx(0.25)
     # hayro 0.9 no longer identifies the mask's group, object 8.
-    assert outer.soft_mask == SoftMask(xref=0, subtype=subtype)
+    assert outer.soft_mask == SoftMask(subtype=subtype)
     assert outer.blend_mode is BlendMode.NORMAL
     assert path.context.opacity == pytest.approx(0.25)
     assert path.fill == Color(0, 1, 0, 1)
 
 
-def test_soft_mask_xref_is_deprecated_and_reading_it_warns() -> None:
+def test_soft_mask_holds_only_its_subtype() -> None:
     mask = SoftMask(subtype=SoftMaskType.ALPHA)
-    with pytest.warns(DeprecationWarning, match="SoftMask.xref is deprecated"):
-        assert mask.xref == 0
-    # A mask built as 0.2.1 built it keeps its number.
-    old = SoftMask(xref=8, subtype=SoftMaskType.LUMINOSITY)
-    with pytest.warns(DeprecationWarning, match="SoftMask.xref is deprecated"):
-        assert old.xref == 8
-    # Building, comparing, hashing, printing, and pickling read no xref.
+    assert [field.name for field in dataclasses.fields(mask)] == ["subtype"]
+    assert not hasattr(mask, "xref")
+    assert not hasattr(mask, "_xref")
+    assert not hasattr(mask, "__dict__")
+    with pytest.raises(TypeError, match="xref"):
+        SoftMask(xref=8, subtype=SoftMaskType.ALPHA)  # ty: ignore[unknown-argument]
+    with pytest.raises(TypeError):
+        SoftMask(SoftMaskType.ALPHA)  # ty: ignore[too-many-positional-arguments, missing-argument]
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        assert mask == SoftMask(xref=0, subtype=SoftMaskType.ALPHA)
-        assert old != SoftMask(subtype=SoftMaskType.LUMINOSITY)
+        assert mask == SoftMask(subtype=SoftMaskType.ALPHA)
+        assert mask != SoftMask(subtype=SoftMaskType.LUMINOSITY)
         assert len({mask, SoftMask(subtype=SoftMaskType.ALPHA)}) == 1
         assert repr(mask) == f"SoftMask(subtype={SoftMaskType.ALPHA!r})"
-        assert pickle.loads(pickle.dumps(old)) == old  # noqa: S301 - a value pickled here.
+        assert pickle.loads(pickle.dumps(mask)) == mask  # noqa: S301 - a value pickled here.
     with pytest.raises(dataclasses.FrozenInstanceError):
         mask.subtype = SoftMaskType.LUMINOSITY  # ty: ignore[invalid-assignment]
 

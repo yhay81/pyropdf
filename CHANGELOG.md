@@ -1,5 +1,13 @@
 # Changelog
 
+## Next minor release (0.3.0 or later, unreleased)
+
+- **Breaking:** Remove the deprecated `SoftMask.xref` property and the
+  `xref=` constructor argument. Use `SoftMask(subtype=...)`; a mask holds
+  only its subtype. The property was deprecated in 0.2.2 because hayro no
+  longer identifies the mask's group (#610). This change is reserved for
+  the next minor release and must not ship in a 0.2.x patch release.
+
 ## Unreleased
 
 - `page.pixmap(glyph_cache=True)` and `Document.render(glyph_cache=True)`
