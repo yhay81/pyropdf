@@ -13,7 +13,7 @@ from test_document import SIMPLE
 import pyropdf
 from pyropdf import Document, InternalError, PdfError, _core
 
-SITES = ("attached", "detached", "edit", "scratch", "locked")
+SITES = ("attached", "detached", "edit", "nested_edit", "scratch", "locked")
 MESSAGE = "pyropdf injected test panic"
 
 
@@ -74,7 +74,7 @@ def test_an_unwinding_transaction_discards_all_its_writes(site: str) -> None:
     assert_usable(document)
 
 
-@pytest.mark.parametrize("site", ["edit", "scratch", "locked"])
+@pytest.mark.parametrize("site", ["edit", "nested_edit", "scratch", "locked"])
 def test_a_caught_panic_cannot_commit_partial_writes(site: str) -> None:
     document = pyropdf.open(SIMPLE)
     with document.transaction("kept"):

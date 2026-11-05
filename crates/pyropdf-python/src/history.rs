@@ -74,10 +74,11 @@ impl Open {
         if let Some(snapshot) = &self.snapshot {
             return Ok(Arc::clone(snapshot));
         }
-        preserve_on_panic(&mut self.transaction, |transaction| {
-            transaction.settle(Scope::Commit, budget)
-        })?
-        .map_err(|e| store_error(&e))?;
+        restore_on_error(&mut self.transaction, |transaction| {
+            transaction
+                .settle(Scope::Commit, budget)
+                .map_err(|error| store_error(&error))
+        })?;
         Ok(Arc::clone(
             self.snapshot.insert(self.transaction.snapshot()),
         ))
@@ -95,20 +96,19 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A borrowed transaction outlives this call. Restore it if an engine
-/// unwinds, even when Python catches the error inside its transaction.
-fn preserve_on_panic<T>(
+/// A borrowed transaction outlives this call. Restore its writes on any
+/// failure, including a panic already translated by an inner boundary.
+/// Python can catch the error inside its transaction and keep using it.
+fn restore_on_error<T>(
     transaction: &mut Transaction,
-    work: impl FnOnce(&mut Transaction) -> T,
+    work: impl FnOnce(&mut Transaction) -> PyResult<T>,
 ) -> PyResult<T> {
     let savepoint = transaction.savepoint();
-    match crate::errors::boundary(|| work(transaction)) {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            transaction.rollback(savepoint);
-            Err(error)
-        }
+    let result = crate::errors::boundary(|| work(transaction)).and_then(std::convert::identity);
+    if result.is_err() {
+        transaction.rollback(savepoint);
     }
+    result
 }
 
 /// Returns the open transaction if this thread opened it.
@@ -304,9 +304,9 @@ impl _Document {
             if let Some(open) = owned(&mut open) {
                 open.snapshot = None;
                 let budget = open.budget(self);
-                return preserve_on_panic(&mut open.transaction, |transaction| {
+                return restore_on_error(&mut open.transaction, |transaction| {
                     write(transaction, &budget)
-                })?;
+                });
             }
         }
         let budget = self.budget();

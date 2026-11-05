@@ -57,6 +57,9 @@ pub fn _test_panic(
             "attached" => inject(payload),
             "detached" => py.detach(|| inject(payload)),
             "edit" => document.edit(py, write_then_panic),
+            "nested_edit" => document.edit(py, |transaction, budget| {
+                crate::errors::boundary(|| write_then_panic(transaction, budget))?
+            }),
             "scratch" => document.scratch(py, write_then_panic),
             "locked" => {
                 let _guard = lock(&document.history.open);
