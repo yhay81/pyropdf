@@ -59,6 +59,37 @@ struct Open {
 }
 
 impl Open {
+    /// Bounds the whole nesting stack even when each transaction gets a fresh
+    /// operation budget, and charges each new slot before allocating it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the stack size is checked and each new slot is charged before fallible reservation and push"
+    )]
+    fn push_savepoint(&mut self, budget: &Budget) -> PyResult<()> {
+        budget.poll().map_err(|error| limit_error(&error))?;
+        let slot = size_of::<(Savepoint, Option<SharedBudget>)>() as u64;
+        let size = (self.savepoints.len() as u64)
+            .saturating_add(1)
+            .saturating_mul(slot);
+        budget
+            .check(LimitCode::MemorySize, size)
+            .map_err(|error| limit_error(&error))?;
+        if self.savepoints.len() == self.savepoints.capacity() {
+            budget
+                .charge(LimitCode::MemorySize, slot)
+                .map_err(|error| limit_error(&error))?;
+            if self.savepoints.try_reserve_exact(1).is_err() {
+                budget.release(LimitCode::MemorySize, slot);
+                return Err(limit_error(&pyropdf_store::LimitExceeded::new(
+                    LimitCode::MemorySize,
+                )));
+            }
+        }
+        let savepoint = self.transaction.savepoint();
+        self.savepoints.push((savepoint, self.operation.clone()));
+        Ok(())
+    }
+
     /// Returns the budget of what runs in this transaction: its canvas
     /// operation, or a new operation of `document`.
     fn budget(&self, document: &_Document) -> SharedBudget {
@@ -367,6 +398,10 @@ impl _Document {
     }
 
     /// Commits `transaction`, and names the step it records.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one moved name per committed history step; sync trims the list to the store's budgeted undo and redo steps"
+    )]
     fn commit(
         &self,
         store: &Document,
@@ -418,8 +453,7 @@ pub fn begin_transaction(py: Python<'_>, document: &_Document, name: String) -> 
         document.document()?;
         let mut open = lock(&document.history.open);
         if let Some(open) = owned(&mut open) {
-            let savepoint = open.transaction.savepoint();
-            open.savepoints.push((savepoint, open.operation.clone()));
+            open.push_savepoint(&open.budget(document))?;
             return Ok(());
         }
         drop(open);
@@ -499,8 +533,7 @@ fn begin_with(
                 }
             }
             .map_err(|error| limit_error(&error))?;
-            let savepoint = open.transaction.savepoint();
-            open.savepoints.push((savepoint, open.operation.clone()));
+            open.push_savepoint(&operation)?;
             open.operation = Some(operation.clone());
             return Ok(handle(operation));
         }
