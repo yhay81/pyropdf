@@ -93,6 +93,127 @@ def test_a_new_document_passes() -> None:
     assert not report
 
 
+def _resource_document(resource: bytes, objects: list[bytes]) -> pyropdf.Document:
+    """Read resource objects starting at object 4 through a page's resource dictionary."""
+    return pyropdf.open(
+        CORPUS["pdf"](
+            [
+                b"<< /Type /Catalog /Pages 2 0 R >>",
+                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << " + resource + b" >> >>",
+                *objects,
+            ]
+        )
+    )
+
+
+def _shading_document(shading_type: int, route: str, omit: bytes = b"", replace: bytes = b"") -> pyropdf.Document:
+    """Reach a shading directly or through a pattern, with one optional malformed entry."""
+    entries = f"/ShadingType {shading_type} /ColorSpace /DeviceGray ".encode()
+    if shading_type <= 3:
+        if shading_type == 1:
+            # A two-input PostScript function for a function-based shading.
+            function = b"<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1] /Length 5 >>\nstream\n{pop}\nendstream"
+        else:
+            coordinates = b"[0 0 200 200]" if shading_type == 2 else b"[0 0 0 100 100 100]"
+            entries += b"/Coords " + coordinates + b" "
+            function = b"<< /FunctionType 2 /Domain [0 1] /N 1 >>"
+        entries += b"/Function 6 0 R "
+    else:
+        entries += b"/BitsPerCoordinate 8 /BitsPerComponent 8 /Decode [0 200 0 200 0 1] "
+        entries += b"/VerticesPerRow 2 " if shading_type == 5 else b"/BitsPerFlag 2 "
+        function = b"null"
+    if omit:
+        assert omit in entries
+        entries = entries.replace(omit, replace)
+    shading = b"<< " + entries + b" >>"
+    if shading_type >= 4:
+        shading = b"<< " + entries + b" /Length 0 >>\nstream\n\nendstream"
+    resource = b"/Shading << /S 4 0 R >>" if route == "shading" else b"/Pattern << /P 5 0 R >>"
+    return _resource_document(resource, [shading, b"<< /Type /Pattern /PatternType 2 /Shading 4 0 R >>", function])
+
+
+@pytest.mark.parametrize("route", ["shading", "pattern"])
+@pytest.mark.parametrize("shading_type", range(1, 8))
+def test_shading_types_check_clean_through_both_resource_paths(shading_type: int, route: str) -> None:
+    doc = _shading_document(shading_type, route)
+    assert doc.check().defects == ()
+
+
+@pytest.mark.parametrize("route", ["shading", "pattern"])
+@pytest.mark.parametrize(
+    ("shading_type", "entry", "key"),
+    [
+        (1, b"/Function 6 0 R ", "Function"),
+        (2, b"/Coords [0 0 200 200] ", "Coords"),
+        (3, b"/Coords [0 0 0 100 100 100] ", "Coords"),
+        (4, b"/BitsPerFlag 2 ", "BitsPerFlag"),
+        (5, b"/VerticesPerRow 2 ", "VerticesPerRow"),
+        (6, b"/BitsPerFlag 2 ", "BitsPerFlag"),
+        (7, b"/BitsPerFlag 2 ", "BitsPerFlag"),
+    ],
+)
+def test_missing_shading_keys_are_reported_against_the_declared_type(
+    shading_type: int, entry: bytes, key: str, route: str
+) -> None:
+    report = _shading_document(shading_type, route, entry).check()
+    assert [(d.xref, d.clause, d.kind) for d in report.defects] == [(4, f"ShadingType{shading_type}/{key}", "required")]
+
+
+@pytest.mark.parametrize("shading_type", range(4, 8))
+def test_invalid_mesh_bit_depth_does_not_prevent_selecting_its_type(shading_type: int) -> None:
+    report = _shading_document(shading_type, "shading", b"/BitsPerComponent 8 ", b"/BitsPerComponent 3 ").check()
+    assert [(d.xref, d.clause, d.kind) for d in report.defects] == [
+        (4, f"ShadingType{shading_type}/BitsPerComponent", "value")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("function_type", "function", "required"),
+    [
+        (
+            0,
+            (
+                b"<< /FunctionType 0 /Domain [0 1] /Range [0 1] /Size [2] /BitsPerSample 8 /Length 2 >>"
+                b"\nstream\n\x00\xff\nendstream"
+            ),
+            b"/Size [2] ",
+        ),
+        (2, b"<< /FunctionType 2 /Domain [0 1] /N 1 >>", b"/N 1 "),
+        (
+            3,
+            b"<< /FunctionType 3 /Domain [0 1] /Functions [5 0 R] /Bounds [] /Encode [0 1] >>",
+            b"/Encode [0 1] ",
+        ),
+        (
+            4,
+            b"<< /FunctionType 4 /Domain [0 1] /Range [0 1] /Length 2 >>\nstream\n{}\nendstream",
+            b"/Range [0 1] ",
+        ),
+    ],
+)
+def test_function_types_validate_their_own_required_keys(function_type: int, function: bytes, required: bytes) -> None:
+    resource = b"/ExtGState << /G << /BG 4 0 R >> >>"
+    nested = b"<< /FunctionType 2 /Domain [0 1] /N 1 >>"
+    assert _resource_document(resource, [function, nested]).check().defects == ()
+    report = _resource_document(resource, [function.replace(required, b""), nested]).check()
+    key = required.split()[0][1:].decode()
+    assert [(d.xref, d.clause, d.kind) for d in report.defects] == [
+        (4, f"FunctionType{function_type}/{key}", "required")
+    ]
+
+
+def test_tiling_pattern_integer_constraints_are_still_validated() -> None:
+    pattern = (
+        b"<< /Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] "
+        b"/XStep 10 /YStep 10 /Resources << >> /Length 0 >>\nstream\n\nendstream"
+    )
+    resource = b"/Pattern << /P 4 0 R >>"
+    assert _resource_document(resource, [pattern]).check().defects == ()
+    report = _resource_document(resource, [pattern.replace(b"/TilingType 1", b"/TilingType 9")]).check()
+    assert [(d.xref, d.clause, d.kind) for d in report.defects] == [(4, "PatternType1/TilingType", "value")]
+
+
 def test_the_report_names_object_path_and_both_clauses() -> None:
     [defect] = pyropdf.open(BROKEN / "value.pdf").check().defects
     assert defect == StructuralDefect(

@@ -712,7 +712,7 @@ impl<'g, G: Graph> Walk<'g, G> {
     }
 
     /// The object type among `links` that a value is, chosen by the keys
-    /// whose values tell the types apart, such as `/Type` and `/Subtype`.
+    /// whose values tell the types apart, such as `/Subtype` and `/ShadingType`.
     fn choose(&self, links: &[Link], value: &G::Value) -> Option<u16> {
         if let [only] = links {
             return Some(only.object);
@@ -764,6 +764,30 @@ impl<'g, G: Graph> Walk<'g, G> {
     fn score(&self, described: &Object, dict: &G::Value) -> Option<usize> {
         let mut score = 0;
         for key in described.keys {
+            if key.name.ends_with('*') {
+                continue;
+            }
+            // A fixed integer identifies a type, such as ShadingType or
+            // FunctionType. Multi-valued constraints such as bit depths
+            // must be validated after selection: a missing or invalid bit
+            // depth must not hide the defects of an otherwise known type.
+            let mut integers = key
+                .types
+                .iter()
+                .filter(|typed| typed.kind == Kind::Integer && typed.values.len() == 1)
+                .filter_map(|typed| literal(typed.values[0])?.parse::<i64>().ok())
+                .peekable();
+            if integers.peek().is_some()
+                && let Some(View::Integer(actual)) = self
+                    .graph
+                    .get(dict, key.name.as_bytes())
+                    .map(|value| self.graph.view(value))
+            {
+                if !integers.any(|expected| expected == actual) {
+                    return None;
+                }
+                score += 1;
+            }
             #[expect(
                 clippy::disallowed_methods,
                 reason = "the values of one key of the generated model"
@@ -777,9 +801,6 @@ impl<'g, G: Graph> Walk<'g, G> {
             let Some(names) = names.filter(|names| !names.is_empty()) else {
                 continue;
             };
-            if key.name.ends_with('*') {
-                continue;
-            }
             match self
                 .graph
                 .get(dict, key.name.as_bytes())
