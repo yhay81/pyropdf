@@ -161,6 +161,10 @@ impl Destination {
 
     /// Returns the destination as an array that names `page`, with the
     /// operands that its fit takes; an unknown fit becomes `/Fit`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a destination has two fixed entries and at most four operands from its fixed-size numbers array"
+    )]
     pub(crate) fn array(&self, page: Reference) -> Array {
         let (name, operands) = match self.name {
             Some(name @ ("XYZ" | "FitR")) => (name, if name == "XYZ" { 3 } else { 4 }),
@@ -338,6 +342,10 @@ pub(crate) fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Opt
 /// Walks the `/Names /Dests` tree from `root` and adds its entries to
 /// `found`, under the limits of its entries, nodes, edges, levels, and
 /// name bytes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the visited-set entry is charged to MemorySize and fallibly reserved before insertion"
+)]
 fn walk(
     reads: &mut Reads<'_>,
     root: Value,
@@ -755,6 +763,10 @@ pub fn named_destinations(document: &_Document) -> PyResult<Vec<Named>> {
 /// generation)` that leads to `target`, and returns its object, or `None`
 /// for a page that is gone.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "adds one target key and one annotation reference; the copied annotation array is charged before growth"
+)]
 pub fn link_add(
     py: Python<'_>,
     document: &_Document,
@@ -785,15 +797,39 @@ pub fn link_add(
 
                 let reference = transaction.allocate().map_err(|e| store_error(&e))?;
                 let mut dict = Dict::new();
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Type key"
+                )]
                 dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Subtype key"
+                )]
                 dict.insert(Name::from("Subtype"), Value::Name(Name::from("Link")));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Rect key"
+                )]
                 dict.insert(Name::from("Rect"), rect);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Border key"
+                )]
                 dict.insert(
                     Name::from("Border"),
                     Value::Array(Array::from(vec![Value::Integer(0); 3])),
                 );
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /F key"
+                )]
                 dict.insert(Name::from("F"), Value::Integer(4));
                 if let Some(page) = page {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /P key"
+                    )]
                     dict.insert(Name::from("P"), Value::Reference(page));
                 }
                 if let Some((key, value)) = entry {
@@ -820,6 +856,10 @@ pub fn link_add(
 #[expect(
     clippy::too_many_arguments,
     reason = "a handle's page and annotation, and the two things a link edit changes"
+)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "replaces or adds at most one destination or action key"
 )]
 pub fn link_edit(
     py: Python<'_>,
@@ -849,6 +889,10 @@ pub fn link_edit(
                 let entry = target.map(|target| entry(annots, &target)).transpose()?;
                 annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
                     if let Some(rect) = rect {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "this call inserts only the fixed /Rect key"
+                        )]
                         dict.insert(Name::from("Rect"), rect);
                     }
                     if let Some(entry) = entry {
@@ -905,6 +949,10 @@ fn entry(annots: &Annots, target: &Target) -> PyResult<Option<(&'static str, Val
 /// Returns the key and value that make a link or an outline item lead to
 /// `target`, a page of `index` for `"goto"`: `/Dest` for a page of this
 /// document, `/A` for an action, or nothing.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the action entries come from a fixed-size literal array"
+)]
 pub(crate) fn target_entry(
     index: &PageIndex,
     target: &Target,
