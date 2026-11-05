@@ -3,6 +3,10 @@
 Does canvas text paint every COLR glyph of a real colour face, or refuse it as
 DESIGN.md section 7 says, and what do the drawings cost and look like?
 
+The later [Type 3 line-order experiment](line-order.md) (#670) fixes xpdf's
+reading order at 1.25 em spacing and compares dictionary/procedure candidates
+in four readers, including CBDT and sbix glyphs.
+
 ## Method
 
 ```bash
