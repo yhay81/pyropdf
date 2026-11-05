@@ -64,6 +64,10 @@ fn check_active(document: &_Document, operation: &OperationBudget) -> PyResult<(
 /// the canvas charged the memory they hold before it built them.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)] // The fields of a gradient and where it goes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Canvas._gradient charges _STOP_SIZE per stop before conversion, including this native copy"
+)]
 pub fn canvas_gradient(
     py: Python<'_>,
     document: &_Document,
