@@ -314,7 +314,9 @@ impl Shadings {
             ("Group", Value::Dict(group)),
             ("Resources", Value::Dict(resources)),
         ]);
-        let data = Bytes::new(content.to_vec());
+        let mut data = BudgetVec::new(budget);
+        data.try_extend_from_slice(content)?;
+        let data = Bytes::new(data.into_vec());
         let stream = Value::from(Stream::new(form, data));
         Ok(self.shared(transaction, &stream, budget)?)
     }
@@ -355,6 +357,10 @@ impl Shadings {
 
     /// Returns the function from 0 to 1 that interpolates `values` of the
     /// stops: exponential between two of them, and otherwise stitched.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one function and one bound per stop, and one more, which the scratch charges"
+    )]
     fn function<'s>(
         &mut self,
         transaction: &mut Transaction,
@@ -410,6 +416,10 @@ impl Shadings {
         if bounds.is_empty() && encode == [0.0, 1.0] {
             return Ok(one);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one function per cycle, which the scratch charges, and MAX_CYCLES at most"
+        )]
         let functions = (0..span.count()).map(|_| Value::Reference(one)).collect();
         let function = Value::Dict(stitching(functions, &bounds, &encode));
         self.shared(transaction, &function, budget)
@@ -437,6 +447,7 @@ impl Shadings {
                 reals(&[start[0], start[1], start_radius, end[0], end[1], end_radius]),
             ),
         };
+        #[expect(clippy::disallowed_methods, reason = "the array holds two entries")]
         let extend = Value::Array(vec![Value::Boolean(extended); 2].into());
         let shading = dict([
             ("ShadingType", Value::Integer(kind)),
@@ -470,10 +481,18 @@ impl Shadings {
             LimitCode::MemorySize,
             (64 + 2 * size_of::<(Box<[u8]>, Reference)>()) as u64,
         )?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the entry is charged to the budget above"
+        )]
         self.objects
             .try_reserve(1)
             .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
         // The key's own charge stays with the operation, as the table keeps it.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the entry is charged to the budget above, and room is made for it"
+        )]
         self.objects
             .insert(key.into_vec().into_boxed_slice(), reference);
         Ok(reference)
@@ -564,6 +583,10 @@ impl Span {
 
     /// Returns the bounds and the encoding of a stitching function from 0 to
     /// 1 over the span, of one function from 0 to 1.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "three numbers per cycle, and `Span::of` keeps MAX_CYCLES cycles at most"
+    )]
     fn stitches(&self) -> (Vec<f64>, Vec<f64>) {
         let count = self.count();
         let length = self.high - self.low;
@@ -756,10 +779,15 @@ fn in_real_range(value: f64) -> bool {
 
 /// Returns the dictionary of `entries`, in their order.
 fn dict<const N: usize>(entries: [(&str, Value); N]) -> Dict {
-    entries
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the N entries of a fixed-size array"
+    )]
+    let dict = entries
         .into_iter()
         .map(|(key, value)| (Name::from(key), value))
-        .collect()
+        .collect();
+    dict
 }
 
 /// Returns a name.
@@ -769,12 +797,15 @@ fn name(text: &str) -> Value {
 
 /// Returns an array of reals, in which negative zero is zero.
 fn reals(values: &[f64]) -> Value {
-    Value::Array(
-        values
-            .iter()
-            .map(|&value| Value::from(value + 0.0))
-            .collect(),
-    )
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a fixed array, a stop's colour, or a stitching's bounds and encoding, which a scratch charges"
+    )]
+    let array = values
+        .iter()
+        .map(|&value| Value::from(value + 0.0))
+        .collect();
+    Value::Array(array)
 }
 
 /// Returns the function that runs from `from` to `to` over 0 to 1.
