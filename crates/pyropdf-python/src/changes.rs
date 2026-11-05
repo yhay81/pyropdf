@@ -53,9 +53,11 @@ pub fn changes(
     document: &_Document,
     incremental: bool,
 ) -> PyResult<(Vec<Finding>, Vec<Finding>)> {
-    let version = document.reading()?;
-    let budget = document.budget();
-    py.detach(|| report(&version, incremental, &budget))
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        py.detach(|| report(&version, incremental, &budget))
+    })?
 }
 
 fn report(

@@ -24,8 +24,8 @@ pub(crate) struct CanvasShadings {
 #[pymethods]
 impl CanvasShadings {
     #[new]
-    fn new() -> Self {
-        Self::default()
+    fn new() -> PyResult<Self> {
+        crate::errors::boundary(Self::default)
     }
 }
 
@@ -76,54 +76,56 @@ pub fn canvas_gradient(
     area: [f64; 4],
     operation: &OperationBudget,
 ) -> PyResult<(u32, Option<u32>, f64)> {
-    check_active(document, operation)?;
-    let extend = match extend {
-        "none" => Extend::None,
-        "pad" => Extend::Pad,
-        "repeat" => Extend::Repeat,
-        "reflect" => Extend::Reflect,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unknown gradient extension {other:?}"
-            )));
-        }
-    };
-    let geometry = match radii {
-        None => Geometry::Axial { start, end },
-        Some((start_radius, end_radius)) => Geometry::Radial {
-            start,
-            start_radius,
-            end,
-            end_radius,
-        },
-    };
-    let stops: Vec<Stop> = stops
-        .into_iter()
-        .map(|(offset, red, green, blue, alpha)| Stop {
-            offset,
-            color: [red, green, blue],
-            alpha,
-        })
-        .collect();
-    let gradient = Gradient {
-        geometry,
-        stops: &stops,
-        extend,
-    };
-    let mut table = shadings
-        .table
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let painted = document.edit(py, |transaction, budget| {
-        table
-            .paint(transaction, &gradient, area, budget)
-            .map_err(|error| shading_error(&error))
-    })?;
-    Ok((
-        painted.shading.number(),
-        painted.mask.map(|mask| mask.number()),
-        painted.alpha,
-    ))
+    crate::errors::boundary(|| {
+        check_active(document, operation)?;
+        let extend = match extend {
+            "none" => Extend::None,
+            "pad" => Extend::Pad,
+            "repeat" => Extend::Repeat,
+            "reflect" => Extend::Reflect,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown gradient extension {other:?}"
+                )));
+            }
+        };
+        let geometry = match radii {
+            None => Geometry::Axial { start, end },
+            Some((start_radius, end_radius)) => Geometry::Radial {
+                start,
+                start_radius,
+                end,
+                end_radius,
+            },
+        };
+        let stops: Vec<Stop> = stops
+            .into_iter()
+            .map(|(offset, red, green, blue, alpha)| Stop {
+                offset,
+                color: [red, green, blue],
+                alpha,
+            })
+            .collect();
+        let gradient = Gradient {
+            geometry,
+            stops: &stops,
+            extend,
+        };
+        let mut table = shadings
+            .table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let painted = document.edit(py, |transaction, budget| {
+            table
+                .paint(transaction, &gradient, area, budget)
+                .map_err(|error| shading_error(&error))
+        })?;
+        Ok((
+            painted.shading.number(),
+            painted.mask.map(|mask| mask.number()),
+            painted.alpha,
+        ))
+    })?
 }
 
 /// Writes or shares the shading pattern of object `shading` through `matrix`
@@ -137,15 +139,17 @@ pub fn canvas_gradient_pattern(
     matrix: [f64; 6],
     operation: &OperationBudget,
 ) -> PyResult<u32> {
-    check_active(document, operation)?;
-    let mut table = shadings
-        .table
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let pattern = document.edit(py, |transaction, budget| {
-        table
-            .pattern(transaction, Reference::new(shading, 0), matrix, budget)
-            .map_err(|error| shading_error(&error))
-    })?;
-    Ok(pattern.number())
+    crate::errors::boundary(|| {
+        check_active(document, operation)?;
+        let mut table = shadings
+            .table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let pattern = document.edit(py, |transaction, budget| {
+            table
+                .pattern(transaction, Reference::new(shading, 0), matrix, budget)
+                .map_err(|error| shading_error(&error))
+        })?;
+        Ok(pattern.number())
+    })?
 }

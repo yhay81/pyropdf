@@ -83,6 +83,7 @@ from pyropdf._encryption import Access, Encryption, Permissions
 from pyropdf._errors import (
     DocumentClosedError,
     EncryptedDocumentError,
+    InternalError,
     LimitError,
     MalformedPdfError,
     OcrError,
@@ -242,6 +243,7 @@ __all__ = [
     "ImageRewriteReport",
     "Ink",
     "InlineImage",
+    "InternalError",
     "Launch",
     "Layer",
     "LayerConfig",

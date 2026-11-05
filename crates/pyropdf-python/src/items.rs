@@ -43,35 +43,41 @@ pub fn page_content(
     clip: Option<BBox>,
     max_elements: Option<u64>,
 ) -> PyResult<Py<PyAny>> {
-    let content = with_content(
-        py,
-        document,
-        (number, generation),
-        kinds,
-        (annotations, clip, max_elements),
-        |content| Ok(content.clone()),
-    )?;
-    let mut items = Vec::new();
-    items
-        .try_reserve_exact(content.items.len())
-        .map_err(|error| PdfError::new_err(format!("cannot hold the content items: {error}")))?;
-    for item in content.items {
-        items.push(match item {
-            ContentItem::Text(run) => (0u8, *run).into_py_any(py)?,
-            ContentItem::Path(row) => (1u8, content.paths.tuple(row as usize)).into_py_any(py)?,
-            ContentItem::Image(image) => (2u8, *image).into_py_any(py)?,
-        });
-    }
-    let contexts = &*content.contexts;
-    (
-        items,
-        content.fonts,
-        &contexts.clips,
-        &contexts.groups,
-        &contexts.marks,
-        &contexts.states,
-    )
-        .into_py_any(py)
+    crate::errors::boundary(|| {
+        let content = with_content(
+            py,
+            document,
+            (number, generation),
+            kinds,
+            (annotations, clip, max_elements),
+            |content| Ok(content.clone()),
+        )?;
+        let mut items = Vec::new();
+        items
+            .try_reserve_exact(content.items.len())
+            .map_err(|error| {
+                PdfError::new_err(format!("cannot hold the content items: {error}"))
+            })?;
+        for item in content.items {
+            items.push(match item {
+                ContentItem::Text(run) => (0u8, *run).into_py_any(py)?,
+                ContentItem::Path(row) => {
+                    (1u8, content.paths.tuple(row as usize)).into_py_any(py)?
+                }
+                ContentItem::Image(image) => (2u8, *image).into_py_any(py)?,
+            });
+        }
+        let contexts = &*content.contexts;
+        (
+            items,
+            content.fonts,
+            &contexts.clips,
+            &contexts.groups,
+            &contexts.marks,
+            &contexts.states,
+        )
+            .into_py_any(py)
+    })?
 }
 
 /// Returns the columns of the paths that the page whose object is `number`
@@ -88,14 +94,16 @@ pub fn page_paths(
     clip: Option<BBox>,
     max_elements: Option<u64>,
 ) -> PyResult<PathColumns> {
-    with_content(
-        py,
-        document,
-        (number, generation),
-        (false, true, false),
-        (annotations, clip, max_elements),
-        |content| Ok(PathColumns::new(content)),
-    )
+    crate::errors::boundary(|| {
+        with_content(
+            py,
+            document,
+            (number, generation),
+            (false, true, false),
+            (annotations, clip, max_elements),
+            |content| Ok(PathColumns::new(content)),
+        )
+    })?
 }
 
 /// Returns what `then` makes of the memoized content of `kinds` of the page

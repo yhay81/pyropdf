@@ -40,25 +40,27 @@ pub fn page_image(
     ordinal: usize,
     annotations: bool,
 ) -> PyResult<Option<Pixmap>> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let image = py.detach(|| -> PyResult<Option<DecodedImage>> {
-        let at = index
-            .index_of(pyropdf_store::value::Reference::new(number, generation))
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!(
-                    "page object {number} {generation} is no longer a page of the document"
-                ))
-            })?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        extract::page_image(&bridged, at, ordinal, annotations, &budget).map_err(|e| match e {
-            Error::Limit(refusal) => limit_error(&refusal),
-            Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
-        })
-    })?;
-    image.map(pixmap).transpose()
+    crate::errors::boundary(|| {
+        let (version, index, budget) = crate::pages::index(document)?;
+        let image = py.detach(|| -> PyResult<Option<DecodedImage>> {
+            let at = index
+                .index_of(pyropdf_store::value::Reference::new(number, generation))
+                .ok_or_else(|| {
+                    StaleObjectError::new_err(format!(
+                        "page object {number} {generation} is no longer a page of the document"
+                    ))
+                })?;
+            let bridged = document
+                .bridge
+                .get(&version, &index, &budget)
+                .map_err(|e| bridge_error(&e))?;
+            extract::page_image(&bridged, at, ordinal, annotations, &budget).map_err(|e| match e {
+                Error::Limit(refusal) => limit_error(&refusal),
+                Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(e.to_string()),
+            })
+        })?;
+        image.map(pixmap).transpose()
+    })?
 }
 
 /// Returns the pixmap of `image`, its alpha interleaved after each pixel.
@@ -93,61 +95,63 @@ pub fn image_stored<'py>(
     document: &_Document,
     root: (u32, u16),
 ) -> PyResult<Option<(String, Bound<'py, PyBytes>)>> {
-    let version = document.reading()?;
-    let budget = document.budget();
-    let (number, generation) = root;
-    let Some(object) = version
-        .get(number, &budget)
-        .map_err(|e| store_error(&e))?
-        .filter(|object| object.generation() == generation)
-    else {
-        return Ok(None);
-    };
-    let Value::Stream(stream) = object.value().as_ref() else {
-        return Ok(None);
-    };
-    let names = |value: Option<&Value>| -> Option<Vec<Vec<u8>>> {
-        match value? {
-            Value::Name(name) => Some(vec![name.as_bytes().to_vec()]),
-            Value::Array(array) => array
-                .iter()
-                .map(|value| match value {
-                    Value::Name(name) => Some(name.as_bytes().to_vec()),
-                    _ => None,
-                })
-                .collect(),
-            _ => None,
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        let (number, generation) = root;
+        let Some(object) = version
+            .get(number, &budget)
+            .map_err(|e| store_error(&e))?
+            .filter(|object| object.generation() == generation)
+        else {
+            return Ok(None);
+        };
+        let Value::Stream(stream) = object.value().as_ref() else {
+            return Ok(None);
+        };
+        let names = |value: Option<&Value>| -> Option<Vec<Vec<u8>>> {
+            match value? {
+                Value::Name(name) => Some(vec![name.as_bytes().to_vec()]),
+                Value::Array(array) => array
+                    .iter()
+                    .map(|value| match value {
+                        Value::Name(name) => Some(name.as_bytes().to_vec()),
+                        _ => None,
+                    })
+                    .collect(),
+                _ => None,
+            }
+        };
+        let Some(filters) = names(stream.dict().get("Filter")) else {
+            return Ok(None);
+        };
+        let Some(last) = filters
+            .last()
+            .filter(|last| IMAGE_FILTERS.contains(&last.as_slice()))
+        else {
+            return Ok(None);
+        };
+        let filter = String::from_utf8_lossy(last).into_owned();
+        if filters.len() == 1 {
+            return Ok(Some((filter, PyBytes::new(py, stream.data()))));
         }
-    };
-    let Some(filters) = names(stream.dict().get("Filter")) else {
-        return Ok(None);
-    };
-    let Some(last) = filters
-        .last()
-        .filter(|last| IMAGE_FILTERS.contains(&last.as_slice()))
-    else {
-        return Ok(None);
-    };
-    let filter = String::from_utf8_lossy(last).into_owned();
-    if filters.len() == 1 {
-        return Ok(Some((filter, PyBytes::new(py, stream.data()))));
-    }
-    // The stream with its image filter left out decodes to the stored data.
-    let keep = filters.len() - 1;
-    let mut dict = stream.dict().clone();
-    let Some(Value::Array(array)) = dict.get("Filter") else {
-        return Ok(None);
-    };
-    let leading: Array = array.iter().take(keep).cloned().collect();
-    dict.insert("Filter".into(), Value::Array(leading));
-    if let Some(Value::Array(parameters)) = dict.get("DecodeParms") {
-        let leading: Array = parameters.iter().take(keep).cloned().collect();
-        dict.insert("DecodeParms".into(), Value::Array(leading));
-    }
-    let data = py
-        .detach(|| Stream::new(dict, stream.data().clone()).decoded(&budget))
-        .map_err(|e| store_error(&e))?;
-    Ok(Some((filter, PyBytes::new(py, &data))))
+        // The stream with its image filter left out decodes to the stored data.
+        let keep = filters.len() - 1;
+        let mut dict = stream.dict().clone();
+        let Some(Value::Array(array)) = dict.get("Filter") else {
+            return Ok(None);
+        };
+        let leading: Array = array.iter().take(keep).cloned().collect();
+        dict.insert("Filter".into(), Value::Array(leading));
+        if let Some(Value::Array(parameters)) = dict.get("DecodeParms") {
+            let leading: Array = parameters.iter().take(keep).cloned().collect();
+            dict.insert("DecodeParms".into(), Value::Array(leading));
+        }
+        let data = py
+            .detach(|| Stream::new(dict, stream.data().clone()).decoded(&budget))
+            .map_err(|e| store_error(&e))?;
+        Ok(Some((filter, PyBytes::new(py, &data))))
+    })?
 }
 
 /// A decoded PNG: width, height, whether gray, the color samples, and the
@@ -169,18 +173,21 @@ pub fn decode_png<'py>(
     document: &_Document,
     data: &[u8],
 ) -> PyResult<DecodedPng<'py>> {
-    let budget = document.budget();
-    // Decoding and splitting a frame can take long enough for another Python
-    // thread to cancel it. Keep Python allocation outside the detached work.
-    let (width, height, gray, color, alpha) = py.detach(|| decode_png_buffers(data, &budget))?;
-    budget.poll().map_err(|e| limit_error(&e))?;
-    Ok((
-        width,
-        height,
-        gray,
-        PyBytes::new(py, &color),
-        alpha.map(|samples| PyBytes::new(py, &samples)),
-    ))
+    crate::errors::boundary(|| {
+        let budget = document.budget();
+        // Decoding and splitting a frame can take long enough for another Python
+        // thread to cancel it. Keep Python allocation outside the detached work.
+        let (width, height, gray, color, alpha) =
+            py.detach(|| decode_png_buffers(data, &budget))?;
+        budget.poll().map_err(|e| limit_error(&e))?;
+        Ok((
+            width,
+            height,
+            gray,
+            PyBytes::new(py, &color),
+            alpha.map(|samples| PyBytes::new(py, &samples)),
+        ))
+    })?
 }
 
 type DecodedPngBuffers<'b> = (u32, u32, bool, BudgetVec<'b, u8>, Option<BudgetVec<'b, u8>>);
@@ -302,21 +309,23 @@ type Samples<'py> = (
 /// as pdf.js turns it into CMYK, and JPEG 2000's palette indexes kept.
 #[pyfunction]
 pub fn image_samples<'py>(py: Python<'py>, data: &[u8], jpx: bool) -> PyResult<Samples<'py>> {
-    let decoded = py.detach(|| {
-        if jpx {
-            jpx_samples(data)
-        } else {
-            jpeg_samples(data)
-        }
-    });
-    let (width, height, components, color, alpha) = decoded.map_err(PyValueError::new_err)?;
-    Ok((
-        width,
-        height,
-        components,
-        PyBytes::new(py, &color),
-        alpha.map(|alpha| PyBytes::new(py, &alpha)),
-    ))
+    crate::errors::boundary(|| {
+        let decoded = py.detach(|| {
+            if jpx {
+                jpx_samples(data)
+            } else {
+                jpeg_samples(data)
+            }
+        });
+        let (width, height, components, color, alpha) = decoded.map_err(PyValueError::new_err)?;
+        Ok((
+            width,
+            height,
+            components,
+            PyBytes::new(py, &color),
+            alpha.map(|alpha| PyBytes::new(py, &alpha)),
+        ))
+    })?
 }
 
 type Decoded = (u32, u32, u8, Vec<u8>, Option<Vec<u8>>);
@@ -412,47 +421,49 @@ pub fn encode_jpeg_samples<'py>(
     quality: u8,
     adobe: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    use jpeg_encoder::{ColorType, Encoder};
+    crate::errors::boundary(|| {
+        use jpeg_encoder::{ColorType, Encoder};
 
-    let color = match components {
-        1 => ColorType::Luma,
-        3 => ColorType::Rgb,
-        4 => ColorType::Cmyk,
-        _ => {
+        let color = match components {
+            1 => ColorType::Luma,
+            3 => ColorType::Rgb,
+            4 => ColorType::Cmyk,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "no {components}-component samples in JPEG"
+                )));
+            }
+        };
+        if width == 0
+            || height == 0
+            || data.len() != usize::from(width) * usize::from(height) * usize::from(components)
+        {
             return Err(PyValueError::new_err(format!(
-                "no {components}-component samples in JPEG"
+                "{} bytes are not the samples of a {width} by {height} image of {components} components",
+                data.len()
             )));
         }
-    };
-    if width == 0
-        || height == 0
-        || data.len() != usize::from(width) * usize::from(height) * usize::from(components)
-    {
-        return Err(PyValueError::new_err(format!(
-            "{} bytes are not the samples of a {width} by {height} image of {components} components",
-            data.len()
-        )));
-    }
-    let out = py.detach(|| {
-        // jpeg-encoder stores each CMYK sample inverted, as Adobe's
-        // JPEGs do, so it is given the inverse of the sample to store.
-        let inverted;
-        let samples = if components == 4 {
-            inverted = data.iter().map(|sample| 255 - sample).collect::<Vec<_>>();
-            &inverted[..]
-        } else {
-            data
-        };
-        let mut out = Vec::new();
-        Encoder::new(&mut out, quality.clamp(1, 100))
-            .encode(samples, width, height, color)
-            .map_err(|e| e.to_string())?;
-        if components == 4 && !adobe {
-            strip_app14(&mut out);
-        }
-        Ok::<_, String>(out)
-    });
-    Ok(PyBytes::new(py, &out.map_err(PyValueError::new_err)?))
+        let out = py.detach(|| {
+            // jpeg-encoder stores each CMYK sample inverted, as Adobe's
+            // JPEGs do, so it is given the inverse of the sample to store.
+            let inverted;
+            let samples = if components == 4 {
+                inverted = data.iter().map(|sample| 255 - sample).collect::<Vec<_>>();
+                &inverted[..]
+            } else {
+                data
+            };
+            let mut out = Vec::new();
+            Encoder::new(&mut out, quality.clamp(1, 100))
+                .encode(samples, width, height, color)
+                .map_err(|e| e.to_string())?;
+            if components == 4 && !adobe {
+                strip_app14(&mut out);
+            }
+            Ok::<_, String>(out)
+        });
+        Ok(PyBytes::new(py, &out.map_err(PyValueError::new_err)?))
+    })?
 }
 
 /// Removes the Adobe APP14 segment before the first frame of JPEG `data`.

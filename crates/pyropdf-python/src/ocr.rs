@@ -58,24 +58,26 @@ impl _OcrEngine {
         threads: usize,
         max_model_size: Option<u64>,
     ) -> PyResult<Self> {
-        if max_model_size == Some(0) {
-            return Err(PyValueError::new_err(
-                "max_model_size must be a positive integer or None",
-            ));
-        }
-        let budget = Budget::new(&DocumentLimits::default())
-            .with_limit(LimitCode::OcrModelSize, max_model_size);
-        py.detach(|| {
-            Engine::load(
-                &detector_path,
-                &recognizer_path,
-                &dictionary_path,
-                threads,
-                &budget,
-            )
-        })
-        .map(|engine| Self { engine })
-        .map_err(ocr_error)
+        crate::errors::boundary(|| {
+            if max_model_size == Some(0) {
+                return Err(PyValueError::new_err(
+                    "max_model_size must be a positive integer or None",
+                ));
+            }
+            let budget = Budget::new(&DocumentLimits::default())
+                .with_limit(LimitCode::OcrModelSize, max_model_size);
+            py.detach(|| {
+                Engine::load(
+                    &detector_path,
+                    &recognizer_path,
+                    &dictionary_path,
+                    threads,
+                    &budget,
+                )
+            })
+            .map(|engine| Self { engine })
+            .map_err(ocr_error)
+        })?
     }
 
     /// Recognizes the words of `pixmap` with the GIL released, as boxes in
@@ -92,24 +94,26 @@ impl _OcrEngine {
         rotation: usize,
         document: Option<PyRef<'_, _Document>>,
     ) -> PyResult<Vec<OcrTuple>> {
-        let budget = document
-            .as_ref()
-            .map_or_else(|| Budget::default().share(), |document| document.budget());
-        drop(document);
-        let (pixels, layout) = pixmap.ocr_raster();
-        drop(pixmap);
-        let options = Options {
-            tile_size,
-            overlap,
-            min_confidence,
-            rotation,
-        };
-        py.detach(|| self.engine.recognize(&pixels, layout, &options, &budget))
-            .map_err(ocr_error)
+        crate::errors::boundary(|| {
+            let budget = document
+                .as_ref()
+                .map_or_else(|| Budget::default().share(), |document| document.budget());
+            drop(document);
+            let (pixels, layout) = pixmap.ocr_raster();
+            drop(pixmap);
+            let options = Options {
+                tile_size,
+                overlap,
+                min_confidence,
+                rotation,
+            };
+            py.detach(|| self.engine.recognize(&pixels, layout, &options, &budget))
+                .map_err(ocr_error)
+        })?
     }
 
-    fn __repr__(&self) -> &'static str {
-        "<pyropdf.OcrEngine native models>"
+    fn __repr__(&self) -> PyResult<&'static str> {
+        crate::errors::boundary(|| "<pyropdf.OcrEngine native models>")
     }
 }
 
@@ -131,90 +135,92 @@ pub fn insert_ocr_layer(
     words: Vec<LayerWord>,
     rotation_correction: u16,
 ) -> PyResult<bool> {
-    document.edit(py, |transaction, budget| {
-        // Read the page after acquiring the writer lock. A concurrent edit
-        // may have changed its content or resources while this call waited.
-        let version = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
-            .map_err(|error| store_error(&error))?;
-        let Some(at) = index.index_of(Reference::new(number, generation)) else {
-            return Ok(false);
-        };
-        let page = &index.pages()[at];
-        let crop = display_box(page);
-        let page_rotation = rotation(page.rotate());
-        let mut resources = match resolve(&version, page.resources(), budget)? {
-            Some(Value::Dict(resources)) => resources,
-            _ => Dict::new(),
-        };
-        let mut fonts = match resolve(&version, resources.get("Font"), budget)? {
-            Some(Value::Dict(fonts)) => fonts,
-            _ => Dict::new(),
-        };
-        let mut name = LAYER_FONT.to_owned();
-        for suffix in 0..=fonts.len() {
-            budget.poll().map_err(|error| limit_error(&error))?;
-            name = if suffix == 0 {
-                LAYER_FONT.to_owned()
-            } else {
-                format!("{LAYER_FONT}{suffix}")
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            // Read the page after acquiring the writer lock. A concurrent edit
+            // may have changed its content or resources while this call waited.
+            let version = transaction.snapshot();
+            let index = PageIndex::memoized(&document.draft_pages, &version, budget)
+                .map_err(|error| store_error(&error))?;
+            let Some(at) = index.index_of(Reference::new(number, generation)) else {
+                return Ok(false);
             };
-            if fonts.get(&name).is_none() {
-                break;
-            }
-        }
-        let layer = layer(
-            &words,
-            crop,
-            page_rotation,
-            rotation_correction,
-            &name,
-            budget,
-        )
-        .map_err(ocr_error)?;
-        let mut page_dict = page.dict().clone();
-        let mut contents = BudgetVec::new(budget);
-        match resolve(&version, page_dict.get("Contents"), budget)? {
-            None | Some(Value::Null) => {}
-            Some(Value::Array(array)) => contents
-                .try_extend(array.iter().cloned())
-                .map_err(|error| limit_error(&error))?,
-            Some(_) => {
-                if let Some(value) = page_dict.get("Contents") {
-                    contents
-                        .try_push(value.clone())
-                        .map_err(|error| limit_error(&error))?;
+            let page = &index.pages()[at];
+            let crop = display_box(page);
+            let page_rotation = rotation(page.rotate());
+            let mut resources = match resolve(&version, page.resources(), budget)? {
+                Some(Value::Dict(resources)) => resources,
+                _ => Dict::new(),
+            };
+            let mut fonts = match resolve(&version, resources.get("Font"), budget)? {
+                Some(Value::Dict(fonts)) => fonts,
+                _ => Dict::new(),
+            };
+            let mut name = LAYER_FONT.to_owned();
+            for suffix in 0..=fonts.len() {
+                budget.poll().map_err(|error| limit_error(&error))?;
+                name = if suffix == 0 {
+                    LAYER_FONT.to_owned()
+                } else {
+                    format!("{LAYER_FONT}{suffix}")
+                };
+                if fonts.get(&name).is_none() {
+                    break;
                 }
             }
-        }
-        let font = add_font(transaction, layer.to_unicode, budget)?;
-        fonts.insert(Name::from(name.as_str()), Value::Reference(font));
-        resources.insert(Name::from("Font"), Value::Dict(fonts));
-        let mut array = BudgetVec::new(budget);
-        if !contents.is_empty() {
+            let layer = layer(
+                &words,
+                crop,
+                page_rotation,
+                rotation_correction,
+                &name,
+                budget,
+            )
+            .map_err(ocr_error)?;
+            let mut page_dict = page.dict().clone();
+            let mut contents = BudgetVec::new(budget);
+            match resolve(&version, page_dict.get("Contents"), budget)? {
+                None | Some(Value::Null) => {}
+                Some(Value::Array(array)) => contents
+                    .try_extend(array.iter().cloned())
+                    .map_err(|error| limit_error(&error))?,
+                Some(_) => {
+                    if let Some(value) = page_dict.get("Contents") {
+                        contents
+                            .try_push(value.clone())
+                            .map_err(|error| limit_error(&error))?;
+                    }
+                }
+            }
+            let font = add_font(transaction, layer.to_unicode, budget)?;
+            fonts.insert(Name::from(name.as_str()), Value::Reference(font));
+            resources.insert(Name::from("Font"), Value::Dict(fonts));
+            let mut array = BudgetVec::new(budget);
+            if !contents.is_empty() {
+                array
+                    .try_push(add_stream(transaction, b"q\n", budget)?)
+                    .map_err(|error| limit_error(&error))?;
+                array
+                    .try_extend(contents.iter().cloned())
+                    .map_err(|error| limit_error(&error))?;
+                array
+                    .try_push(add_stream(transaction, b"\nQ\n", budget)?)
+                    .map_err(|error| limit_error(&error))?;
+            }
             array
-                .try_push(add_stream(transaction, b"q\n", budget)?)
+                .try_push(add_stream(transaction, &layer.content, budget)?)
                 .map_err(|error| limit_error(&error))?;
-            array
-                .try_extend(contents.iter().cloned())
-                .map_err(|error| limit_error(&error))?;
-            array
-                .try_push(add_stream(transaction, b"\nQ\n", budget)?)
-                .map_err(|error| limit_error(&error))?;
-        }
-        array
-            .try_push(add_stream(transaction, &layer.content, budget)?)
-            .map_err(|error| limit_error(&error))?;
-        page_dict.insert(
-            Name::from("Contents"),
-            Value::Array(Array::from(array.into_vec())),
-        );
-        page_dict.insert(Name::from("Resources"), Value::Dict(resources));
-        transaction
-            .write(number, &Value::Dict(page_dict), budget)
-            .map_err(|error| store_error(&error))?;
-        Ok(true)
-    })
+            page_dict.insert(
+                Name::from("Contents"),
+                Value::Array(Array::from(array.into_vec())),
+            );
+            page_dict.insert(Name::from("Resources"), Value::Dict(resources));
+            transaction
+                .write(number, &Value::Dict(page_dict), budget)
+                .map_err(|error| store_error(&error))?;
+            Ok(true)
+        })
+    })?
 }
 
 /// Writes `value` as a new indirect object and returns its reference.

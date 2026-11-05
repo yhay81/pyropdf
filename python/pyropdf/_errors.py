@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 from pyropdf._core import (
     DocumentClosedError,
     EncryptedDocumentError,
+    InternalError,
     LimitError,
     MalformedPdfError,
     OcrError,
@@ -58,6 +59,7 @@ _limit_error_type.__str__ = _limit_error_str
 for _public in (
     PdfError,
     MalformedPdfError,
+    InternalError,
     PasswordError,
     EncryptedDocumentError,
     LimitError,
@@ -72,6 +74,7 @@ for _public in (
 __all__ = [
     "DocumentClosedError",
     "EncryptedDocumentError",
+    "InternalError",
     "LimitError",
     "MalformedPdfError",
     "OcrError",

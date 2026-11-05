@@ -72,6 +72,7 @@ EXTENSION = {
     (
         "DocumentClosedError",
         "EncryptedDocumentError",
+        "InternalError",
         "LimitError",
         "MalformedPdfError",
         "OcrError",

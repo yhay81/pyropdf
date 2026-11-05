@@ -94,40 +94,46 @@ pub(crate) fn entries(pages: Option<Vec<i64>>, count: usize) -> PyResult<Vec<usi
 /// Returns the number of pages.
 #[pyfunction]
 pub fn page_count(document: &_Document) -> PyResult<usize> {
-    Ok(index(document)?.1.len())
+    crate::errors::boundary(|| Ok(index(document)?.1.len()))?
 }
 
 /// Returns the object of page `at`, counted from 0, as a number and a
 /// generation.
 #[pyfunction]
 pub fn page_object(document: &_Document, at: usize) -> PyResult<(u32, u16)> {
-    let (_, index, _) = index(document)?;
-    let page = index
-        .get(at)
-        .ok_or_else(|| PyIndexError::new_err(format!("page {at} is out of range")))?;
-    let object = indirect(page, at)?;
-    Ok((object.number(), object.generation()))
+    crate::errors::boundary(|| {
+        let (_, index, _) = index(document)?;
+        let page = index
+            .get(at)
+            .ok_or_else(|| PyIndexError::new_err(format!("page {at} is out of range")))?;
+        let object = indirect(page, at)?;
+        Ok((object.number(), object.generation()))
+    })?
 }
 
 /// Returns the index of the page whose object is `number` and
 /// `generation`, or `None` when the page tree no longer lists it.
 #[pyfunction]
 pub fn page_index(document: &_Document, number: u32, generation: u16) -> PyResult<Option<usize>> {
-    Ok(index(document)?
-        .1
-        .index_of(Reference::new(number, generation)))
+    crate::errors::boundary(|| {
+        Ok(index(document)?
+            .1
+            .index_of(Reference::new(number, generation)))
+    })?
 }
 
 /// Returns the objects of every page, in order.
 #[pyfunction]
 pub fn page_objects(document: &_Document) -> PyResult<Vec<(u32, u16)>> {
-    let (_, index, _) = index(document)?;
-    index
-        .pages()
-        .iter()
-        .enumerate()
-        .map(|(at, page)| indirect(page, at).map(|r| (r.number(), r.generation())))
-        .collect()
+    crate::errors::boundary(|| {
+        let (_, index, _) = index(document)?;
+        index
+            .pages()
+            .iter()
+            .enumerate()
+            .map(|(at, page)| indirect(page, at).map(|r| (r.number(), r.generation())))
+            .collect()
+    })?
 }
 
 /// Returns the rotation of a page, normalized to 0, 90, 180, or 270, and
@@ -139,19 +145,21 @@ pub fn page_geometry(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<(i64, f64, f64)>> {
-    let (_, index, _) = index(document)?;
-    let Some(at) = index.index_of(Reference::new(number, generation)) else {
-        return Ok(None);
-    };
-    let page = &index.pages()[at];
-    let rotation = rotation(page.rotate());
-    let (mut width, mut height) = visible(page).map_or(A4, |(x0, y0, x1, y1)| {
-        ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
-    });
-    if rotation % 180 == 90 {
-        std::mem::swap(&mut width, &mut height);
-    }
-    Ok(Some((rotation, width, height)))
+    crate::errors::boundary(|| {
+        let (_, index, _) = index(document)?;
+        let Some(at) = index.index_of(Reference::new(number, generation)) else {
+            return Ok(None);
+        };
+        let page = &index.pages()[at];
+        let rotation = rotation(page.rotate());
+        let (mut width, mut height) = visible(page).map_or(A4, |(x0, y0, x1, y1)| {
+            ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
+        });
+        if rotation % 180 == 90 {
+            std::mem::swap(&mut width, &mut height);
+        }
+        Ok(Some((rotation, width, height)))
+    })?
 }
 
 /// Returns the normalized rotation of a page and its display box in
@@ -163,13 +171,15 @@ pub fn page_space(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<(i64, Box4)>> {
-    let (_, index, _) = index(document)?;
-    let Some(at) = index.index_of(Reference::new(number, generation)) else {
-        return Ok(None);
-    };
-    let page = &index.pages()[at];
-    let [x0, y0, x1, y1] = display_box(page);
-    Ok(Some((rotation(page.rotate()), (x0, y0, x1, y1))))
+    crate::errors::boundary(|| {
+        let (_, index, _) = index(document)?;
+        let Some(at) = index.index_of(Reference::new(number, generation)) else {
+            return Ok(None);
+        };
+        let page = &index.pages()[at];
+        let [x0, y0, x1, y1] = display_box(page);
+        Ok(Some((rotation(page.rotate()), (x0, y0, x1, y1))))
+    })?
 }
 
 /// What a canvas reads of a source page, with the version it read.
@@ -234,20 +244,24 @@ impl CanvasSourceSnapshot {
 impl CanvasSourceSnapshot {
     /// Drops the version the snapshot holds, as a canvas does when it ends
     /// without copying the page's resources.
-    fn release(&self) {
-        self.captured
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+    fn release(&self) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            self.captured
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+        })
     }
 
     /// Whether the snapshot still holds its version.
     #[getter]
-    fn held(&self) -> bool {
-        self.captured
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
+    fn held(&self) -> PyResult<bool> {
+        crate::errors::boundary(|| {
+            self.captured
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_some()
+        })
     }
 }
 
@@ -265,68 +279,70 @@ pub fn canvas_source_page<'py>(
     generation: u16,
     operation: &OperationBudget,
 ) -> PyResult<Option<CanvasSourcePage<'py>>> {
-    operation.ensure_active()?;
-    let source_document = source.document()?;
-    let budget = operation.for_source(source)?;
-    let own = operation.is_active_on(source).then_some(&*budget);
-    let (version, index) = index_with(source, own, &budget)?;
-    let page = Reference::new(number, generation);
-    let Some(entry) = index.index_of(page).and_then(|at| index.get(at)) else {
-        return Ok(None);
-    };
-    let rotation = rotation(entry.rotate());
-    let [x0, y0, x1, y1] = display_box(entry);
-    let (mut width, mut height) = visible(entry).map_or(A4, |(x0, y0, x1, y1)| {
-        ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
-    });
-    if rotation % 180 == 90 {
-        std::mem::swap(&mut width, &mut height);
-    }
-    let content = py
-        .detach(|| PageContent::read(&mut Reads::new(&version, &budget), entry))
-        .map_err(|error| store_error(&error))?;
-    // The source may have closed, been replaced by signing, or the canvas
-    // ended on another call while the GIL was released.
-    operation.ensure_active()?;
-    if !Arc::ptr_eq(&source_document, &source.document()?) {
-        return Err(PdfError::new_err(
-            "the source document changed during the canvas read",
-        ));
-    }
-    let data = content.operations().data();
-    let header = py
-        .get_type::<PyBytes>()
-        .getattr("__basicsize__")?
-        .extract::<u64>()?;
-    let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
-    budget
-        .charge(
-            LimitCode::MemorySize,
-            size.saturating_add(header).saturating_add(1),
-        )
-        .map_err(|error| limit_error(&error))?;
-    let bytes = PyBytes::new(py, data);
-    let snapshot = Py::new(
-        py,
-        CanvasSourceSnapshot {
-            captured: Mutex::new(Some(Captured {
-                version,
-                index,
-                content: data.clone(),
-            })),
-            page,
-            source: Arc::downgrade(&source_document),
-            operation: operation.operation.clone(),
-        },
-    )?;
-    Ok(Some((
-        rotation,
-        (x0, y0, x1, y1),
-        width,
-        height,
-        bytes,
-        snapshot,
-    )))
+    crate::errors::boundary(|| {
+        operation.ensure_active()?;
+        let source_document = source.document()?;
+        let budget = operation.for_source(source)?;
+        let own = operation.is_active_on(source).then_some(&*budget);
+        let (version, index) = index_with(source, own, &budget)?;
+        let page = Reference::new(number, generation);
+        let Some(entry) = index.index_of(page).and_then(|at| index.get(at)) else {
+            return Ok(None);
+        };
+        let rotation = rotation(entry.rotate());
+        let [x0, y0, x1, y1] = display_box(entry);
+        let (mut width, mut height) = visible(entry).map_or(A4, |(x0, y0, x1, y1)| {
+            ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
+        });
+        if rotation % 180 == 90 {
+            std::mem::swap(&mut width, &mut height);
+        }
+        let content = py
+            .detach(|| PageContent::read(&mut Reads::new(&version, &budget), entry))
+            .map_err(|error| store_error(&error))?;
+        // The source may have closed, been replaced by signing, or the canvas
+        // ended on another call while the GIL was released.
+        operation.ensure_active()?;
+        if !Arc::ptr_eq(&source_document, &source.document()?) {
+            return Err(PdfError::new_err(
+                "the source document changed during the canvas read",
+            ));
+        }
+        let data = content.operations().data();
+        let header = py
+            .get_type::<PyBytes>()
+            .getattr("__basicsize__")?
+            .extract::<u64>()?;
+        let size = u64::try_from(data.len()).unwrap_or(u64::MAX);
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                size.saturating_add(header).saturating_add(1),
+            )
+            .map_err(|error| limit_error(&error))?;
+        let bytes = PyBytes::new(py, data);
+        let snapshot = Py::new(
+            py,
+            CanvasSourceSnapshot {
+                captured: Mutex::new(Some(Captured {
+                    version,
+                    index,
+                    content: data.clone(),
+                })),
+                page,
+                source: Arc::downgrade(&source_document),
+                operation: operation.operation.clone(),
+            },
+        )?;
+        Ok(Some((
+            rotation,
+            (x0, y0, x1, y1),
+            width,
+            height,
+            bytes,
+            snapshot,
+        )))
+    })?
 }
 
 /// Writes the resources that a page of `source` uses, inherited or its
@@ -351,58 +367,60 @@ pub fn copy_page_resources(
     operation: Option<&OperationBudget>,
     snapshot: Option<&CanvasSourceSnapshot>,
 ) -> PyResult<Option<u32>> {
-    let page = Reference::new(number, generation);
-    let same = std::ptr::eq(document, source);
-    let (version, source_index, budget) = match (operation, snapshot) {
-        (None, None) => {
-            let (version, index, budget) = self::index(source)?;
-            (version, index, budget)
-        }
-        (Some(operation), Some(snapshot)) => {
-            if !operation.is_active_on(document) {
+    crate::errors::boundary(|| {
+        let page = Reference::new(number, generation);
+        let same = std::ptr::eq(document, source);
+        let (version, source_index, budget) = match (operation, snapshot) {
+            (None, None) => {
+                let (version, index, budget) = self::index(source)?;
+                (version, index, budget)
+            }
+            (Some(operation), Some(snapshot)) => {
+                if !operation.is_active_on(document) {
+                    return Err(PyValueError::new_err(
+                        "the canvas operation is not active on this document",
+                    ));
+                }
+                let captured = snapshot.take(&source.document()?, page, operation)?;
+                let budget = operation.for_source(source)?;
+                (captured.version, captured.index, budget)
+            }
+            _ => {
                 return Err(PyValueError::new_err(
-                    "the canvas operation is not active on this document",
+                    "a canvas operation and its source snapshot go together",
                 ));
             }
-            let captured = snapshot.take(&source.document()?, page, operation)?;
-            let budget = operation.for_source(source)?;
-            (captured.version, captured.index, budget)
-        }
-        _ => {
-            return Err(PyValueError::new_err(
-                "a canvas operation and its source snapshot go together",
-            ));
-        }
-    };
-    let Some(entry) = source_index
-        .index_of(page)
-        .and_then(|at| source_index.get(at))
-    else {
-        return Ok(None);
-    };
-    let resources = entry
-        .inherited("Resources")
-        .cloned()
-        .unwrap_or_else(|| Value::Dict(Dict::new()));
-    drop(source_index);
-    let written = document.edit(py, |transaction, edit_budget| {
-        // A canvas charges its operation, under the source's limits too.
-        let budget: &Budget = if operation.is_some() {
-            &budget
-        } else {
-            edit_budget
         };
-        write_resources(
-            transaction,
-            &version,
-            &resources,
-            same,
-            operation.is_some(),
-            budget,
-        )
-        .map(|written| written.number())
-    })?;
-    Ok(Some(written))
+        let Some(entry) = source_index
+            .index_of(page)
+            .and_then(|at| source_index.get(at))
+        else {
+            return Ok(None);
+        };
+        let resources = entry
+            .inherited("Resources")
+            .cloned()
+            .unwrap_or_else(|| Value::Dict(Dict::new()));
+        drop(source_index);
+        let written = document.edit(py, |transaction, edit_budget| {
+            // A canvas charges its operation, under the source's limits too.
+            let budget: &Budget = if operation.is_some() {
+                &budget
+            } else {
+                edit_budget
+            };
+            write_resources(
+                transaction,
+                &version,
+                &resources,
+                same,
+                operation.is_some(),
+                budget,
+            )
+            .map(|written| written.number())
+        })?;
+        Ok(Some(written))
+    })?
 }
 
 /// Writes `resources`, a page's resources in `version`, as a new object of
@@ -475,16 +493,18 @@ struct PageForm {
 #[pymethods]
 impl PageForms {
     #[new]
-    fn new() -> Self {
-        Self::default()
+    fn new() -> PyResult<Self> {
+        crate::errors::boundary(Self::default)
     }
 
     /// The number of Forms the cache keeps.
-    fn __len__(&self) -> usize {
-        self.entries
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .len()
+    fn __len__(&self) -> PyResult<usize> {
+        crate::errors::boundary(|| {
+            self.entries
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .len()
+        })
     }
 }
 
@@ -511,114 +531,116 @@ pub fn canvas_page_form(
     operation: &OperationBudget,
     snapshot: &CanvasSourceSnapshot,
 ) -> PyResult<Option<u32>> {
-    if !operation.is_active_on(document) {
-        return Err(PyValueError::new_err(
-            "the canvas operation is not active on this document",
-        ));
-    }
-    let page = Reference::new(number, generation);
-    let captured = snapshot.take(&source.document()?, page, operation)?;
-    let budget = operation.for_source(source)?;
-    let Some(entry) = captured
-        .index
-        .index_of(page)
-        .and_then(|at| captured.index.get(at))
-    else {
-        return Ok(None);
-    };
-    let contents = entry.dict().get("Contents").cloned();
-    let resources = entry
-        .inherited("Resources")
-        .cloned()
-        .unwrap_or_else(|| Value::Dict(Dict::new()));
-    let bbox = display_box(entry);
-    let limit = |e: pyropdf_store::LimitExceeded| limit_error(&e);
-    {
-        let target = document.reading()?;
-        let mut entries = forms.entries.lock().unwrap_or_else(PoisonError::into_inner);
-        let mut hit = None;
-        for (at, form) in entries.iter().enumerate() {
-            if form.page == page
-                && form.bbox == bbox
-                && form.contents == contents
-                && form.resources == resources
-                && form
-                    .source
-                    .unchanged(&captured.version, &budget)
-                    .map_err(limit)?
-                && form.target.unchanged(&target, &budget).map_err(limit)?
+    crate::errors::boundary(|| {
+        if !operation.is_active_on(document) {
+            return Err(PyValueError::new_err(
+                "the canvas operation is not active on this document",
+            ));
+        }
+        let page = Reference::new(number, generation);
+        let captured = snapshot.take(&source.document()?, page, operation)?;
+        let budget = operation.for_source(source)?;
+        let Some(entry) = captured
+            .index
+            .index_of(page)
+            .and_then(|at| captured.index.get(at))
+        else {
+            return Ok(None);
+        };
+        let contents = entry.dict().get("Contents").cloned();
+        let resources = entry
+            .inherited("Resources")
+            .cloned()
+            .unwrap_or_else(|| Value::Dict(Dict::new()));
+        let bbox = display_box(entry);
+        let limit = |e: pyropdf_store::LimitExceeded| limit_error(&e);
+        {
+            let target = document.reading()?;
+            let mut entries = forms.entries.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut hit = None;
+            for (at, form) in entries.iter().enumerate() {
+                if form.page == page
+                    && form.bbox == bbox
+                    && form.contents == contents
+                    && form.resources == resources
+                    && form
+                        .source
+                        .unchanged(&captured.version, &budget)
+                        .map_err(limit)?
+                    && form.target.unchanged(&target, &budget).map_err(limit)?
+                {
+                    hit = Some(at);
+                    break;
+                }
+            }
+            if let Some(at) = hit
+                && let Some(form) = entries.remove(at)
             {
-                hit = Some(at);
-                break;
+                let number = form.form;
+                entries.push_back(form);
+                return Ok(Some(number));
             }
         }
-        if let Some(at) = hit
-            && let Some(form) = entries.remove(at)
-        {
-            let number = form.form;
-            entries.push_back(form);
-            return Ok(Some(number));
+        let values: Vec<&Value> = contents.iter().chain([&resources]).collect();
+        let reached =
+            sources::reachable(&captured.version, &values, &budget).map_err(|e| store_error(&e))?;
+        let source_stamps = captured
+            .version
+            .stamps(reached.as_slice(), &budget)
+            .map_err(limit)?;
+        drop(reached);
+        let same = std::ptr::eq(document, source);
+        let (form, dictionary) = document.edit(py, |transaction, _| {
+            let dictionary = write_resources(
+                transaction,
+                &captured.version,
+                &resources,
+                same,
+                true,
+                &budget,
+            )?;
+            let mut stream = Stream::new(
+                [
+                    (Name::from("Type"), Value::Name(Name::from("XObject"))),
+                    (Name::from("Subtype"), Value::Name(Name::from("Form"))),
+                    (
+                        Name::from("BBox"),
+                        Value::Array(bbox.iter().map(|&x| Value::from(x)).collect()),
+                    ),
+                    (Name::from("Resources"), Value::Reference(dictionary)),
+                ]
+                .into_iter()
+                .collect(),
+                Bytes::default(),
+            );
+            set_data(&mut stream, &captured.content, true, &budget)?;
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let form = transaction.allocate().map_err(store)?;
+            let form = transaction
+                .write(form.number(), &Value::Stream(Box::new(stream)), &budget)
+                .map_err(store)?;
+            Ok((form.number(), dictionary.number()))
+        })?;
+        drop(captured);
+        let target = document
+            .reading()?
+            .stamps(&[form, dictionary], &budget)
+            .map_err(limit)?;
+        let mut entries = forms.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        if entries.len() >= PAGE_FORMS {
+            entries.pop_front();
         }
-    }
-    let values: Vec<&Value> = contents.iter().chain([&resources]).collect();
-    let reached =
-        sources::reachable(&captured.version, &values, &budget).map_err(|e| store_error(&e))?;
-    let source_stamps = captured
-        .version
-        .stamps(reached.as_slice(), &budget)
-        .map_err(limit)?;
-    drop(reached);
-    let same = std::ptr::eq(document, source);
-    let (form, dictionary) = document.edit(py, |transaction, _| {
-        let dictionary = write_resources(
-            transaction,
-            &captured.version,
-            &resources,
-            same,
-            true,
-            &budget,
-        )?;
-        let mut stream = Stream::new(
-            [
-                (Name::from("Type"), Value::Name(Name::from("XObject"))),
-                (Name::from("Subtype"), Value::Name(Name::from("Form"))),
-                (
-                    Name::from("BBox"),
-                    Value::Array(bbox.iter().map(|&x| Value::from(x)).collect()),
-                ),
-                (Name::from("Resources"), Value::Reference(dictionary)),
-            ]
-            .into_iter()
-            .collect(),
-            Bytes::default(),
-        );
-        set_data(&mut stream, &captured.content, true, &budget)?;
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let form = transaction.allocate().map_err(store)?;
-        let form = transaction
-            .write(form.number(), &Value::Stream(Box::new(stream)), &budget)
-            .map_err(store)?;
-        Ok((form.number(), dictionary.number()))
-    })?;
-    drop(captured);
-    let target = document
-        .reading()?
-        .stamps(&[form, dictionary], &budget)
-        .map_err(limit)?;
-    let mut entries = forms.entries.lock().unwrap_or_else(PoisonError::into_inner);
-    if entries.len() >= PAGE_FORMS {
-        entries.pop_front();
-    }
-    entries.push_back(PageForm {
-        page,
-        contents,
-        resources,
-        bbox,
-        source: source_stamps,
-        target,
-        form,
-    });
-    Ok(Some(form))
+        entries.push_back(PageForm {
+            page,
+            contents,
+            resources,
+            bbox,
+            source: source_stamps,
+            target,
+            form,
+        });
+        Ok(Some(form))
+    })?
 }
 
 /// Copies image object `number` of `source`, as it is in the version that
@@ -635,37 +657,40 @@ pub fn canvas_copy_image(
     number: u32,
     operation: &OperationBudget,
 ) -> PyResult<Option<u32>> {
-    if !operation.is_active_on(document) {
-        return Err(PyValueError::new_err(
-            "the canvas operation is not active on this document",
-        ));
-    }
-    let budget = operation.for_source(source)?;
-    let version = source.reading()?;
-    let Some(generation) = version.generation(number) else {
-        return Ok(None);
-    };
-    let reference = Reference::new(number, generation);
-    match resolve(&version, Some(&Value::Reference(reference)), &budget)? {
-        Some(Value::Stream(stream)) if matches!(stream.dict().get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"Image") =>
-            {}
-        _ => return Ok(None),
-    }
-    let copy = document.edit(py, |transaction, _| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let (root, _) = root(&transaction.snapshot(), &budget)?;
-        let along = import::Along {
-            objects: std::slice::from_ref(&reference),
-            ..import::Along::default()
+    crate::errors::boundary(|| {
+        if !operation.is_active_on(document) {
+            return Err(PyValueError::new_err(
+                "the canvas operation is not active on this document",
+            ));
+        }
+        let budget = operation.for_source(source)?;
+        let version = source.reading()?;
+        let Some(generation) = version.generation(number) else {
+            return Ok(None);
         };
-        let imported = import::import(transaction, &version, Vec::new(), &[], along, root, &budget)
-            .map_err(store)?;
-        Ok(match imported.objects.into_iter().next() {
-            Some(Value::Reference(copy)) => Some(copy.number()),
-            _ => None,
-        })
-    })?;
-    Ok(copy)
+        let reference = Reference::new(number, generation);
+        match resolve(&version, Some(&Value::Reference(reference)), &budget)? {
+            Some(Value::Stream(stream)) if matches!(stream.dict().get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"Image") =>
+                {}
+            _ => return Ok(None),
+        }
+        let copy = document.edit(py, |transaction, _| {
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let (root, _) = root(&transaction.snapshot(), &budget)?;
+            let along = import::Along {
+                objects: std::slice::from_ref(&reference),
+                ..import::Along::default()
+            };
+            let imported =
+                import::import(transaction, &version, Vec::new(), &[], along, root, &budget)
+                    .map_err(store)?;
+            Ok(match imported.objects.into_iter().next() {
+                Some(Value::Reference(copy)) => Some(copy.number()),
+                _ => None,
+            })
+        })?;
+        Ok(copy)
+    })?
 }
 
 /// Sets the `/Rotate` of a page, a multiple of 90 that the caller
@@ -678,19 +703,21 @@ pub fn set_page_rotation(
     generation: u16,
     rotation: i64,
 ) -> PyResult<bool> {
-    let (_, index, _) = index(document)?;
-    let reference = Reference::new(number, generation);
-    let Some(at) = index.index_of(reference) else {
-        return Ok(false);
-    };
-    let mut dict = index.pages()[at].dict().clone();
-    dict.insert(Name::from("Rotate"), Value::Integer(rotation));
-    document.edit(py, |transaction, budget| {
-        transaction
-            .write(number, &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))
-    })?;
-    Ok(true)
+    crate::errors::boundary(|| {
+        let (_, index, _) = index(document)?;
+        let reference = Reference::new(number, generation);
+        let Some(at) = index.index_of(reference) else {
+            return Ok(false);
+        };
+        let mut dict = index.pages()[at].dict().clone();
+        dict.insert(Name::from("Rotate"), Value::Integer(rotation));
+        document.edit(py, |transaction, budget| {
+            transaction
+                .write(number, &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))
+        })?;
+        Ok(true)
+    })?
 }
 
 /// The page boxes, in the order that [`page_boxes`] returns them.
@@ -736,18 +763,20 @@ pub fn page_boxes(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<Box4>>> {
-    let (_, index, _) = index(document)?;
-    let Some(at) = index.index_of(Reference::new(number, generation)) else {
-        return Ok(None);
-    };
-    let page = &index.pages()[at];
-    let (frame, rotation) = (display_box(page), rotation(page.rotate()));
-    Ok(Some(
-        user_boxes(page)
-            .into_iter()
-            .map(|b| display_rect(frame, rotation, b))
-            .collect(),
-    ))
+    crate::errors::boundary(|| {
+        let (_, index, _) = index(document)?;
+        let Some(at) = index.index_of(Reference::new(number, generation)) else {
+            return Ok(None);
+        };
+        let page = &index.pages()[at];
+        let (frame, rotation) = (display_box(page), rotation(page.rotate()));
+        Ok(Some(
+            user_boxes(page)
+                .into_iter()
+                .map(|b| display_rect(frame, rotation, b))
+                .collect(),
+        ))
+    })?
 }
 
 /// Sets box `kind`, an index of [`BOXES`], of a page to `display`, a
@@ -764,57 +793,59 @@ pub fn set_page_box(
     kind: usize,
     display: Box4,
 ) -> PyResult<bool> {
-    const SLACK: f64 = 1e-6;
-    let Some(&key) = BOXES.get(kind) else {
-        return Err(PyValueError::new_err(format!("no page box {kind}")));
-    };
-    let (_, index, _) = index(document)?;
-    let Some(at) = index.index_of(Reference::new(number, generation)) else {
-        return Ok(false);
-    };
-    let page = &index.pages()[at];
-    let (frame, rotation) = (display_box(page), rotation(page.rotate()));
-    let (a, b) = to_pdf(frame, rotation, display.0, display.1);
-    let (c, d) = to_pdf(frame, rotation, display.2, display.3);
-    let user = (a.min(c), b.min(d), a.max(c), b.max(d));
-    if user.2 - user.0 < SLACK || user.3 - user.1 < SLACK {
-        return Err(PyValueError::new_err(format!("the {key} is empty")));
-    }
-    let inside = |inner: Box4, outer: Box4| {
-        inner.0 >= outer.0 - SLACK
-            && inner.1 >= outer.1 - SLACK
-            && inner.2 <= outer.2 + SLACK
-            && inner.3 <= outer.3 + SLACK
-    };
-    let boxes = user_boxes(page);
-    if kind == 0 {
-        let set = [page.crop_box().and_then(rect)].into_iter().chain(
-            BOXES[2..]
-                .iter()
-                .map(|key| page.dict().get(*key).and_then(rect)),
-        );
-        if set.flatten().any(|inner| !inside(inner, user)) {
-            return Err(PyValueError::new_err(
-                "the new MediaBox does not hold the page's other boxes; set them first",
-            ));
+    crate::errors::boundary(|| {
+        const SLACK: f64 = 1e-6;
+        let Some(&key) = BOXES.get(kind) else {
+            return Err(PyValueError::new_err(format!("no page box {kind}")));
+        };
+        let (_, index, _) = index(document)?;
+        let Some(at) = index.index_of(Reference::new(number, generation)) else {
+            return Ok(false);
+        };
+        let page = &index.pages()[at];
+        let (frame, rotation) = (display_box(page), rotation(page.rotate()));
+        let (a, b) = to_pdf(frame, rotation, display.0, display.1);
+        let (c, d) = to_pdf(frame, rotation, display.2, display.3);
+        let user = (a.min(c), b.min(d), a.max(c), b.max(d));
+        if user.2 - user.0 < SLACK || user.3 - user.1 < SLACK {
+            return Err(PyValueError::new_err(format!("the {key} is empty")));
         }
-    } else if !inside(user, boxes[0]) {
-        return Err(PyValueError::new_err(format!(
-            "the {key} leaves the MediaBox"
-        )));
-    }
-    let mut dict = page.dict().clone();
-    let array = [user.0, user.1, user.2, user.3]
-        .into_iter()
-        .map(self::number)
-        .collect::<Vec<_>>();
-    dict.insert(Name::from(key), Value::Array(Array::from(array)));
-    document.edit(py, |transaction, budget| {
-        transaction
-            .write(number, &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))
-    })?;
-    Ok(true)
+        let inside = |inner: Box4, outer: Box4| {
+            inner.0 >= outer.0 - SLACK
+                && inner.1 >= outer.1 - SLACK
+                && inner.2 <= outer.2 + SLACK
+                && inner.3 <= outer.3 + SLACK
+        };
+        let boxes = user_boxes(page);
+        if kind == 0 {
+            let set = [page.crop_box().and_then(rect)].into_iter().chain(
+                BOXES[2..]
+                    .iter()
+                    .map(|key| page.dict().get(*key).and_then(rect)),
+            );
+            if set.flatten().any(|inner| !inside(inner, user)) {
+                return Err(PyValueError::new_err(
+                    "the new MediaBox does not hold the page's other boxes; set them first",
+                ));
+            }
+        } else if !inside(user, boxes[0]) {
+            return Err(PyValueError::new_err(format!(
+                "the {key} leaves the MediaBox"
+            )));
+        }
+        let mut dict = page.dict().clone();
+        let array = [user.0, user.1, user.2, user.3]
+            .into_iter()
+            .map(self::number)
+            .collect::<Vec<_>>();
+        dict.insert(Name::from(key), Value::Array(Array::from(array)));
+        document.edit(py, |transaction, budget| {
+            transaction
+                .write(number, &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))
+        })?;
+        Ok(true)
+    })?
 }
 
 /// Lists `pages`, objects of current pages, as the document's pages in
@@ -833,68 +864,70 @@ pub fn set_pages(
     pages: Vec<(u32, u16)>,
     copies: Vec<bool>,
 ) -> PyResult<()> {
-    if !copies.is_empty() && copies.len() != pages.len() {
-        return Err(PyValueError::new_err("copies must mark every page or none"));
-    }
-    document.edit(py, |transaction, budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
-        let view = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
-        let mut order = BudgetVec::new(budget);
-        let mut retained = BudgetVec::new(budget);
-        let mut sources = BudgetVec::new(budget);
-        for (at, (number, generation)) in pages.into_iter().enumerate() {
-            let page = Reference::new(number, generation);
-            if index.index_of(page).is_none() {
-                return Err(not_a_page(page));
-            }
-            order.try_push(page).map_err(limit)?;
-            sources.try_push(number).map_err(limit)?;
-            if !copies.get(at).copied().unwrap_or(false) {
-                retained.try_push(number).map_err(limit)?;
-            }
+    crate::errors::boundary(|| {
+        if !copies.is_empty() && copies.len() != pages.len() {
+            return Err(PyValueError::new_err("copies must mark every page or none"));
         }
-        retained.sort_unstable();
-        if retained.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(PyValueError::new_err(
-                "a page stays at most once; copies repeat it",
-            ));
-        }
-        let mut before = BudgetVec::new(budget);
-        let mut removed = BudgetVec::new(budget);
-        for (at, page) in index.pages().iter().enumerate() {
-            let number = indirect(page, at)?.number();
-            before.try_push(number).map_err(limit)?;
-            if retained.binary_search(&number).is_err() {
-                removed.try_push(number).map_err(limit)?;
-            }
-        }
-        let mut removed = removed.into_vec();
-        removed.sort_unstable();
-        removed.dedup();
-        let savepoint = transaction.savepoint();
-        let result =
-            copy_pages(transaction, &index, &mut order, &copies, budget).and_then(|added| {
-                for page in &added {
-                    retained.try_push(page.number()).map_err(limit)?;
+        document.edit(py, |transaction, budget| {
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
+            let view = transaction.snapshot();
+            let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
+            let mut order = BudgetVec::new(budget);
+            let mut retained = BudgetVec::new(budget);
+            let mut sources = BudgetVec::new(budget);
+            for (at, (number, generation)) in pages.into_iter().enumerate() {
+                let page = Reference::new(number, generation);
+                if index.index_of(page).is_none() {
+                    return Err(not_a_page(page));
                 }
-                retained.sort_unstable();
-                let pages = Pages {
-                    before: &before,
-                    order: &order,
-                    sources: &sources,
-                    removed: &removed,
-                    retained: &retained,
-                    added: &added,
-                };
-                remove_pages(document, transaction, &index, &pages, budget)
-            });
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+                order.try_push(page).map_err(limit)?;
+                sources.try_push(number).map_err(limit)?;
+                if !copies.get(at).copied().unwrap_or(false) {
+                    retained.try_push(number).map_err(limit)?;
+                }
+            }
+            retained.sort_unstable();
+            if retained.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err(PyValueError::new_err(
+                    "a page stays at most once; copies repeat it",
+                ));
+            }
+            let mut before = BudgetVec::new(budget);
+            let mut removed = BudgetVec::new(budget);
+            for (at, page) in index.pages().iter().enumerate() {
+                let number = indirect(page, at)?.number();
+                before.try_push(number).map_err(limit)?;
+                if retained.binary_search(&number).is_err() {
+                    removed.try_push(number).map_err(limit)?;
+                }
+            }
+            let mut removed = removed.into_vec();
+            removed.sort_unstable();
+            removed.dedup();
+            let savepoint = transaction.savepoint();
+            let result =
+                copy_pages(transaction, &index, &mut order, &copies, budget).and_then(|added| {
+                    for page in &added {
+                        retained.try_push(page.number()).map_err(limit)?;
+                    }
+                    retained.sort_unstable();
+                    let pages = Pages {
+                        before: &before,
+                        order: &order,
+                        sources: &sources,
+                        removed: &removed,
+                        retained: &retained,
+                        added: &added,
+                    };
+                    remove_pages(document, transaction, &index, &pages, budget)
+                });
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 /// Inserts copies of the pages of `source` at `at`, with what they reach,
@@ -908,206 +941,209 @@ pub fn import_pages(
     pages: Vec<(u32, u16)>,
     at: usize,
 ) -> PyResult<()> {
-    document.edit(py, |transaction, budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
-        let view = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
-        let (root, root_dict) = root(&view, budget)?;
-        let (version, source_parent) = source.reading_parent()?;
-        let source_index = match &source_parent {
-            Some(parent) => PageIndex::memoized(&source.pages, parent, budget),
-            None if source.in_transaction() => {
-                PageIndex::memoized(&source.draft_pages, &version, budget)
-            }
-            None => PageIndex::memoized(&source.pages, &version, budget),
-        }
-        .map_err(store)?;
-        let mut selected = BudgetVec::new(budget);
-        let mut imported = BudgetVec::new(budget);
-        for (number, generation) in pages {
-            budget.poll().map_err(limit)?;
-            let page = Reference::new(number, generation);
-            if source_index.index_of(page).is_none() {
-                return Err(not_a_page(page));
-            }
-            selected.try_push(page).map_err(limit)?;
-            imported.try_push(number).map_err(limit)?;
-        }
-        imported.sort_unstable();
-        if imported.windows(2).any(|pair| pair[0] == pair[1]) {
-            return Err(PyValueError::new_err(
-                "a page of another document can be inserted once per call",
-            ));
-        }
-        let mut links = Links {
-            source,
-            version: &version,
-            budget,
-            index: &source_index,
-            imported: &imported,
-            reads: Reads::new(&version, budget),
-            named: None,
-            overrides: BudgetVec::new(budget),
-        };
-        let mut prepared = BudgetVec::new(budget);
-        prepared.try_reserve_exact(selected.len()).map_err(limit)?;
-        for &page in &selected {
-            budget.poll().map_err(limit)?;
-            let entry = source_index
-                .index_of(page)
-                .and_then(|at| source_index.get(at))
-                .ok_or_else(|| not_a_page(page))?;
-            charge_copy(CopyPart::Dict(entry.dict()), budget)?;
-            let mut dict = entry.dict().clone();
-            for key in INHERITABLE {
-                match entry.inherited(key) {
-                    Some(value) => {
-                        dict.insert(
-                            Name::from(key),
-                            refs::copy_for_edit(value, budget).map_err(store)?,
-                        );
-                    }
-                    None => {
-                        dict.remove(key);
-                    }
-                }
-            }
-            for key in INHERITABLE {
-                if dict.get(key).is_some() || root_dict.get(key).is_none() {
-                    continue;
-                }
-                let default = match key {
-                    "CropBox" => dict
-                        .get("MediaBox")
-                        .map(|value| refs::copy_for_edit(value, budget))
-                        .transpose()
-                        .map_err(store)?
-                        .unwrap_or_else(a4),
-                    "MediaBox" => a4(),
-                    "Rotate" => Value::Integer(0),
-                    _ => Value::Dict(Dict::new()),
-                };
-                dict.insert(Name::from(key), default);
-            }
-            match links.annots(&dict)? {
-                Some(annots) if annots.is_empty() => {
-                    dict.remove("Annots");
-                }
-                Some(annots) => {
-                    dict.insert(Name::from("Annots"), Value::Array(annots));
-                }
-                None => {}
-            }
-            prepared.try_push((page, dict)).map_err(limit)?;
-        }
-        let mut overrides = links.overrides;
-        let (fields, calculation) =
-            refs::form_fields(&mut Reads::new(&version, budget)).map_err(store)?;
-        let (pruned, kept) = pruned(
-            source,
-            &version,
-            &source_index,
-            &imported,
-            &overrides,
-            !fields.is_empty(),
-            budget,
-        )?;
-        // A complete import registers every top-level field, and a partial
-        // one those that keep a widget of its pages.
-        let fields = match kept {
-            Some(kept) => {
-                let mut out = BudgetVec::new(budget);
-                for field in fields {
-                    if kept.binary_search(&field.number()).is_ok() {
-                        out.try_push(field).map_err(limit)?;
-                    }
-                }
-                out.into_vec()
-            }
-            None => fields,
-        };
-        for pair in pruned.into_vec() {
-            overrides.try_push(pair).map_err(limit)?;
-        }
-        let mut overrides = overrides.into_vec();
-        budget
-            .charge(
-                LimitCode::MemorySize,
-                overrides
-                    .len()
-                    .saturating_mul(size_of::<(Reference, Option<Value>)>()) as u64,
-            )
-            .map_err(limit)?;
-        overrides.sort_by_key(|(reference, _)| *reference);
-        overrides.dedup_by_key(|(reference, _)| *reference);
-        let mut before = BudgetVec::new(budget);
-        for (at, page) in index.pages().iter().enumerate() {
-            before.try_push(indirect(page, at)?).map_err(limit)?;
-        }
-        let savepoint = transaction.savepoint();
-        let result = (|| {
-            let defaults = if fields.is_empty() {
-                forms::ImportDefaults::default()
-            } else {
-                forms::plan_imported_defaults(&transaction.snapshot(), &version, budget)?
-            };
-            let along = import::Along {
-                objects: &fields,
-                found: &calculation,
-                values: &defaults.values,
-                copies: defaults.renames(),
-            };
-            let imported = import::import(
-                transaction,
-                &version,
-                prepared.into_vec(),
-                &overrides,
-                along,
-                root,
-                budget,
-            )
-            .map_err(store)?;
-            let added = imported.pages;
-            let at = at.min(before.len());
-            let mut order = BudgetVec::new(budget);
-            order
-                .try_reserve_exact(before.len().saturating_add(added.len()))
-                .map_err(limit)?;
-            for &page in before[..at]
-                .iter()
-                .chain(added.iter())
-                .chain(before[at..].iter())
-            {
-                order.try_push(page).map_err(limit)?;
-            }
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let limit = |e: pyropdf_store::LimitExceeded| store_error(&e.into());
             let view = transaction.snapshot();
-            rewrite_with(transaction, &view, &index, &order, &added, budget)?;
-            let mut fields = BudgetVec::new(budget);
-            for field in &imported.objects {
-                if let &Value::Reference(field) = field {
-                    fields.try_push(field).map_err(limit)?;
+            let index = PageIndex::memoized(&document.draft_pages, &view, budget).map_err(store)?;
+            let (root, root_dict) = root(&view, budget)?;
+            let (version, source_parent) = source.reading_parent()?;
+            let source_index = match &source_parent {
+                Some(parent) => PageIndex::memoized(&source.pages, parent, budget),
+                None if source.in_transaction() => {
+                    PageIndex::memoized(&source.draft_pages, &version, budget)
                 }
+                None => PageIndex::memoized(&source.pages, &version, budget),
             }
-            let mut calculation = BudgetVec::new(budget);
-            for &field in imported.found.iter().flatten() {
-                calculation.try_push(field).map_err(limit)?;
+            .map_err(store)?;
+            let mut selected = BudgetVec::new(budget);
+            let mut imported = BudgetVec::new(budget);
+            for (number, generation) in pages {
+                budget.poll().map_err(limit)?;
+                let page = Reference::new(number, generation);
+                if source_index.index_of(page).is_none() {
+                    return Err(not_a_page(page));
+                }
+                selected.try_push(page).map_err(limit)?;
+                imported.try_push(number).map_err(limit)?;
             }
-            forms::register_imported(
-                transaction,
-                &fields,
-                &calculation,
-                &defaults,
-                &imported.values,
-                &imported.copies,
+            imported.sort_unstable();
+            if imported.windows(2).any(|pair| pair[0] == pair[1]) {
+                return Err(PyValueError::new_err(
+                    "a page of another document can be inserted once per call",
+                ));
+            }
+            let mut links = Links {
+                source,
+                version: &version,
                 budget,
-            )
-        })();
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+                index: &source_index,
+                imported: &imported,
+                reads: Reads::new(&version, budget),
+                named: None,
+                overrides: BudgetVec::new(budget),
+            };
+            let mut prepared = BudgetVec::new(budget);
+            prepared.try_reserve_exact(selected.len()).map_err(limit)?;
+            for &page in &selected {
+                budget.poll().map_err(limit)?;
+                let entry = source_index
+                    .index_of(page)
+                    .and_then(|at| source_index.get(at))
+                    .ok_or_else(|| not_a_page(page))?;
+                charge_copy(CopyPart::Dict(entry.dict()), budget)?;
+                let mut dict = entry.dict().clone();
+                for key in INHERITABLE {
+                    match entry.inherited(key) {
+                        Some(value) => {
+                            dict.insert(
+                                Name::from(key),
+                                refs::copy_for_edit(value, budget).map_err(store)?,
+                            );
+                        }
+                        None => {
+                            dict.remove(key);
+                        }
+                    }
+                }
+                for key in INHERITABLE {
+                    if dict.get(key).is_some() || root_dict.get(key).is_none() {
+                        continue;
+                    }
+                    let default = match key {
+                        "CropBox" => dict
+                            .get("MediaBox")
+                            .map(|value| refs::copy_for_edit(value, budget))
+                            .transpose()
+                            .map_err(store)?
+                            .unwrap_or_else(a4),
+                        "MediaBox" => a4(),
+                        "Rotate" => Value::Integer(0),
+                        _ => Value::Dict(Dict::new()),
+                    };
+                    dict.insert(Name::from(key), default);
+                }
+                match links.annots(&dict)? {
+                    Some(annots) if annots.is_empty() => {
+                        dict.remove("Annots");
+                    }
+                    Some(annots) => {
+                        dict.insert(Name::from("Annots"), Value::Array(annots));
+                    }
+                    None => {}
+                }
+                prepared.try_push((page, dict)).map_err(limit)?;
+            }
+            let mut overrides = links.overrides;
+            let (fields, calculation) =
+                refs::form_fields(&mut Reads::new(&version, budget)).map_err(store)?;
+            let (pruned, kept) = pruned(
+                source,
+                &version,
+                &source_index,
+                &imported,
+                &overrides,
+                !fields.is_empty(),
+                budget,
+            )?;
+            // A complete import registers every top-level field, and a partial
+            // one those that keep a widget of its pages.
+            let fields = match kept {
+                Some(kept) => {
+                    let mut out = BudgetVec::new(budget);
+                    for field in fields {
+                        if kept.binary_search(&field.number()).is_ok() {
+                            out.try_push(field).map_err(limit)?;
+                        }
+                    }
+                    out.into_vec()
+                }
+                None => fields,
+            };
+            for pair in pruned.into_vec() {
+                overrides.try_push(pair).map_err(limit)?;
+            }
+            let mut overrides = overrides.into_vec();
+            budget
+                .charge(
+                    LimitCode::MemorySize,
+                    overrides
+                        .len()
+                        .saturating_mul(size_of::<(Reference, Option<Value>)>())
+                        as u64,
+                )
+                .map_err(limit)?;
+            overrides.sort_by_key(|(reference, _)| *reference);
+            overrides.dedup_by_key(|(reference, _)| *reference);
+            let mut before = BudgetVec::new(budget);
+            for (at, page) in index.pages().iter().enumerate() {
+                before.try_push(indirect(page, at)?).map_err(limit)?;
+            }
+            let savepoint = transaction.savepoint();
+            let result = (|| {
+                let defaults = if fields.is_empty() {
+                    forms::ImportDefaults::default()
+                } else {
+                    forms::plan_imported_defaults(&transaction.snapshot(), &version, budget)?
+                };
+                let along = import::Along {
+                    objects: &fields,
+                    found: &calculation,
+                    values: &defaults.values,
+                    copies: defaults.renames(),
+                };
+                let imported = import::import(
+                    transaction,
+                    &version,
+                    prepared.into_vec(),
+                    &overrides,
+                    along,
+                    root,
+                    budget,
+                )
+                .map_err(store)?;
+                let added = imported.pages;
+                let at = at.min(before.len());
+                let mut order = BudgetVec::new(budget);
+                order
+                    .try_reserve_exact(before.len().saturating_add(added.len()))
+                    .map_err(limit)?;
+                for &page in before[..at]
+                    .iter()
+                    .chain(added.iter())
+                    .chain(before[at..].iter())
+                {
+                    order.try_push(page).map_err(limit)?;
+                }
+                let view = transaction.snapshot();
+                rewrite_with(transaction, &view, &index, &order, &added, budget)?;
+                let mut fields = BudgetVec::new(budget);
+                for field in &imported.objects {
+                    if let &Value::Reference(field) = field {
+                        fields.try_push(field).map_err(limit)?;
+                    }
+                }
+                let mut calculation = BudgetVec::new(budget);
+                for &field in imported.found.iter().flatten() {
+                    calculation.try_push(field).map_err(limit)?;
+                }
+                forms::register_imported(
+                    transaction,
+                    &fields,
+                    &calculation,
+                    &defaults,
+                    &imported.values,
+                    &imported.copies,
+                    budget,
+                )
+            })();
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 /// Source objects that an import replaces: `Some` with the value to copy
@@ -1506,38 +1542,40 @@ pub fn new_page(
     width: f64,
     height: f64,
 ) -> PyResult<(u32, u16)> {
-    let (version, index, budget) = index(document)?;
-    let (root, root_dict) = root(&version, &budget)?;
-    let mut page = Dict::new();
-    page.insert(Name::from("Type"), Value::Name(Name::from("Page")));
-    page.insert(Name::from("Parent"), Value::Reference(root));
-    let media = Value::Array(Array::from(vec![
-        Value::Integer(0),
-        Value::Integer(0),
-        number(width),
-        number(height),
-    ]));
-    page.insert(Name::from("MediaBox"), media.clone());
-    // What the page would otherwise inherit from the root.
-    if root_dict.get("CropBox").is_some() {
-        page.insert(Name::from("CropBox"), media);
-    }
-    if root_dict.get("Rotate").is_some() {
-        page.insert(Name::from("Rotate"), Value::Integer(0));
-    }
-    page.insert(Name::from("Resources"), Value::Dict(Dict::new()));
-    let mut order = current_order(&index)?;
-    document.edit(py, |transaction, budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let reference = transaction.allocate().map_err(store)?;
-        transaction
-            .write(reference.number(), &Value::Dict(page), budget)
-            .map_err(store)?;
-        order.insert(at.min(order.len()), reference);
-        let view = transaction.snapshot();
-        rewrite_with(transaction, &view, &index, &order, &[reference], budget)?;
-        Ok((reference.number(), reference.generation()))
-    })
+    crate::errors::boundary(|| {
+        let (version, index, budget) = index(document)?;
+        let (root, root_dict) = root(&version, &budget)?;
+        let mut page = Dict::new();
+        page.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+        page.insert(Name::from("Parent"), Value::Reference(root));
+        let media = Value::Array(Array::from(vec![
+            Value::Integer(0),
+            Value::Integer(0),
+            number(width),
+            number(height),
+        ]));
+        page.insert(Name::from("MediaBox"), media.clone());
+        // What the page would otherwise inherit from the root.
+        if root_dict.get("CropBox").is_some() {
+            page.insert(Name::from("CropBox"), media);
+        }
+        if root_dict.get("Rotate").is_some() {
+            page.insert(Name::from("Rotate"), Value::Integer(0));
+        }
+        page.insert(Name::from("Resources"), Value::Dict(Dict::new()));
+        let mut order = current_order(&index)?;
+        document.edit(py, |transaction, budget| {
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let reference = transaction.allocate().map_err(store)?;
+            transaction
+                .write(reference.number(), &Value::Dict(page), budget)
+                .map_err(store)?;
+            order.insert(at.min(order.len()), reference);
+            let view = transaction.snapshot();
+            rewrite_with(transaction, &view, &index, &order, &[reference], budget)?;
+            Ok((reference.number(), reference.generation()))
+        })
+    })?
 }
 
 fn current_order(index: &PageIndex) -> PyResult<Vec<Reference>> {

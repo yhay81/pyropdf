@@ -616,74 +616,82 @@ pub fn outline_children(
     document: &_Document,
     parent: Option<(u32, u16)>,
 ) -> PyResult<Vec<(u32, u16)>> {
-    let (version, budget) = view(document)?;
-    let mut reads = Reads::new(&version, &budget);
-    let dict = match parent {
-        None => match root(&mut reads)? {
-            Some((root, _)) => root,
-            None => return Ok(Vec::new()),
-        },
-        Some(id) => item(&mut reads, id)?.ok_or_else(|| stale(id))?,
-    };
-    children(&mut reads, &dict)
+    crate::errors::boundary(|| {
+        let (version, budget) = view(document)?;
+        let mut reads = Reads::new(&version, &budget);
+        let dict = match parent {
+            None => match root(&mut reads)? {
+                Some((root, _)) => root,
+                None => return Ok(Vec::new()),
+            },
+            Some(id) => item(&mut reads, id)?.ok_or_else(|| stale(id))?,
+        };
+        children(&mut reads, &dict)
+    })?
 }
 
 /// Returns item `id` as a handle reads it.
 #[pyfunction]
 pub fn outline_item(document: &_Document, id: (u32, u16)) -> PyResult<ItemRecord> {
-    let (version, index, budget) = index(document)?;
-    let mut reads = Reads::new(&version, &budget);
-    let dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
-    let mut walker = Walker {
-        reads: &mut reads,
-        text: Text::default(),
-    };
-    let title = walker.title(&dict)?;
-    let lead = walker.lead(&dict)?;
-    let color = walker.color(&dict)?;
-    let flags = walker.integer(&dict, "F")?;
-    let count = walker.integer(&dict, "Count")?;
-    let children = has_children(&mut reads, &dict)?;
-    let root = root(&mut reads)?.and_then(|(_, object)| object);
-    let level = level(&mut reads, &dict, root)?;
-    let target = Places::new(document, Arc::clone(&version), index, &budget).target(&lead)?;
-    Ok((level, title, target, color, flags, count, children))
+    crate::errors::boundary(|| {
+        let (version, index, budget) = index(document)?;
+        let mut reads = Reads::new(&version, &budget);
+        let dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
+        let mut walker = Walker {
+            reads: &mut reads,
+            text: Text::default(),
+        };
+        let title = walker.title(&dict)?;
+        let lead = walker.lead(&dict)?;
+        let color = walker.color(&dict)?;
+        let flags = walker.integer(&dict, "F")?;
+        let count = walker.integer(&dict, "Count")?;
+        let children = has_children(&mut reads, &dict)?;
+        let root = root(&mut reads)?.and_then(|(_, object)| object);
+        let level = level(&mut reads, &dict, root)?;
+        let target = Places::new(document, Arc::clone(&version), index, &budget).target(&lead)?;
+        Ok((level, title, target, color, flags, count, children))
+    })?
 }
 
 /// Returns every item of the outline in document order.
 #[pyfunction]
 pub fn outline_entries(document: &_Document) -> PyResult<Vec<EntryRecord>> {
-    let (outline, version, index, budget) = memoized(document)?;
-    let mut places = Places::new(document, version, index, &budget);
-    let mut entries = Vec::new();
-    for item in &outline.items {
-        memory(&budget, item.title.len())?;
-        push(
-            &mut entries,
-            (
-                item.id,
-                item.level,
-                item.title.clone(),
-                places.target(&item.lead)?,
-                item.color,
-                item.flags,
-                item.count,
-            ),
-            &budget,
-        )?;
-    }
-    Ok(entries)
+    crate::errors::boundary(|| {
+        let (outline, version, index, budget) = memoized(document)?;
+        let mut places = Places::new(document, version, index, &budget);
+        let mut entries = Vec::new();
+        for item in &outline.items {
+            memory(&budget, item.title.len())?;
+            push(
+                &mut entries,
+                (
+                    item.id,
+                    item.level,
+                    item.title.clone(),
+                    places.target(&item.lead)?,
+                    item.color,
+                    item.flags,
+                    item.count,
+                ),
+                &budget,
+            )?;
+        }
+        Ok(entries)
+    })?
 }
 
 /// Returns how many outline walks the document's memos reused and how many
 /// they computed, for tests.
 #[pyfunction]
-pub fn outline_walk_counts(document: &_Document) -> (u64, u64) {
-    let (outline, drafts) = (document.outline.stats(), document.draft_outline.stats());
-    (
-        outline.hits + drafts.hits,
-        outline.computations + drafts.computations,
-    )
+pub fn outline_walk_counts(document: &_Document) -> PyResult<(u64, u64)> {
+    crate::errors::boundary(|| {
+        let (outline, drafts) = (document.outline.stats(), document.draft_outline.stats());
+        (
+            outline.hits + drafts.hits,
+            outline.computations + drafts.computations,
+        )
+    })
 }
 
 /// The text that one write gives, in UTF-8 and encoded as PDF text
@@ -757,14 +765,16 @@ struct Prepared {
 /// refers to.
 #[pyfunction]
 pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> PyResult<()> {
-    if specs.len() > MAX_ITEMS {
-        return Err(count_error(format!(
-            "cannot write more than {MAX_ITEMS} outline items"
-        )));
-    }
-    editing(py, document, |transaction, budget| {
-        write_outline(document, transaction, budget, specs)
-    })
+    crate::errors::boundary(|| {
+        if specs.len() > MAX_ITEMS {
+            return Err(count_error(format!(
+                "cannot write more than {MAX_ITEMS} outline items"
+            )));
+        }
+        editing(py, document, |transaction, budget| {
+            write_outline(document, transaction, budget, specs)
+        })
+    })?
 }
 
 fn write_outline(
@@ -1053,12 +1063,14 @@ pub fn outline_set_title(
     id: (u32, u16),
     title: &str,
 ) -> PyResult<()> {
-    Input::default().charge(title, "title")?;
-    edit_item(py, document, id, true, |dict, _, budget| {
-        memory(budget, title.len().saturating_mul(3))?;
-        dict.insert(Name::from("Title"), encode_text(title));
-        Ok(())
-    })
+    crate::errors::boundary(|| {
+        Input::default().charge(title, "title")?;
+        edit_item(py, document, id, true, |dict, _, budget| {
+            memory(budget, title.len().saturating_mul(3))?;
+            dict.insert(Name::from("Title"), encode_text(title));
+            Ok(())
+        })
+    })?
 }
 
 /// Makes item `id` lead to `target`.
@@ -1069,22 +1081,24 @@ pub fn outline_set_target(
     id: (u32, u16),
     target: Target,
 ) -> PyResult<()> {
-    Input::default().target(&target)?;
-    edit_item(py, document, id, true, |dict, version, budget| {
-        let index = PageIndex::memoized(&document.draft_pages, version, budget)
-            .map_err(|e| store_error(&e))?;
-        for text in [&target.4, &target.5].into_iter().flatten() {
-            memory(budget, text.len().saturating_mul(3))?;
-        }
-        memory(budget, 4096)?;
-        let entry = target_entry(&index, &target)?;
-        dict.remove("Dest");
-        dict.remove("A");
-        if let Some((key, value)) = entry {
-            dict.insert(Name::from(key), value);
-        }
-        Ok(())
-    })
+    crate::errors::boundary(|| {
+        Input::default().target(&target)?;
+        edit_item(py, document, id, true, |dict, version, budget| {
+            let index = PageIndex::memoized(&document.draft_pages, version, budget)
+                .map_err(|e| store_error(&e))?;
+            for text in [&target.4, &target.5].into_iter().flatten() {
+                memory(budget, text.len().saturating_mul(3))?;
+            }
+            memory(budget, 4096)?;
+            let entry = target_entry(&index, &target)?;
+            dict.remove("Dest");
+            dict.remove("A");
+            if let Some((key, value)) = entry {
+                dict.insert(Name::from(key), value);
+            }
+            Ok(())
+        })
+    })?
 }
 
 /// Sets the color and the `/F` flags of item `id`.
@@ -1098,37 +1112,39 @@ pub fn outline_set_style(
     flags: Option<u32>,
     flag: Option<(u32, bool)>,
 ) -> PyResult<()> {
-    edit_item(py, document, id, false, |dict, version, budget| {
-        if flag.is_none() {
-            memory(budget, 3 * size_of::<Value>())?;
-            match color.map(color_value).transpose()? {
-                Some(color) => dict.insert(Name::from("C"), color),
-                None => dict.remove("C"),
-            };
-        }
-        let flags = if let Some((mask, set)) = flag {
-            let mut reads = Reads::new(version, budget);
-            let current = match read(&mut reads, dict.get("F"))? {
-                Some(Value::Integer(flags)) => flags,
-                _ => 0,
-            };
-            Some(if set {
-                current | i64::from(mask)
-            } else {
-                current & !i64::from(mask)
-            })
-        } else {
-            flags.map(i64::from)
-        };
-        if let Some(flags) = flags {
-            if flags == 0 {
-                dict.remove("F");
-            } else {
-                dict.insert(Name::from("F"), Value::Integer(flags));
+    crate::errors::boundary(|| {
+        edit_item(py, document, id, false, |dict, version, budget| {
+            if flag.is_none() {
+                memory(budget, 3 * size_of::<Value>())?;
+                match color.map(color_value).transpose()? {
+                    Some(color) => dict.insert(Name::from("C"), color),
+                    None => dict.remove("C"),
+                };
             }
-        }
-        Ok(())
-    })
+            let flags = if let Some((mask, set)) = flag {
+                let mut reads = Reads::new(version, budget);
+                let current = match read(&mut reads, dict.get("F"))? {
+                    Some(Value::Integer(flags)) => flags,
+                    _ => 0,
+                };
+                Some(if set {
+                    current | i64::from(mask)
+                } else {
+                    current & !i64::from(mask)
+                })
+            } else {
+                flags.map(i64::from)
+            };
+            if let Some(flags) = flags {
+                if flags == 0 {
+                    dict.remove("F");
+                } else {
+                    dict.insert(Name::from("F"), Value::Integer(flags));
+                }
+            }
+            Ok(())
+        })
+    })?
 }
 
 /// Shows or hides the children of item `id`, and counts every `/Count` of
@@ -1140,73 +1156,75 @@ pub fn outline_set_open(
     id: (u32, u16),
     open: bool,
 ) -> PyResult<()> {
-    editing(py, document, |transaction, budget| {
-        let store = |e: pyropdf_store::Error| store_error(&e);
-        let before = transaction.snapshot();
-        let mut reads = Reads::new(&before, budget);
-        let dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
-        if !has_children(&mut reads, &dict)? {
-            return Err(PdfError::new_err(
-                "an outline item without children has no open state",
-            ));
-        }
-        let Some((root, root_object)) = root(&mut reads)? else {
-            return Ok(());
-        };
-        let location = match root_object {
-            Some(number) => Location {
-                id: (number, generation(&mut reads, number)?),
-                path: Vec::new(),
-            },
-            None => {
-                let Some((_, Some(number))) = catalog(&mut reads)? else {
-                    return Err(PdfError::new_err("the catalog is not an object"));
-                };
-                let mut path = Vec::new();
-                push(&mut path, "Outlines", budget)?;
-                Location {
+    crate::errors::boundary(|| {
+        editing(py, document, |transaction, budget| {
+            let store = |e: pyropdf_store::Error| store_error(&e);
+            let before = transaction.snapshot();
+            let mut reads = Reads::new(&before, budget);
+            let dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
+            if !has_children(&mut reads, &dict)? {
+                return Err(PdfError::new_err(
+                    "an outline item without children has no open state",
+                ));
+            }
+            let Some((root, root_object)) = root(&mut reads)? else {
+                return Ok(());
+            };
+            let location = match root_object {
+                Some(number) => Location {
                     id: (number, generation(&mut reads, number)?),
-                    path,
+                    path: Vec::new(),
+                },
+                None => {
+                    let Some((_, Some(number))) = catalog(&mut reads)? else {
+                        return Err(PdfError::new_err("the catalog is not an object"));
+                    };
+                    let mut path = Vec::new();
+                    push(&mut path, "Outlines", budget)?;
+                    Location {
+                        id: (number, generation(&mut reads, number)?),
+                        path,
+                    }
+                }
+            };
+            let counts = counts(&mut reads, &root, location, (id, open))?;
+            for (location, count) in counts {
+                // Read previous writes from this operation, so several direct nodes
+                // in one holder cannot overwrite each other's updated counts.
+                let Some(object) = transaction
+                    .version()
+                    .get(location.id.0, budget)
+                    .map_err(store)?
+                    .filter(|object| object.generation() == location.id.1)
+                else {
+                    return Err(stale(location.id));
+                };
+                let mut value = refs::copy_for_edit(object.value(), budget).map_err(store)?;
+                let mut current = &mut value;
+                for key in &location.path {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    let Value::Dict(dict) = current else {
+                        return Err(PdfError::new_err(
+                            "an outline count path is not a dictionary",
+                        ));
+                    };
+                    current = dict
+                        .get_mut(key)
+                        .ok_or_else(|| PdfError::new_err("an outline count path is missing"))?;
+                }
+                let Value::Dict(dict) = current else {
+                    return Err(PdfError::new_err("an outline item is not a dictionary"));
+                };
+                if dict.get("Count") != Some(&Value::Integer(count)) {
+                    dict.insert(Name::from("Count"), Value::Integer(count));
+                    transaction
+                        .write(location.id.0, &value, budget)
+                        .map_err(store)?;
                 }
             }
-        };
-        let counts = counts(&mut reads, &root, location, (id, open))?;
-        for (location, count) in counts {
-            // Read previous writes from this operation, so several direct nodes
-            // in one holder cannot overwrite each other's updated counts.
-            let Some(object) = transaction
-                .version()
-                .get(location.id.0, budget)
-                .map_err(store)?
-                .filter(|object| object.generation() == location.id.1)
-            else {
-                return Err(stale(location.id));
-            };
-            let mut value = refs::copy_for_edit(object.value(), budget).map_err(store)?;
-            let mut current = &mut value;
-            for key in &location.path {
-                budget.poll().map_err(|e| limit_error(&e))?;
-                let Value::Dict(dict) = current else {
-                    return Err(PdfError::new_err(
-                        "an outline count path is not a dictionary",
-                    ));
-                };
-                current = dict
-                    .get_mut(key)
-                    .ok_or_else(|| PdfError::new_err("an outline count path is missing"))?;
-            }
-            let Value::Dict(dict) = current else {
-                return Err(PdfError::new_err("an outline item is not a dictionary"));
-            };
-            if dict.get("Count") != Some(&Value::Integer(count)) {
-                dict.insert(Name::from("Count"), Value::Integer(count));
-                transaction
-                    .write(location.id.0, &value, budget)
-                    .map_err(store)?;
-            }
-        }
-        Ok(())
-    })
+            Ok(())
+        })
+    })?
 }
 
 /// Returns the generation of object `number`.
