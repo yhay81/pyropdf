@@ -225,6 +225,10 @@ impl _Document {
 
     /// Returns an empty document: a catalog and a page tree without pages.
     #[staticmethod]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the initial trailer contains the two fixed keys Root and Size"
+    )]
     fn empty(limits: &Bound<'_, PyAny>) -> PyResult<Self> {
         crate::errors::boundary(|| {
             let mut base = MemoryBase::new(
@@ -431,6 +435,10 @@ impl _Document {
     /// Returns each object of the current version that the cross-reference
     /// data lists, as its number, generation, and canonical syntax. Tests
     /// compare documents in value with it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one number and result per budgeted index entry; each canonical syntax buffer also charges the budget"
+    )]
     fn _objects<'py>(&self, py: Python<'py>) -> PyResult<Vec<(u32, u16, Bound<'py, PyBytes>)>> {
         crate::errors::boundary(|| {
             let version = self.reading()?;
@@ -698,6 +706,10 @@ const PROBE_KEYS: [&str; 8] = [
 
 type ProbeData = (u64, String, bool, bool, Vec<(&'static str, String)>);
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "PROBE_KEYS is fixed and returned text is capped at MAX_PROBE_METADATA_SIZE"
+)]
 fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResult<ProbeData> {
     use pyropdf_store::version::Base as _;
     let store = |e: Error| store_error(&e);

@@ -185,6 +185,10 @@ struct Bits {
 }
 
 impl Bits {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "encode_line checks the output limit after each bounded code/run; a row has at most MAX_PIXELS pixels"
+    )]
     fn put(&mut self, code: &str) {
         for bit in code.bytes() {
             self.byte = (self.byte << 1) | u8::from(bit == b'1');
@@ -201,6 +205,10 @@ impl Bits {
         self.out.len() > self.limit
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "at most one partial byte is appended after the encoder checks its output limit"
+    )]
     fn finish(mut self) -> Vec<u8> {
         if self.used > 0 {
             self.out.push(self.byte << (8 - self.used));
@@ -301,6 +309,10 @@ fn encode_line(bits: &mut Bits, line: &[bool], reference: &[bool]) {
 
 /// Returns 1-bit `data` (rows padded to whole bytes, 1 for white) as CCITT
 /// Group 4 data, or `None` once the output would pass `limit` bytes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "two rows of width booleans; encode_ccitt_g4 checks width times height against MAX_PIXELS"
+)]
 pub fn encode_g4(data: &[u8], width: usize, height: usize, limit: usize) -> Option<Vec<u8>> {
     let stride = width.div_ceil(8);
     let mut bits = Bits {

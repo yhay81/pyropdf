@@ -58,6 +58,10 @@ pub fn luma(rgb: [u8; 3]) -> u8 {
 }
 
 /// Inverts the colors of the pixels in `area`, keeping alpha.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "copies a validated Pixmap with at most MAX_PIXELS pixels and four bytes per pixel"
+)]
 pub fn invert(data: &[u8], layout: Layout, area: Area) -> Vec<u8> {
     let mut out = data.to_vec();
     let channels = layout.channels();
@@ -76,6 +80,10 @@ pub fn invert(data: &[u8], layout: Layout, area: Area) -> Vec<u8> {
 
 /// Maps each color component through its table, keeping alpha; a gray
 /// pixmap uses the first table.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "copies a validated Pixmap with at most MAX_PIXELS pixels and four bytes per pixel"
+)]
 pub fn map_colors(data: &[u8], layout: Layout, tables: &[[u8; 256]; 3]) -> Vec<u8> {
     let channels = layout.channels();
     let colors = layout.colors();
@@ -102,6 +110,10 @@ pub fn tint_table(black: u8, white: u8) -> [u8; 256] {
 }
 
 /// Returns the samples converted to gray or to RGB, keeping alpha.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one to four output samples per validated pixel, with at most MAX_PIXELS pixels"
+)]
 pub fn convert(data: &[u8], layout: Layout, gray: bool) -> Vec<u8> {
     if layout.gray == gray {
         return data.to_vec();
@@ -127,6 +139,10 @@ pub fn convert(data: &[u8], layout: Layout, gray: bool) -> Vec<u8> {
 /// by `components`. Gray and RGB are as `convert` makes them; CMYK takes
 /// the gray of each pixel into black, the conversion of ISO 32000-2
 /// 10.4.2.3 with full black generation and undercolor removal.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "recolor_samples checks components as 1, 3, or 4; the Pixmap has at most MAX_PIXELS pixels"
+)]
 pub fn device_samples(data: &[u8], layout: Layout, components: usize) -> Vec<u8> {
     let channels = layout.channels();
     let mut out = Vec::with_capacity(layout.width as usize * layout.height as usize * components);
@@ -150,6 +166,10 @@ pub fn device_samples(data: &[u8], layout: Layout, components: usize) -> Vec<u8>
 }
 
 /// Returns the samples with an opaque alpha byte after each pixel.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "adds one byte per validated pixel; the result has at most four times MAX_PIXELS samples"
+)]
 pub fn add_alpha(data: &[u8], layout: Layout) -> Vec<u8> {
     let colors = layout.colors();
     let mut out = Vec::with_capacity(data.len() / colors * (colors + 1));
@@ -162,6 +182,10 @@ pub fn add_alpha(data: &[u8], layout: Layout) -> Vec<u8> {
 
 /// Returns the samples composited over `background` without alpha; a
 /// gray pixmap uses the luma of `background`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most three background components and three output bytes per validated pixel, bounded by MAX_PIXELS"
+)]
 pub fn drop_alpha(data: &[u8], layout: Layout, background: [u8; 3]) -> Vec<u8> {
     let colors = layout.colors();
     let under: Vec<f64> = if layout.gray {
@@ -182,6 +206,10 @@ pub fn drop_alpha(data: &[u8], layout: Layout, background: [u8; 3]) -> Vec<u8> {
 }
 
 /// Returns the pixels of `area`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the checked crop lies inside a Pixmap of at most MAX_PIXELS pixels and four samples each"
+)]
 pub fn crop(data: &[u8], layout: Layout, area: Area) -> Vec<u8> {
     let channels = layout.channels();
     let (x0, y0, x1, y1) = area;
@@ -203,6 +231,10 @@ struct Taps {
 /// Returns the taps of a triangle filter from `source` to `target`
 /// pixels, widened by the reduction when shrinking, as Pillow's bilinear
 /// resampling computes them.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "source and target are bounded by MAX_PIXELS; the triangle spans at most 2*source + 3*target weights"
+)]
 fn taps(source: u32, target: u32) -> Taps {
     let scale = f64::from(source) / f64::from(target);
     let filter = scale.max(1.0);
@@ -230,6 +262,10 @@ fn taps(source: u32, target: u32) -> Taps {
 
 /// Resamples `width` by `height` pixels of `channels` bytes along rows,
 /// to `target` pixels a row.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "scale chooses the smaller intermediate raster, bounded by MAX_PIXELS; channels is at most four"
+)]
 fn resample_rows(data: &[u8], width: u32, height: u32, channels: usize, target: u32) -> Vec<u8> {
     let taps = taps(width, target);
     let mut out = Vec::with_capacity(target as usize * height as usize * channels);
@@ -251,6 +287,10 @@ fn resample_rows(data: &[u8], width: u32, height: u32, channels: usize, target: 
 
 /// Resamples `width` by `height` pixels of `channels` bytes along
 /// columns, to `target` rows.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "scale chooses the smaller intermediate raster, bounded by MAX_PIXELS; channels is at most four"
+)]
 fn resample_columns(data: &[u8], width: u32, height: u32, channels: usize, target: u32) -> Vec<u8> {
     let taps = taps(height, target);
     let stride = width as usize * channels;
@@ -272,6 +312,10 @@ fn resample_columns(data: &[u8], width: u32, height: u32, channels: usize, targe
 /// Returns the pixels resampled to `width` by `height` with a bilinear
 /// filter, through premultiplied alpha, along the axis that keeps the
 /// intermediate raster smaller first.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "copies the validated source Pixmap, bounded by MAX_PIXELS and four samples per pixel"
+)]
 pub fn scale(data: &[u8], layout: Layout, width: u32, height: u32) -> Vec<u8> {
     let channels = layout.channels();
     let colors = layout.colors();
@@ -311,6 +355,10 @@ pub fn scale(data: &[u8], layout: Layout, width: u32, height: u32) -> Vec<u8> {
 /// Returns the samples of `layout` turned clockwise by `quarters` quarter
 /// turns, 1 through 3, whose layout swaps width and height for an odd
 /// count.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one output pixel per validated source pixel, bounded by MAX_PIXELS and four samples each"
+)]
 pub fn rotate(data: &[u8], layout: Layout, quarters: u8) -> Vec<u8> {
     let (width, height) = (layout.width as usize, layout.height as usize);
     let channels = layout.channels();
@@ -336,6 +384,10 @@ pub fn rotate(data: &[u8], layout: Layout, quarters: u8) -> Vec<u8> {
 
 /// Returns the samples mirrored left to right, or top to bottom when
 /// `vertical`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one output pixel per validated source pixel, bounded by MAX_PIXELS and four samples each"
+)]
 pub fn flip(data: &[u8], layout: Layout, vertical: bool) -> Vec<u8> {
     let stride = layout.stride();
     let channels = layout.channels();
@@ -420,6 +472,10 @@ impl Projection {
 /// center maps into the source, which is sampled bilinearly between pixel
 /// centers, with alpha weighting the colors, and clamped to its edge
 /// pixels.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Pixmap.warp checks the output against MAX_PIXELS; the source has at most four channels"
+)]
 pub fn warp(
     data: &[u8],
     layout: Layout,
@@ -492,6 +548,10 @@ pub fn warp(
 
 /// Returns the pixels of `area` as big-endian keys of their channels,
 /// sorted, so that equal pixels lie together.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one u32 per pixel in a checked area of a Pixmap with at most MAX_PIXELS pixels"
+)]
 fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u32> {
     let channels = layout.channels();
     let (x0, y0, x1, y1) = area;
@@ -511,6 +571,10 @@ fn sorted_pixels(data: &[u8], layout: Layout, area: Area) -> Vec<u32> {
 
 /// Calls `each` with every distinct pixel of `area`, as its channels, and
 /// its count, in ascending order of the channels, until it returns `false`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "copies at most four bytes from one packed u32 pixel"
+)]
 pub fn color_runs(
     data: &[u8],
     layout: Layout,
@@ -533,6 +597,10 @@ pub fn color_runs(
 
 /// Returns the samples with every pixel of `area` set to `pixel`, one byte
 /// per channel.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "copies the validated Pixmap with at most MAX_PIXELS pixels and four samples each"
+)]
 pub fn fill(data: &[u8], layout: Layout, area: Area, pixel: &[u8]) -> Vec<u8> {
     let mut out = data.to_vec();
     let channels = layout.channels();
@@ -590,6 +658,10 @@ pub fn check_size(width: u32, height: u32) -> Result<(), String> {
     Ok(())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "check_size bounds the header to MAX_PIXELS before allocating at most four expanded 8-bit channels"
+)]
 fn decode_png(data: &[u8]) -> Result<Decoded, String> {
     let invalid = |error: png::DecodingError| format!("not a PNG image: {error}");
     let mut decoder = png::Decoder::new(Cursor::new(data));

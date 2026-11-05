@@ -27,12 +27,20 @@ const fn condition(condition: Condition) -> &'static str {
 
 /// The names of every object type of the model, sorted.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the generated Arlington OBJECTS table has a fixed number of names"
+)]
 pub fn schema_names() -> PyResult<Vec<&'static str>> {
     crate::errors::boundary(|| OBJECTS.iter().map(|object| object.name).collect())
 }
 
 /// The keys of the object type `name`, or `None` for an unknown name.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "keys, types, and links come only from the generated Arlington model"
+)]
 pub fn schema_object(name: &str) -> PyResult<Option<Vec<KeyRow>>> {
     crate::errors::boundary(|| {
         let described = object(name)?;

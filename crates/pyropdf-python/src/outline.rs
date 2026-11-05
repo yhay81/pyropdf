@@ -45,6 +45,10 @@ const MAX_DEPTH: usize = 64;
 const MAX_TEXT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Charges before an input-sized vector grows, including temporary old storage.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "memory charges the new capacity before fallible reservation"
+)]
 fn reserve<T>(items: &mut Vec<T>, additional: usize, budget: &Budget) -> PyResult<()> {
     budget.poll().map_err(|e| limit_error(&e))?;
     let needed = items.len().saturating_add(additional);
@@ -60,12 +64,20 @@ fn reserve<T>(items: &mut Vec<T>, additional: usize, budget: &Budget) -> PyResul
     Ok(())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserve charges and fallibly reserves one slot before push"
+)]
 fn push<T>(items: &mut Vec<T>, value: T, budget: &Budget) -> PyResult<()> {
     reserve(items, 1, budget)?;
     items.push(value);
     Ok(())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserve charges and fallibly reserves the entire count before resize"
+)]
 fn filled<T: Clone>(count: usize, value: T, budget: &Budget) -> PyResult<Vec<T>> {
     let mut items = Vec::new();
     reserve(&mut items, count, budget)?;
@@ -73,6 +85,10 @@ fn filled<T: Clone>(count: usize, value: T, budget: &Budget) -> PyResult<Vec<T>>
     Ok(items)
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "memory charges the set entry and table overhead before fallible reservation and insertion"
+)]
 fn visit<T: Eq + Hash>(seen: &mut HashSet<T>, key: T, budget: &Budget) -> PyResult<bool> {
     budget.poll().map_err(|e| limit_error(&e))?;
     if seen.contains(&key) {
@@ -737,6 +753,10 @@ impl Input {
 }
 
 /// Returns a color as a `/C` array, refusing components outside 0 to 1.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a color contains exactly three components"
+)]
 fn color_value((red, green, blue): Color) -> PyResult<Value> {
     let mut components = Vec::with_capacity(3);
     for value in [red, green, blue] {
@@ -777,6 +797,10 @@ pub fn outline_write(py: Python<'_>, document: &_Document, specs: Vec<Spec>) -> 
     })?
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inserts only the single fixed destination or action key produced by target_entry"
+)]
 fn write_outline(
     document: &_Document,
     transaction: &mut Transaction,
@@ -880,28 +904,64 @@ fn write_outline(
         }
         for (at, item) in prepared.into_iter().enumerate() {
             let mut dict = Dict::new();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Title key"
+            )]
             dict.insert(Name::from("Title"), item.title);
             let owner = parent[at].map_or(root, |owner| ids[owner]);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Parent key"
+            )]
             dict.insert(Name::from("Parent"), Value::Reference(owner));
             if let Some(before) = previous_sibling[at] {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Prev key"
+                )]
                 dict.insert(Name::from("Prev"), Value::Reference(ids[before]));
             }
             if let Some(after) = next[at] {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Next key"
+                )]
                 dict.insert(Name::from("Next"), Value::Reference(ids[after]));
             }
             if let (Some(child), Some(final_child)) = (first[at], last_child[at]) {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /First key"
+                )]
                 dict.insert(Name::from("First"), Value::Reference(ids[child]));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Last key"
+                )]
                 dict.insert(Name::from("Last"), Value::Reference(ids[final_child]));
                 let shown = if item.open { visible[at] } else { -visible[at] };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Count key"
+                )]
                 dict.insert(Name::from("Count"), Value::Integer(shown));
             }
             if let Some((key, value)) = item.entry {
                 dict.insert(Name::from(key), value);
             }
             if let Some(color) = item.color {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /C key"
+                )]
                 dict.insert(Name::from("C"), color);
             }
             if item.flags != 0 {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /F key"
+                )]
                 dict.insert(Name::from("F"), Value::Integer(i64::from(item.flags)));
             }
             transaction
@@ -910,14 +970,34 @@ fn write_outline(
         }
         if let (Some(child), Some(final_child)) = top {
             let mut dict = Dict::new();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Type key"
+            )]
             dict.insert(Name::from("Type"), Value::Name(Name::from("Outlines")));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /First key"
+            )]
             dict.insert(Name::from("First"), Value::Reference(ids[child]));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Last key"
+            )]
             dict.insert(Name::from("Last"), Value::Reference(ids[final_child]));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Count key"
+            )]
             dict.insert(Name::from("Count"), Value::Integer(root_visible));
             transaction
                 .write(root.number(), &Value::Dict(dict), budget)
                 .map_err(store)?;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Outlines key"
+        )]
         catalog_dict.insert(Name::from("Outlines"), Value::Reference(root));
     }
     transaction
@@ -1067,6 +1147,10 @@ pub fn outline_set_title(
         Input::default().charge(title, "title")?;
         edit_item(py, document, id, true, |dict, _, budget| {
             memory(budget, title.len().saturating_mul(3))?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Title key"
+            )]
             dict.insert(Name::from("Title"), encode_text(title));
             Ok(())
         })
@@ -1075,6 +1159,10 @@ pub fn outline_set_title(
 
 /// Makes item `id` lead to `target`.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inserts only the single destination or action key produced by target_entry"
+)]
 pub fn outline_set_target(
     py: Python<'_>,
     document: &_Document,
@@ -1104,6 +1192,10 @@ pub fn outline_set_target(
 /// Sets the color and the `/F` flags of item `id`.
 #[pyfunction]
 #[pyo3(signature = (document, id, color, flags=None, flag=None))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inserts only the fixed color key for the item"
+)]
 pub fn outline_set_style(
     py: Python<'_>,
     document: &_Document,
@@ -1139,6 +1231,10 @@ pub fn outline_set_style(
                 if flags == 0 {
                     dict.remove("F");
                 } else {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /F key"
+                    )]
                     dict.insert(Name::from("F"), Value::Integer(flags));
                 }
             }
@@ -1216,6 +1312,10 @@ pub fn outline_set_open(
                     return Err(PdfError::new_err("an outline item is not a dictionary"));
                 };
                 if dict.get("Count") != Some(&Value::Integer(count)) {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /Count key"
+                    )]
                     dict.insert(Name::from("Count"), Value::Integer(count));
                     transaction
                         .write(location.id.0, &value, budget)
@@ -1243,6 +1343,10 @@ struct Location {
 }
 
 impl Location {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "reserve charges and fallibly reserves the old path length plus one before copying the path and pushing its key"
+    )]
     fn child(&self, key: &'static str, budget: &Budget) -> PyResult<Self> {
         let mut path = Vec::new();
         reserve(&mut path, self.path.len() + 1, budget)?;

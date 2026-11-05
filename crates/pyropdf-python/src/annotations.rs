@@ -487,6 +487,10 @@ impl<'b> Annots<'b> {
         resolve(&self.version, value, self.budget)
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the name bytes are charged to MemorySize before this copy"
+    )]
     pub(crate) fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
         Ok(match self.resolved(dict.get(key))? {
             Some(Value::Name(name)) => {
@@ -511,6 +515,10 @@ impl<'b> Annots<'b> {
     }
 
     /// Reads a rectangle, its numbers resolved.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the array length is checked as exactly four before allocating"
+    )]
     pub(crate) fn rect(&self, value: Option<&Value>) -> PyResult<Option<Rect>> {
         let Some(Value::Array(items)) = self.resolved(value)? else {
             return Ok(None);
@@ -529,6 +537,10 @@ impl<'b> Annots<'b> {
     }
 
     /// Reads up to `max` numbers of an array, or `None` for anything else.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the input length is checked against the caller's fixed maximum before allocating"
+    )]
     fn numbers(&self, value: Option<&Value>, max: usize) -> PyResult<Option<Vec<f64>>> {
         let Some(Value::Array(items)) = self.resolved(value)? else {
             return Ok(None);
@@ -557,6 +569,10 @@ impl<'b> Annots<'b> {
     }
 
     /// Reads the border that `/BS`, else `/Border`, describes.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the default is the single fixed byte S"
+    )]
     pub(crate) fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
         if let Some(Value::Dict(style)) = self.resolved(dict.get("BS"))? {
             let width = self
@@ -693,6 +709,10 @@ impl<'b> Annots<'b> {
         };
         charge_copy(CopyPart::Dict(page.dict()), budget)?;
         let mut dict = page.dict().clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Annots key"
+        )]
         dict.insert(Name::from("Annots"), Value::Array(items));
         transaction
             .write(object.number(), &Value::Dict(dict), budget)
@@ -765,6 +785,10 @@ fn charge_decoded(
 
 /// Encodes a text string as `String.text` reads it: ASCII as is, anything
 /// else as UTF-16BE.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most two bytes per input UTF-8 byte plus the two-byte BOM; callers bound or charge the text first"
+)]
 pub(crate) fn encode_text(text: &str) -> Value {
     let bytes = if text.is_ascii() {
         text.as_bytes().to_vec()
@@ -927,6 +951,10 @@ impl Edit {
 
     /// Applies the edit to `dict`, an annotation of `subtype` on a page of
     /// `annots`, refusing an edit that does not fit the annotation.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "only the fixed text keys and one geometry key are inserted; their text and point data are charged first"
+    )]
     fn apply(&self, annots: &Annots, dict: &mut Dict, subtype: &str) -> PyResult<()> {
         let texts = [
             (&self.contents, "Contents"),
@@ -989,12 +1017,24 @@ impl Edit {
             if !known.contains(&icon.as_str()) {
                 return Err(PdfError::new_err(format!("unknown icon {icon:?}")));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Name key"
+            )]
             dict.insert(Name::from("Name"), Value::Name(Name::from(icon.as_str())));
         }
         if let Some(color) = self.color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /C key"
+            )]
             dict.insert(Name::from("C"), rgb(color, "color")?);
         }
         if let Some(color) = self.interior_color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /IC key"
+            )]
             dict.insert(Name::from("IC"), rgb(color, "interior color")?);
         }
         if let Some(opacity) = self.opacity {
@@ -1004,6 +1044,10 @@ impl Edit {
                 ));
             }
             if opacity < 1.0 {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /CA key"
+                )]
                 dict.insert(Name::from("CA"), Value::from(opacity));
             } else {
                 dict.remove("CA");
@@ -1013,13 +1057,25 @@ impl Edit {
             if !(0..=1023).contains(&flags) {
                 return Err(PdfError::new_err("annotation flags are bits 1 to 10"));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /F key"
+            )]
             dict.insert(Name::from("F"), Value::Integer(flags));
         }
         if let Some(border) = &self.border {
             dict.remove("Border");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BS key"
+            )]
             dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
         }
         if let Some(intensity) = self.clouds {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BE key"
+            )]
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
         }
         if let Some(lists) = &self.points {
@@ -1032,12 +1088,20 @@ impl Edit {
                     "only lines and polylines have line endings",
                 ));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /LE key"
+            )]
             dict.insert(Name::from("LE"), line_endings(endings)?);
         }
         if let Some(mode) = &self.blend_mode {
             if !BLEND_MODES.contains(&mode.as_str()) {
                 return Err(PdfError::new_err(format!("unknown blend mode {mode:?}")));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BM key"
+            )]
             dict.insert(Name::from("BM"), Value::Name(Name::from(mode.as_str())));
         }
         if let Some(turn) = self.rotate {
@@ -1052,6 +1116,10 @@ impl Edit {
             if user_turn == 0 {
                 dict.remove("Rotate");
             } else {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Rotate key"
+                )]
                 dict.insert(Name::from("Rotate"), Value::Integer(user_turn));
             }
         }
@@ -1065,12 +1133,20 @@ impl Edit {
             if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
                 return Err(PdfError::new_err("an annotation rectangle is finite"));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rect key"
+            )]
             dict.insert(Name::from("Rect"), annots.to_pdf(area));
         }
         if let Some(modified) = &self.modified {
             if !modified.starts_with("D:") || !modified.is_ascii() || modified.len() > 64 {
                 return Err(PdfError::new_err("an annotation date is a PDF date string"));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /M key"
+            )]
             dict.insert(
                 Name::from("M"),
                 Value::String(PdfString::literal(modified.as_bytes().to_vec())),
@@ -1082,6 +1158,10 @@ impl Edit {
 
 /// Returns the `/BS` dictionary of a border: its width, `/S` style, and
 /// dash lengths, which a dashed border needs and no other takes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the dash count is checked against MAX_BORDER_DASHES before conversion"
+)]
 pub(crate) fn border_style(
     (width, style, dashes): &(f64, String, Vec<f64>),
     budget: &Budget,
@@ -1108,10 +1188,22 @@ pub(crate) fn border_style(
         )));
     }
     let mut border = Dict::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /W key"
+    )]
     border.insert(Name::from("W"), number(*width));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /S key"
+    )]
     border.insert(Name::from("S"), Value::Name(Name::from(style.as_str())));
     if !dashes.is_empty() {
         let dashes = dashes.iter().map(|dash| number(*dash)).collect::<Vec<_>>();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /D key"
+        )]
         border.insert(Name::from("D"), Value::Array(Array::from(dashes)));
     }
     Ok(Value::Dict(border))
@@ -1131,7 +1223,15 @@ fn cloud_effect(subtype: &str, intensity: f64) -> PyResult<Value> {
         ));
     }
     let mut effect = Dict::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /S key"
+    )]
     effect.insert(Name::from("S"), Value::Name(Name::from("C")));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /I key"
+    )]
     effect.insert(Name::from("I"), number(intensity));
     Ok(Value::Dict(effect))
 }
@@ -1502,7 +1602,15 @@ pub fn annotation_draw_face(
                     charge_copy(CopyPart::Dict(&dict), budget)?;
                     let mut dict = dict;
                     let mut appearances = Dict::new();
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /N key"
+                    )]
                     appearances.insert(Name::from("N"), Value::Reference(reference));
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /AP key"
+                    )]
                     dict.insert(Name::from("AP"), Value::Dict(appearances));
                     annots.write(transaction, position, false, dict, |_, _, _, _, _| {
                         Ok(false)
@@ -1528,6 +1636,10 @@ fn face_error(error: WidgetError) -> PyErr {
 /// with `None`. Returns the annotation's object, or
 /// `None` for a page that is gone.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most one popup reference is added; the filtered copy has at most the charged annotation-array length"
+)]
 pub fn annotation_popup(
     py: Python<'_>,
     document: &_Document,
@@ -1578,6 +1690,10 @@ pub fn annotation_popup(
                     dict,
                     |transaction, reference, dict, items, budget| match (area, existing) {
                         (Some(area), Some((popup, mut popup_dict))) => {
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Rect key"
+                            )]
                             popup_dict.insert(Name::from("Rect"), area);
                             transaction
                                 .write(popup.number(), &Value::Dict(popup_dict), budget)
@@ -1587,18 +1703,42 @@ pub fn annotation_popup(
                         (Some(area), None) => {
                             let popup = transaction.allocate().map_err(|e| store_error(&e))?;
                             let mut popup_dict = Dict::new();
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Type key"
+                            )]
                             popup_dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
                             popup_dict
                                 .insert(Name::from("Subtype"), Value::Name(Name::from("Popup")));
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Rect key"
+                            )]
                             popup_dict.insert(Name::from("Rect"), area);
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Parent key"
+                            )]
                             popup_dict.insert(Name::from("Parent"), Value::Reference(reference));
                             if let Some(page) = page {
+                                #[expect(
+                                    clippy::disallowed_methods,
+                                    reason = "this call inserts only the fixed /P key"
+                                )]
                                 popup_dict.insert(Name::from("P"), Value::Reference(page));
                             }
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Open key"
+                            )]
                             popup_dict.insert(Name::from("Open"), Value::Boolean(false));
                             transaction
                                 .write(popup.number(), &Value::Dict(popup_dict), budget)
                                 .map_err(|e| store_error(&e))?;
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Popup key"
+                            )]
                             dict.insert(Name::from("Popup"), Value::Reference(popup));
                             items.push(Value::Reference(popup));
                             Ok(true)
@@ -1669,12 +1809,20 @@ pub fn annotation_open(
                     dict,
                     |transaction, _, dict, _, budget| {
                         if let Some((popup, mut popup_dict)) = popup {
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Open key"
+                            )]
                             popup_dict.insert(Name::from("Open"), Value::Boolean(open));
                             transaction
                                 .write(popup.number(), &Value::Dict(popup_dict), budget)
                                 .map_err(|e| store_error(&e))?;
                         }
                         if is_note {
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "this call inserts only the fixed /Open key"
+                            )]
                             dict.insert(Name::from("Open"), Value::Boolean(open));
                         }
                         Ok(false)
@@ -1727,6 +1875,10 @@ pub fn annotation_reply(
                     annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
                         match target {
                             Some(target) => {
+                                #[expect(
+                                    clippy::disallowed_methods,
+                                    reason = "this call inserts only the fixed /IRT key"
+                                )]
                                 dict.insert(Name::from("IRT"), Value::Reference(target));
                             }
                             None => {
@@ -1812,6 +1964,10 @@ pub fn annotation_remove(
 /// reads see leaves stale. No public API exposes the marks, so tests read
 /// them here (DESIGN.md section 7).
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one object number per stale marker already held by the store's version"
+)]
 pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
     crate::errors::boundary(|| {
         let version = document.reading()?;
@@ -1968,6 +2124,10 @@ impl Spec {
     }
 
     /// Returns the dictionary of the annotation, without its page.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "adds one fixed geometry key and copies a date checked as at most 64 bytes"
+    )]
     fn dictionary(&self, annots: &Annots) -> PyResult<Dict> {
         let subtype = self.subtype.as_str();
         let created = self.created.as_deref().unwrap_or_default();
@@ -2001,7 +2161,15 @@ impl Spec {
         }
         self.check_file(annots.budget)?;
         let mut dict = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Type key"
+        )]
         dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Subtype key"
+        )]
         dict.insert(Name::from("Subtype"), Value::Name(Name::from(subtype)));
         if let Some(rects) = &self.rects {
             if rects.is_empty() {
@@ -2047,6 +2215,10 @@ impl Spec {
                         .flat_map(|&(x, y)| [number(x), number(y)]),
                 )
                 .map_err(|e| limit_error(&e))?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /QuadPoints key"
+            )]
             dict.insert(
                 Name::from("QuadPoints"),
                 Value::Array(Array::from(points.into_vec())),
@@ -2061,6 +2233,10 @@ impl Spec {
                 |(x0, y0, x1, y1), &(x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
             );
             let (x0, y0, x1, y1) = bounds;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rect key"
+            )]
             dict.insert(
                 Name::from("Rect"),
                 Value::Array(Array::from(vec![
@@ -2095,6 +2271,10 @@ impl Spec {
                 );
             }
             dict.insert(Name::from(key), value);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rect key"
+            )]
             dict.insert(
                 Name::from("Rect"),
                 Value::Array(Array::from(vec![
@@ -2110,6 +2290,10 @@ impl Spec {
                         "a {subtype} annotation has no line endings"
                     )));
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /LE key"
+                )]
                 dict.insert(Name::from("LE"), line_endings(endings)?);
             }
         } else {
@@ -2122,20 +2306,44 @@ impl Spec {
             if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
                 return Err(PdfError::new_err("an annotation rectangle is finite"));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rect key"
+            )]
             dict.insert(Name::from("Rect"), annots.to_pdf(area));
         }
         // Printable.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /F key"
+        )]
         dict.insert(Name::from("F"), Value::Integer(4));
         if let Some(color) = self.color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /C key"
+            )]
             dict.insert(Name::from("C"), rgb(color, "color")?);
         }
         if let Some(color) = self.interior_color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /IC key"
+            )]
             dict.insert(Name::from("IC"), rgb(color, "interior color")?);
         }
         if let Some(border) = &self.border {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BS key"
+            )]
             dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
         }
         if let Some(intensity) = self.clouds {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BE key"
+            )]
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
         }
         if let Some(opacity) = self.opacity {
@@ -2145,6 +2353,10 @@ impl Spec {
                 ));
             }
             if opacity < 1.0 {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /CA key"
+                )]
                 dict.insert(Name::from("CA"), Value::from(opacity));
             }
         }
@@ -2152,9 +2364,17 @@ impl Spec {
             if !BLEND_MODES.contains(&mode.as_str()) {
                 return Err(PdfError::new_err(format!("unknown blend mode {mode:?}")));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BM key"
+            )]
             dict.insert(Name::from("BM"), Value::Name(Name::from(mode.as_str())));
         }
         if let Some(contents) = &self.contents {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Contents key"
+            )]
             dict.insert(Name::from("Contents"), encode_text(contents));
         }
         if self.open.is_some() && subtype != "Text"
@@ -2169,6 +2389,10 @@ impl Spec {
             if !STAMP_ICONS.contains(&icon) {
                 return Err(PdfError::new_err(format!("unknown stamp {icon:?}")));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Name key"
+            )]
             dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
         }
         let text_style = self.text_color.is_some()
@@ -2189,6 +2413,10 @@ impl Spec {
                     "unknown file attachment icon {icon:?}"
                 )));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Name key"
+            )]
             dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
         }
         if subtype == "Text" {
@@ -2196,7 +2424,15 @@ impl Spec {
             if !NOTE_ICONS.contains(&icon) {
                 return Err(PdfError::new_err(format!("unknown note icon {icon:?}")));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Name key"
+            )]
             dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Open key"
+            )]
             dict.insert(
                 Name::from("Open"),
                 Value::Boolean(self.open.unwrap_or(false)),
@@ -2204,6 +2440,10 @@ impl Spec {
             // A note's icon neither zooms nor turns with the page (ISO
             // 32000-2 section 12.5.6.4); viewers that honor the flags keep
             // it upright.
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /F key"
+            )]
             dict.insert(Name::from("F"), Value::Integer(4 | 8 | 16));
         }
         if self.rotate.is_some() && !matches!(subtype, "FreeText" | "Stamp") {
@@ -2223,6 +2463,10 @@ impl Spec {
         // attachment's icon stands upright.
         let user_turn = (annots.rotation - turn).rem_euclid(360);
         if matches!(subtype, "FreeText" | "Stamp" | "Caret" | "FileAttachment") && user_turn != 0 {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rotate key"
+            )]
             dict.insert(Name::from("Rotate"), Value::Integer(user_turn));
         }
         if subtype == "FreeText" {
@@ -2233,7 +2477,15 @@ impl Spec {
                 return Err(PdfError::new_err("an annotation date is a PDF date string"));
             }
             let date = Value::String(PdfString::literal(created.as_bytes().to_vec()));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /CreationDate key"
+            )]
             dict.insert(Name::from("CreationDate"), date.clone());
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /M key"
+            )]
             dict.insert(Name::from("M"), date);
         }
         Ok(dict)
@@ -2242,6 +2494,10 @@ impl Spec {
     /// Writes the entries of a free text: `/DA` and `/Q`, and with a callout
     /// `/CL`, `/LE`, `/IT`, `/RD`, and a `/Rect` that holds the line and its
     /// ending as well as the box.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a callout has two or three points, validated before building its coordinate array"
+    )]
     fn free_text_entries(&self, annots: &Annots, dict: &mut Dict) -> PyResult<()> {
         let color = self.text_color.unwrap_or((0.0, 0.0, 0.0));
         rgb(color, "text color")?;
@@ -2264,6 +2520,10 @@ impl Spec {
             fmt(color.1),
             fmt(color.2),
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /DA key"
+        )]
         dict.insert(
             Name::from("DA"),
             Value::String(PdfString::literal(da.into_bytes())),
@@ -2274,6 +2534,10 @@ impl Spec {
                 "free text aligns left (0), centre (1), or right (2)",
             ));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Q key"
+        )]
         dict.insert(Name::from("Q"), Value::Integer(align));
         let Some(points) = &self.callout else {
             if self.callout_ending.is_some() {
@@ -2323,11 +2587,27 @@ impl Spec {
         if !outer.iter().all(|value| value.is_finite()) {
             return Err(PdfError::new_err("a callout line has finite points"));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /CL key"
+        )]
         dict.insert(Name::from("CL"), Value::Array(Array::from(line)));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /IT key"
+        )]
         dict.insert(Name::from("IT"), Value::Name(Name::from("FreeTextCallout")));
         if ending != "None" {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /LE key"
+            )]
             dict.insert(Name::from("LE"), Value::Name(Name::from(ending)));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Rect key"
+        )]
         dict.insert(
             Name::from("Rect"),
             Value::Array(Array::from(outer.map(number).to_vec())),
@@ -2338,6 +2618,10 @@ impl Spec {
             outer[2] - inner[2],
             inner[1] - outer[1],
         ];
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /RD key"
+        )]
         dict.insert(
             Name::from("RD"),
             Value::Array(Array::from(
@@ -2398,6 +2682,10 @@ impl Spec {
     /// Writes the embedded file of a file attachment and its file
     /// specification, which `/FS` of `dict` names: the data compressed, its
     /// size and dates in `/Params`, and the file name as `/F` and `/UF`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the date passed input::MAX_DATE before this copy"
+    )]
     fn embed(
         &self,
         transaction: &mut Transaction,
@@ -2408,17 +2696,37 @@ impl Spec {
             return Ok(());
         };
         let mut params = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Size key"
+        )]
         params.insert(
             Name::from("Size"),
             Value::Integer(i64::try_from(data.len()).unwrap_or(i64::MAX)),
         );
         if let Some(created) = &self.created {
             let date = Value::String(PdfString::literal(created.as_bytes().to_vec()));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /CreationDate key"
+            )]
             params.insert(Name::from("CreationDate"), date.clone());
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /ModDate key"
+            )]
             params.insert(Name::from("ModDate"), date);
         }
         let mut entries = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Type key"
+        )]
         entries.insert(Name::from("Type"), Value::Name(Name::from("EmbeddedFile")));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Params key"
+        )]
         entries.insert(Name::from("Params"), Value::Dict(params));
         let mut stream = Stream::new(entries, Bytes::default());
         set_data(&mut stream, data, true, budget)?;
@@ -2427,20 +2735,52 @@ impl Spec {
             .write(file.number(), &Value::Stream(Box::new(stream)), budget)
             .map_err(|e| store_error(&e))?;
         let mut files = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /F key"
+        )]
         files.insert(Name::from("F"), Value::Reference(file));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /UF key"
+        )]
         files.insert(Name::from("UF"), Value::Reference(file));
         let mut filespec = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Type key"
+        )]
         filespec.insert(Name::from("Type"), Value::Name(Name::from("Filespec")));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /F key"
+        )]
         filespec.insert(Name::from("F"), encode_text(filename));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /UF key"
+        )]
         filespec.insert(Name::from("UF"), encode_text(filename));
         if let Some(description) = &self.description {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Desc key"
+            )]
             filespec.insert(Name::from("Desc"), encode_text(description));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /EF key"
+        )]
         filespec.insert(Name::from("EF"), Value::Dict(files));
         let reference = transaction.allocate().map_err(|e| store_error(&e))?;
         transaction
             .write(reference.number(), &Value::Dict(filespec), budget)
             .map_err(|e| store_error(&e))?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /FS key"
+        )]
         dict.insert(Name::from("FS"), Value::Reference(reference));
         Ok(())
     }
@@ -2454,6 +2794,10 @@ impl Spec {
 /// checked against a Standard 14 font and the appearance is not marked.
 #[pyfunction]
 #[pyo3(signature = (document, number, generation, spec, face=false))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one new annotation reference after charging the copied array"
+)]
 pub fn annotation_add(
     py: Python<'_>,
     document: &_Document,
@@ -2484,6 +2828,10 @@ pub fn annotation_add(
                     check_text(annots, &dict)?;
                 }
                 if let Some(page) = annots.page().object() {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /P key"
+                    )]
                     dict.insert(Name::from("P"), Value::Reference(page));
                 }
                 spec.embed(transaction, &mut dict, budget)?;

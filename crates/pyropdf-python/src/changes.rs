@@ -12,13 +12,13 @@
 //! check is).
 
 use pyo3::prelude::*;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::index::{Index, Location};
 use pyropdf_store::value::{Dict, Value};
 use pyropdf_store::version::Version;
 
 use crate::document::{_Document, text_string};
-use crate::errors::{PdfError, store_error};
+use crate::errors::{PdfError, limit_error, store_error};
 
 /// The most field dictionaries that the walk for signatures visits.
 const MAX_NODES: usize = 4_096;
@@ -60,6 +60,10 @@ pub fn changes(
     })?
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one number per budgeted changed object, one finding per signature, and at most MAX_NAMED numbers per finding"
+)]
 fn report(
     version: &Version,
     incremental: bool,
@@ -156,6 +160,10 @@ fn catalog(version: &Version, budget: &Budget) -> PyResult<Option<Dict>> {
 /// Returns the signatures of `opened`: its signed signature fields, then
 /// the signatures of the catalog's `/Perms`, such as a usage rights
 /// signature, that no field holds.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most MAX_NODES field signatures plus one per entry of the budget-parsed Perms dictionary"
+)]
 fn signatures_of(opened: &Version, budget: &Budget) -> PyResult<Vec<Signature>> {
     let Some(catalog) = catalog(opened, budget)? else {
         return Ok(Vec::new());
@@ -193,35 +201,37 @@ fn signatures_of(opened: &Version, budget: &Budget) -> PyResult<Vec<Signature>> 
 /// inherited `/FT` is `/Sig` and whose `/V` has a `/ByteRange` of two
 /// ranges. Refuses a field tree past [`MAX_NODES`] or [`MAX_DEPTH`].
 fn signature_fields(opened: &Version, catalog: &Dict, budget: &Budget) -> PyResult<Vec<Signature>> {
-    let mut out = Vec::new();
+    let mut out = BudgetVec::new(budget);
     let Some(form) = (match catalog.get("AcroForm") {
         Some(form) => dict(resolved(opened, form, budget)?),
         None => None,
     }) else {
-        return Ok(out);
+        return Ok(out.into_vec());
     };
     let Some(Value::Array(fields)) = (match form.get("Fields") {
         Some(fields) => resolved(opened, fields, budget)?,
         None => None,
     }) else {
-        return Ok(out);
+        return Ok(out.into_vec());
     };
     // A node: its object, the full name of its parent, its inherited
     // `/FT`, and its depth.
-    let mut pending: Vec<(u32, String, bool, usize)> = fields
-        .iter()
-        .rev()
-        .filter_map(|field| match field {
+    let mut pending = BudgetVec::new(budget);
+    pending
+        .try_extend(fields.iter().rev().filter_map(|field| match field {
             Value::Reference(reference) => Some((reference.number(), String::new(), false, 1)),
             _ => None,
-        })
-        .collect();
-    let mut visited = Vec::new();
+        }))
+        .map_err(|error| limit_error(&error))?;
+    let mut visited = BudgetVec::new(budget);
     while let Some((number, parent, inherited, depth)) = pending.pop() {
+        budget.poll().map_err(|error| limit_error(&error))?;
         if visited.contains(&number) {
             continue;
         }
-        visited.push(number);
+        visited
+            .try_push(number)
+            .map_err(|error| limit_error(&error))?;
         if visited.len() > MAX_NODES {
             return Err(PdfError::new_err(format!(
                 "AcroForm field tree exceeds the {MAX_NODES}-node safety limit"
@@ -230,6 +240,17 @@ fn signature_fields(opened: &Version, catalog: &Dict, budget: &Budget) -> PyResu
         let Some(node) = dict(object(opened, number, budget)?) else {
             continue;
         };
+        if let Some(Value::String(partial)) = node.get("T") {
+            // The decoded partial and the joined full name can coexist.
+            budget
+                .charge(
+                    LimitCode::MemorySize,
+                    (parent.len() as u64)
+                        .saturating_add((partial.as_bytes().len() as u64).saturating_mul(6))
+                        .saturating_add(1),
+                )
+                .map_err(|error| limit_error(&error))?;
+        }
         let name = match node.get("T") {
             Some(Value::String(partial)) if parent.is_empty() => text_string(partial.as_bytes()),
             Some(Value::String(partial)) => {
@@ -246,7 +267,10 @@ fn signature_fields(opened: &Version, catalog: &Dict, budget: &Budget) -> PyResu
             && let Some(signature) = dict(resolved(opened, value, budget)?)
             && let Some(ranges) = byte_ranges(&signature)
         {
-            out.push(Signature {
+            budget
+                .charge(LimitCode::MemorySize, name.len() as u64)
+                .map_err(|error| limit_error(&error))?;
+            out.try_push(Signature {
                 name: name.clone(),
                 field: number,
                 value: match value {
@@ -254,7 +278,8 @@ fn signature_fields(opened: &Version, catalog: &Dict, budget: &Budget) -> PyResu
                     _ => None,
                 },
                 ranges,
-            });
+            })
+            .map_err(|error| limit_error(&error))?;
         }
         if let Some(kids) = node.get("Kids")
             && let Some(Value::Array(kids)) = resolved(opened, kids, budget)?
@@ -266,12 +291,17 @@ fn signature_fields(opened: &Version, catalog: &Dict, budget: &Budget) -> PyResu
             }
             for kid in kids.iter().rev() {
                 if let Value::Reference(reference) = kid {
-                    pending.push((reference.number(), name.clone(), signature, depth + 1));
+                    budget
+                        .charge(LimitCode::MemorySize, name.len() as u64)
+                        .map_err(|error| limit_error(&error))?;
+                    pending
+                        .try_push((reference.number(), name.clone(), signature, depth + 1))
+                        .map_err(|error| limit_error(&error))?;
                 }
             }
         }
     }
-    Ok(out)
+    Ok(out.into_vec())
 }
 
 /// Returns the two byte ranges of a signature's `/ByteRange`.
@@ -313,6 +343,10 @@ impl Claim {
 
 /// Returns the claims of the metadata that reads see that the written
 /// objects break.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most two claims, two fixed reasons per claim, and MAX_NAMED object numbers per reason"
+)]
 fn claims(version: &Version, written: &[u32], budget: &Budget) -> PyResult<Vec<Finding>> {
     let mut out = Vec::new();
     if written.is_empty() {
@@ -352,6 +386,10 @@ fn claims(version: &Version, written: &[u32], budget: &Budget) -> PyResult<Vec<F
 
 /// Returns the PDF/A-1, PDF/A-2, PDF/A-4, and PDF/UA claims of XMP
 /// metadata. A PDF/A-3 claim breaks on nothing that the report checks.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most one PDF/A and one PDF/UA claim"
+)]
 fn read_claims(xmp: &[u8]) -> Vec<Claim> {
     let mut out = Vec::new();
     if let Some(part) = property(xmp, b"pdfaid:part").and_then(number) {
@@ -436,6 +474,10 @@ fn number(bytes: &[u8]) -> Option<u32> {
 /// PDF/A-2, and PDF/A-4, other than PDF/A-4f, one that is PDF/A-1, PDF/A-2,
 /// or PDF/A-4 (ISO 19005-2 section 6.8, ISO 19005-4 section 6.9). PDF/UA
 /// requires every annotation in the structure tree.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most the two fixed reasons for a PDF/A-1 claim, or one for the other claim kinds"
+)]
 fn breaks(claim: Claim, value: &Value, budget: &Budget) -> PyResult<Vec<&'static str>> {
     let mut out = Vec::new();
     match claim {
@@ -473,6 +515,10 @@ fn breaks(claim: Claim, value: &Value, budget: &Budget) -> PyResult<Vec<&'static
 /// file specification with an embedded file or a name dictionary with
 /// embedded files: the `/EF` and `/EmbeddedFiles` keys that PDF/A-1
 /// forbids.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one pending pair per node of the already parsed direct Value tree; the walk stops at MAX_NESTING"
+)]
 fn has_embedded_file(value: &Value) -> bool {
     let mut pending = vec![(value, 0)];
     while let Some((value, depth)) = pending.pop() {
@@ -530,6 +576,10 @@ fn is_embedded_file_outside(value: &Value, parts: &[u32], budget: &Budget) -> Py
 /// what PDF/A-1 forbids as transparency (ISO 19005-1 section 6.4): a soft
 /// mask other than `/None`, a constant alpha below 1, a blend mode other
 /// than `/Normal` or `/Compatible`, or a transparency group.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one pending pair per node of the already parsed direct Value tree; the walk stops at MAX_NESTING"
+)]
 fn has_transparency(value: &Value) -> bool {
     let mut pending = vec![(value, 0)];
     while let Some((value, depth)) = pending.pop() {

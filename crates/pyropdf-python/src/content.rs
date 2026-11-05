@@ -31,6 +31,10 @@ type Content<'py> = (Vec<Bound<'py, PyAny>>, Bound<'py, PyBytes>);
 /// content with `content_input_size`, and `max_operations` the operations
 /// with `content_operation_count`; `None` lifts either.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "ContentInputSize checks the borrowed Python buffer once before this copy (DESIGN section 9)"
+)]
 pub fn parse_operations<'py>(
     py: Python<'py>,
     data: &[u8],
@@ -79,6 +83,10 @@ pub fn page_operations<'py>(
 }
 
 /// Returns the operations in the tagged form.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one item per budgeted content operation, and one operand per value parsed under that budget"
+)]
 fn tagged<'py>(py: Python<'py>, operations: &Operations) -> PyResult<Content<'py>> {
     let mut items = Vec::new();
     items.try_reserve_exact(operations.len()).map_err(|error| {
@@ -123,6 +131,10 @@ fn tagged<'py>(py: Python<'py>, operations: &Operations) -> PyResult<Content<'py
 
 /// Returns an operand in the tagged form; `depth` counts the arrays and
 /// dictionaries around it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one item per parsed array element; content input and parsing are budgeted and nesting is checked"
+)]
 fn operand<'py>(py: Python<'py>, value: &Value, depth: usize) -> PyResult<Bound<'py, PyAny>> {
     match value {
         // hayro-syntax reads no reference in content, and a stream only as
@@ -160,6 +172,10 @@ fn operand<'py>(py: Python<'py>, value: &Value, depth: usize) -> PyResult<Bound<
 }
 
 /// Returns the entries of a dictionary at `depth` as `(key, value)` pairs.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one pair per parsed dictionary entry; content input and parsing are budgeted and nesting is checked"
+)]
 fn entries<'py>(
     py: Python<'py>,
     dict: &Dict,

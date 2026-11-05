@@ -54,6 +54,10 @@ pub(crate) enum Step {
 impl<'py> FromPyObject<'_, 'py> for Step {
     type Error = PyErr;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this is PyO3 argument conversion, before the binding body and its operation budget"
+    )]
     fn extract(step: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(key) = step.cast::<PyBytes>() {
             return Ok(Self::Key(key.as_bytes().to_vec()));
@@ -63,6 +67,10 @@ impl<'py> FromPyObject<'_, 'py> for Step {
 }
 
 /// Describes a handle for errors, as `12 0 R/Kids[3]` or `trailer`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one slash and decoded key per already materialized path step, or one formatted usize index"
+)]
 fn describe(root: Root, path: &[Step]) -> String {
     let mut text = match root {
         Some((number, generation)) => format!("{number} {generation} R"),
@@ -212,12 +220,17 @@ fn tagged<'py>(
 
 /// Returns the value that a tagged Python value writes, reading the
 /// containers that it copies from `version`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each dictionary entry charges enough for its amortized backing capacity before insertion; arrays and bytes use BudgetVec"
+)]
 fn untagged(
     value: &Bound<'_, PyAny>,
     version: &Version,
     depth: usize,
     budget: &Budget,
 ) -> PyResult<Value> {
+    budget.poll().map_err(|error| limit_error(&error))?;
     if value.is_none() {
         return Ok(Value::Null);
     }
@@ -232,19 +245,23 @@ fn untagged(
     match tag.as_str() {
         "f" => {
             let number: f64 = item(1)?.extract()?;
-            let lexeme: Option<Vec<u8>> = item(2)?.extract()?;
+            let lexeme: Option<Bound<'_, PyBytes>> = item(2)?.extract()?;
             match lexeme {
-                Some(lexeme) => Real::from_lexeme(Bytes::from(lexeme))
+                Some(lexeme) => Real::from_lexeme(Bytes::from(input_bytes(&lexeme, budget)?))
                     .map(Value::Real)
                     .ok_or_else(|| PyValueError::new_err("a real's lexeme is not a PDF real")),
                 None if number.is_finite() => Ok(Value::from(number)),
                 None => Err(PyValueError::new_err("a real must be finite")),
             }
         }
-        "n" => Ok(Value::Name(Name::new(item(1)?.extract::<Vec<u8>>()?))),
-        "s" => Ok(Value::String(PdfString::literal(
-            item(1)?.extract::<Vec<u8>>()?,
-        ))),
+        "n" => Ok(Value::Name(Name::new(input_bytes(
+            item(1)?.cast::<PyBytes>()?,
+            budget,
+        )?))),
+        "s" => Ok(Value::String(PdfString::literal(input_bytes(
+            item(1)?.cast::<PyBytes>()?,
+            budget,
+        )?))),
         "r" => Ok(Value::Reference(Reference::new(
             item(1)?.extract()?,
             item(2)?.extract()?,
@@ -257,20 +274,31 @@ fn untagged(
         "a" => {
             let items = item(1)?;
             let items = items.cast::<PyList>()?;
-            let mut array = Array::new();
+            let mut array = BudgetVec::new(budget);
+            array
+                .try_reserve_exact(items.len())
+                .map_err(|error| limit_error(&error))?;
             for element in items.iter() {
-                array.push(untagged(&element, version, depth + 1, budget)?);
+                array
+                    .try_push(untagged(&element, version, depth + 1, budget)?)
+                    .map_err(|error| limit_error(&error))?;
             }
-            Ok(Value::Array(array))
+            Ok(Value::Array(Array::from(array.into_vec())))
         }
         "d" => {
             let entries = item(1)?;
             let entries = entries.cast::<PyList>()?;
             let mut dict = Dict::new();
             for entry in entries.iter() {
-                let (key, element): (Vec<u8>, Bound<'_, PyAny>) = entry.extract()?;
+                let (key, element): (Bound<'_, PyBytes>, Bound<'_, PyAny>) = entry.extract()?;
+                budget
+                    .charge(
+                        LimitCode::MemorySize,
+                        (4 * size_of::<(Name, Value)>()) as u64,
+                    )
+                    .map_err(|error| limit_error(&error))?;
                 dict.insert(
-                    Name::new(key),
+                    Name::new(input_bytes(&key, budget)?),
                     untagged(&element, version, depth + 1, budget)?,
                 );
             }
@@ -280,10 +308,20 @@ fn untagged(
             let root: Root = item(1)?.extract()?;
             let path: Vec<Step> = item(2)?.extract()?;
             let value = root_value(version, root, &path, budget)?;
-            Ok(walk(&value, root, &path)?.clone())
+            refs::copy_for_edit(walk(&value, root, &path)?, budget)
+                .map_err(|error| store_error(&error))
         }
         _ => Err(PyTypeError::new_err(format!("unknown value tag {tag:?}"))),
     }
+}
+
+/// Checks the borrowed Python bytes before allocating their Rust copy.
+fn input_bytes(bytes: &Bound<'_, PyBytes>, budget: &Budget) -> PyResult<Vec<u8>> {
+    let mut copied = BudgetVec::new(budget);
+    copied
+        .try_extend_from_slice(bytes.as_bytes())
+        .map_err(|error| limit_error(&error))?;
+    Ok(copied.into_vec())
 }
 
 /// Writes `value` as the root of a handle: the trailer, or an object that
@@ -320,7 +358,11 @@ fn change(
     change: impl FnOnce(&mut Value, &Version, &Budget) -> PyResult<()>,
 ) -> PyResult<()> {
     document.edit(py, |transaction, budget| {
-        let mut value = (*root_value(transaction.version(), root, path, budget)?).clone();
+        let mut value = refs::copy_for_edit(
+            root_value(transaction.version(), root, path, budget)?.as_ref(),
+            budget,
+        )
+        .map_err(|error| store_error(&error))?;
         change(
             walk_mut(&mut value, root, path)?,
             transaction.version(),
@@ -403,6 +445,10 @@ pub fn object_get<'py>(
 /// Returns the keys of the dictionary, or the stream's dictionary, that
 /// `root` and `path` name, in order.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one Python key per entry of the dictionary already parsed under the operation budget"
+)]
 pub fn object_keys<'py>(
     py: Python<'py>,
     document: &_Document,
@@ -443,6 +489,10 @@ pub fn object_len(document: &_Document, root: Root, path: Vec<Step>) -> PyResult
 /// Writes the tagged `value` at `step` of the container that `root` and
 /// `path` name, in one transaction.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one caller-supplied key is inserted per edit; the value and existing container are copied through the budget"
+)]
 pub fn object_set(
     py: Python<'_>,
     document: &_Document,
@@ -503,6 +553,10 @@ pub fn object_delete(
 /// Inserts the tagged `value` before `index`, at most the length, in the
 /// array that `root` and `path` name, in one transaction.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one element is inserted per edit; the value and existing container are copied through the budget"
+)]
 pub fn object_insert(
     py: Python<'_>,
     document: &_Document,
@@ -574,6 +628,10 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
 /// Sets the data of `stream` to `data`, given decoded, compressed with
 /// `/FlateDecode` when `compress`, and drops its previous filters. The copy
 /// and the compression are charged to `budget`, and compression polls it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inserts only the fixed Filter key"
+)]
 pub(crate) fn set_data(
     stream: &mut Stream,
     data: &[u8],

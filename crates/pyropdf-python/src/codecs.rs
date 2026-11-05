@@ -7,6 +7,8 @@
 
 use std::io::{self, Write};
 
+use pyropdf_store::budget::{Budget, BudgetVec};
+
 use crate::pixel_ops::{self, Decoded, Layout};
 
 /// The resolution of formats that state none.
@@ -87,6 +89,10 @@ pub fn is_pnm(data: &[u8]) -> bool {
 
 /// Decodes a PBM, PGM, PPM, or PAM image, plain or raw, at any maximum
 /// value up to 65535, into 8-bit gray or RGB samples.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "check_size bounds dimensions to MAX_PIXELS before producing at most four samples per pixel"
+)]
 pub fn decode_pnm(data: &[u8]) -> Result<Decoded, String> {
     let kind = data[1];
     if kind == b'7' {
@@ -177,6 +183,10 @@ pub fn decode_pnm(data: &[u8]) -> Result<Decoded, String> {
 
 /// Reads `count` raw samples, one byte each below a maximum of 256 and two
 /// big-endian bytes from it on.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the caller passes a sample count derived from dimensions checked against MAX_PIXELS and at most four channels"
+)]
 fn raw_samples(rest: &[u8], count: usize, max: u32) -> Result<Vec<u8>, String> {
     let width = if max < 256 { 1 } else { 2 };
     if rest.len() < count * width {
@@ -305,6 +315,10 @@ impl Field {
 /// decodes to gray when every entry is gray, 24-bit BGR, and 16 or 32 bits
 /// in the default or stated bit fields, with alpha when a field holds it.
 /// Run-length and embedded JPEG or PNG data is refused.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "check_size bounds the raster to MAX_PIXELS and the indexed palette to at most 256 entries"
+)]
 pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
     let offset = u32_at(data, 10)? as usize;
     let header = u32_at(data, 14)? as usize;
@@ -500,6 +514,10 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
 /// a delta or an end of line skips take index 0, as in Pillow. Every code
 /// takes two bytes and writes at most 255 pixels, which bounds the work by
 /// the input.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the caller checks width times height against MAX_PIXELS before allocating one index per pixel"
+)]
 fn expand_rle(
     data: &[u8],
     width: usize,
@@ -579,6 +597,10 @@ pub fn is_gif(data: &[u8]) -> bool {
 /// Decodes the first frame of a GIF onto its logical screen, as Pillow
 /// opens it: RGB, or RGBA where the frame has a transparent color or leaves
 /// part of the screen uncovered.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "check_size bounds the logical screen to MAX_PIXELS before producing at most four samples per pixel"
+)]
 pub fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
     let invalid = |error: gif::DecodingError| format!("not a GIF image: {error}");
     let mut options = gif::DecodeOptions::new();
@@ -644,6 +666,10 @@ pub fn is_tiff(data: &[u8]) -> bool {
 /// a palette, of 1 to 16 bits, uncompressed or compressed with PackBits,
 /// LZW, Deflate, JPEG, or CCITT. Sixteen-bit samples keep their high byte,
 /// and associated alpha is divided out.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "decoder limits bound decoded buffers and IFD values; check_size bounds final output to MAX_PIXELS"
+)]
 pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
     use tiff::ColorType;
     use tiff::decoder::{Decoder, DecodingResult, Limits};
@@ -667,7 +693,7 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
         == Some(3)
     {
         let map = decoder.get_tag_u16_vec(Tag::ColorMap).map_err(invalid)?;
-        let copy = palette_as_gray(data)
+        let copy = palette_as_gray(data)?
             .ok_or_else(|| "the TIFF palette image has no photometric entry".to_owned())?;
         Some((map, copy))
     } else {
@@ -777,44 +803,54 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
 /// Returns a copy of the TIFF `data` whose first image has photometric
 /// interpretation 1, gray with black at 0, in place of 3, a palette, or
 /// `None` if its first directory has no such entry.
-fn palette_as_gray(data: &[u8]) -> Option<Vec<u8>> {
+fn palette_as_gray(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
     let little = data.starts_with(b"II");
-    let u16_at = |at: usize| {
-        let bytes = [*data.get(at)?, *data.get(at + 1)?];
-        Some(if little {
-            u16::from_le_bytes(bytes)
+    let value = (|| {
+        let little = data.starts_with(b"II");
+        let u16_at = |at: usize| {
+            let bytes = [*data.get(at)?, *data.get(at + 1)?];
+            Some(if little {
+                u16::from_le_bytes(bytes)
+            } else {
+                u16::from_be_bytes(bytes)
+            })
+        };
+        let word_at = |at: usize, size: usize| -> Option<u64> {
+            let bytes = data.get(at..at + size)?;
+            Some(bytes.iter().enumerate().fold(0, |value, (index, &byte)| {
+                let shift = if little { index } else { size - 1 - index } * 8;
+                value | u64::from(byte) << shift
+            }))
+        };
+        let big = u16_at(2)? == 43;
+        let (offset, count_size, entry_size) = if big {
+            (usize::try_from(word_at(8, 8)?).ok()?, 8, 20)
         } else {
-            u16::from_be_bytes(bytes)
-        })
+            (usize::try_from(word_at(4, 4)?).ok()?, 2, 12)
+        };
+        let count = usize::try_from(word_at(offset, count_size)?).ok()?;
+        let entries = offset + count_size;
+        let at = (0..count)
+            .map(|index| entries + index * entry_size)
+            .find(|&at| u16_at(at) == Some(262) && u16_at(at + 2) == Some(3))?;
+        // A SHORT value sits at the start of the entry's value field.
+        let value = at + if big { 12 } else { 8 };
+        (u16_at(value)? == 3).then_some(())?;
+        Some(value)
+    })();
+    let Some(value) = value else {
+        return Ok(None);
     };
-    let word_at = |at: usize, size: usize| -> Option<u64> {
-        let bytes = data.get(at..at + size)?;
-        Some(bytes.iter().enumerate().fold(0, |value, (index, &byte)| {
-            let shift = if little { index } else { size - 1 - index } * 8;
-            value | u64::from(byte) << shift
-        }))
-    };
-    let big = u16_at(2)? == 43;
-    let (offset, count_size, entry_size) = if big {
-        (usize::try_from(word_at(8, 8)?).ok()?, 8, 20)
-    } else {
-        (usize::try_from(word_at(4, 4)?).ok()?, 2, 12)
-    };
-    let count = usize::try_from(word_at(offset, count_size)?).ok()?;
-    let entries = offset + count_size;
-    let at = (0..count)
-        .map(|index| entries + index * entry_size)
-        .find(|&at| u16_at(at) == Some(262) && u16_at(at + 2) == Some(3))?;
-    // A SHORT value sits at the start of the entry's value field.
-    let value = at + if big { 12 } else { 8 };
-    (u16_at(value)? == 3).then_some(())?;
-    let mut copy = data.to_vec();
+    let budget = Budget::default();
+    let mut copy = BudgetVec::new(&budget);
+    copy.try_extend_from_slice(data)
+        .map_err(|error| error.to_string())?;
     copy[value..value + 2].copy_from_slice(&if little {
         1u16.to_le_bytes()
     } else {
         1u16.to_be_bytes()
     });
-    Some(copy)
+    Ok(Some(copy.into_vec()))
 }
 
 /// Returns the resolution that a TIFF states, in dots per inch.
@@ -928,6 +964,10 @@ pub fn write_pnm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result
 
 /// Writes raw PBM from gray samples without alpha: a sample below 128 is
 /// black.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one packed scanline of a Pixmap whose pixel count is bounded by MAX_PIXELS"
+)]
 pub fn write_pbm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
     write!(out, "P4\n{} {}\n", layout.width, layout.height)?;
     let width = layout.width as usize;
@@ -946,6 +986,10 @@ pub fn write_pbm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result
 
 /// Writes a flattened version 1 PSD in grayscale or RGB mode, alpha as its
 /// extra channel, with the resolution, without compression.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one scanline of a Pixmap whose pixel count is bounded by MAX_PIXELS"
+)]
 pub fn write_psd(
     out: &mut dyn Write,
     layout: Layout,
@@ -992,6 +1036,10 @@ pub fn write_psd(
 /// Writes a one-page PostScript Level 2 document of gray or RGB samples
 /// without alpha, the page sized to the image at its resolution, and the
 /// samples in ASCII85.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the ASCII85 line is flushed at ASCII85_LINE and can exceed it by at most one five-byte group"
+)]
 pub fn write_ps(
     out: &mut dyn Write,
     layout: Layout,

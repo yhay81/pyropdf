@@ -64,6 +64,10 @@ pub fn page_image(
 }
 
 /// Returns the pixmap of `image`, its alpha interleaved after each pixel.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one interleaved output sample per byte of the engine's budgeted color and alpha buffers"
+)]
 fn pixmap(image: DecodedImage) -> PyResult<Pixmap> {
     let DecodedImage {
         width,
@@ -90,6 +94,10 @@ fn pixmap(image: DecodedImage) -> PyResult<Pixmap> {
 /// `root`, its other filters decoded within the document's limits; `None`
 /// when the last filter is not an image filter or the stream is not one.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "filter names and decode parameters copy only entries of the budget-parsed image dictionary"
+)]
 pub fn image_stored<'py>(
     py: Python<'py>,
     document: &_Document,
@@ -374,6 +382,10 @@ fn jpeg_samples(data: &[u8]) -> Result<Decoded, String> {
     Ok((width as u32, height as u32, components, samples, None))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "check_size bounds the raster to MAX_PIXELS; the output copies the decoded samples one-for-one with the u8 component count"
+)]
 fn jpx_samples(data: &[u8]) -> Result<Decoded, String> {
     use hayro_jpeg2000::{DecodeSettings, DecoderContext, Image};
 
@@ -412,6 +424,10 @@ fn jpx_samples(data: &[u8]) -> Result<Decoded, String> {
 /// JPEG data that decodes to them: four components as CMYK with an Adobe
 /// APP14 marker of transform 0 when `adobe`, and without one otherwise.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the borrowed input is checked once against the nonzero u16 dimensions and 1, 3, or 4 components before its sole inverted copy"
+)]
 pub fn encode_jpeg_samples<'py>(
     py: Python<'py>,
     data: &[u8],

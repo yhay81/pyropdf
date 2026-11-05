@@ -81,22 +81,25 @@ def test_independent_operations_do_not_share_counters() -> None:
 
 
 def test_a_nested_canvas_charges_the_outer_operation() -> None:
-    document = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=100))
+    document = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=1000))
     core = document._core()
     outer = _core.begin_canvas(core)
     try:
         outer.charge("memory_size", 60)
         inner = _core.begin_canvas(core)
-        assert inner.used("memory_size") == 60
+        # The nested savepoint itself also belongs to this operation.
+        used = inner.used("memory_size")
+        assert used > 60
+        remaining = 1000 - used
         with pytest.raises(pyropdf.LimitError) as error:
-            inner.charge("memory_size", 41)
+            inner.charge("memory_size", remaining + 1)
         assert error.value.code == "memory_size"
-        inner.charge("memory_size", 40)
+        inner.charge("memory_size", remaining)
         # Only the innermost canvas is active.
         with pytest.raises(ValueError, match="not active"):
             outer.used("memory_size")
         _core.end_transaction(core, True)
-        assert outer.used("memory_size") == 100
+        assert outer.used("memory_size") == 1000
         with pytest.raises(ValueError, match="not active"):
             inner.poll()
     finally:

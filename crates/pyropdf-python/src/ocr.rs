@@ -127,6 +127,7 @@ impl _OcrEngine {
 /// resources are copied into the page first. The page's earlier content is
 /// wrapped in `q` and `Q`, so its graphics state does not reach the layer.
 #[pyfunction]
+#[expect(clippy::disallowed_methods, reason = "adds one OCR font resource key")]
 pub fn insert_ocr_layer(
     py: Python<'_>,
     document: &_Document,
@@ -194,6 +195,10 @@ pub fn insert_ocr_layer(
             }
             let font = add_font(transaction, layer.to_unicode, budget)?;
             fonts.insert(Name::from(name.as_str()), Value::Reference(font));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Font key"
+            )]
             resources.insert(Name::from("Font"), Value::Dict(fonts));
             let mut array = BudgetVec::new(budget);
             if !contents.is_empty() {
@@ -210,10 +215,18 @@ pub fn insert_ocr_layer(
             array
                 .try_push(add_stream(transaction, &layer.content, budget)?)
                 .map_err(|error| limit_error(&error))?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Contents key"
+            )]
             page_dict.insert(
                 Name::from("Contents"),
                 Value::Array(Array::from(array.into_vec())),
             );
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Resources key"
+            )]
             page_dict.insert(Name::from("Resources"), Value::Dict(resources));
             transaction
                 .write(number, &Value::Dict(page_dict), budget)
@@ -240,6 +253,10 @@ fn add_stream(transaction: &mut Transaction, data: &[u8], budget: &Budget) -> Py
 }
 
 /// Builds a dictionary of `entries`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "N is a compile-time array size at each call, bounding the dictionary entry count"
+)]
 fn dict<const N: usize>(entries: [(&str, Value); N]) -> Value {
     let mut dict = Dict::new();
     for (key, value) in entries {
@@ -252,6 +269,10 @@ fn name(name: &str) -> Value {
     Value::Name(Name::from(name))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "N is a compile-time array size at each call, bounding the integer array length"
+)]
 fn integers<const N: usize>(values: [i64; N]) -> Value {
     Value::Array(Array::from(values.map(Value::Integer).to_vec()))
 }

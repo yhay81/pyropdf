@@ -17,6 +17,10 @@ use pyropdf_engine::extract::{
     BBox, BlockTuple, ClipTuple, Contexts, GroupTuple, MarkTuple, PageContent, PaintColumns,
     PaintTuple, PathTable, StateTuple,
 };
+use pyropdf_store::LimitExceeded;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+
+use crate::errors::limit_error;
 
 /// A table whose columns a [`Column`] exposes.
 trait Columns: Send + Sync {
@@ -109,35 +113,56 @@ fn index(index: usize) -> PyResult<u32> {
 impl CharTable {
     /// Returns the columns of the chars of `blocks`, a layout built with
     /// chars.
-    fn new(blocks: &[BlockTuple]) -> PyResult<Self> {
-        let rows: usize = blocks
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "every column reserves its exact row or byte count through the budget before filling it"
+    )]
+    fn new(blocks: &[BlockTuple], budget: &Budget) -> PyResult<Self> {
+        let mut rows = 0usize;
+        let mut text_bytes = 0usize;
+        for span in blocks
             .iter()
             .flat_map(|(_, lines)| lines)
             .flat_map(|line| &line.1)
-            .map(|span| span.1.1.len())
-            .sum();
+        {
+            budget.poll().map_err(|error| limit_error(&error))?;
+            rows = rows
+                .checked_add(span.1.1.len())
+                .ok_or_else(column_overflow)?;
+            for character in &span.1.1 {
+                text_bytes = text_bytes
+                    .checked_add(character.0.len())
+                    .ok_or_else(column_overflow)?;
+            }
+        }
+        let offsets = rows.checked_add(1).ok_or_else(column_overflow)?;
+        i32::try_from(text_bytes)
+            .map_err(|_| PyValueError::new_err("the text of the chars exceeds 2 GiB"))?;
         let mut table = Self {
-            x0: Vec::with_capacity(rows),
-            y0: Vec::with_capacity(rows),
-            x1: Vec::with_capacity(rows),
-            y1: Vec::with_capacity(rows),
-            origin_x: Vec::with_capacity(rows),
-            origin_y: Vec::with_capacity(rows),
-            text_offsets: Vec::with_capacity(rows + 1),
-            text_data: Vec::new(),
-            block: Vec::with_capacity(rows),
-            line: Vec::with_capacity(rows),
-            span: Vec::with_capacity(rows),
-            is_synthetic: Vec::with_capacity(rows),
-            stream: Vec::with_capacity(rows),
-            operation: Vec::with_capacity(rows),
-            synthetic_bits: vec![0; rows.div_ceil(8)],
-            source_bits: vec![0; rows.div_ceil(8)],
+            x0: column_capacity(rows, budget)?,
+            y0: column_capacity(rows, budget)?,
+            x1: column_capacity(rows, budget)?,
+            y1: column_capacity(rows, budget)?,
+            origin_x: column_capacity(rows, budget)?,
+            origin_y: column_capacity(rows, budget)?,
+            text_offsets: column_capacity(offsets, budget)?,
+            text_data: column_capacity(text_bytes, budget)?,
+            block: column_capacity(rows, budget)?,
+            line: column_capacity(rows, budget)?,
+            span: column_capacity(rows, budget)?,
+            is_synthetic: column_capacity(rows, budget)?,
+            stream: column_capacity(rows, budget)?,
+            operation: column_capacity(rows, budget)?,
+            synthetic_bits: column_capacity(rows.div_ceil(8), budget)?,
+            source_bits: column_capacity(rows.div_ceil(8), budget)?,
         };
+        table.synthetic_bits.resize(rows.div_ceil(8), 0);
+        table.source_bits.resize(rows.div_ceil(8), 0);
         table.text_offsets.push(0);
         for (block_index, (_, lines)) in blocks.iter().enumerate() {
             for (line_index, line) in lines.iter().enumerate() {
                 for (span_index, span) in line.1.iter().enumerate() {
+                    budget.poll().map_err(|error| limit_error(&error))?;
                     for (text, (x0, y0, x1, y1), (x, y), synthetic, source) in &span.1.1 {
                         let row = table.x0.len();
                         table.x0.push(*x0);
@@ -195,6 +220,19 @@ impl CharTable {
     }
 }
 
+fn column_overflow() -> PyErr {
+    limit_error(&LimitExceeded::new(LimitCode::MemorySize))
+}
+
+/// Reserves a column once, retaining its memory charge for the operation.
+fn column_capacity<T>(count: usize, budget: &Budget) -> PyResult<Vec<T>> {
+    let mut column = BudgetVec::new(budget);
+    column
+        .try_reserve_exact(count)
+        .map_err(|error| limit_error(&error))?;
+    Ok(column.into_vec())
+}
+
 impl Columns for CharTable {
     /// Returns the bytes of the column `name` for the rows `start..stop`,
     /// with its item format: `text_offsets` holds one offset more, and
@@ -229,9 +267,9 @@ pub struct CharColumns {
 impl CharColumns {
     /// Returns the columns of the chars of `blocks`, a layout built with
     /// chars.
-    pub(crate) fn new(blocks: &[BlockTuple]) -> PyResult<Self> {
+    pub(crate) fn new(blocks: &[BlockTuple], budget: &Budget) -> PyResult<Self> {
         Ok(Self {
-            table: Arc::new(CharTable::new(blocks)?),
+            table: Arc::new(CharTable::new(blocks, budget)?),
         })
     }
 }
@@ -253,6 +291,10 @@ impl CharColumns {
 
     /// Returns the rows `start..stop` as the tuples that `Char` records are
     /// built from.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "rows_of checks the requested range against the already budgeted column table"
+    )]
     fn rows(&self, start: usize, stop: usize) -> PyResult<Vec<RowTuple<'_>>> {
         crate::errors::boundary(|| {
             rows_of(start, stop, self.table.len())?;
@@ -477,6 +519,10 @@ impl PathColumns {
 
     /// Returns the rows `start..stop` as the tuples that `Path` records are
     /// built from.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "rows_of checks the requested range against the already budgeted column table"
+    )]
     fn rows(&self, start: usize, stop: usize) -> PyResult<Vec<PathRow<'_>>> {
         crate::errors::boundary(|| {
             rows_of(start, stop, self.table.rows())?;
@@ -807,6 +853,10 @@ unsafe extern "C" fn release_schema(schema: *mut ArrowSchema) {
 
 /// Returns the Arrow schema of `field` and its children. The recursion
 /// follows the static fields of this module, two levels deep at most.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "recursion and collection lengths follow only the static CHAR_STRUCT and PATH_STRUCT fields"
+)]
 fn schema(field: &Field) -> ArrowSchema {
     let (children, private_data) = if field.children.is_empty() {
         (ptr::null_mut(), ptr::null_mut())
@@ -926,6 +976,10 @@ fn array(
 
 /// Returns the rows `start..stop` of `table` as an Arrow struct array of
 /// [`CHAR_STRUCT`], whose children read the columns from `start`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the child arrays correspond exactly to the 13 static CHAR_STRUCT fields"
+)]
 fn char_array(table: &Arc<CharTable>, start: usize, stop: usize) -> ArrowArray {
     let owner: Owner = table.clone();
     let length = stop - start;
