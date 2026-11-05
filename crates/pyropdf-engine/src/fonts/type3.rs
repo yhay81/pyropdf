@@ -54,7 +54,7 @@ pub struct Glyph {
     pub width: f64,
     /// The ink, in glyph space: `[x0, y0, x1, y1]`. `None` for no ink.
     pub ink: Option<[f64; 4]>,
-    /// The procedure, which starts with `d0` or `d1` and this width.
+    /// The procedure, whose first line is this width followed by `0 d0`.
     pub procedure: Vec<u8>,
     /// What the procedure names, as `(category, name, value)`: an image is
     /// `(XObject, name, reference)`. A font's glyphs share one dictionary,
@@ -73,6 +73,10 @@ struct Font {
     procedures: Dict,
     resources: Dict,
     ink: Option<[f64; 4]>,
+    /// Vertical glyph units per source-font unit. The first positive width
+    /// chooses this once; later drawings keep the same coordinate system.
+    y_scale: f64,
+    has_width: bool,
     /// The text of each code; empty until a drawing gives it one.
     texts: Vec<String>,
     /// Whether the dictionary and the CMap differ from the document's.
@@ -114,7 +118,7 @@ impl<'b> Fonts<'b> {
             if fonts.fonts.iter().any(|font| font.number == number) {
                 continue;
             }
-            let Some(font) = Font::read(version, number, budget)? else {
+            let Some(font) = Font::read(version, number, em, budget)? else {
                 continue;
             };
             let at = u32::try_from(fonts.fonts.len()).unwrap_or(u32::MAX);
@@ -189,16 +193,21 @@ impl<'b> Fonts<'b> {
             self.budget.poll()?;
             let at = self.with_room(transaction)?;
             let font = &mut self.fonts[at];
+            font.normalize_height(transaction, glyph.width, self.budget)?;
             let code = u8::try_from(font.names.len()).unwrap_or(u8::MAX);
             let procedure = transaction.allocate()?;
-            let stream = stream_of(&glyph.procedure, self.budget)?;
+            let stream = if font.y_scale == 1.0 {
+                stream_of(&glyph.procedure, self.budget)?
+            } else {
+                scaled_procedure(&glyph.procedure, font.y_scale, self.budget)?
+            };
             transaction.write(procedure.number(), &Value::from(stream), self.budget)?;
             font.procedures
                 .insert(glyph.name.clone(), Value::Reference(procedure));
             for (category, name, value) in glyph.resources {
                 insert_resource(&mut font.resources, category, name, value);
             }
-            font.ink = union(font.ink, glyph.ink);
+            font.ink = union(font.ink, scaled_box(glyph.ink, font.y_scale));
             font.widths.push(glyph.width);
             font.names.push(glyph.name.clone());
             font.texts.push(String::new());
@@ -294,6 +303,8 @@ impl Font {
             procedures: Dict::new(),
             resources: Dict::new(),
             ink: None,
+            y_scale: 1.0,
+            has_width: false,
             texts: Vec::new(),
             changed: true,
             text_changed: true,
@@ -306,7 +317,7 @@ impl Font {
         clippy::disallowed_methods,
         reason = "the Differences hold GLYPHS_PER_FONT names at most, checked above, and Widths as many"
     )]
-    fn read(version: &Version, number: u32, budget: &Budget) -> Result<Option<Self>> {
+    fn read(version: &Version, number: u32, em: u16, budget: &Budget) -> Result<Option<Self>> {
         let Some(object) = version.get(number, budget)? else {
             return Ok(None);
         };
@@ -314,6 +325,20 @@ impl Font {
             return Ok(None);
         };
         if !is_name(dict.get("Subtype"), b"Type3") {
+            return Ok(None);
+        }
+        let Some(matrix) = read_numbers::<6>(dict.get("FontMatrix")) else {
+            return Ok(None);
+        };
+        let scale = 1.0 / f64::from(em.max(1));
+        if matrix[0] != scale
+            || matrix[3] <= 0.0
+            || [matrix[1], matrix[2], matrix[4], matrix[5]] != [0.0; 4]
+        {
+            return Ok(None);
+        }
+        let y_scale = scale / matrix[3];
+        if !y_scale.is_finite() || y_scale <= 0.0 {
             return Ok(None);
         }
         let Some(Value::Dict(encoding)) = dict.get("Encoding") else {
@@ -374,6 +399,7 @@ impl Font {
         let Some(texts) = read_cmap(&cmap.decoded(budget)?, names.len()) else {
             return Ok(None);
         };
+        let has_width = advances.iter().any(|width| *width > 0.0);
         Ok(Some(Self {
             number,
             dict: dict.clone(),
@@ -383,6 +409,8 @@ impl Font {
             procedures: procedures.clone(),
             resources: resources.clone(),
             ink: read_box(dict.get("FontBBox")),
+            y_scale,
+            has_width,
             texts,
             changed: false,
             text_changed: false,
@@ -429,6 +457,103 @@ impl Font {
         self.changed = false;
         Ok(())
     }
+
+    /// xpdf estimates a Type 3 font's size from its first positive width,
+    /// assuming half an em, then multiplies by FontMatrix's y/x ratio.
+    /// Give glyph space twice that width per vertical em, with the inverse
+    /// scale in every procedure, so this estimate is the actual text size.
+    /// Neither the advance nor the painted geometry changes. See the
+    /// measurements in evidence/colr-glyphs/line-order.md.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "replaces one existing dictionary entry"
+    )]
+    fn normalize_height(
+        &mut self,
+        transaction: &mut Transaction,
+        width: f64,
+        budget: &Budget,
+    ) -> Result<()> {
+        if self.has_width || width <= 0.0 {
+            return Ok(());
+        }
+        self.has_width = true;
+        let Some(mut matrix) = read_numbers::<6>(self.dict.get("FontMatrix")) else {
+            return Ok(());
+        };
+        let ratio = 2.0 * width * matrix[3];
+        if !ratio.is_finite() || ratio <= 0.0 || ratio == 1.0 {
+            return Ok(());
+        }
+        // A previous drawing may have added only zero-width glyphs. Check
+        // every procedure before rewriting any: an explicitly edited one
+        // outside the writer's format keeps its original coordinate system.
+        for (at, (name, width)) in self.names.iter().zip(&self.widths).enumerate() {
+            budget.poll()?;
+            let Some(Value::Reference(reference)) = self.procedures.get(name.as_bytes()) else {
+                return Ok(());
+            };
+            if self.names[..at].iter().any(|previous| {
+                self.procedures.get(previous.as_bytes()) == Some(&Value::Reference(*reference))
+            }) {
+                return Ok(());
+            }
+            let Some(object) = transaction.version().get(reference.number(), budget)? else {
+                return Ok(());
+            };
+            if object.generation() != reference.generation() {
+                return Ok(());
+            }
+            let Value::Stream(stream) = &**object.value() else {
+                return Ok(());
+            };
+            let data = stream.decoded(budget)?;
+            let header = data.split(|byte| *byte == b'\n').next().unwrap_or_default();
+            if header != format!("{width} 0 d0").as_bytes() {
+                return Ok(());
+            }
+        }
+        for name in &self.names {
+            budget.poll()?;
+            let Some(Value::Reference(reference)) = self.procedures.get(name.as_bytes()) else {
+                unreachable!("the first pass checked every procedure");
+            };
+            let object = transaction
+                .version()
+                .get(reference.number(), budget)?
+                .unwrap();
+            let Value::Stream(stream) = &**object.value() else {
+                unreachable!("the first pass checked every procedure");
+            };
+            let stream = scaled_procedure(&stream.decoded(budget)?, ratio, budget)?;
+            transaction.write(reference.number(), &Value::from(stream), budget)?;
+        }
+        matrix[3] = 0.5 / width;
+        self.dict
+            .insert(Name::from("FontMatrix"), array(matrix.map(number)));
+        self.ink = scaled_box(self.ink, ratio);
+        self.y_scale *= ratio;
+        Ok(())
+    }
+}
+
+/// Scales a writer-owned procedure after its first-line d0 operator, which
+/// must remain first. The wrapper's graphics state cannot escape the glyph.
+fn scaled_procedure(data: &[u8], ratio: f64, budget: &Budget) -> Result<Stream> {
+    let Some(end) = data.iter().position(|byte| *byte == b'\n') else {
+        // An empty glyph has only d0: there is no geometry to transform.
+        return stream_of(data, budget);
+    };
+    let mut out = BudgetVec::new(budget);
+    out.try_extend_from_slice(&data[..end])?;
+    out.try_extend_from_slice(format!("\nq 1 0 0 {ratio} 0 0 cm\n").as_bytes())?;
+    out.try_extend_from_slice(&data[end..])?;
+    out.try_extend_from_slice(b"\nQ")?;
+    stream_of(&out, budget)
+}
+
+fn scaled_box(bounds: Option<[f64; 4]>, ratio: f64) -> Option<[f64; 4]> {
+    bounds.map(|[x0, y0, x1, y1]| [x0, y0 * ratio, x1, y1 * ratio])
 }
 
 fn is_name(value: Option<&Value>, name: &[u8]) -> bool {
@@ -499,10 +624,15 @@ fn insert_resource(resources: &mut Dict, category: Name, name: Name, value: Valu
 
 /// Returns the box of the `FontBBox` array `value`, `None` for no ink.
 fn read_box(value: Option<&Value>) -> Option<[f64; 4]> {
+    let bounds = read_numbers(value)?;
+    (bounds != [0.0; 4]).then_some(bounds)
+}
+
+fn read_numbers<const N: usize>(value: Option<&Value>) -> Option<[f64; N]> {
     let Some(Value::Array(array)) = value else {
         return None;
     };
-    let mut bounds = [0.0; 4];
+    let mut bounds = [0.0; N];
     for (at, slot) in bounds.iter_mut().enumerate() {
         *slot = match array.get(at)? {
             Value::Integer(value) => *value as f64,
@@ -510,7 +640,7 @@ fn read_box(value: Option<&Value>) -> Option<[f64; 4]> {
             _ => return None,
         };
     }
-    (bounds != [0.0; 4]).then_some(bounds)
+    Some(bounds)
 }
 
 fn union(a: Option<[f64; 4]>, b: Option<[f64; 4]>) -> Option<[f64; 4]> {
