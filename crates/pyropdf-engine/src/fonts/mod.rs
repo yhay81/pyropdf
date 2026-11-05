@@ -45,8 +45,14 @@ pub enum Format {
 
 /// Returns `data` subset to the glyphs of `keep`, together with the glyphs
 /// that those draw as components or accents; `None` when the program is not
-/// one that this reads, which leaves it as it is.
+/// one that this reads, which leaves it as it is. A program whose tables,
+/// outlines, or Private DICTs overlap, so that a subset would copy them once
+/// each and outgrow it, is not one that this reads.
 pub fn subset(data: &[u8], format: Format, keep: &[u32]) -> Option<Subset> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one glyph per item of `keep`, which the caller holds"
+    )]
     let keep: BTreeSet<u32> = keep.iter().copied().collect();
     match format {
         Format::Sfnt => sfnt::subset(data, &keep),

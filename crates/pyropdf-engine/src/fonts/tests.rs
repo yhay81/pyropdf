@@ -203,6 +203,76 @@ fn programs_once() -> &'static [(String, Format, Vec<u8>)] {
     PROGRAMS.get_or_init(programs)
 }
 
+/// The tables of a TrueType program of `glyphs` glyphs, whose one outline of
+/// `outline` bytes each glyph's range of `loca` addresses as `offsets` gives.
+fn truetype_tables(
+    glyphs: u16,
+    outline: usize,
+    offsets: impl Fn(usize) -> u32,
+) -> Vec<([u8; 4], Vec<u8>)> {
+    let mut head = vec![0; 54];
+    // indexToLocFormat: 32-bit offsets.
+    head[50..52].copy_from_slice(&1_u16.to_be_bytes());
+    let mut maxp = vec![0, 0, 0x50, 0];
+    maxp.extend_from_slice(&glyphs.to_be_bytes());
+    let mut hhea = vec![0; 36];
+    // numberOfHMetrics: one long metric, then a bearing per glyph.
+    hhea[34..36].copy_from_slice(&1_u16.to_be_bytes());
+    let hmtx = vec![0; 4 + 2 * (usize::from(glyphs) - 1)];
+    // A simple glyph: one contour, and the rest of its bytes.
+    let mut glyf = vec![0; outline];
+    glyf[0..2].copy_from_slice(&1_u16.to_be_bytes());
+    let loca = (0..=usize::from(glyphs))
+        .flat_map(|at| offsets(at).to_be_bytes())
+        .collect();
+    vec![
+        (*b"glyf", glyf),
+        (*b"head", head),
+        (*b"hhea", hhea),
+        (*b"hmtx", hmtx),
+        (*b"loca", loca),
+        (*b"maxp", maxp),
+    ]
+}
+
+#[test]
+fn a_program_whose_tables_overlap_is_left_whole() {
+    // Records that all address one large table would copy it once each.
+    let mut tables = truetype_tables(2, 12, |at| if at == 0 { 0 } else { 12 });
+    let whole = super::sfnt::write(&[0, 1, 0, 0], &tables).unwrap();
+    assert!(subset(&whole, Format::Sfnt, &[1]).is_some());
+    let shared = 16;
+    tables.extend((0..shared).map(|at: u8| ([b'x', b'0', b'a' + at, b' '], vec![0; 4])));
+    tables.push((*b"xbig", vec![0; 4096]));
+    let shared = usize::from(shared);
+    let mut data = super::sfnt::write(&[0, 1, 0, 0], &tables).unwrap();
+    let record = |at: usize| 12 + 16 * at;
+    let big = record(tables.len() - 1);
+    let (offset, length) = (big + 8, big + 12);
+    let location: [u8; 8] = data[offset..length + 4].try_into().unwrap();
+    for at in tables.len() - 1 - shared..tables.len() - 1 {
+        data[record(at) + 8..record(at) + 16].copy_from_slice(&location);
+    }
+    assert!(subset(&data, Format::Sfnt, &[1]).is_none());
+}
+
+#[test]
+fn a_program_whose_glyphs_overlap_is_left_whole() {
+    // Offsets that return to the start give every other glyph the whole
+    // outline, which a rewrite would copy once for each.
+    let (glyphs, outline) = (64, 4096_u32);
+    let apart = truetype_tables(glyphs, 4096, |at| if at == 0 { 0 } else { outline });
+    let apart = super::sfnt::write(&[0, 1, 0, 0], &apart).unwrap();
+    let overlapping = truetype_tables(glyphs, 4096, |at| if at % 2 == 0 { 0 } else { outline });
+    let overlapping = super::sfnt::write(&[0, 1, 0, 0], &overlapping).unwrap();
+    let all: Vec<u32> = (0..u32::from(glyphs)).collect();
+    assert!(subset(&apart, Format::Sfnt, &all).is_some());
+    assert!(subset(&overlapping, Format::Sfnt, &all).is_none());
+    let all = all.into_iter().collect();
+    assert!(super::sfnt::compact(&apart, &all).is_some());
+    assert!(super::sfnt::compact(&overlapping, &all).is_none());
+}
+
 #[test]
 fn a_cff_whose_font_dicts_share_a_private_dict_is_left_whole() {
     // Font DICTs that all address one large Private DICT would copy it once
