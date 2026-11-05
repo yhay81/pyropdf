@@ -678,6 +678,7 @@ Document.render(
     annotations: bool = True,
     colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
     hinting: bool = False,
+    glyph_cache: bool = False,
     format: Literal['png', 'jpeg'] = 'png',
     quality: int = 95,
     workers: int | None = None,
@@ -688,9 +689,9 @@ Document.render(
 Render pages of the current version to encoded images, in the order of `pages`.
 
 `dpi`, `matrix`, `alpha`, `background`, `annotations`,
-`colorspace`, and `hinting` mean what they mean to
-`Page.pixmap`, so the default is opaque RGB at 72 dpi, and each
-image is what `page.pixmap(...).to_bytes(format, quality=quality)`
+`colorspace`, `hinting`, and `glyph_cache` mean what they mean
+to `Page.pixmap`, so the default is opaque RGB at 72 dpi, and
+each image is what `page.pixmap(...).to_bytes(format, quality=quality)`
 returns.
 `format` is `"png"` or `"jpeg"` at `quality`, 1 through 100;
 JPEG has no alpha. `pages` holds page indexes, negative ones from
@@ -703,7 +704,9 @@ call starts, so commits from other threads leave the batch as it
 was. The pages render on up to `workers` threads, 1 through 64,
 and up to four CPUs by default, with the GIL released; the threads
 are fewer when their largest rasters would hold more than about
-512 MB at once. `max_size` bounds the encoded bytes of all the
+512 MB at once. With `glyph_cache=True`, each thread keeps the
+glyphs that it rasterized, outside `DocumentLimits`, until the
+call returns. `max_size` bounds the encoded bytes of all the
 images together, 512 MiB by default, with `LimitError` code
 `render_output_size`; `None` leaves it unbounded.
 
