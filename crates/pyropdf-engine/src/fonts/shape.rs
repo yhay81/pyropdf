@@ -245,6 +245,10 @@ fn push_run(
 /// Maps each glyph of a cluster to its own character, when every glyph
 /// is the nominal glyph of a distinct character of the cluster and the
 /// counts match; `None` otherwise.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one range per glyph of a cluster, 64 at most, checked below"
+)]
 fn own_characters(
     shaper: &ShaperFont<'_, '_>,
     text: &str,
