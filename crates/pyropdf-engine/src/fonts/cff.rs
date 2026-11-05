@@ -42,6 +42,10 @@ struct Entry {
 }
 
 /// The value of the nibbles of a real operand (5176, table 5).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "two characters at most per nibble of `bytes`, an operand that the caller's DICT holds"
+)]
 fn real(bytes: &[u8]) -> Option<f64> {
     let mut text = String::new();
     for nibble in bytes.iter().flat_map(|byte| [byte >> 4, byte & 0x0f]) {
@@ -70,6 +74,10 @@ fn dict(data: &[u8]) -> Option<Vec<Entry>> {
                 } else {
                     u16::from(b0)
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one entry per operator of `data`, with the operand bytes before it"
+                )]
                 entries.push(Entry {
                     op,
                     operands: data
@@ -119,7 +127,15 @@ fn dict(data: &[u8]) -> Option<Vec<Entry>> {
         if values.len() >= 48 {
             return None;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "48 operands per operator at most, checked above"
+        )]
         values.push(value);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "48 operands per operator at most, checked above"
+        )]
         numbers.push(
             value
                 .map(f64::from)
@@ -146,6 +162,10 @@ fn offset(entries: &[Entry], op: u16, at: usize) -> Option<usize> {
 /// Writes `entries`, with the operands of each operator in `replace`
 /// written as 5-byte integers, which keeps the DICT's length whatever the
 /// values.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the operands of `entries`, or five bytes per value of `replace` in their place"
+)]
 fn write_dict(entries: &[Entry], replace: &[(u16, &[i32])]) -> Vec<u8> {
     let mut out = Vec::new();
     for entry in entries {
@@ -163,6 +183,10 @@ fn write_dict(entries: &[Entry], replace: &[(u16, &[i32])]) -> Vec<u8> {
     out
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an operator is two bytes at most"
+)]
 fn push_operator(out: &mut Vec<u8>, op: u16) {
     if op >= 1200 {
         out.extend_from_slice(&[12, u8::try_from(op - 1200).unwrap_or(0)]);
@@ -191,7 +215,14 @@ fn index(data: &[u8], at: usize) -> Option<(Vec<Range<usize>>, usize)> {
         )
     };
     let base = at + 2 + (count + 1) * size;
+    // The last offset ends at `base`, so an INDEX whose offsets `data` lacks
+    // is refused before its count sizes anything.
+    data.get(base)?;
     let mut items = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one range per offset of the INDEX, whose offsets `data` holds, checked above"
+    )]
     items.try_reserve(count).ok()?;
     let mut previous = read(0)?;
     for item in 1..=count {
@@ -199,12 +230,20 @@ fn index(data: &[u8], at: usize) -> Option<(Vec<Range<usize>>, usize)> {
         if next < previous || base + next > data.len() {
             return None;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one range per offset of the INDEX, whose offsets `data` holds, checked above"
+        )]
         items.push(base + previous..base + next);
         previous = next;
     }
     Some((items, base + previous))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the bytes of `items`, which the caller holds, and four bytes of offset at most per item"
+)]
 fn write_index(items: &[&[u8]]) -> Option<Vec<u8>> {
     let count = u16::try_from(items.len()).ok()?;
     let mut out = count.to_be_bytes().to_vec();
@@ -304,6 +343,10 @@ impl<'a> Private<'a> {
         self.dict_len() + self.subrs.map_or(0, <[u8]>::len)
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the Private DICT and its Subrs, as `len` counts them, which `data` holds"
+    )]
     fn write(&self, out: &mut Vec<u8>) -> Option<()> {
         let size = i32::try_from(self.dict_len()).ok()?;
         out.extend_from_slice(&write_dict(&self.entries, &[(SUBRS, &[size])]));
@@ -326,6 +369,10 @@ impl CharstringContext for Seac<'_> {
 
     fn seac_components(&self, base: i32, accent: i32) -> Result<[&[u8]; 2], CsError> {
         let parts = self.inner.seac_components(base, accent)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "two components per charstring: read-fonts refuses a second seac, and `add_accents` drains them"
+        )]
         self.drawn
             .borrow_mut()
             .extend(parts.iter().map(|part| part.as_ptr() as usize));
@@ -369,6 +416,10 @@ fn add_accents(
         inner: (data, &charstring_index, &global_index, &subr_index),
         drawn: RefCell::new(Vec::new()),
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one entry per charstring of the INDEX, whose offsets `data` holds"
+    )]
     let glyphs: HashMap<usize, u32> = charstrings
         .iter()
         .enumerate()
@@ -380,6 +431,10 @@ fn add_accents(
             ))
         })
         .collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a copy of `keep`, which the caller holds"
+    )]
     let used: Vec<u32> = keep.iter().copied().collect();
     for glyph in used {
         let Some(range) = usize::try_from(glyph)
@@ -395,6 +450,10 @@ fn add_accents(
         let _ = cs::evaluate(&context, None, charstring, &mut Nothing);
         for drawn in context.drawn.borrow_mut().drain(..) {
             if let Some(&component) = glyphs.get(&drawn) {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "each component is a glyph of `glyphs`, one per charstring of the INDEX"
+                )]
                 keep.insert(component);
             }
         }
@@ -440,6 +499,10 @@ pub(super) fn identity_charset(data: &[u8]) -> Result<Option<Vec<u8>>, ()> {
             return Some(None);
         }
         let mut identity = Vec::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the identity charset is five bytes at most"
+        )]
         if glyphs > 1 {
             let left = u16::try_from(glyphs - 2).ok()?;
             identity.extend_from_slice(&[2, 0, 1]);
@@ -487,7 +550,8 @@ fn charset_is_identity(block: &[u8], glyphs: usize) -> Option<bool> {
 
 /// Rewrites `data` with the CharStrings of the glyphs outside `keep`
 /// emptied, all kept when `keep` is `None`, and with `charset` in place of
-/// its charset when given.
+/// its charset when given; `None` when it does not read, or when its Font
+/// DICTs share Private DICTs that would copy more than `data` holds.
 fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) -> Option<Subset> {
     if *data.first()? != 1 {
         return None;
@@ -540,6 +604,10 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
         if dicts.len() > 256 {
             return None;
         }
+        // Each Font DICT's Private DICT and Subrs are written once for it, so
+        // Font DICTs that share them would copy them once each: their copies
+        // may add up to no more than `data` holds, as distinct ones do.
+        let mut copied = 0_usize;
         for range in dicts {
             let entries = dict(data.get(range)?)?;
             let private = Private::read(
@@ -547,6 +615,14 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
                 offset(&entries, PRIVATE, 0)?,
                 offset(&entries, PRIVATE, 1)?,
             )?;
+            copied = copied.checked_add(private.len())?;
+            if copied > data.len() {
+                return None;
+            }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "256 Font DICTs at most, checked above"
+            )]
             fonts.push((entries, private));
         }
         None
@@ -571,8 +647,16 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
         );
     }
     let mut new_charstrings: Vec<&[u8]> = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one charstring per glyph of the INDEX, whose offsets `data` holds"
+    )]
     new_charstrings.try_reserve(glyphs).ok()?;
     let mut kept = 0;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one charstring per glyph of the INDEX, whose offsets `data` holds"
+    )]
     for (glyph, range) in charstrings.iter().enumerate() {
         if all || glyph == 0 || u32::try_from(glyph).is_ok_and(|id| keep.contains(&id)) {
             new_charstrings.push(data.get(range.clone())?);
@@ -585,6 +669,7 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
 
     // The layout: everything up to the global subroutines as it was, with the
     // new Top DICT, then the blocks that the Top DICT addresses.
+    #[expect(clippy::disallowed_methods, reason = "five operators replaced at most")]
     let replaced = |values: &[i32; 7]| -> Vec<u8> {
         let mut replace: Vec<(u16, &[i32])> = vec![(CHARSTRINGS, &values[3..4])];
         if charset_block.is_some() {
@@ -612,6 +697,10 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
     let encoding_at = place(encoding_block.map_or(0, <[u8]>::len))?;
     let fd_select_at = place(fd_select_block.map_or(0, <[u8]>::len))?;
     let charstrings_new_at = place(new_charstrings.len())?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one DICT per Font DICT: 256 at most, checked above"
+    )]
     let font_dicts = |privates: &[i32]| -> Option<Vec<u8>> {
         let dicts: Vec<Vec<u8>> = fonts
             .iter()
@@ -626,6 +715,10 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
     };
     let mut fd_array_at = 0;
     let mut privates = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one offset per Font DICT: 256 at most, checked above"
+    )]
     if cid {
         fd_array_at = place(font_dicts(&vec![0; fonts.len()])?.len())?;
         for (_, private) in &fonts {
@@ -640,35 +733,42 @@ fn rewrite(data: &[u8], keep: Option<&BTreeSet<u32>>, charset: Option<&[u8]>) ->
         None => (0, 0),
     };
 
-    let mut out = Vec::new();
-    out.try_reserve(at).ok()?;
-    out.extend_from_slice(data.get(..names_end)?);
-    out.extend_from_slice(&write_index(&[&replaced(&[
-        charset_at,
-        encoding_at,
-        fd_select_at,
-        charstrings_new_at,
-        fd_array_at,
-        private_size,
-        private_at,
-    ])])?);
-    out.extend_from_slice(data.get(tops_end..global_end)?);
-    for block in [charset_block, encoding_block, fd_select_block]
-        .into_iter()
-        .flatten()
-    {
-        out.extend_from_slice(block);
-    }
-    out.extend_from_slice(&new_charstrings);
-    if cid {
-        out.extend_from_slice(&font_dicts(&privates)?);
-        for (_, private) in &fonts {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`at`, the length planned above, which adds up blocks of `data` and what is written from them"
+    )]
+    let out = {
+        let mut out = Vec::new();
+        out.try_reserve(at).ok()?;
+        out.extend_from_slice(data.get(..names_end)?);
+        out.extend_from_slice(&write_index(&[&replaced(&[
+            charset_at,
+            encoding_at,
+            fd_select_at,
+            charstrings_new_at,
+            fd_array_at,
+            private_size,
+            private_at,
+        ])])?);
+        out.extend_from_slice(data.get(tops_end..global_end)?);
+        for block in [charset_block, encoding_block, fd_select_block]
+            .into_iter()
+            .flatten()
+        {
+            out.extend_from_slice(block);
+        }
+        out.extend_from_slice(&new_charstrings);
+        if cid {
+            out.extend_from_slice(&font_dicts(&privates)?);
+            for (_, private) in &fonts {
+                private.write(&mut out)?;
+            }
+        }
+        if let Some(private) = &private {
             private.write(&mut out)?;
         }
-    }
-    if let Some(private) = &private {
-        private.write(&mut out)?;
-    }
+        out
+    };
     Some(Subset {
         data: out,
         glyphs,
@@ -686,6 +786,10 @@ const BLUE_FUZZ: u16 = 1211;
 
 /// Appends a DICT entry of `op` with `operands`, each in the five-byte
 /// integer form, so that an offset's length does not depend on its value.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "five bytes per operand of the caller's, and the operator"
+)]
 fn push_entry(out: &mut Vec<u8>, op: u16, operands: &[i32]) {
     for operand in operands {
         out.push(29);
@@ -697,6 +801,10 @@ fn push_entry(out: &mut Vec<u8>, op: u16, operands: &[i32]) {
 /// Appends `value` as a real operand (5176, table 5), to the millionth, which
 /// is finer than the 16.16 that readers keep of a value and of `BlueScale`'s
 /// thousandfold.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "an `f64` to the millionth has 317 characters at most, a nibble each"
+)]
 fn push_real(out: &mut Vec<u8>, value: f64) {
     let text = format!("{value:.6}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
@@ -754,6 +862,10 @@ pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>>
             _ => continue,
         };
         if unscaled(by) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the operands of one entry of the Private DICT, which `data` holds"
+            )]
             out.extend_from_slice(&entry.operands);
         } else {
             for number in &entry.numbers {
@@ -784,6 +896,10 @@ pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>>
 /// per item of `privates`, the entries of its Private DICT, which `fds`
 /// selects for each glyph. Each Private DICT adds a default width of zero,
 /// since the PDF's `W` array gives the widths.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "linear in the arguments, which the caller holds: their bytes, and a few per CID and per DICT"
+)]
 pub(super) fn cid_keyed(
     name: &str,
     charstrings: &[Vec<u8>],

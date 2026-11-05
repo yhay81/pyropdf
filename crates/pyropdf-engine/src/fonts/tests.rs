@@ -202,3 +202,36 @@ fn programs_once() -> &'static [(String, Format, Vec<u8>)] {
         std::sync::OnceLock::new();
     PROGRAMS.get_or_init(programs)
 }
+
+#[test]
+fn a_cff_whose_font_dicts_share_a_private_dict_is_left_whole() {
+    // Font DICTs that all address one large Private DICT would copy it once
+    // each.
+    let fonts = 8_u8;
+    // Forty BlueValues entries of forty zero operands each.
+    let big: Vec<u8> = (0..40)
+        .flat_map(|_| [[139; 40].as_slice(), &[6]].concat())
+        .collect();
+    let mut privates = vec![big.clone()];
+    privates.resize(usize::from(fonts), Vec::new());
+    let charstrings = vec![vec![14]; usize::from(fonts)];
+    let cids: Vec<u16> = (0..u16::from(fonts)).collect();
+    let fds: Vec<u8> = (0..fonts).collect();
+    let mut data = super::cff::cid_keyed("Shared", &charstrings, &cids, &fds, &privates).unwrap();
+    assert!(subset(&data, Format::Cff, &[1]).is_some());
+    // Each Font DICT is its Private entry: two five-byte integers and the
+    // operator, the first one's size being the large DICT's with its
+    // default width.
+    let size = u32::try_from(big.len() + 6).unwrap().to_be_bytes();
+    let first = data
+        .windows(11)
+        .position(|dict| dict[0] == 29 && dict[1..5] == size && dict[5] == 29 && dict[10] == 18)
+        .unwrap();
+    let dict: [u8; 11] = data[first..first + 11].try_into().unwrap();
+    for at in 1..usize::from(fonts) {
+        let at = first + 11 * at;
+        assert!(data[at] == 29 && data[at + 10] == 18);
+        data[at..at + 11].copy_from_slice(&dict);
+    }
+    assert!(subset(&data, Format::Cff, &[1]).is_none());
+}
