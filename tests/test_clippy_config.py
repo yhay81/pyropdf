@@ -29,9 +29,7 @@ def own_files(directory: Path) -> list[Path]:
 
 def test_the_crates_read_the_shared_configuration() -> None:
     crates = sorted(manifest.parent for manifest in CRATES.glob("*/Cargo.toml"))
-    assert {"pyropdf-store", "pyropdf-schema", "pyropdf-engine"} <= {
-        crate.name for crate in crates
-    }
+    assert {"pyropdf-store", "pyropdf-schema", "pyropdf-engine"} <= {crate.name for crate in crates}
     for crate in crates:
         if crate.name in UNBOUND:
             continue
