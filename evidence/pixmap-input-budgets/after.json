@@ -1,0 +1,9 @@
+{
+  "python": "3.14.8",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "ppm_bytes": 3145745,
+  "tiff_bytes": 67206,
+  "ppm_buffer_ms": 14.0233,
+  "ppm_file_ms": 14.9222,
+  "tiff_palette_ms": 0.386
+}

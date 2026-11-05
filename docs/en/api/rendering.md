@@ -96,7 +96,7 @@ to bottom for `"vertical"`.
 ### `Pixmap.from_bytes`
 
 ```python
-Pixmap.from_bytes(data)
+Pixmap.from_bytes(data, *, max_size=...)
 ```
 
 Decodes PNG, JPEG, PBM, PGM, PPM (plain or raw), PAM, BMP
@@ -109,7 +109,10 @@ transparent; JPEG, GIF, JPEG 2000, and the portable anymaps decode at
 only gray decode to gray. TIFF reads gray, gray with alpha, RGB,
 RGBA, and palettes, uncompressed or with PackBits, LZW, Deflate,
 JPEG, or CCITT Group 4. CMYK, CCITT Group 3 TIFF, and JPEG XR are
-refused. At most 64,000,000 pixels.
+refused. At most 64,000,000 pixels. `max_size` bounds encoded input
+bytes before copying or decoding (default 256 MiB); exceeding it
+raises `LimitError` with code `image_input_size`. Pass `None` to
+remove this input limit for trusted data; the pixel limit remains.
 
 ### `Pixmap.gamma`
 
@@ -141,10 +144,15 @@ them when `rect` is `None`; alpha is kept. `rect` is
 ### `Pixmap.open`
 
 ```python
-Pixmap.open(path)
+Pixmap.open(path, *, max_size=...)
 ```
 
 Reads an image file into a pixmap, as `from_bytes` decodes it.
+`max_size` bounds encoded input bytes (default 256 MiB), both before
+and during reading, including a file that grows after its metadata
+is checked. Exceeding it raises `LimitError` with code
+`image_input_size`. Pass `None` to remove this input limit for trusted
+files; the 64,000,000-pixel limit remains. File errors are preserved.
 
 ### `Pixmap.pixel`
 

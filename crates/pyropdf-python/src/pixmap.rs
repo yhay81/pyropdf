@@ -6,7 +6,7 @@
 
 use std::ffi::{CString, c_int, c_void};
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::ptr;
 use std::sync::Arc;
@@ -32,10 +32,16 @@ use crate::document::_Document;
 use crate::errors::{
     EncryptedDocumentError, LimitError, PdfError, StaleObjectError, limit_error, store_error,
 };
-use crate::pixel_ops::{self, Area, Layout};
+use crate::pixel_ops::{self, Area, DecodeError, Decoded, Layout};
 
 /// The most distinct colors that `Pixmap.colors` returns by default.
 const DEFAULT_MAX_COLORS: u64 = 65_536;
+
+/// The encoded-image limit from the registry, in bytes.
+const DEFAULT_MAX_INPUT_SIZE: Option<usize> = match LimitCode::ImageInputSize.default_limit() {
+    Some(limit) => Some(limit as usize),
+    None => None,
+};
 
 /// Metres per inch, for PNG's pixels per metre.
 const METRES_PER_INCH: f64 = 0.0254;
@@ -355,6 +361,28 @@ impl From<Raster> for Pixmap {
             gray: raster.gray,
             data: Arc::new(raster.data),
             resolution: raster.resolution,
+        }
+    }
+}
+
+impl From<Decoded> for Pixmap {
+    fn from(decoded: Decoded) -> Self {
+        Self {
+            width: decoded.layout.width,
+            height: decoded.layout.height,
+            alpha: decoded.layout.alpha,
+            gray: decoded.layout.gray,
+            data: Arc::new(decoded.data),
+            resolution: decoded.resolution,
+        }
+    }
+}
+
+impl From<DecodeError> for PyErr {
+    fn from(error: DecodeError) -> Self {
+        match error {
+            DecodeError::Invalid(message) => PyValueError::new_err(message),
+            DecodeError::Limit(refusal) => limit_error(&refusal),
         }
     }
 }
@@ -939,43 +967,51 @@ impl Pixmap {
     /// only gray decode to gray. TIFF reads gray, gray with alpha, RGB,
     /// RGBA, and palettes, uncompressed or with PackBits, LZW, Deflate,
     /// JPEG, or CCITT Group 4. CMYK, CCITT Group 3 TIFF, and JPEG XR are
-    /// refused. At most 64,000,000 pixels.
+    /// refused. At most 64,000,000 pixels. `max_size` bounds encoded input
+    /// bytes before copying or decoding (default 256 MiB); exceeding it
+    /// raises `LimitError` with code `image_input_size`. Pass `None` to
+    /// remove this input limit for trusted data; the pixel limit remains.
     #[staticmethod]
-    fn from_bytes(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Self> {
+    #[pyo3(signature = (data, *, max_size=DEFAULT_MAX_INPUT_SIZE))]
+    fn from_bytes(
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        #[pyo3(from_py_with = extract_max_size)] max_size: Option<usize>,
+    ) -> PyResult<Self> {
         crate::errors::boundary(|| {
-            let bytes = PyBuffer::<u8>::get(data)?.to_vec(py)?;
-            let decoded = py
-                .detach(|| pixel_ops::decode(&bytes))
-                .map_err(PyValueError::new_err)?;
-            let layout = decoded.layout;
-            Ok(Self {
-                width: layout.width,
-                height: layout.height,
-                alpha: layout.alpha,
-                gray: layout.gray,
-                data: Arc::new(decoded.data),
-                resolution: decoded.resolution,
-            })
+            let budget = Budget::default()
+                .with_limit(LimitCode::ImageInputSize, max_size.map(|size| size as u64));
+            let bytes = image_buffer(data, &budget)?;
+            py.detach(|| pixel_ops::decode(&bytes, &budget))
+                .map(Self::from)
+                .map_err(PyErr::from)
         })?
     }
 
     /// Reads an image file into a pixmap, as `from_bytes` decodes it.
+    /// `max_size` bounds encoded input bytes (default 256 MiB), both before
+    /// and during reading, including a file that grows after its metadata
+    /// is checked. Exceeding it raises `LimitError` with code
+    /// `image_input_size`. Pass `None` to remove this input limit for trusted
+    /// files; the 64,000,000-pixel limit remains. File errors are preserved.
     #[staticmethod]
-    fn open(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
+    #[pyo3(signature = (path, *, max_size=DEFAULT_MAX_INPUT_SIZE))]
+    fn open(
+        py: Python<'_>,
+        path: PathBuf,
+        #[pyo3(from_py_with = extract_max_size)] max_size: Option<usize>,
+    ) -> PyResult<Self> {
         crate::errors::boundary(|| {
-            let bytes = py.detach(|| fs::read(&path))?;
-            let decoded = py
-                .detach(|| pixel_ops::decode(&bytes))
-                .map_err(PyValueError::new_err)?;
-            let layout = decoded.layout;
-            Ok(Self {
-                width: layout.width,
-                height: layout.height,
-                alpha: layout.alpha,
-                gray: layout.gray,
-                data: Arc::new(decoded.data),
-                resolution: decoded.resolution,
-            })
+            let budget = Budget::default()
+                .with_limit(LimitCode::ImageInputSize, max_size.map(|size| size as u64));
+            let bytes = py.detach(|| {
+                let mut file = File::open(&path)?;
+                let size = file.metadata()?.len();
+                read_image(&mut file, size, &budget)
+            })?;
+            py.detach(|| pixel_ops::decode(&bytes, &budget))
+                .map(Self::from)
+                .map_err(PyErr::from)
         })?
     }
 
@@ -1237,6 +1273,64 @@ fn extract_quality(value: &Bound<'_, PyAny>) -> PyResult<u8> {
         .ok()
         .filter(|quality| (1..=100).contains(quality))
         .ok_or_else(|| PyValueError::new_err(message))
+}
+
+/// Copies a Python buffer only after checking and reserving its full size.
+fn image_buffer(data: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Vec<u8>> {
+    let buffer = PyBuffer::<u8>::get(data)?;
+    let size = buffer.len_bytes();
+    budget
+        .check(LimitCode::ImageInputSize, size as u64)
+        .map_err(|refusal| limit_error(&refusal))?;
+    let mut bytes = BudgetVec::new(budget);
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|refusal| limit_error(&refusal))?;
+    let mut bytes = bytes.into_vec();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "BudgetVec reserved and charged all size bytes before initializing this buffer"
+    )]
+    bytes.resize(size, 0);
+    buffer.copy_to_slice(data.py(), &mut bytes)?;
+    Ok(bytes)
+}
+
+/// Reads a checked image, enforcing the actual byte count even when the
+/// source grows or its metadata reports no size, as a pipe does.
+fn read_image(
+    input: &mut impl Read,
+    metadata_size: u64,
+    budget: &Budget,
+) -> Result<Vec<u8>, crate::source::Error> {
+    budget.check(LimitCode::ImageInputSize, metadata_size)?;
+    let size =
+        usize::try_from(metadata_size).map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
+    let mut bytes = BudgetVec::new(budget);
+    bytes.try_reserve_exact(size)?;
+    let mut chunk = [0; 16 * 1024];
+    loop {
+        budget.poll()?;
+        // Probe at most one byte beyond the limit, without appending that
+        // byte or making room for it in the retained input.
+        let count = budget
+            .limit(LimitCode::ImageInputSize)
+            .map_or(chunk.len(), |limit| {
+                limit
+                    .saturating_sub(bytes.len() as u64)
+                    .saturating_add(1)
+                    .min(chunk.len() as u64) as usize
+            });
+        let read = match input.read(&mut chunk[..count]) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error.into()),
+        };
+        budget.check(LimitCode::ImageInputSize, bytes.len() as u64 + read as u64)?;
+        bytes.try_extend_from_slice(&chunk[..read])?;
+    }
+    Ok(bytes.into_vec())
 }
 
 fn extract_max_size(value: &Bound<'_, PyAny>) -> PyResult<Option<usize>> {
