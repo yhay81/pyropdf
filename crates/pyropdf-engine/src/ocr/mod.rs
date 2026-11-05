@@ -130,6 +130,10 @@ impl Options {
     }
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fallible, and sized by a tile of 2048 square at most, the checked raster, or the detections"
+)]
 fn filled_vec<T: Clone>(length: usize, value: T, label: &str) -> Result<Vec<T>, Error> {
     let mut data = Vec::new();
     data.try_reserve_exact(length)
@@ -138,6 +142,10 @@ fn filled_vec<T: Clone>(length: usize, value: T, label: &str) -> Result<Vec<T>, 
     Ok(data)
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fallible, and each caller adds a counted dictionary entry or detection, or a tile of the checked raster"
+)]
 fn try_push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
     if values.len() == values.capacity() {
         values
@@ -148,6 +156,10 @@ fn try_push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> 
     Ok(())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fallible, and each caller's text is charged to ocr_model_size or ocr_text_size"
+)]
 fn try_push_str(value: &mut String, text: &str, label: &str) -> Result<(), Error> {
     value
         .try_reserve(text.len())
@@ -248,6 +260,10 @@ impl Candidate {
 
 /// Returns straight-alpha RGBA8 samples for samples in `layout`, in one
 /// fallible copy.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "four bytes per pixel of the raster, whose RGBA size ocr_raster_size checks"
+)]
 fn expand_to_rgba(layout: Layout, data: &[u8]) -> Result<Vec<u8>, Error> {
     let channels = layout.channels();
     let pixels = data.len() / channels;
@@ -312,9 +328,14 @@ fn read_input(path: &Path, label: &str, budget: &Budget) -> Result<Vec<u8>, Erro
     }
     let read_limit = remaining.map_or(u64::MAX, |remaining| remaining.saturating_add(1));
     let mut data = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the file's size, capped one byte past the rest of ocr_model_size"
+    )]
     data.try_reserve_exact(usize::try_from(size.min(read_limit)).unwrap_or(0))
         .map_err(|error| format!("failed to allocate OCR {label}: {error}"))?;
     let mut reader = file.take(read_limit);
+    #[expect(clippy::disallowed_methods, reason = "one buffer of READ_CHUNK bytes")]
     let mut chunk = vec![0; READ_CHUNK];
     loop {
         let read = match reader.read(&mut chunk) {
@@ -323,8 +344,16 @@ fn read_input(path: &Path, label: &str, budget: &Budget) -> Result<Vec<u8>, Erro
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(io_error(error)),
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the read stops one byte past the rest of ocr_model_size, which is charged below"
+        )]
         data.try_reserve(read)
             .map_err(|error| format!("failed to grow OCR {label}: {error}"))?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the read stops one byte past the rest of ocr_model_size, which is charged below"
+        )]
         data.extend_from_slice(&chunk[..read]);
     }
     budget
@@ -471,7 +500,10 @@ impl Engine {
         RunOptions::default().with_thread_pool(Some(Arc::clone(&self.thread_pool)))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the raster, its size, and the options of one recognition"
+    )]
     fn recognize_rgba(
         &self,
         pixels: &[u8],
@@ -501,6 +533,10 @@ impl Engine {
         sort_candidates(&mut candidates)?;
 
         let mut results = Vec::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one result per detection, which ocr_detection_count counts"
+        )]
         results
             .try_reserve_exact(candidates.len())
             .map_err(|error| format!("failed to allocate OCR results: {error}"))?;
@@ -728,7 +764,10 @@ fn tile_starts(length: usize, tile_size: usize, overlap: usize) -> Result<Vec<us
     Ok(starts)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the raster, and the geometry of the tile and of the model's input"
+)]
 fn detector_input(
     pixels: &[u8],
     image_width: usize,
@@ -886,10 +925,16 @@ fn merge_candidates(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
     }
 
     let mut parents = Vec::new();
-    parents
-        .try_reserve_exact(candidates.len())
-        .map_err(|error| format!("failed to allocate OCR candidate merge parents: {error}"))?;
-    parents.extend(0..candidates.len());
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one parent per detection, which ocr_detection_count counts"
+    )]
+    {
+        parents
+            .try_reserve_exact(candidates.len())
+            .map_err(|error| format!("failed to allocate OCR candidate merge parents: {error}"))?;
+        parents.extend(0..candidates.len());
+    }
     for index in 0..candidates.len() {
         for other_index in index + 1..candidates.len() {
             let left = candidates[index];
@@ -1171,7 +1216,10 @@ fn sort_candidates(candidates: &mut Vec<Candidate>) -> Result<(), Error> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the raster, and the geometry of the crop and of the model's input"
+)]
 fn recognition_input(
     pixels: &[u8],
     image_width: usize,

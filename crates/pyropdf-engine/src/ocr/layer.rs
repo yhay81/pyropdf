@@ -141,10 +141,18 @@ fn assign_cids(words: &[LayerWord], budget: &Budget) -> Result<HashMap<char, u16
             }
             // Covers bucket overhead and geometric spare capacity.
             budget.charge(LimitCode::MemorySize, 32)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the entry is charged to the budget above, and MAX_OCR_CIDS bounds the map"
+            )]
             map.try_reserve(1)
                 .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
             let cid =
                 u16::try_from(map.len() + 1).expect("the OCR CID count is bounded below u16::MAX");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the entry is charged to the budget above, and room is made for it"
+            )]
             map.insert(ch, cid);
         }
     }
