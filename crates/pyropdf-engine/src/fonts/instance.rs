@@ -198,13 +198,25 @@ impl Face {
             (*b"name", names(self, &font, weight)?),
         ];
         if let Some(os2) = os2(&font, &location, weight)? {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one of the 16 tables at most that the program holds"
+            )]
             tables.push((*b"OS/2", os2));
         }
         if let Some(post) = post(&font, &location)? {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one of the 16 tables at most that the program holds"
+            )]
             tables.push((*b"post", post));
         }
         for tag in COPIED {
             if let Some(data) = font.table_data(Tag::new(tag)) {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one copy per tag of COPIED of a table that the face holds, charged below"
+                )]
                 tables.push((*tag, data.as_bytes().to_vec()));
             }
         }
@@ -217,9 +229,15 @@ impl Face {
         // themselves as they grew.
         let directory = 12 + 16 * (tables.len() as u64 + 3);
         budget.charge(LimitCode::FontInputSize, directory)?;
-        tables.push((*b"glyf", outlines.glyf));
-        tables.push((*b"hmtx", outlines.hmtx));
-        tables.push((*b"loca", outlines.loca));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the last 3 of the 16 tables at most that the program holds"
+        )]
+        tables.extend([
+            (*b"glyf", outlines.glyf),
+            (*b"hmtx", outlines.hmtx),
+            (*b"loca", outlines.loca),
+        ]);
         tables.sort_by_key(|(tag, _)| *tag);
         sfnt::write(&[0, 1, 0, 0], &tables).ok_or_else(too_large)
     }
@@ -235,6 +253,10 @@ fn padded(len: usize) -> u64 {
 }
 
 /// Returns the table of `tag`, which [`Face::read`] made sure of.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a copy of a table that the face holds, which the program charges"
+)]
 fn table(font: &FontRef<'_>, tag: &[u8; 4]) -> Result<Vec<u8>, InstanceError> {
     font.table_data(Tag::new(tag))
         .map(|data| data.as_bytes().to_vec())
@@ -331,6 +353,10 @@ fn hhea(
 /// Returns a `maxp` that counts the flattened outlines. A static program has
 /// no instructions, so the fields for them hold zero and the one zone.
 fn maxp(outlines: &Outlines) -> Vec<u8> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a version 1.0 `maxp` is 32 bytes"
+    )]
     let mut maxp = vec![0; 32];
     maxp[0..4].copy_from_slice(&0x0001_0000_u32.to_be_bytes());
     maxp[4..6].copy_from_slice(&outlines.glyphs.to_be_bytes());
@@ -348,6 +374,10 @@ fn os2(
     let Some(data) = font.table_data(Tag::new(b"OS/2")) else {
         return Ok(None);
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a copy of a table that the face holds, which the program charges"
+    )]
     let mut os2 = data.as_bytes().to_vec();
     vary(font, location, &mut os2, &OS2_VARIED, true)?;
     vary(font, location, &mut os2, &OS2_VARIED_UNSIGNED, false)?;
@@ -372,6 +402,10 @@ fn post(font: &FontRef<'_>, location: &Location) -> Result<Option<Vec<u8>>, Inst
     let Some(header) = data.as_bytes().get(..POST_HEADER) else {
         return Ok(None);
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a `post` header of POST_HEADER bytes"
+    )]
     let mut post = header.to_vec();
     post[0..4].copy_from_slice(&0x0003_0000_u32.to_be_bytes());
     vary(font, location, &mut post, &POST_VARIED, true)?;
@@ -415,6 +449,10 @@ fn postscript_name(face: &Face, font: &FontRef<'_>, weight: u16) -> String {
                 .map_or(source.as_str(), |(stem, _)| stem);
             stem.to_owned()
         });
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "63 characters at most, as a PostScript name"
+    )]
     let kept: String = prefix.chars().take(63 - suffix.len()).collect();
     format!("{kept}{suffix}")
 }
@@ -441,6 +479,10 @@ fn names(face: &Face, font: &FontRef<'_>, weight: u16) -> Result<Vec<u8>, Instan
 
 /// Writes a format 0 `name` table with a Windows English record for each
 /// entry that is not empty, `None` when the strings pass its 16-bit offsets.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "12 bytes per record that the caller gives, and its string, until the 16-bit offsets refuse"
+)]
 fn name_table(records: &[(StringId, &str)]) -> Option<Vec<u8>> {
     const WINDOWS: u16 = 3;
     const UNICODE_BMP: u16 = 1;
@@ -506,6 +548,10 @@ impl Pen {
 
     fn point(&mut self, x: f32, y: f32, on: bool) {
         match (coordinate(x), coordinate(y)) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one glyph's points, which skrifa refuses past MAX_OUTLINE_POINTS (65,536)"
+            )]
             (Some(x), Some(y)) => self.points.push(Point { x, y, on }),
             _ => self.outside = true,
         }
@@ -543,12 +589,20 @@ impl OutlinePen for Pen {
         {
             self.points.pop();
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one end per contour of one glyph, whose points skrifa bounds at 65,536"
+        )]
         self.ends.push(self.points.len());
     }
 }
 
 /// Appends the points of `contour` that the file has to hold: an on-curve
 /// point halfway between two off-curve points is implied.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "some of the points of one contour of a pen, which holds one glyph"
+)]
 fn keep_explicit(contour: &[Point], kept: &mut Vec<Point>) {
     let count = contour.len();
     for (index, &point) in contour.iter().enumerate() {
@@ -570,6 +624,10 @@ fn keep_explicit(contour: &[Point], kept: &mut Vec<Point>) {
 
 /// Writes one column of a simple glyph's coordinates as deltas from zero and
 /// sets their flag bits.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "two bytes per point of a glyph that `encode` bounds at MAX_POINTS"
+)]
 fn encode_axis(
     values: impl Iterator<Item = i16>,
     short: u8,
@@ -607,6 +665,10 @@ struct Encoded {
 
 /// Writes the simple glyph description of `pen`'s contours to `out`, padded
 /// to four bytes; an empty outline writes nothing and returns `None`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a few bytes per point of the pen's one glyph, whose points skrifa bounds at 65,536"
+)]
 fn encode(pen: &Pen, overlaps: bool, out: &mut Vec<u8>) -> Result<Option<Encoded>, &'static str> {
     let mut points = Vec::with_capacity(pen.points.len());
     let mut ends = Vec::with_capacity(pen.ends.len());
@@ -711,6 +773,10 @@ struct Outlines {
 
 impl Outlines {
     /// Draws every glyph at `location`, charging each before it joins `glyf`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "`hmtx` and `loca` are charged first, and each glyph before it joins `glyf`"
+    )]
     fn draw(
         font: &FontRef<'_>,
         location: &Location,
