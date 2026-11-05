@@ -1,6 +1,7 @@
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{DocumentLimits, LimitCode};
 use pyropdf_store::index::Index;
+use pyropdf_store::memo::Reads;
 use pyropdf_store::save::FileBase;
 use pyropdf_store::version::Document;
 
@@ -488,5 +489,64 @@ fn other_form_fonts_fall_back_to_helvetica() {
             Ok(("Helv".to_owned(), "Helvetica")),
             "{font}"
         );
+    }
+}
+
+/// A dictionary of `entries`.
+fn dict(entries: Vec<(&str, Value)>) -> Dict {
+    let mut dict = Dict::new();
+    for (key, value) in entries {
+        dict.insert(Name::from(key), value);
+    }
+    dict
+}
+
+#[test]
+fn merging_default_resources_grows_through_the_budget() {
+    let document = open(&["<< /Type /Catalog >>"]);
+    let version = document.current();
+    let receiving = dict(vec![(
+        "Font",
+        Value::Dict(dict(vec![("F1", Value::Integer(1))])),
+    )]);
+    let renamed = dict(vec![(
+        "Font",
+        Value::Dict(dict(vec![
+            ("F1", Value::Integer(2)),
+            ("F2", Value::Integer(3)),
+        ])),
+    )]);
+    let whole = dict(vec![(
+        "ExtGState",
+        Value::Dict(dict(vec![("G", Value::Integer(4))])),
+    )]);
+    let merge = |source: &Dict, budget: &Budget| {
+        defaults::merge(
+            &mut Reads::new(&version, budget),
+            &receiving,
+            &mut Reads::new(&version, budget),
+            source,
+        )
+    };
+
+    let budget = Budget::default();
+    let (joined, renames) = merge(&renamed, &budget).unwrap();
+    let names: Vec<_> = joined
+        .iter()
+        .map(|joined| joined.name.clone().unwrap())
+        .collect();
+    assert_eq!(names, [Name::from("F1_1"), Name::from("F2")]);
+    assert_eq!(
+        renames[&Name::from("Font")][&Name::from("F1")],
+        Name::from("F1_1")
+    );
+    let (joined, _) = merge(&whole, &budget).unwrap();
+    assert!(joined.len() == 1 && joined[0].name.is_none());
+
+    // A rename and a category that joins whole are each refused.
+    for source in [&renamed, &whole] {
+        let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+        let error = merge(source, &budget).err().unwrap();
+        assert_eq!(error.limit().unwrap().code(), LimitCode::MemorySize);
     }
 }

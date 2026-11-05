@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use pyropdf_store::Result;
+use pyropdf_store::budget::{BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::value::{Dict, Name, Reference, Value};
@@ -82,19 +83,21 @@ pub struct Joined {
 /// A source resource that is [`equivalent`] to the receiving resource of
 /// its name is shared. Any other under a name that the receiving category
 /// holds takes the smallest `_N` suffix that neither category uses. A
-/// receiving category that is no dictionary keeps its value.
+/// receiving category that is no dictionary keeps its value. The plan
+/// grows through the budget of `receiving`.
 ///
 /// # Errors
 ///
-/// A failed read.
+/// A failed read, or a plan that the budget refuses.
 pub fn merge(
     receiving: &mut Reads<'_>,
     resources: &Dict,
     source: &mut Reads<'_>,
     source_resources: &Dict,
 ) -> Result<(Vec<Joined>, Renames)> {
-    let mut joined = Vec::new();
-    let mut whole = Vec::new();
+    let budget = receiving.budget();
+    let mut joined = BudgetVec::new(budget);
+    let mut whole = BudgetVec::new(budget);
     let mut renames = Renames::new();
     for (category, value) in source_resources.iter() {
         let Some(source_category) = resolve(source, value.clone())? else {
@@ -102,11 +105,11 @@ pub fn merge(
         };
         let receiving_category = match slot(receiving, resources, category.as_bytes())? {
             Slot::Absent => {
-                whole.push(Joined {
+                whole.try_push(Joined {
                     category: category.clone(),
                     name: None,
                     value: value.clone(),
-                });
+                })?;
                 continue;
             }
             Slot::Found(_, Value::Dict(dict)) => dict,
@@ -134,28 +137,51 @@ pub fn merge(
             }
             let key = if occupied.is_some() {
                 let renamed = unique(name, &receiving_category, &source_category, &assigned);
+                // The new name is held twice: assigned, and renaming `name`.
+                let size =
+                    3 * size_of::<Name>() + name.as_bytes().len() + 2 * renamed.as_bytes().len();
+                budget.charge(LimitCode::MemorySize, size as u64)?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one name per rename, charged to the budget above"
+                )]
                 assigned.insert(renamed.clone());
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one entry per rename, charged to the budget above"
+                )]
                 category_renames.insert(name.clone(), renamed.clone());
                 renamed
             } else {
                 name.clone()
             };
-            joined.push(Joined {
+            joined.try_push(Joined {
                 category: category.clone(),
                 name: Some(key),
                 value: entry.clone(),
-            });
+            })?;
         }
         if !category_renames.is_empty() {
+            let size = size_of::<(Name, HashMap<Name, Name>)>() + category.as_bytes().len();
+            budget.charge(LimitCode::MemorySize, size as u64)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one entry per category, charged to the budget above"
+            )]
             renames.insert(category.clone(), category_renames);
         }
     }
-    joined.extend(whole);
-    Ok((joined, renames))
+    joined.try_reserve_exact(whole.len())?;
+    joined.try_extend(whole.into_vec())?;
+    Ok((joined.into_vec(), renames))
 }
 
 /// Returns `name` followed by `_` and the smallest positive integer that
 /// no entry of `receiving` or `source` and no name of `assigned` has.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a candidate is a name of the source category, `_`, and twenty digits at most"
+)]
 fn unique(name: &Name, receiving: &Dict, source: &Dict, assigned: &HashSet<Name>) -> Name {
     let mut suffix = 1_usize;
     loop {
@@ -200,6 +226,10 @@ pub fn equivalent(
         if objects > MAX_COMPARED_OBJECTS {
             return Ok(false);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one pair per object compared, and MAX_COMPARED_OBJECTS objects at most, checked above"
+        )]
         if let (&Value::Reference(l), &Value::Reference(r)) = (&left, &right)
             && !pairs.insert((l, r))
         {
@@ -228,6 +258,10 @@ pub fn equivalent(
             (Value::Array(l), Value::Array(r)) => {
                 let alike = l.len() == r.len() && fits(&pending, l.len());
                 if alike {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "`fits` keeps the queue within MAX_COMPARED_OBJECTS pairs, checked above"
+                    )]
                     pending.extend(l.iter().cloned().zip(r.iter().cloned()));
                 }
                 alike
@@ -268,6 +302,10 @@ fn entries(
         if !charge(key.as_bytes().len()) {
             return false;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the caller's `fits` keeps the queue with these entries within MAX_COMPARED_OBJECTS pairs"
+        )]
         pending.push((value.clone(), other.clone()));
     }
     true
@@ -316,6 +354,10 @@ const fn is_regular(byte: u8) -> bool {
 }
 
 /// Decodes the `#xx` escapes of a name token without its slash.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the name is no longer than `token`, which the caller holds"
+)]
 fn decode_name(token: &[u8]) -> Vec<u8> {
     let mut decoded = Vec::with_capacity(token.len());
     let mut index = 0;
@@ -339,6 +381,10 @@ fn decode_name(token: &[u8]) -> Vec<u8> {
 
 /// Appends `name` as a name token, escaping its `#`, delimiter,
 /// whitespace, and non-printable bytes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "UNRESOLVED: three bytes per byte of a renamed name, once per operand of an appearance string that names it"
+)]
 fn encode_name(out: &mut Vec<u8>, name: &[u8]) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     out.push(b'/');
@@ -370,6 +416,10 @@ pub fn rewrite(appearance: &[u8], renames: &Renames) -> Option<Vec<u8>> {
         if !rest.is_empty() {
             return None;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "three UTF-8 bytes per two bytes of the string at most, which the caller holds"
+        )]
         let text = char::decode_utf16(units.iter().map(|unit| u16::from_be_bytes(*unit)))
             .collect::<std::result::Result<String, _>>()
             .ok()
@@ -483,6 +533,10 @@ fn rewrite_bytes(appearance: &[u8], renames: &Renames) -> Option<Vec<u8>> {
                             .get(&Name::from(category))
                             .and_then(|category| category.get(&Name::new(name)))
                     {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "one replacement per operator of the appearance string at most, which the caller holds"
+                        )]
                         replacements.push((start, end, renamed));
                     }
                 }
@@ -493,13 +547,25 @@ fn rewrite_bytes(appearance: &[u8], renames: &Renames) -> Option<Vec<u8>> {
     if replacements.is_empty() {
         return None;
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the length of the appearance string, which the caller holds"
+    )]
     let mut rewritten = Vec::with_capacity(appearance.len());
     let mut copied = 0;
     for (start, end, renamed) in replacements {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the bytes of the appearance string before a replacement, which the caller holds"
+        )]
         rewritten.extend_from_slice(&appearance[copied..start]);
         encode_name(&mut rewritten, renamed.as_bytes());
         copied = end;
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the rest of the appearance string, which the caller holds"
+    )]
     rewritten.extend_from_slice(&appearance[copied..]);
     Some(rewritten)
 }
