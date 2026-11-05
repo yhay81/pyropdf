@@ -5,6 +5,8 @@
 
 use std::io::Cursor;
 
+use pyropdf_store::LimitExceeded;
+use pyropdf_store::budget::Budget;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
@@ -621,10 +623,29 @@ pub struct Decoded {
     pub resolution: (u32, u32),
 }
 
+/// A malformed image or an operation budget that refused decoding.
+#[derive(Debug)]
+pub enum DecodeError {
+    Invalid(String),
+    Limit(LimitExceeded),
+}
+
+impl From<String> for DecodeError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
+impl From<LimitExceeded> for DecodeError {
+    fn from(refusal: LimitExceeded) -> Self {
+        Self::Limit(refusal)
+    }
+}
+
 /// Decodes PNG, JPEG, portable anymap, PAM, BMP, GIF, TIFF, or JPEG 2000
 /// `data`, refusing more than [`MAX_PIXELS`] pixels.
-pub fn decode(data: &[u8]) -> Result<Decoded, String> {
-    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+pub fn decode(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError> {
+    let result = if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(data)
     } else if data.starts_with(b"\xff\xd8") {
         decode_jpeg(data)
@@ -635,7 +656,7 @@ pub fn decode(data: &[u8]) -> Result<Decoded, String> {
     } else if codecs::is_gif(data) {
         codecs::decode_gif(data)
     } else if codecs::is_tiff(data) {
-        codecs::decode_tiff(data)
+        return codecs::decode_tiff(data, budget);
     } else if codecs::is_jpx(data) {
         codecs::decode_jpx(data)
     } else if codecs::is_jxr(data) {
@@ -645,7 +666,8 @@ pub fn decode(data: &[u8]) -> Result<Decoded, String> {
             "the data is not PNG, JPEG, a portable anymap, PAM, BMP, GIF, TIFF, or JPEG 2000"
                 .to_owned(),
         )
-    }
+    };
+    result.map_err(DecodeError::Invalid)
 }
 
 pub fn check_size(width: u32, height: u32) -> Result<(), String> {

@@ -7,9 +7,10 @@
 
 use std::io::{self, Write};
 
+use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec};
 
-use crate::pixel_ops::{self, Decoded, Layout};
+use crate::pixel_ops::{self, DecodeError, Decoded, Layout};
 
 /// The resolution of formats that state none.
 const DEFAULT_RESOLUTION: (u32, u32) = (96, 96);
@@ -670,7 +671,7 @@ pub fn is_tiff(data: &[u8]) -> bool {
     clippy::disallowed_methods,
     reason = "decoder limits bound decoded buffers and IFD values; check_size bounds final output to MAX_PIXELS"
 )]
-pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
+pub fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError> {
     use tiff::ColorType;
     use tiff::decoder::{Decoder, DecodingResult, Limits};
     use tiff::tags::{ExtraSamples, Tag};
@@ -693,7 +694,7 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
         == Some(3)
     {
         let map = decoder.get_tag_u16_vec(Tag::ColorMap).map_err(invalid)?;
-        let copy = palette_as_gray(data)?
+        let copy = palette_as_gray(data, budget)?
             .ok_or_else(|| "the TIFF palette image has no photometric entry".to_owned())?;
         Some((map, copy))
     } else {
@@ -720,15 +721,16 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
         ColorType::RGB(bits @ (8 | 16)) => (3, false, false, bits),
         ColorType::RGBA(bits @ (8 | 16)) => (4, false, true, bits),
         ColorType::CMYK(_) | ColorType::CMYKA(_) => {
-            return Err("CMYK TIFF is not supported".to_owned());
+            return Err("CMYK TIFF is not supported".to_owned().into());
         }
         other if palette.is_some() => {
             return Err(format!(
                 "TIFF palette image of {} bits is not supported",
                 other.bit_depth()
-            ));
+            )
+            .into());
         }
-        other => return Err(format!("TIFF of color type {other:?} is not supported")),
+        other => return Err(format!("TIFF of color type {other:?} is not supported").into()),
     };
     let resolution = resolution(&mut decoder).unwrap_or(DEFAULT_RESOLUTION);
     let palette = palette.as_ref().map(|(map, _)| map.as_slice());
@@ -754,10 +756,14 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
         }
         DecodingResult::U8(samples) => samples,
         DecodingResult::U16(samples) => samples.iter().map(|&value| (value >> 8) as u8).collect(),
-        _ => return Err("TIFF samples of this format are not supported".to_owned()),
+        _ => {
+            return Err("TIFF samples of this format are not supported"
+                .to_owned()
+                .into());
+        }
     };
     if samples.len() < width_us * height_us * channels {
-        return Err("the TIFF ends before its samples".to_owned());
+        return Err("the TIFF ends before its samples".to_owned().into());
     }
     let mut samples = samples;
     samples.truncate(width_us * height_us * channels);
@@ -765,7 +771,9 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
         // Red, then green, then blue entries, each of 16 bits.
         let colors = 1 << bits;
         if map.len() < colors * 3 {
-            return Err("the TIFF color map is shorter than its bits promise".to_owned());
+            return Err("the TIFF color map is shorter than its bits promise"
+                .to_owned()
+                .into());
         }
         let mut rgb = Vec::with_capacity(samples.len() * 3);
         for &index in &samples {
@@ -803,7 +811,10 @@ pub fn decode_tiff(data: &[u8]) -> Result<Decoded, String> {
 /// Returns a copy of the TIFF `data` whose first image has photometric
 /// interpretation 1, gray with black at 0, in place of 3, a palette, or
 /// `None` if its first directory has no such entry.
-fn palette_as_gray(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
+fn palette_as_gray<'b>(
+    data: &[u8],
+    budget: &'b Budget,
+) -> Result<Option<BudgetVec<'b, u8>>, LimitExceeded> {
     let little = data.starts_with(b"II");
     let value = (|| {
         let little = data.starts_with(b"II");
@@ -841,16 +852,14 @@ fn palette_as_gray(data: &[u8]) -> Result<Option<Vec<u8>>, String> {
     let Some(value) = value else {
         return Ok(None);
     };
-    let budget = Budget::default();
-    let mut copy = BudgetVec::new(&budget);
-    copy.try_extend_from_slice(data)
-        .map_err(|error| error.to_string())?;
+    let mut copy = BudgetVec::new(budget);
+    copy.try_extend_from_slice(data)?;
     copy[value..value + 2].copy_from_slice(&if little {
         1u16.to_le_bytes()
     } else {
         1u16.to_be_bytes()
     });
-    Ok(Some(copy.into_vec()))
+    Ok(Some(copy))
 }
 
 /// Returns the resolution that a TIFF states, in dots per inch.
