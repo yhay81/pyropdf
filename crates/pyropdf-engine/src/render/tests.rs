@@ -108,6 +108,15 @@ fn hinted_options(hinting: bool) -> Options {
     }
 }
 
+/// The options of a raster at 72 dpi on white through the glyph cache,
+/// hinted or not.
+fn cached_options(hinting: bool) -> Options {
+    Options {
+        glyph_cache: true,
+        ..hinted_options(hinting)
+    }
+}
+
 /// A corpus document with text in an embedded font.
 fn pdf20_simple() -> Arc<Bridged> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -115,48 +124,25 @@ fn pdf20_simple() -> Arc<Bridged> {
     Arc::new(Bridged::of_bytes(fs::read(path).unwrap()))
 }
 
-#[test]
-fn a_render_fills_glyphs_without_the_glyph_cache() {
+/// A corpus form of two pages of text.
+fn f1040() -> Arc<Bridged> {
     let path =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets/real_world/f1040.pdf");
-    let bridged = Arc::new(Bridged::of_bytes(fs::read(path).unwrap()));
-    let pages = bridged.pdf().pages();
-    let theirs = |glyph_caching| -> Vec<u8> {
-        hayro::render(
-            pages.first().unwrap(),
-            &RenderCache::new(),
-            &InterpreterSettings::default(),
-            &RenderSettings {
-                hinting: false,
-                glyph_caching,
-                ..RenderSettings::default()
-            },
-            &PixmapSettings {
-                x_scale: 1.0,
-                y_scale: 1.0,
-                bg_color: AlphaColor::WHITE,
-            },
-        )
-        .data()
-        .iter()
-        .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
-        .collect()
-    };
-    let ours = raster(&bridged, &Fallback::default(), 0, &hinted_options(false)).unwrap();
-    assert!(ours.data == theirs(false));
-    assert!(ours.data != theirs(true));
+    Arc::new(Bridged::of_bytes(fs::read(path).unwrap()))
 }
 
-#[test]
-fn hinting_renders_as_hayro_hints_without_its_glyph_cache() {
-    let bridged = pdf20_simple();
+/// hayro's own rendering of the first page of `bridged` at 72 dpi on
+/// white, as RGB samples, with its default settings but `hinting` and
+/// `glyph_caching`.
+fn hayro_rgb(bridged: &Bridged, hinting: bool, glyph_caching: bool) -> Vec<u8> {
     let pages = bridged.pdf().pages();
-    let theirs = hayro::render(
+    hayro::render(
         pages.first().unwrap(),
         &RenderCache::new(),
         &InterpreterSettings::default(),
         &RenderSettings {
-            glyph_caching: false,
+            hinting,
+            glyph_caching,
             ..RenderSettings::default()
         },
         &PixmapSettings {
@@ -164,13 +150,40 @@ fn hinting_renders_as_hayro_hints_without_its_glyph_cache() {
             y_scale: 1.0,
             bg_color: AlphaColor::WHITE,
         },
-    );
-    let theirs: Vec<u8> = theirs
-        .data()
-        .iter()
-        .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
-        .collect();
+    )
+    .data()
+    .iter()
+    .flat_map(|pixel| [pixel.r, pixel.g, pixel.b])
+    .collect()
+}
 
+#[test]
+fn a_render_fills_glyphs_without_the_glyph_cache() {
+    let bridged = f1040();
+    let options = Options::new((1.0, 0.0, 0.0, 1.0), false);
+    let ours = raster(&bridged, &Fallback::default(), 0, &options).unwrap();
+    assert!(ours.data == hayro_rgb(&bridged, false, false));
+    assert!(ours.data != hayro_rgb(&bridged, false, true));
+}
+
+#[test]
+fn the_glyph_cache_renders_as_hayro_caches_glyphs() {
+    let none = Fallback::default();
+    let form = f1040();
+    let cached = raster(&form, &none, 0, &cached_options(false)).unwrap();
+    assert!(cached.data == hayro_rgb(&form, false, true));
+    assert!(cached.data != hayro_rgb(&form, false, false));
+    // Hinted as well, text renders as hayro's default settings render it.
+    let text = pdf20_simple();
+    let both = raster(&text, &none, 0, &cached_options(true)).unwrap();
+    assert!(both.data == hayro_rgb(&text, true, true));
+    assert!(both.data != hayro_rgb(&text, true, false));
+}
+
+#[test]
+fn hinting_renders_as_hayro_hints_without_its_glyph_cache() {
+    let bridged = pdf20_simple();
+    let theirs = hayro_rgb(&bridged, true, false);
     let none = Fallback::default();
     let hinted = raster(&bridged, &none, 0, &hinted_options(true)).unwrap();
     assert!(hinted.data == theirs);
@@ -179,19 +192,38 @@ fn hinting_renders_as_hayro_hints_without_its_glyph_cache() {
 }
 
 #[test]
-fn a_render_cache_keeps_hinted_and_unhinted_glyphs_apart() {
+fn a_render_cache_keeps_the_glyphs_of_each_setting_apart() {
     let bridged = pdf20_simple();
     let other = pdf20_simple();
     let none = Fallback::default();
-    let fresh = |hinting| {
-        // Rendering another bridge first makes this one start a new cache.
-        raster(&other, &none, 0, &hinted_options(hinting)).unwrap();
-        raster(&bridged, &none, 0, &hinted_options(hinting)).unwrap()
-    };
-    let (hinted, unhinted) = (fresh(true), fresh(false));
-    assert!(raster(&bridged, &none, 0, &hinted_options(false)).unwrap() == unhinted);
-    assert!(raster(&bridged, &none, 0, &hinted_options(true)).unwrap() == hinted);
-    assert!(raster(&bridged, &none, 0, &hinted_options(false)).unwrap() == unhinted);
+    let settings = [
+        hinted_options(false),
+        hinted_options(true),
+        cached_options(false),
+        cached_options(true),
+    ];
+    let fresh: Vec<Raster> = settings
+        .iter()
+        .map(|options| {
+            // Rendering another bridge first makes this one start a new cache.
+            raster(&other, &none, 0, options).unwrap();
+            raster(&bridged, &none, 0, options).unwrap()
+        })
+        .collect();
+    // The four settings draw four different rasters.
+    for (at, one) in fresh.iter().enumerate() {
+        assert!(fresh[at + 1..].iter().all(|later| later != one), "{at}");
+    }
+    // Each setting after each other, through the cache that they share.
+    for (first, first_fresh) in settings.iter().zip(&fresh) {
+        for (then, then_fresh) in settings.iter().zip(&fresh) {
+            assert!(raster(&bridged, &none, 0, first).unwrap() == *first_fresh);
+            assert!(
+                raster(&bridged, &none, 0, then).unwrap() == *then_fresh,
+                "{first:?} then {then:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -209,6 +241,29 @@ fn a_batch_renders_each_entry_as_raster_does_in_order() {
         .collect();
 
     for workers in [1, 3, MAX_WORKERS] {
+        let batched = batch(&bridged, &none, &indexes, &options, workers, |raster| {
+            Ok::<_, RasterError>(raster)
+        })
+        .unwrap();
+        assert!(batched == alone, "workers={workers}");
+    }
+}
+
+#[test]
+fn a_batch_through_the_glyph_cache_renders_each_entry_as_raster_does() {
+    let bridged = f1040();
+    let options = Options {
+        glyph_cache: true,
+        ..Options::new((0.5, 0.0, 0.0, 0.5), false)
+    };
+    let indexes = [1, 0, 0, 1];
+    let none = Fallback::default();
+    let alone: Vec<Raster> = indexes
+        .iter()
+        .map(|&at| raster(&bridged, &none, at, &options).unwrap())
+        .collect();
+
+    for workers in [1, 2] {
         let batched = batch(&bridged, &none, &indexes, &options, workers, |raster| {
             Ok::<_, RasterError>(raster)
         })

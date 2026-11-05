@@ -249,6 +249,7 @@ Page.pixmap(
     annotations: bool = True,
     colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
     hinting: bool = False,
+    glyph_cache: bool = False,
 ) -> Pixmap
 ```
 
@@ -270,6 +271,17 @@ em, and not stroked or clipping text. The fonts that
 `Document.subset_fonts` subsets and that a save compacts can
 draw differently hinted than their originals, so hinted renders of a
 document before and after either may differ.
+
+`glyph_cache=True` draws text through hayro's glyph cache, which
+rasterizes each glyph once at each size and reuses it, so that text
+renders faster. The cache places a glyph at a whole pixel vertically
+and a quarter of a pixel horizontally, so text moves by up to half a
+pixel vertically. It holds horizontal text filled in one color, in
+glyphs up to 128 pixels wide and high; other text is filled where it
+lies. Its memory is outside `DocumentLimits`: it grows with
+each glyph that the document draws at another size, and lasts as
+long as the thread's render cache for the document's version, which
+the thread keeps until it renders another version.
 
 `clip` is a display rectangle `(x0, y0, x1, y1)`: its bounding
 box under the matrix, rounded outward to whole pixels and

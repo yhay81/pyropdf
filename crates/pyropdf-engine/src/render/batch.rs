@@ -35,6 +35,10 @@ const CACHE_PAGES: usize = 4096;
 /// and on fewer when their largest raster would hold more than 512 MB in
 /// all. A thread that cannot start leaves its share to the others. The
 /// first error stops the workers from starting another page.
+///
+/// Each worker renders through a cache of its own, which also holds the
+/// glyphs that [`Options::glyph_cache`] rasterizes, and drops it after
+/// 4,096 pages and when the batch ends.
 pub fn batch<T, E>(
     bridged: &Bridged,
     fallback: &Fallback,

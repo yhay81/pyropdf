@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `page.pixmap(glyph_cache=True)` and `Document.render(glyph_cache=True)`
+  render text through hayro's glyph cache, which rasterizes each glyph once
+  at each size and reuses it: on the corpus, about 1.5 times as fast at
+  72 dpi and 1.4 times at 144 dpi, but text moves by up to half a pixel
+  vertically, and the cache's memory is outside `DocumentLimits`.
+  `DocumentLimits.web()` accepts the option. Without it, renders are
+  unchanged (#640, #685).
+
 ## 0.2.2 (2026-11-04)
 
 - pyropdf moves to hayro 0.9.0 with LaurenzV/hayro#1734 applied, which
