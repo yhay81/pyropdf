@@ -289,6 +289,10 @@ impl Pixmap {
     /// Each row is stored unfiltered and the image data is compressed with
     /// `deflate`, so the buffers are charged to `budget` before they grow
     /// and the work polls it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the PNG header and physical-size chunks hold exactly 13 and 9 bytes"
+    )]
     fn encode_png(&self, out: &mut dyn Write, budget: &Budget) -> Result<(), EncodeError> {
         let io = |e: io::Error| EncodeError::Other(e.to_string());
         let limit = |e: LimitExceeded| EncodeError::Limit(e);
@@ -449,6 +453,10 @@ impl<'a> Bounded<'a> {
 }
 
 impl Write for Bounded<'_> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the shared atomic output count checks every extension against the caller output-size limit first"
+    )]
     fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
         let counted = self
             .written
@@ -846,6 +854,10 @@ impl Pixmap {
     /// that have it, in ascending order of the channels. More than
     /// `max_colors` distinct pixels raise `ValueError`; `None` lifts it.
     #[pyo3(signature = (rect=None, *, max_colors=Some(DEFAULT_MAX_COLORS)))]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "max_colors is checked before each push; even with no limit there are at most MAX_PIXELS colors"
+    )]
     fn colors<'py>(
         &self,
         py: Python<'py>,
@@ -1475,6 +1487,10 @@ impl From<RasterError> for Failed {
 /// resolved `background` to straight RGBA.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the options of Document.render")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one Python byte buffer per already budgeted and output-size-bounded encoded page"
+)]
 pub fn render_pages(
     py: Python<'_>,
     document: &_Document,
