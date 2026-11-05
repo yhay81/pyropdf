@@ -78,7 +78,10 @@ impl Graph for Store<'_> {
             _ => None,
         }
     }
-
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one pair per entry of a Value already parsed under the operation budget"
+    )]
     fn entries<'v>(&self, dict: &'v Value) -> Vec<(&'v [u8], &'v Value)> {
         let dict = match dict {
             Value::Dict(dict) => dict,
@@ -108,6 +111,10 @@ impl Graph for Store<'_> {
 
 /// Runs the structural check over the document's current version.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the schema report caps its defects at MAX_DEFECTS (10,000)"
+)]
 pub fn structural_check(
     py: Python<'_>,
     document: &_Document,
