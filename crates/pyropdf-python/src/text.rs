@@ -266,9 +266,9 @@ pub fn page_layout(
             options,
             chars,
             limits,
-            |layout| {
+            |layout, budget| {
                 let columns = if chars {
-                    Some(CharColumns::new(&layout.blocks)?)
+                    Some(CharColumns::new(&layout.blocks, budget)?)
                 } else {
                     None
                 };
@@ -307,7 +307,7 @@ pub fn page_chars(
             options,
             true,
             limits,
-            |layout| Ok((CharColumns::new(&layout.blocks)?, layout.skipped)),
+            |layout, budget| Ok((CharColumns::new(&layout.blocks, budget)?, layout.skipped)),
         )
     })?
 }
@@ -323,7 +323,7 @@ fn with_layout<T: Send>(
     options: OptionsTuple,
     chars: bool,
     (max_glyphs, max_size): (Option<u64>, Option<u64>),
-    then: impl FnOnce(&PageLayout) -> PyResult<T> + Send,
+    then: impl FnOnce(&PageLayout, &Budget) -> PyResult<T> + Send,
 ) -> PyResult<T> {
     let fallback = document.fallback();
     let key = text_key(options, &fallback);
@@ -381,7 +381,7 @@ fn with_layout<T: Send>(
             },
         )?;
         match &*result {
-            PageResult::Layout(layout) => then(layout),
+            PageResult::Layout(layout) => then(layout, &budget),
             _ => Err(mismatch()),
         }
     })
