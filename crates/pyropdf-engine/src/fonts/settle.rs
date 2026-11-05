@@ -6,8 +6,6 @@
 //!
 //! [`Structure::FontSubset`]: pyropdf_store::settle::Structure::FontSubset
 
-use std::collections::BTreeSet;
-
 use pyropdf_store::Result;
 use pyropdf_store::budget::Budget;
 use pyropdf_store::settle::Settler;
@@ -234,7 +232,7 @@ impl Font {
 /// or `None` when it is not an array of those.
 #[expect(
     clippy::disallowed_methods,
-    reason = "16-bit glyph IDs, so the set holds 65,536 glyphs at most"
+    reason = "16-bit glyph IDs, so the result holds 65,536 glyphs at most"
 )]
 fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
     let Value::Array(array) = value else {
@@ -244,24 +242,61 @@ fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
         Some(&Value::Integer(glyph)) => u16::try_from(glyph).ok().map(u32::from),
         _ => None,
     };
-    let mut glyphs = BTreeSet::new();
+    // Each range writes at most two partial words and one endpoint for its
+    // full words. Sweep those endpoints once below, instead of expanding
+    // overlapping ranges repeatedly. The fixed tables occupy 10 KiB.
+    let mut edges = [0_u64; 1024];
+    let mut full_ends = [0_u16; 1024];
+    let mut first_used = edges.len();
+    let mut end_used = 0;
     let mut at = 0;
     while at < array.len() {
         let first = glyph(array.get(at))?;
-        match array.get(at + 1)? {
+        let end = match array.get(at + 1)? {
             Value::Array(widths) => {
                 let last = first.checked_add(u32::try_from(widths.len()).ok()?)?;
-                glyphs.extend((first..last).filter(|&glyph| glyph <= u32::from(u16::MAX)));
                 at += 2;
+                last.min(u32::from(u16::MAX) + 1)
             }
             _ => {
                 let last = glyph(array.get(at + 1))?;
-                glyphs.extend(first..=last);
                 at += 3;
+                last + 1
             }
+        };
+        if first >= end {
+            continue;
+        }
+        let last = end - 1;
+        let first_word = (first / 64) as usize;
+        let last_word = (last / 64) as usize;
+        first_used = first_used.min(first_word);
+        end_used = end_used.max(last_word + 1);
+        let first_bits = u64::MAX << (first % 64);
+        let last_bits = u64::MAX >> (63 - last % 64);
+        if first_word == last_word {
+            edges[first_word] |= first_bits & last_bits;
+        } else {
+            edges[first_word] |= first_bits;
+            edges[last_word] |= last_bits;
+            full_ends[first_word + 1] = full_ends[first_word + 1].max(last_word as u16);
         }
     }
-    Some(glyphs.into_iter().collect())
+    let mut glyphs = Vec::new();
+    let mut full_end = 0;
+    for word in first_used..end_used {
+        full_end = full_end.max(usize::from(full_ends[word]));
+        let mut bits = if word < full_end {
+            u64::MAX
+        } else {
+            edges[word]
+        };
+        while bits != 0 {
+            glyphs.push(word as u32 * 64 + bits.trailing_zeros());
+            bits &= bits - 1;
+        }
+    }
+    Some(glyphs)
 }
 
 /// Returns the CIDToGIDMap of a compacted TrueType program: for each CID,
@@ -301,3 +336,6 @@ fn tag(compact: &Compact) -> String {
     tag.push('+');
     tag
 }
+
+#[cfg(test)]
+mod tests;
