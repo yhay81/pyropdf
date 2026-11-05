@@ -82,6 +82,10 @@ where
                 .map_err(E::from)
                 .and_then(&finish)
             {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one result per page of `indexes`, which the caller holds"
+                )]
                 Ok(value) => done.push((at, value)),
                 Err(error) => {
                     failed.store(true, Ordering::Relaxed);
@@ -92,6 +96,10 @@ where
         Ok(done)
     };
     let parts = thread::scope(|scope| {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one thread per worker, and MAX_WORKERS at most"
+        )]
         let spawned: Vec<_> = (1..count)
             .filter_map(|_| {
                 thread::Builder::new()
@@ -102,6 +110,10 @@ where
             .collect();
         let mut parts = vec![work()];
         for handle in spawned {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one part per worker, and MAX_WORKERS at most"
+            )]
             parts.push(
                 handle
                     .join()
@@ -110,6 +122,10 @@ where
         }
         parts
     });
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one result per page of `indexes`, which the caller holds"
+    )]
     let mut ordered: Vec<Option<T>> = std::iter::repeat_with(|| None)
         .take(indexes.len())
         .collect();
@@ -118,8 +134,13 @@ where
             ordered[at] = Some(value);
         }
     }
-    Ok(ordered
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one result per page of `indexes`, which the caller holds"
+    )]
+    let rendered = ordered
         .into_iter()
         .map(|value| value.expect("every page that a worker claimed is rendered"))
-        .collect())
+        .collect();
+    Ok(rendered)
 }

@@ -71,6 +71,10 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
             bg_color: AlphaColor::TRANSPARENT,
         },
     );
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "four bytes per pixel of hayro's pixmap, whose sides are 16-bit"
+    )]
     let data = pixmap
         .data()
         .iter()
