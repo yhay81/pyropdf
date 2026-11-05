@@ -543,5 +543,9 @@ fn row(kind: u8, second: u64, third: u32) -> [u8; 13] {
 }
 
 fn insert(dict: &mut Dict, key: Name, value: Value) {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the trailer copies the entries of the version's trailer, which the store holds, and five constant keys"
+    )]
     dict.insert(key, value);
 }
