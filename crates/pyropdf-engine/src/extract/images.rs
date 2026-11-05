@@ -72,12 +72,16 @@ impl ContentSink for Grab<'_> {
             ),
             Image::Stencil(stencil) => stencil.with_stencil(
                 |mask, _| {
-                    let size = mask.data.len();
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "as many bytes as the decoded mask that hayro holds"
+                    )]
+                    let color = vec![0; mask.data.len()];
                     self.image = Some(DecodedImage {
                         width: mask.width,
                         height: mask.height,
                         gray: true,
-                        color: vec![0; size],
+                        color,
                         alpha: Some(mask.data),
                     });
                 },

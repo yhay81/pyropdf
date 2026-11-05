@@ -89,6 +89,10 @@ struct Walk<'b> {
 impl Walk<'_> {
     /// Marks `number` once. Charge conservatively for its key, table
     /// metadata, spare capacity, and growth before reserving fallibly.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each number is charged to memory_size before the set grows by it"
+    )]
     fn mark(&mut self, number: u32) -> Result<bool> {
         if self.seen.contains(&number) {
             return Ok(false);
