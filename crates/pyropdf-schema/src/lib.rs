@@ -8,6 +8,13 @@
 //! the structural check's work (DESIGN.md section 8).
 
 #![warn(clippy::allow_attributes_without_reason)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::disallowed_methods,
+        reason = "tests grow standard collections freely; F6 binds the check's own code"
+    )
+)]
 
 pub mod check;
 #[rustfmt::skip]

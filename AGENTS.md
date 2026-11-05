@@ -102,8 +102,9 @@ gh api --paginate repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by
   English. Other languages appear only in test data.
 - Do not depend on lopdf. hayro-syntax parses every object (F5).
 - No recursion over input-derived structure without a bound, and no
-  collection that grows from input outside the operation's budget (F6). In
-  the store, `crates/pyropdf-store/clippy.toml` checks the collections.
+  collection that grows from input outside the operation's budget (F6).
+  `crates/clippy.toml` checks the collections of every crate that has no
+  `clippy.toml` of its own.
 - A pull request that claims a performance effect commits the measurement
   and its script under `evidence/`.
 - When DESIGN.md is wrong or unclear for your issue, do not deviate silently:
