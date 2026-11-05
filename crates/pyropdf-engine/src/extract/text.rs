@@ -185,6 +185,11 @@ impl GlyphText {
     }
 
     /// Hold `text`, inline when it is one character.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "copies one glyph's text, which text_size counts, or the /ActualText that the \
+                  budget holds"
+    )]
     fn try_from_str(text: &str) -> Result<Self, Error> {
         let mut chars = text.chars();
         if let (Some(ch), None) = (chars.next(), chars.next()) {
@@ -382,6 +387,12 @@ struct GlyphRecord {
     source: Option<Source>,
 }
 
+/// Appends `value`, fallibly.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "every caller grows linearly in what the text budget counts: glyphs, rules, table \
+              slots, or hits"
+)]
 fn try_push_text<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
     if values.len() == values.capacity() {
         values
@@ -392,6 +403,12 @@ fn try_push_text<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Er
     Ok(())
 }
 
+/// Appends `text`, fallibly.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "every caller builds a string from text and names that text_size counts, with a \
+              separator per glyph at most"
+)]
 fn try_push_str_text(value: &mut String, text: &str, label: &str) -> Result<(), Error> {
     value
         .try_reserve(text.len())
@@ -400,6 +417,11 @@ fn try_push_str_text(value: &mut String, text: &str, label: &str) -> Result<(), 
     Ok(())
 }
 
+/// Appends a glyph's text, fallibly.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "every caller builds a string from glyph text that text_size counts"
+)]
 fn try_push_glyph_text(value: &mut String, text: &GlyphText, label: &str) -> Result<(), Error> {
     match text {
         GlyphText::Char(c) => {
@@ -751,12 +773,22 @@ impl TextCollector<'_> {
                     last_info.clone()
                 } else {
                     if !self.font_infos.contains_key(&key) {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "one entry per font that hayro has loaded for the page, \
+                                      which its cache holds"
+                        )]
                         self.font_infos.try_reserve(1).map_err(|error| {
                             Error::Allocation(format!(
                                 "failed to grow extraction font cache: {error}"
                             ))
                         })?;
                     }
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "one entry per font that hayro has loaded for the page, which its \
+                                  cache holds"
+                    )]
                     let info = self
                         .font_infos
                         .entry(key)
@@ -860,9 +892,18 @@ impl TextCollector<'_> {
                     GlyphText::Heap(s.into_boxed_str())
                 } else {
                     let mut exact = String::new();
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "copies the text that hayro holds for the glyph, which \
+                                  text_size counts"
+                    )]
                     exact.try_reserve_exact(s.len()).map_err(|error| {
                         Error::Allocation(format!("failed to allocate glyph text: {error}"))
                     })?;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "fills the capacity reserved above"
+                    )]
                     exact.push_str(&s);
                     GlyphText::Heap(exact.into_boxed_str())
                 }
@@ -1219,11 +1260,19 @@ fn extract_inferred_vertical_cjk(
     }
 
     let mut selected = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one flag per glyph of the arena, which text_glyph_count counts"
+    )]
     selected.try_reserve_exact(arena.len()).map_err(|error| {
         Error::Allocation(format!(
             "failed to allocate vertical-CJK selection mask: {error}"
         ))
     })?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the capacity reserved above"
+    )]
     selected.resize(arena.len(), false);
     for index in eligible {
         selected[index] = true;
@@ -1618,6 +1667,10 @@ fn cluster_lines(glyphs: Vec<GlyphRecord>) -> Result<Vec<Vec<GlyphRecord>>, Erro
 }
 
 /// Move each collected glyph once from the arena into its clustered line.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "moves each glyph of the arena, which text_glyph_count counts, into one line"
+)]
 fn materialize_lines(
     arena: Vec<GlyphRecord>,
     lines: Vec<Vec<usize>>,
@@ -1717,6 +1770,10 @@ fn order_axis_page_lines(
     // Precompute each line's geometry key once instead of rescanning both
     // lines' glyphs inside every sort comparison.
     let mut decorated = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one key per line of the page's glyphs, which text_glyph_count counts"
+    )]
     decorated
         .try_reserve_exact(clustered.len())
         .map_err(|error| {
@@ -1725,6 +1782,10 @@ fn order_axis_page_lines(
     for line in clustered {
         let bbox = logical_line_bbox(&line, orientation);
         let source_order = line_source_order(&line);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above: one key per line"
+        )]
         decorated.push((bbox.1, bbox.0, source_order, line));
     }
     decorated.sort_unstable_by(|left, right| {
@@ -1734,11 +1795,19 @@ fn order_axis_page_lines(
             .then(left.2.cmp(&right.2))
     });
     let mut clustered = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one entry per line of the page's glyphs, which text_glyph_count counts"
+    )]
     clustered
         .try_reserve_exact(decorated.len())
         .map_err(|error| {
             Error::Allocation(format!("failed to allocate ordered text lines: {error}"))
         })?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the capacity reserved above"
+    )]
     clustered.extend(decorated.into_iter().map(|(_, _, _, line)| line));
     if let Some(boundary) = narrow_column_boundary(&clustered, orientation)? {
         return order_narrow_column_regions(clustered, orientation, boundary);
@@ -1845,6 +1914,10 @@ fn line_bbox(line: &[GlyphRecord]) -> BBox {
 /// Sort whole lines by one precomputed geometry key with the explicit
 /// source-order tie-breaker, scanning each line's glyphs once instead of on
 /// every comparison.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one key and one entry per line of the page's glyphs, which text_glyph_count counts"
+)]
 fn sort_lines_by_bbox_key(
     lines: Vec<Vec<GlyphRecord>>,
     key: impl Fn(&[GlyphRecord]) -> f64,
@@ -2266,6 +2339,10 @@ fn narrow_column_boundary(
     }))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "moves the glyphs of one line, which text_glyph_count counts, into two"
+)]
 fn split_owned_line_at(
     line: Vec<GlyphRecord>,
     index: usize,
@@ -2641,6 +2718,10 @@ pub fn page_text(
         Error::Allocation("the assembled text exceeds the address space".to_owned())
     })?;
     budget.charge(LimitCode::TextSize, as_u64(size))?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the assembled text, which text_size counts above"
+    )]
     let appended = assemble_text(&lines, Some(size)).and_then(|text| {
         out.try_reserve(text.len())
             .map_err(|error| Error::Allocation(format!("failed to grow the text: {error}")))?;
@@ -3326,6 +3407,10 @@ fn assemble_text<L: AsRef<[GlyphRecord]>>(
 ) -> Result<String, Error> {
     let mut out = String::new();
     if let Some(size) = exact_size {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the assembled size, which each caller charges to text_size first"
+        )]
         out.try_reserve_exact(size).map_err(|error| {
             Error::Allocation(format!("failed to reserve plain text output: {error}"))
         })?;

@@ -238,6 +238,10 @@ impl<'b> Graft<'b> {
                     LimitCode::MemorySize,
                     (2 * size_of::<(Name, Value)>()) as u64,
                 )?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the entry is charged to the budget above"
+                )]
                 classes.insert(Name::new(copy_bytes(&new, budget)?), copied);
                 classes_changed = true;
                 if new != name.as_bytes() {
@@ -314,6 +318,10 @@ impl<'b> Graft<'b> {
                 match (ours, theirs) {
                     (Some(ours), Some(theirs)) if ours != theirs => {
                         let standard = resolved_role(walk, source_roles.as_ref(), role)?;
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the element already has an /S, which this replaces"
+                        )]
                         element.insert(Name::from("S"), Value::Name(standard));
                         changed = true;
                     }
@@ -323,6 +331,10 @@ impl<'b> Graft<'b> {
                             LimitCode::MemorySize,
                             (2 * size_of::<(Name, Value)>()) as u64,
                         )?;
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the entry is charged to the budget above"
+                        )]
                         roles.insert(role.clone(), copy_for_edit(ours, budget)?);
                         roles_changed = true;
                     }
@@ -357,6 +369,10 @@ impl<'b> Graft<'b> {
                 let string = PdfString::new(copy_bytes(&new, budget)?, identifier.form());
                 taken_ids.insert(new, (), 0)?;
                 budget.charge(LimitCode::MemorySize, string.as_bytes().len() as u64)?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the element already has an /ID, which this replaces"
+                )]
                 element.insert(Name::from("ID"), Value::String(string.clone()));
                 changed = true;
                 if let Value::Reference(copied) = walk.reference(transaction, reference)? {
@@ -405,6 +421,10 @@ impl<'b> Graft<'b> {
             if let Value::Dict(element) = kid
                 && is_element(element)
             {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the element grows by one entry at most"
+                )]
                 element.insert(Name::from("P"), Value::Reference(self.top));
             }
         }
@@ -444,11 +464,17 @@ impl<'b> Graft<'b> {
             if tree_dict.get("Nums").is_none() && tree_dict.get("Kids").is_some() {
                 let limits = Array::from(vec![flat[0].clone(), flat[flat.len() - 2].clone()]);
                 let mut node = Dict::new();
-                node.insert(
-                    Name::from("Nums"),
-                    Value::Array(Array::from(flat.into_vec())),
-                );
-                node.insert(Name::from("Limits"), Value::Array(limits));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "each key is a constant, so the leaf holds two entries"
+                )]
+                {
+                    node.insert(
+                        Name::from("Nums"),
+                        Value::Array(Array::from(flat.into_vec())),
+                    );
+                    node.insert(Name::from("Limits"), Value::Array(limits));
+                }
                 leaf = Some(node);
             } else {
                 extend_entry(
@@ -464,6 +490,10 @@ impl<'b> Graft<'b> {
                 && let (Some(first), Some(last)) =
                     (first_key.into_iter().chain(first_new).min(), last_new)
             {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the tree already has /Limits, which this replaces"
+                )]
                 tree_dict.insert(
                     Name::from("Limits"),
                     Value::Array(Array::from(vec![
@@ -553,18 +583,28 @@ impl<'b> Graft<'b> {
                 transaction.write(object.number(), &Value::Dict(tree_dict), budget)?;
             }
             None => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the root grows by one entry at most"
+                )]
                 root_dict.insert(Name::from("ParentTree"), Value::Dict(tree_dict));
             }
         }
-        root_dict.insert(
-            Name::from("ParentTreeNextKey"),
-            Value::Integer(self.next_key),
-        );
-        if let Some(roles) = self.roles {
-            root_dict.insert(Name::from("RoleMap"), Value::Dict(roles));
-        }
-        if let Some(classes) = self.classes {
-            root_dict.insert(Name::from("ClassMap"), Value::Dict(classes));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "each key is a constant, so the root grows by three entries at most"
+        )]
+        {
+            root_dict.insert(
+                Name::from("ParentTreeNextKey"),
+                Value::Integer(self.next_key),
+            );
+            if let Some(roles) = self.roles {
+                root_dict.insert(Name::from("RoleMap"), Value::Dict(roles));
+            }
+            if let Some(classes) = self.classes {
+                root_dict.insert(Name::from("ClassMap"), Value::Dict(classes));
+            }
         }
         if let Some(mut ids) = self.ids {
             budget.charge(
@@ -579,14 +619,24 @@ impl<'b> Graft<'b> {
                 names.try_push(value)?;
             }
             let mut node = Dict::new();
-            node.insert(
-                Name::from("Names"),
-                Value::Array(Array::from(names.into_vec())),
-            );
-            root_dict.insert(Name::from("IDTree"), Value::Dict(node));
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "each key is a constant: the node holds one entry, and the root gains one"
+            )]
+            {
+                node.insert(
+                    Name::from("Names"),
+                    Value::Array(Array::from(names.into_vec())),
+                );
+                root_dict.insert(Name::from("IDTree"), Value::Dict(node));
+            }
         }
         transaction.write(self.root.number(), &Value::Dict(root_dict), budget)?;
         if old_root.is_none() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the catalog grows by one entry at most"
+            )]
             catalog_dict.insert(Name::from("StructTreeRoot"), Value::Reference(self.root));
             transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
         }
@@ -686,6 +736,7 @@ impl Receiving {
 
 fn new_root() -> Dict {
     let mut root = Dict::new();
+    #[expect(clippy::disallowed_methods, reason = "the new root holds one entry")]
     root.insert(
         Name::from("Type"),
         Value::Name(Name::from("StructTreeRoot")),

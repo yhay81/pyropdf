@@ -35,8 +35,17 @@ pub struct Compact {
 /// only `.notdef`, the glyphs of `keep`, and the glyphs that those draw;
 /// `None` when it is not a program that this reads, which leaves it whole.
 /// `name` names a CFF result.
+///
+/// A CFF result's charstrings inline the subroutines and the `seac`
+/// components that they call, so they can outgrow the program by far. They
+/// stop at the program's length, past which no result is smaller than it,
+/// and the program then stays whole too.
 #[must_use]
 pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one entry per glyph of the caller's `keep`"
+    )]
     let keep: BTreeSet<u32> = keep.iter().copied().collect();
     if let Some((data, glyphs)) = sfnt::compact(program, &keep) {
         return Some(Compact {
@@ -52,6 +61,10 @@ pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
     let units_per_em = font.head().ok()?.units_per_em();
     let scale = 1000.0 / f64::from(units_per_em.max(1));
     let source = CffFontRef::new_cff(table, 0, Some(i32::from(units_per_em))).ok()?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "16-bit glyph IDs, so 65,536 glyphs at most"
+    )]
     let glyphs: Vec<u16> = std::iter::once(0)
         .chain(keep)
         .filter(|&glyph| glyph < count)
@@ -60,9 +73,19 @@ pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
         .into_iter()
         .collect();
     let mut charstrings = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one charstring per kept glyph, 65,536 at most"
+    )]
     charstrings.try_reserve(glyphs.len()).ok()?;
     let mut fds = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one font DICT index per kept glyph, 65,536 at most"
+    )]
     fds.try_reserve(glyphs.len()).ok()?;
+    // The bytes that the charstrings may still take.
+    let mut room = program.len();
     // The hint values of the result's font DICTs, each only once, and for
     // each font DICT of the face, which of them it became and how it draws.
     let mut privates: Vec<Vec<u8>> = Vec::new();
@@ -70,7 +93,12 @@ pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
     for &glyph in &glyphs {
         let glyph = GlyphId::new(u32::from(glyph));
         let index = source.subfont_index(glyph).unwrap_or(0);
-        let (fd, subfont) = match subfonts.entry(index) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one entry per font DICT of a kept glyph, 65,536 at most"
+        )]
+        let subfont_entry = subfonts.entry(index);
+        let (fd, subfont) = match subfont_entry {
             Entry::Occupied(entry) => *entry.get(),
             Entry::Vacant(entry) => {
                 let subfont = source
@@ -85,18 +113,34 @@ pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
                     .iter()
                     .position(|private| *private == values)
                     .unwrap_or_else(|| {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the font DICT index is a u8, which refuses past 256 entries below"
+                        )]
                         privates.push(values);
                         privates.len() - 1
                     });
                 *entry.insert((u8::try_from(fd).ok()?, subfont))
             }
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "within the capacity reserved above"
+        )]
         fds.push(fd);
         // A glyph that does not draw is empty.
-        charstrings.push(match subfont {
-            Some((subfont, transform)) => charstring(&source, &subfont, glyph, transform, scale)?,
+        let charstring = match subfont {
+            Some((subfont, transform)) => {
+                charstring(&source, &subfont, glyph, transform, scale, room)?
+            }
             None => vec![ENDCHAR],
-        });
+        };
+        room = room.checked_sub(charstring.len())?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "within the capacity reserved above"
+        )]
+        charstrings.push(charstring);
     }
     let name = if name.is_empty() { "Subset" } else { name };
     Some(Compact {
@@ -122,17 +166,19 @@ fn hint_scale(transform: &Transform, scale: f64) -> Option<f64> {
 }
 
 /// Returns the charstring of `glyph` for the result; `None` when a value is
-/// out of the range of a charstring's numbers.
+/// out of the range of a charstring's numbers, or when the charstring would
+/// pass `room` bytes.
 fn charstring(
     source: &CffFontRef<'_>,
     subfont: &Subfont,
     glyph: GlyphId,
     transform: Transform,
     scale: f64,
+    room: usize,
 ) -> Option<Vec<u8>> {
     let hinted = hint_scale(&transform, scale);
     let scale = hinted.unwrap_or(scale);
-    let mut pen = Charstring::new(scale, hinted.is_some());
+    let mut pen = Charstring::new(scale, hinted.is_some(), room);
     // Stems describe the charstring's own units, so the outline stays in
     // them too, unless a font matrix has to draw it.
     let mut drawn = if hinted.is_some() {
@@ -144,17 +190,17 @@ fn charstring(
     // A viewer hints each component of a `seac` by its own stems, and a
     // charstring without the `seac` holds one set, so its outline goes alone.
     if pen.seac {
-        pen = Charstring::new(scale, false);
+        pen = Charstring::new(scale, false, room);
         drawn = source.evaluate_charstring(subfont, glyph, &[], &mut pen);
     }
     if pen.overflow {
         return None;
     }
-    Some(if drawn.is_ok() {
+    if drawn.is_ok() {
         pen.finish_glyph()
     } else {
-        vec![ENDCHAR]
-    })
+        Some(vec![ENDCHAR])
+    }
 }
 
 const HSTEM: u8 = 1;
@@ -179,9 +225,13 @@ const GHOST_BOTTOM: i32 = -21 * 65536;
 /// units per em and kept to 16.16 fixed.
 struct Charstring {
     data: Vec<u8>,
+    /// The most bytes that `data` takes.
+    limit: usize,
     scale: f64,
     /// The current point, in 1/65536 units.
     at: (i64, i64),
+    /// Whether a value left the range of a charstring's numbers, or the
+    /// charstring would pass `limit`.
     overflow: bool,
     /// Whether it writes stems and masks.
     hints: bool,
@@ -199,9 +249,10 @@ struct Charstring {
 }
 
 impl Charstring {
-    fn new(scale: f64, hints: bool) -> Self {
+    fn new(scale: f64, hints: bool, limit: usize) -> Self {
         Self {
             data: Vec::new(),
+            limit,
             scale,
             at: (0, 0),
             overflow: false,
@@ -213,6 +264,19 @@ impl Charstring {
             stem_operators: Vec::new(),
             masked: false,
         }
+    }
+
+    /// Appends `bytes`, or overflows when they would pass the limit.
+    fn put(&mut self, bytes: &[u8]) {
+        if self.overflow || bytes.len() > self.limit - self.data.len() {
+            self.overflow = true;
+            return;
+        }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "`data` stops at `limit`, checked above"
+        )]
+        self.data.extend_from_slice(bytes);
     }
 
     fn fixed(&self, value: Fixed) -> i64 {
@@ -237,29 +301,30 @@ impl Charstring {
             return;
         };
         if value % 65536 != 0 {
-            self.data.push(255);
-            self.data.extend_from_slice(&value.to_be_bytes());
+            let [b1, b2, b3, b4] = value.to_be_bytes();
+            self.put(&[255, b1, b2, b3, b4]);
             return;
         }
         let integer = value / 65536;
         match integer {
-            -107..=107 => self.data.push(u8::try_from(integer + 139).unwrap_or(139)),
+            -107..=107 => self.put(&[u8::try_from(integer + 139).unwrap_or(139)]),
             108..=1131 => {
                 let rest = integer - 108;
-                self.data
-                    .push(u8::try_from(rest / 256 + 247).unwrap_or(247));
-                self.data.push(u8::try_from(rest % 256).unwrap_or(0));
+                self.put(&[
+                    u8::try_from(rest / 256 + 247).unwrap_or(247),
+                    u8::try_from(rest % 256).unwrap_or(0),
+                ]);
             }
             -1131..=-108 => {
                 let rest = -integer - 108;
-                self.data
-                    .push(u8::try_from(rest / 256 + 251).unwrap_or(251));
-                self.data.push(u8::try_from(rest % 256).unwrap_or(0));
+                self.put(&[
+                    u8::try_from(rest / 256 + 251).unwrap_or(251),
+                    u8::try_from(rest % 256).unwrap_or(0),
+                ]);
             }
             _ => {
-                self.data.push(28);
-                self.data
-                    .extend_from_slice(&i16::try_from(integer).unwrap_or(0).to_be_bytes());
+                let [b1, b2] = i16::try_from(integer).unwrap_or(0).to_be_bytes();
+                self.put(&[28, b1, b2]);
             }
         }
     }
@@ -273,7 +338,7 @@ impl Charstring {
             self.number(dy);
             self.at = (x, y);
         }
-        self.data.push(op);
+        self.put(&[op]);
     }
 
     fn stem(&mut self, vertical: bool, start: Fixed, end: Fixed) {
@@ -307,8 +372,15 @@ impl Charstring {
     /// starts counting from zero again.
     fn end_stems(&mut self) {
         if self.stems > 0 {
-            self.stem_operators.push(self.data.len());
-            self.data.push(if self.vertical { VSTEM } else { HSTEM });
+            let at = self.data.len();
+            self.put(&[if self.vertical { VSTEM } else { HSTEM }]);
+            if !self.overflow {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one entry per stem operator written to `data`, which stops at `limit`"
+                )]
+                self.stem_operators.push(at);
+            }
             self.stems = 0;
             self.stem_at = 0;
         }
@@ -326,12 +398,17 @@ impl Charstring {
             self.end_stems();
         }
         self.masked = true;
-        self.data.push(op);
-        self.data.extend_from_slice(mask);
+        self.put(&[op]);
+        self.put(mask);
     }
 
-    fn finish_glyph(mut self) -> Vec<u8> {
+    /// Returns the charstring, ended; `None` when it overflowed.
+    fn finish_glyph(mut self) -> Option<Vec<u8>> {
         self.end_stems();
+        self.put(&[ENDCHAR]);
+        if self.overflow {
+            return None;
+        }
         if self.masked {
             for at in self.stem_operators {
                 self.data[at] = if self.data[at] == VSTEM {
@@ -341,8 +418,7 @@ impl Charstring {
                 };
             }
         }
-        self.data.push(ENDCHAR);
-        self.data
+        Some(self.data)
     }
 }
 

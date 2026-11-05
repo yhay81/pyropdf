@@ -179,6 +179,10 @@ impl<'b> Fonts<'b> {
     /// in the first font that has room and then in new ones. Each procedure
     /// becomes a stream object of `transaction`. Refuses with what the budget
     /// refuses.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a font holds GLYPHS_PER_FONT glyphs at most, and `with_room` finds one with room"
+    )]
     pub fn add(&mut self, transaction: &mut Transaction, glyphs: Vec<Glyph>) -> Result<()> {
         self.index.try_reserve(glyphs.len())?;
         for glyph in glyphs {
@@ -243,6 +247,10 @@ impl<'b> Fonts<'b> {
             .charge(LimitCode::MemorySize, text.len() as u64)?;
         self.charged = self.charged.saturating_add(text.len() as u64);
         slot.clear();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "MAX_MAPPED_UNITS units at most, checked and charged to the budget above"
+        )]
         slot.push_str(text);
         font.text_changed = true;
         Ok(())
@@ -261,6 +269,10 @@ impl<'b> Fonts<'b> {
 impl Font {
     /// Returns a font with no glyphs, whose dictionary and CMap
     /// [`Font::write`] writes.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each key is a constant: the dictionary holds four entries"
+    )]
     fn new(transaction: &mut Transaction, em: u16) -> Result<Self> {
         let number = transaction.allocate()?.number();
         let to_unicode = transaction.allocate()?;
@@ -290,6 +302,10 @@ impl Font {
 
     /// Returns the font of object `number`, `None` when it no longer has
     /// the shape that [`Font::write`] gives it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the Differences hold GLYPHS_PER_FONT names at most, checked above, and Widths as many"
+    )]
     fn read(version: &Version, number: u32, budget: &Budget) -> Result<Option<Self>> {
         let Some(object) = version.get(number, budget)? else {
             return Ok(None);
@@ -373,6 +389,10 @@ impl Font {
         }))
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each key is a constant: the encoding holds two entries, and the font grows by seven"
+    )]
     fn write(&mut self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
         if self.text_changed {
             let stream = stream_of(&write_cmap(&self.texts, budget)?, budget)?;
@@ -382,14 +402,11 @@ impl Font {
         if !self.changed {
             return Ok(());
         }
-        let mut differences = Array::default();
-        differences.push(Value::Integer(0));
-        for name in &self.names {
-            differences.push(Value::Name(name.clone()));
-        }
+        let differences =
+            std::iter::once(Value::Integer(0)).chain(self.names.iter().cloned().map(Value::Name));
         let mut encoding = Dict::new();
         encoding.insert(Name::from("Type"), Value::Name(Name::from("Encoding")));
-        encoding.insert(Name::from("Differences"), Value::Array(differences));
+        encoding.insert(Name::from("Differences"), array(differences));
         let dict = &mut self.dict;
         let last = i64::try_from(self.names.len()).unwrap_or(i64::MAX) - 1;
         dict.insert(Name::from("Encoding"), Value::Dict(encoding));
@@ -419,6 +436,10 @@ fn is_name(value: Option<&Value>, name: &[u8]) -> bool {
 }
 
 /// Returns `values` as an array.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the callers pass a font's codes, GLYPHS_PER_FONT and one at most, or a fixed box or matrix"
+)]
 fn array(values: impl IntoIterator<Item = Value>) -> Value {
     let mut array = Array::default();
     for value in values {
@@ -446,6 +467,10 @@ pub(super) fn stream_with(mut dict: Dict, data: &[u8], budget: &Budget) -> Resul
     let encoded = deflate(data, 6, data.len().saturating_sub(1), budget)?;
     let data = match encoded {
         Some(encoded) => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary grows by one entry at most"
+            )]
             dict.insert(Name::from("Filter"), Value::Name(Name::from("FlateDecode")));
             encoded
         }
@@ -459,6 +484,10 @@ pub(super) fn stream_with(mut dict: Dict, data: &[u8], budget: &Budget) -> Resul
 }
 
 /// Adds `value` as `name` of `category` of `resources`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "two entries at most per resource of a glyph that the caller adds and moves here"
+)]
 fn insert_resource(resources: &mut Dict, category: Name, name: Name, value: Value) {
     if !matches!(resources.get(category.as_bytes()), Some(Value::Dict(_))) {
         resources.insert(category.clone(), Value::Dict(Dict::new()));
@@ -518,6 +547,10 @@ const BFCHAR_BLOCK: usize = 100;
 fn write_cmap<'b>(texts: &[String], budget: &'b Budget) -> Result<BudgetVec<'b, u8>> {
     let mut out = BudgetVec::new(budget);
     out.try_extend_from_slice(CMAP_HEAD)?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one entry per code of a font, GLYPHS_PER_FONT at most"
+    )]
     let mapped: Vec<(usize, &String)> = texts
         .iter()
         .enumerate()
@@ -541,6 +574,10 @@ fn write_cmap<'b>(texts: &[String], budget: &'b Budget) -> Result<BudgetVec<'b, 
 /// Returns the text of each of `count` codes in a CMap that [`write_cmap`]
 /// wrote, `None` when it is not one.
 fn read_cmap(data: &[u8], count: usize) -> Option<Vec<String>> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the caller counts a font's names, GLYPHS_PER_FONT at most"
+    )]
     let mut texts = vec![String::new(); count];
     let text = std::str::from_utf8(data).ok()?;
     for line in text.lines() {
@@ -554,6 +591,10 @@ fn read_cmap(data: &[u8], count: usize) -> Option<Vec<String>> {
             continue;
         }
         let code = usize::from_str_radix(code, 16).ok()?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one unit per four hex digits of a line of the CMap, which the budget decoded"
+        )]
         let units = (0..mapped.len() / 4)
             .map(|at| u16::from_str_radix(mapped.get(4 * at..4 * at + 4)?, 16).ok())
             .collect::<Option<Vec<u16>>>()?;

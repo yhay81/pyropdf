@@ -99,8 +99,14 @@ pub(super) fn break_ends_with<'b>(
         poll()?;
         let end = step_end(text, start, step);
         window.clear();
-        window.push_str(&context);
-        window.push_str(&text[start..end]);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the window holds the context, max_context characters at most, and one step"
+        )]
+        {
+            window.push_str(&context);
+            window.push_str(&text[start..end]);
+        }
         let base = context.len();
         let mut restart = 0;
         for (offset, _) in linebreaks(&window) {
@@ -133,6 +139,10 @@ pub(super) fn break_ends_with<'b>(
 /// Writes `text` to `out` with each run of characters of one line-breaking
 /// class cut to its first and last [`RUN_ENDS`] characters, and returns the
 /// characters written.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "`out` keeps some of the characters of `text`, a part of the bounded window"
+)]
 fn keep_run_ends(text: &str, out: &mut String) -> usize {
     out.clear();
     let mut written = 0;
@@ -159,6 +169,10 @@ fn keep_run_ends(text: &str, out: &mut String) -> usize {
 }
 
 /// Writes the last characters of a run of `run` characters from its ring.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "RUN_ENDS characters at most, of a run that `keep_run_ends` reads once"
+)]
 fn push_run_end(out: &mut String, run: usize, tail: &[char; RUN_ENDS]) -> usize {
     let past = run.saturating_sub(RUN_ENDS);
     let kept = past.min(RUN_ENDS);

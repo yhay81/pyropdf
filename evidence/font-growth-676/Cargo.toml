@@ -1,0 +1,38 @@
+# The harness of issue #676: the time that pyropdf-engine's font subsetter
+# and compactor take on a face, built against the checkout that it sits in.
+# `run.py` builds it in a checkout of the base commit as well. The empty
+# table below makes this directory a workspace of its own, so it is no
+# member of the repository's workspace and the root Cargo.toml and
+# Cargo.lock stay unchanged.
+[workspace]
+
+[package]
+name = "font-growth-676"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+pyropdf-engine = { path = "../../crates/pyropdf-engine" }
+
+# The hayro commit of the repository's workspace, which pyropdf-engine
+# builds against.
+[patch.crates-io]
+hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-font = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-interpret = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jbig2 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jpeg2000 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-postscript = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-svg = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-syntax = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+
+# The release profile of the repository's workspace, so that the timings are
+# those of the code that a wheel would ship.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"

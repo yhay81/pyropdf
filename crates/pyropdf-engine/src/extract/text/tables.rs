@@ -55,7 +55,8 @@ pub type TableTuple = (
 /// borderless rows; and the number of glyphs without Unicode left out.
 ///
 /// The page's glyphs count against the budgets of [`super::page_text`]
-/// while detection runs. A refusal keeps nothing.
+/// while detection runs, and the text of the cells of a ruled table against
+/// `text_size` for the rest of the operation. A refusal keeps nothing.
 pub fn page_tables(
     bridged: &Bridged,
     index: usize,
@@ -91,6 +92,10 @@ fn bbox_is_inside((x0, y0, x1, y1): BBox, (clip_x0, clip_y0, clip_x1, clip_y1): 
         && y1 <= clip_y1 + TABLE_SNAP_TOLERANCE
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "every caller sizes a grid whose slots table_slots checks against table_cell_count"
+)]
 fn try_filled_text<T: Clone>(len: usize, value: T, label: &str) -> Result<Vec<T>, Error> {
     let mut values = Vec::new();
     values
@@ -354,12 +359,33 @@ fn cell_has_internal_split(
 
 /// Tile a detected grid with the smallest bounded cells, allowing rectangular
 /// row/column spans where an internal rule is absent.
+///
+/// The text of the cells counts against `text_size` for the rest of the
+/// operation, as the strings of a layout do, unless the grid is discarded.
 fn materialize_grid_cells(
     rules: &[RuleSegment],
     xs: &[f64],
     ys: &[f64],
     word_lines: &[Vec<BorrowedWord<'_>>],
     budget: &Budget,
+) -> Result<Option<MaterializedGrid>, Error> {
+    let mut charged = 0;
+    let grid = tile_grid_cells(rules, xs, ys, word_lines, budget, &mut charged);
+    if !matches!(grid, Ok(Some(_))) {
+        budget.release(LimitCode::TextSize, as_u64(charged));
+    }
+    grid
+}
+
+/// [`materialize_grid_cells`], adding the `text_size` that the cells' text
+/// charges to `charged`.
+fn tile_grid_cells(
+    rules: &[RuleSegment],
+    xs: &[f64],
+    ys: &[f64],
+    word_lines: &[Vec<BorrowedWord<'_>>],
+    budget: &Budget,
+    charged: &mut usize,
 ) -> Result<Option<MaterializedGrid>, Error> {
     let row_count = ys.len() - 1;
     let column_count = xs.len() - 1;
@@ -424,7 +450,7 @@ fn materialize_grid_cells(
                 return Ok(None);
             };
             let bbox = (xs[column_start], ys[row_start], xs[column_end], ys[row_end]);
-            cells[slot] = Some((bbox, cell_text(word_lines, bbox, budget)?));
+            cells[slot] = Some((bbox, cell_text(word_lines, bbox, budget, charged)?));
             let Ok(anchor) = u32::try_from(slot) else {
                 return Ok(None);
             };
@@ -600,8 +626,28 @@ fn infer_hybrid_grid_rules(
     Ok(inferred)
 }
 
-/// Extract physical-order text whose word centers fall inside a cell.
+/// Extract physical-order text whose word centers fall inside a cell, and
+/// charge it to `text_size`, adding it to `charged`.
+///
+/// A cell holds at most the text of the page's words, which `text_size`
+/// counts already, but the cells of a grid can hold more than the page:
+/// a word near an edge falls in the cells on both sides, and the grids of
+/// a page may overlap. The charge bounds what they hold together.
 fn cell_text(
+    lines: &[Vec<BorrowedWord<'_>>],
+    bbox: BBox,
+    budget: &Budget,
+    charged: &mut usize,
+) -> Result<String, Error> {
+    let text = physical_cell_text(lines, bbox, budget)?;
+    budget.charge(LimitCode::TextSize, as_u64(text.len()))?;
+    *charged += text.len();
+    Ok(text)
+}
+
+/// The text of the words of `lines` whose centers fall inside a cell, in
+/// physical order.
+fn physical_cell_text(
     lines: &[Vec<BorrowedWord<'_>>],
     (x0, y0, x1, y1): BBox,
     budget: &Budget,
@@ -1154,6 +1200,91 @@ mod tests {
         let error = line_grid_slots(&[], &[0.0, 10.0, 20.0], true, &budget).unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::MemorySize));
         assert_eq!(budget.used(LimitCode::MemorySize), 0);
+    }
+
+    /// A glyph of `ch` with its origin at `x` on the baseline y = 5.
+    fn glyph(ch: char, x: f64) -> GlyphRecord {
+        let text = super::super::GlyphText::Char(ch);
+        GlyphRecord {
+            bidi_flags: super::super::glyph_bidi_flags(&text),
+            text,
+            x,
+            y: 5.0,
+            size: 1.0,
+            advance: 1.0,
+            zero_advance: false,
+            direction: (1.0, 0.0),
+            writing_mode: 0,
+            font_key: 0,
+            font: super::super::FontInfo::default(),
+            color: None,
+            render_mode: 0,
+            is_clipped: false,
+            ink: None,
+            is_underlined: false,
+            is_struck: false,
+            joins_previous: false,
+            source_order: 0,
+            shown_until: 1,
+            run: 0,
+            source: None,
+        }
+    }
+
+    #[test]
+    fn cell_text_counts_against_text_size() {
+        let glyphs = [glyph('a', 4.0), glyph('b', 5.0)];
+        let lines = vec![vec![((4.0, 4.0, 6.0, 6.0), &glyphs[..])]];
+        let cell = (0.0, 0.0, 10.0, 10.0);
+        let budget = Budget::default();
+        let mut charged = 0;
+        assert_eq!(
+            cell_text(&lines, cell, &budget, &mut charged).unwrap(),
+            "ab"
+        );
+        assert_eq!((charged, budget.used(LimitCode::TextSize)), (2, 2));
+
+        let budget = Budget::default().with_limit(LimitCode::TextSize, Some(1));
+        let mut charged = 0;
+        let error = cell_text(&lines, cell, &budget, &mut charged).unwrap_err();
+        assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::TextSize));
+        assert_eq!((charged, budget.used(LimitCode::TextSize)), (0, 0));
+    }
+
+    #[test]
+    fn a_discarded_grid_releases_the_text_of_its_cells() {
+        let glyphs = [glyph('a', 4.0), glyph('b', 5.0)];
+        let lines = vec![vec![((4.0, 4.0, 6.0, 6.0), &glyphs[..])]];
+        let rule = |x0, y0, x1, y1, horizontal| RuleSegment {
+            x0,
+            y0,
+            x1,
+            y1,
+            horizontal,
+        };
+        // The rules bound the first cell, which holds the text, and leave
+        // the second open, so the grid is discarded after the first.
+        let rules = [
+            rule(0.0, 0.0, 10.0, 0.0, true),
+            rule(0.0, 10.0, 10.0, 10.0, true),
+            rule(0.0, 0.0, 0.0, 10.0, false),
+            rule(10.0, 0.0, 10.0, 10.0, false),
+        ];
+        let (xs, ys) = ([0.0, 10.0, 20.0], [0.0, 10.0]);
+        let budget = Budget::default();
+        assert!(
+            materialize_grid_cells(&rules, &xs, &ys, &lines, &budget)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(budget.used(LimitCode::TextSize), 0);
+
+        let (xs, ys) = ([0.0, 10.0], [0.0, 10.0]);
+        let (cells, _) = materialize_grid_cells(&rules, &xs, &ys, &lines, &budget)
+            .unwrap()
+            .unwrap();
+        assert_eq!(cells[0].as_ref().map(|(_, text)| text.as_str()), Some("ab"));
+        assert_eq!(budget.used(LimitCode::TextSize), 2);
     }
 
     #[test]

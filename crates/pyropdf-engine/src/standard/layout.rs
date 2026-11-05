@@ -500,12 +500,24 @@ pub fn single_line<'t>(text: &'t str, budget: &Budget) -> Result<Cow<'t, str>, L
         return Ok(Cow::Borrowed(text));
     };
     budget.charge(LimitCode::MemorySize, text.len() as u64)?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the line has the length of `text`, charged to the budget above"
+    )]
     let mut line = String::with_capacity(text.len());
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the line has the length of `text`, charged to the budget above"
+    )]
     line.push_str(&text[..first]);
     let mut start = first;
     while start < text.len() {
         poll()?;
         let end = text.ceil_char_boundary(start.saturating_add(scan::STEP).min(text.len()));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the line has the length of `text`, charged to the budget above"
+        )]
         line.extend(text[start..end].chars().map(|character| {
             if matches!(character, '\r' | '\n') {
                 ' '

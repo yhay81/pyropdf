@@ -318,7 +318,7 @@ impl<'a> Colr<'a> {
             });
         };
         let form = write_group(painter.transaction, root, outset(ink), budget)?;
-        let procedure = procedure(width, &name);
+        let procedure = procedure(width, &name, budget)?;
         Ok(Glyph {
             resources: vec![(Name::from("XObject"), name.clone(), Value::Reference(form))],
             name,
@@ -342,11 +342,12 @@ impl<'a> Colr<'a> {
 /// Returns the procedure of a Type 3 glyph that shows the group `name`, and
 /// advances by `width`. `d0` leaves the colour to the procedure (ISO 32000-2
 /// 9.6.5).
-fn procedure(width: f64, name: &Name) -> Vec<u8> {
-    let mut out = format!("{width} 0 d0\n/").into_bytes();
-    out.extend_from_slice(name.as_bytes());
-    out.extend_from_slice(b" Do");
-    out
+fn procedure(width: f64, name: &Name, budget: &Budget) -> Result<Vec<u8>, LimitExceeded> {
+    let mut out = BudgetVec::new(budget);
+    out.try_extend_from_slice(format!("{width} 0 d0\n/").as_bytes())?;
+    out.try_extend_from_slice(name.as_bytes())?;
+    out.try_extend_from_slice(b" Do")?;
+    Ok(out.into_vec())
 }
 
 /// Returns what a composite mode writes, `None` for one that blending and
@@ -1140,6 +1141,10 @@ const fn outer_nothing() -> Clip {
 
 /// Returns the state that shows through the alpha of `group`, or through its
 /// absence when `out`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each key is a constant: the mask holds four entries at most, and the state two"
+)]
 fn mask_state(group: Reference, out: bool) -> Dict {
     let mut mask = Dict::new();
     mask.insert(Name::from("Type"), Value::Name(Name::from("Mask")));
@@ -1155,6 +1160,10 @@ fn mask_state(group: Reference, out: bool) -> Dict {
 }
 
 /// Returns the function that takes `x` to `1 - x`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each key is a constant: the function holds five entries"
+)]
 fn inverted() -> Dict {
     let unit = |value: i64| Value::Array(vec![Value::Integer(value)].into());
     let mut function = Dict::new();
@@ -1172,6 +1181,10 @@ fn inverted() -> Dict {
 /// Sets one entry of the graphics state, naming it in the frame's resources.
 fn state(frame: &mut Frame<'_>, key: &str, value: Value) -> Result<(), LimitExceeded> {
     let mut entry = Dict::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the new dictionary holds one entry"
+    )]
     entry.insert(Name::from(key), value);
     let name = frame.name(Category::ExtGState, Value::Dict(entry))?;
     frame.show(&name, b"gs")
@@ -1191,6 +1204,10 @@ fn write_group(
         for (held, name, value) in &frame.resources {
             if *held == category {
                 budget.poll()?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one entry per resource of the frame, which its `BudgetVec` charged"
+                )]
                 named.insert(name.clone(), value.clone());
             }
         }
@@ -1200,9 +1217,26 @@ fn write_group(
                 Category::Shading => "Shading",
                 Category::ExtGState => "ExtGState",
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "one entry for each of the three categories"
+            )]
             resources.insert(Name::from(key), Value::Dict(named));
         }
     }
+    let stream = stream_with(group_form(bbox, resources), &frame.content, budget)?;
+    let reference = transaction.allocate()?;
+    transaction.write(reference.number(), &Value::from(stream), budget)?;
+    Ok(reference)
+}
+
+/// Returns the dictionary of an isolated transparency group over `bbox`,
+/// which names `resources`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each key is a constant, and the box holds four numbers"
+)]
+fn group_form(bbox: Bounds, resources: Dict) -> Dict {
     let mut group = Dict::new();
     group.insert(Name::from("Type"), Value::Name(Name::from("Group")));
     group.insert(Name::from("S"), Value::Name(Name::from("Transparency")));
@@ -1217,10 +1251,7 @@ fn write_group(
     );
     form.insert(Name::from("Group"), Value::Dict(group));
     form.insert(Name::from("Resources"), Value::Dict(resources));
-    let stream = stream_with(form, &frame.content, budget)?;
-    let reference = transaction.allocate()?;
-    transaction.write(reference.number(), &Value::from(stream), budget)?;
-    Ok(reference)
+    form
 }
 
 /// Returns `value`, a whole number of [`outset`], as an integer when it fits.

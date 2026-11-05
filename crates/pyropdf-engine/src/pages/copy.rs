@@ -22,6 +22,10 @@ use pyropdf_store::version::Transaction;
 use pyropdf_store::{Error, LimitExceeded, Result};
 
 /// Hash table keys, values, slack, and rehash space share the operation budget.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each new entry is charged to the budget before the map grows"
+)]
 fn map_put<K: Eq + Hash, V>(
     map: &mut HashMap<K, V>,
     key: K,
@@ -47,6 +51,10 @@ fn append(array: &mut Array, value: Value, budget: &Budget) -> Result<()> {
             .saturating_add(1)
             .saturating_mul(2 * size_of::<Value>())) as u64,
     )?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the grown array is charged to the budget above"
+    )]
     array.push(value);
     Ok(())
 }
@@ -97,6 +105,10 @@ pub(super) fn extend_entry(
     )?;
     for value in values {
         budget.poll()?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the grown array, with every value of the iterator, is charged to the budget above"
+        )]
         array.push(value);
     }
     match object {
@@ -104,6 +116,10 @@ pub(super) fn extend_entry(
             transaction.write(object.number(), &Value::Array(array), budget)?;
         }
         None => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary grows by one entry at most"
+            )]
             dict.insert(Name::from(key), Value::Array(array));
         }
     }
@@ -234,6 +250,10 @@ impl<'b> Copies<'b> {
                     if actions.is_empty() {
                         annotation.remove("AA");
                     } else {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the annotation grows by one entry at most"
+                        )]
                         annotation.insert(Name::from("AA"), Value::Dict(actions));
                     }
                 }
@@ -255,6 +275,10 @@ impl<'b> Copies<'b> {
             }
         }
         if !annots.is_empty() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the page grows by one entry at most"
+            )]
             page.insert(
                 Name::from("Annots"),
                 Value::Array(Array::from(annots.into_vec())),
@@ -268,10 +292,18 @@ impl<'b> Copies<'b> {
             let (page_key, keys) =
                 structure.copy_page(transaction, source, copy, page_key, &copied)?;
             if let Some(key) = page_key {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the page grows by one entry at most"
+                )]
                 page.insert(Name::from("StructParents"), Value::Integer(key));
             }
             for (annotation, key) in keys {
                 if let Some(mut dict) = dict_at(transaction, annotation, budget)? {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "the annotation grows by one entry at most"
+                    )]
                     dict.insert(Name::from("StructParent"), Value::Integer(key));
                     transaction.write(annotation.number(), &Value::Dict(dict), budget)?;
                 }
@@ -453,15 +485,27 @@ impl<'b> Structure<'b> {
                 let (parent, _) = structure_node(transaction, parent, budget)?;
                 match copies.get(&parent) {
                     Some(&copied) => {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the element already has a /P, which this replaces"
+                        )]
                         dict.insert(Name::from("P"), Value::Reference(copied));
                     }
                     None => {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the element already has a /P, which this replaces"
+                        )]
                         dict.insert(Name::from("P"), Value::Reference(parent));
                         self.appends.try_push((parent, new))?;
                     }
                 }
             }
             if on_source {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the element already has a /Pg, which this replaces"
+                )]
                 dict.insert(Name::from("Pg"), Value::Reference(copy));
             }
             dict.remove("ID");
@@ -515,6 +559,10 @@ impl<'b> Structure<'b> {
                                     && here
                                     && reference.get("Stm").is_none() =>
                             {
+                                #[expect(
+                                    clippy::disallowed_methods,
+                                    reason = "the reference grows by one entry at most"
+                                )]
                                 reference.insert(Name::from("Pg"), Value::Reference(copy));
                                 copied.try_push(Value::Dict(reference))?;
                             }
@@ -522,7 +570,15 @@ impl<'b> Structure<'b> {
                                 if let Some(Value::Reference(old)) = reference.get("Obj")
                                     && let Some(&new) = annotation_map.get(old)
                                 {
+                                    #[expect(
+                                        clippy::disallowed_methods,
+                                        reason = "the reference already has an /Obj, which this replaces"
+                                    )]
                                     reference.insert(Name::from("Obj"), Value::Reference(new));
+                                    #[expect(
+                                        clippy::disallowed_methods,
+                                        reason = "the reference grows by one entry at most"
+                                    )]
                                     reference.insert(Name::from("Pg"), Value::Reference(copy));
                                     copied.try_push(Value::Dict(reference))?;
                                 }
@@ -532,6 +588,10 @@ impl<'b> Structure<'b> {
                     }
                 }
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the element grows by one entry at most"
+            )]
             dict.insert(
                 Name::from("K"),
                 Value::Array(Array::from(copied.into_vec())),
@@ -636,11 +696,17 @@ impl<'b> Structure<'b> {
             if tree.get("Nums").is_none() && tree.get("Kids").is_some() {
                 let limits = Array::from(vec![flat[0].clone(), flat[flat.len() - 2].clone()]);
                 let mut leaf = Dict::new();
-                leaf.insert(
-                    Name::from("Nums"),
-                    Value::Array(Array::from(flat.into_vec())),
-                );
-                leaf.insert(Name::from("Limits"), Value::Array(limits));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "each key is a constant, so the leaf holds two entries"
+                )]
+                {
+                    leaf.insert(
+                        Name::from("Nums"),
+                        Value::Array(Array::from(flat.into_vec())),
+                    );
+                    leaf.insert(Name::from("Limits"), Value::Array(limits));
+                }
                 let object = transaction.allocate()?;
                 transaction.write(object.number(), &Value::Dict(leaf), budget)?;
                 extend_entry(
@@ -664,6 +730,10 @@ impl<'b> Structure<'b> {
             if tree.get("Limits").is_some()
                 && let (Some(first), Some(last)) = (smallest, largest)
             {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the tree already has /Limits, which this replaces"
+                )]
                 tree.insert(
                     Name::from("Limits"),
                     Value::Array(Array::from(vec![
@@ -678,9 +748,17 @@ impl<'b> Structure<'b> {
                 transaction.write(object.number(), &Value::Dict(tree), budget)?;
             }
             None => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the root grows by one entry at most"
+                )]
                 root.insert(Name::from("ParentTree"), Value::Dict(tree));
             }
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the root grows by one entry at most"
+        )]
         root.insert(
             Name::from("ParentTreeNextKey"),
             Value::Integer(self.next_key),
@@ -756,12 +834,20 @@ fn join(
     editable(&old)?;
     let parent = if is_widget(&old) {
         let mut parent = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the new parent grows by one entry at most"
+        )]
         parent.insert(
             Name::from("Kids"),
             Value::Array(Array::from(vec![Value::Reference(field)])),
         );
         for key in FIELD_KEYS {
             if let Some(value) = old.get(key) {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the keys are FIELD_KEYS, so the parent gains 11 entries at most"
+                )]
                 parent.insert(Name::from(key), copy_for_edit(value, budget)?);
             }
         }
@@ -775,10 +861,18 @@ fn join(
             let mut field_actions = Dict::new();
             for trigger in FIELD_TRIGGERS {
                 if let Some(action) = actions.remove(trigger) {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "the keys are FIELD_TRIGGERS, so the actions hold 4 entries at most"
+                    )]
                     field_actions.insert(Name::from(trigger), action);
                 }
             }
             if !field_actions.is_empty() {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the new parent grows by one entry at most"
+                )]
                 parent.insert(Name::from("AA"), Value::Dict(field_actions));
             }
         }
@@ -787,6 +881,10 @@ fn join(
             _ => None,
         };
         if let Some(grand) = grand {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the new parent grows by one entry at most"
+            )]
             parent.insert(Name::from("Parent"), Value::Reference(grand));
         }
         let parent_object = transaction.allocate()?;
@@ -800,10 +898,18 @@ fn join(
                 kid.remove("AA");
             }
             Some(actions) => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the kid grows by one entry at most"
+                )]
                 kid.insert(Name::from("AA"), Value::Dict(actions));
             }
             None => {}
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the kid grows by one entry at most"
+        )]
         kid.insert(Name::from("Parent"), Value::Reference(parent_object));
         transaction.write(field.number(), &Value::Dict(kid), budget)?;
         replace_node(transaction, grand, field, parent_object, budget)?;
@@ -811,6 +917,10 @@ fn join(
     } else {
         field
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the widget grows by one entry at most"
+    )]
     widget.insert(Name::from("Parent"), Value::Reference(parent));
     let new = transaction.allocate()?;
     transaction.write(new.number(), &Value::Dict(widget), budget)?;
@@ -862,6 +972,10 @@ fn replace_node(
                         transaction.write(object.number(), &Value::Dict(form), budget)?;
                     }
                     None => {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "the catalog already has an /AcroForm, which this replaces"
+                        )]
                         catalog_dict.insert(Name::from("AcroForm"), Value::Dict(form));
                         transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
                     }
@@ -923,6 +1037,10 @@ fn replaced(
             Ok(false)
         }
         None => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary already has the array at `key`, which this replaces"
+            )]
             dict.insert(Name::from(key), Value::Array(array));
             Ok(true)
         }
@@ -937,12 +1055,20 @@ fn remap_annotation(
     page: Reference,
     budget: &Budget,
 ) -> Result<()> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the annotation grows by one entry at most"
+    )]
     annotation.insert(Name::from("P"), Value::Reference(page));
     for key in ["Popup", "Parent", "IRT"] {
         if let Some(value @ Value::Reference(_)) = annotation.get(key)
             && let Some((_, Some(old))) = located(transaction, Some(value), budget)?
             && let Some(&new) = numbers.get(&old)
         {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the annotation already has the key, which this replaces"
+            )]
             annotation.insert(Name::from(key), Value::Reference(new));
         }
     }

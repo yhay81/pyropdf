@@ -54,9 +54,17 @@ pub fn synthesized(
             }
             // Hash slots, load-factor slack, and temporary rehash storage.
             budget.charge(LimitCode::MemorySize, 64)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the entry is charged to the budget above"
+            )]
             visited
                 .try_reserve(1)
                 .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the entry is charged to the budget above, and room is made for it"
+            )]
             visited.insert(reference);
             let Some((dict, form)) = plan(&reader, reference)? else {
                 continue;
@@ -100,8 +108,14 @@ fn substitute(
         .filter(|number| *number < u32::MAX)
         .ok_or_else(|| Error::malformed("no object number remains for a synthesized appearance"))?;
     let mut normal = Dict::new();
-    normal.insert(Name::from("N"), Value::Reference(Reference::new(number, 0)));
-    dict.insert(Name::from("AP"), Value::Dict(normal));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each key is a constant: the appearances hold one entry, and the annotation gains one"
+    )]
+    {
+        normal.insert(Name::from("N"), Value::Reference(Reference::new(number, 0)));
+        dict.insert(Name::from("AP"), Value::Dict(normal));
+    }
     Ok([
         (reference, Value::Dict(dict)),
         (Reference::new(number, 0), Value::from(form)),
@@ -137,6 +151,10 @@ fn plan(reader: &Reader<'_>, reference: Reference) -> Result<Option<(Dict, Strea
         .charge(LimitCode::AnnotationSynthesisCount, 1)?;
     charge_copy(CopyPart::Dict(dict), reader.budget)?;
     let mut dict = dict.clone();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the annotation grows by one entry at most"
+    )]
     dict.insert(Name::from("Rect"), numbers_array(&drawn.rect));
     Ok(Some((dict, drawn.form())))
 }

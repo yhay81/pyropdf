@@ -90,6 +90,10 @@ fn append_char(out: &mut BudgetVec<'_, u8>, character: char) -> Result<(), Limit
 /// Decodes a text string: UTF-16BE or UTF-8 after their byte order marks,
 /// and PDFDocEncoding otherwise (ISO 32000-2 section 7.9.2.2).
 #[must_use]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "three UTF-8 bytes per byte of the string at most, which the caller holds"
+)]
 pub fn text_string(bytes: &[u8]) -> String {
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
         let units = rest

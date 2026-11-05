@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use pyropdf_store::Result;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::{MAX_CHAIN, Page};
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Transaction;
@@ -54,6 +54,10 @@ pub struct Plan {
 /// Returns what flattening `selection` does with the `/Annots` entries
 /// `items` of a page, or `None` when it takes none of them off. The plan's
 /// lists, at most one entry of each per item, are charged up front.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the plan's lists hold one entry per item at most, charged up front"
+)]
 pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<Option<Plan>> {
     let entry = 2 * size_of::<Value>() + size_of::<Reference>();
     reader
@@ -74,11 +78,12 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
             plan.keep.push(item.clone());
             continue;
         };
-        let subtype = match reader.entry(annotation, "Subtype")?.as_deref() {
-            Some(Value::Name(name)) => Some(name.as_bytes().to_vec()),
+        let subtype = reader.entry(annotation, "Subtype")?;
+        let subtype = match subtype.as_deref() {
+            Some(Value::Name(name)) => Some(name.as_bytes()),
             _ => None,
         };
-        let selected = match subtype.as_deref() {
+        let selected = match subtype {
             Some(b"Link") => false,
             Some(b"Widget") => selection.widgets,
             _ => selection.annotations,
@@ -88,7 +93,7 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
             continue;
         }
         changed = true;
-        if subtype.as_deref() == Some(b"Widget")
+        if subtype == Some(b"Widget")
             && let Value::Reference(reference) = item
         {
             plan.widgets.push(*reference);
@@ -120,6 +125,10 @@ impl Missing {
     /// Returns the appearances of the objects that
     /// [`synthesized`](crate::annotations::synthesized) returns, charging
     /// the maps that hold them to `budget`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one entry per object of `objects` at most, which the charge above covers"
+    )]
     pub fn new(objects: Vec<(Reference, Value)>, budget: &Budget) -> Result<Self> {
         let entry = size_of::<(Reference, (Dict, Stream))>() + size_of::<(Reference, Reference)>();
         budget.charge(LimitCode::MemorySize, (objects.len() * entry) as u64)?;
@@ -167,6 +176,10 @@ impl Missing {
         }
         let reference = transaction.allocate()?;
         transaction.write(reference.number(), &Value::from(form), budget)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one entry per form of `forms`, which `new` charged"
+        )]
         self.written.insert(annotation, reference);
         Ok(reference)
     }
@@ -194,7 +207,8 @@ pub fn draw(
     missing: &mut Missing,
     budget: &Budget,
 ) -> Result<()> {
-    let mut placed = Vec::with_capacity(plan.drawn.len());
+    let mut placed = BudgetVec::new(budget);
+    placed.try_reserve_exact(plan.drawn.len())?;
     {
         let reader = Reader {
             version: transaction.version(),
@@ -205,7 +219,7 @@ pub fn draw(
                 && let Some((dict, form)) = missing.forms.get(reference)
             {
                 if let Some(placement) = placement(&reader, dict, form.dict())? {
-                    placed.push((Source::Missing(*reference, form.clone()), placement));
+                    placed.try_push((Source::Missing(*reference, form.clone()), placement))?;
                 }
                 continue;
             }
@@ -226,19 +240,23 @@ pub fn draw(
             // `/Subtype` is one by its role.
             let retyped = stream.dict().get("Subtype").is_none().then(|| {
                 let mut stream = (**stream).clone();
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the stream grows by one entry at most"
+                )]
                 stream
                     .dict_mut()
                     .insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
                 stream
             });
-            placed.push((Source::Stream(reference, retyped), placement));
+            placed.try_push((Source::Stream(reference, retyped), placement))?;
         }
     }
     let mut dict = page.dict().clone();
     let mut xobjects = Dict::new();
-    let mut ops = Vec::new();
+    let mut ops = BudgetVec::new(budget);
     let mut bounds: Option<[f64; 4]> = None;
-    for (index, (source, (matrix, rect))) in placed.into_iter().enumerate() {
+    for (index, (source, (matrix, rect))) in placed.into_vec().into_iter().enumerate() {
         let reference = match source {
             Source::Stream(reference, None) => reference,
             Source::Stream(reference, Some(stream)) => {
@@ -251,7 +269,17 @@ pub fn draw(
         };
         let name = format!("A{index}");
         let [a, b, c, d, e, f] = matrix.map(fmt);
-        ops.extend_from_slice(format!("q {a} {b} {c} {d} {e} {f} cm /{name} Do Q\n").as_bytes());
+        ops.try_extend_from_slice(
+            format!("q {a} {b} {c} {d} {e} {f} cm /{name} Do Q\n").as_bytes(),
+        )?;
+        budget.charge(
+            LimitCode::MemorySize,
+            (size_of::<(Name, Value)>() + name.len()) as u64,
+        )?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one entry per appearance drawn, charged to the budget above"
+        )]
         xobjects.insert(Name::from(name.as_str()), Value::Reference(reference));
         bounds = Some(match bounds {
             None => rect,
@@ -264,62 +292,96 @@ pub fn draw(
         });
     }
     if let Some(bounds) = bounds {
-        let mut resources = Dict::new();
-        resources.insert(Name::from("XObject"), Value::Dict(xobjects));
-        let mut form = Dict::new();
-        form.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
-        form.insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
-        form.insert(Name::from("BBox"), numbers_array(&bounds));
-        form.insert(Name::from("Resources"), Value::Dict(resources));
-        budget.charge(LimitCode::MemorySize, ops.len() as u64)?;
-        let form = add_stream(transaction, form, ops, budget)?;
+        let form = add_stream(
+            transaction,
+            drawing_form(xobjects, &bounds),
+            ops.into_vec(),
+            budget,
+        )?;
         let reader = Reader {
             version: transaction.version(),
             budget,
         };
         let (resources, name) = with_form(&reader, page.resources(), form)?;
-        let contents = contents(&reader, dict.get("Contents"))?;
-        let mut array = Array::new();
+        let contents = contents(&reader, budget, dict.get("Contents"))?;
+        let mut array = BudgetVec::new(budget);
         if !contents.is_empty() {
-            array.push(add_stream(
+            array.try_reserve_exact(contents.len() + 3)?;
+            #[expect(clippy::disallowed_methods, reason = "a constant of two bytes")]
+            array.try_push(add_stream(
                 transaction,
                 Dict::new(),
                 b"q\n".to_vec(),
                 budget,
-            )?);
-            for content in contents {
-                array.push(content);
-            }
-            array.push(add_stream(
+            )?)?;
+            array.try_extend_from_slice(&contents)?;
+            #[expect(clippy::disallowed_methods, reason = "a constant of three bytes")]
+            array.try_push(add_stream(
                 transaction,
                 Dict::new(),
                 b"\nQ\n".to_vec(),
                 budget,
-            )?);
+            )?)?;
         }
         let drawing = format!("q /{name} Do Q\n").into_bytes();
-        array.push(add_stream(transaction, Dict::new(), drawing, budget)?);
-        dict.insert(Name::from("Contents"), Value::Array(array));
+        array.try_push(add_stream(transaction, Dict::new(), drawing, budget)?)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the page grows by one entry at most"
+        )]
+        dict.insert(
+            Name::from("Contents"),
+            Value::Array(Array::from(array.into_vec())),
+        );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the page grows by one entry at most"
+        )]
         dict.insert(Name::from("Resources"), Value::Dict(resources));
     }
-    let mut keep = Array::new();
+    let mut keep = BudgetVec::new(budget);
+    keep.try_reserve_exact(plan.keep.len())?;
     for item in plan.keep {
-        keep.push(match item {
+        keep.try_push(match item {
             Value::Dict(entry) => {
                 let reference = transaction.allocate()?;
                 transaction.write(reference.number(), &Value::Dict(entry), budget)?;
                 Value::Reference(reference)
             }
             item => item,
-        });
+        })?;
     }
     if keep.is_empty() {
         dict.remove("Annots");
     } else {
-        dict.insert(Name::from("Annots"), Value::Array(keep));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the page grows by one entry at most"
+        )]
+        dict.insert(
+            Name::from("Annots"),
+            Value::Array(Array::from(keep.into_vec())),
+        );
     }
     transaction.write(number, &Value::Dict(dict), budget)?;
     Ok(())
+}
+
+/// Returns the dictionary of the form that draws a page's flattened
+/// appearances, `xobjects`, within `bounds`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each key is a constant, so the form holds four entries and its resources one"
+)]
+fn drawing_form(xobjects: Dict, bounds: &[f64; 4]) -> Dict {
+    let mut resources = Dict::new();
+    resources.insert(Name::from("XObject"), Value::Dict(xobjects));
+    let mut form = Dict::new();
+    form.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
+    form.insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
+    form.insert(Name::from("BBox"), numbers_array(bounds));
+    form.insert(Name::from("Resources"), Value::Dict(resources));
+    form
 }
 
 /// Writes a stream of `dict` and `data` as a new object and returns a
@@ -338,6 +400,10 @@ fn add_stream(
 
 /// Returns the page resources `resources` with the form `form` added under
 /// a name that they do not use yet, and that name.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the resources and their forms grow by one entry each at most"
+)]
 fn with_form(
     reader: &Reader<'_>,
     resources: Option<&Value>,
@@ -369,17 +435,24 @@ fn with_form(
     Ok((resources, name))
 }
 
-/// Returns the content streams of a page's `/Contents` entry `value`.
-fn contents(reader: &Reader<'_>, value: Option<&Value>) -> Result<Vec<Value>> {
-    Ok(match value {
-        Some(Value::Array(items)) => items.iter().cloned().collect(),
+/// Returns the content streams of a page's `/Contents` entry `value`,
+/// grown through `budget`.
+fn contents<'b>(
+    reader: &Reader<'_>,
+    budget: &'b Budget,
+    value: Option<&Value>,
+) -> Result<BudgetVec<'b, Value>> {
+    let mut contents = BudgetVec::new(budget);
+    match value {
+        Some(Value::Array(items)) => contents.try_extend_from_slice(items.as_slice())?,
         Some(value @ Value::Reference(_)) => match &*reader.resolve(value)? {
-            Value::Array(items) => items.iter().cloned().collect(),
-            Value::Stream(_) => vec![value.clone()],
-            _ => Vec::new(),
+            Value::Array(items) => contents.try_extend_from_slice(items.as_slice())?,
+            Value::Stream(_) => contents.try_push(value.clone())?,
+            _ => {}
         },
-        _ => Vec::new(),
-    })
+        _ => {}
+    }
+    Ok(contents)
 }
 
 /// Returns the normal appearance that a render draws for `annotation`:

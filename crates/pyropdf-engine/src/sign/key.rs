@@ -163,6 +163,10 @@ impl Key {
     /// Returns the DER ECDSA signature of `data`, hashed with the key's
     /// digest algorithm.
     #[must_use]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a DER ECDSA signature on P-256 or P-384 holds 104 bytes at most"
+    )]
     pub fn sign(&self, data: &[u8]) -> Vec<u8> {
         match self {
             Self::P256(key) => {

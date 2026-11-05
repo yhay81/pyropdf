@@ -166,10 +166,20 @@ impl Settler for AppearanceSettler {
                 let reference = transaction.allocate()?;
                 transaction.write(reference.number(), &Value::from(form), budget)?;
                 let mut appearances = Dict::new();
-                appearances.insert(Name::from("N"), Value::Reference(reference));
-                dict.insert(Name::from("AP"), Value::Dict(appearances));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "each key is a constant: the appearances hold one entry, and the annotation gains one"
+                )]
+                {
+                    appearances.insert(Name::from("N"), Value::Reference(reference));
+                    dict.insert(Name::from("AP"), Value::Dict(appearances));
+                }
             }
             if let Some(rect) = rect {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the annotation grows by one entry at most"
+                )]
                 dict.insert(Name::from("Rect"), numbers_array(&rect));
             }
             transaction.write(number, &Value::Dict(dict), budget)?;
@@ -700,6 +710,10 @@ impl Appearance {
     /// Returns the form XObject of the appearance, whose `/Matrix` maps its
     /// box onto the rectangle.
     #[must_use]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each key is a constant, so each dictionary of the form holds five entries at most"
+    )]
     pub fn form(&self) -> Stream {
         let (width, height) = self.size;
         let mut dict = Dict::new();
@@ -1413,8 +1427,13 @@ pub(crate) fn real(value: f64) -> Value {
     }
 }
 
-pub(crate) fn numbers_array(values: &[f64]) -> Value {
-    Value::Array(values.iter().map(|value| real(*value)).collect::<Array>())
+pub(crate) fn numbers_array<const N: usize>(values: &[f64; N]) -> Value {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the N numbers of a fixed-size array, such as a rectangle or a matrix"
+    )]
+    let array = values.iter().map(|value| real(*value)).collect::<Array>();
+    Value::Array(array)
 }
 
 #[cfg(test)]

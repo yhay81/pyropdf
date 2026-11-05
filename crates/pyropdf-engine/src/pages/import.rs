@@ -91,6 +91,10 @@ pub fn import(
     let mut graft = graft::Graft::plan(transaction, &mut walk, budget)?;
     for ((_, mut dict), &new) in pages.into_iter().zip(added.iter()) {
         walk.dict(transaction, &mut dict, 1)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the page grows by one entry at most"
+        )]
         dict.insert(Name::from("Parent"), Value::Reference(root));
         transaction.write(new.number(), &Value::Dict(dict), budget)?;
     }
@@ -212,6 +216,10 @@ impl<'b, K: Eq + Hash, V> Charged<'b, K, V> {
     fn len(&self) -> usize {
         self.map.len()
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each new entry is charged to the budget before the map grows"
+    )]
     fn insert(&mut self, key: K, value: V, extra: u64) -> Result<Option<V>> {
         self.budget.poll()?;
         if !self.map.contains_key(&key) {

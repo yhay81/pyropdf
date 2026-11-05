@@ -139,6 +139,10 @@ impl Font {
 
     fn subset(self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
         let base = match self.font.get("BaseFont") {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a copy of the font's BaseFont, which the version holds"
+            )]
             Some(Value::Name(name)) => name.as_bytes().to_vec(),
             _ => return Ok(()),
         };
@@ -154,17 +158,29 @@ impl Font {
             return Ok(());
         }
         let mut tagged = tag(&compact).into_bytes();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the tag's seven bytes, then the BaseFont copied above"
+        )]
         tagged.extend_from_slice(&base);
         let tagged = Value::Name(Name::new(tagged));
 
         let (program, data) = (self.program.0, compact.data.clone());
         let mut program_dict = Dict::new();
         if compact.cff {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary grows by one entry at most"
+            )]
             program_dict.insert(
                 Name::from("Subtype"),
                 Value::Name(Name::from("CIDFontType0C")),
             );
         } else {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary grows by one entry at most"
+            )]
             program_dict.insert(
                 Name::from("Length1"),
                 Value::Integer(i64::try_from(data.len()).unwrap_or(i64::MAX)),
@@ -174,10 +190,18 @@ impl Font {
         transaction.write(program.number(), &Value::from(stream), budget)?;
 
         let (descriptor, mut descriptor_dict) = self.descriptor;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the dictionary grows by one entry at most"
+        )]
         descriptor_dict.insert(Name::from("FontName"), tagged.clone());
         transaction.write(descriptor.number(), &Value::Dict(descriptor_dict), budget)?;
 
         let (descendant, mut cid_font) = self.descendant;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the dictionary grows by one entry at most"
+        )]
         cid_font.insert(Name::from("BaseFont"), tagged.clone());
         if !compact.cff {
             let map = cid_to_gid(&compact.glyphs);
@@ -186,11 +210,19 @@ impl Font {
             let number = transaction.number_for_save()?;
             let stream = Stream::new(Dict::new(), Bytes::from(map));
             let reference = transaction.write(number, &Value::from(stream), budget)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary grows by one entry at most"
+            )]
             cid_font.insert(Name::from("CIDToGIDMap"), Value::Reference(reference));
         }
         transaction.write(descendant.number(), &Value::Dict(cid_font), budget)?;
 
         let mut font = self.font;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the dictionary grows by one entry at most"
+        )]
         font.insert(Name::from("BaseFont"), tagged);
         transaction.write(self.number, &Value::Dict(font), budget)?;
         Ok(())
@@ -200,6 +232,10 @@ impl Font {
 /// Returns the glyphs that the `W` array `value` gives widths, in its
 /// `c [w1 w2 ...]` and `c_first c_last w` forms (ISO 32000-2 9.7.4.3),
 /// or `None` when it is not an array of those.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "16-bit glyph IDs, so the set holds 65,536 glyphs at most"
+)]
 fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
     let Value::Array(array) = value else {
         return None;
@@ -232,6 +268,10 @@ fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
 /// the old glyph ID, its new glyph ID, two bytes each.
 fn cid_to_gid(glyphs: &[u16]) -> Vec<u8> {
     let cids = glyphs.iter().max().map_or(0, |&last| usize::from(last) + 1);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "two bytes per 16-bit glyph ID, 128 KiB at most"
+    )]
     let mut map = vec![0; 2 * cids];
     for (new, &old) in glyphs.iter().enumerate() {
         let at = 2 * usize::from(old);
@@ -246,6 +286,7 @@ fn has_tag(name: &[u8]) -> bool {
 
 /// Returns the subset tag of `compact`: six capital letters from a hash of
 /// the program, so that the same subset gets the same tag.
+#[expect(clippy::disallowed_methods, reason = "the tag's seven characters")]
 fn tag(compact: &Compact) -> String {
     // FNV-1a, whose value does not change between builds.
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;

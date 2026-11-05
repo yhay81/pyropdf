@@ -29,16 +29,44 @@ struct Table<'a> {
     data: &'a [u8],
 }
 
+/// Returns the tables of the sfnt `data`; `None` when its records do not
+/// read, repeat a tag, or when its tables add up to more than `data` holds,
+/// as tables that overlap do, since a rewrite would copy each in full.
 fn tables(data: &[u8]) -> Option<Vec<Table<'_>>> {
     let count = usize::from(be16(data, 4)?);
+    // The records are present, so a claimed count sizes nothing past `data`.
+    data.get(..12 + 16 * count)?;
     let mut tables = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one table per record, which `data` holds, checked above"
+    )]
     tables.try_reserve(count).ok()?;
+    let mut tags = BTreeSet::new();
+    let mut total = 0_usize;
     for at in 0..count {
         let record = 12 + 16 * at;
         let tag: [u8; 4] = data.get(record..record + 4)?.try_into().ok()?;
+        // A rewrite replaces every record of a rewritten tag with its
+        // first table. Even empty duplicates could multiply that result.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one tag per table record, whose bytes are present, checked above"
+        )]
+        if !tags.insert(tag) {
+            return None;
+        }
         let offset = usize::try_from(be32(data, record + 8)?).ok()?;
         let length = usize::try_from(be32(data, record + 12)?).ok()?;
         let table = data.get(offset..offset.checked_add(length)?)?;
+        total = total.checked_add(length)?;
+        if total > data.len() {
+            return None;
+        }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one table per record, which `data` holds, checked above"
+        )]
         tables.push(Table { tag, data: table });
     }
     Some(tables)
@@ -60,7 +88,13 @@ fn checksum(data: &[u8]) -> u32 {
 }
 
 /// Returns the glyph offsets of `loca`, one more than the glyphs.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one offset per glyph, which `loca` holds, checked first"
+)]
 fn offsets(loca: &[u8], long: bool, glyphs: usize, glyf: usize) -> Option<Vec<usize>> {
+    // The offsets are present, so a claimed count sizes nothing past `loca`.
+    loca.get(..(glyphs + 1) * if long { 4 } else { 2 })?;
     let mut offsets = Vec::new();
     offsets.try_reserve(glyphs + 1).ok()?;
     for at in 0..=glyphs {
@@ -76,6 +110,10 @@ fn offsets(loca: &[u8], long: bool, glyphs: usize, glyf: usize) -> Option<Vec<us
 
 /// Adds the components of the composite glyphs of `keep` to it, to any depth:
 /// each glyph is read once, so the walk ends.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the glyphs of `keep`, and those that 16-bit component IDs name, each added once"
+)]
 fn add_components(glyf: &[u8], offsets: &[usize], keep: &mut BTreeSet<u32>) {
     let glyphs = offsets.len() - 1;
     let mut pending: Vec<u32> = keep.iter().copied().collect();
@@ -116,28 +154,55 @@ fn add_components(glyf: &[u8], offsets: &[usize], keep: &mut BTreeSet<u32>) {
     }
 }
 
-/// Returns `glyf` with only the glyphs of `keep` and the matching long `loca`.
+/// Returns `glyf` with only the glyphs of `keep` and the matching long `loca`;
+/// `None` when the outlines kept add up to more than `glyf` holds, as glyphs
+/// whose offsets overlap do, since each would copy the outline in full.
 fn rebuild(glyf: &[u8], offsets: &[usize], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec<u8>)> {
     let glyphs = offsets.len() - 1;
     let mut new_glyf = Vec::new();
     let mut new_loca = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "four bytes per offset of `offsets`, which `loca` holds"
+    )]
     new_loca.try_reserve(4 * (glyphs + 1)).ok()?;
+    let mut copied = 0_usize;
     for glyph in 0..glyphs {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "four bytes per offset of `offsets`, reserved above"
+        )]
         new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
         let id = u32::try_from(glyph).ok()?;
         let (start, end) = (offsets[glyph], offsets[glyph + 1]);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the outlines kept, no more than `glyf` holds, checked here, and their padding"
+        )]
         if (glyph == 0 || keep.contains(&id)) && end > start {
             let data = glyf.get(start..end)?;
+            copied = copied.checked_add(data.len())?;
+            if copied > glyf.len() {
+                return None;
+            }
             new_glyf.try_reserve(data.len() + 3).ok()?;
             new_glyf.extend_from_slice(data);
             new_glyf.resize(new_glyf.len().next_multiple_of(4), 0);
         }
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "four bytes per offset of `offsets`, reserved above"
+    )]
     new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
     Some((new_glyf, new_loca))
 }
 
 /// Writes an sfnt with `tables`, in their order, and its `head` adjustment.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the bytes of `tables`, which the caller holds, and 16 of record and 3 of padding per table"
+)]
 pub(super) fn write(version: &[u8], tables: &[([u8; 4], Vec<u8>)]) -> Option<Vec<u8>> {
     let count = u16::try_from(tables.len()).ok()?;
     let power = if count == 0 {
@@ -192,9 +257,17 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
     let tables = tables(data)?;
     let mut keep = keep.clone();
     let mut written: Vec<([u8; 4], Vec<u8>)> = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one table per record that `tables` read"
+    )]
     written.try_reserve(tables.len()).ok()?;
     if let Some(cff) = find(&tables, CFF) {
         let new = super::cff::subset(cff, &keep)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "each table once, as read or rebuilt, and the tables add up to no more than `data` holds"
+        )]
         for table in &tables {
             let data = if table.tag == CFF {
                 new.data.clone()
@@ -218,6 +291,10 @@ pub(super) fn subset(data: &[u8], keep: &BTreeSet<u32>) -> Option<Subset> {
     let offsets = offsets(loca, long, glyphs, glyf.len())?;
     add_components(glyf, &offsets, &mut keep);
     let (new_glyf, new_loca) = rebuild(glyf, &offsets, &keep)?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each table once, as read or rebuilt, and the tables add up to no more than `data` holds"
+    )]
     for table in &tables {
         let data = match table.tag {
             GLYF => new_glyf.clone(),
@@ -257,7 +334,8 @@ const GLYPH_COUNT_AT: usize = 4;
 /// Returns the TrueType sfnt `data` with only the glyphs of `keep`, their
 /// components, and `.notdef`, renumbered in order, and the tables that
 /// a CIDFont needs; with the old ID of each new glyph. `None` when it is
-/// not a TrueType program that this reads.
+/// not a TrueType program that this reads, or when the outlines kept add up
+/// to more than its `glyf` holds, as glyphs whose offsets overlap do.
 pub(super) fn compact(data: &[u8], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec<u16>)> {
     let version = data.get(0..4)?;
     if version != [0, 1, 0, 0] && version != b"true" {
@@ -274,14 +352,26 @@ pub(super) fn compact(data: &[u8], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec
     }
     let long = be16(head, LOCA_FORMAT_AT)? == 1;
     let offsets = offsets(find(&tables, LOCA)?, long, glyphs, glyf.len())?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the glyphs of `keep` below the face's 16-bit glyph count"
+    )]
     let mut keep: BTreeSet<u32> = keep
         .iter()
         .copied()
         .filter(|&glyph| usize::try_from(glyph).is_ok_and(|glyph| glyph < glyphs))
         .collect();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the set grows by one glyph at most"
+    )]
     keep.insert(0);
     add_components(glyf, &offsets, &mut keep);
     keep.retain(|&glyph| usize::try_from(glyph).is_ok_and(|glyph| glyph < glyphs));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one ID per glyph of `keep`, below the face's 16-bit glyph count"
+    )]
     let old: Vec<u16> = keep
         .iter()
         .filter_map(|&glyph| u16::try_from(glyph).ok())
@@ -291,35 +381,66 @@ pub(super) fn compact(data: &[u8], keep: &BTreeSet<u32>) -> Option<(Vec<u8>, Vec
     let mut new_glyf = Vec::new();
     let mut new_loca = Vec::new();
     let mut new_hmtx = Vec::new();
+    #[expect(clippy::disallowed_methods, reason = "four bytes per glyph of `old`")]
     new_loca.try_reserve(4 * (old.len() + 1)).ok()?;
+    #[expect(clippy::disallowed_methods, reason = "four bytes per glyph of `old`")]
     new_hmtx.try_reserve(4 * old.len()).ok()?;
+    let mut copied = 0_usize;
     for &glyph in &old {
         let glyph = usize::from(glyph);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "four bytes per glyph of `old`, reserved above"
+        )]
         new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
         let (start, end) = (offsets[glyph], offsets[glyph + 1]);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the outlines kept, no more than `glyf` holds, checked here, and their padding"
+        )]
         if end > start {
             let at = new_glyf.len();
             let outline = glyf.get(start..end)?;
+            copied = copied.checked_add(outline.len())?;
+            if copied > glyf.len() {
+                return None;
+            }
             new_glyf.try_reserve(outline.len() + 3).ok()?;
             new_glyf.extend_from_slice(outline);
             renumber_components(&mut new_glyf[at..], new_id)?;
             new_glyf.resize(new_glyf.len().next_multiple_of(4), 0);
         }
         let metric = glyph.min(long_metrics - 1);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "four bytes per glyph of `old`, reserved above"
+        )]
         new_hmtx.extend_from_slice(hmtx.get(4 * metric..4 * metric + 2)?);
         let bearing = if glyph < long_metrics {
             4 * glyph + 2
         } else {
             4 * long_metrics + 2 * (glyph - long_metrics)
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "four bytes per glyph of `old`, reserved above"
+        )]
         new_hmtx.extend_from_slice(hmtx.get(bearing..bearing + 2)?);
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "four bytes per glyph of `old`, reserved above"
+    )]
     new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).ok()?.to_be_bytes());
 
     let count = u16::try_from(old.len()).ok()?.to_be_bytes();
     let mut written: Vec<([u8; 4], Vec<u8>)> = Vec::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the nine EMBEDDED tables at most, each once, as read or rebuilt"
+    )]
     for table in &tables {
-        if !EMBEDDED.contains(&table.tag) || written.iter().any(|(tag, _)| *tag == table.tag) {
+        if !EMBEDDED.contains(&table.tag) {
             continue;
         }
         let data = match table.tag {

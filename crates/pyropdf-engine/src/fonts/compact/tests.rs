@@ -440,26 +440,26 @@ fn hstem(start: i32, end: i32) -> Command {
 
 #[test]
 fn a_ghost_hint_keeps_its_marker_at_any_scale() {
-    let mut pen = Charstring::new(0.5, true);
+    let mut pen = Charstring::new(0.5, true, usize::MAX);
     // The ghost of a top edge has a width of -20, that of a bottom edge -21.
     pen.hstem(units(100), units(80));
     pen.hstem(units(221), units(200));
     pen.hstem(units(300), units(340));
     assert_eq!(
-        evaluated(&pen.finish_glyph()),
+        evaluated(&pen.finish_glyph().unwrap()),
         [hstem(50, 30), hstem(121, 100), hstem(150, 170)]
     );
 }
 
 #[test]
 fn stems_past_the_operand_limit_take_another_operator() {
-    let mut pen = Charstring::new(1.0, true);
+    let mut pen = Charstring::new(1.0, true, usize::MAX);
     let mut stems = Vec::new();
     for stem in 0..30 {
         pen.hstem(units(stem * 10), units(stem * 10 + 5));
         stems.push(hstem(stem * 10, stem * 10 + 5));
     }
-    let data = pen.finish_glyph();
+    let data = pen.finish_glyph().unwrap();
     assert_eq!(evaluated(&data), stems);
     // No byte of these numbers reads as the operator.
     assert_eq!(data.iter().filter(|&&byte| byte == HSTEM).count(), 2);
@@ -467,16 +467,16 @@ fn stems_past_the_operand_limit_take_another_operator() {
 
 #[test]
 fn stems_take_the_operators_of_masks_only_when_a_mask_follows() {
-    let mut pen = Charstring::new(1.0, true);
+    let mut pen = Charstring::new(1.0, true, usize::MAX);
     pen.hstem(units(0), units(10));
     pen.vstem(units(5), units(15));
     pen.move_to(units(1), units(2));
     assert_eq!(
-        pen.finish_glyph(),
+        pen.finish_glyph().unwrap(),
         [139, 149, HSTEM, 144, 149, VSTEM, 140, 141, RMOVETO, ENDCHAR]
     );
 
-    let mut pen = Charstring::new(1.0, true);
+    let mut pen = Charstring::new(1.0, true, usize::MAX);
     pen.hstem(units(0), units(10));
     pen.vstem(units(5), units(15));
     pen.hint_mask(&[0b1100_0000]);
@@ -485,7 +485,7 @@ fn stems_take_the_operators_of_masks_only_when_a_mask_follows() {
     pen.counter_mask(&[0b1010_0000]);
     // Vertical stems right before a mask need no operator of their own.
     assert_eq!(
-        pen.finish_glyph(),
+        pen.finish_glyph().unwrap(),
         [
             139,
             149,
@@ -535,11 +535,11 @@ fn blues(values: &[i32]) -> Vec<u8> {
 
 /// A charstring with a stem at `y` and a line from there.
 fn stem_and_line(y: i32) -> Vec<u8> {
-    let mut pen = Charstring::new(1.0, true);
+    let mut pen = Charstring::new(1.0, true, usize::MAX);
     pen.hstem(units(y), units(y + 10));
     pen.move_to(units(0), units(y));
     pen.line_to(units(10), units(y));
-    pen.finish_glyph()
+    pen.finish_glyph().unwrap()
 }
 
 #[test]
@@ -570,7 +570,7 @@ fn each_glyph_keeps_the_private_dict_of_its_font_dict() {
 #[test]
 fn a_seac_glyph_keeps_its_outline_and_no_hints() {
     // `adx ady bchar achar endchar`, of "A" and "acute" in StandardEncoding.
-    let mut accented = Charstring::new(1.0, true);
+    let mut accented = Charstring::new(1.0, true, usize::MAX);
     for value in [5, 20, 65, 194] {
         accented.number(i64::from(value) << 16);
     }
@@ -579,7 +579,7 @@ fn a_seac_glyph_keeps_its_outline_and_no_hints() {
     let mut charstrings = vec![vec![ENDCHAR]; 127];
     charstrings[34] = stem_and_line(0);
     charstrings[125] = stem_and_line(100);
-    charstrings[126] = accented.finish_glyph();
+    charstrings[126] = accented.finish_glyph().unwrap();
     let cids: Vec<u16> = (0..127).collect();
     let source =
         cff::cid_keyed("Source", &charstrings, &cids, &[0; 127], &[blues(&[0, 10])]).unwrap();
@@ -595,6 +595,68 @@ fn a_seac_glyph_keeps_its_outline_and_no_hints() {
         .collect();
     assert_eq!(outline.len(), 4, "a move and a line of each component");
     assert_eq!(commands(&after, 1), outline);
+}
+
+#[test]
+fn a_charstring_overflows_at_its_limit() {
+    // A move and a line take three bytes each, and the end one more.
+    let mut pen = Charstring::new(1.0, false, 7);
+    pen.move_to(units(1), units(2));
+    pen.line_to(units(3), units(4));
+    assert_eq!(pen.finish_glyph().map(|data| data.len()), Some(7));
+
+    let mut pen = Charstring::new(1.0, false, 8);
+    pen.move_to(units(1), units(2));
+    pen.line_to(units(3), units(4));
+    assert!(!pen.overflow);
+    pen.line_to(units(5), units(6));
+    assert!(pen.overflow);
+    assert!(pen.data.len() <= 8);
+    assert_eq!(pen.finish_glyph(), None);
+}
+
+#[test]
+fn an_overflowing_charstring_stops_recording_stem_operators() {
+    // Two stem operands fit, but their operator does not. Later callbacks
+    // must not grow the bookkeeping after the byte limit has refused it.
+    let mut pen = Charstring::new(1.0, true, 2);
+    for _ in 0..100 {
+        pen.hstem(units(0), units(1));
+        pen.move_to(units(0), units(0));
+    }
+    assert!(pen.overflow);
+    assert!(pen.stem_operators.is_empty());
+    assert_eq!(pen.finish_glyph(), None);
+}
+
+#[test]
+fn charstrings_that_outgrow_the_program_leave_it_whole() {
+    // Each `seac` glyph draws the long outline of "A" again, so a few bytes
+    // of the program become thousands in the result.
+    let mut base = Charstring::new(1.0, false, usize::MAX);
+    base.move_to(units(0), units(0));
+    for at in 1..2000 {
+        base.line_to(units(at % 50), units(at / 50));
+    }
+    let mut accented = Charstring::new(1.0, false, usize::MAX);
+    for value in [5, 20, 65, 194] {
+        accented.number(i64::from(value) << 16);
+    }
+    let accented = accented.finish_glyph().unwrap();
+    let mut charstrings = vec![vec![ENDCHAR]; 127];
+    charstrings[34] = base.finish_glyph().unwrap();
+    charstrings[125] = stem_and_line(100);
+    charstrings.extend(std::iter::repeat_n(accented, 100));
+    let cids: Vec<u16> = (0..227).collect();
+    let source =
+        cff::cid_keyed("Source", &charstrings, &cids, &[0; 227], &[blues(&[0, 10])]).unwrap();
+    let program = wrap(&source, 227, &FontRef::new(JAPANESE).unwrap());
+    let seacs: Vec<u32> = (127..227).collect();
+    assert!(seacs.len() * charstrings[34].len() > program.len());
+
+    assert_eq!(compact(&program, &seacs, "Subset"), None);
+    let one = compact(&program, &[127], "Subset").unwrap();
+    assert!(one.data.len() < program.len());
 }
 
 proptest! {

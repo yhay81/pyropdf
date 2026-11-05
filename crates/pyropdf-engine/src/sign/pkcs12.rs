@@ -129,12 +129,24 @@ pub fn parse(data: &[u8], password: &str) -> Result<(Key, Vec<Certificate>), Err
         for bag in Vec::<SafeBag>::from_der(&bags).map_err(malformed)? {
             let value = || bag.bag_value.to_der().map_err(malformed);
             if bag.bag_id == KEY_BAG {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one key per bag of the file, which the caller holds"
+                )]
                 keys.push(Key::from_pkcs8(&value()?)?);
             } else if bag.bag_id == SHROUDED_KEY_BAG {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one key per bag of the file, which the caller holds"
+                )]
                 keys.push(Key::from_encrypted_pkcs8(&value()?, password.as_bytes())?);
             } else if bag.bag_id == CERT_BAG {
                 let cert = bag.bag_value.decode_as::<CertBag>().map_err(malformed)?;
                 if cert.cert_id == X509_CERTIFICATE {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "one certificate per bag of the file, which the caller holds"
+                    )]
                     certificates.push(Certificate::from_der(cert.cert_value.as_bytes()).map_err(
                         |error| Error::invalid("a PKCS#12 certificate is not X.509", error),
                     )?);
@@ -212,7 +224,12 @@ where
 {
     // The password as a BMPString with its two-byte terminator (RFC 7292
     // appendix B.1).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "two bytes per UTF-16 unit of the password, which the caller holds"
+    )]
     let mut bmp: Vec<u8> = password.encode_utf16().flat_map(u16::to_be_bytes).collect();
+    #[expect(clippy::disallowed_methods, reason = "the two bytes of the terminator")]
     bmp.extend_from_slice(&[0, 0]);
     let key = derive_key::<D>(
         &bmp,
@@ -234,6 +251,10 @@ where
     D: Digest + BlockSizeUser,
 {
     let block = <D as BlockSizeUser>::block_size();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the salt or the password, which the caller holds, padded to whole blocks"
+    )]
     let fill = |data: &[u8]| -> Vec<u8> {
         if data.is_empty() {
             return Vec::new();
@@ -241,24 +262,49 @@ where
         let length = block * data.len().div_ceil(block);
         data.iter().copied().cycle().take(length).collect()
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one block of a SHA-2 digest, 128 bytes at most"
+    )]
     let diversifier = vec![id; block];
     let mut input = fill(salt);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the password, which the caller holds, padded to whole blocks"
+    )]
     input.extend(fill(password));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the callers ask for one digest's output, 64 bytes at most"
+    )]
     let mut output = Vec::with_capacity(size);
     loop {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "a SHA-2 digest holds 64 bytes at most"
+        )]
         let mut hash = D::new()
             .chain_update(&diversifier)
             .chain_update(&input)
             .finalize()
             .to_vec();
         for _ in 1..iterations {
-            hash = D::digest(&hash).to_vec();
+            let next = D::digest(&hash);
+            hash.copy_from_slice(&next);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the loop returns once the output holds `size` bytes, one digest's output"
+        )]
         output.extend_from_slice(&hash);
         if output.len() >= size {
             output.truncate(size);
             return output;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one block of a SHA-2 digest, 128 bytes at most"
+        )]
         let addend: Vec<u8> = hash.iter().copied().cycle().take(block).collect();
         for chunk in input.chunks_exact_mut(block) {
             let mut carry = 1_u16;

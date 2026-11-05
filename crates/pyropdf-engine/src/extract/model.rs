@@ -173,6 +173,12 @@ pub struct Contexts {
     pub states: Vec<StateTuple>,
 }
 
+/// Appends `value` to a table of the content model, fallibly.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "every caller grows the content model in step with the elements that the collector \
+              charges to content_element_count"
+)]
 fn push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
     if values.len() == values.capacity() {
         values
@@ -184,6 +190,11 @@ fn push<T>(values: &mut Vec<T>, value: T, label: &str) -> Result<(), Error> {
 }
 
 /// Makes room for `capacity` values in all, without spare room.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "every caller sizes the content model by what hayro paints, whose elements count \
+              against content_element_count"
+)]
 fn reserve_exact<T>(values: &mut Vec<T>, capacity: usize, label: &str) -> Result<(), Error> {
     values
         .try_reserve_exact(capacity.saturating_sub(values.len()))
@@ -198,6 +209,10 @@ fn with_capacity<T>(capacity: usize, label: &str) -> Result<Vec<T>, Error> {
 
 fn copy_values(values: &[f64], label: &str) -> Result<Vec<f64>, Error> {
     let mut copy = with_capacity(values.len(), label)?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the capacity reserved above"
+    )]
     copy.extend_from_slice(values);
     Ok(copy)
 }
@@ -285,6 +300,10 @@ impl Segments {
         reserve_exact(coords, coordinate_count, "path coordinates")?;
         let mut current = Point::ZERO;
         let mut start = Point::ZERO;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above: one kind per element and its coordinates"
+        )]
         for element in elements {
             match *element {
                 PathEl::MoveTo(point) => {
@@ -432,6 +451,10 @@ impl StrokeStyle {
     fn new(stroke: &StrokeProps, transform: Affine) -> Result<Self, Error> {
         let scale = transform_scale(transform);
         let mut dashes = with_capacity(stroke.dash_array.len(), "dash lengths")?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         dashes.extend(
             stroke
                 .dash_array
@@ -518,6 +541,10 @@ fn offset(count: usize) -> Result<i32, Error> {
 /// `set` holds.
 fn bitmap(rows: usize, set: impl Fn(usize) -> bool) -> Result<Vec<u8>, Error> {
     let mut bits = with_capacity(rows.div_ceil(8), "a path bitmap")?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "fills the capacity reserved above"
+    )]
     bits.resize(rows.div_ceil(8), 0u8);
     for row in (0..rows).filter(|&row| set(row)) {
         bits[row / 8] |= 1 << (row % 8);
@@ -543,6 +570,10 @@ fn retain_offsets(
     for (row, &kept) in keep.iter().enumerate() {
         let end = offsets[row + 1];
         let count = (end - start) as usize;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above: the rows' counts sum to `values`"
+        )]
         kept_values.extend(std::iter::repeat_n(kept, count));
         if kept {
             total += end - start;
@@ -621,6 +652,7 @@ impl PaintColumns {
         }
         Some(match usize::try_from(self.pattern[row]) {
             Ok(pattern) => patterns[pattern].clone(),
+            #[expect(clippy::disallowed_methods, reason = "a color's four components")]
             Err(_) => (
                 COLOR,
                 [
@@ -740,6 +772,10 @@ impl PathTable {
 
     /// The coordinates of `row` in the form of the content model: the points
     /// that its verbs consume.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "six coordinates per segment of one row at most, which the collector charged"
+    )]
     pub fn coordinates(&self, row: usize) -> Vec<f64> {
         let mut coords = Vec::new();
         for segment in self.segments_of(row) {
@@ -762,6 +798,10 @@ impl PathTable {
     }
 
     /// `row` in the tuple form that crosses into Python.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "copies the verbs and dash lengths of one row, which the collector charged"
+    )]
     pub fn tuple(&self, row: usize) -> PathTuple {
         (
             self.verb[self.segments_of(row)].to_vec(),
@@ -899,6 +939,10 @@ impl PathTable {
     fn retain_meeting(&mut self, clip: BBox) -> Result<(), Error> {
         let rows = self.rows();
         let mut keep = with_capacity(rows, PATH_COLUMNS)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         keep.extend((0..rows).map(|row| meets(self.bbox(row), clip)));
         if keep.iter().all(|&kept| kept) {
             return Ok(());
@@ -946,6 +990,10 @@ impl PathTable {
     fn retain_patterns(&mut self) -> Result<(), Error> {
         let mut patterns = std::mem::take(&mut self.patterns);
         let mut indexes = with_capacity(patterns.len(), PATH_COLUMNS)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         indexes.resize(patterns.len(), -1);
         for row in 0..self.rows() {
             for column in [&mut self.fill.pattern, &mut self.stroke.pattern] {
@@ -1225,6 +1273,10 @@ struct FaceGlyphs<'b> {
 }
 
 impl FaceGlyphs<'_> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one font per text run at most, whose first glyph `glyphs` charges to the budget"
+    )]
     fn add_font(&mut self, key: u128, glyph: &OutlineGlyph) -> Result<(), Error> {
         if !self.fonts.contains_key(&key) {
             self.fonts.try_reserve(1).map_err(|error| {
@@ -1484,10 +1536,22 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             return Ok(state);
         }
         let mut clips = with_capacity(self.clip_stack.len(), "context clips")?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         clips.extend_from_slice(&self.clip_stack);
         let mut groups = with_capacity(self.group_stack.len(), "context groups")?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         groups.extend_from_slice(&self.group_stack);
         let mut marks = with_capacity(self.mark_stack.len(), "context marked content")?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         marks.extend_from_slice(&self.mark_stack);
         self.charge(1 + clips.len() + groups.len() + marks.len())?;
         let index = index_of(self.states.len())?;
@@ -1514,6 +1578,10 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
 
     /// The index of the font with key `key` in the fonts table, adding it
     /// with what `glyph`'s program says about it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one font per text run at most, which the caller has charged to content_element_count"
+    )]
     fn outline_font(&mut self, key: u128, glyph: &OutlineGlyph) -> Result<u32, Error> {
         if let Some(index) = self.font_indexes.get(&key) {
             return Ok(*index);
@@ -1555,9 +1623,17 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             if self.outlines.len() >= MAX_CACHED_GLYPHS {
                 return Ok(ink.and_then(|ink| path_bbox(&ink.path, transform)));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the cache keeps MAX_CACHED_GLYPHS outlines at most, checked above"
+            )]
             self.outlines.try_reserve(1).map_err(|error| {
                 Error::Allocation(format!("failed to grow the outline cache: {error}"))
             })?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the cache keeps MAX_CACHED_GLYPHS outlines at most, checked above"
+            )]
             self.outlines.insert(key, ink);
         }
         let Some(Some(ink)) = self.outlines.get(&key) else {
@@ -1585,9 +1661,17 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
                 let mut ink = InkBounds { bbox: None };
                 glyph.interpret(&mut ink, Affine::IDENTITY, Affine::IDENTITY, paint);
                 if self.type3_boxes.len() < MAX_CACHED_GLYPHS {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "the cache keeps MAX_CACHED_GLYPHS boxes at most, checked above"
+                    )]
                     self.type3_boxes.try_reserve(1).map_err(|error| {
                         Error::Allocation(format!("failed to grow the Type 3 cache: {error}"))
                     })?;
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "the cache keeps MAX_CACHED_GLYPHS boxes at most, checked above"
+                    )]
                     self.type3_boxes.insert(key, ink.bbox);
                 }
                 ink.bbox
@@ -1609,16 +1693,30 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             return Ok(None);
         }
         let mut bits = with_capacity(paint.1.len(), "paint values")?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         bits.extend(paint.1.iter().map(|&value| value_bits(value)));
         let key = (paint.0, bits);
         if let Some(&index) = self.pattern_indexes.get(&key) {
             return Ok(Some(PathPaint::Pattern(index)));
         }
         let index = offset(self.paths.patterns.len())?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one pattern per paint of a path, whose row the collector charges to \
+                      content_element_count"
+        )]
         self.pattern_indexes.try_reserve(1).map_err(|error| {
             Error::Allocation(format!("failed to grow the pattern index: {error}"))
         })?;
         push(&mut self.paths.patterns, paint, PATH_COLUMNS)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "one pattern per paint of a path, whose row the collector charges to \
+                      content_element_count"
+        )]
         self.pattern_indexes.insert(key, index);
         Ok(Some(PathPaint::Pattern(index)))
     }
@@ -1705,6 +1803,11 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
         if is_fill {
             // The kept buffer is reused, so steady text allocates nothing here.
             self.pending_matrices.clear();
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "six coefficients per glyph of the run that hayro holds, in a buffer that \
+                          each fill reuses"
+            )]
             self.pending_matrices
                 .try_reserve(glyphs.len().saturating_mul(6))
                 .map_err(|error| {
@@ -1739,6 +1842,10 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             for glyph in glyphs {
                 let transform = props.transform * glyph.transform();
                 if is_fill {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "fills the capacity reserved above: six coefficients per glyph"
+                    )]
                     self.pending_matrices
                         .extend_from_slice(&transform.as_coeffs());
                 }
@@ -1794,6 +1901,10 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
         let mut matrices = with_capacity(glyphs.len().saturating_mul(6), "glyph matrices")?;
         for glyph in glyphs {
             let matrix = props.transform * glyph.transform() * Affine::scale(1000.0);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "fills the capacity reserved above: six coefficients per glyph"
+            )]
             matrices.extend_from_slice(&matrix.as_coeffs());
         }
         if !matrices.iter().all(|value| value.is_finite()) {
@@ -1840,6 +1951,10 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
         let mut boxes = with_capacity(glyphs.len(), "glyph boxes")?;
         let mut ink: Option<Rect> = None;
         let mut extent: Option<Rect> = None;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above: one of each per glyph"
+        )]
         for glyph in glyphs {
             let combined = props.transform * glyph.transform();
             let origin = combined * Point::ZERO;
@@ -1979,6 +2094,12 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
     }
 
     /// Push the box of a clip path, intersected with the boxes in force.
+    /// Text extraction records no items, so these boxes count no elements.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one box per clip in force, as hayro keeps one in its own stack, and pop_clip \
+                  removes it"
+    )]
     fn push_clip_box(&mut self, clip: &ClipPath) -> Result<(), Error> {
         // A clip that no finite path describes leaves nothing visible.
         let bbox = path_bbox(&clip.path, Affine::IDENTITY)
@@ -1988,7 +2109,13 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             .clip_boxes
             .last()
             .map_or(bbox, |outer| outer.intersect(bbox));
-        push(&mut self.clip_boxes, bbox, "the clip boxes")
+        if self.clip_boxes.len() == self.clip_boxes.capacity() {
+            self.clip_boxes.try_reserve(1).map_err(|error| {
+                Error::Allocation(format!("failed to grow the clip boxes: {error}"))
+            })?;
+        }
+        self.clip_boxes.push(bbox);
+        Ok(())
     }
 
     fn push_clip_entry(
@@ -2031,9 +2158,17 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
         self.charge(1)?;
         let mut name = String::new();
         let text = String::from_utf8_lossy(tag);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the tag of one sequence, a name of the content, which is charged above"
+        )]
         name.try_reserve_exact(text.len()).map_err(|error| {
             Error::Allocation(format!("failed to allocate a marked-content tag: {error}"))
         })?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "fills the capacity reserved above"
+        )]
         name.push_str(&text);
         let index = index_of(self.marks.len())?;
         push(&mut self.marks, (name, mcid), "marked content")?;
@@ -2086,6 +2221,10 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             if matches!(item, ContentItem::Path(_)) {
                 path_row += 1;
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "fills the capacity reserved above: one item per record"
+            )]
             items.push(item);
         }
         if let Some(clip) = clip {
@@ -2128,6 +2267,10 @@ fn index_of(length: usize) -> Result<u32, Error> {
 }
 
 /// A glyph's Unicode text, or `None` when hayro finds no mapping.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one character, four bytes at most"
+)]
 fn glyph_text(glyph: &Glyph<'_>) -> Result<Option<String>, Error> {
     Ok(match glyph.as_unicode() {
         None => None,
