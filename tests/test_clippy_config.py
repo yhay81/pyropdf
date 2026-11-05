@@ -19,7 +19,7 @@ NAMES = ("clippy.toml", ".clippy.toml")
 
 # The crates that the shared configuration does not bind yet, and the issue
 # that adopts it for each one by deleting the crate's own file.
-UNBOUND = {"pyropdf-engine": 676, "pyropdf-python": 677}
+UNBOUND = {"pyropdf-python": 677}
 
 
 def own_files(directory: Path) -> list[Path]:
@@ -29,7 +29,9 @@ def own_files(directory: Path) -> list[Path]:
 
 def test_the_crates_read_the_shared_configuration() -> None:
     crates = sorted(manifest.parent for manifest in CRATES.glob("*/Cargo.toml"))
-    assert {"pyropdf-store", "pyropdf-schema"} <= {crate.name for crate in crates}
+    assert {"pyropdf-store", "pyropdf-schema", "pyropdf-engine"} <= {
+        crate.name for crate in crates
+    }
     for crate in crates:
         if crate.name in UNBOUND:
             continue

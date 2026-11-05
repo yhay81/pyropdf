@@ -4,9 +4,9 @@
 # `clippy.toml` of its own, and nothing outside this directory: `fuzz/` and
 # the evidence crates, which `tools/check.py` does not lint, find no
 # configuration, and a checkout nested in this one, such as a worktree under
-# `.claude/`, never reads this file in place of its own. pyropdf-engine and
-# pyropdf-python keep an empty file of their own until #676 and #677 adopt
-# this one; tests/test_clippy_config.py lists the crates that it binds.
+# `.claude/`, never reads this file in place of its own. pyropdf-python
+# keeps an empty file of its own until #677 adopts this one;
+# tests/test_clippy_config.py lists the crates that it binds.
 #
 # A collection that grows from input grows through the operation's budget
 # (DESIGN.md F6 and section 9): a `BudgetVec`, whose growth is fallible and
