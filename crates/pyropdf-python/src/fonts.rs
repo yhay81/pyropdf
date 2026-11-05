@@ -118,13 +118,19 @@ pub fn type3_codes(
         let budget = document.budget();
         let held =
             Fonts::read(&version, &fonts, units_per_em, &budget).map_err(|e| store_error(&e))?;
-        Ok(names
-            .iter()
-            .map(|name| {
-                held.find(name.as_bytes())
-                    .map(|code| (code.font, code.code))
-            })
-            .collect())
+        let mut codes = BudgetVec::new(&budget);
+        codes
+            .try_reserve_exact(names.len())
+            .map_err(|error| limit_error(&error))?;
+        for name in &names {
+            codes
+                .try_push(
+                    held.find(name.as_bytes())
+                        .map(|code| (code.font, code.code)),
+                )
+                .map_err(|error| limit_error(&error))?;
+        }
+        Ok(codes.into_vec())
     })?
 }
 
@@ -140,6 +146,10 @@ pub fn type3_codes(
 #[expect(
     clippy::too_many_arguments,
     reason = "what a drawing adds to the fonts"
+)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one tuple per code in the budgeted codes vector; mapped texts are bounded by the font CMap budget"
 )]
 pub fn type3_draw(
     py: Python<'_>,
@@ -572,6 +582,10 @@ impl _Font {
         })
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "Standard 14 has fixed tables; skrifa's CmapIterLimits cap monotonic mappings at char::MAX, so UTF-8 needs at most four bytes per codepoint"
+    )]
     fn chars(&self) -> PyResult<String> {
         crate::errors::boundary(|| match &self.kind {
             Kind::Standard(font) => standard::chars(*font).collect(),
@@ -716,6 +730,10 @@ impl _Font {
     /// that has no outline, which would draw nothing under text that reads
     /// back. With `operation`, as for [`_Font::encode`].
     #[pyo3(signature = (text, *, operation=None))]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the character index is charged above; the returned records map budgeted shaped glyphs one to one"
+    )]
     fn shape(
         &self,
         py: Python<'_>,
@@ -885,6 +903,10 @@ impl _Font {
 
     /// Returns the advances of `glyphs` of an embedded face in thousandths
     /// of the em, as a CIDFont's `W` array records them.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the internal callers deduplicate glyph IDs from budgeted shaping, at most the loaded face's glyph count"
+    )]
     fn glyph_widths(&self, glyphs: Vec<u32>) -> PyResult<Vec<f64>> {
         crate::errors::boundary(|| {
             let Kind::Embedded(face) = &self.kind else {
