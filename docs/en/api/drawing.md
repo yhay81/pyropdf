@@ -53,7 +53,7 @@ when it is drawn.
 Canvas.path(
     path: PathLike,
     *,
-    fill: Color | Gradient | None = None,
+    fill: Color | Gradient | ShadingPattern | None = None,
     stroke: Stroke | Color | Gradient | None = None,
     fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
 )
@@ -283,11 +283,14 @@ Canvas.draw(item: Path | Image)
 Paint a `Path` or `Image` item that `Page.content` returned.
 
 The item's clips, its groups' opacity and blend modes, and its own
-blend mode are applied; soft masks are not. A pattern paint cannot be
-drawn, a gradient that a canvas drew included: a `ShadingPattern`
-or `TilingPattern` reports its kind and its matrix, not its stops
-or its cell, so draw a `LinearGradient` or `RadialGradient`
-in place of one. An image is drawn from its object, with the
+blend mode are applied; soft masks are not. An axial or radial
+`ShadingPattern` retains the color function read from its
+document version. Its RGB approximation is sampled on the first
+drawing, preserving its matrix, domain, opacity, and extension at
+either end, its clip box, and its background. Sampling is bounded
+to 1,025 stops; features between the probes can be lost.
+Function-based and mesh shadings and `TilingPattern`
+paints cannot be drawn yet. An image is drawn from its object, with the
 image's own masks: a canvas on a page of the item's document draws
 that object again, and one of another document copies it, with the
 objects it reaches but pages, as it is when this call is made. Images
@@ -296,9 +299,10 @@ drawn yet, and text runs follow in a later release; an item that
 cannot be drawn raises `TypeError` or `ValueError` and draws
 nothing.
 
-Redrawing the paths and images of a page this way renders within 16
-levels of 255 per channel of the page at 72 dpi, outside the boxes of
-the items that cannot be drawn and of those under a soft mask.
+The round-trip tests allow 16 levels of 255 per channel at 72 dpi,
+outside the boxes of the items that cannot be drawn and of those
+under a soft mask. They cover the bundled corpus and axial/radial
+gradients, including sampled and calculator functions.
 
 ### `Canvas.clip`
 

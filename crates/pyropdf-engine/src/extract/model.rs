@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use hayro::hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph, Type3Glyph};
 use hayro::hayro_interpret::hayro_cmap::BfString;
-use hayro::hayro_interpret::pattern::Pattern;
+use hayro::hayro_interpret::pattern::{Pattern, ShadingPattern};
 use hayro::hayro_interpret::shading::ShadingType;
 use hayro::hayro_interpret::{
     BlendMode, CacheKey, ClipPath, Device, DrawMode, DrawProps, FillRule, Image, ImageDrawProps,
@@ -52,7 +52,9 @@ type Coefficients = [f64; 6];
 /// shading pattern (shading type, or 0 for a shading that hayro could not
 /// read, the six matrix coefficients, and opacity), and kind 2 a tiling
 /// pattern (the four pattern-space bbox coordinates, x step, y step, the six
-/// matrix coefficients, and opacity).
+/// matrix coefficients, and opacity). A path pattern appends its stable
+/// identity within the original table, so equal metadata never aliases two
+/// different colour functions or tiling cells after crossing into Python.
 pub type PaintTuple = (u8, Vec<f64>);
 /// A stroke: paint, width, cap, join, miter limit, dash lengths, dash offset.
 pub type StrokeTuple = (PaintTuple, f64, u8, u8, f64, Vec<f64>, f64);
@@ -586,12 +588,6 @@ fn retain_offsets(
     Ok(kept_values)
 }
 
-/// The bits of a pattern's value, with -0.0 read as 0.0, as Python compares
-/// them.
-fn value_bits(value: f64) -> u64 {
-    if value == 0.0 { 0 } else { value.to_bits() }
-}
-
 /// A paint in the form of the path columns: a color's sRGB components and
 /// alpha, or a pattern's index in [`PathTable::patterns`].
 #[derive(Clone, Copy)]
@@ -744,9 +740,131 @@ pub struct PathTable {
     /// The distinct pattern paints that the pattern columns index, in the
     /// order in which the paths first use them.
     pub patterns: Vec<PaintTuple>,
+    /// Owned hayro paints, shared by the rows, without evaluating their
+    /// functions while extracting content. Non-shading patterns have no source.
+    shadings: Vec<Option<ShadingPattern>>,
+}
+
+/// Whether the gradient is axial, its coordinates and extension flags, and
+/// sampled stops (offset, red, green, blue, alpha) in its own coordinate space.
+pub type SampledShadingTuple = (
+    bool,
+    [f64; 6],
+    [bool; 2],
+    Vec<[f64; 5]>,
+    Option<BBox>,
+    Option<[f64; 4]>,
+);
+
+/// Use the renderer's quarter/midpoint probes, RGB tolerance, and depth so
+/// quantized colour spaces keep the approximation that the original shows.
+const SHADING_DEPTH: u8 = 10;
+const SHADING_TOLERANCE: f32 = 0.01;
+
+/// Appends one interval's endpoint, subdividing at most SHADING_DEPTH times.
+fn shading_interval(
+    sample: &impl Fn(f32) -> Result<[f32; 4], Error>,
+    stops: &mut BudgetVec<'_, [f64; 5]>,
+    start: (f32, [f32; 4]),
+    end: (f32, [f32; 4]),
+    depth: u8,
+) -> Result<(), Error> {
+    let middle = (start.0 + end.0) * 0.5;
+    let mid_color = sample(middle)?;
+    let mut accurate = true;
+    for (color, mix) in [
+        (sample((start.0 + middle) * 0.5)?, 0.25),
+        (mid_color, 0.5),
+        (sample((middle + end.0) * 0.5)?, 0.75),
+    ] {
+        accurate &= color.iter().enumerate().all(|(channel, &value)| {
+            (value - (start.1[channel] * (1.0 - mix) + end.1[channel] * mix)).abs()
+                <= SHADING_TOLERANCE
+        });
+    }
+    if accurate || depth == SHADING_DEPTH {
+        let [r, g, b, a] = end.1.map(f64::from);
+        stops.try_push([f64::from(end.0), r, g, b, a])?;
+    } else {
+        shading_interval(sample, stops, start, (middle, mid_color), depth + 1)?;
+        shading_interval(sample, stops, (middle, mid_color), end, depth + 1)?;
+    }
+    Ok(())
 }
 
 impl PathTable {
+    /// Samples one axial/radial paint on demand, under the drawing operation's
+    /// budget. The owned hayro functions and colour space outlive the source
+    /// document and keep the version that extraction read.
+    pub fn sample_shading(
+        &self,
+        pattern: usize,
+        budget: &Budget,
+    ) -> Result<Option<SampledShadingTuple>, Error> {
+        let Some(Some(paint)) = self.shadings.get(pattern) else {
+            return Ok(None);
+        };
+        let ShadingType::RadialAxial {
+            coords,
+            domain,
+            function,
+            extend,
+            axial,
+        } = paint.shading.shading_type.as_ref()
+        else {
+            return Ok(None);
+        };
+        // hayro's function reader bounds inputs and outputs to 32 components.
+        if function.num_outputs() > 32 {
+            return Ok(None);
+        }
+        let sample = |offset: f32| {
+            budget.charge(LimitCode::InterpretationFuel, 1)?;
+            let input = domain[0] + (domain[1] - domain[0]) * offset;
+            let mut output = [0.0; 32];
+            let output = &mut output[..function.num_outputs()];
+            if function.eval(&[input], output).is_none() {
+                return Ok([0.0; 4]);
+            }
+            let rgba = paint.shading.color_space.to_rgba(output, paint.opacity);
+            let rgba = paint
+                .transfer_function
+                .as_ref()
+                .map_or(rgba, |tf| tf.apply(&rgba));
+            Ok(rgba.components())
+        };
+        let mut stops = BudgetVec::counting(budget, LimitCode::ContentElementCount);
+        let start = (0.0, sample(0.0)?);
+        let [r, g, b, a] = start.1.map(f64::from);
+        stops.try_push([0.0, r, g, b, a])?;
+        shading_interval(&sample, &mut stops, start, (1.0, sample(1.0)?), 0)?;
+        // hayro has already transformed the clip into display space. Restore
+        // the shading's box before writing it under the pattern matrix again.
+        let bounds = paint
+            .shading
+            .clip_path
+            .as_ref()
+            .and_then(|path| path_bbox(path, paint.matrix.inverse()))
+            .map(bbox_tuple);
+        let background = paint.shading.background.as_ref().map(|components| {
+            let rgba = paint.shading.color_space.to_rgba(components, paint.opacity);
+            paint
+                .transfer_function
+                .as_ref()
+                .map_or(rgba, |tf| tf.apply(&rgba))
+                .components()
+                .map(f64::from)
+        });
+        Ok(Some((
+            *axial,
+            coords.map(f64::from),
+            *extend,
+            stops.into_vec(),
+            bounds,
+            background,
+        )))
+    }
+
     fn new() -> Self {
         Self {
             segment_offsets: vec![0],
@@ -989,6 +1107,7 @@ impl PathTable {
     /// use them.
     fn retain_patterns(&mut self) -> Result<(), Error> {
         let mut patterns = std::mem::take(&mut self.patterns);
+        let mut shadings = std::mem::take(&mut self.shadings);
         let mut indexes = with_capacity(patterns.len(), PATH_COLUMNS)?;
         #[expect(
             clippy::disallowed_methods,
@@ -1004,6 +1123,7 @@ impl PathTable {
                     indexes[pattern] = offset(self.patterns.len())?;
                     let paint = std::mem::take(&mut patterns[pattern]);
                     push(&mut self.patterns, paint, PATH_COLUMNS)?;
+                    push(&mut self.shadings, shadings[pattern].take(), PATH_COLUMNS)?;
                 }
                 column[row] = indexes[pattern];
             }
@@ -1046,6 +1166,7 @@ impl PathTable {
         self.c2_y.shrink_to_fit();
         self.stroke_dashes.shrink_to_fit();
         self.patterns.shrink_to_fit();
+        self.shadings.shrink_to_fit();
         Ok(())
     }
 }
@@ -1431,9 +1552,9 @@ pub(crate) struct ContentCollector<'a, 'b, S> {
     kinds: ItemKinds,
     records: Vec<Record>,
     paths: PathTable,
-    /// The index of each pattern in the table, by its kind and the bits of
-    /// its values.
-    pattern_indexes: HashMap<(u8, Vec<u64>), i32>,
+    /// The index of each pattern by hayro's key, including its source,
+    /// matrix, and opacity. Repeated paints need no new tuple allocation.
+    pattern_indexes: HashMap<u128, i32>,
     /// The segments of the path being recorded, in a buffer that is reused.
     segments: Segments,
     /// The segments of the fill path that a stroke may complete.
@@ -1688,21 +1809,26 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             let finite = rgba.iter().all(|value| value.is_finite());
             return Ok(finite.then_some(PathPaint::Color(rgba)));
         }
-        let paint = paint_tuple(paint)?;
+        let Paint::Pattern(pattern) = paint else {
+            unreachable!("colors returned above");
+        };
+        let shading = match pattern.as_ref() {
+            Pattern::Shading(shading) => Some(shading),
+            Pattern::Tiling(_) => None,
+        };
+        // hayro's cache key does not include a transfer function. Keep such
+        // paints separate so that two transfers of one shading cannot alias.
+        let cacheable = shading.is_none_or(|shading| shading.transfer_function.is_none());
+        let key = pattern.cache_key();
+        if cacheable && let Some(&index) = self.pattern_indexes.get(&key) {
+            return Ok(Some(PathPaint::Pattern(index)));
+        }
+        let mut paint = paint_tuple(paint)?;
         if !paint_is_finite(&paint) {
             return Ok(None);
         }
-        let mut bits = with_capacity(paint.1.len(), "paint values")?;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "fills the capacity reserved above"
-        )]
-        bits.extend(paint.1.iter().map(|&value| value_bits(value)));
-        let key = (paint.0, bits);
-        if let Some(&index) = self.pattern_indexes.get(&key) {
-            return Ok(Some(PathPaint::Pattern(index)));
-        }
         let index = offset(self.paths.patterns.len())?;
+        push(&mut paint.1, f64::from(index), "paint values")?;
         #[expect(
             clippy::disallowed_methods,
             reason = "one pattern per paint of a path, whose row the collector charges to \
@@ -1712,12 +1838,21 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
             Error::Allocation(format!("failed to grow the pattern index: {error}"))
         })?;
         push(&mut self.paths.patterns, paint, PATH_COLUMNS)?;
+        let retained = shading.filter(|paint| {
+            matches!(
+                paint.shading.shading_type.as_ref(),
+                ShadingType::RadialAxial { .. }
+            )
+        });
+        push(&mut self.paths.shadings, retained.cloned(), PATH_COLUMNS)?;
         #[expect(
             clippy::disallowed_methods,
             reason = "one pattern per paint of a path, whose row the collector charges to \
                       content_element_count"
         )]
-        self.pattern_indexes.insert(key, index);
+        if cacheable {
+            self.pattern_indexes.insert(key, index);
+        }
         Ok(Some(PathPaint::Pattern(index)))
     }
 

@@ -5,7 +5,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyropdf_engine::content::shading::{Extend, Geometry, Gradient, ShadingError, Shadings, Stop};
+use pyropdf_engine::content::shading::{
+    Extend, Geometry, Gradient, ShadingError, ShadingMetadata, Shadings, Stop,
+};
 use pyropdf_store::value::Reference;
 
 use crate::document::_Document;
@@ -78,6 +80,9 @@ pub fn canvas_gradient(
     stops: Vec<(f64, f64, f64, f64, f64)>,
     extend: &str,
     area: [f64; 4],
+    bbox: Option<[f64; 4]>,
+    background: Option<[f64; 4]>,
+    sampled: bool,
     operation: &OperationBudget,
 ) -> PyResult<(u32, Option<u32>, f64)> {
     crate::errors::boundary(|| {
@@ -85,6 +90,8 @@ pub fn canvas_gradient(
         let extend = match extend {
             "none" => Extend::None,
             "pad" => Extend::Pad,
+            "pad_start" => Extend::PadStart,
+            "pad_end" => Extend::PadEnd,
             "repeat" => Extend::Repeat,
             "reflect" => Extend::Reflect,
             other => {
@@ -121,7 +128,17 @@ pub fn canvas_gradient(
             .unwrap_or_else(PoisonError::into_inner);
         let painted = document.edit(py, |transaction, budget| {
             table
-                .paint(transaction, &gradient, area, budget)
+                .paint_with_metadata(
+                    transaction,
+                    &gradient,
+                    area,
+                    ShadingMetadata {
+                        bbox,
+                        background,
+                        sampled,
+                    },
+                    budget,
+                )
                 .map_err(|error| shading_error(&error))
         })?;
         Ok((

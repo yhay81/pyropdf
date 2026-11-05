@@ -20,7 +20,8 @@ use pyropdf_engine::extract::{
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
-use crate::errors::limit_error;
+use crate::errors::{PdfError, limit_error};
+use crate::history::OperationBudget;
 
 /// A table whose columns a [`Column`] exposes.
 trait Columns: Send + Sync {
@@ -569,6 +570,46 @@ impl PathColumns {
     /// tuple form of `page_content`.
     fn patterns(&self) -> PyResult<&[PaintTuple]> {
         crate::errors::boundary(|| self.table.patterns.as_slice())
+    }
+
+    /// Samples a retained axial/radial shading only when a canvas repaints it.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the private shading tuple crossing into Python"
+    )]
+    fn sample_shading(
+        &self,
+        py: Python<'_>,
+        pattern: usize,
+        operation: &OperationBudget,
+    ) -> PyResult<
+        Option<(
+            bool,
+            [f64; 6],
+            [bool; 2],
+            Vec<[f64; 5]>,
+            Option<BBox>,
+            Option<[f64; 4]>,
+        )>,
+    > {
+        crate::errors::boundary(|| {
+            operation.ensure_active()?;
+            let sampled = py
+                .detach(|| self.table.sample_shading(pattern, &operation.operation))
+                .map_err(|error| match error {
+                    pyropdf_engine::extract::Error::Limit(refusal) => limit_error(&refusal),
+                    other => PdfError::new_err(other.to_string()),
+                })?;
+            if let Some((_, _, _, stops, _, _)) = &sampled {
+                // Python's temporary lists/floats and the retained ColorStop,
+                // Color, and tuple objects, before any conversion creates them.
+                operation
+                    .operation
+                    .charge(LimitCode::MemorySize, stops.len() as u64 * 512 + 256)
+                    .map_err(|refusal| limit_error(&refusal))?;
+            }
+            Ok(sampled)
+        })?
     }
 
     /// Returns the Arrow schema of the rows as a PyCapsule.

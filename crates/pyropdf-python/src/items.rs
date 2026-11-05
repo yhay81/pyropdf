@@ -56,6 +56,7 @@ pub fn page_content(
             (annotations, clip, max_elements),
             |content| Ok(content.clone()),
         )?;
+        let columns = PathColumns::new(&content);
         let mut items = Vec::new();
         items
             .try_reserve_exact(content.items.len())
@@ -79,6 +80,7 @@ pub fn page_content(
             &contexts.groups,
             &contexts.marks,
             &contexts.states,
+            columns,
         )
             .into_py_any(py)
     })?
