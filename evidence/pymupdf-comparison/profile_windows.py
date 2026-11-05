@@ -3,8 +3,10 @@
 
 Run this script with the wheel environment's Python, after compiling
 sample_windows.cpp into target/365-profile-windows/sample_windows.exe.
-Only the child renderer's main thread is inspected. These are wall-clock
-leaf-PC samples, not inclusive call stacks or an uninstrumented timing test.
+Only the child renderer's main thread is inspected. By default these are
+wall-clock leaf-PC samples. --stacks adds bounded physical callers for copy
+functions, without reconstructing inline frames. Neither mode is an
+uninstrumented timing test.
 """
 
 from __future__ import annotations
@@ -42,7 +44,7 @@ def worker(path: Path, dpi: int) -> None:
     sys.stdin.readline()
 
 
-def sample(document: str, dpi: int, symbols: Path) -> dict:
+def sample(document: str, dpi: int, symbols: Path, *, stacks: bool = False) -> dict:
     """Launch, sample, resolve symbols, and clean up one owned worker."""
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
@@ -74,6 +76,7 @@ def sample(document: str, dpi: int, symbols: Path) -> dict:
                 str(identity["tid"]),
                 str(SECONDS),
                 str(symbols),
+                *(["--stacks"] if stacks else []),
             ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -121,14 +124,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--symbols", type=Path, required=True, help="Directory with the wheel's matching PDB")
+    parser.add_argument(
+        "--stacks", action="store_true", help="Unwind up to 24 frames and record memcpy/memmove callers"
+    )
+    parser.add_argument("--document", choices=("bill-hr815", "usrguide"))
+    parser.add_argument("--dpi", type=int, choices=(72, 144))
     args = parser.parse_args()
     if not args.symbols.is_dir():
         parser.error("--symbols must name an existing directory")
     results = {}
-    for document in ("bill-hr815", "usrguide"):
-        for dpi in (72, 144):
+    for document in (args.document,) if args.document else ("bill-hr815", "usrguide"):
+        for dpi in (args.dpi,) if args.dpi else (72, 144):
             case = f"{document}-{dpi}"
-            results[case] = sample(document, dpi, args.symbols.resolve())
+            results[case] = sample(document, dpi, args.symbols.resolve(), stacks=args.stacks)
             print(case, sorted(results[case]["symbols"].items(), key=lambda item: -item[1])[:8], flush=True)
     import pyropdf  # noqa: PLC0415
     from pyropdf import _core  # noqa: PLC0415
@@ -138,7 +146,8 @@ def main() -> None:
         "python": platform.python_version(),
         "pyropdf": pyropdf.__version__,
         "extension_sha256": hashlib.sha256(Path(_core.__file__).read_bytes()).hexdigest(),
-        "method": "Wall-clock main-thread leaf PC, nominal 5 ms interval; no call stacks",
+        "method": "Wall-clock main-thread leaf PC, nominal 5 ms interval",
+        "stack_depth_limit": 24 if args.stacks else 0,
         "results": results,
     }
     args.output.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")

@@ -1,15 +1,17 @@
 // Sample only the explicitly launched rendering worker's main thread.
 // Build in Developer PowerShell: cl /EHsc /O2 sample_windows.cpp /link dbghelp.lib
-// GetThreadContext requires suspension; always resume before symbol lookup.
+// GetThreadContext requires suspension; resume before resolving function names.
 // https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getthreadcontext
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dbghelp.h>
+#include <array>
 #include <chrono>
 #include <iostream>
 #include <map>
 #include <string>
 #include <thread>
+#include <vector>
 
 static std::string quoted(const std::string& value) {
     std::string result = "\"";
@@ -21,7 +23,9 @@ static std::string quoted(const std::string& value) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 5) return 2;
+    if (argc != 5 && argc != 6) return 2;
+    const bool capture_stacks = argc == 6 && std::string(argv[5]) == "--stacks";
+    if (argc == 6 && !capture_stacks) return 2;
     const DWORD pid = std::stoul(argv[1]);
     const DWORD tid = std::stoul(argv[2]);
     const int seconds = std::stoi(argv[3]);
@@ -40,7 +44,8 @@ int main(int argc, char** argv) {
         CloseHandle(process);
         return 1;
     }
-    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES |
+                  SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
     if (!SymInitialize(process, argv[4], TRUE)) {
         std::cerr << "SymInitialize failed: " << GetLastError() << '\n';
         CloseHandle(thread);
@@ -51,16 +56,37 @@ int main(int argc, char** argv) {
     std::string start;
     std::getline(std::cin, start);
     std::map<DWORD64, unsigned> addresses;
+    std::map<std::vector<DWORD64>, unsigned> stacks;
     unsigned errors = 0;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
     while (std::chrono::steady_clock::now() < deadline) {
         CONTEXT context{};
-        context.ContextFlags = CONTEXT_CONTROL;
+        context.ContextFlags = capture_stacks ? CONTEXT_FULL : CONTEXT_CONTROL;
         if (SuspendThread(thread) == DWORD(-1)) {
             ++errors;
             break;
         }
         const BOOL captured = GetThreadContext(thread, &context);
+        const DWORD64 leaf_pc = context.Rip;
+        std::array<DWORD64, 24> frames{};
+        size_t depth = 0;
+        if (captured && capture_stacks) {
+            frames[depth++] = leaf_pc;
+            STACKFRAME64 frame{};
+            frame.AddrPC = {context.Rip, 0, AddrModeFlat};
+            frame.AddrFrame = {context.Rbp, 0, AddrModeFlat};
+            frame.AddrStack = {context.Rsp, 0, AddrModeFlat};
+            // Unwind only this suspended thread, bounded to 24 physical frames.
+            // DbgHelp calls are serialized on this sampler's single thread.
+            for (size_t walk = 0; walk < frames.size() - 1; ++walk) {
+                if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, thread,
+                       &frame, &context, nullptr, SymFunctionTableAccess64,
+                       SymGetModuleBase64, nullptr)) break;
+                if (!frame.AddrPC.Offset) break;
+                if (frame.AddrPC.Offset != frames[depth - 1]) frames[depth++] = frame.AddrPC.Offset;
+                else if (walk != 0) break;
+            }
+        }
         const DWORD resumed = ResumeThread(thread);
         if (resumed == DWORD(-1)) {
             std::cerr << "ResumeThread failed: " << GetLastError() << '\n';
@@ -69,12 +95,16 @@ int main(int argc, char** argv) {
             CloseHandle(process);
             return 1;
         }
-        if (captured) ++addresses[context.Rip];
+        if (captured) {
+            ++addresses[leaf_pc];
+            if (capture_stacks) ++stacks[std::vector<DWORD64>(frames.begin(), frames.begin() + depth)];
+        }
         else ++errors;
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     SymRefreshModuleList(process);
     std::map<std::string, unsigned> symbols;
+    std::map<DWORD64, std::string> names;
     std::map<DWORD64, unsigned> modules;
     unsigned unresolved = 0;
     unsigned missing_module = 0;
@@ -87,7 +117,8 @@ int main(int argc, char** argv) {
         symbol->MaxNameLen = 4096;
         DWORD64 displacement = 0;
         if (SymFromAddr(process, entry.first, &displacement, symbol)) {
-            symbols[std::string(symbol->Name, symbol->NameLen)] += entry.second;
+            names[entry.first] = std::string(symbol->Name, symbol->NameLen);
+            symbols[names[entry.first]] += entry.second;
         } else {
             unresolved += entry.second;
             if (!module_base) missing_module += entry.second;
@@ -112,6 +143,55 @@ int main(int argc, char** argv) {
         std::cout << "{\"name\":" << quoted(info.ModuleName) << ",\"samples\":" << entry.second
                   << ",\"symbol_type\":" << info.SymType
                   << ",\"pdb_unmatched\":" << (info.PdbUnmatched ? "true" : "false") << '}';
+    }
+    std::cout << "],\"copy_stacks\":[";
+    first = true;
+    for (const auto& entry : stacks) {
+        const auto& leaf = names[entry.first.front()];
+        if (leaf != "memmove" && leaf != "memcpy") continue;
+        if (!first) std::cout << ',';
+        first = false;
+        std::cout << "{\"count\":" << entry.second << ",\"frames\":[";
+        bool first_frame = true;
+        for (DWORD64 address : entry.first) {
+            auto found = names.find(address);
+            if (found == names.end()) {
+                alignas(SYMBOL_INFO) char buffer[sizeof(SYMBOL_INFO) + 4096]{};
+                auto symbol = reinterpret_cast<SYMBOL_INFO*>(buffer);
+                symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+                symbol->MaxNameLen = 4096;
+                DWORD64 displacement = 0;
+                const bool resolved = SymFromAddr(process, address, &displacement, symbol) != FALSE;
+                found = names.emplace(address, resolved ? std::string(symbol->Name, symbol->NameLen) : "<unresolved>").first;
+            }
+            if (!first_frame) std::cout << ',';
+            first_frame = false;
+            std::cout << quoted(found->second);
+        }
+        std::cout << "],\"locations\":[";
+        first_frame = true;
+        for (DWORD64 address : entry.first) {
+            IMAGEHLP_LINE64 line{};
+            line.SizeOfStruct = sizeof(line);
+            DWORD displacement = 0;
+            std::string location;
+            if (SymGetLineFromAddr64(process, address, &displacement, &line)) {
+                location = line.FileName;
+                // Keep only the final three components, not machine/user paths.
+                size_t position = location.size();
+                for (int part = 0; part < 3; ++part) {
+                    if (!position) break;
+                    position = location.find_last_of("/\\", position - 1);
+                    if (position == std::string::npos) break;
+                }
+                if (position != std::string::npos) location = location.substr(position + 1);
+                location += ':' + std::to_string(line.LineNumber);
+            }
+            if (!first_frame) std::cout << ',';
+            first_frame = false;
+            std::cout << quoted(location);
+        }
+        std::cout << "]}";
     }
     std::cout << "]}" << std::endl;
     SymCleanup(process);

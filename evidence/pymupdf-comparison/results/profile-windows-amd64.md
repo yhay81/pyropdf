@@ -76,6 +76,11 @@ it without caller evidence. The next useful evidence is its native callers
 and allocation paths, followed by a measured scoped optimization or an
 upstream proposal. The 1.5 target remains unmet.
 
+The subsequent [copy-caller investigation](copy-initialization-windows.md)
+resolves the Rust-side copies to `Pixmap::new` and prepares the local
+initialization change tracked by #710. It retains the Python raw-pixel copy
+in the comparison and distinguishes deferred allocation from render speed.
+
 The upstream release check still identifies `sparse-strips-v0.3.0` as the
 latest sparse-strips release. Main contains subsequent changes, including
 [line-segment clip culling (#1954)](https://github.com/linebender/vello/pull/1954)
