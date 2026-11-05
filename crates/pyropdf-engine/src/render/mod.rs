@@ -22,8 +22,8 @@ pub use batch::{MAX_WORKERS, batch};
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::svg;
 
-/// What hayro renders with: its defaults, with text hinted only on request
-/// and without its glyph cache.
+/// What hayro renders with: its defaults, with text hinted and glyphs
+/// cached only on request.
 ///
 /// hayro 0.9 hints text by default (LaurenzV/hayro#1705), which hayro 0.8
 /// did not. Hinting reads more of a font program than the glyphs drawn, so
@@ -34,11 +34,13 @@ pub use svg::svg;
 /// hayro 0.9 also reuses a rasterized glyph by default (LaurenzV/hayro#1706),
 /// placed at a quarter of a pixel horizontally and at a whole pixel
 /// vertically, which changes most pages of the corpus. pyropdf fills each
-/// glyph where it lies, as it did with hayro 0.8 (#622).
-fn render_settings(hinting: bool) -> RenderSettings {
+/// glyph where it lies, as it did with hayro 0.8 (#622), unless asked to
+/// reuse rasterized glyphs, which renders text faster and less faithfully
+/// (evidence/glyph-cache, #685).
+fn render_settings(hinting: bool, glyph_caching: bool) -> RenderSettings {
     RenderSettings {
         hinting,
-        glyph_caching: false,
+        glyph_caching,
         ..RenderSettings::default()
     }
 }
@@ -64,7 +66,7 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
         page,
         &RenderCache::new(),
         &InterpreterSettings::default(),
-        &render_settings(false),
+        &render_settings(false, false),
         &PixmapSettings {
             x_scale: scale,
             y_scale: scale,
@@ -149,11 +151,16 @@ pub struct Options {
     pub annotations: bool,
     /// Whether text is hinted, as hayro's default settings hint it.
     pub hinting: bool,
+    /// Whether text filled in one color is drawn through hayro's glyph
+    /// cache, as hayro's default settings draw it: each glyph is rasterized
+    /// once at each size and placed at a whole pixel vertically.
+    pub glyph_cache: bool,
 }
 
 impl Options {
     /// Renders through `matrix` in RGB, on white without `alpha` and on
-    /// transparency with it, with annotations, no clip, and no hinting.
+    /// transparency with it, with annotations, no clip, no hinting, and no
+    /// glyph cache.
     pub const fn new(matrix: Matrix, alpha: bool) -> Self {
         Self {
             matrix,
@@ -163,6 +170,7 @@ impl Options {
             clip: None,
             annotations: true,
             hinting: false,
+            glyph_cache: false,
         }
     }
 }
@@ -194,7 +202,9 @@ impl std::error::Error for RasterError {}
 
 /// The render cache of the bridge that this thread rendered last: fonts,
 /// images, and glyph outlines, which every page of one version shares, as
-/// pylopdf keeps one cache per snapshot. hayro's cache is not `Send`, so
+/// pylopdf keeps one cache per snapshot, and, after a render with
+/// [`Options::glyph_cache`], the glyphs that hayro rasterized, which
+/// nothing bounds or charges to a budget. hayro's cache is not `Send`, so
 /// each thread keeps its own, and the bridge that it borrows from, until it
 /// renders another version. The fonts that it holds were resolved through
 /// the fallback faces, so other faces start another cache too (DESIGN.md
@@ -417,7 +427,7 @@ fn draw<'a>(
         page,
         cache,
         &settings,
-        &render_settings(options.hinting),
+        &render_settings(options.hinting, options.glyph_cache),
         &mut context,
         transform,
     );

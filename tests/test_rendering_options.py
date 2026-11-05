@@ -1,4 +1,4 @@
-"""The options of page.pixmap: clip, background, annotations, colorspace, and hinting.
+"""The options of page.pixmap: clip, background, annotations, colorspace, hinting, and glyph_cache.
 
 Ported from pylopdf's tests/test_rendering_api.py at 036be111. Intended
 differences:
@@ -191,6 +191,45 @@ def test_hinting_must_be_a_bool() -> None:
         _page().pixmap(hinting=1)  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="hinting must be a bool"):
         pyropdf.open(REAL_WORLD / "pdf20-simple.pdf").render(hinting=None)  # ty: ignore[invalid-argument-type]
+
+
+def test_glyph_cache_changes_text_and_is_off_by_default() -> None:
+    page = _corpus_page()
+    filled = bytes(page.pixmap())
+    assert bytes(page.pixmap(glyph_cache=False)) == filled
+    cached = bytes(page.pixmap(glyph_cache=True))
+    assert cached != filled
+    assert cached != bytes(page.pixmap(hinting=True))
+
+
+def test_a_render_with_one_glyph_cache_setting_after_the_other_equals_a_fresh_one() -> None:
+    page = _corpus_page()
+    fresh_cached = bytes(_corpus_page().pixmap(glyph_cache=True))
+    fresh_filled = bytes(_corpus_page().pixmap())
+    assert bytes(page.pixmap()) == fresh_filled
+    assert bytes(page.pixmap(glyph_cache=True)) == fresh_cached
+    assert bytes(page.pixmap()) == fresh_filled
+
+
+def test_document_render_caches_glyphs_as_page_pixmap_does() -> None:
+    doc = pyropdf.open(REAL_WORLD / "f1040.pdf")
+    cached = [page.pixmap(glyph_cache=True).to_bytes("png") for page in doc.pages]
+    assert doc.render(glyph_cache=True) == cached
+    assert doc.render(glyph_cache=False) == [page.pixmap().to_bytes("png") for page in doc.pages]
+    assert doc.render() != cached
+
+
+def test_the_web_limits_accept_the_glyph_cache() -> None:
+    """``DocumentLimits.web()`` does not refuse the cache, whose memory is outside the budget (#685)."""
+    with pyropdf.open(REAL_WORLD / "pdf20-simple.pdf", limits=pyropdf.DocumentLimits.web()) as doc:
+        assert bytes(doc.pages[0].pixmap(glyph_cache=True)) == bytes(_corpus_page().pixmap(glyph_cache=True))
+
+
+def test_glyph_cache_must_be_a_bool() -> None:
+    with pytest.raises(TypeError, match="glyph_cache must be a bool"):
+        _page().pixmap(glyph_cache=1)  # ty: ignore[invalid-argument-type]
+    with pytest.raises(TypeError, match="glyph_cache must be a bool"):
+        pyropdf.open(REAL_WORLD / "pdf20-simple.pdf").render(glyph_cache=None)  # ty: ignore[invalid-argument-type]
 
 
 def test_gray_holds_the_luma_of_each_color() -> None:

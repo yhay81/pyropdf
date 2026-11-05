@@ -2594,6 +2594,7 @@ pub fn annotation_pixmap(
         clip: Some(rect),
         annotations: false,
         hinting: false,
+        glyph_cache: false,
     };
     let fallback = document.fallback();
     let raster = py.detach(|| -> PyResult<Raster> {

@@ -1362,6 +1362,7 @@ pub fn render_page(
     clip: Option<(f64, f64, f64, f64)>,
     annotations: bool,
     hinting: bool,
+    glyph_cache: bool,
 ) -> PyResult<Pixmap> {
     let (version, index, budget) = crate::pages::index(document)?;
     let (red, green, blue, opacity) = background;
@@ -1373,6 +1374,7 @@ pub fn render_page(
         clip,
         annotations,
         hinting,
+        glyph_cache,
     };
     let fallback = document.fallback();
     let raster = py.detach(|| -> PyResult<Raster> {
@@ -1426,6 +1428,7 @@ pub fn render_pages(
     background: (u8, u8, u8, u8),
     annotations: bool,
     hinting: bool,
+    glyph_cache: bool,
     format: &str,
     quality: u8,
     workers: usize,
@@ -1443,6 +1446,7 @@ pub fn render_pages(
         clip: None,
         annotations,
         hinting,
+        glyph_cache,
     };
     let written = AtomicUsize::new(0);
     let fallback = document.fallback();
