@@ -1382,8 +1382,7 @@ def test_a_saved_gradient_opens_with_the_same_render_and_a_clean_check() -> None
     doc = _drawn(draw)
     reopened = pyropdf.open(doc.to_bytes())
     assert bytes(reopened.pages[0].pixmap(dpi=72)) == bytes(doc.pages[0].pixmap(dpi=72))
-    # The check reads every shading dictionary as type 1 (#643).
-    assert [defect for defect in reopened.check().defects if defect.clause != "ShadingType1/ShadingType"] == []
+    assert reopened.check().defects == ()
 
 
 def test_gradients_that_cannot_be_drawn_raise_and_draw_nothing() -> None:
