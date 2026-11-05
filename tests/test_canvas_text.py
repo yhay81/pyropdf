@@ -608,3 +608,89 @@ def test_drawing_text_is_one_transaction_and_one_undo_step() -> None:
     assert bytes(pixmap) != bytes(pyropdf.Document().pages.new((300, 200)).pixmap(dpi=72))
     doc.history.undo()
     assert page.text() == ""
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("extend", list(pyropdf.GradientExtend))
+@pytest.mark.parametrize("radial", [False, True])
+@pytest.mark.parametrize("textbox", [False, True])
+def test_gradient_text_paints_and_reads_once(
+    rotation: int, extend: pyropdf.GradientExtend, *, radial: bool, textbox: bool
+) -> None:
+    doc, page = _new_page(300, 300)
+    stops = (pyropdf.ColorStop(0, RED), pyropdf.ColorStop(1, Color(0, 0, 1, 0.2)))
+    gradient = (
+        pyropdf.RadialGradient(
+            start=pyropdf.Point(150, 150),
+            end=pyropdf.Point(150, 150),
+            start_radius=0,
+            end_radius=40,
+            stops=stops,
+            extend=extend,
+        )
+        if radial
+        else pyropdf.LinearGradient(
+            start=pyropdf.Point(100, 100), end=pyropdf.Point(140, 100), stops=stops, extend=extend
+        )
+    )
+    with page.draw() as canvas:
+        if textbox:
+            assert canvas.textbox(
+                (30, 30, 270, 270),
+                "AVA office",
+                size=25,
+                rotate=rotation,
+                fill=gradient,
+                stroke=Stroke(paint=gradient, width=2),
+            ).fits
+        else:
+            canvas.text(
+                "AVA office",
+                (150, 150),
+                size=25,
+                rotate=rotation,
+                fill=gradient,
+                stroke=Stroke(paint=gradient, width=2),
+            )
+    reopened = pyropdf.open(doc.to_bytes())
+    for drawn in (page, reopened.pages[0]):
+        assert drawn.text().strip() == "AVA office"
+        first, second = drawn.content().text_runs
+        assert isinstance(first.fill, pyropdf.ShadingPattern)
+        assert second.stroke is not None
+        assert isinstance(second.stroke.paint, pyropdf.ShadingPattern)
+        assert first.soft_mask is not None
+        assert second.soft_mask is not None
+        assert sum(operation.operator == "BT" for operation in drawn.operations) == 2
+        if extend is not pyropdf.GradientExtend.NONE:
+            assert min(bytes(drawn.pixmap(dpi=72))) < 240
+
+
+@pytest.mark.parametrize("fill_gradient", [False, True])
+@pytest.mark.parametrize("stroke_gradient", [False, True])
+@pytest.mark.parametrize("alpha", [0.2, 1.0])
+def test_text_gradient_paint_modes(*, fill_gradient: bool, stroke_gradient: bool, alpha: float) -> None:
+    doc, page = _new_page()
+    gradient = pyropdf.LinearGradient(
+        start=pyropdf.Point(0, 0),
+        end=pyropdf.Point(200, 0),
+        stops=(pyropdf.ColorStop(0, RED), pyropdf.ColorStop(1, Color(0, 0, 1, alpha))),
+    )
+    with page.draw() as canvas:
+        canvas.text(
+            "AVA",
+            (20, 80),
+            size=50,
+            fill=gradient if fill_gradient else RED,
+            stroke=Stroke(paint=gradient if stroke_gradient else BLUE, width=2),
+        )
+        canvas.text("Outline", (20, 120), fill=None, stroke=gradient)
+    assert page.text() == "AVA\nOutline\n"
+    runs = page.content().text_runs
+    split = alpha < 1 and (fill_gradient or stroke_gradient)
+    assert len(runs) == (3 if split else 2)
+    assert runs[-1].render_mode is TextRenderMode.STROKE
+    assert runs[-1].fill is None
+    if not split:
+        assert runs[0].render_mode is TextRenderMode.FILL_STROKE
+    assert pyropdf.open(doc.to_bytes()).pages[0].text() == page.text()

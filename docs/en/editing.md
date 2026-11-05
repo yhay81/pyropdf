@@ -99,8 +99,8 @@ everything drawn inside them.
 
 ### Gradients
 
-`LinearGradient` and `RadialGradient` paint wherever a `Color` does on a path
-or a shape, as the `fill` or as the `paint` of a `Stroke`. A gradient's
+`LinearGradient` and `RadialGradient` paint wherever a `Color` does on a path,
+a shape, or text, as the `fill` or as the `paint` of a `Stroke`. A gradient's
 coordinates are in the space of what it paints, so it moves with
 `canvas.transform`.
 
@@ -141,7 +141,9 @@ with page.draw() as canvas:
 back and forth (`REFLECT`). Equal functions and shadings are written once in a
 canvas. `page.content()` reads a drawn gradient back as a `ShadingPattern`,
 which reports its kind and its matrix but not its stops, so `canvas.draw` cannot
-paint it again. Text fills and strokes with a `Color`.
+paint it again. Text fills and strokes also accept gradients. When a soft mask
+requires separate fill and stroke objects, the second has empty `ActualText`
+so that text extraction reads the text once.
 
 ### Text
 

@@ -94,7 +94,7 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 ### グラデーション
 
 `LinearGradient` と `RadialGradient` は、パスと図形の上で `Color` が使える場所、
-つまり `fill` と `Stroke` の `paint` で使えます。座標は描くものと同じ空間にあるので、
+つまり `fill` と `Stroke` の `paint` で使えます。テキストにも使えます。座標は描くものと同じ空間にあるので、
 `canvas.transform` に合わせて動きます。
 
 ```python
@@ -133,8 +133,9 @@ with page.draw() as canvas:
 (既定)、何も描かない `NONE`、線を繰り返す `REPEAT`、往復させる `REFLECT` があります。
 同じ関数とシェーディングは 1 つの canvas の中で一度だけ書かれます。`page.content()` は
 描かれたグラデーションを `ShadingPattern` として読み戻します。これは種類と行列を報告しますが
-ストップは持たないので、`canvas.draw` で描き直すことはできません。テキストの塗りと線は
-`Color` で描きます。
+ストップは持たないので、`canvas.draw` で描き直すことはできません。テキストの塗りと線にもグラデーションを使えます。
+ソフトマスクのために塗りと線を分けて描く場合は、二度目に空の `ActualText` を付け、
+文字抽出では一度だけ読み取れるようにします。
 
 ### テキスト
 
