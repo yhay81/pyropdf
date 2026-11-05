@@ -2138,11 +2138,10 @@ class Canvas:
         paints cannot be drawn yet. An image is drawn from its object, with the
         image's own masks: a canvas on a page of the item's document draws
         that object again, and one of another document copies it, with the
-        objects it reaches but pages, as it is when this call is made. Images
-        without an object number, inline images and image masks, cannot be
-        drawn yet, and text runs follow in a later release; an item that
-        cannot be drawn raises ``TypeError`` or ``ValueError`` and draws
-        nothing.
+        objects it reaches but pages, as it is when this call is made. Inline
+        images and stencil image masks cannot be drawn yet, and text runs
+        follow in a later release; an item that cannot be drawn raises
+        ``TypeError`` or ``ValueError`` and draws nothing.
 
         The round-trip tests allow 16 levels of 255 per channel at 72 dpi,
         outside the boxes of the items that cannot be drawn and of those
@@ -2164,8 +2163,11 @@ class Canvas:
 
     def _draw_image(self, item: Image) -> None:
         """Paint an :class:`Image` item from the object it names."""
+        if item.is_stencil:
+            msg = "a stencil image mask cannot be drawn yet"
+            raise ValueError(msg)
         if item.xref == 0:
-            msg = "an image without an object number, an inline image or an image mask, cannot be drawn yet"
+            msg = "an image without an object number cannot be drawn yet"
             raise ValueError(msg)
         if item._source is None or item._source.document is None:  # noqa: SLF001
             msg = "the image does not name its document; draw an Image that Page.content() returned"

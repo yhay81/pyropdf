@@ -293,11 +293,10 @@ Function-based and mesh shadings and `TilingPattern`
 paints cannot be drawn yet. An image is drawn from its object, with the
 image's own masks: a canvas on a page of the item's document draws
 that object again, and one of another document copies it, with the
-objects it reaches but pages, as it is when this call is made. Images
-without an object number, inline images and image masks, cannot be
-drawn yet, and text runs follow in a later release; an item that
-cannot be drawn raises `TypeError` or `ValueError` and draws
-nothing.
+objects it reaches but pages, as it is when this call is made. Inline
+images and stencil image masks cannot be drawn yet, and text runs
+follow in a later release; an item that cannot be drawn raises
+`TypeError` or `ValueError` and draws nothing.
 
 The round-trip tests allow 16 levels of 255 per channel at 72 dpi,
 outside the boxes of the items that cannot be drawn and of those

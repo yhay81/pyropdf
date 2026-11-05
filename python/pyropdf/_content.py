@@ -549,10 +549,16 @@ class _Source:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Image:
-    """An image painted on the page."""
+    """An image painted on the page.
+
+    ``xref`` is the object number, including for stencil masks, or zero for
+    an inline image. ``encoded_size`` is the byte length reported by the
+    interpreter before decoding image filters; for inline images, it can
+    include whitespace before ``EI``.
+    """
 
     xref: int
-    """The image object number, or 0 for an inline image or an image mask."""
+    """The image object number, or 0 for an inline image."""
     width: int
     height: int
     bits: int
@@ -564,6 +570,7 @@ class Image:
     """Whether the image is a stencil mask painted with the fill paint."""
     mask: ImageMask | None
     encoded_size: int
+    """The encoded byte count reported by the interpreter."""
     resolution: tuple[int, int]
     """The resolution that a JPEG's JFIF header states, else 96 by 96."""
     matrix: Matrix

@@ -26,7 +26,7 @@ import zlib
 from pathlib import Path as FilePath
 
 import pytest
-from test_content_model import page_with, stream_object
+from test_content_model import page_with, stencil_page, stream_object
 
 import pyropdf
 from pyropdf import Color, ColorStop, Image, LinearGradient, Path, Point, ShadingPattern, ShadingType, Stroke, TextRun
@@ -45,7 +45,7 @@ def _not_drawn(item: TextRun | Path | Image) -> str | None:
     if item.soft_mask is not None or any(group.soft_mask is not None for group in item.context.groups):
         return "soft mask"
     if isinstance(item, Image):
-        return "inline image or image mask" if item.xref == 0 else None
+        return "inline image or image mask" if item.xref == 0 or item.is_stencil else None
     paints = (item.fill, None if item.stroke is None else item.stroke.paint)
     if any(
         paint is not None
@@ -451,3 +451,16 @@ def test_draw_refuses_items_it_cannot_draw_and_writes_nothing() -> None:
     with copy.draw() as canvas:
         canvas.draw(path)
     assert copy.content().paths[0].bbox == path.bbox
+
+
+@pytest.mark.parametrize("inline", [False, True])
+def test_draw_refuses_stencil_images_without_writing(*, inline: bool) -> None:
+    page = stencil_page(inline=inline)
+    image = page.content().images[0]
+    assert image.xref == (0 if inline else 6)
+    target = pyropdf.Document()
+    copy = target.pages.new((200, 100))
+    before = target.to_bytes(), target.history.steps
+    with copy.draw() as canvas, pytest.raises(ValueError, match="stencil"):
+        canvas.draw(image)
+    assert (target.to_bytes(), target.history.steps) == before

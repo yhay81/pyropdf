@@ -2162,18 +2162,20 @@ impl<'a, 'b, S: ContentSink> ContentCollector<'a, 'b, S> {
         self.images += 1;
         let default_resolution = (DEFAULT_IMAGE_RESOLUTION, DEFAULT_IMAGE_RESOLUTION);
         let record = match image {
-            // hayro does not expose the stream of an image mask.
-            Image::Stencil(_) => ImageRecord {
-                xref: 0,
-                format: (width, height, 1, 1, String::new()),
-                is_stencil: true,
-                mask: MASK_NONE,
-                encoded_size: 0,
-                resolution: default_resolution,
-                matrix: matrix.as_coeffs(),
-                bbox,
-                context,
-            },
+            Image::Stencil(stencil) => {
+                let stream = stencil.stream();
+                ImageRecord {
+                    xref: stream.obj_id().obj_number,
+                    format: (width, height, 1, 1, String::new()),
+                    is_stencil: true,
+                    mask: MASK_NONE,
+                    encoded_size: stream.raw_data().len(),
+                    resolution: default_resolution,
+                    matrix: matrix.as_coeffs(),
+                    bbox,
+                    context,
+                }
+            }
             Image::Raster(raster) => {
                 let stream = raster.stream();
                 let dict = stream.dict();
