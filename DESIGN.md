@@ -598,6 +598,9 @@ rules instead of revisiting every structural operation.
   `PdfError`, which derives from `Exception` and not from `ValueError`:
   - `MalformedPdfError` for input that cannot be read as a PDF, empty
     input included;
+  - `InternalError` for a Rust panic in pyropdf or an engine: a library
+    defect that the input exposed, with the panic's message retained so
+    that the caller can report it;
   - `PasswordError` for a password that matches neither password, and
     `EncryptedDocumentError` for an operation that needs one;
   - `LimitError`, whose stable `code` names the limit that refused;
@@ -609,6 +612,15 @@ rules instead of revisiting every structural operation.
   and a missing file raises `FileNotFoundError`. A recoverable condition,
   such as glyphs that text extraction leaves out, warns with
   `PyropdfWarning`.
+
+  Every binding entry point catches unwinding Rust panics from its work
+  before they reach PyO3, so document operations never expose
+  `PanicException`. A failed transaction is discarded (F2), and the same
+  document remains usable after `InternalError`; a poisoned lock must not
+  refuse later calls. The boundary leaves the process-wide panic hook
+  unchanged, so the default hook still prints the panic to stderr. It
+  cannot catch a panic that aborts instead of unwinding; the PyEmscripten
+  wheel must verify unwinding when that target is built (section 11).
 
 ## 10. Python API
 
