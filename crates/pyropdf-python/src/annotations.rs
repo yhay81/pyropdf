@@ -802,24 +802,27 @@ pub fn annotation_list(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<Record>>> {
-    let (version, index_of_pages, budget) = page_index(document)?;
-    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
-        return Ok(None);
-    };
-    py.detach(|| {
-        let mut records = BudgetVec::new(annots.budget);
-        let mut budget = (0, 0);
-        for (index, item) in annots.items.iter().enumerate() {
-            annots.budget.poll().map_err(|e| limit_error(&e))?;
-            let Some((id, dict)) = annots.entry(item)? else {
-                continue;
-            };
-            if let Some(record) = annots.record(index, id, &dict, &mut budget)? {
-                records.try_push(record).map_err(|e| limit_error(&e))?;
+    crate::errors::boundary(|| {
+        let (version, index_of_pages, budget) = page_index(document)?;
+        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
+        else {
+            return Ok(None);
+        };
+        py.detach(|| {
+            let mut records = BudgetVec::new(annots.budget);
+            let mut budget = (0, 0);
+            for (index, item) in annots.items.iter().enumerate() {
+                annots.budget.poll().map_err(|e| limit_error(&e))?;
+                let Some((id, dict)) = annots.entry(item)? else {
+                    continue;
+                };
+                if let Some(record) = annots.record(index, id, &dict, &mut budget)? {
+                    records.try_push(record).map_err(|e| limit_error(&e))?;
+                }
             }
-        }
-        Ok(Some(records.into_vec()))
-    })
+            Ok(Some(records.into_vec()))
+        })
+    })?
 }
 
 /// Reads the annotation that a handle names. Returns `None` for a page that
@@ -832,20 +835,23 @@ pub fn annotation_read(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<Record>> {
-    let (version, index_of_pages, budget) = page_index(document)?;
-    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
-        return Ok(None);
-    };
-    let (position, dict) = annots.find(index, id)?;
-    annots
-        .record(position, id, &dict, &mut (0, 0))?
-        .map(Some)
-        .ok_or_else(|| {
-            StaleObjectError::new_err(format!(
-                "annotation {} is no longer one that page.annotations lists",
-                id.0
-            ))
-        })
+    crate::errors::boundary(|| {
+        let (version, index_of_pages, budget) = page_index(document)?;
+        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
+        else {
+            return Ok(None);
+        };
+        let (position, dict) = annots.find(index, id)?;
+        annots
+            .record(position, id, &dict, &mut (0, 0))?
+            .map(Some)
+            .ok_or_else(|| {
+                StaleObjectError::new_err(format!(
+                    "annotation {} is no longer one that page.annotations lists",
+                    id.0
+                ))
+            })
+    })?
 }
 
 /// The properties that one edit of an annotation sets, as
@@ -1226,37 +1232,40 @@ pub fn annotation_geometry(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<Geometry>> {
-    let (version, index_of_pages, budget) = page_index(document)?;
-    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
-        return Ok(None);
-    };
-    let (_, dict) = annots.find(index, id)?;
-    let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
-    if !has_points(&subtype) {
-        return Ok(Some((None, None)));
-    }
-    let reader = Reader {
-        version: &annots.version,
-        budget: annots.budget,
-    };
-    let mut points = reader
-        .point_lists(&dict, &subtype)
-        .map_err(|e| store_error(&e))?;
-    if let Some(lists) = &mut points {
-        for list in lists {
-            for point in list {
-                budget.poll().map_err(|e| limit_error(&e))?;
-                *point = to_display(annots.crop, annots.rotation, point.0, point.1);
+    crate::errors::boundary(|| {
+        let (version, index_of_pages, budget) = page_index(document)?;
+        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
+        else {
+            return Ok(None);
+        };
+        let (_, dict) = annots.find(index, id)?;
+        let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
+        if !has_points(&subtype) {
+            return Ok(Some((None, None)));
+        }
+        let reader = Reader {
+            version: &annots.version,
+            budget: annots.budget,
+        };
+        let mut points = reader
+            .point_lists(&dict, &subtype)
+            .map_err(|e| store_error(&e))?;
+        if let Some(lists) = &mut points {
+            for list in lists {
+                for point in list {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    *point = to_display(annots.crop, annots.rotation, point.0, point.1);
+                }
             }
         }
-    }
-    let endings = if matches!(&*subtype, b"Line" | b"PolyLine") {
-        let [start, end] = reader.line_endings(&dict).map_err(|e| store_error(&e))?;
-        Some((LINE_ENDINGS[start], LINE_ENDINGS[end]))
-    } else {
-        None
-    };
-    Ok(Some((points, endings)))
+        let endings = if matches!(&*subtype, b"Line" | b"PolyLine") {
+            let [start, end] = reader.line_endings(&dict).map_err(|e| store_error(&e))?;
+            Some((LINE_ENDINGS[start], LINE_ENDINGS[end]))
+        } else {
+            None
+        };
+        Ok(Some((points, endings)))
+    })?
 }
 
 /// Reads the draft only after acquiring its writer lock. A refused edit
@@ -1335,24 +1344,26 @@ pub fn annotation_edit(
     edit: &Bound<'_, PyAny>,
     face: bool,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let edit = Edit::read(edit, budget)?;
-            let (position, mut dict) = annots.find(index, id)?;
-            let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
-            edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
-            if !face {
-                check_text(annots, &dict)?;
-            }
-            annots.write(transaction, position, !face, dict, |_, _, _, _, _| {
-                Ok(false)
-            })
-        },
-    )
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let edit = Edit::read(edit, budget)?;
+                let (position, mut dict) = annots.find(index, id)?;
+                let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
+                edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
+                if !face {
+                    check_text(annots, &dict)?;
+                }
+                annots.write(transaction, position, !face, dict, |_, _, _, _, _| {
+                    Ok(false)
+                })
+            },
+        )
+    })?
 }
 
 /// Returns the object of the Type0 font that the normal appearance of the
@@ -1367,30 +1378,33 @@ pub fn annotation_face(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<u32>> {
-    let (version, index_of_pages, budget) = page_index(document)?;
-    let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)? else {
-        return Ok(None);
-    };
-    let (_, dict) = annots.find(index, id)?;
-    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
-        return Ok(None);
-    }
-    let Some(Value::Dict(appearances)) = annots.resolved(dict.get("AP"))? else {
-        return Ok(None);
-    };
-    let Some(Value::Stream(normal)) = annots.resolved(appearances.get("N"))? else {
-        return Ok(None);
-    };
-    let Some(Value::Dict(resources)) = annots.resolved(normal.dict().get("Resources"))? else {
-        return Ok(None);
-    };
-    let Some(Value::Dict(fonts)) = annots.resolved(resources.get("Font"))? else {
-        return Ok(None);
-    };
-    Ok(match fonts.get(FACE_RESOURCE) {
-        Some(Value::Reference(font)) => Some(font.number()),
-        _ => None,
-    })
+    crate::errors::boundary(|| {
+        let (version, index_of_pages, budget) = page_index(document)?;
+        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
+        else {
+            return Ok(None);
+        };
+        let (_, dict) = annots.find(index, id)?;
+        if annots.name(&dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
+            return Ok(None);
+        }
+        let Some(Value::Dict(appearances)) = annots.resolved(dict.get("AP"))? else {
+            return Ok(None);
+        };
+        let Some(Value::Stream(normal)) = annots.resolved(appearances.get("N"))? else {
+            return Ok(None);
+        };
+        let Some(Value::Dict(resources)) = annots.resolved(normal.dict().get("Resources"))? else {
+            return Ok(None);
+        };
+        let Some(Value::Dict(fonts)) = annots.resolved(resources.get("Font"))? else {
+            return Ok(None);
+        };
+        Ok(match fonts.get(FACE_RESOURCE) {
+            Some(Value::Reference(font)) => Some(font.number()),
+            _ => None,
+        })
+    })?
 }
 
 /// Draws the free text that a handle names with its text in embedded
@@ -1421,80 +1435,83 @@ pub fn annotation_draw_face(
     face: &_Font,
     font: Option<(u32, HashMap<u32, String>)>,
 ) -> PyResult<Option<Vec<(u32, String)>>> {
-    let Some(face) = face.embedded() else {
-        return Err(PdfError::new_err(
-            "free text draws an OpenType face here, not a Standard 14 font",
-        ));
-    };
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let store = |e: pyropdf_store::Error| store_error(&e);
-            let (position, dict) = annots.find(index, id)?;
-            let font = match &font {
-                Some((number, mapped)) => {
-                    let generation = transaction
-                        .version()
-                        .get(*number, budget)
-                        .map_err(store)?
-                        .map_or(0, |object| object.generation());
-                    Some(FaceFont {
-                        font: Reference::new(*number, generation),
-                        mapped,
-                    })
-                }
-                None => None,
-            };
-            let writing = font.is_some();
-            let mut text = FaceText::new(face, font, budget).map_err(face_error)?;
-            let Some(drawn) = face_appearance(&annots.reader(), &dict, &mut text).map_err(store)?
-            else {
-                return Err(PdfError::new_err(
-                    "only a free text with a usable rectangle draws in an embedded face",
-                ));
-            };
-            match drawn.text_fit() {
-                TextFit::Unfit => {
+    crate::errors::boundary(|| {
+        let Some(face) = face.embedded() else {
+            return Err(PdfError::new_err(
+                "free text draws an OpenType face here, not a Standard 14 font",
+            ));
+        };
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let store = |e: pyropdf_store::Error| store_error(&e);
+                let (position, dict) = annots.find(index, id)?;
+                let font = match &font {
+                    Some((number, mapped)) => {
+                        let generation = transaction
+                            .version()
+                            .get(*number, budget)
+                            .map_err(store)?
+                            .map_or(0, |object| object.generation());
+                        Some(FaceFont {
+                            font: Reference::new(*number, generation),
+                            mapped,
+                        })
+                    }
+                    None => None,
+                };
+                let writing = font.is_some();
+                let mut text = FaceText::new(face, font, budget).map_err(face_error)?;
+                let Some(drawn) =
+                    face_appearance(&annots.reader(), &dict, &mut text).map_err(store)?
+                else {
                     return Err(PdfError::new_err(
-                        "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
+                        "only a free text with a usable rectangle draws in an embedded face",
                     ));
+                };
+                match drawn.text_fit() {
+                    TextFit::Unfit => {
+                        return Err(PdfError::new_err(
+                            "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
+                        ));
+                    }
+                    TextFit::NoGlyph(character) => {
+                        return Err(PdfError::new_err(format!(
+                            "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
+                            face.full_name,
+                            u32::from(character)
+                        )));
+                    }
+                    TextFit::NoOutline(character) => {
+                        return Err(PdfError::new_err(format!(
+                            "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
+                            face.full_name,
+                            u32::from(character)
+                        )));
+                    }
+                    TextFit::Fits | TextFit::NotWinAnsi => {}
                 }
-                TextFit::NoGlyph(character) => {
-                    return Err(PdfError::new_err(format!(
-                        "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
-                        face.full_name,
-                        u32::from(character)
-                    )));
+                if writing {
+                    let reference = transaction.allocate().map_err(store)?;
+                    transaction
+                        .write(reference.number(), &Value::from(drawn.form()), budget)
+                        .map_err(store)?;
+                    charge_copy(CopyPart::Dict(&dict), budget)?;
+                    let mut dict = dict;
+                    let mut appearances = Dict::new();
+                    appearances.insert(Name::from("N"), Value::Reference(reference));
+                    dict.insert(Name::from("AP"), Value::Dict(appearances));
+                    annots.write(transaction, position, false, dict, |_, _, _, _, _| {
+                        Ok(false)
+                    })?;
                 }
-                TextFit::NoOutline(character) => {
-                    return Err(PdfError::new_err(format!(
-                        "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
-                        face.full_name,
-                        u32::from(character)
-                    )));
-                }
-                TextFit::Fits | TextFit::NotWinAnsi => {}
-            }
-            if writing {
-                let reference = transaction.allocate().map_err(store)?;
-                transaction
-                    .write(reference.number(), &Value::from(drawn.form()), budget)
-                    .map_err(store)?;
-                charge_copy(CopyPart::Dict(&dict), budget)?;
-                let mut dict = dict;
-                let mut appearances = Dict::new();
-                appearances.insert(Name::from("N"), Value::Reference(reference));
-                dict.insert(Name::from("AP"), Value::Dict(appearances));
-                annots.write(transaction, position, false, dict, |_, _, _, _, _| {
-                    Ok(false)
-                })?;
-            }
-            Ok(text.into_drawn())
-        },
-    )
+                Ok(text.into_drawn())
+            },
+        )
+    })?
 }
 
 /// Maps a refusal of an embedded face's drawing to its Python error.
@@ -1520,88 +1537,93 @@ pub fn annotation_popup(
     id: (u32, u16),
     area: Option<Rect>,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, _budget| {
-            let (position, dict) = annots.find(index, id)?;
-            if let Some((x0, y0, x1, y1)) = area
-                && !([x0, y0, x1, y1].iter().all(|value| value.is_finite()) && x0 < x1 && y0 < y1)
-            {
-                return Err(PdfError::new_err(
-                    "a popup rectangle is finite and not empty",
-                ));
-            }
-            let existing = match dict.get("Popup") {
-                Some(Value::Reference(popup)) => {
-                    match annots.resolved(Some(&Value::Reference(*popup)))? {
-                        Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
-                        _ => None,
-                    }
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, _budget| {
+                let (position, dict) = annots.find(index, id)?;
+                if let Some((x0, y0, x1, y1)) = area
+                    && !([x0, y0, x1, y1].iter().all(|value| value.is_finite())
+                        && x0 < x1
+                        && y0 < y1)
+                {
+                    return Err(PdfError::new_err(
+                        "a popup rectangle is finite and not empty",
+                    ));
                 }
-                _ => None,
-            };
-            if area.is_some() && existing.is_none() {
-                annots
-                    .budget
-                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                    .map_err(|e| limit_error(&e))?;
-            }
-            let area = area.map(|area| annots.to_pdf(area));
-            let page = annots.page().object();
-            let written = annots.write(
-                transaction,
-                position,
-                false,
-                dict,
-                |transaction, reference, dict, items, budget| match (area, existing) {
-                    (Some(area), Some((popup, mut popup_dict))) => {
-                        popup_dict.insert(Name::from("Rect"), area);
-                        transaction
-                            .write(popup.number(), &Value::Dict(popup_dict), budget)
-                            .map_err(|e| store_error(&e))?;
-                        Ok(false)
-                    }
-                    (Some(area), None) => {
-                        let popup = transaction.allocate().map_err(|e| store_error(&e))?;
-                        let mut popup_dict = Dict::new();
-                        popup_dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
-                        popup_dict.insert(Name::from("Subtype"), Value::Name(Name::from("Popup")));
-                        popup_dict.insert(Name::from("Rect"), area);
-                        popup_dict.insert(Name::from("Parent"), Value::Reference(reference));
-                        if let Some(page) = page {
-                            popup_dict.insert(Name::from("P"), Value::Reference(page));
+                let existing = match dict.get("Popup") {
+                    Some(Value::Reference(popup)) => {
+                        match annots.resolved(Some(&Value::Reference(*popup)))? {
+                            Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
+                            _ => None,
                         }
-                        popup_dict.insert(Name::from("Open"), Value::Boolean(false));
-                        transaction
-                            .write(popup.number(), &Value::Dict(popup_dict), budget)
-                            .map_err(|e| store_error(&e))?;
-                        dict.insert(Name::from("Popup"), Value::Reference(popup));
-                        items.push(Value::Reference(popup));
-                        Ok(true)
                     }
-                    (None, existing) => {
-                        dict.remove("Popup");
-                        let Some((popup, _)) = existing else {
-                            return Ok(false);
-                        };
-                        charge_copy(CopyPart::Array(items), budget)?;
-                        let kept = items
+                    _ => None,
+                };
+                if area.is_some() && existing.is_none() {
+                    annots
+                        .budget
+                        .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                        .map_err(|e| limit_error(&e))?;
+                }
+                let area = area.map(|area| annots.to_pdf(area));
+                let page = annots.page().object();
+                let written = annots.write(
+                    transaction,
+                    position,
+                    false,
+                    dict,
+                    |transaction, reference, dict, items, budget| match (area, existing) {
+                        (Some(area), Some((popup, mut popup_dict))) => {
+                            popup_dict.insert(Name::from("Rect"), area);
+                            transaction
+                                .write(popup.number(), &Value::Dict(popup_dict), budget)
+                                .map_err(|e| store_error(&e))?;
+                            Ok(false)
+                        }
+                        (Some(area), None) => {
+                            let popup = transaction.allocate().map_err(|e| store_error(&e))?;
+                            let mut popup_dict = Dict::new();
+                            popup_dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+                            popup_dict
+                                .insert(Name::from("Subtype"), Value::Name(Name::from("Popup")));
+                            popup_dict.insert(Name::from("Rect"), area);
+                            popup_dict.insert(Name::from("Parent"), Value::Reference(reference));
+                            if let Some(page) = page {
+                                popup_dict.insert(Name::from("P"), Value::Reference(page));
+                            }
+                            popup_dict.insert(Name::from("Open"), Value::Boolean(false));
+                            transaction
+                                .write(popup.number(), &Value::Dict(popup_dict), budget)
+                                .map_err(|e| store_error(&e))?;
+                            dict.insert(Name::from("Popup"), Value::Reference(popup));
+                            items.push(Value::Reference(popup));
+                            Ok(true)
+                        }
+                        (None, existing) => {
+                            dict.remove("Popup");
+                            let Some((popup, _)) = existing else {
+                                return Ok(false);
+                            };
+                            charge_copy(CopyPart::Array(items), budget)?;
+                            let kept = items
                     .iter()
                     .filter(|item| !matches!(item, Value::Reference(listed) if *listed == popup))
                     .cloned()
                     .collect::<Vec<_>>();
-                        let changed = kept.len() != items.len();
-                        *items = Array::from(kept);
-                        Ok(changed)
-                    }
-                },
-            )?;
-            Ok(written)
-        },
-    )
+                            let changed = kept.len() != items.len();
+                            *items = Array::from(kept);
+                            Ok(changed)
+                        }
+                    },
+                )?;
+                Ok(written)
+            },
+        )
+    })?
 }
 
 /// Opens or closes the popup of the annotation that a handle names, and a
@@ -1617,49 +1639,51 @@ pub fn annotation_open(
     id: (u32, u16),
     open: bool,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, _budget| {
-            let (position, dict) = annots.find(index, id)?;
-            let popup = match dict.get("Popup") {
-                Some(Value::Reference(popup)) => {
-                    match annots.resolved(Some(&Value::Reference(*popup)))? {
-                        Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
-                        _ => None,
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, _budget| {
+                let (position, dict) = annots.find(index, id)?;
+                let popup = match dict.get("Popup") {
+                    Some(Value::Reference(popup)) => {
+                        match annots.resolved(Some(&Value::Reference(*popup)))? {
+                            Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
+                            _ => None,
+                        }
                     }
+                    _ => None,
+                };
+                let is_note = annots.name(&dict, "Subtype")?.as_deref() == Some(b"Text");
+                if popup.is_none() && !is_note {
+                    return Err(PdfError::new_err(
+                        "the annotation has no popup to open; set popup_rect first",
+                    ));
                 }
-                _ => None,
-            };
-            let is_note = annots.name(&dict, "Subtype")?.as_deref() == Some(b"Text");
-            if popup.is_none() && !is_note {
-                return Err(PdfError::new_err(
-                    "the annotation has no popup to open; set popup_rect first",
-                ));
-            }
-            let written = annots.write(
-                transaction,
-                position,
-                false,
-                dict,
-                |transaction, _, dict, _, budget| {
-                    if let Some((popup, mut popup_dict)) = popup {
-                        popup_dict.insert(Name::from("Open"), Value::Boolean(open));
-                        transaction
-                            .write(popup.number(), &Value::Dict(popup_dict), budget)
-                            .map_err(|e| store_error(&e))?;
-                    }
-                    if is_note {
-                        dict.insert(Name::from("Open"), Value::Boolean(open));
-                    }
-                    Ok(false)
-                },
-            )?;
-            Ok(written)
-        },
-    )
+                let written = annots.write(
+                    transaction,
+                    position,
+                    false,
+                    dict,
+                    |transaction, _, dict, _, budget| {
+                        if let Some((popup, mut popup_dict)) = popup {
+                            popup_dict.insert(Name::from("Open"), Value::Boolean(open));
+                            transaction
+                                .write(popup.number(), &Value::Dict(popup_dict), budget)
+                                .map_err(|e| store_error(&e))?;
+                        }
+                        if is_note {
+                            dict.insert(Name::from("Open"), Value::Boolean(open));
+                        }
+                        Ok(false)
+                    },
+                )?;
+                Ok(written)
+            },
+        )
+    })?
 }
 
 /// Makes the annotation that a handle names a reply to `target`, another
@@ -1676,45 +1700,46 @@ pub fn annotation_reply(
     id: (u32, u16),
     target: Option<(u32, u16)>,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, _budget| {
-            let (position, dict) = annots.find(index, id)?;
-            let target = match target {
-                Some(target) => {
-                    let target = Reference::new(target.0, target.1);
-                    let listed = annots
-                        .items
-                        .iter()
-                        .any(|item| matches!(item, Value::Reference(listed) if *listed == target));
-                    if !listed || (target.number(), target.generation()) == id {
-                        return Err(PdfError::new_err(
-                            "an annotation replies to another annotation of its page",
-                        ));
-                    }
-                    Some(target)
-                }
-                None => None,
-            };
-            let written =
-                annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
-                    match target {
-                        Some(target) => {
-                            dict.insert(Name::from("IRT"), Value::Reference(target));
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, _budget| {
+                let (position, dict) = annots.find(index, id)?;
+                let target = match target {
+                    Some(target) => {
+                        let target = Reference::new(target.0, target.1);
+                        let listed = annots.items.iter().any(
+                            |item| matches!(item, Value::Reference(listed) if *listed == target),
+                        );
+                        if !listed || (target.number(), target.generation()) == id {
+                            return Err(PdfError::new_err(
+                                "an annotation replies to another annotation of its page",
+                            ));
                         }
-                        None => {
-                            dict.remove("IRT");
-                            dict.remove("RT");
-                        }
+                        Some(target)
                     }
-                    Ok(false)
-                })?;
-            Ok(written)
-        },
-    )
+                    None => None,
+                };
+                let written =
+                    annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
+                        match target {
+                            Some(target) => {
+                                dict.insert(Name::from("IRT"), Value::Reference(target));
+                            }
+                            None => {
+                                dict.remove("IRT");
+                                dict.remove("RT");
+                            }
+                        }
+                        Ok(false)
+                    })?;
+                Ok(written)
+            },
+        )
+    })?
 }
 
 /// Takes the annotations that `handles` name, each `(index, object)`, and
@@ -1730,55 +1755,57 @@ pub fn annotation_remove(
     generation: u16,
     handles: Vec<(u32, (u32, u16))>,
 ) -> PyResult<bool> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            budget
-                .check(LimitCode::AnnotationCount, handles.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            let mut positions = BudgetVec::new(budget);
-            for (index, id) in handles {
-                let (position, dict) = annots.find(index, id)?;
-                budget.poll().map_err(|e| limit_error(&e))?;
-                positions.try_push(position).map_err(|e| limit_error(&e))?;
-                if let Some(Value::Reference(popup)) = dict.get("Popup")
-                    && let Some(position) = annots.items.iter().position(
-                        |item| matches!(item, Value::Reference(listed) if listed == popup),
-                    )
-                {
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                budget
+                    .check(LimitCode::AnnotationCount, handles.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                let mut positions = BudgetVec::new(budget);
+                for (index, id) in handles {
+                    let (position, dict) = annots.find(index, id)?;
+                    budget.poll().map_err(|e| limit_error(&e))?;
                     positions.try_push(position).map_err(|e| limit_error(&e))?;
+                    if let Some(Value::Reference(popup)) = dict.get("Popup")
+                        && let Some(position) = annots.items.iter().position(
+                            |item| matches!(item, Value::Reference(listed) if listed == popup),
+                        )
+                    {
+                        positions.try_push(position).map_err(|e| limit_error(&e))?;
+                    }
                 }
-            }
-            if positions.is_empty() {
-                return Ok(());
-            }
-            // Remove from the end, so that each removal keeps the earlier positions.
-            let mut positions = positions.into_vec();
-            positions.sort_unstable_by(|a, b| b.cmp(a));
-            positions.dedup();
-            charge_copy(CopyPart::Array(&annots.items), budget)?;
-            let mut items = annots.items.clone();
+                if positions.is_empty() {
+                    return Ok(());
+                }
+                // Remove from the end, so that each removal keeps the earlier positions.
+                let mut positions = positions.into_vec();
+                positions.sort_unstable_by(|a, b| b.cmp(a));
+                positions.dedup();
+                charge_copy(CopyPart::Array(&annots.items), budget)?;
+                let mut items = annots.items.clone();
 
-            for item in items.iter_mut() {
-                if let Value::Dict(entry) = item {
-                    charge_copy(CopyPart::Dict(entry), budget)?;
-                    let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-                    transaction
-                        .write(reference.number(), &Value::Dict(entry.clone()), budget)
-                        .map_err(|e| store_error(&e))?;
-                    *item = Value::Reference(reference);
+                for item in items.iter_mut() {
+                    if let Value::Dict(entry) = item {
+                        charge_copy(CopyPart::Dict(entry), budget)?;
+                        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+                        transaction
+                            .write(reference.number(), &Value::Dict(entry.clone()), budget)
+                            .map_err(|e| store_error(&e))?;
+                        *item = Value::Reference(reference);
+                    }
                 }
-            }
-            for position in positions {
-                items.remove(position);
-            }
-            annots.write_items(transaction, items, budget)
-        },
-    )
-    .map(|page| page.is_some())
+                for position in positions {
+                    items.remove(position);
+                }
+                annots.write_items(transaction, items, budget)
+            },
+        )
+        .map(|page| page.is_some())
+    })?
 }
 
 /// Returns the numbers of the annotations whose appearance the version that
@@ -1786,12 +1813,14 @@ pub fn annotation_remove(
 /// them here (DESIGN.md section 7).
 #[pyfunction]
 pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
-    let version = document.reading()?;
-    Ok(version
-        .stale()
-        .filter(|mark| mark.structure == Structure::Appearance)
-        .map(|mark| mark.number)
-        .collect())
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        Ok(version
+            .stale()
+            .filter(|mark| mark.structure == Structure::Appearance)
+            .map(|mark| mark.number)
+            .collect())
+    })?
 }
 
 /// At most three callout points, extracted without collecting the input.
@@ -2433,47 +2462,49 @@ pub fn annotation_add(
     spec: &Bound<'_, PyAny>,
     face: bool,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let spec = Spec::read(spec, budget)?;
-            budget
-                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                .map_err(|e| limit_error(&e))?;
-            if !matches!(
-                annots.resolved(annots.page().dict().get("Annots"))?,
-                None | Some(Value::Array(_))
-            ) {
-                return Err(PdfError::new_err("the page's /Annots is not an array"));
-            }
-            let mut dict = spec.dictionary(annots)?;
-            if !face {
-                check_text(annots, &dict)?;
-            }
-            if let Some(page) = annots.page().object() {
-                dict.insert(Name::from("P"), Value::Reference(page));
-            }
-            spec.embed(transaction, &mut dict, budget)?;
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let spec = Spec::read(spec, budget)?;
+                budget
+                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                    .map_err(|e| limit_error(&e))?;
+                if !matches!(
+                    annots.resolved(annots.page().dict().get("Annots"))?,
+                    None | Some(Value::Array(_))
+                ) {
+                    return Err(PdfError::new_err("the page's /Annots is not an array"));
+                }
+                let mut dict = spec.dictionary(annots)?;
+                if !face {
+                    check_text(annots, &dict)?;
+                }
+                if let Some(page) = annots.page().object() {
+                    dict.insert(Name::from("P"), Value::Reference(page));
+                }
+                spec.embed(transaction, &mut dict, budget)?;
 
-            let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-            transaction
-                .write(reference.number(), &Value::Dict(dict), budget)
-                .map_err(|e| store_error(&e))?;
-            charge_copy(CopyPart::Array(&annots.items), budget)?;
-            let mut items = annots.items.clone();
-            items.push(Value::Reference(reference));
-            annots.write_items(transaction, items, budget)?;
-            if !face {
+                let reference = transaction.allocate().map_err(|e| store_error(&e))?;
                 transaction
-                    .mark(Structure::Appearance, reference.number(), budget)
+                    .write(reference.number(), &Value::Dict(dict), budget)
                     .map_err(|e| store_error(&e))?;
-            }
-            Ok((reference.number(), reference.generation()))
-        },
-    )
+                charge_copy(CopyPart::Array(&annots.items), budget)?;
+                let mut items = annots.items.clone();
+                items.push(Value::Reference(reference));
+                annots.write_items(transaction, items, budget)?;
+                if !face {
+                    transaction
+                        .mark(Structure::Appearance, reference.number(), budget)
+                        .map_err(|e| store_error(&e))?;
+                }
+                Ok((reference.number(), reference.generation()))
+            },
+        )
+    })?
 }
 
 /// A version where a page draws nothing but one annotation's appearance:
@@ -2580,29 +2611,32 @@ pub fn annotation_pixmap(
     gray: bool,
     background: (u8, u8, u8, u8),
 ) -> PyResult<Option<Pixmap>> {
-    let Some((version, pages, at, rect)) = isolated(py, document, number, generation, index, id)?
-    else {
-        return Ok(None);
-    };
-    let budget = document.budget();
-    let (red, green, blue, opacity) = background;
-    let options = render::Options {
-        matrix,
-        alpha,
-        gray,
-        background: [red, green, blue, opacity],
-        clip: Some(rect),
-        annotations: false,
-        hinting: false,
-        glyph_cache: false,
-    };
-    let fallback = document.fallback();
-    let raster = py.detach(|| -> PyResult<Raster> {
-        let bridged =
-            Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
-        render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
-    })?;
-    Ok(Some(Pixmap::from(raster)))
+    crate::errors::boundary(|| {
+        let Some((version, pages, at, rect)) =
+            isolated(py, document, number, generation, index, id)?
+        else {
+            return Ok(None);
+        };
+        let budget = document.budget();
+        let (red, green, blue, opacity) = background;
+        let options = render::Options {
+            matrix,
+            alpha,
+            gray,
+            background: [red, green, blue, opacity],
+            clip: Some(rect),
+            annotations: false,
+            hinting: false,
+            glyph_cache: false,
+        };
+        let fallback = document.fallback();
+        let raster = py.detach(|| -> PyResult<Raster> {
+            let bridged =
+                Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
+            render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
+        })?;
+        Ok(Some(Pixmap::from(raster)))
+    })?
 }
 
 /// Returns the text of the appearance of the annotation that a handle
@@ -2626,20 +2660,22 @@ pub fn annotation_text(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<Option<(String, usize)>> {
-    let options = text_options(options)?;
-    let Some((version, pages, at, _)) = isolated(py, document, number, generation, index, id)?
-    else {
-        return Ok(None);
-    };
-    let budget = document.call_budget(&[
-        (LimitCode::TextGlyphCount, max_glyphs),
-        (LimitCode::TextSize, max_size),
-    ])?;
-    py.detach(|| {
-        let bridged = Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?;
-        let mut text = String::new();
-        let (skipped, _) =
-            extract::page_text(&bridged, at, &options, &budget, &mut text).map_err(text_error)?;
-        Ok(Some((text, skipped)))
-    })
+    crate::errors::boundary(|| {
+        let options = text_options(options)?;
+        let Some((version, pages, at, _)) = isolated(py, document, number, generation, index, id)?
+        else {
+            return Ok(None);
+        };
+        let budget = document.call_budget(&[
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        py.detach(|| {
+            let bridged = Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?;
+            let mut text = String::new();
+            let (skipped, _) = extract::page_text(&bridged, at, &options, &budget, &mut text)
+                .map_err(text_error)?;
+            Ok(Some((text, skipped)))
+        })
+    })?
 }

@@ -20,30 +20,32 @@ pub fn render_page_svg(
     annotations: bool,
     max_size: Option<usize>,
 ) -> PyResult<String> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let fallback = document.fallback();
-    py.detach(|| {
-        let at = index
-            .index_of(Reference::new(number, generation))
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!(
-                    "page object {number} {generation} is no longer a page of the document"
-                ))
-            })?;
-        let bridged = document
-            .bridge
-            .get_for_render(&version, &index, &budget, annotations)
-            .map_err(|e| bridge_error(&e))?;
-        let svg = render::svg(&bridged, &fallback, at, annotations)
-            .map_err(|e| PdfError::new_err(e.to_string()))?;
-        if let Some(limit) = max_size
-            && svg.len() > limit
-        {
-            return Err(LimitError::new_err((
-                "svg_output_size",
-                format!("rendered SVG exceeds the {limit}-byte UTF-8 output limit"),
-            )));
-        }
-        Ok(svg)
-    })
+    crate::errors::boundary(|| {
+        let (version, index, budget) = crate::pages::index(document)?;
+        let fallback = document.fallback();
+        py.detach(|| {
+            let at = index
+                .index_of(Reference::new(number, generation))
+                .ok_or_else(|| {
+                    StaleObjectError::new_err(format!(
+                        "page object {number} {generation} is no longer a page of the document"
+                    ))
+                })?;
+            let bridged = document
+                .bridge
+                .get_for_render(&version, &index, &budget, annotations)
+                .map_err(|e| bridge_error(&e))?;
+            let svg = render::svg(&bridged, &fallback, at, annotations)
+                .map_err(|e| PdfError::new_err(e.to_string()))?;
+            if let Some(limit) = max_size
+                && svg.len() > limit
+            {
+                return Err(LimitError::new_err((
+                    "svg_output_size",
+                    format!("rendered SVG exceeds the {limit}-byte UTF-8 output limit"),
+                )));
+            }
+            Ok(svg)
+        })
+    })?
 }

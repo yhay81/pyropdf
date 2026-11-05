@@ -474,47 +474,49 @@ impl Write for Bounded<'_> {
 impl Pixmap {
     /// Width in pixels.
     #[getter]
-    const fn width(&self) -> u32 {
-        self.width
+    fn width(&self) -> PyResult<u32> {
+        crate::errors::boundary(|| self.width)
     }
 
     /// Height in pixels.
     #[getter]
-    const fn height(&self) -> u32 {
-        self.height
+    fn height(&self) -> PyResult<u32> {
+        crate::errors::boundary(|| self.height)
     }
 
     /// Bytes per pixel: 1 for gray, 3 for RGB, and one more with alpha.
     #[getter(channels)]
-    fn get_channels(&self) -> u32 {
-        self.channels()
+    fn get_channels(&self) -> PyResult<u32> {
+        crate::errors::boundary(|| self.channels())
     }
 
     /// Whether each pixel ends with a straight alpha byte.
     #[getter]
-    const fn alpha(&self) -> bool {
-        self.alpha
+    fn alpha(&self) -> PyResult<bool> {
+        crate::errors::boundary(|| self.alpha)
     }
 
     /// The color space of the samples, a `pyropdf.Colorspace`.
     #[getter]
     fn colorspace<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        py.import("pyropdf._pixmap")?
-            .getattr("Colorspace")?
-            .getattr(if self.gray { "GRAY" } else { "RGB" })
+        crate::errors::boundary(|| {
+            py.import("pyropdf._pixmap")?
+                .getattr("Colorspace")?
+                .getattr(if self.gray { "GRAY" } else { "RGB" })
+        })?
     }
 
     /// Bytes per row: width × channels.
     #[getter]
-    fn stride(&self) -> u32 {
-        self.width * self.channels()
+    fn stride(&self) -> PyResult<u32> {
+        crate::errors::boundary(|| self.width * self.channels())
     }
 
     /// The horizontal and vertical resolution in dots per inch, which PNG
     /// output records.
     #[getter]
-    const fn resolution(&self) -> (u32, u32) {
-        self.resolution
+    fn resolution(&self) -> PyResult<(u32, u32)> {
+        crate::errors::boundary(|| self.resolution)
     }
 
     /// Returns a copy with the colors inside `rect` inverted, or all of
@@ -522,118 +524,130 @@ impl Pixmap {
     /// `(x0, y0, x1, y1)` in whole pixels, cut to the pixmap.
     #[pyo3(signature = (rect=None))]
     fn invert(&self, py: Python<'_>, rect: Option<(i64, i64, i64, i64)>) -> PyResult<Self> {
-        let area = match rect {
-            None => Some((0, 0, self.width, self.height)),
-            Some(rect) => self.area(rect)?,
-        };
-        let Some(area) = area else {
-            return Ok(self.share());
-        };
-        let layout = self.layout();
-        Ok(self.derive(
-            layout,
-            py.detach(|| pixel_ops::invert(&self.data, layout, area)),
-        ))
+        crate::errors::boundary(|| {
+            let area = match rect {
+                None => Some((0, 0, self.width, self.height)),
+                Some(rect) => self.area(rect)?,
+            };
+            let Some(area) = area else {
+                return Ok(self.share());
+            };
+            let layout = self.layout();
+            Ok(self.derive(
+                layout,
+                py.detach(|| pixel_ops::invert(&self.data, layout, area)),
+            ))
+        })?
     }
 
     /// Returns a copy with each color component `c`, from 0 to 1, replaced
     /// by `c ** value`: a `value` above 1 darkens and one below lightens.
     fn gamma(&self, py: Python<'_>, value: f64) -> PyResult<Self> {
-        if !(value.is_finite() && value > 0.0) {
-            return Err(PyValueError::new_err(format!(
-                "gamma must be a positive number: {value}"
-            )));
-        }
-        let table = pixel_ops::gamma_table(value);
-        let layout = self.layout();
-        Ok(self.derive(
-            layout,
-            py.detach(|| pixel_ops::map_colors(&self.data, layout, &[table; 3])),
-        ))
+        crate::errors::boundary(|| {
+            if !(value.is_finite() && value > 0.0) {
+                return Err(PyValueError::new_err(format!(
+                    "gamma must be a positive number: {value}"
+                )));
+            }
+            let table = pixel_ops::gamma_table(value);
+            let layout = self.layout();
+            Ok(self.derive(
+                layout,
+                py.detach(|| pixel_ops::map_colors(&self.data, layout, &[table; 3])),
+            ))
+        })?
     }
 
     /// Returns a copy whose black becomes `black` and whose white becomes
     /// `white`, RGB colors of 0 to 255, with the values between mapped
     /// linearly; a gray pixmap uses their luma. Alpha is kept.
     #[pyo3(signature = (black=(0, 0, 0), white=(255, 255, 255)))]
-    fn tint(&self, py: Python<'_>, black: (u8, u8, u8), white: (u8, u8, u8)) -> Self {
-        let (black, white) = ([black.0, black.1, black.2], [white.0, white.1, white.2]);
-        let tables = if self.gray {
-            [pixel_ops::tint_table(pixel_ops::luma(black), pixel_ops::luma(white)); 3]
-        } else {
-            std::array::from_fn(|component| {
-                pixel_ops::tint_table(black[component], white[component])
-            })
-        };
-        let layout = self.layout();
-        self.derive(
-            layout,
-            py.detach(|| pixel_ops::map_colors(&self.data, layout, &tables)),
-        )
+    fn tint(&self, py: Python<'_>, black: (u8, u8, u8), white: (u8, u8, u8)) -> PyResult<Self> {
+        crate::errors::boundary(|| {
+            let (black, white) = ([black.0, black.1, black.2], [white.0, white.1, white.2]);
+            let tables = if self.gray {
+                [pixel_ops::tint_table(pixel_ops::luma(black), pixel_ops::luma(white)); 3]
+            } else {
+                std::array::from_fn(|component| {
+                    pixel_ops::tint_table(black[component], white[component])
+                })
+            };
+            let layout = self.layout();
+            self.derive(
+                layout,
+                py.detach(|| pixel_ops::map_colors(&self.data, layout, &tables)),
+            )
+        })
     }
 
     /// Returns the pixmap in gray, with ITU-R BT.601 luma weights, keeping alpha.
-    fn to_gray(&self, py: Python<'_>) -> Self {
-        self.converted(py, true)
+    fn to_gray(&self, py: Python<'_>) -> PyResult<Self> {
+        crate::errors::boundary(|| self.converted(py, true))
     }
 
     /// Returns the pixmap in RGB, keeping alpha.
-    fn to_rgb(&self, py: Python<'_>) -> Self {
-        self.converted(py, false)
+    fn to_rgb(&self, py: Python<'_>) -> PyResult<Self> {
+        crate::errors::boundary(|| self.converted(py, false))
     }
 
     /// Returns the pixmap with an alpha channel, opaque where it had none.
-    fn with_alpha(&self, py: Python<'_>) -> Self {
-        if self.alpha {
-            return self.share();
-        }
-        let layout = self.layout();
-        self.derive(
-            Layout {
-                alpha: true,
-                ..layout
-            },
-            py.detach(|| pixel_ops::add_alpha(&self.data, layout)),
-        )
+    fn with_alpha(&self, py: Python<'_>) -> PyResult<Self> {
+        crate::errors::boundary(|| {
+            if self.alpha {
+                return self.share();
+            }
+            let layout = self.layout();
+            self.derive(
+                Layout {
+                    alpha: true,
+                    ..layout
+                },
+                py.detach(|| pixel_ops::add_alpha(&self.data, layout)),
+            )
+        })
     }
 
     /// Returns the pixmap without alpha, composited over `background`, an
     /// RGB color of 0 to 255 whose luma a gray pixmap uses.
     #[pyo3(signature = (background=(255, 255, 255)))]
-    fn without_alpha(&self, py: Python<'_>, background: (u8, u8, u8)) -> Self {
-        if !self.alpha {
-            return self.share();
-        }
-        let layout = self.layout();
-        let background = [background.0, background.1, background.2];
-        self.derive(
-            Layout {
-                alpha: false,
-                ..layout
-            },
-            py.detach(|| pixel_ops::drop_alpha(&self.data, layout, background)),
-        )
+    fn without_alpha(&self, py: Python<'_>, background: (u8, u8, u8)) -> PyResult<Self> {
+        crate::errors::boundary(|| {
+            if !self.alpha {
+                return self.share();
+            }
+            let layout = self.layout();
+            let background = [background.0, background.1, background.2];
+            self.derive(
+                Layout {
+                    alpha: false,
+                    ..layout
+                },
+                py.detach(|| pixel_ops::drop_alpha(&self.data, layout, background)),
+            )
+        })
     }
 
     /// Returns the pixels of `rect`, `(x0, y0, x1, y1)` in whole pixels,
     /// cut to the pixmap; a rect outside it raises `ValueError`.
     fn crop(&self, py: Python<'_>, rect: (i64, i64, i64, i64)) -> PyResult<Self> {
-        let Some(area) = self.area(rect)? else {
-            return Err(PyValueError::new_err(format!(
-                "rect {rect:?} does not overlap the {}x{} pixmap",
-                self.width, self.height
-            )));
-        };
-        let layout = self.layout();
-        let (x0, y0, x1, y1) = area;
-        Ok(self.derive(
-            Layout {
-                width: x1 - x0,
-                height: y1 - y0,
-                ..layout
-            },
-            py.detach(|| pixel_ops::crop(&self.data, layout, area)),
-        ))
+        crate::errors::boundary(|| {
+            let Some(area) = self.area(rect)? else {
+                return Err(PyValueError::new_err(format!(
+                    "rect {rect:?} does not overlap the {}x{} pixmap",
+                    self.width, self.height
+                )));
+            };
+            let layout = self.layout();
+            let (x0, y0, x1, y1) = area;
+            Ok(self.derive(
+                Layout {
+                    width: x1 - x0,
+                    height: y1 - y0,
+                    ..layout
+                },
+                py.detach(|| pixel_ops::crop(&self.data, layout, area)),
+            ))
+        })?
     }
 
     /// Returns the pixmap resampled to `width` by `height` pixels with a
@@ -641,76 +655,82 @@ impl Pixmap {
     /// resolution follows, so the image keeps its size in inches. At most
     /// 64,000,000 pixels.
     fn scale(&self, py: Python<'_>, width: u32, height: u32) -> PyResult<Self> {
-        let pixels = u64::from(width) * u64::from(height);
-        if width == 0 || height == 0 || pixels > pixel_ops::MAX_PIXELS {
-            return Err(PyValueError::new_err(format!(
-                "a scaled pixmap has 1 to {} pixels, not {width}x{height}",
-                pixel_ops::MAX_PIXELS
-            )));
-        }
-        let layout = self.layout();
-        let mut scaled = self.derive(
-            Layout {
-                width,
-                height,
-                ..layout
-            },
-            py.detach(|| pixel_ops::scale(&self.data, layout, width, height)),
-        );
-        let follow = |dpi: u32, to: u32, from: u32| {
-            (f64::from(dpi) * f64::from(to) / f64::from(from))
-                .round()
-                .clamp(1.0, 65_535.0) as u32
-        };
-        scaled.resolution = (
-            follow(self.resolution.0, width, self.width),
-            follow(self.resolution.1, height, self.height),
-        );
-        Ok(scaled)
+        crate::errors::boundary(|| {
+            let pixels = u64::from(width) * u64::from(height);
+            if width == 0 || height == 0 || pixels > pixel_ops::MAX_PIXELS {
+                return Err(PyValueError::new_err(format!(
+                    "a scaled pixmap has 1 to {} pixels, not {width}x{height}",
+                    pixel_ops::MAX_PIXELS
+                )));
+            }
+            let layout = self.layout();
+            let mut scaled = self.derive(
+                Layout {
+                    width,
+                    height,
+                    ..layout
+                },
+                py.detach(|| pixel_ops::scale(&self.data, layout, width, height)),
+            );
+            let follow = |dpi: u32, to: u32, from: u32| {
+                (f64::from(dpi) * f64::from(to) / f64::from(from))
+                    .round()
+                    .clamp(1.0, 65_535.0) as u32
+            };
+            scaled.resolution = (
+                follow(self.resolution.0, width, self.width),
+                follow(self.resolution.1, height, self.height),
+            );
+            Ok(scaled)
+        })?
     }
 
     /// Returns the pixmap turned clockwise by `degrees`, a multiple of 90;
     /// a quarter turn swaps the width, the height, and the resolution.
     fn rotate(&self, py: Python<'_>, degrees: i64) -> PyResult<Self> {
-        if degrees % 90 != 0 {
-            return Err(PyValueError::new_err(format!(
-                "degrees must be a multiple of 90: {degrees}"
-            )));
-        }
-        let quarters = degrees.rem_euclid(360) / 90;
-        if quarters == 0 {
-            return Ok(self.share());
-        }
-        let layout = self.layout();
-        let mut rotated = self.derive(
-            layout,
-            py.detach(|| pixel_ops::rotate(&self.data, layout, quarters as u8)),
-        );
-        if quarters % 2 == 1 {
-            rotated.width = self.height;
-            rotated.height = self.width;
-            rotated.resolution = (self.resolution.1, self.resolution.0);
-        }
-        Ok(rotated)
+        crate::errors::boundary(|| {
+            if degrees % 90 != 0 {
+                return Err(PyValueError::new_err(format!(
+                    "degrees must be a multiple of 90: {degrees}"
+                )));
+            }
+            let quarters = degrees.rem_euclid(360) / 90;
+            if quarters == 0 {
+                return Ok(self.share());
+            }
+            let layout = self.layout();
+            let mut rotated = self.derive(
+                layout,
+                py.detach(|| pixel_ops::rotate(&self.data, layout, quarters as u8)),
+            );
+            if quarters % 2 == 1 {
+                rotated.width = self.height;
+                rotated.height = self.width;
+                rotated.resolution = (self.resolution.1, self.resolution.0);
+            }
+            Ok(rotated)
+        })?
     }
 
     /// Returns the pixmap mirrored left to right for `"horizontal"`, or top
     /// to bottom for `"vertical"`.
     fn flip(&self, py: Python<'_>, axis: &str) -> PyResult<Self> {
-        let vertical = match axis {
-            "horizontal" => false,
-            "vertical" => true,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "axis must be 'horizontal' or 'vertical': {axis:?}"
-                )));
-            }
-        };
-        let layout = self.layout();
-        Ok(self.derive(
-            layout,
-            py.detach(|| pixel_ops::flip(&self.data, layout, vertical)),
-        ))
+        crate::errors::boundary(|| {
+            let vertical = match axis {
+                "horizontal" => false,
+                "vertical" => true,
+                _ => {
+                    return Err(PyValueError::new_err(format!(
+                        "axis must be 'horizontal' or 'vertical': {axis:?}"
+                    )));
+                }
+            };
+            let layout = self.layout();
+            Ok(self.derive(
+                layout,
+                py.detach(|| pixel_ops::flip(&self.data, layout, vertical)),
+            ))
+        })?
     }
 
     /// Returns `width` by `height` pixels whose corners are the corners
@@ -726,44 +746,50 @@ impl Pixmap {
         width: u32,
         height: u32,
     ) -> PyResult<Self> {
-        let pixels = u64::from(width) * u64::from(height);
-        if width == 0 || height == 0 || pixels > pixel_ops::MAX_PIXELS {
-            return Err(PyValueError::new_err(format!(
-                "a warped pixmap has 1 to {} pixels, not {width}x{height}",
-                pixel_ops::MAX_PIXELS
-            )));
-        }
-        let projection = pixel_ops::Projection::new(quad).ok_or_else(|| {
-            PyValueError::new_err(format!("quad must be finite and convex: {quad:?}"))
-        })?;
-        let layout = self.layout();
-        Ok(self.derive(
-            Layout {
-                width,
-                height,
-                ..layout
-            },
-            py.detach(|| pixel_ops::warp(&self.data, layout, projection, width, height)),
-        ))
+        crate::errors::boundary(|| {
+            let pixels = u64::from(width) * u64::from(height);
+            if width == 0 || height == 0 || pixels > pixel_ops::MAX_PIXELS {
+                return Err(PyValueError::new_err(format!(
+                    "a warped pixmap has 1 to {} pixels, not {width}x{height}",
+                    pixel_ops::MAX_PIXELS
+                )));
+            }
+            let projection = pixel_ops::Projection::new(quad).ok_or_else(|| {
+                PyValueError::new_err(format!("quad must be finite and convex: {quad:?}"))
+            })?;
+            let layout = self.layout();
+            Ok(self.derive(
+                Layout {
+                    width,
+                    height,
+                    ..layout
+                },
+                py.detach(|| pixel_ops::warp(&self.data, layout, projection, width, height)),
+            ))
+        })?
     }
 
     /// Returns the channels of the pixel at column `x` and row `y`.
     fn pixel<'py>(&self, py: Python<'py>, x: i64, y: i64) -> PyResult<Bound<'py, PyTuple>> {
-        let at = self.position(x, y)?;
-        PyTuple::new(py, &self.data[at..at + self.channels() as usize])
+        crate::errors::boundary(|| {
+            let at = self.position(x, y)?;
+            PyTuple::new(py, &self.data[at..at + self.channels() as usize])
+        })?
     }
 
     /// Returns a copy with the pixel at column `x` and row `y` set to
     /// `value`, one integer of 0 to 255 per channel, alpha included.
     fn with_pixel(&self, py: Python<'_>, x: i64, y: i64, value: Vec<u8>) -> PyResult<Self> {
-        self.position(x, y)?;
-        let value = self.value(value)?;
-        let layout = self.layout();
-        let area = (x as u32, y as u32, x as u32 + 1, y as u32 + 1);
-        Ok(self.derive(
-            layout,
-            py.detach(|| pixel_ops::fill(&self.data, layout, area, &value)),
-        ))
+        crate::errors::boundary(|| {
+            self.position(x, y)?;
+            let value = self.value(value)?;
+            let layout = self.layout();
+            let area = (x as u32, y as u32, x as u32 + 1, y as u32 + 1);
+            Ok(self.derive(
+                layout,
+                py.detach(|| pixel_ops::fill(&self.data, layout, area, &value)),
+            ))
+        })?
     }
 
     /// Returns a copy with every pixel inside `rect` set to `value`, one
@@ -777,19 +803,21 @@ impl Pixmap {
         value: Vec<u8>,
         rect: Option<(i64, i64, i64, i64)>,
     ) -> PyResult<Self> {
-        let value = self.value(value)?;
-        let area = match rect {
-            None => Some((0, 0, self.width, self.height)),
-            Some(rect) => self.area(rect)?,
-        };
-        let Some(area) = area else {
-            return Ok(self.share());
-        };
-        let layout = self.layout();
-        Ok(self.derive(
-            layout,
-            py.detach(|| pixel_ops::fill(&self.data, layout, area, &value)),
-        ))
+        crate::errors::boundary(|| {
+            let value = self.value(value)?;
+            let area = match rect {
+                None => Some((0, 0, self.width, self.height)),
+                Some(rect) => self.area(rect)?,
+            };
+            let Some(area) = area else {
+                return Ok(self.share());
+            };
+            let layout = self.layout();
+            Ok(self.derive(
+                layout,
+                py.detach(|| pixel_ops::fill(&self.data, layout, area, &value)),
+            ))
+        })?
     }
 
     /// Returns the number of distinct pixels, alpha included, inside
@@ -797,18 +825,20 @@ impl Pixmap {
     /// outside it.
     #[pyo3(signature = (rect=None))]
     fn color_count(&self, py: Python<'_>, rect: Option<(i64, i64, i64, i64)>) -> PyResult<u64> {
-        let Some(area) = self.region(rect)? else {
-            return Ok(0);
-        };
-        let layout = self.layout();
-        let mut count = 0;
-        py.detach(|| {
-            pixel_ops::color_runs(&self.data, layout, area, |_, _| {
-                count += 1;
-                true
+        crate::errors::boundary(|| {
+            let Some(area) = self.region(rect)? else {
+                return Ok(0);
+            };
+            let layout = self.layout();
+            let mut count = 0;
+            py.detach(|| {
+                pixel_ops::color_runs(&self.data, layout, area, |_, _| {
+                    count += 1;
+                    true
+                });
             });
-        });
-        Ok(count)
+            Ok(count)
+        })?
     }
 
     /// Returns each distinct pixel, alpha included, inside `rect`, or in
@@ -822,36 +852,38 @@ impl Pixmap {
         rect: Option<(i64, i64, i64, i64)>,
         max_colors: Option<u64>,
     ) -> PyResult<Bound<'py, PyDict>> {
-        if max_colors == Some(0) {
-            return Err(PyValueError::new_err("max_colors must be positive"));
-        }
-        let dict = PyDict::new(py);
-        let Some(area) = self.region(rect)? else {
-            return Ok(dict);
-        };
-        let layout = self.layout();
-        let mut runs = Vec::new();
-        let mut exceeded = false;
-        py.detach(|| {
-            pixel_ops::color_runs(&self.data, layout, area, |pixel, count| {
-                if max_colors.is_some_and(|max| runs.len() as u64 >= max) {
-                    exceeded = true;
-                    return false;
-                }
-                runs.push((pixel, count));
-                true
+        crate::errors::boundary(|| {
+            if max_colors == Some(0) {
+                return Err(PyValueError::new_err("max_colors must be positive"));
+            }
+            let dict = PyDict::new(py);
+            let Some(area) = self.region(rect)? else {
+                return Ok(dict);
+            };
+            let layout = self.layout();
+            let mut runs = Vec::new();
+            let mut exceeded = false;
+            py.detach(|| {
+                pixel_ops::color_runs(&self.data, layout, area, |pixel, count| {
+                    if max_colors.is_some_and(|max| runs.len() as u64 >= max) {
+                        exceeded = true;
+                        return false;
+                    }
+                    runs.push((pixel, count));
+                    true
+                });
             });
-        });
-        if exceeded {
-            return Err(PyValueError::new_err(format!(
-                "the pixmap has more than {} distinct colors; pass a larger max_colors",
-                max_colors.unwrap_or_default()
-            )));
-        }
-        for (pixel, count) in runs {
-            dict.set_item(PyTuple::new(py, pixel)?, count)?;
-        }
-        Ok(dict)
+            if exceeded {
+                return Err(PyValueError::new_err(format!(
+                    "the pixmap has more than {} distinct colors; pass a larger max_colors",
+                    max_colors.unwrap_or_default()
+                )));
+            }
+            for (pixel, count) in runs {
+                dict.set_item(PyTuple::new(py, pixel)?, count)?;
+            }
+            Ok(dict)
+        })?
     }
 
     /// Returns the share of the pixels inside `rect`, or in the whole
@@ -864,23 +896,25 @@ impl Pixmap {
         py: Python<'py>,
         rect: Option<(i64, i64, i64, i64)>,
     ) -> PyResult<Option<(f64, Bound<'py, PyTuple>)>> {
-        let Some(area) = self.region(rect)? else {
-            return Ok(None);
-        };
-        let layout = self.layout();
-        let mut top: Option<(Vec<u8>, u64)> = None;
-        py.detach(|| {
-            pixel_ops::color_runs(&self.data, layout, area, |pixel, count| {
-                if top.as_ref().is_none_or(|(_, most)| count > *most) {
-                    top = Some((pixel, count));
-                }
-                true
+        crate::errors::boundary(|| {
+            let Some(area) = self.region(rect)? else {
+                return Ok(None);
+            };
+            let layout = self.layout();
+            let mut top: Option<(Vec<u8>, u64)> = None;
+            py.detach(|| {
+                pixel_ops::color_runs(&self.data, layout, area, |pixel, count| {
+                    if top.as_ref().is_none_or(|(_, most)| count > *most) {
+                        top = Some((pixel, count));
+                    }
+                    true
+                });
             });
-        });
-        let (x0, y0, x1, y1) = area;
-        let total = f64::from(x1 - x0) * f64::from(y1 - y0);
-        top.map(|(pixel, count)| Ok((count as f64 / total, PyTuple::new(py, pixel)?)))
-            .transpose()
+            let (x0, y0, x1, y1) = area;
+            let total = f64::from(x1 - x0) * f64::from(y1 - y0);
+            top.map(|(pixel, count)| Ok((count as f64 / total, PyTuple::new(py, pixel)?)))
+                .transpose()
+        })?
     }
 
     /// Decodes PNG, JPEG, PBM, PGM, PPM (plain or raw), PAM, BMP
@@ -896,65 +930,71 @@ impl Pixmap {
     /// refused. At most 64,000,000 pixels.
     #[staticmethod]
     fn from_bytes(py: Python<'_>, data: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let bytes = PyBuffer::<u8>::get(data)?.to_vec(py)?;
-        let decoded = py
-            .detach(|| pixel_ops::decode(&bytes))
-            .map_err(PyValueError::new_err)?;
-        let layout = decoded.layout;
-        Ok(Self {
-            width: layout.width,
-            height: layout.height,
-            alpha: layout.alpha,
-            gray: layout.gray,
-            data: Arc::new(decoded.data),
-            resolution: decoded.resolution,
-        })
+        crate::errors::boundary(|| {
+            let bytes = PyBuffer::<u8>::get(data)?.to_vec(py)?;
+            let decoded = py
+                .detach(|| pixel_ops::decode(&bytes))
+                .map_err(PyValueError::new_err)?;
+            let layout = decoded.layout;
+            Ok(Self {
+                width: layout.width,
+                height: layout.height,
+                alpha: layout.alpha,
+                gray: layout.gray,
+                data: Arc::new(decoded.data),
+                resolution: decoded.resolution,
+            })
+        })?
     }
 
     /// Reads an image file into a pixmap, as `from_bytes` decodes it.
     #[staticmethod]
     fn open(py: Python<'_>, path: PathBuf) -> PyResult<Self> {
-        let bytes = py.detach(|| fs::read(&path))?;
-        let decoded = py
-            .detach(|| pixel_ops::decode(&bytes))
-            .map_err(PyValueError::new_err)?;
-        let layout = decoded.layout;
-        Ok(Self {
-            width: layout.width,
-            height: layout.height,
-            alpha: layout.alpha,
-            gray: layout.gray,
-            data: Arc::new(decoded.data),
-            resolution: decoded.resolution,
-        })
+        crate::errors::boundary(|| {
+            let bytes = py.detach(|| fs::read(&path))?;
+            let decoded = py
+                .detach(|| pixel_ops::decode(&bytes))
+                .map_err(PyValueError::new_err)?;
+            let layout = decoded.layout;
+            Ok(Self {
+                width: layout.width,
+                height: layout.height,
+                alpha: layout.alpha,
+                gray: layout.gray,
+                data: Arc::new(decoded.data),
+                resolution: decoded.resolution,
+            })
+        })?
     }
 
     /// Returns the pixels as a Pillow image of mode `L`, `LA`, `RGB`, or
     /// `RGBA`, with the resolution in its `dpi` info; it needs Pillow.
     fn to_pil<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        let module = py.import("PIL.Image").map_err(|error| {
-            if error.is_instance_of::<PyImportError>(py) {
-                PyImportError::new_err("Pixmap.to_pil needs Pillow: pip install pillow")
-            } else {
-                error
-            }
-        })?;
-        let mode = match (self.gray, self.alpha) {
-            (true, false) => "L",
-            (true, true) => "LA",
-            (false, false) => "RGB",
-            (false, true) => "RGBA",
-        };
-        let image = module.call_method1(
-            "frombytes",
-            (
-                mode,
-                (self.width, self.height),
-                PyBytes::new(py, &self.data),
-            ),
-        )?;
-        image.getattr("info")?.set_item("dpi", self.resolution)?;
-        Ok(image)
+        crate::errors::boundary(|| {
+            let module = py.import("PIL.Image").map_err(|error| {
+                if error.is_instance_of::<PyImportError>(py) {
+                    PyImportError::new_err("Pixmap.to_pil needs Pillow: pip install pillow")
+                } else {
+                    error
+                }
+            })?;
+            let mode = match (self.gray, self.alpha) {
+                (true, false) => "L",
+                (true, true) => "LA",
+                (false, false) => "RGB",
+                (false, true) => "RGBA",
+            };
+            let image = module.call_method1(
+                "frombytes",
+                (
+                    mode,
+                    (self.width, self.height),
+                    PyBytes::new(py, &self.data),
+                ),
+            )?;
+            image.getattr("info")?.set_item("dpi", self.resolution)?;
+            Ok(image)
+        })?
     }
 
     /// Returns the pixels encoded as `format` (`"png"`, `"jpeg"` at
@@ -975,22 +1015,24 @@ impl Pixmap {
         #[pyo3(from_py_with = extract_quality)] quality: u8,
         #[pyo3(from_py_with = extract_max_size)] max_size: Option<usize>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
-        let written = AtomicUsize::new(0);
-        let mut out = Bounded::new(&written, max_size);
-        let result = py.detach(|| self.encode(&mut out, encoding, &Budget::default()));
-        if out.exceeded {
-            let limit = max_size.unwrap_or_default();
-            return Err(LimitError::new_err((
-                "pixmap_output_size",
-                format!(
-                    "the encoded {} exceeds the {limit}-byte output limit",
-                    encoding.name()
-                ),
-            )));
-        }
-        result.map_err(|e| e.into_py(&format!("failed to encode {}", encoding.name())))?;
-        Ok(PyBytes::new(py, &out.bytes))
+        crate::errors::boundary(|| {
+            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
+            let written = AtomicUsize::new(0);
+            let mut out = Bounded::new(&written, max_size);
+            let result = py.detach(|| self.encode(&mut out, encoding, &Budget::default()));
+            if out.exceeded {
+                let limit = max_size.unwrap_or_default();
+                return Err(LimitError::new_err((
+                    "pixmap_output_size",
+                    format!(
+                        "the encoded {} exceeds the {limit}-byte output limit",
+                        encoding.name()
+                    ),
+                )));
+            }
+            result.map_err(|e| e.into_py(&format!("failed to encode {}", encoding.name())))?;
+            Ok(PyBytes::new(py, &out.bytes))
+        })?
     }
 
     /// Writes the pixels as `format`, as `to_bytes` encodes it, or
@@ -1006,60 +1048,64 @@ impl Pixmap {
         format: Option<&str>,
         #[pyo3(from_py_with = extract_quality)] quality: u8,
     ) -> PyResult<()> {
-        let format = match format {
-            Some(format) => format,
-            None => format_of(&path).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "cannot tell the image format of {}; pass format as {FORMATS}",
-                    path.display()
-                ))
-            })?,
-        };
-        let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
-        py.detach(|| {
-            let error = |e: &dyn std::fmt::Display| {
-                PdfError::new_err(format!(
-                    "failed to save the image to {}: {e}",
-                    path.display()
-                ))
+        crate::errors::boundary(|| {
+            let format = match format {
+                Some(format) => format,
+                None => format_of(&path).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "cannot tell the image format of {}; pass format as {FORMATS}",
+                        path.display()
+                    ))
+                })?,
             };
-            let target = final_target(&path).map_err(|e| error(&e))?;
-            let permissions = fs::metadata(&target)
-                .ok()
-                .filter(fs::Metadata::is_file)
-                .map(|metadata| metadata.permissions());
-            let (temporary, file) = temporary_sibling(&target).map_err(|e| error(&e))?;
-            let mut out = BufWriter::new(file);
-            let result = self
-                .encode(&mut out, encoding, &Budget::default())
-                .map_err(|e| match e {
-                    EncodeError::Limit(refusal) => refusal.to_string(),
-                    EncodeError::Other(message) => message,
-                })
-                .and_then(|()| out.flush().map_err(|e| e.to_string()))
-                .and_then(|()| out.get_ref().sync_all().map_err(|e| e.to_string()))
-                .map_err(|e| error(&e));
-            drop(out);
-            let result = result.and_then(|()| {
-                if let Some(permissions) = permissions {
-                    fs::set_permissions(&temporary, permissions).map_err(|e| error(&e))?;
+            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
+            py.detach(|| {
+                let error = |e: &dyn std::fmt::Display| {
+                    PdfError::new_err(format!(
+                        "failed to save the image to {}: {e}",
+                        path.display()
+                    ))
+                };
+                let target = final_target(&path).map_err(|e| error(&e))?;
+                let permissions = fs::metadata(&target)
+                    .ok()
+                    .filter(fs::Metadata::is_file)
+                    .map(|metadata| metadata.permissions());
+                let (temporary, file) = temporary_sibling(&target).map_err(|e| error(&e))?;
+                let mut out = BufWriter::new(file);
+                let result = self
+                    .encode(&mut out, encoding, &Budget::default())
+                    .map_err(|e| match e {
+                        EncodeError::Limit(refusal) => refusal.to_string(),
+                        EncodeError::Other(message) => message,
+                    })
+                    .and_then(|()| out.flush().map_err(|e| e.to_string()))
+                    .and_then(|()| out.get_ref().sync_all().map_err(|e| e.to_string()))
+                    .map_err(|e| error(&e));
+                drop(out);
+                let result = result.and_then(|()| {
+                    if let Some(permissions) = permissions {
+                        fs::set_permissions(&temporary, permissions).map_err(|e| error(&e))?;
+                    }
+                    fs::rename(&temporary, &target).map_err(|e| error(&e))
+                });
+                if result.is_err() {
+                    let _ = fs::remove_file(&temporary);
                 }
-                fs::rename(&temporary, &target).map_err(|e| error(&e))
-            });
-            if result.is_err() {
-                let _ = fs::remove_file(&temporary);
-            }
-            result
-        })
+                result
+            })
+        })?
     }
 
-    fn __repr__(&self) -> String {
-        let colorspace = if self.gray { "gray" } else { "rgb" };
-        let alpha = if self.alpha { " alpha" } else { "" };
-        format!(
-            "<Pixmap {}x{} {colorspace}{alpha}>",
-            self.width, self.height
-        )
+    fn __repr__(&self) -> PyResult<String> {
+        crate::errors::boundary(|| {
+            let colorspace = if self.gray { "gray" } else { "rgb" };
+            let alpha = if self.alpha { " alpha" } else { "" };
+            format!(
+                "<Pixmap {}x{} {colorspace}{alpha}>",
+                self.width, self.height
+            )
+        })
     }
 
     /// Exposes the pixels without a copy, read-only, shaped `(height,
@@ -1069,73 +1115,77 @@ impl Pixmap {
         view: *mut ffi::Py_buffer,
         flags: c_int,
     ) -> PyResult<()> {
-        if view.is_null() {
-            return Err(PyBufferError::new_err("buffer view is null"));
-        }
-        if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
-            return Err(PyBufferError::new_err("Pixmap buffer is read-only"));
-        }
-        let owner = slf.clone().into_any();
-        let pixmap = slf.get();
-        let data = &pixmap.data;
-        let length = isize::try_from(data.len())
-            .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
-        let channels = pixmap.channels() as isize;
-        let width = pixmap.width as isize;
-        let height = pixmap.height as isize;
-        // Shape and strides live in one allocation that `internal` owns
-        // until `__releasebuffer__`.
-        let mut dimensions = Box::new([height, width, channels, width * channels, channels, 1]);
-        let dimensions_ptr = dimensions.as_mut_ptr();
-        let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
-        let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
-        // SAFETY: `view` was checked for null. The frozen Pixmap never moves
-        // or changes `data`, and the owner reference keeps it alive. Shape
-        // and strides point into the boxed array that `internal` owns.
-        unsafe {
-            (*view).obj = owner.into_ptr();
-            (*view).buf = data.as_ptr().cast_mut().cast::<c_void>();
-            (*view).len = length;
-            (*view).readonly = 1;
-            (*view).itemsize = 1;
-            (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-                CString::new("B")
-                    .expect("the format has no null byte")
-                    .into_raw()
-            } else {
-                ptr::null_mut()
-            };
-            (*view).ndim = if nd { 3 } else { 1 };
-            (*view).shape = if nd { dimensions_ptr } else { ptr::null_mut() };
-            (*view).strides = if nd && strides {
-                dimensions_ptr.add(3)
-            } else {
-                ptr::null_mut()
-            };
-            (*view).suboffsets = ptr::null_mut();
-            (*view).internal = Box::into_raw(dimensions).cast::<c_void>();
-        }
-        Ok(())
+        crate::errors::boundary(|| {
+            if view.is_null() {
+                return Err(PyBufferError::new_err("buffer view is null"));
+            }
+            if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
+                return Err(PyBufferError::new_err("Pixmap buffer is read-only"));
+            }
+            let owner = slf.clone().into_any();
+            let pixmap = slf.get();
+            let data = &pixmap.data;
+            let length = isize::try_from(data.len())
+                .map_err(|_| PyBufferError::new_err("Pixmap buffer is too large"))?;
+            let channels = pixmap.channels() as isize;
+            let width = pixmap.width as isize;
+            let height = pixmap.height as isize;
+            // Shape and strides live in one allocation that `internal` owns
+            // until `__releasebuffer__`.
+            let mut dimensions = Box::new([height, width, channels, width * channels, channels, 1]);
+            let dimensions_ptr = dimensions.as_mut_ptr();
+            let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
+            let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
+            // SAFETY: `view` was checked for null. The frozen Pixmap never moves
+            // or changes `data`, and the owner reference keeps it alive. Shape
+            // and strides point into the boxed array that `internal` owns.
+            unsafe {
+                (*view).obj = owner.into_ptr();
+                (*view).buf = data.as_ptr().cast_mut().cast::<c_void>();
+                (*view).len = length;
+                (*view).readonly = 1;
+                (*view).itemsize = 1;
+                (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
+                    CString::new("B")
+                        .expect("the format has no null byte")
+                        .into_raw()
+                } else {
+                    ptr::null_mut()
+                };
+                (*view).ndim = if nd { 3 } else { 1 };
+                (*view).shape = if nd { dimensions_ptr } else { ptr::null_mut() };
+                (*view).strides = if nd && strides {
+                    dimensions_ptr.add(3)
+                } else {
+                    ptr::null_mut()
+                };
+                (*view).suboffsets = ptr::null_mut();
+                (*view).internal = Box::into_raw(dimensions).cast::<c_void>();
+            }
+            Ok(())
+        })?
     }
 
     /// Releases the format string and dimensions of one buffer view.
-    unsafe fn __releasebuffer__(&self, view: *mut ffi::Py_buffer) {
-        if view.is_null() {
-            return;
-        }
-        // SAFETY: `__getbuffer__` made every non-null format with
-        // `CString::into_raw` and stored a boxed `[isize; 6]` in
-        // `internal`, once for this view.
-        unsafe {
-            let format = (*view).format;
-            if !format.is_null() {
-                drop(CString::from_raw(format));
+    unsafe fn __releasebuffer__(&self, view: *mut ffi::Py_buffer) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            if view.is_null() {
+                return;
             }
-            let internal = (*view).internal;
-            if !internal.is_null() {
-                drop(Box::from_raw(internal.cast::<[isize; 6]>()));
+            // SAFETY: `__getbuffer__` made every non-null format with
+            // `CString::into_raw` and stored a boxed `[isize; 6]` in
+            // `internal`, once for this view.
+            unsafe {
+                let format = (*view).format;
+                if !format.is_null() {
+                    drop(CString::from_raw(format));
+                }
+                let internal = (*view).internal;
+                if !internal.is_null() {
+                    drop(Box::from_raw(internal.cast::<[isize; 6]>()));
+                }
             }
-        }
+        })
     }
 }
 
@@ -1259,56 +1309,58 @@ pub fn pixmap_png<'py>(
     document: &_Document,
     pixmap: &Pixmap,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let budget = document.budget();
-    let mut out = BudgetedPngOutput {
-        bytes: BudgetVec::new(&budget),
-        refusal: None,
-    };
-    let result = py.detach(|| pixmap.encode_png(&mut out, &budget));
-    if let Some(refusal) = out.refusal {
-        return Err(limit_error(&refusal));
-    }
-    result.map_err(|e| e.into_py("failed to encode PNG"))?;
-    // Python copies the encoded bytes while the Rust output remains live.
-    // Charge both allocations and use the fallible Python allocation API.
-    let len = out.bytes.len();
-    budget
-        .charge(
-            LimitCode::MemorySize,
-            u64::try_from(len).unwrap_or(u64::MAX),
-        )
-        .map_err(|e| limit_error(&e))?;
-    let size =
-        isize::try_from(len).map_err(|_| PyValueError::new_err("the encoded PNG is too large"))?;
-    // SAFETY: a null source requests an uninitialized bytes object. It is
-    // owned locally and is never exposed to Python before it is filled.
-    let raw = unsafe { ffi::PyBytes_FromStringAndSize(ptr::null(), size) };
-    // SAFETY: PyBytes_FromStringAndSize returns a new reference or null with
-    // a Python exception set. The owned handle also frees it on refusal.
-    let bytes = unsafe { Bound::from_owned_ptr_or_err(py, raw)? };
-    // SAFETY: `bytes` is a new, unshared bytes object and the result points
-    // to its `len` bytes of writable storage until the object is published.
-    let target = unsafe { ffi::PyBytes_AsString(bytes.as_ptr()).cast::<u8>() } as usize;
-    // The object remains owned and inaccessible to Python while detached, so
-    // another thread can cancel the operation while the bytes are copied.
-    py.detach(|| -> Result<(), LimitExceeded> {
-        for (index, source) in out.bytes.chunks(16 * 1024).enumerate() {
-            budget.poll()?;
-            // SAFETY: every chunk fits in the allocated, unshared object, and
-            // the source is a distinct Rust buffer. No uninitialized bytes
-            // are read. The owning handle remains alive until this finishes.
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    source.as_ptr(),
-                    (target as *mut u8).add(index * 16 * 1024),
-                    source.len(),
-                );
-            }
+    crate::errors::boundary(|| {
+        let budget = document.budget();
+        let mut out = BudgetedPngOutput {
+            bytes: BudgetVec::new(&budget),
+            refusal: None,
+        };
+        let result = py.detach(|| pixmap.encode_png(&mut out, &budget));
+        if let Some(refusal) = out.refusal {
+            return Err(limit_error(&refusal));
         }
-        budget.poll()
-    })
-    .map_err(|e| limit_error(&e))?;
-    bytes.cast_into::<PyBytes>().map_err(Into::into)
+        result.map_err(|e| e.into_py("failed to encode PNG"))?;
+        // Python copies the encoded bytes while the Rust output remains live.
+        // Charge both allocations and use the fallible Python allocation API.
+        let len = out.bytes.len();
+        budget
+            .charge(
+                LimitCode::MemorySize,
+                u64::try_from(len).unwrap_or(u64::MAX),
+            )
+            .map_err(|e| limit_error(&e))?;
+        let size = isize::try_from(len)
+            .map_err(|_| PyValueError::new_err("the encoded PNG is too large"))?;
+        // SAFETY: a null source requests an uninitialized bytes object. It is
+        // owned locally and is never exposed to Python before it is filled.
+        let raw = unsafe { ffi::PyBytes_FromStringAndSize(ptr::null(), size) };
+        // SAFETY: PyBytes_FromStringAndSize returns a new reference or null with
+        // a Python exception set. The owned handle also frees it on refusal.
+        let bytes = unsafe { Bound::from_owned_ptr_or_err(py, raw)? };
+        // SAFETY: `bytes` is a new, unshared bytes object and the result points
+        // to its `len` bytes of writable storage until the object is published.
+        let target = unsafe { ffi::PyBytes_AsString(bytes.as_ptr()).cast::<u8>() } as usize;
+        // The object remains owned and inaccessible to Python while detached, so
+        // another thread can cancel the operation while the bytes are copied.
+        py.detach(|| -> Result<(), LimitExceeded> {
+            for (index, source) in out.bytes.chunks(16 * 1024).enumerate() {
+                budget.poll()?;
+                // SAFETY: every chunk fits in the allocated, unshared object, and
+                // the source is a distinct Rust buffer. No uninitialized bytes
+                // are read. The owning handle remains alive until this finishes.
+                unsafe {
+                    ptr::copy_nonoverlapping(
+                        source.as_ptr(),
+                        (target as *mut u8).add(index * 16 * 1024),
+                        source.len(),
+                    );
+                }
+            }
+            budget.poll()
+        })
+        .map_err(|e| limit_error(&e))?;
+        bytes.cast_into::<PyBytes>().map_err(Into::into)
+    })?
 }
 
 #[pyfunction]
@@ -1319,30 +1371,33 @@ pub fn recolor_samples<'py>(
     components: usize,
     quality: Option<u8>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let color = match (components, quality) {
-        (1 | 3 | 4, None) => None,
-        (1, Some(_)) => Some(ColorType::Luma),
-        (3, Some(_)) => Some(ColorType::Rgb),
-        _ => {
-            return Err(PyValueError::new_err(format!(
-                "no {components}-component samples{}",
-                if quality.is_some() { " in JPEG" } else { "" }
-            )));
-        }
-    };
-    let layout = pixmap.layout();
-    let samples = py.detach(|| pixel_ops::device_samples(&pixmap.data, layout, components));
-    let (Some(color), Some(quality)) = (color, quality) else {
-        return Ok(PyBytes::new(py, &samples));
-    };
-    let side = |length: u32| {
-        u16::try_from(length).map_err(|_| PyValueError::new_err("JPEG sides end at 65535 pixels"))
-    };
-    let (width, height) = (side(pixmap.width)?, side(pixmap.height)?);
-    let mut out = Vec::new();
-    py.detach(|| JpegEncoder::new(&mut out, quality).encode(&samples, width, height, color))
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-    Ok(PyBytes::new(py, &out))
+    crate::errors::boundary(|| {
+        let color = match (components, quality) {
+            (1 | 3 | 4, None) => None,
+            (1, Some(_)) => Some(ColorType::Luma),
+            (3, Some(_)) => Some(ColorType::Rgb),
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "no {components}-component samples{}",
+                    if quality.is_some() { " in JPEG" } else { "" }
+                )));
+            }
+        };
+        let layout = pixmap.layout();
+        let samples = py.detach(|| pixel_ops::device_samples(&pixmap.data, layout, components));
+        let (Some(color), Some(quality)) = (color, quality) else {
+            return Ok(PyBytes::new(py, &samples));
+        };
+        let side = |length: u32| {
+            u16::try_from(length)
+                .map_err(|_| PyValueError::new_err("JPEG sides end at 65535 pixels"))
+        };
+        let (width, height) = (side(pixmap.width)?, side(pixmap.height)?);
+        let mut out = Vec::new();
+        py.detach(|| JpegEncoder::new(&mut out, quality).encode(&samples, width, height, color))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(PyBytes::new(py, &out))
+    })?
 }
 
 /// Renders the page whose object is `number` and `generation` through the
@@ -1364,34 +1419,36 @@ pub fn render_page(
     hinting: bool,
     glyph_cache: bool,
 ) -> PyResult<Pixmap> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let (red, green, blue, opacity) = background;
-    let options = render::Options {
-        matrix,
-        alpha,
-        gray,
-        background: [red, green, blue, opacity],
-        clip,
-        annotations,
-        hinting,
-        glyph_cache,
-    };
-    let fallback = document.fallback();
-    let raster = py.detach(|| -> PyResult<Raster> {
-        let at = index
-            .index_of(Reference::new(number, generation))
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!(
-                    "page object {number} {generation} is no longer a page of the document"
-                ))
-            })?;
-        let bridged = document
-            .bridge
-            .get_for_render(&version, &index, &budget, annotations)
-            .map_err(|e| bridge_error(&e))?;
-        render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
-    })?;
-    Ok(Pixmap::from(raster))
+    crate::errors::boundary(|| {
+        let (version, index, budget) = crate::pages::index(document)?;
+        let (red, green, blue, opacity) = background;
+        let options = render::Options {
+            matrix,
+            alpha,
+            gray,
+            background: [red, green, blue, opacity],
+            clip,
+            annotations,
+            hinting,
+            glyph_cache,
+        };
+        let fallback = document.fallback();
+        let raster = py.detach(|| -> PyResult<Raster> {
+            let at = index
+                .index_of(Reference::new(number, generation))
+                .ok_or_else(|| {
+                    StaleObjectError::new_err(format!(
+                        "page object {number} {generation} is no longer a page of the document"
+                    ))
+                })?;
+            let bridged = document
+                .bridge
+                .get_for_render(&version, &index, &budget, annotations)
+                .map_err(|e| bridge_error(&e))?;
+            render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
+        })?;
+        Ok(Pixmap::from(raster))
+    })?
 }
 
 pub(crate) fn raster_error(error: RasterError) -> PyErr {
@@ -1434,46 +1491,48 @@ pub fn render_pages(
     workers: usize,
     max_size: Option<usize>,
 ) -> PyResult<Vec<Py<PyBytes>>> {
-    let encoding = Encoding::parse(format, quality, gray, alpha)?;
-    let (version, index, budget) = crate::pages::index(document)?;
-    let indexes = crate::pages::entries(pages, index.len())?;
-    let (red, green, blue, opacity) = background;
-    let options = render::Options {
-        matrix,
-        alpha,
-        gray,
-        background: [red, green, blue, opacity],
-        clip: None,
-        annotations,
-        hinting,
-        glyph_cache,
-    };
-    let written = AtomicUsize::new(0);
-    let fallback = document.fallback();
-    let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {
-        let bridged = document
-            .bridge
-            .get_for_render(&version, &index, &budget, annotations)
-            .map_err(|e| bridge_error(&e))?;
-        render::batch(&bridged, &fallback, &indexes, &options, workers, |raster| {
-            let mut out = Bounded::new(&written, max_size);
-            let result = Pixmap::from(raster).encode(&mut out, encoding, &budget);
-            if out.exceeded {
-                let limit = max_size.unwrap_or_default();
-                return Err(Failed(LimitError::new_err((
-                    "render_output_size",
-                    format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
-                ))));
-            }
-            result.map_err(|e| Failed(e.into_py("failed to encode the rendered image")))?;
-            Ok(out.bytes)
-        })
-        .map_err(|Failed(error)| error)
-    })?;
-    Ok(encoded
-        .into_iter()
-        .map(|bytes| PyBytes::new(py, &bytes).unbind())
-        .collect())
+    crate::errors::boundary(|| {
+        let encoding = Encoding::parse(format, quality, gray, alpha)?;
+        let (version, index, budget) = crate::pages::index(document)?;
+        let indexes = crate::pages::entries(pages, index.len())?;
+        let (red, green, blue, opacity) = background;
+        let options = render::Options {
+            matrix,
+            alpha,
+            gray,
+            background: [red, green, blue, opacity],
+            clip: None,
+            annotations,
+            hinting,
+            glyph_cache,
+        };
+        let written = AtomicUsize::new(0);
+        let fallback = document.fallback();
+        let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {
+            let bridged = document
+                .bridge
+                .get_for_render(&version, &index, &budget, annotations)
+                .map_err(|e| bridge_error(&e))?;
+            render::batch(&bridged, &fallback, &indexes, &options, workers, |raster| {
+                let mut out = Bounded::new(&written, max_size);
+                let result = Pixmap::from(raster).encode(&mut out, encoding, &budget);
+                if out.exceeded {
+                    let limit = max_size.unwrap_or_default();
+                    return Err(Failed(LimitError::new_err((
+                        "render_output_size",
+                        format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
+                    ))));
+                }
+                result.map_err(|e| Failed(e.into_py("failed to encode the rendered image")))?;
+                Ok(out.bytes)
+            })
+            .map_err(|Failed(error)| error)
+        })?;
+        Ok(encoded
+            .into_iter()
+            .map(|bytes| PyBytes::new(py, &bytes).unbind())
+            .collect())
+    })?
 }
 
 pub fn bridge_error(error: &BridgeError) -> PyErr {

@@ -27,25 +27,27 @@ const fn condition(condition: Condition) -> &'static str {
 
 /// The names of every object type of the model, sorted.
 #[pyfunction]
-pub fn schema_names() -> Vec<&'static str> {
-    OBJECTS.iter().map(|object| object.name).collect()
+pub fn schema_names() -> PyResult<Vec<&'static str>> {
+    crate::errors::boundary(|| OBJECTS.iter().map(|object| object.name).collect())
 }
 
 /// The keys of the object type `name`, or `None` for an unknown name.
 #[pyfunction]
-pub fn schema_object(name: &str) -> Option<Vec<KeyRow>> {
-    let described = object(name)?;
-    let keys = described.keys.iter().map(|key| {
-        let types = key.types.iter().map(|typed| {
-            let links = typed.links.iter().map(|link| link.target().name).collect();
-            (typed.kind.name(), links, typed.default, typed.values)
+pub fn schema_object(name: &str) -> PyResult<Option<Vec<KeyRow>>> {
+    crate::errors::boundary(|| {
+        let described = object(name)?;
+        let keys = described.keys.iter().map(|key| {
+            let types = key.types.iter().map(|typed| {
+                let links = typed.links.iter().map(|link| link.target().name).collect();
+                (typed.kind.name(), links, typed.default, typed.values)
+            });
+            (
+                key.name,
+                key.inheritable,
+                condition(key.required),
+                types.collect(),
+            )
         });
-        (
-            key.name,
-            key.inheritable,
-            condition(key.required),
-            types.collect(),
-        )
-    });
-    Some(keys.collect())
+        Some(keys.collect())
+    })
 }

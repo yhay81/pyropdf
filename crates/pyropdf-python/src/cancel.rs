@@ -17,27 +17,31 @@ pub struct CancellationToken(pub(crate) Token);
 #[pymethods]
 impl CancellationToken {
     #[new]
-    fn new() -> Self {
-        Self(Token::new())
+    fn new() -> PyResult<Self> {
+        crate::errors::boundary(|| Self(Token::new()))
     }
 
     /// Cancels every operation whose limits carry this token.
-    fn cancel(&self) {
-        self.0.cancel();
+    fn cancel(&self) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            self.0.cancel();
+        })
     }
 
     /// Whether :meth:`cancel` was called.
     #[getter]
-    fn cancelled(&self) -> bool {
-        self.0.is_cancelled()
+    fn cancelled(&self) -> PyResult<bool> {
+        crate::errors::boundary(|| self.0.is_cancelled())
     }
 
-    fn __repr__(&self) -> String {
-        let state = if self.0.is_cancelled() {
-            "cancelled "
-        } else {
-            ""
-        };
-        format!("<{state}CancellationToken>")
+    fn __repr__(&self) -> PyResult<String> {
+        crate::errors::boundary(|| {
+            let state = if self.0.is_cancelled() {
+                "cancelled "
+            } else {
+                ""
+            };
+            format!("<{state}CancellationToken>")
+        })
     }
 }

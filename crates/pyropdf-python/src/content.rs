@@ -37,20 +37,22 @@ pub fn parse_operations<'py>(
     max_operations: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<Content<'py>> {
-    let budget = Budget::default()
-        .with_limit(LimitCode::ContentOperationCount, max_operations)
-        .with_limit(LimitCode::ContentInputSize, max_size);
-    budget
-        .check(
-            LimitCode::ContentInputSize,
-            u64::try_from(data.len()).unwrap_or(u64::MAX),
-        )
-        .map_err(|e| limit_error(&e))?;
-    let data = Bytes::new(data.to_vec());
-    let operations = py
-        .detach(|| Operations::parse(data, &budget))
-        .map_err(|e| store_error(&e))?;
-    tagged(py, &operations)
+    crate::errors::boundary(|| {
+        let budget = Budget::default()
+            .with_limit(LimitCode::ContentOperationCount, max_operations)
+            .with_limit(LimitCode::ContentInputSize, max_size);
+        budget
+            .check(
+                LimitCode::ContentInputSize,
+                u64::try_from(data.len()).unwrap_or(u64::MAX),
+            )
+            .map_err(|e| limit_error(&e))?;
+        let data = Bytes::new(data.to_vec());
+        let operations = py
+            .detach(|| Operations::parse(data, &budget))
+            .map_err(|e| store_error(&e))?;
+        tagged(py, &operations)
+    })?
 }
 
 /// Returns the operations of the content of the page whose object is
@@ -63,15 +65,17 @@ pub fn page_operations<'py>(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Content<'py>>> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let Some(at) = index.index_of(Reference::new(number, generation)) else {
-        return Ok(None);
-    };
-    let page = &index.pages()[at];
-    let content = py
-        .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
-        .map_err(|e| store_error(&e))?;
-    tagged(py, content.operations()).map(Some)
+    crate::errors::boundary(|| {
+        let (version, index, budget) = crate::pages::index(document)?;
+        let Some(at) = index.index_of(Reference::new(number, generation)) else {
+            return Ok(None);
+        };
+        let page = &index.pages()[at];
+        let content = py
+            .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
+            .map_err(|e| store_error(&e))?;
+        tagged(py, content.operations()).map(Some)
+    })?
 }
 
 /// Returns the operations in the tagged form.

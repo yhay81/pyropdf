@@ -1016,33 +1016,37 @@ fn memoized(document: &_Document) -> PyResult<Arc<Form>> {
 /// then object.
 #[pyfunction]
 pub fn form_fields(py: Python<'_>, document: &_Document) -> PyResult<Vec<(String, Id)>> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        let form = memoized_at(document, &version, &budget)?;
-        let mut out = BudgetVec::new(&budget);
-        for field in &form.fields {
-            budget
-                .charge(LimitCode::MemorySize, field.name.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            out.try_push((field.name.clone(), field.id))
-                .map_err(|e| limit_error(&e))?;
-        }
-        Ok(out.into_vec())
-    })
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            let form = memoized_at(document, &version, &budget)?;
+            let mut out = BudgetVec::new(&budget);
+            for field in &form.fields {
+                budget
+                    .charge(LimitCode::MemorySize, field.name.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                out.try_push((field.name.clone(), field.id))
+                    .map_err(|e| limit_error(&e))?;
+            }
+            Ok(out.into_vec())
+        })
+    })?
 }
 
 /// Returns the object of the first terminal field named `name`, or `None`.
 #[pyfunction]
 pub fn form_field(py: Python<'_>, document: &_Document, name: &str) -> PyResult<Option<Id>> {
-    let form = py.detach(|| memoized(document))?;
-    let at = form
-        .fields
-        .partition_point(|field| field.name.as_str() < name);
-    Ok(form
-        .fields
-        .get(at)
-        .filter(|field| field.name == name)
-        .map(|field| field.id))
+    crate::errors::boundary(|| {
+        let form = py.detach(|| memoized(document))?;
+        let at = form
+            .fields
+            .partition_point(|field| field.name.as_str() < name);
+        Ok(form
+            .fields
+            .get(at)
+            .filter(|field| field.name == name)
+            .map(|field| field.id))
+    })?
 }
 
 /// Reads field `id` as a handle does: its full name, kind, inherited `/Ff`,
@@ -1053,27 +1057,29 @@ pub fn form_field_read(
     document: &_Document,
     id: Id,
 ) -> PyResult<(String, &'static str, i64, Option<String>)> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        let form = memoized_at(document, &version, &budget)?;
-        let field = form.field(id).ok_or_else(|| stale(id))?;
-        budget
-            .charge(
-                LimitCode::MemorySize,
-                field
-                    .name
-                    .len()
-                    .saturating_add(field.value.as_ref().map_or(0, |value| value.len()))
-                    as u64,
-            )
-            .map_err(|e| limit_error(&e))?;
-        Ok((
-            field.name.clone(),
-            field.kind,
-            field.flags,
-            field.value.as_deref().map(str::to_owned),
-        ))
-    })
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            let form = memoized_at(document, &version, &budget)?;
+            let field = form.field(id).ok_or_else(|| stale(id))?;
+            budget
+                .charge(
+                    LimitCode::MemorySize,
+                    field
+                        .name
+                        .len()
+                        .saturating_add(field.value.as_ref().map_or(0, |value| value.len()))
+                        as u64,
+                )
+                .map_err(|e| limit_error(&e))?;
+            Ok((
+                field.name.clone(),
+                field.kind,
+                field.flags,
+                field.value.as_deref().map(str::to_owned),
+            ))
+        })
+    })?
 }
 
 /// Returns entry `key` of field `id` or of the nearest field above it that
@@ -1118,56 +1124,58 @@ pub fn form_field_choices(
     document: &_Document,
     id: Id,
 ) -> PyResult<Vec<(String, String)>> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        memoized_at(document, &version, &budget)?
-            .field(id)
-            .ok_or_else(|| stale(id))?;
-        let mut reads = Reads::new(&version, &budget);
-        let Some(options) = inherited(&mut reads, id, "Opt")? else {
-            return Ok(Vec::new());
-        };
-        let Some(Value::Array(options)) = read(&mut reads, Some(&options))? else {
-            return Ok(Vec::new());
-        };
-        if options.len() > MAX_VALUE_ITEMS {
-            return Err(limit(format!(
-                "AcroForm choice options exceed the {MAX_VALUE_ITEMS}-item safety limit"
-            )));
-        }
-        let mut totals = (0, 0);
-        let mut choices = BudgetVec::new(&budget);
-        for option in options.iter() {
-            let mut text = |value: &Value| {
-                text(
-                    &mut reads,
-                    value,
-                    &mut totals,
-                    MAX_VALUE_BYTES,
-                    "choice-option",
-                )
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            memoized_at(document, &version, &budget)?
+                .field(id)
+                .ok_or_else(|| stale(id))?;
+            let mut reads = Reads::new(&version, &budget);
+            let Some(options) = inherited(&mut reads, id, "Opt")? else {
+                return Ok(Vec::new());
             };
-            let choice = match option {
-                Value::Array(pair) if pair.len() == 2 => {
-                    match (text(&pair.as_slice()[0])?, text(&pair.as_slice()[1])?) {
-                        (Some(value), Some(label)) => (value, label),
-                        _ => continue,
-                    }
-                }
-                option => match text(option)? {
-                    Some(value) => {
-                        budget
-                            .charge(LimitCode::MemorySize, value.len() as u64)
-                            .map_err(|e| limit_error(&e))?;
-                        (value.clone(), value)
-                    }
-                    None => continue,
-                },
+            let Some(Value::Array(options)) = read(&mut reads, Some(&options))? else {
+                return Ok(Vec::new());
             };
-            choices.try_push(choice).map_err(|e| limit_error(&e))?;
-        }
-        Ok(choices.into_vec())
-    })
+            if options.len() > MAX_VALUE_ITEMS {
+                return Err(limit(format!(
+                    "AcroForm choice options exceed the {MAX_VALUE_ITEMS}-item safety limit"
+                )));
+            }
+            let mut totals = (0, 0);
+            let mut choices = BudgetVec::new(&budget);
+            for option in options.iter() {
+                let mut text = |value: &Value| {
+                    text(
+                        &mut reads,
+                        value,
+                        &mut totals,
+                        MAX_VALUE_BYTES,
+                        "choice-option",
+                    )
+                };
+                let choice = match option {
+                    Value::Array(pair) if pair.len() == 2 => {
+                        match (text(&pair.as_slice()[0])?, text(&pair.as_slice()[1])?) {
+                            (Some(value), Some(label)) => (value, label),
+                            _ => continue,
+                        }
+                    }
+                    option => match text(option)? {
+                        Some(value) => {
+                            budget
+                                .charge(LimitCode::MemorySize, value.len() as u64)
+                                .map_err(|e| limit_error(&e))?;
+                            (value.clone(), value)
+                        }
+                        None => continue,
+                    },
+                };
+                choices.try_push(choice).map_err(|e| limit_error(&e))?;
+            }
+            Ok(choices.into_vec())
+        })
+    })?
 }
 
 /// Returns where the widgets of field `id` appear, in page order: the page
@@ -1178,41 +1186,43 @@ pub fn form_field_widgets(
     document: &_Document,
     id: Id,
 ) -> PyResult<Vec<(Id, Id, u32)>> {
-    py.detach(|| {
-        let (version, index, budget) = index(document)?;
-        let form = memoized_at(document, &version, &budget)?;
-        let field = form.field(id).ok_or_else(|| stale(id))?;
-        let mut widgets = HashSet::new();
-        for &widget in &field.widgets {
-            insert_set(&mut widgets, widget, &budget)?;
-        }
-        let mut reads = Reads::new(&version, &budget);
-        let mut out = BudgetVec::new(&budget);
-        for page in index.pages() {
-            budget.poll().map_err(|e| limit_error(&e))?;
-            let Some(object) = page.object() else {
-                continue;
-            };
-            let Some(Value::Array(items)) = read(&mut reads, page.dict().get("Annots"))? else {
-                continue;
-            };
-            budget
-                .check(LimitCode::AnnotationCount, items.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            for (at, item) in items.iter().enumerate() {
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, index, budget) = index(document)?;
+            let form = memoized_at(document, &version, &budget)?;
+            let field = form.field(id).ok_or_else(|| stale(id))?;
+            let mut widgets = HashSet::new();
+            for &widget in &field.widgets {
+                insert_set(&mut widgets, widget, &budget)?;
+            }
+            let mut reads = Reads::new(&version, &budget);
+            let mut out = BudgetVec::new(&budget);
+            for page in index.pages() {
                 budget.poll().map_err(|e| limit_error(&e))?;
-                if let Value::Reference(reference) = item
-                    && let Some((actual, _)) = object_location(&mut reads, *reference)?
-                    && widgets.contains(&actual)
-                {
-                    let at = u32::try_from(at).unwrap_or(u32::MAX);
-                    out.try_push((self::id(object), actual, at))
-                        .map_err(|e| limit_error(&e))?;
+                let Some(object) = page.object() else {
+                    continue;
+                };
+                let Some(Value::Array(items)) = read(&mut reads, page.dict().get("Annots"))? else {
+                    continue;
+                };
+                budget
+                    .check(LimitCode::AnnotationCount, items.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                for (at, item) in items.iter().enumerate() {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    if let Value::Reference(reference) = item
+                        && let Some((actual, _)) = object_location(&mut reads, *reference)?
+                        && widgets.contains(&actual)
+                    {
+                        let at = u32::try_from(at).unwrap_or(u32::MAX);
+                        out.try_push((self::id(object), actual, at))
+                            .map_err(|e| limit_error(&e))?;
+                    }
                 }
             }
-        }
-        Ok(out.into_vec())
-    })
+            Ok(out.into_vec())
+        })
+    })?
 }
 
 /// A widget as a handle reads it: its position in the page's `/Annots`;
@@ -1297,41 +1307,46 @@ pub fn widget_list(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<WidgetRecord>>> {
-    py.detach(|| {
-        let (version, page_index, budget) = crate::pages::index(document)?;
-        let Some(annots) = Annots::read(
-            Arc::clone(&version),
-            page_index,
-            &budget,
-            number,
-            generation,
-        )?
-        else {
-            return Ok(None);
-        };
-        let form = memoized_at(document, &version, &budget)?;
-        let mut records = BudgetVec::new(&budget);
-        let mut reads = Reads::new(&version, &budget);
-        let mut totals = (0, 0);
-        for (index, item) in annots.items.iter().enumerate() {
-            let Some((id, dict)) = annots.entry(item)? else {
-                continue;
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, page_index, budget) = crate::pages::index(document)?;
+            let Some(annots) = Annots::read(
+                Arc::clone(&version),
+                page_index,
+                &budget,
+                number,
+                generation,
+            )?
+            else {
+                return Ok(None);
             };
-            let id = if id == (0, 0) {
-                id
-            } else {
-                let Some((actual, _)) = object_location(&mut reads, Reference::new(id.0, id.1))?
-                else {
+            let form = memoized_at(document, &version, &budget)?;
+            let mut records = BudgetVec::new(&budget);
+            let mut reads = Reads::new(&version, &budget);
+            let mut totals = (0, 0);
+            for (index, item) in annots.items.iter().enumerate() {
+                let Some((id, dict)) = annots.entry(item)? else {
                     continue;
                 };
-                actual
-            };
-            if let Some(record) = widget(&annots, &form, index, id, &dict, &mut totals, &budget)? {
-                records.try_push(record).map_err(|e| limit_error(&e))?;
+                let id = if id == (0, 0) {
+                    id
+                } else {
+                    let Some((actual, _)) =
+                        object_location(&mut reads, Reference::new(id.0, id.1))?
+                    else {
+                        continue;
+                    };
+                    actual
+                };
+                if let Some(record) =
+                    widget(&annots, &form, index, id, &dict, &mut totals, &budget)?
+                {
+                    records.try_push(record).map_err(|e| limit_error(&e))?;
+                }
             }
-        }
-        Ok(Some(records.into_vec()))
-    })
+            Ok(Some(records.into_vec()))
+        })
+    })?
 }
 
 /// Locate the same widget after its annotation reference changes through an alias.
@@ -1392,27 +1407,29 @@ pub fn widget_read(
     index: u32,
     id: Id,
 ) -> PyResult<Option<WidgetRecord>> {
-    py.detach(|| {
-        let (version, page_index, budget) = crate::pages::index(document)?;
-        let Some(annots) = Annots::read(
-            Arc::clone(&version),
-            page_index,
-            &budget,
-            number,
-            generation,
-        )?
-        else {
-            return Ok(None);
-        };
-        let mut reads = Reads::new(&version, &budget);
-        let (position, dict) = find_widget(&annots, index, id, &mut reads)?;
-        let form = memoized_at(document, &version, &budget)?;
-        widget(&annots, &form, position, id, &dict, &mut (0, 0), &budget)?
-            .map(Some)
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!("annotation {} is no longer a widget", id.0))
-            })
-    })
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, page_index, budget) = crate::pages::index(document)?;
+            let Some(annots) = Annots::read(
+                Arc::clone(&version),
+                page_index,
+                &budget,
+                number,
+                generation,
+            )?
+            else {
+                return Ok(None);
+            };
+            let mut reads = Reads::new(&version, &budget);
+            let (position, dict) = find_widget(&annots, index, id, &mut reads)?;
+            let form = memoized_at(document, &version, &budget)?;
+            widget(&annots, &form, position, id, &dict, &mut (0, 0), &budget)?
+                .map(Some)
+                .ok_or_else(|| {
+                    StaleObjectError::new_err(format!("annotation {} is no longer a widget", id.0))
+                })
+        })
+    })?
 }
 
 /// Where the form's `/Fields` array is written: as an object of its own,
@@ -1530,14 +1547,16 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> PyResult<Vec<Group>> {
 /// made. Viewers and the walk otherwise see only one of them.
 #[pyfunction]
 pub fn form_repair_radio_groups(py: Python<'_>, document: &_Document) -> PyResult<u32> {
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = repair_radio_groups(transaction, budget);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = repair_radio_groups(transaction, budget);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResult<u32> {
@@ -1842,21 +1861,23 @@ pub fn form_field_fill(
     value: &Bound<'_, PyAny>,
     draw: bool,
 ) -> PyResult<()> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let value = FillValue::read(value, budget)?;
-        let savepoint = transaction.savepoint();
-        let result = fill(transaction, id, &value, budget, cache, draft, draw);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let value = FillValue::read(value, budget)?;
+            let savepoint = transaction.savepoint();
+            let result = fill(transaction, id, &value, budget, cache, draft, draw);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 fn fill(
@@ -1908,25 +1929,27 @@ pub fn form_field_draw_face(
     face: &_Font,
     font: Option<(u32, HashMap<u32, String>)>,
 ) -> PyResult<Vec<(u32, String)>> {
-    let Some(face) = face.embedded() else {
-        return Err(PdfError::new_err(
-            "form appearances draw an OpenType face, not a Standard 14 font",
-        ));
-    };
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = draw_face(transaction, id, face, font.as_ref(), budget, cache, draft);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        let Some(face) = face.embedded() else {
+            return Err(PdfError::new_err(
+                "form appearances draw an OpenType face, not a Standard 14 font",
+            ));
+        };
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = draw_face(transaction, id, face, font.as_ref(), budget, cache, draft);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 fn draw_face(
@@ -2404,13 +2427,15 @@ pub fn form_set_need_appearances(
     document: &_Document,
     value: bool,
 ) -> PyResult<()> {
-    document.edit(py, |transaction, budget| {
-        if set_need_appearances(transaction, value, budget)? {
-            Ok(())
-        } else {
-            Err(PdfError::new_err("the document has no interactive form"))
-        }
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            if set_need_appearances(transaction, value, budget)? {
+                Ok(())
+            } else {
+                Err(PdfError::new_err("the document has no interactive form"))
+            }
+        })
+    })?
 }
 
 /// Reads field `id`'s label (`/TU`), maximum length (inherited `/MaxLen`,
@@ -2422,46 +2447,50 @@ pub fn form_field_details(
     document: &_Document,
     id: Id,
 ) -> PyResult<(Option<String>, Option<i64>, Option<String>)> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        memoized_at(document, &version, &budget)?
-            .field(id)
-            .ok_or_else(|| stale(id))?;
-        let mut reads = Reads::new(&version, &budget);
-        let mut totals = (0, 0);
-        let field = object(&mut reads, id)?;
-        let label = match field.as_deref() {
-            Some(Value::Dict(dict)) => match own(&mut reads, dict, "TU")? {
-                Some(label) => text(
-                    &mut reads,
-                    label,
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            memoized_at(document, &version, &budget)?
+                .field(id)
+                .ok_or_else(|| stale(id))?;
+            let mut reads = Reads::new(&version, &budget);
+            let mut totals = (0, 0);
+            let field = object(&mut reads, id)?;
+            let label = match field.as_deref() {
+                Some(Value::Dict(dict)) => match own(&mut reads, dict, "TU")? {
+                    Some(label) => text(
+                        &mut reads,
+                        label,
+                        &mut totals,
+                        MAX_VALUE_BYTES,
+                        "field label",
+                    )?,
+                    None => None,
+                },
+                _ => None,
+            };
+            let length = inherited(&mut reads, id, "MaxLen")?;
+            let max_length = match read(&mut reads, length.as_ref())? {
+                Some(Value::Integer(length)) if length >= 0 => Some(length),
+                _ => None,
+            };
+            let default = inherited(&mut reads, id, "DV")?;
+            let default = match read(&mut reads, default.as_ref())? {
+                Some(Value::Name(name)) => {
+                    Some(String::from_utf8_lossy(name.as_bytes()).into_owned())
+                }
+                Some(Value::String(encoded)) => Some(decode(
+                    &encoded,
                     &mut totals,
                     MAX_VALUE_BYTES,
-                    "field label",
-                )?,
-                None => None,
-            },
-            _ => None,
-        };
-        let length = inherited(&mut reads, id, "MaxLen")?;
-        let max_length = match read(&mut reads, length.as_ref())? {
-            Some(Value::Integer(length)) if length >= 0 => Some(length),
-            _ => None,
-        };
-        let default = inherited(&mut reads, id, "DV")?;
-        let default = match read(&mut reads, default.as_ref())? {
-            Some(Value::Name(name)) => Some(String::from_utf8_lossy(name.as_bytes()).into_owned()),
-            Some(Value::String(encoded)) => Some(decode(
-                &encoded,
-                &mut totals,
-                MAX_VALUE_BYTES,
-                "field default value",
-                &budget,
-            )?),
-            _ => None,
-        };
-        Ok((label, max_length, default))
-    })
+                    "field default value",
+                    &budget,
+                )?),
+                _ => None,
+            };
+            Ok((label, max_length, default))
+        })
+    })?
 }
 
 /// The `/Ff` bits that decide a field's kind, which an edit keeps: radio,
@@ -2573,21 +2602,23 @@ pub fn form_field_edit(
     id: Id,
     edit: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let edit = FieldEdit::read(edit, budget)?;
-        let savepoint = transaction.savepoint();
-        let result = edit_field(transaction, id, &edit, budget, cache, draft);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let edit = FieldEdit::read(edit, budget)?;
+            let savepoint = transaction.savepoint();
+            let result = edit_field(transaction, id, &edit, budget, cache, draft);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 /// Returns the key of a field property that an edit can remove.
@@ -3021,41 +3052,43 @@ pub fn widget_add(
     generation: u16,
     spec: &Bound<'_, PyAny>,
 ) -> PyResult<Option<(Id, u32)>> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let spec = FieldSpec::read(spec, budget)?;
-            budget
-                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                .map_err(|e| limit_error(&e))?;
-            if !matches!(
-                annots.resolved(annots.page().dict().get("Annots"))?,
-                None | Some(Value::Array(_))
-            ) {
-                return Err(PdfError::new_err("the page's /Annots is not an array"));
-            }
-            let (widget, field) = spec.dictionaries(annots, budget)?;
-            let index = u32::try_from(annots.items.len()).unwrap_or(u32::MAX);
-            let id = add_widget(
-                transaction,
-                annots,
-                &spec,
-                (widget, field),
-                budget,
-                (cache, draft),
-            )?;
-            Ok((id, index))
-        },
-    )
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let spec = FieldSpec::read(spec, budget)?;
+                budget
+                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                    .map_err(|e| limit_error(&e))?;
+                if !matches!(
+                    annots.resolved(annots.page().dict().get("Annots"))?,
+                    None | Some(Value::Array(_))
+                ) {
+                    return Err(PdfError::new_err("the page's /Annots is not an array"));
+                }
+                let (widget, field) = spec.dictionaries(annots, budget)?;
+                let index = u32::try_from(annots.items.len()).unwrap_or(u32::MAX);
+                let id = add_widget(
+                    transaction,
+                    annots,
+                    &spec,
+                    (widget, field),
+                    budget,
+                    (cache, draft),
+                )?;
+                Ok((id, index))
+            },
+        )
+    })?
 }
 
 fn add_widget(
@@ -4150,58 +4183,60 @@ pub fn widget_remove(
     generation: u16,
     handles: Vec<(u32, Id)>,
 ) -> PyResult<bool> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    let removed = editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            budget
-                .check(LimitCode::AnnotationCount, handles.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            let mut positions = BudgetVec::new(budget);
-            let mut widgets = BudgetVec::new(budget);
-            for &(index, handle) in &handles {
-                let (position, dict) = annots.find(index, handle)?;
-                if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
-                    return Err(StaleObjectError::new_err(format!(
-                        "annotation {} is no longer a widget",
-                        handle.0
-                    )));
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        let removed = editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                budget
+                    .check(LimitCode::AnnotationCount, handles.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                let mut positions = BudgetVec::new(budget);
+                let mut widgets = BudgetVec::new(budget);
+                for &(index, handle) in &handles {
+                    let (position, dict) = annots.find(index, handle)?;
+                    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                        return Err(StaleObjectError::new_err(format!(
+                            "annotation {} is no longer a widget",
+                            handle.0
+                        )));
+                    }
+                    if handle == (0, 0) {
+                        positions.try_push(position)
+                    } else {
+                        widgets.try_push(handle)
+                    }
+                    .map_err(|e| limit_error(&e))?;
                 }
-                if handle == (0, 0) {
-                    positions.try_push(position)
-                } else {
-                    widgets.try_push(handle)
+                let mut positions = positions.into_vec();
+                let mut widgets = widgets.into_vec();
+                positions.sort_unstable();
+                positions.dedup();
+                widgets.sort_unstable();
+                widgets.dedup();
+                if positions.is_empty() && widgets.is_empty() {
+                    return Ok(());
                 }
-                .map_err(|e| limit_error(&e))?;
-            }
-            let mut positions = positions.into_vec();
-            let mut widgets = widgets.into_vec();
-            positions.sort_unstable();
-            positions.dedup();
-            widgets.sort_unstable();
-            widgets.dedup();
-            if positions.is_empty() && widgets.is_empty() {
-                return Ok(());
-            }
-            remove_widgets(
-                transaction,
-                annots,
-                &positions,
-                &widgets,
-                budget,
-                (cache, draft),
-            )
-        },
-    )?;
-    Ok(removed.is_some())
+                remove_widgets(
+                    transaction,
+                    annots,
+                    &positions,
+                    &widgets,
+                    budget,
+                    (cache, draft),
+                )
+            },
+        )?;
+        Ok(removed.is_some())
+    })?
 }
 
 /// Implements [`widget_remove`] in its transaction, for the sorted
@@ -4305,91 +4340,93 @@ pub fn flatten(
     annotations: bool,
     widgets: bool,
 ) -> PyResult<bool> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = (|| {
-            let before = base(transaction, draft);
-            let version = transaction.snapshot();
-            let index =
-                PageIndex::memoized(&document.draft_pages, &version, budget).map_err(store)?;
-            let targets = match page {
-                Some((number, generation)) => {
-                    match index.index_of(Reference::new(number, generation)) {
-                        Some(at) => at..at + 1,
-                        None => return Ok(false),
+    crate::errors::boundary(|| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = (|| {
+                let before = base(transaction, draft);
+                let version = transaction.snapshot();
+                let index =
+                    PageIndex::memoized(&document.draft_pages, &version, budget).map_err(store)?;
+                let targets = match page {
+                    Some((number, generation)) => {
+                        match index.index_of(Reference::new(number, generation)) {
+                            Some(at) => at..at + 1,
+                            None => return Ok(false),
+                        }
                     }
+                    None => 0..index.pages().len(),
+                };
+                if !annotations && !widgets {
+                    return Ok(true);
                 }
-                None => 0..index.pages().len(),
-            };
-            if !annotations && !widgets {
-                return Ok(true);
-            }
-            let selection = Selection {
-                annotations,
-                widgets,
-            };
-            // Annotations without an appearance are drawn as a render
-            // draws them.
-            let mut missing = if annotations {
-                let objects = synthesized(&version, &index, budget).map_err(store)?;
-                Missing::new(objects, budget).map_err(store)?
-            } else {
-                Missing::default()
-            };
-            let mut flattened = BudgetVec::new(budget);
-            for at in targets {
-                budget.poll().map_err(|e| limit_error(&e))?;
-                let annots = Annots::at(Arc::clone(&version), Arc::clone(&index), budget, at)?;
-                let Some(plan) =
-                    flattening::plan(&annots.reader(), &annots.items, selection).map_err(store)?
-                else {
-                    continue;
+                let selection = Selection {
+                    annotations,
+                    widgets,
                 };
-                let Some(object) = annots.page().object() else {
-                    return Err(PdfError::new_err("the page is not an indirect object"));
+                // Annotations without an appearance are drawn as a render
+                // draws them.
+                let mut missing = if annotations {
+                    let objects = synthesized(&version, &index, budget).map_err(store)?;
+                    Missing::new(objects, budget).map_err(store)?
+                } else {
+                    Missing::default()
                 };
-                if page.is_some() {
-                    for &widget in &plan.widgets {
-                        flattened
-                            .try_push(id(widget))
-                            .map_err(|e| limit_error(&e))?;
+                let mut flattened = BudgetVec::new(budget);
+                for at in targets {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    let annots = Annots::at(Arc::clone(&version), Arc::clone(&index), budget, at)?;
+                    let Some(plan) = flattening::plan(&annots.reader(), &annots.items, selection)
+                        .map_err(store)?
+                    else {
+                        continue;
+                    };
+                    let Some(object) = annots.page().object() else {
+                        return Err(PdfError::new_err("the page is not an indirect object"));
+                    };
+                    if page.is_some() {
+                        for &widget in &plan.widgets {
+                            flattened
+                                .try_push(id(widget))
+                                .map_err(|e| limit_error(&e))?;
+                        }
                     }
+                    flattening::draw(
+                        transaction,
+                        object.number(),
+                        annots.page(),
+                        plan,
+                        &mut missing,
+                        budget,
+                    )
+                    .map_err(store)?;
                 }
-                flattening::draw(
-                    transaction,
-                    object.number(),
-                    annots.page(),
-                    plan,
-                    &mut missing,
-                    budget,
-                )
-                .map_err(store)?;
+                if !widgets {
+                } else if page.is_none() {
+                    remove_form(transaction, budget)?;
+                } else {
+                    let mut flattened = flattened.into_vec();
+                    flattened.sort_unstable();
+                    flattened.dedup();
+                    let index = cache.get(&before, budget)?;
+                    let (fields, detached, _) = leaving(&index.topology.form, &flattened, budget)?;
+                    unfield(transaction, &fields, &detached, budget)?;
+                }
+                Ok(true)
+            })();
+            if result.is_err() {
+                transaction.rollback(savepoint);
             }
-            if !widgets {
-            } else if page.is_none() {
-                remove_form(transaction, budget)?;
-            } else {
-                let mut flattened = flattened.into_vec();
-                flattened.sort_unstable();
-                flattened.dedup();
-                let index = cache.get(&before, budget)?;
-                let (fields, detached, _) = leaving(&index.topology.form, &flattened, budget)?;
-                unfield(transaction, &fields, &detached, budget)?;
-            }
-            Ok(true)
-        })();
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+            result
+        })
+    })?
 }
 
 /// Takes the interactive form out of the catalog.
@@ -4422,41 +4459,43 @@ fn remove_form(transaction: &mut Transaction, budget: &Budget) -> PyResult<()> {
 /// kids.
 #[pyfunction]
 pub fn form_field_remove(py: Python<'_>, document: &_Document, field: Id) -> PyResult<()> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = (|| {
-            let before = base(transaction, draft);
-            let index = cache.get(&before, budget)?;
-            let found = index
-                .topology
-                .form
-                .field(field)
-                .ok_or_else(|| stale(field))?;
-            let mut widgets = BudgetVec::new(budget);
-            for &widget in &found.widgets {
-                widgets.try_push(widget).map_err(|e| limit_error(&e))?;
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = (|| {
+                let before = base(transaction, draft);
+                let index = cache.get(&before, budget)?;
+                let found = index
+                    .topology
+                    .form
+                    .field(field)
+                    .ok_or_else(|| stale(field))?;
+                let mut widgets = BudgetVec::new(budget);
+                for &widget in &found.widgets {
+                    widgets.try_push(widget).map_err(|e| limit_error(&e))?;
+                }
+                let mut widgets = widgets.into_vec();
+                widgets.sort_unstable();
+                widgets.dedup();
+                let version = transaction.snapshot();
+                let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
+                    .map_err(|e| store_error(&e))?;
+                unlist(transaction, (&version, &pages), &widgets, (0, &[]), budget)?;
+                let holder = form_object(transaction, budget)?;
+                remove_field(transaction, holder, field, budget)
+            })();
+            if result.is_err() {
+                transaction.rollback(savepoint);
             }
-            let mut widgets = widgets.into_vec();
-            widgets.sort_unstable();
-            widgets.dedup();
-            let version = transaction.snapshot();
-            let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
-                .map_err(|e| store_error(&e))?;
-            unlist(transaction, (&version, &pages), &widgets, (0, &[]), budget)?;
-            let holder = form_object(transaction, budget)?;
-            remove_field(transaction, holder, field, budget)
-        })();
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+            result
+        })
+    })?
 }
 
 /// Takes the sorted `widgets` off every page of `pages`, a version and its
@@ -4610,12 +4649,14 @@ fn detach(
 /// Returns how many form walks the document's memos reused and how many
 /// they computed, for tests.
 #[pyfunction]
-pub fn form_walk_counts(document: &_Document) -> (u64, u64) {
-    let (form, drafts) = (document.form.stats(), document.draft_form.stats());
-    (
-        form.hits + drafts.hits,
-        form.computations + drafts.computations,
-    )
+pub fn form_walk_counts(document: &_Document) -> PyResult<(u64, u64)> {
+    crate::errors::boundary(|| {
+        let (form, drafts) = (document.form.stats(), document.draft_form.stats());
+        (
+            form.hits + drafts.hits,
+            form.computations + drafts.computations,
+        )
+    })
 }
 
 /// Whether a widget shows a normal text appearance or a selected button
@@ -6233,54 +6274,56 @@ pub fn widget_style(
     index: u32,
     id: Id,
 ) -> PyResult<Option<WidgetStyle>> {
-    let (version, pages, budget) = crate::pages::index(document)?;
-    py.detach(|| {
-        let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
-            return Ok(None);
-        };
-        let (_, dict) = annots.find(index, id)?;
-        if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
-            return Err(StaleObjectError::new_err(format!(
-                "annotation {} is no longer a widget",
-                id.0
-            )));
-        }
-        let mark = match annots.resolved(dict.get("MK"))? {
-            Some(Value::Dict(mark)) => mark,
-            _ => Dict::new(),
-        };
-        let caption = match annots.resolved(mark.get("CA"))? {
-            Some(Value::String(caption)) => {
-                let caption = widgets::text_string(caption.as_bytes());
-                if caption.len() > MAX_INPUT_BYTES {
-                    return Err(limit(format!(
-                        "a widget caption exceeds the {MAX_INPUT_BYTES}-byte safety limit"
-                    )));
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = crate::pages::index(document)?;
+        py.detach(|| {
+            let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
+                return Ok(None);
+            };
+            let (_, dict) = annots.find(index, id)?;
+            if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                return Err(StaleObjectError::new_err(format!(
+                    "annotation {} is no longer a widget",
+                    id.0
+                )));
+            }
+            let mark = match annots.resolved(dict.get("MK"))? {
+                Some(Value::Dict(mark)) => mark,
+                _ => Dict::new(),
+            };
+            let caption = match annots.resolved(mark.get("CA"))? {
+                Some(Value::String(caption)) => {
+                    let caption = widgets::text_string(caption.as_bytes());
+                    if caption.len() > MAX_INPUT_BYTES {
+                        return Err(limit(format!(
+                            "a widget caption exceeds the {MAX_INPUT_BYTES}-byte safety limit"
+                        )));
+                    }
+                    Some(caption)
                 }
-                Some(caption)
-            }
-            _ => None,
-        };
-        let rotation = match annots.resolved(mark.get("R"))? {
-            Some(Value::Integer(rotation)) => rotation.rem_euclid(360),
-            _ => 0,
-        };
-        let colors = (
-            annots.color(&mark, "BC")?,
-            annots.color(&mark, "BG")?,
-            caption,
-            rotation,
-        );
-        let reader = annots.reader();
-        let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
-            Some(da) => {
-                let font = widget_text_font(&annots, &da.font)?;
-                Some((da.font, da.size, da.color, font))
-            }
-            None => None,
-        };
-        Ok(Some((colors, annots.border(&dict)?, appearance)))
-    })
+                _ => None,
+            };
+            let rotation = match annots.resolved(mark.get("R"))? {
+                Some(Value::Integer(rotation)) => rotation.rem_euclid(360),
+                _ => 0,
+            };
+            let colors = (
+                annots.color(&mark, "BC")?,
+                annots.color(&mark, "BG")?,
+                caption,
+                rotation,
+            );
+            let reader = annots.reader();
+            let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
+                Some(da) => {
+                    let font = widget_text_font(&annots, &da.font)?;
+                    Some((da.font, da.size, da.color, font))
+                }
+                None => None,
+            };
+            Ok(Some((colors, annots.border(&dict)?, appearance)))
+        })
+    })?
 }
 
 /// A value read without copying its input-sized contents.
@@ -6579,56 +6622,58 @@ pub fn widget_edit(
     id: Id,
     edit: &Bound<'_, PyAny>,
 ) -> PyResult<Option<Id>> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let edit = WidgetEdit::read(edit, budget)?;
-            let before = base(transaction, draft);
-            let (position, mut dict) = annots.find(index, id)?;
-            if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
-                return Err(StaleObjectError::new_err(format!(
-                    "annotation {} is no longer a widget",
-                    id.0
-                )));
-            }
-            // The font resolves through the form's /DR, as a created
-            // field's does, so that a name that another font holds there
-            // is not drawn in that font.
-            let font_resource = match edit.font_resource()? {
-                Some((preferred, base)) => {
-                    let holder = form_object(transaction, budget)?;
-                    Some(register_standard_font(
-                        transaction,
-                        holder,
-                        preferred,
-                        base,
-                        budget,
-                    )?)
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let edit = WidgetEdit::read(edit, budget)?;
+                let before = base(transaction, draft);
+                let (position, mut dict) = annots.find(index, id)?;
+                if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                    return Err(StaleObjectError::new_err(format!(
+                        "annotation {} is no longer a widget",
+                        id.0
+                    )));
                 }
-                None => None,
-            };
-            edit.apply(annots, &mut dict, font_resource, budget)?;
-            annots.write(
-                transaction,
-                position,
-                false,
-                dict,
-                |transaction, reference, dict, _, budget| {
-                    restyle(transaction, reference, dict, budget, (cache, before))?;
-                    Ok(false)
-                },
-            )
-        },
-    )
+                // The font resolves through the form's /DR, as a created
+                // field's does, so that a name that another font holds there
+                // is not drawn in that font.
+                let font_resource = match edit.font_resource()? {
+                    Some((preferred, base)) => {
+                        let holder = form_object(transaction, budget)?;
+                        Some(register_standard_font(
+                            transaction,
+                            holder,
+                            preferred,
+                            base,
+                            budget,
+                        )?)
+                    }
+                    None => None,
+                };
+                edit.apply(annots, &mut dict, font_resource, budget)?;
+                annots.write(
+                    transaction,
+                    position,
+                    false,
+                    dict,
+                    |transaction, reference, dict, _, budget| {
+                        restyle(transaction, reference, dict, budget, (cache, before))?;
+                        Ok(false)
+                    },
+                )
+            },
+        )
+    })?
 }
 
 /// Writes widget `reference`, `dict`, draws it again as [`widget_edit`]

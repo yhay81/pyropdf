@@ -338,19 +338,21 @@ pub fn encode_ccitt_g4<'py>(
     height: usize,
     limit: usize,
 ) -> PyResult<Option<Bound<'py, PyBytes>>> {
-    if width == 0 || height == 0 || (width as u64) * (height as u64) > MAX_PIXELS {
-        return Err(PyValueError::new_err(format!(
-            "a {width} by {height} image is empty or has more than {MAX_PIXELS} pixels"
-        )));
-    }
-    if data.len() != width.div_ceil(8) * height {
-        return Err(PyValueError::new_err(format!(
-            "{} bytes are not the samples of a {width} by {height} bitonal image",
-            data.len()
-        )));
-    }
-    let encoded = py.detach(|| encode_g4(data, width, height, limit));
-    Ok(encoded.map(|bytes| PyBytes::new(py, &bytes)))
+    crate::errors::boundary(|| {
+        if width == 0 || height == 0 || (width as u64) * (height as u64) > MAX_PIXELS {
+            return Err(PyValueError::new_err(format!(
+                "a {width} by {height} image is empty or has more than {MAX_PIXELS} pixels"
+            )));
+        }
+        if data.len() != width.div_ceil(8) * height {
+            return Err(PyValueError::new_err(format!(
+                "{} bytes are not the samples of a {width} by {height} bitonal image",
+                data.len()
+            )));
+        }
+        let encoded = py.detach(|| encode_g4(data, width, height, limit));
+        Ok(encoded.map(|bytes| PyBytes::new(py, &bytes)))
+    })?
 }
 
 #[cfg(test)]

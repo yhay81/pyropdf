@@ -68,8 +68,8 @@ mod _core {
     };
     #[pymodule_export]
     use super::errors::{
-        DocumentClosedError, EncryptedDocumentError, LimitError, MalformedPdfError, OcrError,
-        PasswordError, PdfError, StaleObjectError,
+        DocumentClosedError, EncryptedDocumentError, InternalError, LimitError, MalformedPdfError,
+        OcrError, PasswordError, PdfError, StaleObjectError,
     };
     #[pymodule_export]
     use super::fax::encode_ccitt_g4;
@@ -85,6 +85,8 @@ mod _core {
         form_fields, form_repair_radio_groups, form_set_need_appearances, form_walk_counts,
         widget_add, widget_edit, widget_list, widget_read, widget_remove, widget_style,
     };
+    #[pymodule_export]
+    use super::history::testing::{_test_arm_panic_settler, _test_mark_for_panic, _test_panic};
     #[pymodule_export]
     use super::history::{
         OperationBudget, abort_canvas, begin_canvas, begin_operation, begin_transaction,

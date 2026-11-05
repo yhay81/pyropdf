@@ -85,6 +85,8 @@ fn copy_dacl(source: &Path, destination: &Path) -> io::Result<()> {
 /// Copies the DACL of `source` to `destination`, with the GIL released.
 #[pyfunction]
 pub fn _copy_windows_dacl(py: Python<'_>, source: PathBuf, destination: PathBuf) -> PyResult<()> {
-    py.detach(|| copy_dacl(&source, &destination))?;
-    Ok(())
+    crate::errors::boundary(|| {
+        py.detach(|| copy_dacl(&source, &destination))?;
+        Ok(())
+    })?
 }

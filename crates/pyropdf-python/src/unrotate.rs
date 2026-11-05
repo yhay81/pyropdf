@@ -338,178 +338,181 @@ pub fn remove_page_rotation(
     number: u32,
     generation: u16,
 ) -> PyResult<bool> {
-    document.edit(py, |transaction, budget| {
-        let version = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
-            .map_err(|e| store_error(&e))?;
-        let Some(at) = index.index_of(Reference::new(number, generation)) else {
-            return Ok(false);
-        };
-        let page = &index.pages()[at];
-        let turn = rotation(page.rotate());
-        if turn == 0 {
-            return Ok(true);
-        }
-        let boxes = user_boxes(page);
-        let mut state = Turn {
-            version: &version,
-            budget,
-            matrix: unrotation(boxes[0], turn),
-            turn,
-            copies: HashMap::new(),
-            unused: Vec::new(),
-        };
-        charge_copy(CopyPart::Dict(page.dict()), budget)?;
-        let mut dict = page.dict().clone();
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let version = transaction.snapshot();
+            let index = PageIndex::memoized(&document.draft_pages, &version, budget)
+                .map_err(|e| store_error(&e))?;
+            let Some(at) = index.index_of(Reference::new(number, generation)) else {
+                return Ok(false);
+            };
+            let page = &index.pages()[at];
+            let turn = rotation(page.rotate());
+            if turn == 0 {
+                return Ok(true);
+            }
+            let boxes = user_boxes(page);
+            let mut state = Turn {
+                version: &version,
+                budget,
+                matrix: unrotation(boxes[0], turn),
+                turn,
+                copies: HashMap::new(),
+                unused: Vec::new(),
+            };
+            charge_copy(CopyPart::Dict(page.dict()), budget)?;
+            let mut dict = page.dict().clone();
 
-        let others = index
-            .pages()
-            .iter()
-            .enumerate()
-            .filter(|&(other, _)| other != at)
-            .map(|(_, page)| page);
-        let mut listing = HashSet::new();
-        for other in others {
-            if let Some(object) = other.object() {
-                listing.insert(object.number());
+            let others = index
+                .pages()
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != at)
+                .map(|(_, page)| page);
+            let mut listing = HashSet::new();
+            for other in others {
+                if let Some(object) = other.object() {
+                    listing.insert(object.number());
+                }
+                if let Some(Value::Reference(array)) = other.dict().get("Annots") {
+                    listing.insert(array.number());
+                }
             }
-            if let Some(Value::Reference(array)) = other.dict().get("Annots") {
-                listing.insert(array.number());
+            let array = match dict.get("Annots") {
+                Some(Value::Reference(array)) => Some(*array),
+                _ => None,
+            };
+            if array.is_some_and(|array| listing.contains(&array.number())) {
+                return Err(PyValueError::new_err(
+                    "the page shares its /Annots array with another page",
+                ));
             }
-        }
-        let array = match dict.get("Annots") {
-            Some(Value::Reference(array)) => Some(*array),
-            _ => None,
-        };
-        if array.is_some_and(|array| listing.contains(&array.number())) {
-            return Err(PyValueError::new_err(
-                "the page shares its /Annots array with another page",
-            ));
-        }
-        let mut items = match state.resolved(dict.get("Annots"))? {
-            Some(Value::Array(items)) => items,
-            _ => Array::new(),
-        };
-        budget
-            .check(LimitCode::AnnotationCount, items.len() as u64)
-            .map_err(|e| limit_error(&e))?;
-        let references = crate::outline::references(document, transaction, budget)?;
-        let mut direct = false;
-        for item in items.iter_mut() {
-            budget.poll().map_err(|e| limit_error(&e))?;
-            match item {
-                &mut Value::Reference(reference) => {
-                    if references
-                        .referrers(reference.number())
-                        .iter()
-                        .any(|referrer| listing.contains(referrer))
-                    {
-                        return Err(PyValueError::new_err(format!(
-                            "annotation {} is listed by another page too",
-                            reference.number()
-                        )));
+            let mut items = match state.resolved(dict.get("Annots"))? {
+                Some(Value::Array(items)) => items,
+                _ => Array::new(),
+            };
+            budget
+                .check(LimitCode::AnnotationCount, items.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let references = crate::outline::references(document, transaction, budget)?;
+            let mut direct = false;
+            for item in items.iter_mut() {
+                budget.poll().map_err(|e| limit_error(&e))?;
+                match item {
+                    &mut Value::Reference(reference) => {
+                        if references
+                            .referrers(reference.number())
+                            .iter()
+                            .any(|referrer| listing.contains(referrer))
+                        {
+                            return Err(PyValueError::new_err(format!(
+                                "annotation {} is listed by another page too",
+                                reference.number()
+                            )));
+                        }
+                        let Some(Value::Dict(mut annotation)) =
+                            state.resolved(Some(&Value::Reference(reference)))?
+                        else {
+                            continue;
+                        };
+                        state.annotation(transaction, &mut annotation)?;
+                        transaction
+                            .write(reference.number(), &Value::Dict(annotation), budget)
+                            .map_err(|e| store_error(&e))?;
                     }
-                    let Some(Value::Dict(mut annotation)) =
-                        state.resolved(Some(&Value::Reference(reference)))?
-                    else {
-                        continue;
-                    };
-                    state.annotation(transaction, &mut annotation)?;
-                    transaction
-                        .write(reference.number(), &Value::Dict(annotation), budget)
-                        .map_err(|e| store_error(&e))?;
-                }
-                Value::Dict(annotation) => {
-                    state.annotation(transaction, annotation)?;
-                    direct = true;
-                }
-                _ => {}
-            }
-        }
-        if direct {
-            match array {
-                Some(array) => {
-                    transaction
-                        .write(array.number(), &Value::Array(items), budget)
-                        .map_err(|e| store_error(&e))?;
-                }
-                None => {
-                    dict.insert(Name::from("Annots"), Value::Array(items));
+                    Value::Dict(annotation) => {
+                        state.annotation(transaction, annotation)?;
+                        direct = true;
+                    }
+                    _ => {}
                 }
             }
-        }
+            if direct {
+                match array {
+                    Some(array) => {
+                        transaction
+                            .write(array.number(), &Value::Array(items), budget)
+                            .map_err(|e| store_error(&e))?;
+                    }
+                    None => {
+                        dict.insert(Name::from("Annots"), Value::Array(items));
+                    }
+                }
+            }
 
-        // The media and crop boxes may be inherited; the page sets its own.
-        dict.insert(
-            Name::from(BOXES[0]),
-            rect_value(mapped_rect(&state.matrix, boxes[0])),
-        );
-        if let Some(crop) = page.crop_box().and_then(rect) {
+            // The media and crop boxes may be inherited; the page sets its own.
             dict.insert(
-                Name::from(BOXES[1]),
-                rect_value(mapped_rect(&state.matrix, crop)),
+                Name::from(BOXES[0]),
+                rect_value(mapped_rect(&state.matrix, boxes[0])),
             );
-        }
-        for key in &BOXES[2..] {
-            if let Some(own) = state.resolved(dict.get(*key))?.as_ref().and_then(rect) {
+            if let Some(crop) = page.crop_box().and_then(rect) {
                 dict.insert(
-                    Name::from(*key),
-                    rect_value(mapped_rect(&state.matrix, own)),
+                    Name::from(BOXES[1]),
+                    rect_value(mapped_rect(&state.matrix, crop)),
                 );
             }
-        }
-        let contents = match state.resolved(dict.get("Contents"))? {
-            Some(Value::Array(items)) => items.iter().cloned().collect(),
-            Some(Value::Stream(_)) => dict.get("Contents").into_iter().cloned().collect(),
-            _ => Vec::new(),
-        };
-        if !contents.is_empty() {
-            if let Some(Value::Reference(old)) = dict.get("Contents")
-                && !contents.contains(&Value::Reference(*old))
-            {
-                state.unused.push(old.number());
+            for key in &BOXES[2..] {
+                if let Some(own) = state.resolved(dict.get(*key))?.as_ref().and_then(rect) {
+                    dict.insert(
+                        Name::from(*key),
+                        rect_value(mapped_rect(&state.matrix, own)),
+                    );
+                }
             }
-            let [a, b, c, d, e, f] = state.matrix.map(|value| value + 0.0);
-            let mut array = Array::new();
-            array.push(content(
-                transaction,
-                format!("q {a} {b} {c} {d} {e} {f} cm\n"),
-                budget,
-            )?);
-            for item in contents {
-                array.push(item);
-            }
-            array.push(content(transaction, "\nQ\n".to_owned(), budget)?);
-            dict.insert(Name::from("Contents"), Value::Array(array));
-        }
-        dict.insert(Name::from("Rotate"), Value::Integer(0));
-        // Destinations in the page's own direct annotations, then in every
-        // other object that names the page.
-        let page = Reference::new(number, generation);
-        state.retarget(dict.iter_mut().map(|(_, value)| value), page)?;
-        transaction
-            .write(number, &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))?;
-        let current = transaction.snapshot();
-        for &referrer in references.referrers(number) {
-            if referrer == number {
-                continue;
-            }
-            let Some(object) = current.get(referrer, budget).map_err(|e| store_error(&e))? else {
-                continue;
+            let contents = match state.resolved(dict.get("Contents"))? {
+                Some(Value::Array(items)) => items.iter().cloned().collect(),
+                Some(Value::Stream(_)) => dict.get("Contents").into_iter().cloned().collect(),
+                _ => Vec::new(),
             };
-            let mut value =
-                refs::copy_for_edit(object.value(), budget).map_err(|e| store_error(&e))?;
-            if state.retarget(std::iter::once(&mut value), page)? {
-                transaction
-                    .write(referrer, &value, budget)
-                    .map_err(|e| store_error(&e))?;
+            if !contents.is_empty() {
+                if let Some(Value::Reference(old)) = dict.get("Contents")
+                    && !contents.contains(&Value::Reference(*old))
+                {
+                    state.unused.push(old.number());
+                }
+                let [a, b, c, d, e, f] = state.matrix.map(|value| value + 0.0);
+                let mut array = Array::new();
+                array.push(content(
+                    transaction,
+                    format!("q {a} {b} {c} {d} {e} {f} cm\n"),
+                    budget,
+                )?);
+                for item in contents {
+                    array.push(item);
+                }
+                array.push(content(transaction, "\nQ\n".to_owned(), budget)?);
+                dict.insert(Name::from("Contents"), Value::Array(array));
             }
-        }
-        let unused = std::mem::take(&mut state.unused);
-        free(document, transaction, &unused, budget)?;
-        Ok(true)
-    })
+            dict.insert(Name::from("Rotate"), Value::Integer(0));
+            // Destinations in the page's own direct annotations, then in every
+            // other object that names the page.
+            let page = Reference::new(number, generation);
+            state.retarget(dict.iter_mut().map(|(_, value)| value), page)?;
+            transaction
+                .write(number, &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))?;
+            let current = transaction.snapshot();
+            for &referrer in references.referrers(number) {
+                if referrer == number {
+                    continue;
+                }
+                let Some(object) = current.get(referrer, budget).map_err(|e| store_error(&e))?
+                else {
+                    continue;
+                };
+                let mut value =
+                    refs::copy_for_edit(object.value(), budget).map_err(|e| store_error(&e))?;
+                if state.retarget(std::iter::once(&mut value), page)? {
+                    transaction
+                        .write(referrer, &value, budget)
+                        .map_err(|e| store_error(&e))?;
+                }
+            }
+            let unused = std::mem::take(&mut state.unused);
+            free(document, transaction, &unused, budget)?;
+            Ok(true)
+        })
+    })?
 }
 
 impl Turn<'_> {
