@@ -1,5 +1,5 @@
 # ruff: noqa: INP001, T201 - a script, not a package; it prints its progress.
-"""Install both engines from PyPI in environments of their own and compare them.
+"""Install both engines in environments of their own and compare them.
 
     python3 evidence/pymupdf-comparison/run.py
 
@@ -8,11 +8,14 @@ Each engine is installed from its published wheels into
 project and both run release builds. PyMuPDF is AGPL; it only runs here, as a
 separate program. The script runs ``bench.py`` with each environment over
 ``tests/assets/real_world`` and writes ``results/<platform>.md`` and the raw
-timings beside it.
+timings beside it. ``--pyropdf-wheel`` measures a local release-profile wheel
+instead, records its SHA-256, and writes a separate ``<platform>-checkout`` result.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
 import platform
 import subprocess
@@ -41,12 +44,12 @@ def _run(*command: str | Path) -> None:
     subprocess.run([str(part) for part in command], check=True, cwd=ROOT)  # noqa: S603 - fixed tools
 
 
-def _environment(engine: str) -> Path:
+def _environment(engine: str, wheel: Path | None = None) -> Path:
     """Install one engine's pinned release into its own environment; return its Python."""
-    env = TARGET / f"{engine}-env"
-    python = env / "bin" / "python"
+    env = TARGET / f"{engine}{'-checkout' if wheel else ''}-env"
+    python = env / ("Scripts/python.exe" if platform.system() == "Windows" else "bin/python")
     _run("uv", "venv", "--clear", "--quiet", "--python", PYTHON, env)
-    _run("uv", "pip", "install", "--quiet", "--python", python, ENGINES[engine])
+    _run("uv", "pip", "install", "--quiet", "--python", python, wheel or ENGINES[engine])
     return python
 
 
@@ -74,12 +77,21 @@ def _per_document(pymupdf: dict, pyropdf: dict) -> list[str]:
 
 def main() -> None:
     """Run both engines and write the comparison."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--pyropdf-wheel", type=Path, help="Use a local release-profile wheel")
+    args = parser.parse_args()
+    wheel = args.pyropdf_wheel.resolve() if args.pyropdf_wheel else None
+    if wheel is not None and (not wheel.is_file() or wheel.suffix != ".whl"):
+        parser.error("--pyropdf-wheel must name an existing wheel")
     raw: dict[str, dict] = {}
     for engine in ENGINES:
         out = TARGET / f"{engine}.json"
-        _run(_environment(engine), HERE / "bench.py", engine, out, *CORPUS)
+        _run(_environment(engine, wheel if engine == "pyropdf" else None), HERE / "bench.py", engine, out, *CORPUS)
         raw[engine] = json.loads(out.read_text(encoding="utf-8"))
     system = f"{platform.system().lower()}-{platform.machine().lower()}"
+    if wheel is not None:
+        system += "-checkout"
+        raw["artifact"] = {"wheel": wheel.name, "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest()}
     results = HERE / "results"
     results.mkdir(exist_ok=True)
     (results / f"{system}.json").write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
@@ -100,6 +112,16 @@ def main() -> None:
         *_per_document(raw["pymupdf"], raw["pyropdf"]),
         "",
     ]
+    if wheel is not None:
+        lines.extend(
+            [
+                "## Local artifact",
+                "",
+                f"Wheel: `{wheel.name}`. SHA-256: `{raw['artifact']['sha256']}`.",
+                "Built separately in the release profile; rendering uses the public API defaults.",
+                "",
+            ]
+        )
     (results / f"{system}.md").write_text("\n".join(lines), encoding="utf-8")
     print("\n".join(lines))
 

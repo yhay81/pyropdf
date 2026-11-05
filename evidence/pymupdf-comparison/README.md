@@ -22,6 +22,27 @@ are the floor). Measured for #354.
 python3 evidence/pymupdf-comparison/run.py
 ```
 
+To measure a checkout, first build a wheel with `maturin build --release --locked`,
+then run the same comparison with that artifact:
+
+```bash
+python3 evidence/pymupdf-comparison/run.py --pyropdf-wheel /path/to/pyropdf.whl
+```
+
+Both environments use the installed Python 3.13 on Windows as well as Unix.
+Local-wheel results are written to `results/<platform>-checkout.json` and `.md`,
+including the wheel's SHA-256, without replacing the published-version baseline.
+Record the source commit and rendering defaults alongside those measurements.
+The runner uses the public rendering defaults; it does not enable hinting or
+glyph caching on the caller's behalf. Reusing the checkout result name replaces
+that checkout measurement, so preserve any result that should remain comparable.
+
+The [Windows remeasurement](results/remeasurement-windows.md) records a 0.2.2
+release-wheel comparison and a separate opt-in glyph-cache experiment.
+`cache_probe.py OUT` records every sample of that experiment, alternating
+option order. It does not change the shipped defaults or establish the
+1.5 rendering target; see the report's variability and quality limitations.
+
 PyMuPDF is AGPL. It runs only here, as a separate program in its own
 environment, and is never a dependency of pyropdf.
 
