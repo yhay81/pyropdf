@@ -154,6 +154,10 @@ enum FontEntry {
 impl WidgetAppearance {
     /// Writes the font and the form XObject of the appearance as new
     /// objects, and returns the form's reference.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "each key is a constant or the one font resource, so each dictionary holds six entries at most"
+    )]
     fn write(self, transaction: &mut Transaction, budget: &Budget) -> Result<Reference> {
         let mut dict = Dict::new();
         dict.insert(Name::from("Type"), Value::Name(Name::from("XObject")));
@@ -187,6 +191,10 @@ impl WidgetAppearance {
 
 /// Writes the font dictionary of Standard 14 font `base_font` as a new
 /// object and returns its reference.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each key is a constant, so the font holds four entries at most"
+)]
 fn standard_font(
     transaction: &mut Transaction,
     base_font: &str,
@@ -256,6 +264,10 @@ pub fn write(
         }
         Drawing::Drawn(drawn) => {
             let reference = drawn.write(transaction, budget)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the appearances grow by one entry at most"
+            )]
             appearances.insert(Name::from("N"), Value::Reference(reference));
         }
         Drawing::States(states) => {
@@ -268,8 +280,16 @@ pub fn write(
             };
             for (state, drawn) in states {
                 let reference = drawn.write(transaction, budget)?;
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "one entry per state drawn, and `button_states` grew the states through the budget"
+                )]
                 normal.insert(state, Value::Reference(reference));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the appearances grow by one entry at most"
+            )]
             appearances.insert(Name::from("N"), Value::Dict(normal));
         }
     }
@@ -284,6 +304,10 @@ pub fn write(
     if appearances.is_empty() {
         widget.remove("AP");
     } else {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the widget grows by one entry at most"
+        )]
         widget.insert(Name::from("AP"), Value::Dict(appearances));
     }
     transaction.write(number, &Value::Dict(widget), budget)?;
@@ -716,20 +740,24 @@ fn button_states(
         Some(Value::Name(state)) => state.clone(),
         _ => Name::from(OFF),
     };
-    let mut named = Vec::new();
+    let mut named = BudgetVec::new(reader.budget);
     if every {
         with_normal_states(reader, widget, |normal| -> Result<()> {
             for state in normal.keys() {
                 let size = state.as_bytes().len() as u64;
                 reader.budget.charge(LimitCode::MemorySize, size)?;
-                named.push(state.clone());
+                named.try_push(state.clone())?;
             }
             Ok(())
         })?
         .transpose()?;
     }
-    let mut states = Vec::new();
-    for state in named.into_iter().chain([Name::from(OFF), current]) {
+    let mut states = BudgetVec::new(reader.budget);
+    for state in named
+        .into_vec()
+        .into_iter()
+        .chain([Name::from(OFF), current])
+    {
         if states.iter().any(|(drawn, _)| *drawn == state) {
             continue;
         }
@@ -738,7 +766,7 @@ fn button_states(
         }
         let on = state.as_bytes() != OFF.as_bytes();
         let content = style.button(on, radio, reader.budget)?;
-        states.push((
+        states.try_push((
             state,
             WidgetAppearance {
                 content,
@@ -746,9 +774,9 @@ fn button_states(
                 matrix: style.matrix,
                 font: None,
             },
-        ));
+        ))?;
     }
-    Ok((!states.is_empty()).then_some(Drawing::States(states)))
+    Ok((!states.is_empty()).then(|| Drawing::States(states.into_vec())))
 }
 
 /// Reads the entries of [`KEYS`] for a widget's field: each from the
@@ -813,6 +841,10 @@ fn parent(
             )
             .into());
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the chain holds MAX_PARENTS fields at most, checked above"
+        )]
         visited.push(*reference);
         Ok(Some(owned(parent, reader.budget)?))
     } else {
@@ -959,6 +991,10 @@ impl Color {
         let Some(values) = reader.numbers_of(value, 4)? else {
             return Ok(None);
         };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "`numbers_of` reads four numbers at most"
+        )]
         let values: Vec<f64> = values.into_iter().map(|v| v.clamp(0.0, 1.0)).collect();
         Ok(match values[..] {
             [gray] => Some(Self::Gray(gray)),
@@ -970,6 +1006,10 @@ impl Color {
 
     /// Returns the operator that selects the colour for filling or
     /// stroking.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "four numbers and an operator at most"
+    )]
     fn operator(self, stroke: bool) -> String {
         let (values, operator) = match self {
             Self::Gray(gray) => (vec![gray], "g"),
@@ -1091,6 +1131,10 @@ impl WidgetStyle {
         let (width, height) = (self.width, self.height);
         if on && radio {
             let mut ops = circle(width / 2.0, height / 2.0, width.min(height) * 0.22);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a constant operator after the circle"
+            )]
             ops.push_str("0 g\nf\n");
             out.try_extend_from_slice(ops.as_bytes())?;
         } else if on {
@@ -1110,6 +1154,10 @@ impl WidgetStyle {
     }
 
     /// Draws the background and the border of a radio button as circles.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a fixed number of operators, of numbers that `fmt` writes"
+    )]
     fn round_decoration(&self, out: &mut BudgetVec<'_, u8>) -> Result<(), LimitExceeded> {
         let radius = ((self.width.min(self.height) - self.border_width) / 2.0).max(0.0);
         let (x, y) = (self.width / 2.0, self.height / 2.0);
@@ -1132,6 +1180,10 @@ impl WidgetStyle {
     }
 
     /// Draws the background and the rectangular border.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a fixed number of operators, of numbers that `fmt` writes"
+    )]
     fn decoration(&self, out: &mut BudgetVec<'_, u8>) -> Result<(), LimitExceeded> {
         let mut ops = String::from("q\n");
         if let Some(color) = self.background {
@@ -1363,6 +1415,10 @@ fn comb_ops(
 /// Formats a number for content with at most six decimals, as pylopdf's
 /// widget appearances do.
 /// Returns a closed path of four Bézier curves around a circle.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "four curves of six numbers that `fmt` writes"
+)]
 fn circle(x: f64, y: f64, radius: f64) -> String {
     const KAPPA: f64 = 0.552_284_749_830_793_6;
     let control = radius * KAPPA;
