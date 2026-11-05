@@ -383,7 +383,8 @@ fn decode_name(token: &[u8]) -> Vec<u8> {
 /// whitespace, and non-printable bytes.
 #[expect(
     clippy::disallowed_methods,
-    reason = "UNRESOLVED: three bytes per byte of a renamed name, once per operand of an appearance string that names it"
+    reason = "a renamed name is the operand's name, `_`, and 20 digits at most, so a call writes \
+              3 bytes per byte of the operand that it replaces, and 64 more, at most"
 )]
 fn encode_name(out: &mut Vec<u8>, name: &[u8]) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
