@@ -33,6 +33,10 @@ use crate::text::box_bits;
 /// them.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one Python item per content item; extraction bounds their count with ContentElementCount"
+)]
 pub fn page_content(
     py: Python<'_>,
     document: &_Document,
