@@ -55,8 +55,12 @@ uv run --group docs zensical build -f mkdocs.yml -s
 - Write code, comments, and documentation in English; the Japanese pages in
   `docs/ja/` translate the English ones.
 
-Pull requests are squash-merged once CI passes and the maintainer has
-reviewed them. By contributing, you agree that your contribution is licensed
+Pull requests are squash-merged after review, acceptance checks, and CI on
+the current head pass, with review concerns resolved. The maintainer has
+authorized coding agents to review and merge ready pull requests without
+per-task approval, including their own. Explicit release gates, owner
+decisions, and instructions to hold a particular PR still apply.
+By contributing, you agree that your contribution is licensed
 under the [MIT License](LICENSE).
 
 ## Releases

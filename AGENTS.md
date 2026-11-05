@@ -35,14 +35,14 @@ status text in a design document is not a work queue.
 | What is allowed and how do agents work? | This file and the user's instructions |
 | What must the implementation preserve? | DESIGN.md, especially F1 to F9 |
 | What is next, owned, or blocked? | Issue state, labels, milestone, parent, and blocked-by links |
-| What was decided or left unfinished? | Issue comments and the linked PR; approvals come from the owner, not an agent using the same account |
-| Is the change ready to land? | Acceptance evidence, review threads, and CI on the current PR head; merge authorization is separate |
+| What was decided or left unfinished? | Issue comments and the linked PR; owner decisions come from the owner, not an agent using the same account |
+| Is the change ready to land? | Acceptance evidence, review threads, CI on the current PR head, and any explicit release or owner-decision gate |
 
 When no ordinary task is ready, inspect decision recommendations, upstream
 release/adoption status, and claims. Prepare missing evidence or a local
 patch where allowed; do not repeat a finished recommendation or infer an
-approval. If these are all waiting, report the exact dependency or owner
-choice and the work already prepared. An empty ready list does not mean
+unmade owner decision. If these are all waiting, report the exact dependency
+or owner choice and the work already prepared. An empty ready list does not mean
 that a phase's exit criteria hold.
 
 ## Choosing work
@@ -95,9 +95,13 @@ gh api --paginate repos/yhay81/pyropdf/issues/<number>/dependencies/blocked_by
 - The pull request body says `Closes #<issue>` and checks the issue's
   acceptance criteria. Squash-merge, so one issue becomes one commit on
   `main`.
-- Merge only with CI green. An agent merges its own pull request only when
-  the owner has said so for that work; otherwise it leaves the pull request
-  for the owner. Never enable auto-merge.
+- Agents have standing permission to squash-merge ready pull requests in
+  this repository, including their own, without per-task owner approval.
+  Review the change, verify that its acceptance criteria hold and its
+  current-head CI is green, and resolve review concerns before merging.
+  Respect explicit release gates, owner decisions, and instructions to
+  hold a particular PR.
+  Never enable auto-merge.
 - Write code, comments, documentation, commit messages, and issues in
   English. Other languages appear only in test data.
 - Do not depend on lopdf. hayro-syntax parses every object (F5).
@@ -125,10 +129,11 @@ what changed, checks and evidence, the exact next action, and any dependency
 or owner decision still needed. Link an existing recommendation instead of
 copying it. Keep the claim while actively working; release it as above if
 stopping. Open PR links still keep an issue out of the new-work queue. A PR
-awaiting owner review should say so and link its issue.
+waiting on an explicit owner decision or release gate should say so and
+link its issue. A ready PR does not wait for separate merge permission.
 
 Before merge, check the **current head's** CI, acceptance criteria, unresolved
-reviews, and authorization for this work. After merge, verify the issue
+reviews, and any explicit hold or release gate. After merge, verify the issue
 closed, remove its `in-progress` label, and inspect the main CI and newly
 unblocked work with the report. A failed main check gets an issue or an
 explicit handoff. Close a phase tracker only after verifying its exit
