@@ -1415,15 +1415,11 @@ def test_gradients_that_cannot_be_drawn_raise_and_draw_nothing() -> None:
     assert (doc.to_bytes(), doc.history.steps) == before
 
 
-def test_text_and_read_back_patterns_refuse_a_gradient() -> None:
+def test_read_back_patterns_refuse_drawing() -> None:
     doc = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE)))
     page = doc.pages[0]
     read_back = page.content().paths[0].fill
     assert isinstance(read_back, ShadingPattern)
-    with pytest.raises(TypeError, match="Color"), page.draw() as canvas:
-        canvas.text("Hello", (10, 10), fill=_linear(*RED_BLUE))  # ty: ignore[invalid-argument-type]
-    with pytest.raises(TypeError, match="Color"), page.draw() as canvas:
-        canvas.text("Hello", (10, 10), stroke=_linear(*RED_BLUE))  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="ShadingPattern"), page.draw() as canvas:
         canvas.rect(WHOLE_PAGE, fill=read_back)  # ty: ignore[invalid-argument-type]
     with pytest.raises(TypeError, match="ShadingPattern"), page.draw() as canvas:

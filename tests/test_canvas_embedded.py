@@ -1604,3 +1604,97 @@ def test_undo_removes_what_a_colr_drawing_added(paints: pyropdf.Font) -> None:
     assert set(_procedures(document)) == {"g1c"}
     document.history.redo()
     assert document.pages[0].text().split() == ["L", "AY"]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_embedded_gradient_fill_and_stroke_read_once(japanese: pyropdf.Font, rotation: int) -> None:
+    document, page = _new_page(300, 300)
+    gradient = pyropdf.LinearGradient(
+        start=pyropdf.Point(0, 0),
+        end=pyropdf.Point(300, 0),
+        stops=(pyropdf.ColorStop(0, pyropdf.Color(1, 0, 0)), pyropdf.ColorStop(1, pyropdf.Color(0, 0, 1, 0.2))),
+    )
+    with page.draw() as canvas:
+        canvas.text(
+            "AVA office 日本語",
+            (150, 150),
+            font=japanese,
+            size=15,
+            rotate=rotation,
+            fill=gradient,
+            stroke=pyropdf.Stroke(paint=gradient, width=1),
+        )
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        assert drawn.text().strip() == "AVA office 日本語"
+        assert all(isinstance(run.fill, pyropdf.ShadingPattern) for run in drawn.content().text_runs if run.fill)
+        assert min(bytes(drawn.pixmap(dpi=72))) < 240
+
+
+@pytest.mark.parametrize("renderer", ["hayro", "poppler"])
+@pytest.mark.parametrize("embedded", [False, True])
+@pytest.mark.parametrize("radial", [False, True])
+@pytest.mark.parametrize(
+    "extend", [pyropdf.GradientExtend.PAD, pyropdf.GradientExtend.REPEAT, pyropdf.GradientExtend.REFLECT]
+)
+def test_gradient_text_matches_painted_area_inside_glyphs(
+    japanese: pyropdf.Font,
+    renderer: str,
+    extend: pyropdf.GradientExtend,
+    *,
+    embedded: bool,
+    radial: bool,
+) -> None:
+    if renderer == "poppler" and shutil.which("pdftoppm") is None:
+        pytest.skip("poppler's pdftoppm is not installed")
+    stops = (pyropdf.ColorStop(0, pyropdf.Color(1, 0, 0)), pyropdf.ColorStop(1, pyropdf.Color(0, 0, 1, 0.2)))
+    gradient = (
+        pyropdf.RadialGradient(
+            start=pyropdf.Point(80, 70),
+            end=pyropdf.Point(80, 70),
+            start_radius=0,
+            end_radius=35,
+            stops=stops,
+            extend=extend,
+        )
+        if radial
+        else pyropdf.LinearGradient(start=pyropdf.Point(40, 0), end=pyropdf.Point(75, 0), stops=stops, extend=extend)
+    )
+    rendered = []
+    for kind in ("text", "mask", "reference"):
+        document, page = _new_page(240, 140)
+        with page.draw() as canvas:
+            if kind == "reference":
+                canvas.rect((0, 0, 240, 140), fill=gradient)
+            else:
+                canvas.text(
+                    "AVA",
+                    (30, 110),
+                    font=japanese if embedded else None,
+                    size=90,
+                    fill=gradient if kind == "text" else pyropdf.Color(0, 0, 0),
+                )
+        data = document.to_bytes()
+        if renderer == "poppler":
+            samples, width = _poppler_rgb(data)
+        else:
+            pixmap = pyropdf.open(data).pages[0].pixmap(dpi=72)
+            samples, width = bytes(pixmap), pixmap.width
+        rendered.append(samples)
+    actual, mask, reference = rendered
+    interior = [
+        (y * width + x) * 3
+        for y in range(2, 138)
+        for x in range(2, 238)
+        if all(mask[((y + dy) * width + x + dx) * 3] == 0 for dy in range(-2, 3) for dx in range(-2, 3))
+        # Repeating stops are discontinuities; compare interiors of their cycles too.
+        and (
+            extend is not pyropdf.GradientExtend.REPEAT
+            or 0.1 < ((math.hypot(x + 0.5 - 80, y + 0.5 - 70) if radial else x + 0.5 - 40) / 35) % 1 < 0.9
+        )
+    ]
+    assert len(interior) > 20
+    tolerance = 8 if extend is pyropdf.GradientExtend.PAD else 16
+    assert (
+        max(abs(actual[offset + channel] - reference[offset + channel]) for offset in interior for channel in range(3))
+        <= tolerance
+    )

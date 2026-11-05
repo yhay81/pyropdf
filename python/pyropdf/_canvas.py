@@ -296,16 +296,15 @@ def _line_height(value: object) -> float | None:
     return line_height
 
 
-def _text_paint(fill: Color | None, stroke: Stroke | Color | None) -> tuple[Color | None, Stroke | None]:
-    """Return the fill and stroke of text, which needs at least one, and paints with a :class:`Color`."""
+def _text_paint(
+    fill: Color | Gradient | None, stroke: Stroke | Color | Gradient | None
+) -> tuple[Color | Gradient | None, Stroke | None]:
+    """Return the checked fill and stroke of text, which needs at least one."""
     if fill is None and stroke is None:
         msg = "text needs a fill or a stroke"
         raise ValueError(msg)
     stroked = _stroke(stroke)
-    if stroked is not None and not isinstance(stroked.paint, Color):
-        msg = "text strokes with a Color; a gradient paints paths and shapes"
-        raise TypeError(msg)
-    return (None if fill is None else _color(fill, "fill")), stroked
+    return (None if fill is None else _paint(fill, "fill")), stroked
 
 
 @dataclass(frozen=True, slots=True)
@@ -896,7 +895,7 @@ class Canvas:
     or a :class:`Color` for a 1-point line; a path with neither is stroked
     with a 1-point black line. A color's alpha below 1 paints it
     translucent. A :class:`LinearGradient` or a :class:`RadialGradient` paints
-    wherever a color does on a path or a shape, and stops that differ in alpha
+    wherever a color does on a path, a shape, or text, and stops that differ in alpha
     paint through a soft mask, so that a fill and a stroke are then two
     paintings. Equal gradient objects are written once in a canvas. A gradient
     renders within 8 levels of 255 per channel of what its stops say at 72 dpi
@@ -1559,8 +1558,8 @@ class Canvas:
         *,
         font: Font | None = None,
         size: float = 11,
-        fill: Color | None = _BLACK,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = _BLACK,
+        stroke: Stroke | Color | Gradient | None = None,
         line_height: float | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
@@ -1573,7 +1572,11 @@ class Canvas:
         270 degrees, so that at 90 the lines run down the page and stack
         leftward; :meth:`transform` turns it by any other angle. ``font``
         defaults to Helvetica. Text is filled, stroked, or both; at least one
-        is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
+        is needed. Both accept a :class:`LinearGradient` or :class:`RadialGradient`,
+        in the canvas coordinate space. If a soft mask requires separate fill
+        and stroke objects, the second uses empty ``ActualText`` so extraction
+        reads the text once. Gradient tolerances are those of :class:`Canvas`.
+        The text is limited to 1 MiB of UTF-8 and 4,096 lines by
         default (``max_text_size``, ``None`` for trusted input), refused with
         :class:`LimitError` code ``text_input_size`` or ``text_line_count``.
         A colour glyph that COLR paints or a PNG strike holds draws in its own
@@ -1619,8 +1622,8 @@ class Canvas:
         size: float = 11,
         align: Literal["left", "center", "right", "justify"] = "left",
         line_height: float | None = None,
-        fill: Color | None = _BLACK,
-        stroke: Stroke | Color | None = None,
+        fill: Color | Gradient | None = _BLACK,
+        stroke: Stroke | Color | Gradient | None = None,
         rotate: int = 0,
         max_text_size: int | None = _DEFAULT_MAX_GENERATED_TEXT_SIZE,
     ) -> TextFit:
@@ -1668,7 +1671,7 @@ class Canvas:
         size: float,
         align: str,
         line_height: float | None,
-        paint: tuple[Color | None, Stroke | Color | None],
+        paint: tuple[Color | Gradient | None, Stroke | Color | Gradient | None],
         rotation: int,
         max_text_size: int | None,
     ) -> TextFit:
@@ -1721,7 +1724,7 @@ class Canvas:
         self,
         font: Font,
         size: float,
-        paint: tuple[Color | None, Stroke | None],
+        paint: tuple[Color | Gradient | None, Stroke | None],
         rotation: int,
         lines: list[tuple[str, float, float, float]],
     ) -> None:
@@ -1729,16 +1732,18 @@ class Canvas:
         if not lines:
             return
         fill, stroke = paint
-        parts = [b"q"]
-        fill_alpha = None if fill is None or fill.alpha >= 1 else fill.alpha
-        stroke_paint = None if stroke is None else cast("Color", stroke.paint)
-        stroke_alpha = None if stroke_paint is None or stroke_paint.alpha >= 1 else stroke_paint.alpha
-        if fill_alpha is not None or stroke_alpha is not None:
-            parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
-        if fill is not None:
-            parts.append(_numbers(*fill.rgb) + b" rg")
-        if stroke is not None:
-            parts.extend(_stroke_ops(stroke))
+        segments = (
+            self._text_bounds(font, size, rotation, lines)
+            if (
+                isinstance(fill, (LinearGradient, RadialGradient))
+                or (stroke is not None and isinstance(stroke.paint, (LinearGradient, RadialGradient)))
+            )
+            else []
+        )
+        filling = None if fill is None else self._setting(fill, segments, None)
+        stroking = None if stroke is None else self._setting(cast("Color | Gradient", stroke.paint), segments, stroke)
+        split = filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None)
+        parts: list[bytes] = []
         if font._font.standard_name is None:  # noqa: SLF001
             # An embedded face's lines select their fonts as their glyphs ask.
             shown = self._shown_glyphs(font, size, lines)
@@ -1747,15 +1752,79 @@ class Canvas:
             name = self._add_font(font)
             shown = _shown_winansi(font, lines, self._operation)
             parts.append(b"BT\n/" + name.encode() + b" " + _fmt(size) + b" Tf")
-        if stroke is not None:
-            parts.append(b"2 Tr" if fill is not None else b"1 Tr")
         cos, sin = _TURNS[rotation]
         for (_line, x, y, _spacing), operators in zip(lines, shown, strict=True):
             # Display space points down, so the text's own y axis is flipped up.
             parts.append(_numbers(cos, sin, sin, -cos, _number(x, "at"), _number(y, "at")) + b" Tm")
             parts.append(operators)
-        parts.append(b"ET\nQ")
-        self._emit(b"\n".join(parts))
+        parts.append(b"ET")
+        shown_text = b"\n".join(parts)
+        passes = ((filling, None), (None, stroking)) if split else ((filling, stroking),)
+        with self._scratch(4 * len(shown_text) + 1024):
+            painted = [
+                self._paint_text(shown_text, filled, stroked, stroke, duplicate=bool(index))
+                for index, (filled, stroked) in enumerate(passes)
+            ]
+            self._emit(b"\n".join(painted))
+
+    def _paint_text(
+        self,
+        shown_text: bytes,
+        filled: _Painting | None,
+        stroked: _Painting | None,
+        stroke: Stroke | None,
+        *,
+        duplicate: bool,
+    ) -> bytes:
+        """Return one painted text object, suppressing duplicate extraction when needed."""
+        parts = [b"q"]
+        if duplicate:
+            # The second painting contributes ink but no second copy of the text.
+            parts.append(b"/Span <</ActualText ()>> BDC")
+        fill_alpha = None if filled is None else filled.alpha
+        stroke_alpha = None if stroked is None else stroked.alpha
+        if fill_alpha is not None or stroke_alpha is not None:
+            parts.append(b"/" + self._gstate(fill_alpha=fill_alpha, stroke_alpha=stroke_alpha).encode() + b" gs")
+        for painting in (filled, stroked):
+            if painting is not None:
+                if painting.mask is not None:
+                    parts.append(b"/" + painting.mask.encode() + b" gs")
+                parts.extend(painting.operators)
+        if stroked is not None:
+            parts.extend(_line_style(cast("Stroke", stroke)))
+        parts.append(b"2 Tr" if filled is not None and stroked is not None else b"1 Tr" if stroked else b"0 Tr")
+        parts.append(shown_text)
+        if duplicate:
+            parts.append(b"EMC")
+        parts.append(b"Q")
+        return b"\n".join(parts)
+
+    def _text_bounds(
+        self,
+        font: Font,
+        size: float,
+        rotation: int,
+        lines: list[tuple[str, float, float, float]],
+    ) -> list[Segment]:
+        """Bound rotated lines, including font side bearings and overhangs."""
+        cos, sin = _TURNS[rotation]
+        box = font.bbox
+        self._charge(len(lines) * 1024)  # Four points and their segments per line.
+        segments: list[Segment] = []
+        for line, x, y, spacing in lines:
+            if font._font.standard_name is not None:  # noqa: SLF001
+                with self._scratch(len(line) * 16):
+                    advance = font._font.text_width(line, size, None)  # noqa: SLF001
+            else:
+                glyphs = font._font.shape(line, operation=self._operation)  # noqa: SLF001
+                advance = sum(glyph[1] for glyph in glyphs) * size / font._font.units_per_em  # noqa: SLF001
+            advance += line.count(" ") * spacing
+            for across in (min(0, box.x0 * size), advance + max(0, box.x1 * size)):
+                segments.extend(
+                    MoveTo(Point(x + across * cos - down * sin, y + across * sin + down * cos))
+                    for down in (-max(font.ascender, box.y1) * size, -min(font.descender, box.y0) * size)
+                )
+        return segments
 
     def _shown_glyphs(self, font: Font, size: float, lines: list[tuple[str, float, float, float]]) -> list[bytes]:
         """Return the operators that show each line in an embedded face.

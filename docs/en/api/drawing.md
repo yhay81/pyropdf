@@ -27,7 +27,7 @@ Paths take a `fill` `Color` and a `stroke`, a `Stroke`
 or a `Color` for a 1-point line; a path with neither is stroked
 with a 1-point black line. A color's alpha below 1 paints it
 translucent. A `LinearGradient` or a `RadialGradient` paints
-wherever a color does on a path or a shape, and stops that differ in alpha
+wherever a color does on a path, a shape, or text, and stops that differ in alpha
 paint through a soft mask, so that a fill and a stroke are then two
 paintings. Equal gradient objects are written once in a canvas. A gradient
 renders within 8 levels of 255 per channel of what its stops say at 72 dpi
@@ -154,8 +154,8 @@ Canvas.text(
     *,
     font: Font | None = None,
     size: float = 11,
-    fill: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | None = None,
     line_height: float | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
@@ -170,7 +170,11 @@ times `size` apart, by default at the font's own line height.
 270 degrees, so that at 90 the lines run down the page and stack
 leftward; `transform` turns it by any other angle. `font`
 defaults to Helvetica. Text is filled, stroked, or both; at least one
-is needed. The text is limited to 1 MiB of UTF-8 and 4,096 lines by
+is needed. Both accept a `LinearGradient` or `RadialGradient`,
+in the canvas coordinate space. If a soft mask requires separate fill
+and stroke objects, the second uses empty `ActualText` so extraction
+reads the text once. Gradient tolerances are those of `Canvas`.
+The text is limited to 1 MiB of UTF-8 and 4,096 lines by
 default (`max_text_size`, `None` for trusted input), refused with
 `LimitError` code `text_input_size` or `text_line_count`.
 A colour glyph that COLR paints or a PNG strike holds draws in its own
@@ -190,8 +194,8 @@ Canvas.textbox(
     size: float = 11,
     align: Literal['left', 'center', 'right', 'justify'] = 'left',
     line_height: float | None = None,
-    fill: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
-    stroke: Stroke | Color | None = None,
+    fill: Color | Gradient | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
+    stroke: Stroke | Color | Gradient | None = None,
     rotate: int = 0,
     max_text_size: int | None = 1048576,
 ) -> TextFit
