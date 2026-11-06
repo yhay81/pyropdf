@@ -1,0 +1,150 @@
+--- a/hayro/src/glyph.rs
++++ b/hayro/src/glyph.rs
+@@ -227,8 +227,18 @@
+
+                     if !use_cache || !self.fill_cached_glyph(id, hinted, &path, transform, color) {
+                         self.ctx.set_paint(color);
+-                        self.ctx.set_transform(transform);
+-                        self.ctx.fill_path(path.as_ref());
++                        let prepared = if !use_cache && !hinted {
++                            self.global.prepared.borrow_mut().get(id, &path, transform)
++                        } else {
++                            None
++                        };
++                        if let Some((shape, position)) = prepared {
++                            self.ctx.set_transform(position);
++                            self.ctx.fill_path(&shape);
++                        } else {
++                            self.ctx.set_transform(transform);
++                            self.ctx.fill_path(path.as_ref());
++                        }
+                     }
+                 }
+                 self.finish_run(clip_path);
+--- a/hayro/src/lib.rs
++++ b/hayro/src/lib.rs
+@@ -69,11 +69,13 @@
+ mod mask;
+ mod paint;
+ mod path;
++mod prepared;
+ mod tiling;
+
+ type OutlineCache = FxHashMap<(u128, u32), Option<Rc<BezPath>>>;
+
+ pub(crate) struct GlobalState {
++    prepared: RefCell<prepared::Prepared>,
+     level: Level,
+     outline_cache: Rc<RefCell<OutlineCache>>,
+     glyph_cache: Rc<RefCell<GlyphCache>>,
+@@ -88,6 +90,7 @@
+ impl GlobalState {
+     pub(crate) fn new(cache: &RenderCache<'_>, settings: &RenderSettings) -> Self {
+         Self {
++            prepared: RefCell::default(),
+             level: Level::new(),
+             outline_cache: cache.outline_cache.clone(),
+             glyph_cache: cache.glyph_cache.clone(),
+--- /dev/null
++++ b/hayro/src/prepared.rs
+@@ -0,0 +1,100 @@
++use kurbo::{Affine, BezPath, Line, ParamCurveNearest, PathEl, Point};
++use rustc_hash::FxHashMap;
++use std::rc::Rc;
++
++const BYTES: usize = 4 * 1024 * 1024;
++const ENTRIES: usize = 4096;
++
++#[derive(Default)]
++pub(crate) struct Prepared {
++    paths: FxHashMap<(u128, [u64; 4]), Rc<BezPath>>,
++    bytes: usize,
++}
++
++impl Prepared {
++    pub(crate) fn get(
++        &mut self,
++        id: u128,
++        path: &BezPath,
++        transform: Affine,
++    ) -> Option<(Rc<BezPath>, Affine)> {
++        let [a, b, c, d, e, f] = transform.as_coeffs();
++        if ![a, b, c, d, e, f]
++            .iter()
++            .all(|v| v.is_finite() && v.abs() <= 1_048_576.0)
++        {
++            return None;
++        }
++        let key = (id, [a, b, c, d].map(f64::to_bits));
++        let translation = Affine::translate((e, f));
++        if let Some(p) = self.paths.get(&key) {
++            return Some((Rc::clone(p), translation));
++        }
++        let n = path.elements().len();
++        if n > 4096 {
++            return None;
++        }
++        let mut out = Vec::new();
++        out.try_reserve_exact(n).ok()?;
++        let linear = Affine::new([a, b, c, d, 0., 0.]);
++        let mut start = Point::ZERO;
++        let mut last = start;
++        for &el in path.elements() {
++            let transformed = linear * el;
++            // Leave large, nonfinite, or otherwise exceptional geometry on
++            // the ordinary path. The thresholds below are strictly inside
++            // vello_common 0.3's flat-curve thresholds at tolerance 0.25.
++            let bounded = |p: Point| p.x.abs() <= 1_048_576.0 && p.y.abs() <= 1_048_576.0;
++            let prepared = match transformed {
++                PathEl::MoveTo(p) if bounded(p) => {
++                    start = p;
++                    last = p;
++                    transformed
++                }
++                PathEl::LineTo(p) if bounded(p) => {
++                    last = p;
++                    transformed
++                }
++                PathEl::QuadTo(p1, p2) if bounded(p1) && bounded(p2) => {
++                    let chord = Line::new(last, p2);
++                    last = p2;
++                    if chord.nearest(p1, 0.).distance_sq < 0.24 {
++                        PathEl::LineTo(p2)
++                    } else {
++                        transformed
++                    }
++                }
++                PathEl::CurveTo(p1, p2, p3) if bounded(p1) && bounded(p2) && bounded(p3) => {
++                    let chord = Line::new(last, p3);
++                    last = p3;
++                    if chord
++                        .nearest(p1, 0.)
++                        .distance_sq
++                        .max(chord.nearest(p2, 0.).distance_sq)
++                        < 0.10
++                    {
++                        PathEl::LineTo(p3)
++                    } else {
++                        transformed
++                    }
++                }
++                PathEl::ClosePath => {
++                    last = start;
++                    transformed
++                }
++                _ => return None,
++            };
++            out.push(prepared);
++        }
++        let charge = out.capacity() * std::mem::size_of::<PathEl>();
++        if self.bytes + charge > BYTES || self.paths.len() >= ENTRIES {
++            self.paths.clear();
++            self.bytes = 0;
++        }
++        self.paths.try_reserve(1).ok()?;
++        let result = Rc::new(BezPath::from_vec(out));
++        self.paths.insert(key, Rc::clone(&result));
++        self.bytes += charge;
++        Some((result, translation))
++    }
++}

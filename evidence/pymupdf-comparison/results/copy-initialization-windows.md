@@ -73,11 +73,11 @@ the potential full-render gain. Touching every byte reduces the gain to
 noise for the small size and about 8%/24% for the larger sizes, for this
 initialization probe only. It does not simulate all rendering work.
 
-#710 must compare complete rendering using ordinary baseline and candidate
-release wheels, retain the raw-pixel copy in both measurements, check exact
-output in all layouts and preserve allocation/dimension behavior. #365's
-1.5-times-MuPDF target remains unchanged and unmet. No upstream publication
-or dependency change is needed to evaluate this existing API locally.
+[#710's full-render experiment](https://github.com/yhay81/pyropdf/pull/711)
+rejected this candidate. The 144 dpi totals regressed in both measurement
+orders, despite identical output in all 1,872 pixel comparisons. The
+[glyph reuse investigation](glyph-phase.md) examines the other major cost
+in the native profile. #365's 1.5-times-MuPDF target is still open.
 
 The helper uses Microsoft's bounded
 [StackWalk64 API](https://learn.microsoft.com/windows/win32/api/dbghelp/nf-dbghelp-stackwalk64)

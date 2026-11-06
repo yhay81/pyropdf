@@ -1,0 +1,17 @@
+{
+  "baseline": {
+    "python": "3.13.17",
+    "engine": "0.2.2",
+    "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+    "wheel_sha256": "d9232afcac19d40db410853da4cd9af5979a26fc9064ac8337e522b64b632c63"
+  },
+  "candidate": {
+    "python": "3.13.17",
+    "engine": "0.2.2",
+    "extension_sha256": "18b6886065e86e1e9a00fb41cad22d92b4d008051b83453bba6920b94bec1148",
+    "wheel_sha256": "6b655a3f0b2575a026d153712b4f1b25fc19da4ede49c52fb7b08f3295adb10a"
+  },
+  "baseline_cases": 1872,
+  "candidate_cases": 1872,
+  "mismatches": {}
+}
