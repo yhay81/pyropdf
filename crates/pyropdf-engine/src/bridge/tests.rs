@@ -346,6 +346,110 @@ fn the_cache_keeps_one_version_and_no_version_alive() {
     assert!(!Arc::ptr_eq(&first, &second));
 }
 
+fn assert_interpretation_limit(error: Error, limit: u64) {
+    let Error::Store(store) = error else {
+        panic!("expected an interpreter input limit, got {error}");
+    };
+    let refusal = store.limit().unwrap();
+    assert_eq!(
+        refusal.code(),
+        pyropdf_store::budget::LimitCode::InterpretationSize
+    );
+    assert_eq!(refusal.limit(), Some(limit));
+    assert!(refusal.amount().unwrap() > limit);
+}
+
+fn input_budget(limit: u64) -> Budget {
+    Budget::default().with_limit(
+        pyropdf_store::budget::LimitCode::InterpretationSize,
+        Some(limit),
+    )
+}
+
+#[test]
+fn the_exact_input_fits_before_and_after_an_edit() {
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/assets");
+    let plain =
+        open(fs::read(assets.join("real_world/pdfium-links-highlights-annots.pdf")).unwrap());
+    let (encrypted, _) = open_encrypted(&assets.join("encrypted/user-aes-128.pdf"));
+    for document in [three_pages(), plain, encrypted] {
+        for edited in [false, true] {
+            if edited {
+                let mut transaction = document.begin();
+                let reference = transaction.allocate().unwrap();
+                transaction
+                    .write(reference.number(), &content(7), &Budget::default())
+                    .unwrap();
+                transaction.commit(&Budget::default()).unwrap();
+            }
+            let version = document.current();
+            let pages = page_index(&version);
+            let size = bridge(&version).stats().bytes as u64;
+            let exact = input_budget(size);
+            // The same operation can interpret two inputs of this size.
+            for _ in 0..2 {
+                assert_eq!(
+                    Bridged::new(&version, &pages, &exact)
+                        .unwrap()
+                        .stats()
+                        .bytes as u64,
+                    size
+                );
+            }
+            let below = size - 1;
+            assert_interpretation_limit(
+                Bridged::new(&version, &pages, &input_budget(below)).unwrap_err(),
+                below,
+            );
+        }
+    }
+}
+
+#[test]
+fn cached_inputs_and_render_only_appearances_observe_the_callers_limit() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
+    let version = open(fs::read(path).unwrap()).current();
+    let pages = page_index(&version);
+    let cache = Cache::new();
+    let plain = cache.get(&version, &pages, &Budget::default()).unwrap();
+    let size = plain.stats().bytes as u64;
+    assert_interpretation_limit(
+        cache
+            .get(&version, &pages, &input_budget(size - 1))
+            .unwrap_err(),
+        size - 1,
+    );
+    let exact = input_budget(size);
+    assert_interpretation_limit(
+        cache
+            .get_for_render(&version, &pages, &exact, true)
+            .unwrap_err(),
+        size,
+    );
+    assert!(Arc::ptr_eq(
+        &plain,
+        &cache.get(&version, &pages, &exact).unwrap()
+    ));
+    let painted = cache
+        .get_for_render(&version, &pages, &Budget::default(), true)
+        .unwrap();
+    let painted_size = painted.stats().bytes as u64;
+    assert!(painted_size > size);
+    assert_interpretation_limit(
+        cache
+            .get_for_render(&version, &pages, &input_budget(painted_size - 1), true)
+            .unwrap_err(),
+        painted_size - 1,
+    );
+    assert!(Arc::ptr_eq(
+        &painted,
+        &cache
+            .get_for_render(&version, &pages, &input_budget(painted_size), true)
+            .unwrap()
+    ));
+}
+
 #[test]
 fn a_page_list_that_differs_from_the_index_refuses() {
     let budget = Budget::default();
