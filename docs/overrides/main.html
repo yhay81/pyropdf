@@ -30,10 +30,33 @@
       label.textContent = button.dataset.copiedLabel;
       window.setTimeout(() => { label.textContent = previous; }, 1600);
     });
-    // Once a reader switches the hero viewer's version, the page changes
-    // at once instead of replaying the fade that runs on load.
-    document.addEventListener("change", (event) => {
-      event.target.closest?.(".pp-viewer")?.classList.add("pp-viewer--touched");
-    });
+    // The home page's demo plays its steps in turn while it is on screen,
+    // and stops for good once the reader picks a step. Without motion, it
+    // stays on the step that the reader picks.
+    function playDemo() {
+      const reel = document.querySelector(".pp-reel");
+      if (!reel || reel.dataset.playing !== undefined) return;
+      reel.dataset.playing = "";
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const steps = [...reel.querySelectorAll('input[name="pp-step"]')];
+      const period = parseFloat(getComputedStyle(reel).getPropertyValue("--pp-step")) * 1000 || 5000;
+      let visible = false;
+      new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(reel);
+      reel.classList.add("pp-reel--playing");
+      const timer = window.setInterval(() => {
+        if (!document.contains(reel)) return window.clearInterval(timer);
+        if (!visible || document.hidden) return;
+        const next = (steps.findIndex((step) => step.checked) + 1) % steps.length;
+        steps[next].checked = true;
+      }, period);
+      const stop = () => {
+        window.clearInterval(timer);
+        reel.classList.remove("pp-reel--playing");
+      };
+      reel.addEventListener("pointerdown", stop, { once: true });
+      reel.addEventListener("keydown", stop, { once: true });
+    }
+    if (window.document$) window.document$.subscribe(playDemo);
+    else playDemo();
   </script>
 {% endblock %}
