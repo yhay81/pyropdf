@@ -1,0 +1,11 @@
+{
+  "extension_sha256": "5da183723d6b073baa2b5d220ac8c807445082733b04f9546ae6e57b77aa4cd9",
+  "probe_threads": null,
+  "counts": {
+    "sequential": 1872,
+    "mixed": 156,
+    "revisit": 312
+  },
+  "covered_all_reference_keys": true,
+  "mismatches": []
+}
