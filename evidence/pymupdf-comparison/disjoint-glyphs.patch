@@ -1,0 +1,182 @@
+--- a/hayro/src/glyph.rs
++++ b/hayro/src/glyph.rs
+@@ -216,6 +216,16 @@
+                     && self.global.aliasing_threshold.is_none()
+                     && glyph_run.writing_mode() == WritingMode::Horizontal;
+                 let clip_path = self.begin_fill_run(props, Rect::ZERO);
++                let batchable = !use_cache
++                    && !hint
++                    && !self.inside_pattern
++                    && !self.in_type3_glyph
++                    && glyph_run.writing_mode() == WritingMode::Horizontal
++                    && glyph_run.glyphs().len() > 1;
++                let mut batch = crate::glyph_batch::Batch::default();
++                if batchable {
++                    self.ctx.set_paint(color);
++                }
+                 for glyph in glyph_run.glyphs() {
+                     let Glyph::Outline(outline) = &**glyph else {
+                         continue;
+@@ -225,12 +235,22 @@
+                     let (path, transform, hinted) =
+                         self.fill_outline(outline, id, props.transform * glyph.transform(), hint);
+
+-                    if !use_cache || !self.fill_cached_glyph(id, hinted, &path, transform, color) {
++                    if batchable {
++                        let box_ = self
++                            .global
++                            .batch_bounds
++                            .borrow_mut()
++                            .pixels(id, &path, transform);
++                        batch.push(self.ctx, path, transform, box_);
++                    } else if !use_cache
++                        || !self.fill_cached_glyph(id, hinted, &path, transform, color)
++                    {
+                         self.ctx.set_paint(color);
+                         self.ctx.set_transform(transform);
+                         self.ctx.fill_path(path.as_ref());
+                     }
+                 }
++                batch.flush(self.ctx);
+                 self.finish_run(clip_path);
+             }
+             Paint::Pattern(_) => {
+--- /dev/null
++++ b/hayro/src/glyph_batch.rs
+@@ -0,0 +1,110 @@
++use kurbo::{Affine, BezPath, Rect, Shape, Vec2};
++use rustc_hash::FxHashMap;
++use std::rc::Rc;
++use vello_cpu::RenderContext;
++
++const MAX_ELEMENTS: usize = 4096;
++
++#[derive(Default)]
++pub(crate) struct Bounds(FxHashMap<(u128, [u64; 4]), Rect>);
++
++impl Bounds {
++    pub(crate) fn pixels(&mut self, id: u128, p: &BezPath, transform: Affine) -> Option<Rect> {
++        let [a, b, c, d, e, f] = transform.as_coeffs();
++        if p.elements().len() > MAX_ELEMENTS
++            || ![a, b, c, d, e, f].iter().all(|v| v.abs() <= 65_536.0)
++        {
++            return None;
++        }
++        let key = (id, [a, b, c, d].map(f64::to_bits));
++        let ink = if let Some(&box_) = self.0.get(&key) {
++            box_
++        } else {
++            let rect = (Affine::new([a, b, c, d, 0., 0.]) * p.clone()).bounding_box();
++            if self.0.len() >= 4096 {
++                self.0.clear();
++            }
++            self.0.try_reserve(1).ok()?;
++            self.0.insert(key, rect);
++            rect
++        };
++        if ink.is_zero_area() || ink.width() > 128.0 || ink.height() > 128.0 {
++            return None;
++        }
++        let rect = ink + Vec2::new(e, f);
++        if ![rect.x0, rect.x1, rect.y0, rect.y1]
++            .iter()
++            .all(|v| v.abs() <= 65_536.0)
++        {
++            return None;
++        }
++        Some(Rect::new(
++            (rect.x0 - 1. / 256.).floor(),
++            (rect.y0 - 1. / 256.).floor(),
++            (rect.x1 + 1. / 256.).ceil(),
++            (rect.y1 + 1. / 256.).ceil(),
++        ))
++    }
++}
++
++#[derive(Default)]
++pub(crate) struct Batch {
++    paths: Vec<(Affine, Rc<BezPath>)>,
++    combined: BezPath,
++    bounds: Option<Rect>,
++    elements: usize,
++}
++
++impl Batch {
++    pub(crate) fn push(
++        &mut self,
++        ctx: &mut RenderContext,
++        path: Rc<BezPath>,
++        t: Affine,
++        rect: Option<Rect>,
++    ) {
++        let Some(rect) = rect else {
++            self.flush(ctx);
++            ctx.set_transform(t);
++            ctx.fill_path(&path);
++            return;
++        };
++        if let Some(prev) = self.bounds {
++            let union = prev.union(rect);
++            if !prev.intersect(rect).is_zero_area()
++                || union.width() > 256.0
++                || union.height() > 128.0
++                || self.paths.len() == 16
++                || self.elements + path.elements().len() > MAX_ELEMENTS
++            {
++                self.flush(ctx);
++            }
++        }
++        self.elements += path.elements().len();
++        self.bounds = Some(self.bounds.map_or(rect, |prev| prev.union(rect)));
++        self.paths.push((t, path));
++    }
++
++    pub(crate) fn flush(&mut self, ctx: &mut RenderContext) {
++        match self.paths.as_slice() {
++            [] => return,
++            [(t, path)] => {
++                ctx.set_transform(*t);
++                ctx.fill_path(path);
++            }
++            paths => {
++                self.combined.truncate(0);
++                for (t, path) in paths {
++                    for &el in path.elements() {
++                        self.combined.push(*t * el);
++                    }
++                }
++                ctx.set_transform(Affine::IDENTITY);
++                ctx.fill_path(&self.combined);
++            }
++        }
++        self.elements = 0;
++        self.paths.clear();
++        self.bounds = None;
++    }
++}
+--- a/hayro/src/lib.rs
++++ b/hayro/src/lib.rs
+@@ -64,6 +64,7 @@
+
+ mod clip;
+ mod glyph;
++mod glyph_batch;
+ mod glyph_cache;
+ mod image;
+ mod mask;
+@@ -74,6 +75,7 @@
+ type OutlineCache = FxHashMap<(u128, u32), Option<Rc<BezPath>>>;
+
+ pub(crate) struct GlobalState {
++    batch_bounds: RefCell<glyph_batch::Bounds>,
+     level: Level,
+     outline_cache: Rc<RefCell<OutlineCache>>,
+     glyph_cache: Rc<RefCell<GlyphCache>>,
+@@ -88,6 +90,7 @@
+ impl GlobalState {
+     pub(crate) fn new(cache: &RenderCache<'_>, settings: &RenderSettings) -> Self {
+         Self {
++            batch_bounds: RefCell::default(),
+             level: Level::new(),
+             outline_cache: cache.outline_cache.clone(),
+             glyph_cache: cache.glyph_cache.clone(),

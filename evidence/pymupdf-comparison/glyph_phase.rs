@@ -57,6 +57,45 @@ struct Probe {
     document_hits: usize,
     exact_repeats: usize,
     linear_repeats: usize,
+    batches: usize,
+}
+
+// A dry run of grouping consecutive fills inside a single draw call.
+// The pixel envelopes include a small outward margin before rounding.
+#[derive(Default)]
+struct Group {
+    bounds: Option<Rect>,
+    elements: usize,
+    glyphs: usize,
+}
+
+impl Group {
+    fn push(&mut self, rect: Rect, elements: usize) -> bool {
+        let envelope = Rect::new(
+            (rect.x0 - 1.0 / 256.0).floor(),
+            (rect.y0 - 1.0 / 256.0).floor(),
+            (rect.x1 + 1.0 / 256.0).ceil(),
+            (rect.y1 + 1.0 / 256.0).ceil(),
+        );
+        if let Some(previous) = self.bounds {
+            let union = previous.union(envelope);
+            if self.glyphs < 16
+                && self.elements + elements <= 4096
+                && union.width() <= 256.0
+                && union.height() <= 128.0
+                && previous.intersect(envelope).is_zero_area()
+            {
+                self.bounds = Some(union);
+                self.glyphs += 1;
+                self.elements += elements;
+                return false;
+            }
+        }
+        self.bounds = Some(envelope);
+        self.elements = elements;
+        self.glyphs = 1;
+        true
+    }
 }
 
 // Count repeat opportunities even if a cache would have evicted the entry.
@@ -90,6 +129,7 @@ impl Device<'_> for Probe {
         {
             return;
         }
+        let mut group = Group::default();
         for positioned in run.glyphs() {
             let Glyph::Outline(outline) = &**positioned else {
                 unreachable!()
@@ -97,11 +137,15 @@ impl Device<'_> for Probe {
             let [a, b, c, d, x, y] = (props.transform * positioned.transform()).as_coeffs();
             let (fx, fy) = (x - x.floor(), y - y.floor());
             if x.floor() + fx != x || y.floor() + fy != y {
+                group = Group::default();
                 continue;
             }
             let matrix = [a, b, c, d, fx, fy];
-            let bbox = (Affine::new(matrix) * outline.outline()).bounding_box();
+            let path = outline.outline();
+            let elements = path.elements().len();
+            let bbox = (Affine::new(matrix) * path).bounding_box();
             if bbox.is_zero_area() || bbox.width() > 128.0 || bbox.height() > 128.0 {
+                group = Group::default();
                 continue;
             }
             let width = (bbox.x1.ceil() - bbox.x0.floor()) as usize;
@@ -112,6 +156,10 @@ impl Device<'_> for Probe {
                 transform: matrix.map(f64::to_bits),
             };
             self.eligible += 1;
+            self.batches += usize::from(group.push(
+                bbox + hayro::kurbo::Vec2::new(x.floor(), y.floor()),
+                elements,
+            ));
             self.page_hits += usize::from(self.page.visit(key, bytes));
             self.document_hits += usize::from(self.document.visit(key, bytes));
             let (exact, linear) = self.history.visit(key);
@@ -130,7 +178,7 @@ impl Device<'_> for Probe {
 
 fn main() {
     println!(
-        "document,dpi,page,glyphs,eligible,page_hits,document_hits,exact_repeats,linear_repeats"
+        "document,dpi,page,glyphs,eligible,page_hits,document_hits,exact_repeats,linear_repeats,batches"
     );
     for name in ["bill-hr815", "usrguide"] {
         let path = Path::new("tests/assets/real_world").join(format!("{name}.pdf"));
@@ -161,13 +209,14 @@ fn main() {
                 };
                 interpret_page(page, &mut ctx, &mut probe);
                 println!(
-                    "{name},{dpi},{index},{},{},{},{},{},{}",
+                    "{name},{dpi},{index},{},{},{},{},{},{},{}",
                     probe.seen,
                     probe.eligible,
                     probe.page_hits,
                     probe.document_hits,
                     probe.exact_repeats,
-                    probe.linear_repeats
+                    probe.linear_repeats,
+                    probe.batches
                 );
                 document = probe.document;
                 history = probe.history;

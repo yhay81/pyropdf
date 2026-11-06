@@ -42,6 +42,25 @@ do not establish pixel equivalence after translation or predict elapsed time.
 The current bitmap fast path also uses a different rasterizer for the mask.
 Changing its key alone cannot guarantee equivalence to direct vello fills.
 
+## Disjoint fills within a run
+
+For each eligible glyph the probe rounds its device-space ink envelope
+outward after a 1/256-pixel margin. Starting a new group at each run and
+ineligible glyph, it appends a glyph only if its envelope is disjoint from
+the union already in the group. It limits a group to 16 glyphs, 4,096
+path elements and a 256 by 128 pixel extent. Singletons use the ordinary
+path. The `batches` column counts the resulting groups of eligible fills.
+
+| Document | DPI | Individual eligible fills | Groups | Fewer fill calls |
+| --- | ---: | ---: | ---: | ---: |
+| bill-hr815 | 72 | 254,489 | 146,035 | 42.62% |
+| bill-hr815 | 144 | 254,489 | 76,567 | 69.91% |
+| usrguide | 72 | 46,581 | 18,250 | 60.82% |
+| usrguide | 144 | 46,581 | 7,501 | 83.90% |
+
+The [full-render trial](disjoint-glyphs/README.md) found different pixel
+hashes and slower best-of-five totals despite the reduction in fill calls.
+
 ## Reproduce
 
 Use the repository's locked workspace at the PR revision. Copy the probe
