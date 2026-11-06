@@ -22,6 +22,53 @@ are the floor). Measured for #354.
 python3 evidence/pymupdf-comparison/run.py
 ```
 
+## Rendering investigations
+
+The Windows investigation is preserved as evidence in #723. Its source
+patches are experimental inputs to separately built wheels; they are not
+applied by the project build. These measurements do not establish that the
+shipped renderer meets #365's performance target. #715 owns the bounded
+worker implementation and validation of the eventual shipping artifact.
+
+| Investigation | Evidence and conclusion |
+| --- | --- |
+| Native hot paths and copies | [Native samples](results/profile-windows-amd64.md) and [copy attribution](results/copy-initialization-windows.md) identify the work to optimize |
+| Exact glyph positions | [Phase measurements](results/glyph-phase.md) quantify reuse without changing subpixel positions |
+| Prepared outlines | [Report](results/prepared-outline/README.md) preserves matching pixels but small, inconsistent full-render gains |
+| Disjoint glyph batches | [Report](results/disjoint-glyphs/README.md) records pixel differences and slower rendering; the candidate was rejected |
+| Per-call workers | [Report](results/two-workers/README.md) records setup costs and resource measurements |
+| Reused workers | [Report](results/reused-workers/README.md) records faster experimental rendering and the lifetime problem that led to #715 |
+
+To measure a checkout, first build a wheel with `maturin build --release --locked`,
+then run the same comparison with that artifact:
+
+```bash
+python3 evidence/pymupdf-comparison/run.py --pyropdf-wheel /path/to/pyropdf.whl
+```
+
+Both environments use the installed Python 3.13 on Windows as well as Unix.
+Local-wheel results are written to `results/<platform>-checkout.json` and `.md`,
+including the wheel's SHA-256, without replacing the published-version baseline.
+Record the source commit and rendering defaults alongside those measurements.
+The runner uses the public rendering defaults; it does not enable hinting or
+glyph caching on the caller's behalf. Reusing the checkout result name replaces
+that checkout measurement, so preserve any result that should remain comparable.
+
+The [Windows remeasurement](results/remeasurement-windows.md) records a 0.2.2
+release-wheel comparison and a separate opt-in glyph-cache experiment.
+`cache_probe.py OUT` records every sample of that experiment, alternating
+option order. It does not change the shipped defaults or establish the
+1.5 rendering target; see the report's variability and quality limitations.
+
+[Windows native samples](results/profile-windows-amd64.md) identify the current
+rasterization hot functions with a separate PDB-enabled release wheel.
+`profile_windows.py` and `sample_windows.cpp` reproduce those main-thread
+leaf samples without changing product code; they are not benchmark timings.
+The [copy-caller follow-up](results/copy-initialization-windows.md) attributes
+the Rust-side copies to target initialization and measures an existing
+zeroed-storage alternative. #710 owns its implementation and full-render
+validation; constructor timing alone does not satisfy #365.
+
 PyMuPDF is AGPL. It runs only here, as a separate program in its own
 environment, and is never a dependency of pyropdf.
 

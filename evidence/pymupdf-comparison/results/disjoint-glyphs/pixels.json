@@ -1,0 +1,2314 @@
+{
+  "baseline": {
+    "python": "3.13.17",
+    "engine": "0.2.2",
+    "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+    "wheel_sha256": "d9232afcac19d40db410853da4cd9af5979a26fc9064ac8337e522b64b632c63"
+  },
+  "candidate": {
+    "python": "3.13.17",
+    "engine": "0.2.2",
+    "extension_sha256": "a8c14efa4e806ff308b69f71fa7b349f3d5eb839464368fa823b85b258a0cf66",
+    "wheel_sha256": "de212b770c9853c4124e866d4c805ad1fa025c5bd0ba154adcf15ded07a890e9"
+  },
+  "baseline_cases": 1872,
+  "candidate_cases": 1872,
+  "mismatches": {
+    "bill-hr815/1/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "252f29795a771f1ac951a95956b0c96ca8479a8e06939a80051ca996aad221b6"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "799356eee3c4ae89cf8fe6e4d456d5c21f061791af5dd315bb1041408ca90f09"
+      ]
+    },
+    "bill-hr815/1/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "5b90be24d4f5dadee9c25f877dd30e5e34c6e318792b7258149392d9cec03c8a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "7a23112ab7c086afcfcb9bb87e204ecf3e4452cf61b3b7de8fbcebec07d06bf1"
+      ]
+    },
+    "bill-hr815/1/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "dcf3b7cb16e70ac9a9a5e3c494ae5b1df8453e12e6300623d95334e499446581"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "2706801dd103645a49947e0466ee545d2f7058fae59920734c0f47a417d02e9e"
+      ]
+    },
+    "bill-hr815/1/144/rgb-orange": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "484485ae6aa06d1b75344835ba16350d056961c5043f5d88e315cce5245c6089"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "1ecbb3b20910b18b96bf5c9b9187801692c618257ac6fb9da44ec3da43f7452a"
+      ]
+    },
+    "bill-hr815/1/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "20735f79d6545451c00a6bed1eaf7a89a34f9460bea0479eecc7c6de314b6ff0"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "98020752a07824bc03b90ad676146493e7105e7892b2eb295a87f001f25fa540"
+      ]
+    },
+    "bill-hr815/1/144/rgba-green": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "754abfcafd1d4777eca701e1893bedce25882f61ad12e293830a029b24636d75"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "ea83b91cb41044cf5474b269cccf074a722947909864c345d6ed517590bd1018"
+      ]
+    },
+    "bill-hr815/10/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "a4a1fc62b99326551577684629e65066726e411f3be68dfa7547b53510d06bc2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "46377cc229cbd5f2e762b3eb18d5714139ef1bf299513ebcb86d4eab3c4e1b8a"
+      ]
+    },
+    "bill-hr815/10/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "9c21a9fafd58fa348639f8bd51bb44254571e3264581b489f44a6ae98c73eee1"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "783892ad766e9ff5951dad101d6c95f85c0536ec14338c89841278402b01e32c"
+      ]
+    },
+    "bill-hr815/10/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "c7c30de31704fddc4a258446dccc3538bb1d3a4de42879e3205f1e22861c845a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "5a6c1bab4a238dbb2caf08589e52aa67240cc5c694cbd038cfdd00e069710c93"
+      ]
+    },
+    "bill-hr815/10/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "bf37a98986be050f0361b33e1718953f0997e294b0e023f016089f6cd5fcaf35"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "d200d27e020d9530d5334bd5e9039e9af709eadf130e17d73a5c78c2b99ea7e9"
+      ]
+    },
+    "bill-hr815/105/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "161f729d81172e8a02c61a694f385e3c65481e2b26e05cd3f84d1ba24674df6a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "dcd1f79c1449de352b36aee9a21ce20293bbcbd1fa08d6b7eeb6c87b189ad25c"
+      ]
+    },
+    "bill-hr815/105/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "649f03802dc9fcf26e35862ca482364119e0a1c247e90dc7febf6e9873b0065e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "e90d1ebbbdb63867eff2ba0005673c79de77970bbfd63d617d3a39db2cce03e9"
+      ]
+    },
+    "bill-hr815/105/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "6c43f0e0b029f0a55ea6c8ed84496c5c21d31cc7f121a932d9621ab7c9c9a054"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "617a881e857e57f2a803886b6209522a0bc51f687a391ad3302cd84570c6680f"
+      ]
+    },
+    "bill-hr815/105/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "0fdebe2d7518e8191b1f9039841b3ebffd54f18f0ab979de76afa234a057fc6c"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "cf83d117127079196fadca5a877b770d33c12a8f2c7207d2fd2b66424741fdcb"
+      ]
+    },
+    "bill-hr815/106/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "69831285ed1d5c62459f5a7cb9e2f20f8da88345cce9818497494eb15387b5f2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "00632a6c8909a946ee79a9ffa0023c37cc01f11c936fd871026dd4d2ff0e87d1"
+      ]
+    },
+    "bill-hr815/106/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "4ed09afd6afcc785a1c96ab0413673fed1014b3c0c4c78f7b41730b67aa3d458"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "c8aa1e84fcd62b9d3ace68d150f6a85307fe3591d9a3fd3b3aabe7a26e25a6a9"
+      ]
+    },
+    "bill-hr815/106/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "0772965abe0bef534e0b2739d5484f475b66cbd8be89a66ec3bd54c4d2783904"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "51511732551587663ebc8644623a20a0ab610c15340828385f376961270d4e04"
+      ]
+    },
+    "bill-hr815/106/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "563d9094d52e83b1de4493fdf29b1f9cc8bcbc205880194793b2953a84e74e5e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "c2a2a843b52a935ded0b91811419df055f0b2393a3ed6bc55fe87cf3b32913cd"
+      ]
+    },
+    "bill-hr815/107/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "9009d36d79667700792de3f8ecea7ab51018a83ea9f1a4256eaeb548d71c63ac"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "b7004a9f9cfdc7e9c4536fbedad5d5486911a49392e487f9b590d0a8c6085930"
+      ]
+    },
+    "bill-hr815/107/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "167d9e551cb20505d2eb1bb41f569b7f65ec6297c5852cdd8568cd9fa0c39bf2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "8fe8452be559801657804473a15536fa8b0bb101285a34e3bb9d140aaab98346"
+      ]
+    },
+    "bill-hr815/107/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "d1265c507c6fff610dbeabb9273bdc136113ab1f4075f18a98e600d03616693e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "2c581900a0bb17a51ed34c06ebbb434a48226188db81e44e46da51be0202fd32"
+      ]
+    },
+    "bill-hr815/107/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "cd334fca1b4fb2e1620ce7bf2333b3fefb2b819ac622d812a3dcdd980699f9cf"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "cea65c3ce8bb4bc009a137a81bf3867407f477561eb747cf756d1a365fd11b21"
+      ]
+    },
+    "bill-hr815/108/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "22ae7a7480abd8052c74b0239d94dfa81e522247ce25c79a0ebaf3eac9ae65d5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "a827344f1873c0d397073595b7d163accf3dfeac018a349de584415e1273c736"
+      ]
+    },
+    "bill-hr815/108/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "3422453cad6bd4a59d2e4d7c26c523d439b2aab35f59e6feca135d13f3271327"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "2fc3c72341d8776b1da7480dc6ae2e1f9beb81484e7fecc66340b5b26f7bf9d5"
+      ]
+    },
+    "bill-hr815/108/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "3a859e7ca03faaf7202c74e167121ce764469a36ea2bd79070e9a1ccdc626744"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "7c5b14df1284af5946d0e23801666ab0f47d8a7d82d3f4c47d9494110ec30432"
+      ]
+    },
+    "bill-hr815/108/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "a0c96a2fd2e8637bbc60c5bc67b98bafc9b69c2dd9029cd1b9db291b6af19bb5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "0be7c6d1c9985c96b263ffe8c2ce375fadb38be99c7c6919db3c14ca5300a373"
+      ]
+    },
+    "bill-hr815/11/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "4927bc3c50606284988e1c6bd0a2e57e3ed46bcfa7844bf3a67eff99d1f15cd4"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "53737be62b581c7f7aa1c500e79fdbf122af28cccb4c9cf27322738c3d4405f3"
+      ]
+    },
+    "bill-hr815/11/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "9137fe2692589b54437be477bbdb3a401d94f7405666acbdf962d05ef68cf49f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "daff459a600b0fce235a886f5d8f047949bc4c27fbba8943631a7a14c38635d9"
+      ]
+    },
+    "bill-hr815/11/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "897f633d0da165c1e3619d11f2c3520ffe764060c60bcdec5c03b9e1f6454af1"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "7d4804a58c63a50ac211a4c85ff8a6508a9149abee921b8290c7cb0ee3443604"
+      ]
+    },
+    "bill-hr815/11/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "4e77bfec8d5d4ce1c72c26b7c80dbb6a1a9eb466319cdef8f11a9840f271202c"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "106c460c41db309ddc21bd9f3bc339a75c43f2ac41a1478788a72f961b1251ce"
+      ]
+    },
+    "bill-hr815/13/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "8e8dd0eb749d6281a351b6459c78e664b9addc182c2756bf2bed67fe5fbb5d04"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "4a66cc886f0dfaadaf7eb9693f87201a1a65c6a8fc57e2af36ffb95c5e367139"
+      ]
+    },
+    "bill-hr815/13/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "23efd64d9ed342cd7ef048b48d2db07983239ead66605d40ee88971033a239fa"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "539f24ceb83887ab059a06ba86c4d2460d727feed22eeebca338001db7ccad86"
+      ]
+    },
+    "bill-hr815/13/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "453bb23ae641e6efd594a16b51235d502a2d956184bfb86c2f7490b5ecd9ea3f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "0b655847dc046d3ee6aacb5b751bb72cf9d25ac7347604ba6ff92bd3e2e80220"
+      ]
+    },
+    "bill-hr815/13/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "b5297cb79a9f6eba3b4461c565b232e1d650c530e6e00ccfecd4ecf9dfde97aa"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "2e0c00210212b5bf566dcb3c1274f498e438ef8ff96d956be90362627a1a3c4b"
+      ]
+    },
+    "bill-hr815/13/72/gray": {
+      "baseline": [
+        720,
+        1080,
+        1,
+        "11406dec52e6ee1e61a83a065935b0aa3b5d16bb6d285db7c83fbf3c6d469200"
+      ],
+      "candidate": [
+        720,
+        1080,
+        1,
+        "423a6eb9cf31651265a865a01b0e76fbe0700c9b34e74e6343c9a308aabec749"
+      ]
+    },
+    "bill-hr815/13/72/gray-alpha": {
+      "baseline": [
+        720,
+        1080,
+        2,
+        "c49a7b000e33f46ba7ceaa28e0e0f055a4acd1a20940036d87e9e226e817356c"
+      ],
+      "candidate": [
+        720,
+        1080,
+        2,
+        "336d14722bd9b9d7385cebfc6edc7c8f118a246d7c7a2f98680363b55edbcf8b"
+      ]
+    },
+    "bill-hr815/13/72/rgb": {
+      "baseline": [
+        720,
+        1080,
+        3,
+        "7d0e753d6c218b0b265eaa4338ea0d4084d0b9a0265c60f1b8d887ef29f2afb7"
+      ],
+      "candidate": [
+        720,
+        1080,
+        3,
+        "5bfb3164a1622b50b0fa30a11e9b3bd4858322e4578ab639901e52ac2e55fea6"
+      ]
+    },
+    "bill-hr815/13/72/rgba": {
+      "baseline": [
+        720,
+        1080,
+        4,
+        "01ddbd55a5b3dd2b5b1c1b4ef16fd8a77d2f5808596d17e437cabd0a728fe164"
+      ],
+      "candidate": [
+        720,
+        1080,
+        4,
+        "4fb188e2f0b7ee78af5d8e2d6c39c5df05a98e919ab423a6509051d99c9191bb"
+      ]
+    },
+    "bill-hr815/24/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "0acf7f5f1d9cf6019e23fc1acc54b147ec2aab6a82320b3b3f52d1087d3e01bc"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "32a61f83e7e864c9bbe84972ae37fbfbe0c30748f123b0bf6d5d5ec7ac2c38cc"
+      ]
+    },
+    "bill-hr815/24/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "1ded27bbc63da71ddac418a67df1cd967a579f8ecfc133b02f1e7c9d397453f2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "07e0e28945746f4259f8c36d933325d9fac7e6f7f69990fb151172277dae8736"
+      ]
+    },
+    "bill-hr815/24/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "81a784a84dd6c143eb2fdd8efaff52426e778a34d36373575e5fdc38d063e440"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "79e06ea182b7bda4aabae3166e371832ea1b788a9890bb60aec5f5372a3d6978"
+      ]
+    },
+    "bill-hr815/24/144/rgb-orange": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "4f50cb86fb96be4a9b9332a2e8f45a2205590053814a03de5719c63af1587157"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "be3f51e6b0f4887fc4ce7c5cd0b0c00e6e23d79398376106f6ce5914c5f1655e"
+      ]
+    },
+    "bill-hr815/24/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "24e74987fbe7dfbd2945261a54559be8d8afefde3f4037658b376e6a051d1631"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "478403150d1f76b65d500c657d9416275dc49a32d1919d9c618f89d04d52f082"
+      ]
+    },
+    "bill-hr815/24/144/rgba-green": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "a8a6be1b17022399f302e95a85970d0bf51f268c35a1fe474d254c91f1c4a90d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "cc4010ef3b8bb400fc670df906a88bb582227db52bdaa5dc7c93c3775736da45"
+      ]
+    },
+    "bill-hr815/29/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "134a8c1df644ab13aa7786d4213cfbbdf6c927cf6fc86605255690f053f805e2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "0a0a144c7524312818525be91db93fea53477ba9510a74dba67ed50c05d1e873"
+      ]
+    },
+    "bill-hr815/29/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "5365f14e666b2d947301f92f68a4e367be777a02c09b0cbcf46d53ab010dee2b"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "ab947914fe573fee007094cdd50933ca036232744dc00ecf48826376c25f1469"
+      ]
+    },
+    "bill-hr815/29/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "be83163df92978e7a3454372018613dd0dc560ae20e60cd94af44fb586765ee7"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "9fc049669903ae44fbdd13481f708791cd87b45f24f771710a32da87628e11bc"
+      ]
+    },
+    "bill-hr815/29/144/rgb-orange": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "91ba6e1217164ca2be8d6f74c1f3ead04927efa59a76077a0105bf2eebec1faf"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "f2f59d8641edabb15d6e285f18c5e7867d85f9f318d9451dbb311a75033e0d7e"
+      ]
+    },
+    "bill-hr815/29/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "458476e76b8f4e842152b8e4e89d01608a2070564c73428a8c9f033a30517727"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "77542a06ffc9564ce186491afa6382d9396ea7f024fea6d0124d08b55298ef7b"
+      ]
+    },
+    "bill-hr815/29/144/rgba-green": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "1666258398547c9428d2984b01ee143cc60ba953f1959a7ef691eed0b156d0f6"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "49150ca95c8d58e45ad062f9577b3fac95e55ae186f6f6a316a1c54dad467880"
+      ]
+    },
+    "bill-hr815/3/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "0d65cd6448a3bf4e235e8fbd71e1d8b17b698d4b884a80eab4453048854ef890"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "b415836105c03a73e591450a014a6878231c2a50b0d59cdff48cbf8b6f18f2dc"
+      ]
+    },
+    "bill-hr815/3/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "66665f817da06ad5ae0f897d58e74d99c4b16bb1aed3d97a522cb1af006da529"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "fc2c509b3935a31ef1dea12393b6c546db548923229afb5552a74820880ba486"
+      ]
+    },
+    "bill-hr815/3/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "dccaf10c3395385866c8af721ba8fdcb374d5f6b8ad4426ac81291929f092c07"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "9014043114d6f711068e7971d68913eff7f9e4d6b08dc217508ae1ea4127998d"
+      ]
+    },
+    "bill-hr815/3/144/rgb-orange": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "0fe041b02f9a40129d9bea75587bc1b28b8fa5b0db1b16c3593be52758511b63"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "12fc825cf5c1d57056deb8c10cc2a2677ed69f587aad7c2e50bb0ce36389cead"
+      ]
+    },
+    "bill-hr815/3/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "3b16dcc897ef6167969653feec6f0eaa7211fa346de3acbdb6492a7ba964709a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "8f00ff7dcc0899d94e1f85b7ef3a9e2e0ab4b083b0b347e9ce29c7e3700c692e"
+      ]
+    },
+    "bill-hr815/3/144/rgba-green": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "9705b0d21221b259485f67f86c4ef387a84dd2dcdd48cdbb671c1f9de11a6a8d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "47c33d76e9e976223b21724cd607bf2b952696bba8cff1260a9ab00075243bc8"
+      ]
+    },
+    "bill-hr815/33/72/gray": {
+      "baseline": [
+        720,
+        1080,
+        1,
+        "1e8ef0480977d1380c08990e24fb54c9ee99ba8759eb206ad91046128bd6a9a6"
+      ],
+      "candidate": [
+        720,
+        1080,
+        1,
+        "bc3e8f0381ca49d70c4d31704cf09b42234d3d7e7bbc21f805e9e7428f06469a"
+      ]
+    },
+    "bill-hr815/33/72/gray-alpha": {
+      "baseline": [
+        720,
+        1080,
+        2,
+        "b44cec6c22f0ce5f784df17ce3ed895714282996e8f2ef03d30d2dbf4027c7a1"
+      ],
+      "candidate": [
+        720,
+        1080,
+        2,
+        "6239bc82a653fb940f177fa84f999a4c646a21b002970c2a20f76d144190d8c8"
+      ]
+    },
+    "bill-hr815/33/72/rgb": {
+      "baseline": [
+        720,
+        1080,
+        3,
+        "7932dd94fa20718ba093079f4c04b2044268531dde85105b02179a8cb63262c2"
+      ],
+      "candidate": [
+        720,
+        1080,
+        3,
+        "94c0fea69e7c371a04eb9e39bed82dc25a416f7b7fa156a0be3cadde7a772f69"
+      ]
+    },
+    "bill-hr815/33/72/rgba": {
+      "baseline": [
+        720,
+        1080,
+        4,
+        "ef5e817a674826cfd1e9e174ed3b0fd23fa4817a4b80ba4d6a955326c27a3a05"
+      ],
+      "candidate": [
+        720,
+        1080,
+        4,
+        "a37386655dae3b43b5a44dac528a284db5467b14c1c92208b7b870963861cb4d"
+      ]
+    },
+    "bill-hr815/35/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "c43b298673160b91e4609dba9d64cb6f6e07ae0491c7c2d71c232c799e7fbbc1"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "aaba37cb1b8e561a3eea28c0efc163144bb326a39aae9983df13fb1f74621065"
+      ]
+    },
+    "bill-hr815/35/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "5668aca6afed6ba35f3bc00808e61dace9ff9a8285b395d5aaebb338a79d8729"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "17a37489e20dd6f485bd0dc7499d998e7b52aef658a6d40f323ad0506a5aacf3"
+      ]
+    },
+    "bill-hr815/35/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "87497514214e5f0d52214f7cd49a7cb6b4c0cc1a7613835c264b2d06c9399a6f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "122c860b610ee6ffce6e7c51fed875b6e2447cd81f6cca8104271d090898a9e9"
+      ]
+    },
+    "bill-hr815/35/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "d26d18e11e64325b2d2caafdbb04213f2446d7c87b56475fb494fce9d9ee9762"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "54d3c7d48f8617e9c9b30cdeb4ec592ef1eaa5ca2068a75d9d74c8edc27d4121"
+      ]
+    },
+    "bill-hr815/42/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "2317462148885dfe0e0fd59304d211d45809712ea2f84995d55dfd4d831f6fca"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "3e054bd4a42c39bd89ce8825aeb5c36bfdfda7916fd57f82581e7ae4f07c753c"
+      ]
+    },
+    "bill-hr815/42/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "1991b8380c6211d30bb18ee9ae546bf89b25afb5eb8030ced6673763f1f31ba2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "84b98f3d3e2ff879a33ea0edc06405534680cf6581a727c47748ede6b0a99cdb"
+      ]
+    },
+    "bill-hr815/42/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "0ffec44ea12715109e6785754ebbb5d9f6975adf8a3bc92a38381f62bd23180f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "cc76d4ce08d594f2879ab4520f34042676514ca6f45dc18e6721ca1a696d8642"
+      ]
+    },
+    "bill-hr815/42/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "4df7fd8600df4c7d08124cc0e8db5cb914322f1ebd558e90277ad0d32f81dc85"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "404fbcb809160585846aa7ee534a56888eee3043a81435cebe5b81987bcf2187"
+      ]
+    },
+    "bill-hr815/44/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "3d903175e6d941577c3ee940910a722e1647cd854aa2ab31becacd820298ba56"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "448ea569790a7b704bd8322cb74204a9db7633578ad6201f9c6758a1341d347b"
+      ]
+    },
+    "bill-hr815/44/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "8245aba8e2a0d9ea638bea4f5df88f9cd36de47e5ddaa0c6cedc8bc83f69d176"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "b6b4d6f9967eec0fb4bc5b486c4fac2f1b1af88f19613e40199f62d2975926a5"
+      ]
+    },
+    "bill-hr815/44/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "54bef9b937f03355fa1f7e6c8229caa47aa4bd637a68b7cb46eb5353d2f2f507"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "5b8c74409af48626f86d51fb4b3edd73626f1265f0161aed0c40e2999e4e4cf9"
+      ]
+    },
+    "bill-hr815/44/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "8a4d11b8cd783e04f3808f129024228f2954f85b660cb6ad615e0d56371603cc"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "773b06aab64c80d045f78cf7ce943517cb3b69a95fdd521641c1c4fdd7f23bbe"
+      ]
+    },
+    "bill-hr815/46/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "a4e91f71a21c6f804cb41009002b7663d4383afcee160ba7951a171dab0eb9ff"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "9625dd49667223e48635c276fb89633f2b7fb2e33b8df74cd819c172ada5ca59"
+      ]
+    },
+    "bill-hr815/46/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "ae9b8d569a900f865388b0cfb29d4df571a7b408e1be916ed45b6626bd69d6df"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "6517e23dfe509aadadac3489a897ea2cf57e9e4676ab4b440c3768a6582e37df"
+      ]
+    },
+    "bill-hr815/46/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "7adf013996d51546a38248e322de9af9000618b84867c4b6b2ee645525d2f455"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "e49444ee41a4d7c9c94702c33805a5e38b4946cd14b018c445cf8ad0fca9e50b"
+      ]
+    },
+    "bill-hr815/46/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "4b8abb20e13bbb03be5a9ba1f82e2e3182eef64901e1c3feba22fa5a53a3ca89"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "a500dafbb3ff99556232746be321403e683f4a5ccf90bf8510ac460eee5d31d2"
+      ]
+    },
+    "bill-hr815/47/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "4405cdcb15bd2fdc4137a4f2e93bbb6d80b75f9a36194d5fee63a84103bc9dc1"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "c18218d725374cac0dd5df270969374f744417b17d1bf07f79660ea141c2d500"
+      ]
+    },
+    "bill-hr815/47/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "3b22087ef5537ece82f6a300f107b8ecbb1fa2435b419c9434aace5483906443"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "fa79526c3a9695e9abca9ff9ed0abe1af4afd6331476252471d12df3ee34f40c"
+      ]
+    },
+    "bill-hr815/47/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "ba7e3681a65f72085b279cf7148b843ca99c24b5596c86ea6f9405728a9c235a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "c2edc9c747c038eefe252d18c2f8e5aea4bf5f1fffaf4fd4bbb71a19f585e582"
+      ]
+    },
+    "bill-hr815/47/144/rgb-orange": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "e06500fd395760585078598daa85477db0c01b4fbe2930db611cb70b93f5a2a9"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "477052c78bd63eac59368f739976ea774f076a69ffc2404a67c0349e36ccc810"
+      ]
+    },
+    "bill-hr815/47/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "b86aaf40aa6deec41ce159e361ae7fc720727d6f0751b8bb39cb1459f7fb9633"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "3b3d7ad0e9f44d635e3b990cb15cf1e30231b111633557691e90c47881df12d2"
+      ]
+    },
+    "bill-hr815/47/144/rgba-green": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "be07b283909005e7b91a2d97a979e24e1570bb85df386ebad10c46627111bac5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "afa9b6b377863fa06923be843eac5fac50336b59fd22cd2aa73b13fb310fbc85"
+      ]
+    },
+    "bill-hr815/49/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "688791beef995f8b70f3e8198cbe921666a5605ba414c92563075fbfac0cd652"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "c3533ed6bf90a86eb82e559c700d485fe5ea66a0f22686eb4a49f9e2030a077d"
+      ]
+    },
+    "bill-hr815/49/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "2a1c84160dc73ecd0a9e4ead1b8e1c011aee6899e7825a5ba36572e05e860a96"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "c3ae31e5ab8fcb83e8f89ae424218d4c2e004d0789012888e16235b596bbd4aa"
+      ]
+    },
+    "bill-hr815/49/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "a808a8665226de0ce090fc61764e4f30784729d19bc369f3d17b06e8a487d38f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "7366a3d864cf7e6027cd70d712756a1e10090d24c037a8fce377e4b9b820fda0"
+      ]
+    },
+    "bill-hr815/49/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "9d5596fbbe082a8d307c9a1d2fcb8c359e3d7704815f6d44f50168864f063e8a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "2d97dc956ddc2fcd561b70e17f609142236810b288fe6fe717ed69f8959399a8"
+      ]
+    },
+    "bill-hr815/50/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "90a8eb986da58857224586871dbb00452009f305221a959b7f3021b12a8c2aa2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "b8a3a29c10c7b39ee8a7dcf2c62e2400b6219fd49834b788fdbd03293195f89f"
+      ]
+    },
+    "bill-hr815/50/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "f611e31c17ede0a5d0b2b67a4a2232b585275836675f8d3ae18813f56abf6510"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "cde39a4febfee06d228a2eea36d5e4b414adc51ff8e50bb7c0782edd75e38a3f"
+      ]
+    },
+    "bill-hr815/50/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "895e86690190c563afd50cc75590f95b508006e1255ffc375c2ea28454643e62"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "962af7586c76f5ee1ccadc253a59c151b4acc12bdd7eb2d16b1675b5dc332d51"
+      ]
+    },
+    "bill-hr815/50/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "ca6e6c2f4f8a93bb0cd5b83026f99536de17b8fc6bcabddb4889bfec7b24bb17"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "6453b102206b797ed3cede2d426727d19f145f490614979a737ddbfbb3aca679"
+      ]
+    },
+    "bill-hr815/56/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "57352cabd45f6f7eb8808d3d8ead2a57f3625c78c923c7aca5babcb50423d8f8"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "0543a9f4010be1affd3465a3f353dd74c38cc48d557c99f4ebafbcd995d639c4"
+      ]
+    },
+    "bill-hr815/56/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "cc2f227a1294ae2cdaaceed7849a951064def8a794f3f64ecbc3aaad301b3d96"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "42f561c1721c4637d15b4c454dfc2b83cb3e26c43bdf56fce1d01cd6d334ff77"
+      ]
+    },
+    "bill-hr815/56/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "6166ac8f2821d173dacff1178ec255ef01d154bae57b915d72759819294f2577"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "ff248277f6a93a5515e52703eb5373c5e2c31c1c740ed57c050ad3ffca4b4c9b"
+      ]
+    },
+    "bill-hr815/56/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "6d6985df76d4b4f4a35e41133d7ad4563310514d09b3dd9c1d0bb8d4afce5b8a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "6c33187d68872f35e71bb514dc3e95ea0510ff53e81d0f48c7648586e2297f27"
+      ]
+    },
+    "bill-hr815/60/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "425bcc12721325a3240065db45cc07951c8ab092c35736b825452db673f1742a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "25cd5478ddd3ac5fc243c453e055f7b545d8504b781f6ed5e82c6594a45f3565"
+      ]
+    },
+    "bill-hr815/60/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "86bef531082be2315cc8e1f488699e54b5a23e2a2aef51a8c97c822882e27064"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "46e04c2ac043c8da7448ba391dcd9bfee0eedf06ed194a56cd2e1d5ab00e8975"
+      ]
+    },
+    "bill-hr815/60/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "3f52bda51e916736d96086227c15a73c22f61ebb98c8bee9ac1419742194457c"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "f9f3069f440368ddc15cbf92b66932241597cb58a40af8f8cd3c388f9d2bbf98"
+      ]
+    },
+    "bill-hr815/60/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "c816295631eee6297b5b5814484cd2843de716b8dba3f8e9f3e805a7c03e14fb"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "15f4cbb23f2452978fe8c8f8654aaf3776d71f5d80ee4fa90068c5960026199a"
+      ]
+    },
+    "bill-hr815/61/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "fcc7f8de5a896a0d3403b8c75f2a7107307d21b5e251596c8a773f59d20f6f1d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "ccf7df3671776d7d533308b58a22f012bd25cc7b79fffe55140c9d6021d84afa"
+      ]
+    },
+    "bill-hr815/61/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "432dc5d811f938a4f500ae9737a8117d02c5144e61b6861cfb0f22db5fc2c407"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "912f80f3b2dc3d26e4a38c882c14b26528b8cbc390f47a385fff0bda9d25d280"
+      ]
+    },
+    "bill-hr815/61/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "4fcf3a2025864f476bd2ae32e1bf61ae636b4eda2da01d3f02b058185a80ebb5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "c65a10cefc1621e0de807634a0b4e4619ee501b432987a62bc21fa2d4f883d8a"
+      ]
+    },
+    "bill-hr815/61/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "5314db42e03079fdaed2b01b308710ac1a5b54422642ca50bc576bc0d46c9c4c"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "a5a2180b4c81a20db8fa3cd718698e6c78cc33e59be7b92d5b3dbdfd434318f3"
+      ]
+    },
+    "bill-hr815/67/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "e79903a8ea349ef5fd6643b4b1b356ccfa9a13e3d42061f825dd056b5abde596"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "f682890ce5c22ef7d27e1c3974773d135785c6f6c618e84908cabc09344cdd5f"
+      ]
+    },
+    "bill-hr815/67/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "5f737bf1796e67a1b0e5d82f38e98fee2347216a23f4fb5605e850ca1dc0f87b"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "f41490a8951b0adbbdad0e473cd4281df954481731d8427224730a7be0c003c5"
+      ]
+    },
+    "bill-hr815/67/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "c074ec7a02cf8626614a6795b592b6fe772543adfb9f8476fe3d659356ff01ec"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "6205adcb7406f77c94845013adcd714e4a885149ff40717acb53a1f575da6622"
+      ]
+    },
+    "bill-hr815/67/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "edefae51a06d721b1ca30f7f3f44b2805fd842f230f4681b6b564bdb13bb126d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "5bbf49eaaf66ec89a2cfdd5fe9ccf41a05c5e0245957de7fdd6d5d3d508e8f97"
+      ]
+    },
+    "bill-hr815/68/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "8816d50a134860feb95c5b5da1d4a55b9fabc7f5dbda0b4760123a2618455c66"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "bf2ea3c22dc8e7881144763b20069e9f448768f412cfccfa70cd2e5046fbea12"
+      ]
+    },
+    "bill-hr815/68/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "9e9966bca58366cf9a975de1240a91d0d557614a508aba4108b192f105c455ed"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "20995e16ed7e546425bce1be1d2860d9feff02f18ae6174179c5341d8363385e"
+      ]
+    },
+    "bill-hr815/68/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "88afe2392bc50f448b7757acd43f22eebe03a1607153cfdcdae951958ffd73ce"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "ea9f47c6117ea788e49d998ad80691b78189d9458de7f1e88183f34df40b4ccc"
+      ]
+    },
+    "bill-hr815/68/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "86f1f453b502367800ebcf490a15d12456ac26f0df85b10b5bfcf8596608cf3f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "36587467111a8807a1ac5e29c594242e0e10be74335bf9c85a5b55ea7281bb60"
+      ]
+    },
+    "bill-hr815/69/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "be29da3e568daefb6092814f95a461d7724db4be868bc574ba64f9d972a8e7f9"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "ae9a09f69e6a88a586eb3670a00cbd1101ceb9f113931cb175b9f087d36906fc"
+      ]
+    },
+    "bill-hr815/69/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "fec4bba561b1d7396340308f2a4c59d74be191005ccc4a34fdb0725f4a524034"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "b3cca233eb1ac444a75532e0c7ef1760d7623f00797da5504e7b8ed5a70412c7"
+      ]
+    },
+    "bill-hr815/69/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "bef149ec6ab61dc67d923051437c4bf178295d4363ef21d9e2422ce6375108bd"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "85e07802c58e46436323320c389f091b6fb3cec65d6a9dbaeb8224f736ff06af"
+      ]
+    },
+    "bill-hr815/69/144/rgb-orange": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "87b7476d94b5277e1e7e0fb68bf587280bf64f7a4e75d23ee1eac922f008e965"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "e409769ee6a7aefaf62f404dfd4a013d4b3e82309de1d385d06ec948dda95a64"
+      ]
+    },
+    "bill-hr815/69/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "c1b886a0b577d99d1d7c27c9e6d155bf65258147f73820d4e853fb1a5bb4a89b"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "64f7ffc46b615666a22459dc41150f8ba93666ddd9361ca8255a7cb108281773"
+      ]
+    },
+    "bill-hr815/69/144/rgba-green": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "c9ade23475af5adc1238a5004581691659d65149179bbfc94a2c24e94937eae2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "e8866da92c658f2ac78462d0a8082565e6843c3855fdc065928ff818ffea6607"
+      ]
+    },
+    "bill-hr815/71/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "64dca0103e0ebec2c110ee4ab1ee2e1bf2712ddb87fad0306deb3da231d93e2e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "5be71be528ccef2bed8429228474837d8a1699cc75309910df46200ba9886c9e"
+      ]
+    },
+    "bill-hr815/71/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "acd4960625e1253cebdee6578ee427e979ceb9e17dad07e1d59051d16f3f498b"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "963189c09cff87e59399fa601c26bc2a703fdff22b8937abe45b7a02ee3c36c3"
+      ]
+    },
+    "bill-hr815/71/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "9647f87deaef01edfd768b89b3e3a5ed1270bde471a83788cbc1a2d7e562c04a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "97ec6e8c2a99ef732cc280ac1571a991e999d01aba718b457d210d6f3265cfda"
+      ]
+    },
+    "bill-hr815/71/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "86f6a12a226988c6e1fe5f70251aa572146fb0ea8e5c16fb1129ec269fc0f5d5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "e7bc1041d81813c0b9718f0f3934ac3c0b1341f392846423f2946a659695e6c6"
+      ]
+    },
+    "bill-hr815/73/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "d8077deef80d3845fcab9f899e4d8bd4d8e4e1737ab2d7040b824892375eb651"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "a5686b80b5b0b49a8e299ae69388cd93a7a496ff79bd5d2328dd394b1569234e"
+      ]
+    },
+    "bill-hr815/73/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "7da58e08b39938b4eaba8824c968dd5902a44d1f7ed929ed93e2473aa892aaea"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "5877943a2b5647b12660522787b7a0978702d87e882f2c9c599ecc5d08fae1bc"
+      ]
+    },
+    "bill-hr815/73/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "47943c90d434872bc4ac5e9be0a6772c4ac739ba75f866d2d4641f89ec9fbf6a"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "cb84d6e1ad0ac5cc80c4df4c772e23ddf037f92d6032dcbf1b2432ca47396867"
+      ]
+    },
+    "bill-hr815/73/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "8ae62d7da705df65e1651077d42aba25fa7ba7cc847bb2e1b04738ef60a85010"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "fc77a577645ecb92c332d026363962d20cac0e78ad4c302f108ca96ba19e0f6b"
+      ]
+    },
+    "bill-hr815/75/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "de073f2d732c2e62f128ccb3a79e201387d8780b979ed979737d37204db76212"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "d70dc81c56aadc061689e49a8cdfbe64b2dae6c75091b4858551d06b23b6cb17"
+      ]
+    },
+    "bill-hr815/75/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "42215fa2674da5ad4da4783f8d5e496cebb75667f1b54816ef2c8ed80ecde69b"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "b61119344699d56d582acfe109de9715a0f7d963eb07af4d61319fd46fe0165e"
+      ]
+    },
+    "bill-hr815/75/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "e89d07f0476a0bb0c464092c7216f7387dd258585ce1a5bef0ff097b5c3aaaab"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "da7015ad14904d83df2fc8ca43e921f59fd73594f14531854cadcccc6f53f034"
+      ]
+    },
+    "bill-hr815/75/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "7a115b7e645a8d8396cf614ac0eb5e74007564df0a6a2a1fd157605e65486d6e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "733c74e361a5aca76e2a6f8f35b7070956dea0afe81ee2bb94183a3039db2dc2"
+      ]
+    },
+    "bill-hr815/79/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "5c8dd6291a3a0d9ea0645002966ae84b6f4ca7875af0f7ef2032eeb1123654b4"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "fca55098dccca5d6381198dda3e96754369f1595ed1442b14996eb2681ba107c"
+      ]
+    },
+    "bill-hr815/79/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "02d55a17c499fe35dc04574e04a6cd919e90d5026e97ea10a5e340dd1f91298f"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "0d188d83da8413a3cee7187a2efad443dc9c641a4ac97c7629ac0af866155bb6"
+      ]
+    },
+    "bill-hr815/79/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "7da37d8d9b309d1fbfae072f045cdc3a939904684f8bc995d6831dfc8752a8ab"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "3581bf6573cf7a3debd1caab7259c63932eb5d0a4f6c2682d4c494228a896c45"
+      ]
+    },
+    "bill-hr815/79/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "3fcfa578e3d9ea5fa58b33b0ff60be3c328754ee6272c32b238c945f47b8d69d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "946a3a2c0971801f10a4f6ac98eb493fa919b4d72e4507572f6f34b59517e363"
+      ]
+    },
+    "bill-hr815/81/72/gray": {
+      "baseline": [
+        720,
+        1080,
+        1,
+        "dc4442aeadf747ba668b0b40f38bb05f32f906369a6b8a78964d3ca052bac5e9"
+      ],
+      "candidate": [
+        720,
+        1080,
+        1,
+        "06160c6fcaaf32e0fc3e37c0db81e2feb88ef90ce996c30d0c9edbc2bd09f75c"
+      ]
+    },
+    "bill-hr815/81/72/gray-alpha": {
+      "baseline": [
+        720,
+        1080,
+        2,
+        "80ecfda374a8c87ef5eaf77b72a2e81e7ed3e47325aa1002bca2a8f1bf726e8c"
+      ],
+      "candidate": [
+        720,
+        1080,
+        2,
+        "4a7eb8e79ffb9608f610e3849196b611b4330d350d7cf55e61267c53b4ab5a5f"
+      ]
+    },
+    "bill-hr815/81/72/rgb": {
+      "baseline": [
+        720,
+        1080,
+        3,
+        "a57fe43357886e0fe6d7be028a450979bb5178e03aebe06a9853a8585f709f0c"
+      ],
+      "candidate": [
+        720,
+        1080,
+        3,
+        "1a89ba8b02b0e495f04f2d7e3a582ab68c18aa70a319dc929739e68ec49d5e82"
+      ]
+    },
+    "bill-hr815/81/72/rgba": {
+      "baseline": [
+        720,
+        1080,
+        4,
+        "7686ac0ac5b40fffbda699b12aaa0a99be30084712fe169fab4773846e5f0a8d"
+      ],
+      "candidate": [
+        720,
+        1080,
+        4,
+        "f2183617c3a351f78c30321eb88ec5be3ea204d7112136599533e967e194f3ba"
+      ]
+    },
+    "bill-hr815/83/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "9d27e10596ae5cffb8cfdce669c75adbe1b4f03d531e2fc685fa0552303951ac"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "8c3338b654142aceef60ae4731150afd72fc192ede18243317fd6f84d2250c01"
+      ]
+    },
+    "bill-hr815/83/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "d09c9a4379499ca1dfc12594966238fa71b86a637df6b4dae6cf6812584ac6fa"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "658925ad913a3f1ca4db10c14aa76f9447ddc620f05690e27182720be6766a4e"
+      ]
+    },
+    "bill-hr815/83/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "0e5a019fbfa2df18eb7e132e80a407bcb4ae9c2b35172e370a3a6a2bf2391f1d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "45ebc4c5a614c020239442fd56e01b99be71afd5281f509a6a9b44c5335c1548"
+      ]
+    },
+    "bill-hr815/83/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "2a412f3b53f848c71aff2c180928290dfca05975ff77c2f2c668360d1f2304b5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "44be786ff7ed79fbee2cd3f766d93355d337866e41905ae4ad9cfa54d51084b6"
+      ]
+    },
+    "bill-hr815/85/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "40e4e9ab4c9c286cc82d93d123c796f3cebaed843e4196c4c02128a7b39d83f1"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "c79a4b56122d9d09d79915b39c421ec87129079ee765095bc478c0032e2936dc"
+      ]
+    },
+    "bill-hr815/85/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "ede07bcf753ab8ec1ec83a07c56b232cfb04843d03f51325faa03408eaa512e5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "e0f77021bf00833369b7eeec94500a721d3a6815fc86df789d82027472da9a23"
+      ]
+    },
+    "bill-hr815/85/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "1f1da66c52ebbe6c003e5fb1216431f2113bc5b4ca75da8cc50143d8858b411e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "df5f132554776ded27c1cbf8ce7e1b8c2d9f0e4fe98f641053f0031182609f35"
+      ]
+    },
+    "bill-hr815/85/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "e7edaf2324f874bf3ca109654c1d790fc97185a8183de37abcf9ee175d66df41"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "0a379abb451df3f7b0f48b8183202ad0514e29e31b9caa30e61c91415214f45d"
+      ]
+    },
+    "bill-hr815/89/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "a6d884f3fa1a007cbd0c5c284dcccaeaea52d868c11354fa40b49018731cbbe2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "4814b3f4c4163d6288206cb309ed221bf19e4749844a21604b7c1a8edfd249d3"
+      ]
+    },
+    "bill-hr815/89/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "70ff6772d03b9abe1549f8a56c302573281d293c34e7bdca202b1a5c79b840f2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "3732d2001d324d9bdf445c2fa4d31c9c9086b54d3b9b5d7747e4d57516466a54"
+      ]
+    },
+    "bill-hr815/89/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "278b8d4e33b4afb578e3b483e7023263b6ef68f7139c6fc547af066bfd57316e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "77d1708b0e7ae6df6fe6b66bebfdbe069f089ab53bc5c18e59292ece14653f85"
+      ]
+    },
+    "bill-hr815/89/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "62d01ed38df919c91850c76d83f9ca625a7812eb6b6cd75fcbcb0c1c3d573be2"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "011bd1ca4592577ddc7f10ab4df0b172e5018ffbca1f9945f9802472d470af5d"
+      ]
+    },
+    "bill-hr815/90/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "f353eb89223782685ce03cf2997cab1ba802a3ebcb82dde1ed3fe56830a611ad"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "bfaa346f9522ff756649af36b3e4e201d90ae4a420f6896a4ef7816a9c7f68f8"
+      ]
+    },
+    "bill-hr815/90/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "7eff4db186a0c713b2782d8e90108cc9995dc0cd184e912b6147bb16604c9032"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "811953063d590a34965adb9509d0f7c313684e73d2d440359e34660667bfd61b"
+      ]
+    },
+    "bill-hr815/90/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "17921249de20444a5f57d5ca7a996bedf9bf8d4d09c93bfc50bec9fd9816a54e"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "1ea12697a4434516096271d468dd6518ea0dac796b04e86210f8fe38dd403439"
+      ]
+    },
+    "bill-hr815/90/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "1427b7e23ba8591030c92e649b4730d7c859d31bd6605a6e2ed15edbeec7b6a9"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "a5922426aa6377a025d6ddd06b036749b345435f6bb4aa705a653524d8993853"
+      ]
+    },
+    "bill-hr815/93/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "231887fdfcda96913445d9fe531cd6921e3bf65728198eeeab0c1a76ead52097"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "06e856c41fd1d5c4acd36053fd72475727a06f00e318dc6aa740957e2c8800b7"
+      ]
+    },
+    "bill-hr815/93/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "c79cf7b51fd72f52e285665662c8dc80b31347a0b64ab562afadc06513ae6f62"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "dc5dccb27d933b3cd081ab54a048259da376a24ec4321376f8d91f1b36085ebf"
+      ]
+    },
+    "bill-hr815/93/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "d2f41433f3c2d858b4176fd4858455c3bb7dc677286000164589095ed5f905cf"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "0050e90764877421c2185aeb51483ea8f5bf484c11b090bee70e8b687dd56155"
+      ]
+    },
+    "bill-hr815/93/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "21e04eb35cf0a849dff022d0f42024b7d4452d8ba4a6f8ed8129a8bf5f1a99ab"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "ef94677a4a2e086c94d7145821823390421876cd506c68f53179f2cf60e408fc"
+      ]
+    },
+    "bill-hr815/95/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "92a075b7bb6df528d0351b1832a236e607235f72293e5f2cd4ceff1aaf6135b5"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "f98cd6d56b3bded612e1ad6639d0b797e8c8775f4f5645c5b0b4625ff1c29789"
+      ]
+    },
+    "bill-hr815/95/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "a8925437353a89e284251126477303a5695abb7c48f5c23fbedcab28cf69c373"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "a7a2cb692e8b9459f092cbba6fd90c9d4d92c330eeb10d955c7b1cacd67372b6"
+      ]
+    },
+    "bill-hr815/95/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "c05e979336be79d624fc068926482628190e7fdbe65f775e4e5854b6c5638495"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "dcd7f052c7ab2b09c64d466fee5f48b67295cb2a28cb428f6ac7e449c3caa4a0"
+      ]
+    },
+    "bill-hr815/95/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "ac96b88f4d384892b29f962b84d00c51a5b467433eb4add4830f870a25019653"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "60f783e06db242beba221e57f1a1ff4091270f91e1354688db07c4e36ed30aeb"
+      ]
+    },
+    "bill-hr815/96/144/gray": {
+      "baseline": [
+        1440,
+        2160,
+        1,
+        "f3c3957eeb2c8a51e2cead76e8b6cda29e6aa913975d7c5f9060022b7f8616ff"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        1,
+        "e306ce066991cc2eb05f6787eccb54540bdccac8f1cb5ddf7680ed5adb0c71b7"
+      ]
+    },
+    "bill-hr815/96/144/gray-alpha": {
+      "baseline": [
+        1440,
+        2160,
+        2,
+        "dc7fb8e776d39439b9fe6135684564c3a595bef55ff7881f2a5b1ff19e3d5e43"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        2,
+        "23f60f3671a21dc6e3e3a7d97f6ca02c33b6a104492256cc5970482c53ae1aa3"
+      ]
+    },
+    "bill-hr815/96/144/rgb": {
+      "baseline": [
+        1440,
+        2160,
+        3,
+        "5f7584d74729a09fde64529506ae16170957d415611e65ce323a2e6697a914a3"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        3,
+        "1016a381ed423a33b70c77450f62fd1d3dd91a50a4cda10ba747bb19f871885c"
+      ]
+    },
+    "bill-hr815/96/144/rgba": {
+      "baseline": [
+        1440,
+        2160,
+        4,
+        "90f64fb3dffc2c43f5525180c1685b514bc428f330ef599debbc15e1a42b570d"
+      ],
+      "candidate": [
+        1440,
+        2160,
+        4,
+        "678c643ca7720397708dacdc3ea1cce5aba04666c6340911998ff7f679ebe1f4"
+      ]
+    }
+  }
+}

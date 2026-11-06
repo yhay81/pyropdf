@@ -1,0 +1,870 @@
+{
+  "baseline": [
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 32784384,
+      "rss_after_bytes": 36032512,
+      "peak_rss_bytes": 45559808
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ],
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 32669696,
+      "rss_after_bytes": 36192256,
+      "peak_rss_bytes": 53575680
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32866304,
+      "rss_after_bytes": 36257792,
+      "peak_rss_bytes": 61820928
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ],
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32706560,
+      "rss_after_bytes": 36229120,
+      "peak_rss_bytes": 78135296
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 33206272,
+      "rss_after_bytes": 36958208,
+      "peak_rss_bytes": 46157824
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ],
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32702464,
+      "rss_after_bytes": 37355520,
+      "peak_rss_bytes": 53497856
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32854016,
+      "rss_after_bytes": 36823040,
+      "peak_rss_bytes": 57864192
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ],
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 33189888,
+      "rss_after_bytes": 38334464,
+      "peak_rss_bytes": 70959104
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 33214464,
+      "rss_after_bytes": 36405248,
+      "peak_rss_bytes": 45862912
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ],
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 32747520,
+      "rss_after_bytes": 36425728,
+      "peak_rss_bytes": 53870592
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32788480,
+      "rss_after_bytes": 35807232,
+      "peak_rss_bytes": 61747200
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ],
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32641024,
+      "rss_after_bytes": 35864576,
+      "peak_rss_bytes": 79417344
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32755712,
+      "rss_after_bytes": 36904960,
+      "peak_rss_bytes": 46157824
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ],
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32743424,
+      "rss_after_bytes": 38137856,
+      "peak_rss_bytes": 55963648
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32690176,
+      "rss_after_bytes": 36478976,
+      "peak_rss_bytes": 57049088
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ],
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 33026048,
+      "rss_after_bytes": 36540416,
+      "peak_rss_bytes": 70324224
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 33193984,
+      "rss_after_bytes": 36401152,
+      "peak_rss_bytes": 45846528
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ],
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 33193984,
+      "rss_after_bytes": 36818944,
+      "peak_rss_bytes": 53116928
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32780288,
+      "rss_after_bytes": 36323328,
+      "peak_rss_bytes": 61558784
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ],
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32522240,
+      "rss_after_bytes": 36499456,
+      "peak_rss_bytes": 79699968
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 33099776,
+      "rss_after_bytes": 36458496,
+      "peak_rss_bytes": 47124480
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ],
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32706560,
+      "rss_after_bytes": 36749312,
+      "peak_rss_bytes": 55164928
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 33263616,
+      "rss_after_bytes": 36483072,
+      "peak_rss_bytes": 56918016
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ],
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32657408,
+      "rss_after_bytes": 37003264,
+      "peak_rss_bytes": 72605696
+    }
+  ],
+  "candidate": [
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 32817152,
+      "rss_after_bytes": 38592512,
+      "peak_rss_bytes": 50847744
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ],
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 33181696,
+      "rss_after_bytes": 42414080,
+      "peak_rss_bytes": 62849024
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 33226752,
+      "rss_after_bytes": 37199872,
+      "peak_rss_bytes": 63918080
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ],
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32636928,
+      "rss_after_bytes": 45744128,
+      "peak_rss_bytes": 94130176
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32960512,
+      "rss_after_bytes": 37556224,
+      "peak_rss_bytes": 47300608
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ],
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 33144832,
+      "rss_after_bytes": 42135552,
+      "peak_rss_bytes": 63111168
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 33169408,
+      "rss_after_bytes": 38617088,
+      "peak_rss_bytes": 57876480
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ],
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32993280,
+      "rss_after_bytes": 41431040,
+      "peak_rss_bytes": 76038144
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 32821248,
+      "rss_after_bytes": 38047744,
+      "peak_rss_bytes": 47308800
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ],
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 33112064,
+      "rss_after_bytes": 47857664,
+      "peak_rss_bytes": 70434816
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 33239040,
+      "rss_after_bytes": 38002688,
+      "peak_rss_bytes": 63885312
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ],
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 33005568,
+      "rss_after_bytes": 44965888,
+      "peak_rss_bytes": 90710016
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 33026048,
+      "rss_after_bytes": 38678528,
+      "peak_rss_bytes": 48275456
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ],
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 33222656,
+      "rss_after_bytes": 41631744,
+      "peak_rss_bytes": 60997632
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32903168,
+      "rss_after_bytes": 38563840,
+      "peak_rss_bytes": 58499072
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ],
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 33226752,
+      "rss_after_bytes": 41066496,
+      "peak_rss_bytes": 75051008
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 32673792,
+      "rss_after_bytes": 38502400,
+      "peak_rss_bytes": 48308224
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          256608000
+        ],
+        [
+          110,
+          256608000
+        ]
+      ],
+      "rss_before_bytes": 33230848,
+      "rss_after_bytes": 42754048,
+      "peak_rss_bytes": 62423040
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 32710656,
+      "rss_after_bytes": 39485440,
+      "peak_rss_bytes": 65372160
+    },
+    {
+      "document": "bill-hr815",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          110,
+          1026432000
+        ],
+        [
+          110,
+          1026432000
+        ]
+      ],
+      "rss_before_bytes": 33206272,
+      "rss_after_bytes": 45748224,
+      "peak_rss_bytes": 88506368
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32972800,
+      "rss_after_bytes": 38203392,
+      "peak_rss_bytes": 47726592
+    },
+    {
+      "document": "usrguide",
+      "dpi": 72,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          40531995
+        ],
+        [
+          27,
+          40531995
+        ]
+      ],
+      "rss_before_bytes": 32698368,
+      "rss_after_bytes": 41824256,
+      "peak_rss_bytes": 59576320
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 1,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32800768,
+      "rss_after_bytes": 38510592,
+      "peak_rss_bytes": 58593280
+    },
+    {
+      "document": "usrguide",
+      "dpi": 144,
+      "callers": 2,
+      "python": "3.13.17",
+      "extension_sha256": "d342e2df96471474988aae2cf7ac594a0cb7b8e55fe4c9139464de254fb8083f",
+      "pages_and_bytes_per_caller": [
+        [
+          27,
+          162224370
+        ],
+        [
+          27,
+          162224370
+        ]
+      ],
+      "rss_before_bytes": 32751616,
+      "rss_after_bytes": 40845312,
+      "peak_rss_bytes": 77611008
+    }
+  ]
+}

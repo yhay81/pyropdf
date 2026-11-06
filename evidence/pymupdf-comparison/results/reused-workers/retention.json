@@ -1,0 +1,90 @@
+{
+  "baseline": {
+    "start": {
+      "threads": 4,
+      "rss_bytes": 31932416,
+      "peak_rss_bytes": 31932416
+    },
+    "after_two_pages": {
+      "threads": 4,
+      "rss_bytes": 36581376,
+      "peak_rss_bytes": 58331136
+    },
+    "after_close": {
+      "threads": 4,
+      "rss_bytes": 35794944,
+      "peak_rss_bytes": 58331136
+    },
+    "after_another_document": {
+      "threads": 4,
+      "rss_bytes": 34930688,
+      "peak_rss_bytes": 58331136
+    }
+  },
+  "fresh-2": {
+    "start": {
+      "threads": 4,
+      "rss_bytes": 31920128,
+      "peak_rss_bytes": 31920128
+    },
+    "after_two_pages": {
+      "threads": 4,
+      "rss_bytes": 37990400,
+      "peak_rss_bytes": 59752448
+    },
+    "after_close": {
+      "threads": 4,
+      "rss_bytes": 37306368,
+      "peak_rss_bytes": 59752448
+    },
+    "after_another_document": {
+      "threads": 4,
+      "rss_bytes": 35639296,
+      "peak_rss_bytes": 59752448
+    }
+  },
+  "reuse-2": {
+    "start": {
+      "threads": 4,
+      "rss_bytes": 31887360,
+      "peak_rss_bytes": 31887360
+    },
+    "after_two_pages": {
+      "threads": 6,
+      "rss_bytes": 41050112,
+      "peak_rss_bytes": 62828544
+    },
+    "after_close": {
+      "threads": 6,
+      "rss_bytes": 41127936,
+      "peak_rss_bytes": 62828544
+    },
+    "after_another_document": {
+      "threads": 4,
+      "rss_bytes": 35745792,
+      "peak_rss_bytes": 62828544
+    }
+  },
+  "reuse-4": {
+    "start": {
+      "threads": 4,
+      "rss_bytes": 31838208,
+      "peak_rss_bytes": 31838208
+    },
+    "after_two_pages": {
+      "threads": 8,
+      "rss_bytes": 38961152,
+      "peak_rss_bytes": 60739584
+    },
+    "after_close": {
+      "threads": 8,
+      "rss_bytes": 38203392,
+      "peak_rss_bytes": 60739584
+    },
+    "after_another_document": {
+      "threads": 4,
+      "rss_bytes": 35749888,
+      "peak_rss_bytes": 60739584
+    }
+  }
+}

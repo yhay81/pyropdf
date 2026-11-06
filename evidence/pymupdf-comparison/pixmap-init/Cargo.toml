@@ -1,0 +1,14 @@
+[package]
+name = "pixmap-init-probe"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+vello_common = { version = "=0.3.0", default-features = false, features = ["std"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

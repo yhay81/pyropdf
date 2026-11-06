@@ -1,0 +1,46 @@
+{
+  "baseline": {
+    "extension_sha256": "1a15c3c52ee426b45a95490915b4649fc7212dd4a7f3a91dfad552a8d4245ed2",
+    "probe_threads": null,
+    "counts": {
+      "sequential": 1872,
+      "mixed": 156,
+      "revisit": 312
+    },
+    "covered_all_reference_keys": true,
+    "mismatches": []
+  },
+  "0": {
+    "extension_sha256": "823d5adbb4400b19abaf6588840c88a2e4a26a49ccb974093b1ba80fcca9db1e",
+    "probe_threads": "0",
+    "counts": {
+      "sequential": 1872,
+      "mixed": 156,
+      "revisit": 312
+    },
+    "covered_all_reference_keys": true,
+    "mismatches": []
+  },
+  "2": {
+    "extension_sha256": "823d5adbb4400b19abaf6588840c88a2e4a26a49ccb974093b1ba80fcca9db1e",
+    "probe_threads": "2",
+    "counts": {
+      "sequential": 1872,
+      "mixed": 156,
+      "revisit": 312
+    },
+    "covered_all_reference_keys": true,
+    "mismatches": []
+  },
+  "4": {
+    "extension_sha256": "823d5adbb4400b19abaf6588840c88a2e4a26a49ccb974093b1ba80fcca9db1e",
+    "probe_threads": "4",
+    "counts": {
+      "sequential": 1872,
+      "mixed": 156,
+      "revisit": 312
+    },
+    "covered_all_reference_keys": true,
+    "mismatches": []
+  }
+}

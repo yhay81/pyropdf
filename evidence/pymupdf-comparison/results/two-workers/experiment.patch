@@ -1,0 +1,123 @@
+--- a/product/Cargo.toml
++++ b/product/Cargo.toml
+@@ -23,6 +23,7 @@
+ # name each other by path and their types agree only from one source.
+ # fuzz/Cargo.toml repeats this table. #603 removes both.
+ [patch.crates-io]
++vello_cpu = { path = "../vello_cpu" }
+ hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+ hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+ hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+--- a/product/Cargo.lock
++++ b/product/Cargo.lock
+@@ -281,6 +281,15 @@
+ checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
+ dependencies = [
+  "cfg-if",
++]
++
++[[package]]
++name = "crossbeam-channel"
++version = "0.5.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
++dependencies = [
++ "crossbeam-utils",
+ ]
+
+ [[package]]
+@@ -908,6 +917,15 @@
+ version = "1.21.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
++
++[[package]]
++name = "ordered-channel"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "95be4d57809897b5a7539fc15a7dfe0e84141bc3dfaa2e9b1b27caa90acf61ab"
++dependencies = [
++ "crossbeam-channel",
++]
+
+ [[package]]
+ name = "p256"
+@@ -1235,6 +1253,7 @@
+  "unicode-linebreak",
+  "unicode-script",
+  "unicode-segmentation",
++ "vello_cpu",
+  "x509-cert",
+ ]
+
+@@ -1687,6 +1706,15 @@
+ ]
+
+ [[package]]
++name = "thread_local"
++version = "1.1.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
+ name = "tiff"
+ version = "0.11.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1777,13 +1805,15 @@
+ [[package]]
+ name = "vello_cpu"
+ version = "0.3.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ed1fec424fbba6acf6cbc78bb526447eb77590d95f40419d598870fe37535212"
+ dependencies = [
+  "bytemuck",
++ "crossbeam-channel",
+  "glifo",
+  "hashbrown",
++ "ordered-channel",
+  "png",
++ "rayon",
++ "thread_local",
+  "vello_common",
+ ]
+
+--- a/product/crates/pyropdf-engine/Cargo.toml
++++ b/product/crates/pyropdf-engine/Cargo.toml
+@@ -9,6 +9,7 @@
+ publish.workspace = true
+
+ [dependencies]
++vello_cpu = { version = "=0.3.0", default-features = false, features = ["multithreading"] }
+ # Every engine reads the document through the store (DESIGN.md F1).
+ pyropdf-store.workspace = true
+ hayro = "0.9.0"
+--- a/product/crates/pyropdf-engine/src/render/mod.rs
++++ b/product/crates/pyropdf-engine/src/render/mod.rs
+@@ -426,7 +426,7 @@
+         },
+         ..fallback.settings()
+     };
+-    let mut context = RenderContext::new(raster_width, raster_height);
++    let mut context = RenderContext::new_with(raster_width, raster_height, hayro::vello_cpu::RenderSettings { num_threads: 2, ..Default::default() });
+     hayro::render_into(
+         page,
+         cache,
+--- a/vello_cpu/src/render.rs
++++ b/vello_cpu/src/render.rs
+@@ -179,13 +179,6 @@
+     fn default() -> Self {
+         Self {
+             level: Level::try_detect().unwrap_or(Level::baseline()),
+-            #[cfg(feature = "multithreading")]
+-            num_threads: (std::thread::available_parallelism()
+-                .unwrap()
+-                .get()
+-                .saturating_sub(1) as u16)
+-                .min(8),
+-            #[cfg(not(feature = "multithreading"))]
+             num_threads: 0,
+         }
+     }
