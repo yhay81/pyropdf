@@ -21,6 +21,7 @@ use pyropdf_store::value::Reference;
 use crate::buffers::PathColumns;
 use crate::document::{_Document, PageKey, PageKind, PageResult};
 use crate::errors::{PdfError, StaleObjectError, limit_error};
+use crate::pages::PageSource;
 use crate::pixmap::bridge_error;
 use crate::text::box_bits;
 
@@ -39,7 +40,7 @@ use crate::text::box_bits;
 )]
 pub fn page_content(
     py: Python<'_>,
-    document: &_Document,
+    document: PageSource<'_>,
     number: u32,
     generation: u16,
     kinds: (bool, bool, bool),
@@ -93,7 +94,7 @@ pub fn page_content(
 #[pyfunction]
 pub fn page_paths(
     py: Python<'_>,
-    document: &_Document,
+    document: PyRef<'_, _Document>,
     number: u32,
     generation: u16,
     annotations: bool,
@@ -103,7 +104,7 @@ pub fn page_paths(
     crate::errors::boundary(|| {
         with_content(
             py,
-            document,
+            PageSource::Live(document),
             (number, generation),
             (false, true, false),
             (annotations, clip, max_elements),
@@ -118,17 +119,18 @@ pub fn page_paths(
 /// released throughout.
 fn with_content<T: Send>(
     py: Python<'_>,
-    document: &_Document,
+    source: PageSource<'_>,
     (number, generation): (u32, u16),
     kinds: (bool, bool, bool),
     (annotations, clip, max_elements): (bool, Option<BBox>, Option<u64>),
     then: impl FnOnce(&PageContent) -> PyResult<T> + Send,
 ) -> PyResult<T> {
+    let document = source.document();
     let budget = document.call_budget(&[(LimitCode::ContentElementCount, max_elements)])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
+    let (version, index) = source.index(&budget)?;
     let (text_runs, paths, images) = kinds;
     let fallback = if text_runs {
-        document.fallback()
+        source.fallback()
     } else {
         Fallback::default()
     };

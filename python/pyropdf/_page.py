@@ -138,6 +138,10 @@ class Page:
         """Return the document that holds the page."""
         return self._document
 
+    def _reader(self) -> _core._Document | _core._PageSnapshot:
+        """Return the source for layout, tables and painted content."""
+        return self._document._core()  # noqa: SLF001
+
     @property
     def xref(self) -> int:
         """Return the object number of the page dictionary."""
@@ -703,7 +707,7 @@ class Page:
         clip_box = None if clip is None else _clip_box(clip)
         try:
             raw = _core.page_content(
-                self._document._core(),  # noqa: SLF001
+                self._reader(),
                 self._number,
                 self._generation,
                 (text_runs, paths, images),
@@ -970,7 +974,7 @@ class Page:
         """Return the core's layout of the page and the columns of its chars, and warn of the glyphs it skipped."""
         try:
             width, height, blocks, skipped, columns = _core.page_layout(
-                self._document._core(),  # noqa: SLF001
+                self._reader(),
                 self._number,
                 self._generation,
                 options,
@@ -1209,7 +1213,7 @@ class Page:
         _validate_optional_positive_int("max_size", max_size)
         try:
             raw, skipped = _core.page_tables(
-                self._document._core(),  # noqa: SLF001
+                self._reader(),
                 self._number,
                 self._generation,
                 strategy == "text",
@@ -1300,6 +1304,24 @@ class Page:
     def __repr__(self) -> str:
         """Return a representation naming the page object and the document."""
         return f"<Page {self._number} {self._generation} R of {self._document!r}>"
+
+
+class _ExportPage(Page):
+    """The page at a fixed index in the version captured for a document export."""
+
+    __slots__ = ("_index", "_snapshot")
+
+    def __init__(self, document: Document, snapshot: _core._PageSnapshot, index: int) -> None:
+        super().__init__(document, *snapshot.page_object(index))
+        self._snapshot = snapshot
+        self._index = index
+
+    @property
+    def index(self) -> int:
+        return self._index
+
+    def _reader(self) -> _core._PageSnapshot:
+        return self._snapshot
 
 
 __all__ = ["Page"]

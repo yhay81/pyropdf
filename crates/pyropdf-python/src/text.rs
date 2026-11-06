@@ -20,6 +20,7 @@ use pyropdf_store::value::Reference;
 use crate::buffers::CharColumns;
 use crate::document::{_Document, PageKey, PageKind, PageResult};
 use crate::errors::{PdfError, StaleObjectError, limit_error, store_error};
+use crate::pages::PageSource;
 use crate::pixmap::bridge_error;
 
 /// The text options as `python/pyropdf/_text.py` passes them: `(clip, keep
@@ -250,7 +251,7 @@ type LayoutTuple = (f64, f64, Vec<BlockTuple>, usize, Option<CharColumns>);
 )]
 pub fn page_layout(
     py: Python<'_>,
-    document: &_Document,
+    document: PageSource<'_>,
     number: u32,
     generation: u16,
     options: OptionsTuple,
@@ -292,7 +293,7 @@ pub fn page_layout(
 #[pyfunction]
 pub fn page_chars(
     py: Python<'_>,
-    document: &_Document,
+    document: PyRef<'_, _Document>,
     number: u32,
     generation: u16,
     options: OptionsTuple,
@@ -303,7 +304,7 @@ pub fn page_chars(
         let limits = (max_glyphs, max_size);
         with_layout(
             py,
-            document,
+            PageSource::Live(document),
             (number, generation),
             options,
             true,
@@ -319,21 +320,22 @@ pub fn page_chars(
 /// GIL released.
 fn with_layout<T: Send>(
     py: Python<'_>,
-    document: &_Document,
+    source: PageSource<'_>,
     (number, generation): (u32, u16),
     options: OptionsTuple,
     chars: bool,
     (max_glyphs, max_size): (Option<u64>, Option<u64>),
     then: impl FnOnce(&PageLayout, &Budget) -> PyResult<T> + Send,
 ) -> PyResult<T> {
-    let fallback = document.fallback();
+    let document = source.document();
+    let fallback = source.fallback();
     let key = text_key(options, &fallback);
     let options = text_options(options)?;
     let budget = document.call_budget(&[
         (LimitCode::TextGlyphCount, max_glyphs),
         (LimitCode::TextSize, max_size),
     ])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
+    let (version, index) = source.index(&budget)?;
     py.detach(|| {
         let reference = Reference::new(number, generation);
         let (at, page) = index
@@ -505,7 +507,7 @@ pub fn page_selection(
 )]
 pub fn page_tables(
     py: Python<'_>,
-    document: &_Document,
+    document: PageSource<'_>,
     number: u32,
     generation: u16,
     text_strategy: bool,
@@ -514,16 +516,17 @@ pub fn page_tables(
     max_size: Option<u64>,
 ) -> PyResult<(Vec<TableTuple>, usize)> {
     crate::errors::boundary(|| {
-        let budget = document.call_budget(&[
+        let owner = document.document();
+        let budget = owner.call_budget(&[
             (LimitCode::TextGlyphCount, max_glyphs),
             (LimitCode::TextSize, max_size),
         ])?;
-        let (version, index) = crate::pages::index_with(document, None, &budget)?;
+        let (version, index) = document.index(&budget)?;
         py.detach(|| {
             let at = index
                 .index_of(Reference::new(number, generation))
                 .ok_or_else(|| stale(number, generation))?;
-            let bridged = document
+            let bridged = owner
                 .bridge
                 .get(&version, &index, &budget)
                 .map_err(|e| bridge_error(&e))?;
