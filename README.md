@@ -6,7 +6,7 @@ store that every engine reads, so an edit costs what it touches, every
 change can be undone, and a failed transaction leaves the document as it
 was.
 
-**Status:** alpha, 0.2. The API may change between minor versions. Documentation:
+**Status:** 0.3. The API may change between minor versions. Documentation:
 <https://pyropdf.haya.works/>. [DESIGN.md](DESIGN.md) describes the
 foundation, and [CHANGELOG.md](CHANGELOG.md) what each release holds.
 
@@ -26,12 +26,12 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("output.pdf", incremental=True)
 ```
 
-0.2.2 reads text, words, layout, tables, images, fonts, and Markdown,
+0.3.0 reads text, words, layout, tables, images, fonts, and Markdown,
 exports them as JSON or retrieval chunks, runs offline OCR, and renders
 pages to pixmaps and SVG, drawing the CJK fonts that a document does not
-embed in fallback faces. It draws paths in colors or gradients, images,
-pages, and text in Standard 14 or OpenType fonts, in color glyphs and any
-weight of a variable face, with `page.draw`; edits pages and their boxes,
+embed in fallback faces. It draws paths and text in colors or gradients,
+images, and pages, the text in Standard 14 or OpenType fonts, in color
+glyphs and any weight of a variable face, with `page.draw`; edits pages and their boxes,
 text, images, colors, annotations, links, form fields, outlines,
 attachments, metadata, page labels, and layers; signs documents and verifies
 signatures; removes hidden or active content and subsets fonts; and saves
