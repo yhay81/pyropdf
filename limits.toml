@@ -252,6 +252,12 @@ unit = "bytes"
 default = 67_108_864
 reached = "Encoding a pixmap writes more bytes than the call's `max_size`."
 
+[codes.clip_page_side]
+message = "the transformed page is too large for clipped rendering"
+unit = "pixels"
+default = 524_288
+reached = "With `clip`, either side of the page after applying the render matrix exceeds 524,288 pixels."
+
 [codes.svg_output_size]
 message = "the SVG document is too large"
 unit = "bytes"

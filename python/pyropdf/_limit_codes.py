@@ -48,6 +48,7 @@ LimitCode: TypeAlias = Literal[
     "export_output_size",
     "pdf_output_size",
     "pixmap_output_size",
+    "clip_page_side",
     "svg_output_size",
     "render_output_size",
     "password_input_size",
@@ -170,6 +171,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         ),
         "pdf_output_size": "Saving writes more bytes than the call's `max_size`.",
         "pixmap_output_size": "Encoding a pixmap writes more bytes than the call's `max_size`.",
+        "clip_page_side": (
+            "With `clip`, either side of the page after applying the render matrix exceeds 524,288 pixels."
+        ),
         "svg_output_size": "A page's SVG holds more UTF-8 bytes than the call's `max_size`.",
         "render_output_size": (
             "The images that `doc.render` encodes write more bytes in all than the call's `max_size`."

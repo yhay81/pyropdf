@@ -369,11 +369,14 @@ def test_a_clip_renders_a_page_up_to_the_bound() -> None:
     assert max(abs(a - b) for a, b in zip(bytes(far), bytes(near), strict=True)) < 16
 
 
-def test_a_clip_of_a_page_beyond_the_bound_raises() -> None:
-    scale = (PAGE_BOUND + 1) / A1[0]
+@pytest.mark.parametrize("size", [A1, A1[::-1]], ids=["width", "height"])
+def test_a_clip_of_a_page_beyond_the_bound_raises(size: tuple[int, int]) -> None:
+    scale = (PAGE_BOUND + 1) / max(size)
 
-    with pytest.raises(ValueError, match=rf"page size {PAGE_BOUND + 1}x\d+ exceeds the limit of {PAGE_BOUND} pixels"):
-        _sized(A1, "").pixmap(matrix=(scale, 0, 0, scale), clip=(0, 0, 1, 1))
+    with pytest.raises(pyropdf.LimitError, match=rf"exceeds the limit of {PAGE_BOUND} pixels") as error:
+        _sized(size, "").pixmap(matrix=(scale, 0, 0, scale), clip=(0, 0, 1, 1))
+    assert error.value.code == "clip_page_side"
+    assert str(PAGE_BOUND + 1) in str(error.value)
 
 
 @pytest.mark.parametrize(

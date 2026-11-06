@@ -9,6 +9,7 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use hayro::hayro_syntax::Pdf;
+use pyropdf_store::budget::LimitCode;
 
 use crate::bridge::{Bridged, Error, Result};
 
@@ -111,7 +112,9 @@ pub const MAX_HEIGHT: u16 = 65_532;
 /// vello_cpu rasterizes in `f32`, so an edge that reaches the clip from the
 /// far side of the page moves by less than 1/16 of a pixel at this bound,
 /// and by more beyond it (evidence/clip-precision-605).
-pub const MAX_PAGE_SIDE: u32 = 1 << 19;
+pub const MAX_PAGE_SIDE: u32 = LimitCode::ClipPageSide
+    .default_limit()
+    .expect("clip_page_side has a fixed limit") as u32;
 
 /// How far a page edge may fall short of a pixel boundary through
 /// floating-point error and still cover that pixel, as MuPDF's
@@ -185,10 +188,11 @@ pub enum RasterError {
     /// The document has no such page.
     NoPage(usize),
     /// The matrix or the page size gives no raster, or one above the
-    /// limits: [`MAX_WIDTH`], [`MAX_HEIGHT`], and [`MAX_PIXELS`]; or, with
-    /// a clip, a page above [`MAX_PAGE_SIDE`]; or the options are
-    /// inconsistent.
+    /// limits [`MAX_WIDTH`], [`MAX_HEIGHT`], and [`MAX_PIXELS`], or the
+    /// options are inconsistent.
     Geometry(String),
+    /// A clip was requested and a transformed page side exceeds [`MAX_PAGE_SIDE`].
+    ClipPageSide(String),
     /// The clip leaves no pixel of the page.
     Clip(String),
 }
@@ -197,7 +201,9 @@ impl std::fmt::Display for RasterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPage(index) => write!(f, "the document has no page {index}"),
-            Self::Geometry(message) | Self::Clip(message) => f.write_str(message),
+            Self::Geometry(message) | Self::ClipPageSide(message) | Self::Clip(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
@@ -371,7 +377,7 @@ fn extent(
         Some(clip) => {
             let side = f64::from(MAX_PAGE_SIDE);
             if page_width > side || page_height > side {
-                return Err(RasterError::Geometry(format!(
+                return Err(RasterError::ClipPageSide(format!(
                     "page size {page_width:.0}x{page_height:.0} exceeds the limit of \
                      {MAX_PAGE_SIDE} pixels a side for a clip"
                 )));

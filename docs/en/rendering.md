@@ -62,8 +62,9 @@ all, and a larger one raises `ValueError`. With `clip`, these limits apply
 to the clipped raster, so a small region renders at scales at which the
 whole page would not: the 100 by 100 point corner of an A1 page renders
 2,000 pixels square at 20 times, where the whole page would take 1.6
-billion pixels. The page under the matrix may measure up to 524,288 pixels
-a side; within that, content that reaches the clip from the far side of the
+billion pixels. If either side of the transformed page exceeds 524,288
+pixels, clipped rendering raises `LimitError` with code `clip_page_side`.
+Within that bound, content that reaches the clip from the far side of the
 page lands within 1/16 of a pixel of where it belongs.
 
 ## Encoding
