@@ -2979,9 +2979,12 @@ pub fn annotation_pixmap(
         };
         let fallback = document.fallback();
         let raster = py.detach(|| -> PyResult<Raster> {
+            budget.poll().map_err(|e| limit_error(&e))?;
             let bridged =
                 Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
-            render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
+            let raster = render::raster(&bridged, &fallback, at, &options).map_err(raster_error)?;
+            budget.poll().map_err(|e| limit_error(&e))?;
+            Ok(raster)
         })?;
         Ok(Some(Pixmap::from(raster)))
     })?
