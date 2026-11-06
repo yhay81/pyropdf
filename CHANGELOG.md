@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Breaking:** Remove the deprecated `SoftMask.xref` property and the
+  `xref=` constructor argument. Use `SoftMask(subtype=...)`; a mask holds
+  only its subtype. The property was deprecated in 0.2.2 and has been 0
+  since then, because hayro no longer identifies the mask's group. The
+  owner chose to remove it in this patch release, as an exception to
+  removing public API only in a minor release (#610).
 - `page.pixmap(glyph_cache=True)` and `Document.render(glyph_cache=True)`
   render text through hayro's glyph cache, which rasterizes each glyph once
   at each size and reuses it: on the corpus, about 1.5 times as fast at
