@@ -127,9 +127,23 @@ PDF はフォントのプログラムを埋め込まずに名前だけで指定�
 `page.text()` では読めるテキストが描画では空白になります。フォントの extra を入れると、
 代わりに描く書体が入ります。
 
-```bash
-pip install "pyropdf[jp]"
-```
+=== "pip"
+
+    ```bash
+    pip install "pyropdf[jp]"
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add "pyropdf[jp]"
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add "pyropdf[jp]"
+    ```
 
 `jp`・`ko`・`zh-cn`・`zh-tw` は、日本語・韓国語・簡体字中国語・繁体字中国語の Noto Sans と
 Noto Serif を入れます。すると `page.pixmap()`・`page.svg()`・`doc.render()`・

@@ -1,6 +1,6 @@
 site_name: pyropdf
 site_url: https://pyropdf.haya.works/
-site_description: Complete control of PDF from Python, on one versioned object store in Rust. Every edit is a version, every change can be undone, and a failed transaction leaves the document as it was.
+site_description: PDFs, with Python ergonomics and a Rust core. pyropdf reads, renders, edits, and signs PDF from Python on one versioned object store, so every change can be undone and a failed edit leaves the document as it was.
 site_author: Yusuke Hayashi
 copyright: Copyright &copy; 2026 Yusuke Hayashi · MIT License
 repo_url: https://github.com/yhay81/pyropdf
@@ -23,16 +23,21 @@ theme:
     alternate: material/translate
   features:
     - navigation.footer
+    - navigation.indexes
     - navigation.instant
+    - navigation.instant.prefetch
     - navigation.instant.progress
     - navigation.path
     - navigation.sections
     - navigation.tabs
     - navigation.top
     - search.highlight
-    - search.suggest
+    - content.action.copy
     - content.action.edit
+    - content.code.annotate
     - content.code.copy
+    - content.tabs.link
+    - content.tooltips
     - toc.follow
   palette:
     - media: "(prefers-color-scheme: light)"
@@ -98,6 +103,7 @@ nav:
       - Changelog: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
 
 markdown_extensions:
+  - abbr
   - admonition
   - attr_list
   - md_in_html
@@ -109,15 +115,73 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  # The glossary: its abbreviations show as tooltips on every page.
   - pymdownx.snippets:
       base_path: [docs]
       check_paths: true
-  - pymdownx.superfences
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
+  # Hovering a link to a heading of these pages previews it in place.
+  - zensical.extensions.preview:
+      configurations:
+        - targets:
+            include:
+              - concepts.md
+              - limits.md
+              - api/*
 
 plugins:
   - search
+  # Serve the Google Fonts from the site itself. Only the fonts: the theme's
+  # bundle also names video and lightbox scripts that no page loads, and the
+  # plugin would otherwise download them and the ad SDK that they load.
+  - privacy:
+      assets_include:
+        - fonts.googleapis.com/*
+        - fonts.gstatic.com/*
+  # llms.txt, llms-full.txt, and a Markdown copy of each listed page; the
+  # theme's content.action.copy shows "Copy as Markdown" on those pages.
+  - llmstxt:
+      markdown_description: >-
+        The guide explains concepts and tasks with examples that run in the
+        project's tests. The API reference is generated from the package's
+        docstrings: one page per area, each listing its classes, functions,
+        and signatures. The Japanese guide is at
+        https://pyropdf.haya.works/ja/llms.txt.
+      full_output: llms-full.txt
+      sections:
+        Guide:
+          - getting-started.md
+          - concepts.md
+          - reading.md
+          - rendering.md
+          - editing.md
+          - versions.md
+          - limits.md
+          - recipes.md
+        API reference:
+          - api/*.md
+        Project:
+          - choosing.md
+          - status.md
+          - specification.md
+  # A social card and Open Graph metadata for every page.
+  - social:
+      cards_layout_options:
+        background_color: "#15120f"
+        color: "#f1ebe0"
+        font_family: Inter
+  - minify:
+      minify_html: true
+      minify_inline_css: true
+      minify_inline_js: true
 
 extra:
   current_language: en

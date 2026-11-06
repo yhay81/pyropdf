@@ -7,17 +7,45 @@ description: pyropdf をインストールし、文書を開き、ページを�
 
 ## インストール
 
-```bash
-pip install pyropdf
-```
+=== "pip"
+
+    ```bash
+    pip install pyropdf
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add pyropdf
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add pyropdf
+    ```
 
 wheel は Linux・macOS・Windows の CPython 3.11〜3.15 に対応し、free-threaded
 ビルド用の wheel も別にあります。必須の依存はありません。オフライン OCR には
 モデルが必要で、extra で入ります。
 
-```bash
-pip install "pyropdf[ocr]"
-```
+=== "pip"
+
+    ```bash
+    pip install "pyropdf[ocr]"
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add "pyropdf[ocr]"
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add "pyropdf[ocr]"
+    ```
 
 `jp`・`ko`・`zh-cn`・`zh-tw` の extra は、文書が埋め込んでいない日本語・韓国語・中国語の
 フォントを描く書体を入れます。[描画](rendering.md#fonts-that-a-document-does-not-embed)を参照してください。
@@ -50,22 +78,28 @@ print(info.page_count, info.version, info.needs_password)
 
 ## ページを読む
 
-```python
+```python title="read.py"
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
-    print(page.text())
+    print(page.text())  # (1)!
     for word in page.words():
-        print(word.text, word.bbox)
-    print(page.search("total"))
+        print(word.text, word.bbox)  # (2)!
+    print(page.search("total"))  # (3)!
 ```
+
+1. 読む順のテキスト。段組、表、見出しは、コンテンツストリームが描く順ではなく、
+   人が読む順に出てきます。
+2. 矩形は表示座標です。ページの回転にかかわらず、ビューアが見せるページの左上からの
+   ポイントで表します。[概念](concepts.md#display-coordinates)を参照してください。
+3. 一致ごとに一つの矩形のリスト。そのまま `pyropdf.Highlight` などの注釈に渡せます。
 
 レイアウト、文字、表、Markdown、OCR は[内容を読む](reading.md)にあります。
 
 ## ページを描画する
 
-```python
+```python title="render.py"
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
@@ -78,16 +112,21 @@ with pyropdf.open("input.pdf") as doc:
 まとめ、`doc.history` で取り消せるようにします。ブロックが例外を出したときは、
 文書を元のまま残します。
 
-```python
+```python title="edit.py"
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
-    with doc.transaction("回転とメモ"):
+    with doc.transaction("回転とメモ"):  # (1)!
         page.rotation = 90
         page.annotations.add(pyropdf.Note((40, 40), contents="確認済み"))
-    doc.save("output.pdf", incremental=True)
+    doc.save("output.pdf", incremental=True)  # (2)!
 ```
+
+1. 二つの編集は `doc.history` の名前付きの一歩になります。ブロックが例外を出せば
+   どちらも残らず、文書は前の版のままです。
+2. 編集が書いたオブジェクトだけを元のバイト列の後ろに追記するので、
+   元のバイト列に対する署名は有効なままです。
 
 増分保存は、編集が書いたオブジェクトだけを追記します。既定の全体保存はファイルを
 書き直します。違いは[版と保存](versions.md)にあります。

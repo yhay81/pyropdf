@@ -104,6 +104,7 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
         0 => Unmapped::Skip,
         1 => Unmapped::Replacement,
         2 => Unmapped::GlyphId,
+        3 => Unmapped::Type3CharCode,
         other => {
             return Err(PyValueError::new_err(format!(
                 "unknown unmapped code {other}"

@@ -1,0 +1,38 @@
+diff --git i/crates/pyropdf-engine/src/render/mod.rs w/crates/pyropdf-engine/src/render/mod.rs
+index 96b54cc..0f73c3d 100644
+--- i/crates/pyropdf-engine/src/render/mod.rs
++++ w/crates/pyropdf-engine/src/render/mod.rs
+@@ -409,7 +409,10 @@ fn draw<'a>(
+ ) -> std::result::Result<Raster, RasterError> {
+     use hayro::hayro_interpret::TransformExt;
+     use hayro::kurbo::Affine;
+-    use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
++    use hayro::vello_cpu::peniko::ImageAlphaType;
++    use hayro::vello_cpu::{
++        PixelMetadata, Pixmap, RasterizerSettings, RenderContext, Resources, TargetInit,
++    };
+
+     let pages = pdf.pages();
+     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
+@@ -437,7 +440,20 @@ fn draw<'a>(
+     );
+     context.flush();
+     let [red, green, blue, opacity] = options.background;
+-    let mut pixmap = hayro::vello_cpu::Pixmap::new(raster_width, raster_height);
++    // `extent` bounds this to MAX_PIXELS (64 million), so four bytes per
++    // pixel fit usize even on 32-bit targets. Allocate zeroed bytes rather
++    // than repeatedly copying a zero PremulRgba8; rendering clears them next.
++    #[expect(
++        clippy::disallowed_methods,
++        reason = "extent bounds the raster to MAX_PIXELS; this replaces hayro's same-size target allocation"
++    )]
++    let data = vec![0_u8; usize::from(raster_width) * usize::from(raster_height) * 4];
++    let mut pixmap = Pixmap::from_parts(
++        data,
++        raster_width,
++        raster_height,
++        PixelMetadata::new(ImageAlphaType::AlphaPremultiplied, true),
++    );
+     context.render_with(
+         &mut pixmap,
+         &mut Resources::default(),

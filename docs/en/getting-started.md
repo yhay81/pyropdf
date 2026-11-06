@@ -7,17 +7,45 @@ description: Install pyropdf, open a document, read and render a page, edit it i
 
 ## Install
 
-```bash
-pip install pyropdf
-```
+=== "pip"
+
+    ```bash
+    pip install pyropdf
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add pyropdf
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add pyropdf
+    ```
 
 Wheels cover CPython 3.11 to 3.15 on Linux, macOS, and Windows, with
 separate wheels for the free-threaded builds. pyropdf has no required
 dependencies. Offline OCR needs its models, which an extra installs:
 
-```bash
-pip install "pyropdf[ocr]"
-```
+=== "pip"
+
+    ```bash
+    pip install "pyropdf[ocr]"
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add "pyropdf[ocr]"
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add "pyropdf[ocr]"
+    ```
 
 The `jp`, `ko`, `zh-cn`, and `zh-tw` extras install the faces that render
 Japanese, Korean, and Chinese fonts that a document does not embed; see
@@ -53,23 +81,31 @@ print(info.page_count, info.version, info.needs_password)
 
 ## Read a page
 
-```python
+```python title="read.py"
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
-    print(page.text())
+    print(page.text())  # (1)!
     for word in page.words():
-        print(word.text, word.bbox)
-    print(page.search("total"))
+        print(word.text, word.bbox)  # (2)!
+    print(page.search("total"))  # (3)!
 ```
+
+1. Text in reading order: columns, tables, and headings come out as a reader
+   would read them, not in the order the content stream draws them.
+2. Boxes are in display coordinates: points from the top-left of the page as
+   a viewer shows it, whatever the page's rotation. See
+   [Concepts](concepts.md#display-coordinates).
+3. A list of rectangles, one per match, ready to pass to an annotation such
+   as `pyropdf.Highlight`.
 
 [Reading content](reading.md) covers layout, characters, tables, Markdown,
 and OCR.
 
 ## Render a page
 
-```python
+```python title="render.py"
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
@@ -82,16 +118,21 @@ Every edit makes a new version of the document. A transaction groups edits
 into one named step that `doc.history` can undo, and leaves the document as
 it was if its block raises.
 
-```python
+```python title="edit.py"
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
-    with doc.transaction("rotate and note"):
+    with doc.transaction("rotate and note"):  # (1)!
         page.rotation = 90
         page.annotations.add(pyropdf.Note((40, 40), contents="Checked"))
-    doc.save("output.pdf", incremental=True)
+    doc.save("output.pdf", incremental=True)  # (2)!
 ```
+
+1. Both edits become one named step of `doc.history`. If the block raises,
+   neither stays, and the document is the version it was before.
+2. Appends only the objects that the edits wrote, after the original bytes,
+   so signatures over those bytes stay valid.
 
 An incremental save appends only the objects that the edits wrote. A full
 save, the default, rewrites the file. [Versions and saving](versions.md)

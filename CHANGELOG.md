@@ -1,6 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-06)
+
+A minor release: it removes one public property, deprecated in 0.2.2, and
+changes the exception that an internal fault raises.
+
+### Breaking
+
+- `SoftMask.xref` and the `xref=` argument of `SoftMask` are removed. A
+  mask holds only its subtype; build one with `SoftMask(subtype=...)`. The
+  property was deprecated in 0.2.2 and has been 0 since then, because hayro
+  0.9 no longer identifies the group of a soft mask (#610).
+- A fault inside pyropdf's Rust code now raises `pyropdf.InternalError`, a
+  `PdfError` that carries the panic message, instead of PyO3's
+  `PanicException`, which escaped `except Exception`. An edit that faults
+  is discarded, and the document stays usable: it reads, edits, saves, and
+  undoes as before (#674).
+
+### Added
 
 - `page.pixmap(glyph_cache=True)` and `Document.render(glyph_cache=True)`
   render text through hayro's glyph cache, which rasterizes each glyph once
@@ -9,6 +26,40 @@
   vertically, and the cache's memory is outside `DocumentLimits`.
   `DocumentLimits.web()` accepts the option. Without it, renders are
   unchanged (#640, #685).
+- `Canvas.text` and `Canvas.textbox` fill and stroke text with linear and
+  radial gradients, in the Standard 14 and embedded fonts; extraction
+  still reads the text once (#646).
+- `Canvas.draw` repaints the axial and radial `ShadingPattern` fills and
+  strokes that `page.content()` and `page.paths()` return, as a bounded
+  sampled approximation under the canvas budget. `GradientExtend` gains
+  `PAD_START` and `PAD_END`, so all four combinations of extension survive
+  (#645).
+- The text readers take `unmapped="type3_char_code"`, which reads a Type 3
+  glyph that has no Unicode mapping or glyph name as the character of its
+  code: a heuristic for custom encodings, used only after the other
+  lookups fail (#437).
+- `Pixmap.from_bytes` and `Pixmap.open` take `max_size`, 256 MiB by
+  default, and refuse larger encoded input with `LimitError` code
+  `image_input_size` before copying or reading it; `None` removes the
+  bound (#697).
+
+### Fixed
+
+- An indirect stencil image (`/ImageMask true`) reports its object number
+  and encoded size instead of 0, so its stored stream can be read.
+  `Canvas.draw` refuses stencil masks, whose fill paint the image record
+  does not keep (#706).
+- Canvas text in colour glyphs reads back in line order in xpdf as in
+  MuPDF, PDFium, and pyropdf: xpdf no longer interleaves its lines (#670).
+- `Document.check()` chooses the schema of a shading or function by its
+  integer type, such as `ShadingType` 2, so a valid axial shading no longer
+  reports defects of another type (#643).
+- Saving a Type 0 font whose `/W` array holds many overlapping ranges takes
+  time in proportion to the array and the glyphs, not to their product
+  (#684).
+- Caches and worklists of the Python binding charge the operation's memory
+  budget, so they refuse with `LimitError` code `memory_size` instead of
+  growing without bound (#677).
 
 ## 0.2.2 (2026-11-04)
 

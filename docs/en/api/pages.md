@@ -567,7 +567,10 @@ ligature characters U+FB00 to U+FB06 to their letters;
 `dehyphenate=True` removes a hyphen that ends a line between two
 letters of a word that continues in lowercase on the next line of the
 block, and joins the two lines; and `unmapped` decides what a glyph
-without Unicode becomes (see `Unmapped`).
+without Unicode becomes (see `Unmapped`). With
+`unmapped="type3_char_code"`, an unmapped Type 3 glyph's original
+character code is interpreted as a Unicode code point. This guess
+can produce unrelated text for a custom font encoding.
 
 `max_glyphs` bounds the glyphs collected, 262,144 by default, with
 `LimitError` code `text_glyph_count`, and `max_size` the

@@ -1,19 +1,19 @@
 ---
 title: Status and safety
-description: What the 0.2 alpha covers, what it does not yet, and what pyropdf does and does not claim about input safety.
+description: What pyropdf 0.3 covers, what it does not yet, and what pyropdf does and does not claim about input safety.
 ---
 
 # Status and safety
 
 ## Status
 
-pyropdf is in **alpha**. The API may change between minor versions, and the
+The API may change between minor versions, and the
 [changelog](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md) lists
 each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)
 how much of ISO 32000-2 each part covers.
 
-Not yet in 0.2.2:
+Not yet in 0.3.0:
 
 - redaction, and removing the content outside a rectangle, which need the
   content provenance of a hayro change under review;
@@ -23,9 +23,8 @@ Not yet in 0.2.2:
 - canvas text in CFF2 variable faces; color glyphs from `SVG ` tables, from
   JPEG, TIFF, or raw strikes, and COLR glyphs that need a sweep gradient or
   a compositing mode that PDF lacks, which draw their monochrome outline or
-  refuse; color glyphs in form fields
-  and free text annotations, which draw outlines only; and text filled with
-  a gradient.
+  refuse; and color glyphs in form fields and free text annotations, which
+  draw outlines only.
 
 Progress is tracked in the
 [issue tree](https://github.com/yhay81/pyropdf/issues/1).
