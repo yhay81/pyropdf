@@ -61,10 +61,22 @@ DocumentLimits(
 Optional budgets for opening and reading PDFs.
 
 `None` leaves a limit unset. Each limit refuses with `LimitError`,
-whose `code` names it. Opening reads only the cross-reference data, so
-damage and most limits surface when a part is first read;
-`check_at_open` reads every object at open instead. `web` is a
-conservative profile for servers that read documents in bounded workers.
+whose `code` names it. Opening normally reads only the cross-reference
+data. `check_at_open` also reads every object, so that damage and object
+limits can surface at open.
+
+`Page.text`, `Page.words`, `Page.paths`,
+`Page.content`, and `Page.pixmap` all call hayro.
+When the store decodes a filtered stream, `max_decompressed_size`
+checks its decoded size. `max_page_content_size` also applies when
+the store decodes a page content stream for `Page.operations`.
+Page content and images that hayro decodes directly bypass these checks.
+
+`max_memory_size` counts allocations charged by pyropdf. Memory used
+internally by hayro can exceed it. `max_duration` is checked when
+pyropdf polls the budget. A call into hayro can run past that deadline.
+For documents from outside your application, see
+[Reading a PDF in a worker](../limits.md#reading-a-pdf-in-a-worker).
 
 ### `DocumentLimits.web`
 
@@ -72,7 +84,12 @@ conservative profile for servers that read documents in bounded workers.
 DocumentLimits.web() -> DocumentLimits
 ```
 
-Return pylopdf's web profile, which checks every object at open.
+Return the web profile, which checks every object at open.
+
+Its decoded-size limits apply to reads through the store. hayro
+decodes page content and images directly during interpretation and
+rendering. The profile leaves `max_memory_size` and `max_duration`
+unset. Give the worker its own memory and wall-clock limits.
 
 ## `EncryptedDocumentError`
 

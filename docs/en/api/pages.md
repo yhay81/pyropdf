@@ -295,6 +295,10 @@ scales at which the whole page would not, and the page under the
 matrix may measure up to 524,288 pixels a side. The GIL is released
 while hayro renders.
 
+These dimensions bound the output raster. Image decoding and
+rasterization inside hayro can exceed the document's memory and
+time limits. See [Reading and rendering](../limits.md#reading-and-rendering).
+
 ### `Page.draw`
 
 ```python
@@ -511,6 +515,10 @@ applies; above it the call raises `LimitError` with code
 `content_element_count`. `None` removes the bound for trusted
 input. The GIL is released while hayro interprets the page.
 
+The element count bounds what pyropdf collects. hayro's stream
+decoding and interpretation can exceed the
+[document limits](../limits.md#reading-and-rendering).
+
 ### `Page.paths`
 
 ```python
@@ -531,6 +539,10 @@ interpretation without a Python object per path or segment:
 raises `LimitError` with code `content_element_count`. The
 row view builds each `Path` on demand. The GIL is released
 while hayro interprets the page and the columns are built.
+
+Requesting only paths still runs hayro's interpreter. Its stream
+decoding and working memory can exceed the
+[document limits](../limits.md#reading-and-rendering).
 
 ### `Page.text`
 
@@ -578,6 +590,10 @@ UTF-8 of their text and of the returned text, 64 MiB by default, with
 code `text_size`; `None` lifts either. The GIL is released while
 hayro interprets the page.
 
+A page with little text can still take substantial memory and time
+for hayro to decode and interpret. See the
+[document limits for page reading](../limits.md#reading-and-rendering).
+
 ### `Page.words`
 
 ```python
@@ -604,6 +620,10 @@ for a CJK font that the document does not embed: they are the outlines
 of the face that draws it. The other options are those of `text`; a
 word that dehyphenation joins is one `Word` on its first line
 whose box spans both parts.
+
+As with `text`, the glyph and text limits bound what is collected.
+hayro can exceed the [document limits](../limits.md#reading-and-rendering)
+while decoding and interpreting the page.
 
 ### `Page.layout`
 

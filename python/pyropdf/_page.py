@@ -390,6 +390,10 @@ class Page:
         scales at which the whole page would not, and the page under the
         matrix may measure up to 524,288 pixels a side. The GIL is released
         while hayro renders.
+
+        These dimensions bound the output raster. Image decoding and
+        rasterization inside hayro can exceed the document's memory and
+        time limits. See [Reading and rendering](../limits.md#reading-and-rendering).
         """
         linear = _render_matrix(matrix, dpi)
         rgba = _render_background(background, alpha=alpha)
@@ -681,6 +685,10 @@ class Page:
         applies; above it the call raises :class:`LimitError` with code
         ``content_element_count``. ``None`` removes the bound for trusted
         input. The GIL is released while hayro interprets the page.
+
+        The element count bounds what pyropdf collects. hayro's stream
+        decoding and interpretation can exceed the
+        [document limits](../limits.md#reading-and-rendering).
         """
         for name, value in (
             ("text_runs", text_runs),
@@ -723,6 +731,10 @@ class Page:
         raises :class:`LimitError` with code ``content_element_count``. The
         row view builds each :class:`Path` on demand. The GIL is released
         while hayro interprets the page and the columns are built.
+
+        Requesting only paths still runs hayro's interpreter. Its stream
+        decoding and working memory can exceed the
+        [document limits](../limits.md#reading-and-rendering).
         """
         _validate_bool("annotations", annotations)
         _validate_optional_positive_int("max_elements", max_elements)
@@ -781,6 +793,10 @@ class Page:
         UTF-8 of their text and of the returned text, 64 MiB by default, with
         code ``text_size``; ``None`` lifts either. The GIL is released while
         hayro interprets the page.
+
+        A page with little text can still take substantial memory and time
+        for hayro to decode and interpret. See the
+        [document limits for page reading](../limits.md#reading-and-rendering).
         """
         options = text_options(
             clip=None if clip is None else _clip_box(clip),
@@ -828,6 +844,10 @@ class Page:
         of the face that draws it. The other options are those of :meth:`text`; a
         word that dehyphenation joins is one :class:`Word` on its first line
         whose box spans both parts.
+
+        As with :meth:`text`, the glyph and text limits bound what is collected.
+        hayro can exceed the [document limits](../limits.md#reading-and-rendering)
+        while decoding and interpreting the page.
         """
         options = text_options(
             clip=None if clip is None else _clip_box(clip),

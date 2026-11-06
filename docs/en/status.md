@@ -36,9 +36,8 @@ construction ([#15](https://github.com/yhay81/pyropdf/issues/15)) is
 released. Until then, treat a PDF from an unknown source as able to exhaust
 memory or time in the rendering and interpretation paths.
 
-`DocumentLimits` bounds the work of each operation that pyropdf itself
-performs, and its codes are listed under
-[Limits and errors](limits.md#limit-codes). It is not that claim.
+For documents supplied by users, see [which limits apply during page reading and rendering](limits.md#reading-and-rendering)
+and [how to enforce memory and time limits in a worker](limits.md#reading-a-pdf-in-a-worker).
 
 Report a vulnerability privately through
 [GitHub security advisories](https://github.com/yhay81/pyropdf/security/advisories/new).
