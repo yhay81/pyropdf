@@ -16,10 +16,8 @@ Intended differences:
   ``Font`` and on ``form_field_draw_face``. New cases check one undo step
   per fill, one font for every field, fills after a save, and
   right-to-left values in logical order.
-- rendering reads the store and hands no serialized snapshot to the
-  interpreter, so ``max_interpretation_size`` does not refuse rendering a
-  filled button; the two ``test_state_appearance_*`` cases become one that
-  renders under both limits.
+- filling a button settles the appearance in the store. Rendering the
+  filled button reads the bridge's PDF under ``max_interpretation_size``.
 - pyropdf has no renumbering save, so a handle goes stale when page
   deletion removes its field, and undo restores it.
 - a refused read leaves the document as it was by construction, so the
@@ -822,13 +820,18 @@ def test_fill_checkbox_with_bool() -> None:
 
 
 @pytest.mark.parametrize("max_interpretation_size", [1, 1024 * 1024])
-def test_state_appearance_renders_from_the_store(max_interpretation_size: int) -> None:
+def test_filled_button_renders_within_the_interpreter_input_limit(max_interpretation_size: int) -> None:
     limits = pyropdf.DocumentLimits(max_interpretation_size=max_interpretation_size)
     doc = pyropdf.open(_build_form_pdf(), limits=limits)
     doc.form["agree"].value = True
 
     assert _values(doc)["agree"] == "Yes"
-    assert _opaque_pixels(doc, (45, 107, 75, 137)) > 0
+    if max_interpretation_size == 1:
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.pages[0].pixmap(clip=(45, 107, 75, 137), alpha=True)
+        assert caught.value.code == "interpretation_size"
+    else:
+        assert _opaque_pixels(doc, (45, 107, 75, 137)) > 0
 
 
 def test_fill_radio_selects_only_matching_widget() -> None:

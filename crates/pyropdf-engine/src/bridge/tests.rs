@@ -411,6 +411,12 @@ fn cached_inputs_and_render_only_appearances_observe_the_callers_limit() {
         .join("../../tests/assets/real_world/pdfium-links-highlights-annots.pdf");
     let version = open(fs::read(path).unwrap()).current();
     let pages = page_index(&version);
+    let base_limit = version.base().file().unwrap().bytes().len() as u64 - 1;
+    let no_memory = input_budget(base_limit).with_limit(LimitCode::MemorySize, Some(0));
+    assert_interpretation_limit(
+        Bridged::with_appearances(&version, &pages, &no_memory).unwrap_err(),
+        base_limit,
+    );
     let cache = Cache::new();
     let plain = cache.get(&version, &pages, &Budget::default()).unwrap();
     let size = plain.stats().bytes as u64;

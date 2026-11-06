@@ -988,11 +988,11 @@ def test_usrguide_named_destinations_survive_merge() -> None:
                 assert after == before
 
 
-def test_insert_pdf_refusal_preserves_original_interpretation_fast_path() -> None:
-    """Keep a bounded original snapshot usable after source-navigation refusal."""
+def test_insert_pdf_refusal_preserves_the_bounded_bridge() -> None:
+    """The compressed source and bridge update still fit after a refused import."""
     compressed = pyropdf.open(build_pdf(["Unchanged"] * 8)).to_bytes(object_streams=True)
-    limit = len(compressed) + 10
-    assert len(pyropdf.open(compressed).to_bytes()) > limit
+    limit = len(pyropdf.open(compressed).to_bytes()) - 1
+    assert len(compressed) < limit
     target = pyropdf.open(compressed, limits=pyropdf.DocumentLimits(max_interpretation_size=limit))
     page = target.pages[0]
     original_text = page.text()

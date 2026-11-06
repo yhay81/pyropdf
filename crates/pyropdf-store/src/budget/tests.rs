@@ -485,6 +485,29 @@ fn a_counting_vector_refuses_an_element_beyond_the_limit() {
 }
 
 #[test]
+fn a_length_limit_applies_before_reserving_or_relocating_byte_output() {
+    const LIMIT: usize = 40_000;
+    let code = LimitCode::InterpretationSize;
+    let budget = Budget::default().with_limit(code, Some(LIMIT as u64));
+    let mut out = BudgetVec::with_length_limit(&budget, code);
+    out.try_extend_from_slice(&vec![0u8; 24_000]).unwrap();
+    let capacity = out.capacity();
+    let extra = LIMIT - out.len();
+    let refused = Err(LimitExceeded::over(code, LIMIT as u64, LIMIT as u64 + 1));
+    assert_eq!(out.try_reserve_exact(extra + 1), refused);
+    assert_eq!(out.try_reserve_polled(extra + 1), refused);
+    assert_eq!(out.try_reserve(usize::MAX).unwrap_err().code(), code);
+    assert_eq!(out.capacity(), capacity);
+    // Geometric growth would exceed the limit; the exact output still fits.
+    out.try_reserve_polled(extra).unwrap();
+    out.try_extend_from_slice(&vec![1; extra]).unwrap();
+    assert_eq!(out.try_push(2), refused);
+    assert_eq!(out.len(), LIMIT);
+    assert_eq!(budget.used(LimitCode::MemorySize), LIMIT as u64);
+    assert_eq!(budget.used(code), 0);
+}
+
+#[test]
 fn an_extension_adds_all_of_its_items_or_none() {
     let code = LimitCode::ObjectCount;
     let budget = Budget::default().with_limit(code, Some(5));

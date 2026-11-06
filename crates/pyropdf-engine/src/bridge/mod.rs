@@ -34,7 +34,7 @@ use std::time::{Duration, Instant};
 
 use hayro::hayro_syntax::Pdf;
 use pyropdf_store::Password;
-use pyropdf_store::budget::{Budget, BudgetVec};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::index::Location;
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::security::{self, Handler};
@@ -161,6 +161,11 @@ impl Bridged {
             }
             None => "",
         };
+        // The original is a prefix in either mode, even when appearances
+        // still have to be synthesized or the cross-reference stream rebuilt.
+        if let Some(file) = version.base().file() {
+            budget.check(LimitCode::InterpretationSize, file.bytes().len() as u64)?;
+        }
         let extra = if appearances {
             crate::annotations::synthesized(version, pages, budget)?
         } else {
@@ -175,6 +180,7 @@ impl Bridged {
         let store = started.elapsed();
         let started = Instant::now();
         let len = bytes.len();
+        budget.check(LimitCode::InterpretationSize, len as u64)?;
         let pdf = Pdf::new_with_password(bytes, password).map_err(|_| Error::Unreadable)?;
         check_pages(&pdf, pages)?;
         Ok(Self {
@@ -253,6 +259,7 @@ impl Cache {
             && held.strong_count() > 0
             && *mode == annotations
         {
+            budget.check(LimitCode::InterpretationSize, bridged.stats.bytes as u64)?;
             return Ok(Arc::clone(bridged));
         }
         let bridged = Arc::new(Bridged::build(version, pages, budget, annotations)?);
@@ -309,7 +316,7 @@ fn handler(version: &Version) -> Result<Option<&Handler>> {
 }
 
 fn copy(bytes: &[u8], budget: &Budget) -> Result<Vec<u8>> {
-    let mut out = BudgetVec::new(budget);
+    let mut out = BudgetVec::with_length_limit(budget, LimitCode::InterpretationSize);
     out.try_extend_from_slice(bytes)?;
     Ok(out.into_vec())
 }
@@ -329,7 +336,7 @@ fn update(
     budget: &Budget,
 ) -> Result<(Vec<u8>, usize)> {
     let file = version.base().file();
-    let mut out = BudgetVec::new(budget);
+    let mut out = BudgetVec::with_length_limit(budget, LimitCode::InterpretationSize);
     match file {
         Some(file) => out.try_extend_from_slice(file.bytes())?,
         None => out.try_extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n")?,
@@ -359,10 +366,16 @@ fn update(
     let mut index: BudgetVec<'_, Value> = BudgetVec::new(budget);
     let mut run: Option<(u32, u32)> = None;
     for &number in numbers.iter() {
-        budget.poll()?;
         if number >= size || run.is_some_and(|(start, count)| number < start + count) {
+            budget.poll()?;
             continue;
         }
+        // Each pending row will add 13 bytes to the same input.
+        let row_bytes = (rows.len() as u64 + 1) * 13;
+        budget.check(
+            LimitCode::InterpretationSize,
+            (out.len() as u64).saturating_add(row_bytes),
+        )?;
         run = match run {
             Some((start, count)) if start + count == number => Some((start, count + 1)),
             _ => {
@@ -383,17 +396,13 @@ fn update(
             .map(|at| &extra[at]);
         let entry = match (stand_in, version.slot(number)) {
             (Some((reference, value)), _) => {
-                let mut bytes = BudgetVec::new(budget);
-                write::value(&mut bytes, value)?;
-                let bytes = Bytes::new(bytes.into_vec());
-                object(&mut out, *reference, &bytes, handler, budget)?
+                object(&mut out, *reference, Body::Value(value), handler)?
             }
             (None, Some(Slot::Written(written))) => object(
                 &mut out,
                 Reference::new(number, written.generation()),
-                written.bytes(),
+                Body::Serialized(written.bytes()),
                 handler,
-                budget,
             )?,
             (None, Some(Slot::Free(_))) => row(0, 0, 0),
             (None, None) => base_row(version, number, &mut out, budget)?,
@@ -465,23 +474,35 @@ fn update(
     Ok((out.into_vec(), update))
 }
 
-/// Appends the object `reference` whose serialized value is `bytes`,
-/// encrypted with `handler`, and returns its row.
+enum Body<'a> {
+    Serialized(&'a Bytes),
+    Value(&'a Value),
+}
+
+/// Appends an object directly to the bounded input, encrypting it when needed.
 fn object(
     out: &mut BudgetVec<'_, u8>,
     reference: Reference,
-    bytes: &Bytes,
+    body: Body<'_>,
     handler: Option<&Handler>,
-    budget: &Budget,
 ) -> Result<[u8; 13]> {
     let offset = out.len() as u64;
     header(out, reference.number(), reference.generation())?;
-    match handler {
-        Some(handler) => {
-            let bytes = security::encrypt_bytes(handler, reference, bytes, budget)?;
-            out.try_extend_from_slice(&bytes)?;
+    match (body, handler) {
+        (Body::Serialized(bytes), None) => out.try_extend_from_slice(bytes)?,
+        (Body::Value(value), None) => write::value(out, value)?,
+        (body, Some(handler)) => {
+            let parsed;
+            let value = match body {
+                Body::Value(value) => value,
+                Body::Serialized(bytes) => {
+                    parsed = Value::parse(bytes, out.budget())?;
+                    &parsed
+                }
+            };
+            let encrypted = security::encrypt_value(handler, reference, value, out.budget())?;
+            write::value(out, &encrypted)?;
         }
-        None => out.try_extend_from_slice(bytes)?,
     }
     out.try_extend_from_slice(b"\nendobj\n")?;
     Ok(row(1, offset, u32::from(reference.generation())))
@@ -503,11 +524,12 @@ fn base_row(
         let Some(bytes) = base.object(Reference::new(number, generation), budget)? else {
             return Ok(row(0, 0, 0));
         };
-        let offset = out.len() as u64;
-        header(out, number, generation)?;
-        out.try_extend_from_slice(&bytes)?;
-        out.try_extend_from_slice(b"\nendobj\n")?;
-        return Ok(row(1, offset, u32::from(generation)));
+        return object(
+            out,
+            Reference::new(number, generation),
+            Body::Serialized(&bytes),
+            None,
+        );
     };
     let Some(entry) = file.get(number) else {
         return Ok(row(0, 0, 0));

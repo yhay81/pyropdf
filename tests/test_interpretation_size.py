@@ -39,3 +39,18 @@ def test_interpretation_size_bounds_the_pdf_handed_to_hayro(
         if edited:
             page.rotation = 90
         read(page)
+
+
+def test_an_encrypted_file_at_the_limit_can_render_again_after_undo() -> None:
+    with pyropdf.open(build_text_pdf("BT /F1 12 Tf 5 20 Td (hello) Tj ET")) as source:
+        encrypted = source.to_bytes(encryption=pyropdf.Encryption())
+    limits = pyropdf.DocumentLimits(max_interpretation_size=len(encrypted))
+    with pyropdf.open(encrypted, limits=limits) as doc:
+        page = doc.pages[0]
+        original = page.pixmap().to_bytes()
+        page.rotation = 90
+        with pytest.raises(pyropdf.LimitError) as caught:
+            page.pixmap()
+        assert caught.value.code == "interpretation_size"
+        doc.history.undo()
+        assert page.pixmap().to_bytes() == original
