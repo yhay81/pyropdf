@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 import pytest
 from test_content import build_raw_pdf
 
 import pyropdf
+from pyropdf import _markdown
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable, Iterator
+
+    from pyropdf._markdown import TextPageDict
 
 
 def _stream(data: str | bytes, extra: str = "") -> bytes:
@@ -58,6 +66,70 @@ def fixture_bytes(first: str = FIRST, second: str = SECOND) -> bytes:
 
 def _document(first: str = FIRST, second: str = SECOND) -> pyropdf.Document:
     return pyropdf.open(fixture_bytes(first, second))
+
+
+_EXPORTS = (pyropdf.Document.markdown, pyropdf.Document.to_json, pyropdf.Document.to_chunks)
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_export_keeps_one_version_while_a_writer_commits(
+    export: Callable[[pyropdf.Document], object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = "BT /F1 12 Tf 40 300 Td (old) Tj ET"
+    new = old.replace("old", "new")
+    document = _document(first=old)
+    document.pages[1].obj["Contents"] = document.pages[0].obj["Contents"]
+    before = export(document)
+    layout = _markdown._page_layout  # noqa: SLF001 - schedule the commit between actual page reads.
+    reads = 0
+
+    with ThreadPoolExecutor(max_workers=1) as writer:
+
+        def layout_during_commit(page: pyropdf.Page) -> tuple[TextPageDict, list[pyropdf.Word]]:
+            nonlocal reads
+            result = layout(page)
+            reads += 1
+            # After the heading pass and the first output page, replace the shared stream.
+            if reads == 3:
+                writer.submit(document.objects[7].write, new.encode()).result(timeout=10)
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(_markdown, "_page_layout", layout_during_commit)
+            during = export(document)
+
+    assert during == before
+    after = export(document)
+    assert after != before
+    assert after == export(_document(first=new, second=new))
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_export_selects_pages_from_its_starting_version(
+    export: Callable[[pyropdf.Document, Iterable[int]], object],
+) -> None:
+    document = _document()
+    expected = export(document, [-1, 0, 1])
+
+    def selection() -> Iterator[int]:
+        yield -1
+        del document.pages[0]
+        yield 0
+        yield 1
+
+    assert export(document, selection()) == expected
+    assert len(document.pages) == 1
+
+
+@pytest.mark.parametrize("export", _EXPORTS)
+def test_export_reads_the_callers_uncommitted_edits(export: Callable[[pyropdf.Document], object]) -> None:
+    document = _document()
+    before = export(document)
+    with document.transaction():
+        document.objects[7].write(b"BT /F1 12 Tf 40 300 Td (draft) Tj ET")
+        draft = export(document)
+        assert draft != before
+    assert export(document) == draft
 
 
 def test_json_lists_each_page_with_its_size_and_elements_in_reading_order() -> None:
