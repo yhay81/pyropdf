@@ -21,7 +21,9 @@ with this limit matched the baseline on all 2,340 pixel comparisons.
 In the PDF integration's interleaved corpus trial, adding the bound
 increased the best 72 dpi total by 8% and reduced the best 144 dpi total
 by 5%. Median totals changed by +92% and -5% respectively on the shared
-Windows host. The cap trades producer run-ahead for bounded outstanding
+Windows host. In a separate paired run with both starting orders, best
+totals ranged from unchanged to 4.8% slower and medians from 1.6% faster
+to 2.2% slower. The cap trades producer run-ahead for bounded outstanding
 work. These observations are from a four-worker PDF workload.
 
 I used OpenAI Codex to draft the code, tests and this description.

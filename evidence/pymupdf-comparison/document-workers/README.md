@@ -63,6 +63,13 @@ At 144 dpi the ratios between those variants were 0.951 and 0.948.
 The shared host exhibited large timing variation. Keep both statistics
 when assessing the cost of the queue bound. [Raw samples](interleaved.json).
 
+A direct worker-only versus bounded-dispatch comparison repeated the same
+five alternating raw renders per document and DPI in each starting order.
+The best bounded/unbounded ratios were 1.0483 and 1.0156 at 72 dpi,
+1.0002 and 1.0414 at 144 dpi. Median ratios were 1.0140 and 0.9839,
+1.0050 and 1.0217 respectively. [Worker-only first](pressure-baseline-first.json)
+and [bounded first](pressure-candidate-first.json).
+
 The baseline and both initial candidates matched all 2,340 sequence
 comparisons, including 1,872 fixed page/layout/resolution cases, mixed DPI
 and layouts, and page revisits. With two concurrent callers rendering
