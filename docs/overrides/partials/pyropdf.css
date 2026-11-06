@@ -286,75 +286,144 @@
   line-height: 1.7;
 }
 
-/* The stage: pyropdf's renders of the example's page, before and after,
-   with the example itself in front. tools/hero_invoice.py makes them. */
+/* The stage: a PDF viewer showing pyropdf's renders of the example's
+   page, with the example in front. tools/hero_invoice.py makes the renders;
+   the version switch shows each, and the page opens the PDF itself. */
 :root {
   --pp-lift: 0 1px 2px rgb(60 40 20 / 8%), 0 24px 48px -24px rgb(60 40 20 / 40%);
+  --pp-viewer-bar: #fbf8f2;
+  --pp-viewer-canvas: #e7e1d6;
 }
 [data-md-color-scheme="slate"] {
   --pp-lift: 0 1px 2px rgb(0 0 0 / 40%), 0 28px 56px -24px rgb(0 0 0 / 85%);
+  --pp-viewer-bar: #221e19;
+  --pp-viewer-canvas: #0f0d0b;
 }
 .pp-stage {
   position: relative;
-  min-height: 35rem;
+  min-height: 38.5rem;
+  padding-bottom: 2rem;
 }
-.md-typeset .pp-sheet {
-  position: absolute;
-  top: 0;
-  right: 0.5rem;
-  width: min(19rem, 74%);
-  height: auto;
-  margin: 0;
-  border-radius: 3px;
-  background: #fff;
+.pp-viewer {
+  position: relative;
+  width: min(25rem, 88%);
+  margin-left: auto;
+  overflow: hidden;
+  border: 1px solid var(--pp-rule);
+  border-radius: 12px;
+  background: var(--pp-viewer-canvas);
   box-shadow: var(--pp-lift);
-  transform: rotate(1.6deg);
 }
-.md-typeset .pp-sheet img {
+.pp-viewer__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  height: 2.3rem;
+  padding: 0 0.5rem 0 0.75rem;
+  border-bottom: 1px solid var(--pp-rule);
+  background: var(--pp-viewer-bar);
+  color: var(--pp-ink-soft);
+  font-size: 0.6rem;
+}
+.pp-viewer__bar svg {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+}
+.pp-viewer__file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--pp-ink);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pp-viewer__versions {
+  display: inline-flex;
+  margin-left: auto;
+  padding: 0.15rem;
+  border-radius: 7px;
+  background: var(--pp-sunken);
+}
+.pp-viewer__versions input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.pp-viewer__versions label {
+  padding: 0.2rem 0.55rem;
+  border-radius: 5px;
+  color: var(--pp-ink-soft);
+  font-family: var(--md-code-font-family);
+  font-size: 0.56rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+.pp-viewer__versions input:checked + label {
+  background: var(--pp-surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%);
+  color: var(--pp-ink);
+}
+.pp-viewer__versions input:focus-visible + label {
+  outline: 2px solid var(--pp-ember);
+  outline-offset: 1px;
+}
+.pp-viewer__page {
+  font-variant-numeric: tabular-nums;
+}
+.md-typeset .pp-viewer__open {
+  display: inline-grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 6px;
+  color: var(--pp-ink-soft);
+}
+.md-typeset .pp-viewer__open:hover,
+.md-typeset .pp-viewer__open:focus-visible {
+  background: var(--pp-sunken);
+  color: var(--pp-ink);
+}
+.pp-viewer__canvas {
+  padding: 1.4rem 1.6rem 1.8rem;
+}
+.md-typeset .pp-viewer__sheet {
+  position: relative;
+  width: 82%;
+  margin: 0 auto;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 10px 24px -14px rgb(0 0 0 / 35%);
+}
+.md-typeset .pp-viewer__sheet img {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 3px;
 }
-.md-typeset .pp-sheet--before {
-  top: 1.4rem;
-  right: 2.4rem;
-  opacity: 0.5;
-  transform: rotate(-3.2deg);
-}
-[data-md-color-scheme="slate"] .md-typeset .pp-sheet--before {
-  opacity: 0.3;
-}
-/* The render after the edit fades in over the one before it, so the
-   highlight appears as the annotation lands. */
-.md-typeset .pp-sheet .pp-sheet__after {
+/* Version 2 fades in over version 1 once, so the highlight lands as the
+   page loads; the switch then shows either version. */
+.md-typeset .pp-viewer__sheet .pp-viewer__after {
   position: absolute;
   inset: 0;
-  animation: pp-reveal 600ms ease-out 700ms both;
+  animation: pp-reveal 600ms ease-out 900ms both;
+  transition: opacity 250ms ease-out;
+}
+.md-typeset .pp-viewer--touched .pp-viewer__after,
+.md-typeset .pp-viewer:has(#pp-v1:checked) .pp-viewer__after {
+  animation: none;
+}
+.md-typeset .pp-viewer:has(#pp-v1:checked) .pp-viewer__after {
+  opacity: 0;
 }
 @keyframes pp-reveal {
   from { opacity: 0; }
 }
-.pp-sheet__tag {
-  position: absolute;
-  top: -0.7rem;
-  right: 1.2rem;
-  padding: 0.3em 0.75em;
-  border-radius: 99px;
-  background: var(--pp-ink);
-  color: var(--pp-paper);
-  font-family: var(--md-code-font-family);
-  font-size: 0.54rem;
-  animation: pp-rise 500ms ease-out 1.2s both;
-}
-@keyframes pp-rise {
-  from { opacity: 0; transform: translateY(0.3rem); }
-}
 .md-typeset .pp-stage__caption {
   position: absolute;
-  right: 0.5rem;
-  bottom: -2.2rem;
-  max-width: 26rem;
+  right: 0;
+  bottom: 0;
+  max-width: 25rem;
   margin: 0;
   color: var(--pp-ink-faint);
   font-size: 0.6rem;
@@ -366,7 +435,7 @@
 .pp-stage__code {
   position: absolute;
   left: 0;
-  bottom: 0;
+  bottom: 2.6rem;
   z-index: 1;
   width: min(27.5rem, 94%);
 }
@@ -551,15 +620,17 @@
   }
   .pp-stage {
     min-height: 0;
+    padding-bottom: 0;
   }
-  .md-typeset .pp-sheet--before {
+  .pp-viewer {
+    width: 100%;
+  }
+  .pp-viewer__canvas {
+    padding-bottom: 2.5rem;
+  }
+  .pp-viewer__page,
+  .pp-viewer__note {
     display: none;
-  }
-  .md-typeset .pp-sheet {
-    position: relative;
-    right: auto;
-    width: 82%;
-    margin-left: auto;
   }
   .md-typeset .pp-stage__caption {
     position: static;
@@ -568,6 +639,7 @@
   }
   .pp-stage__code {
     position: relative;
+    bottom: auto;
     width: 100%;
     margin-top: -1.5rem;
   }
@@ -579,8 +651,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .md-typeset .pp-sheet .pp-sheet__after,
-  .pp-sheet__tag {
+  .md-typeset .pp-viewer__sheet .pp-viewer__after,
+  .pp-viewer__versions label {
     animation: none;
   }
   .md-typeset a.pp-card,

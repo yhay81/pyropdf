@@ -30,12 +30,25 @@ hide:
   </ul>
 </div>
 <div class="pp-stage" markdown>
-<img class="pp-sheet pp-sheet--before" src="/assets/hero/invoice.png" width="1057" height="1375" alt="" aria-hidden="true">
-<figure class="pp-sheet">
-  <img src="/assets/hero/invoice.png" width="1057" height="1375" alt="例を実行する前の請求書を pyropdf で描画したもの">
-  <img class="pp-sheet__after" src="/assets/hero/reviewed.png" width="1057" height="1375" alt="例を実行した後の請求書。Total がハイライトされ、版 2 として保存されたページを pyropdf で描画したもの">
-  <span class="pp-sheet__tag">v2 · "highlight totals"</span>
-</figure>
+<div class="pp-viewer" role="group" aria-label="pyropdf が描画した reviewed.pdf を表示する PDF ビューア">
+  <div class="pp-viewer__bar">
+    <span class="pp-viewer__file"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9.5 1.5V5H13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>reviewed.pdf</span>
+    <span class="pp-viewer__versions" role="radiogroup" aria-label="版">
+      <input type="radio" name="pp-version" id="pp-v1" value="1">
+      <label for="pp-v1">v1</label>
+      <input type="radio" name="pp-version" id="pp-v2" value="2" checked>
+      <label for="pp-v2">v2<span class="pp-viewer__note"> · highlight totals</span></label>
+    </span>
+    <span class="pp-viewer__page" aria-label="1 / 1 ページ">1 / 1</span>
+    <a class="pp-viewer__open" href="/assets/hero/reviewed.pdf" title="reviewed.pdf を開く" aria-label="reviewed.pdf を開く"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v4H2.5V4h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+  </div>
+  <div class="pp-viewer__canvas">
+    <figure class="pp-viewer__sheet">
+      <img src="/assets/hero/invoice.png" width="1057" height="1375" alt="例を実行する前の請求書を pyropdf で描画したもの">
+      <img class="pp-viewer__after" src="/assets/hero/reviewed.png" width="1057" height="1375" alt="例を実行した後の請求書。Total がハイライトされたページを pyropdf で描画したもの">
+    </figure>
+  </div>
+</div>
 <div class="pp-stage__code" markdown>
 
 ```python

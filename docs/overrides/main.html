@@ -30,5 +30,10 @@
       label.textContent = button.dataset.copiedLabel;
       window.setTimeout(() => { label.textContent = previous; }, 1600);
     });
+    // Once a reader switches the hero viewer's version, the page changes
+    // at once instead of replaying the fade that runs on load.
+    document.addEventListener("change", (event) => {
+      event.target.closest?.(".pp-viewer")?.classList.add("pp-viewer--touched");
+    });
   </script>
 {% endblock %}
