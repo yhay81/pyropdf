@@ -232,6 +232,7 @@ def test_unmapped_glyphs_are_skipped_or_stand_for_a_placeholder() -> None:
         replaced = page.text(unmapped="replacement")
         glyph_ids = page.text(unmapped="glyph_id")
     assert "�" in replaced
+    assert page.text(unmapped="type3_char_code") == replaced
     assert set(replaced) <= {"�", " ", "\n"}
     assert all(0 < ord(char) < 0x10000 for char in glyph_ids.replace(" ", "").replace("\n", ""))
 
@@ -243,6 +244,36 @@ def test_type3_glyphs_without_unicode_have_no_glyph_id() -> None:
         assert page.text() == ""
     assert page.text(unmapped="glyph_id") == page.text(unmapped="replacement")
     assert set(page.text(unmapped="replacement")) <= {"�", " ", "\n"}
+
+
+def test_type3_character_code_is_an_opt_in_fallback() -> None:
+    page = pyropdf.open(ASSETS / "pdfium-type3.pdf").pages[0]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", pyropdf.PyropdfWarning)
+        assert page.text(unmapped="type3_char_code").split() == ["A"] * 3
+        assert [w.text for w in page.words(unmapped="type3_char_code")] == ["A"] * 3
+        assert [c.text for c in page.chars(unmapped="type3_char_code") if not c.is_synthetic] == ["A"] * 3
+    with pytest.raises(pyropdf.LimitError) as glyphs:
+        page.text(unmapped="type3_char_code", max_glyphs=2)
+    assert glyphs.value.code == "text_glyph_count"
+    with pytest.raises(pyropdf.LimitError) as size:
+        page.text(unmapped="type3_char_code", max_size=2)
+    assert size.value.code == "text_size"
+
+
+def test_type3_character_codes_follow_the_unicode_and_glyph_name_mappings() -> None:
+    fixture = Path(__file__).resolve().parents[1] / "evidence/type3-char-codes/type3-cases.pdf"
+    # Use an opaque non-Latin name in place of the custom /C1. Equal byte
+    # lengths preserve the fixture's cross-reference offsets.
+    page = pyropdf.open(fixture.read_bytes().replace(b"/C1", "/Ж".encode())).pages[0]
+    # Fonts in order: unknown names, standard names, recognized non-Latin
+    # names, valid ToUnicode, null mappings, and a malformed uni name.
+    mapped = ["AB", "AB", "あА", "Bあ", "AB", "AB"]
+    with pytest.warns(pyropdf.PyropdfWarning, match="no Unicode mapping"):
+        assert page.text().splitlines() == ["AB", "あА", "Bあ", "AB", "A"]
+    assert page.text(unmapped="type3_char_code").splitlines() == mapped
+    assert [w.text for w in page.words(unmapped="type3_char_code")] == mapped
+    assert "".join(c.text for c in page.chars(unmapped="type3_char_code")) == "".join(mapped)
 
 
 def _type3_page(content: str, em: int) -> pyropdf.Page:
