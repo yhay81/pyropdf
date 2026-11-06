@@ -33,6 +33,17 @@ with pyropdf.open("input.pdf") as doc:
 編集は保存しなくても次の `text()` や `pixmap()` に反映され、版だけで決まる結果は版ごとに一度だけ
 計算されます。
 
+```mermaid
+flowchart LR
+  base["input.pdf<br><small>ベース</small>"]
+  v1["版 1<br><small>回転：1 オブジェクト</small>"]
+  v2["版 2<br><small>注釈：2 オブジェクト</small>"]
+  readers["text() · pixmap() · save()"]
+  base --> v1 --> v2
+  v2 -. "doc.history.undo()" .-> v1
+  readers -- "現在の版を読む" --> v2
+```
+
 `doc.history` は undo と redo がたどる手順を保持します。各手順は置き換えたオブジェクトを持ち、
 `doc.history.size` がそのバイト数を数えます。`doc.history.max_size` で上限を決められ、
 `doc.history.clear()` は文書をそのままにして手順を忘れます。

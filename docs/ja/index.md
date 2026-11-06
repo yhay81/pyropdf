@@ -1,122 +1,195 @@
 ---
 title: pyropdf
-description: PythonからPDFを完全に扱う。Rustの版付きオブジェクトストアの上で、すべての編集は版になり、どの変更も取り消せ、失敗したトランザクションは文書を元のまま残します。
+description: PDF を、Python の書き心地と Rust の芯で。Python から PDF を読み、描画し、編集し、署名します。すべての編集は取り消せる版になり、失敗した編集は文書を元のまま残します。
+home: true
 hide:
   - navigation
   - toc
 ---
 
-<section class="pp-hero" aria-labelledby="pp-hero-title">
-  <div>
-    <p class="pp-eyebrow">0.2 alpha</p>
-    <h1 id="pp-hero-title">PDF の編集は、すべて<em>版</em>になる。</h1>
-    <p class="pp-lede">
-      pyropdf は、Rust で書かれた一つの版付きオブジェクトストアの上で、Python から PDF を読み、描画し、編集します。
-      編集の代価は触れた分だけ。どの変更も取り消せ、失敗したトランザクションは文書を元のまま残します。
-    </p>
-    <div class="pp-actions">
-      <a class="pp-button pp-button--primary" href="getting-started/">はじめる →</a>
-      <a class="pp-button" href="recipes/">レシピ</a>
-      <a class="pp-button" href="https://pyropdf.haya.works/api/">API リファレンス</a>
-    </div>
+<section class="pp-hero pp-reel" aria-labelledby="pp-hero-title" markdown>
+<div class="pp-hero__text">
+  <h1 id="pp-hero-title">PDF を、<span class="pp-accent">Python の書き心地</span>と <span class="pp-accent">Rust の芯</span>で。</h1>
+  <p class="pp-lede">
+    pyropdf は PDF を読み、描画し、編集し、署名します。ページはシーケンス、フィールドはマッピング、編集はトランザクション。その下で Rust の版付きストアが、どの変更も取り消せるようにします。
+  </p>
+  <div class="pp-hero__start">
     <div class="pp-install" aria-label="インストールのコマンド">
-      <span class="pp-install__prompt" aria-hidden="true">$</span>
-      <code tabindex="0">pip install pyropdf</code>
-      <button type="button" data-copy-command="pip install pyropdf" data-copied-label="コピーしました" aria-label="インストールのコマンドをコピー"><span data-copy-label>コピー</span></button>
+    <span class="pp-install__prompt" aria-hidden="true">$</span>
+    <code tabindex="0">pip install pyropdf</code>
+    <button type="button" data-copy-command="pip install pyropdf" data-copied-label="コピーしました" aria-label="インストールのコマンドをコピー"><span data-copy-label>コピー</span></button>
     </div>
-    <ul class="pp-facts" aria-label="プロジェクトの概要">
-      <li>MIT ライセンス</li>
-      <li>必須の依存なし</li>
-      <li>Python 3.11–3.15（free-threaded 対応）</li>
-    </ul>
+    <p class="pp-actions">
+    <a class="pp-button pp-button--primary" href="getting-started/">はじめる</a>
+    <a class="pp-button" href="https://pyropdf.haya.works/api/" hreflang="en">API リファレンス</a>
+  </p>
   </div>
-  <div class="pp-stack" role="img" aria-label="文書の三つの版が重なり、それぞれにその版を作った編集と、最新の版を取り消す undo が添えられている図">
-    <div class="pp-version" aria-hidden="true">
-      <div class="pp-version__head"><span><b>v1</b> · 開いた直後</span><span>12 ページ</span></div>
-      <span class="pp-version__line">trailer /Root 1 0 R</span>
-      <span class="pp-version__line">xref · 214 objects</span>
-    </div>
-    <div class="pp-version" aria-hidden="true">
-      <div class="pp-version__head"><span><b>v2</b> · "rotate"</span><span>1 オブジェクト</span></div>
-      <span class="pp-version__line pp-version__line--change">7 0 obj /Rotate 90</span>
-      <span class="pp-version__line">pages[0].rotation = 90</span>
-    </div>
-    <div class="pp-version" aria-hidden="true">
-      <div class="pp-version__head"><span><b>v3</b> · "annotate"</span><span>2 オブジェクト</span></div>
-      <span class="pp-version__line pp-version__line--add">215 0 obj /Subtype /Highlight</span>
-      <span class="pp-version__line pp-version__line--change">7 0 obj /Annots [215 0 R]</span>
-      <span class="pp-version__line">page.annotations.add(Highlight(hits))</span>
-      <div class="pp-version__foot">
-        <span class="pp-chip pp-chip--ember">history.undo()</span>
-        <span class="pp-chip pp-chip--moss">save(incremental=True)</span>
-        <span class="pp-chip">+2 オブジェクト</span>
-      </div>
-    </div>
+</div>
+  <div class="pp-reel__steps" role="radiogroup" aria-label="手順">
+    <input type="radio" name="pp-step" id="pp-s1" value="1" checked>
+    <label for="pp-s1"><span class="pp-reel__n">1</span><span class="pp-reel__title">読む</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <input type="radio" name="pp-step" id="pp-s2" value="2">
+    <label for="pp-s2"><span class="pp-reel__n">2</span><span class="pp-reel__title">注釈</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <input type="radio" name="pp-step" id="pp-s3" value="3">
+    <label for="pp-s3"><span class="pp-reel__n">3</span><span class="pp-reel__title">フォーム</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <input type="radio" name="pp-step" id="pp-s4" value="4">
+    <label for="pp-s4"><span class="pp-reel__n">4</span><span class="pp-reel__title">スタンプ</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+  </div>
+<div class="pp-reel__code" markdown>
+<div class="pp-reel__panel" data-step="1" markdown>
+
+```python title="read.py"
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    words = doc.pages[0].words()
+    for word in words[:3]:
+        print(word.text, *(round(v) for v in word.bbox))
+    print(len(words), "words")
+```
+
+<p class="pp-reel__label">出力</p>
+
+```text
+--8<-- "en/assets/hero/read.txt"
+```
+
+</div>
+<div class="pp-reel__panel" data-step="2" markdown>
+
+```python title="annotate.py"
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    with doc.transaction("highlight totals"):
+        hits = page.search("total")
+        page.annotations.add(pyropdf.Highlight(hits))
+    doc.save("output.pdf", incremental=True)
+```
+
+</div>
+<div class="pp-reel__panel" data-step="3" markdown>
+
+```python title="fill.py"
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    with doc.transaction("approve"):
+        field = pyropdf.TextField("approver", (30, 316, 170, 334))
+        page.widgets.add(field)
+        doc.form["approver"].value = "Ada Lovelace"
+    doc.save("output.pdf", incremental=True)
+```
+
+</div>
+<div class="pp-reel__panel" data-step="4" markdown>
+
+```python title="stamp.py"
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    with doc.transaction("stamp"):
+        box = (196, 300, 310, 346)
+        stamp = pyropdf.Stamp(box, icon=pyropdf.StampIcon.APPROVED)
+        page.annotations.add(stamp)
+    doc.save("output.pdf", incremental=True)
+```
+
+</div>
+</div>
+<div class="pp-viewer" role="group" aria-label="請求書の各リビジョンを pyropdf で描画して表示する PDF ビューア">
+  <div class="pp-viewer__bar">
+    <span class="pp-viewer__file"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.5h5.5L13 5v9.5H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9.5 1.5V5H13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>invoice.pdf</span>
+    <span class="pp-viewer__revs"><span class="pp-reel__rev" data-step="1">rev 1 · 開いた直後</span><span class="pp-reel__rev" data-step="2">rev 2 · highlight totals</span><span class="pp-reel__rev" data-step="3">rev 3 · approve</span><span class="pp-reel__rev" data-step="4">rev 4 · stamp</span></span>
+    <span class="pp-viewer__page" aria-label="1 / 1 ページ">1 / 1</span>
+    <a class="pp-viewer__open" href="/assets/hero/reviewed.pdf" title="reviewed.pdf を開く" aria-label="reviewed.pdf を開く"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9 2.5h4.5V7M13.5 2.5 7.5 8.5M12 9.5v4H2.5V4h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+  </div>
+  <div class="pp-viewer__canvas">
+    <figure class="pp-viewer__sheet">
+      <img class="pp-reel__frame" data-step="1" src="/assets/hero/revision-1.png" width="1057" height="1375" alt="pyropdf が描画した請求書と、page.words() が見つけた単語の矩形">
+      <img class="pp-reel__frame" data-step="2" src="/assets/hero/revision-2.png" width="1057" height="1375" alt="Total をハイライトした請求書を pyropdf で描画したもの">
+      <img class="pp-reel__frame" data-step="3" src="/assets/hero/revision-3.png" width="1057" height="1375" alt="Approved by のフィールドを入力した請求書を pyropdf で描画したもの">
+      <img class="pp-reel__frame" data-step="4" src="/assets/hero/revision-4.png" width="1057" height="1375" alt="Approved のスタンプを押した請求書を pyropdf で描画したもの">
+      <img class="pp-reel__words" data-step="1" src="/assets/hero/words.svg" width="340" height="442" alt="">
+    </figure>
+  </div>
+</div>
+<div class="pp-hero__foot">
+  <ul class="pp-facts" aria-label="プロジェクトの概要">
+    <li>MIT ライセンス</li>
+    <li>必須の依存なし</li>
+    <li>CPython 3.11–3.15（free-threaded 対応）</li>
+  </ul>
+<p class="pp-stage__caption">どのコマも pyropdf 自身の描画です。<a href="https://github.com/yhay81/pyropdf/blob/main/tools/hero_invoice.py">tools/hero_invoice.py</a> がこの四つのコードを順に、前の出力に対して実行し、<a href="/assets/hero/reviewed.pdf">reviewed.pdf</a> は四つのリビジョンをすべて保っています。</p>
+</div>
+</section>
+
+<section class="pp-section" aria-labelledby="pp-features">
+  <header class="pp-section__head">
+    <h2 id="pp-features">文書のすべてを、一つのパッケージで</h2>
+    <p>読み取り、描画、編集は一つのストアを共有します。読むのはいつも、いま編集した版です。</p>
+  </header>
+  <div class="pp-cards">
+    <a class="pp-card" href="reading/">
+      <h3>読む</h3>
+      <p>読む順のテキスト、単語、文字、レイアウト、検索、表、Markdown。</p>
+      <code>page.markdown()</code>
+    </a>
+    <a class="pp-card" href="reading/#offline-ocr">
+      <h3>スキャンを認識する</h3>
+      <p><code>ocr</code> extra の PP-OCR モデルによるオフライン OCR。結果は見えないテキスト層として書き戻します。</p>
+      <code>page.ocr(engine=OcrEngine())</code>
+    </a>
+    <a class="pp-card" href="rendering/">
+      <h3>描画する</h3>
+      <p>hayro による pixmap・PNG・JPEG・SVG と、複数ページの並列描画。</p>
+      <code>page.pixmap(dpi=144)</code>
+    </a>
+    <a class="pp-card" href="editing/">
+      <h3>ページを編集する</h3>
+      <p>ページの挿入・取り込み・移動・回転・切り抜き・平坦化。メタデータ、ページラベル、しおり、レイヤーの編集。</p>
+      <code>page.rotation = 90</code>
+    </a>
+    <a class="pp-card" href="editing/">
+      <h3>作図し、注釈を付ける</h3>
+      <p>パス、画像、ページ、テキストの作図。ハイライト、メモ、図形、リンク、フリーテキスト、スタンプ。</p>
+      <code>page.draw()</code>
+    </a>
+    <a class="pp-card" href="editing/#forms">
+      <h3>フォームを入力する</h3>
+      <p>フィールドの値を読み書きし、ウィジェットを加え、外観を最新に保ちます。</p>
+      <code>doc.form["name"].value = "Ada"</code>
+    </a>
+    <a class="pp-card" href="versions/">
+      <h3>保存し、署名する</h3>
+      <p>変わった分だけを追記する増分保存、AES-256 暗号化、新しいリビジョンへの PAdES 署名。</p>
+      <code>doc.sign("approval", signer)</code>
+    </a>
+    <a class="pp-card" href="editing/#sanitizing">
+      <h3>クリーンにし、軽くする</h3>
+      <p>共有の前に JavaScript、添付ファイル、メタデータ、隠れたテキストを取り除き、フォントをサブセット化します。</p>
+      <code>doc.sanitize("shared.pdf")</code>
+    </a>
   </div>
 </section>
 
-<section class="pp-principles" aria-label="オブジェクトストアが保証すること">
-  <article class="pp-principle">
-    <span class="pp-principle__number">01</span>
-    <h2>編集の代価は触れた分だけ</h2>
-    <p>エンジンは書き直したファイルではなくストアを読みます。ページを回転すれば書くのは一つのオブジェクトだけで、次にページを読むときも直列化するのは編集が書いた分だけです。</p>
-  </article>
-  <article class="pp-principle">
-    <span class="pp-principle__number">02</span>
-    <h2>どの変更も取り消せる</h2>
-    <p>トランザクションは <code>doc.history</code> に名前付きの一歩として残ります。undo と redo は文書を複製せずに版のあいだを移ります。</p>
-  </article>
-  <article class="pp-principle">
-    <span class="pp-principle__number">03</span>
-    <h2>失敗は跡を残さない</h2>
-    <p>例外を出した編集は、現在の版を元のまま残します。制限はすべての操作の仕事量に上限を設け、型付きの <code>LimitError</code> で止めます。</p>
-  </article>
-</section>
-
-<div class="pp-section-title">
-<h2>いまできること</h2>
-<p>0.2.2 は文書の読み取り・描画・編集・署名・クリーンアップ・軽量化と、<code>page.draw</code> によるページへの作図に対応します。</p>
+<section class="pp-section pp-split" aria-labelledby="pp-versions" markdown>
+<div class="pp-split__text">
+  <header class="pp-section__head">
+    <h2 id="pp-versions">版の上に立つ</h2>
+    <p>どの編集も、解析したコピーをその場で書き換えるのではなく、文書の新しい版を書きます。保証はすべてここから来ています。</p>
+  </header>
+  <ul class="pp-points">
+    <li><strong>編集の代価は触れた分だけ。</strong>エンジンは書き直したファイルではなくストアを読みます。ページを回転すれば、書くのは一つのオブジェクトだけです。</li>
+    <li><strong>どの変更も取り消せる。</strong>トランザクションは <code>doc.history</code> の名前付きの一歩で、undo は文書を複製せずに版のあいだを移ります。</li>
+    <li><strong>失敗は跡を残さない。</strong>例外を出した編集は始まったときの版を保ち、制限はどの操作の仕事も型付きの <code>LimitError</code> で止めます。</li>
+  </ul>
+  <p class="pp-more"><a href="versions/">版と保存</a><a href="concepts/">概念</a></p>
 </div>
-
-<div class="pp-cards">
-  <a class="pp-card" href="reading/">
-    <h3>テキストと構造を読む</h3>
-    <p>読む順のテキスト、単語、文字、レイアウト、検索、表、Markdown。</p>
-    <code>page.search("total")</code>
-  </a>
-  <a class="pp-card" href="reading/#offline-ocr">
-    <h3>オフライン OCR</h3>
-    <p><code>ocr</code> extra の PP-OCR モデルでスキャンしたページを認識し、見えないテキスト層を加えます。</p>
-    <code>page.ocr(engine=OcrEngine())</code>
-  </a>
-  <a class="pp-card" href="rendering/">
-    <h3>描画</h3>
-    <p>hayro による pixmap・PNG・JPEG・SVG。複数ページの並列描画もできます。</p>
-    <code>page.pixmap(dpi=144)</code>
-  </a>
-  <a class="pp-card" href="editing/">
-    <h3>ページと注釈を編集する</h3>
-    <p>ページの挿入・取り込み・移動・回転・切り抜き・平坦化。ハイライト、メモ、図形、リンクの追加。メタデータ、ページラベル、レイヤーの編集。</p>
-    <code>doc.pages.insert(0, other.pages)</code>
-  </a>
-  <a class="pp-card" href="editing/#forms">
-    <h3>フォームを入力し、作る</h3>
-    <p>フィールドの値を読み書きし、ウィジェットを加え、外観を整えたまま保ちます。</p>
-    <code>doc.form["name"].value = "Ada"</code>
-  </a>
-  <a class="pp-card" href="versions/">
-    <h3>保存し、クリーンにし、軽くする</h3>
-    <p>変わったオブジェクトだけを追記する増分保存、AES-256 暗号化、共有前のサニタイズ、フォントのサブセット化。</p>
-    <code>doc.save(path, incremental=True)</code>
-  </a>
-</div>
-
-<div class="pp-split" markdown>
-<div class="pp-section-title">
-<h2>スナップショットではなく、トランザクション</h2>
-<p>編集を名前付きの一歩にまとめます。ブロックが例外を出せば何も残らず、最後まで進めば一度の undo で戻せます。</p>
-<p><a href="versions/">版と保存 →</a></p>
-</div>
+<div class="pp-split__code" markdown>
 
 ```python
 import pyropdf
@@ -129,8 +202,11 @@ with pyropdf.open("input.pdf") as doc:
     doc.history.undo()
     print(page.rotation)       # 0
 ```
-</div>
 
-<div class="pp-status">
-  <p><strong>Alpha 版です。</strong>API はマイナーバージョンのあいだで変わることがあります。hayro の bounded construction がリリースされるまで、pyropdf のどのリリースも、信頼できない入力に対する安全性を主張しません。制限が何を約束し、何を約束しないかは<a href="status/">状態と安全性</a>にあります。</p>
 </div>
+</section>
+
+<section class="pp-section pp-closing" aria-labelledby="pp-adopt">
+  <h2 id="pp-adopt">採用する前に</h2>
+  <p>API はまだマイナーバージョンのあいだで変わることがあり、描画は MuPDF より遅いです。hayro の bounded construction がリリースされるまで、pyropdf のどのリリースも、信頼できない入力に対する安全性を主張しません。制限が何を約束し、何を約束しないかは<a href="status/">状態と安全性</a>に、PyMuPDF・pypdf・pikepdf との時間を含めた比較は<a href="choosing/">pyropdf を選ぶ</a>にあります。</p>
+</section>

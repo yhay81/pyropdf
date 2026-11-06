@@ -99,3 +99,28 @@ def test_cancellation_must_be_a_token() -> None:
     with pytest.raises(TypeError, match="CancellationToken"):
         DocumentLimits(cancellation=True)  # ty: ignore[invalid-argument-type]
     assert DocumentLimits.web().cancellation is None
+
+
+def test_cancelled_token_refuses_rasters_with_warm_page_and_bridge_caches() -> None:
+    token = CancellationToken()
+    with pyropdf.open(numbered(3), limits=DocumentLimits(cancellation=token)) as doc:
+        pages = list(doc.pages)
+        pages[0].pixmap(dpi=72)
+        pages[1].pixmap(dpi=72)
+        token.cancel()
+        for page in (pages[1], pages[2]):
+            with pytest.raises(pyropdf.LimitError) as caught:
+                page.pixmap(dpi=72)
+            assert caught.value.code == "cancelled"
+
+
+def test_cancelled_token_refuses_an_annotation_raster_after_rendering() -> None:
+    token = CancellationToken()
+    with pyropdf.Document(limits=DocumentLimits(cancellation=token)) as doc:
+        page = doc.pages.new((200, 200))
+        annotation = page.annotations.add(pyropdf.Square((20, 20, 120, 80)))
+        assert annotation.pixmap(dpi=72) is not None
+        token.cancel()
+        with pytest.raises(pyropdf.LimitError) as caught:
+            annotation.pixmap(dpi=72)
+        assert caught.value.code == "cancelled"

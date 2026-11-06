@@ -2,16 +2,17 @@
 
 {% block extrahead %}
   {{ super() }}
-  {% set social_title = (page.meta and page.meta.title) or page.title or config.site_name %}
-  {% set social_description = (page.meta and page.meta.description) or config.site_description %}
-  <meta property="og:type" content="website">
+  {# The social plugin writes the other Open Graph and Twitter tags. #}
   <meta property="og:site_name" content="{{ config.site_name }}">
-  <meta property="og:title" content="{{ social_title }}">
-  <meta property="og:description" content="{{ social_description }}">
-  <meta name="twitter:card" content="summary">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f3ec">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15120f">
   <style>{% include "partials/pyropdf.css" %}</style>
+  {% if page.meta and page.meta.home %}
+    {# The home page has no source to edit or copy. #}
+    <style>.md-content__button { display: none; }
+      .md-main__inner { margin-top: 0; }
+      .md-content__inner { padding-top: 0; }</style>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
@@ -31,5 +32,33 @@
       label.textContent = button.dataset.copiedLabel;
       window.setTimeout(() => { label.textContent = previous; }, 1600);
     });
+    // The home page's demo plays its steps in turn while it is on screen,
+    // and stops for good once the reader picks a step. Without motion, it
+    // stays on the step that the reader picks.
+    function playDemo() {
+      const reel = document.querySelector(".pp-reel");
+      if (!reel || reel.dataset.playing !== undefined) return;
+      reel.dataset.playing = "";
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const steps = [...reel.querySelectorAll('input[name="pp-step"]')];
+      const period = parseFloat(getComputedStyle(reel).getPropertyValue("--pp-step")) * 1000 || 5000;
+      let visible = false;
+      new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; }).observe(reel);
+      reel.classList.add("pp-reel--playing");
+      const timer = window.setInterval(() => {
+        if (!document.contains(reel)) return window.clearInterval(timer);
+        if (!visible || document.hidden) return;
+        const next = (steps.findIndex((step) => step.checked) + 1) % steps.length;
+        steps[next].checked = true;
+      }, period);
+      const stop = () => {
+        window.clearInterval(timer);
+        reel.classList.remove("pp-reel--playing");
+      };
+      reel.addEventListener("pointerdown", stop, { once: true });
+      reel.addEventListener("keydown", stop, { once: true });
+    }
+    if (window.document$) window.document$.subscribe(playDemo);
+    else playDemo();
   </script>
 {% endblock %}

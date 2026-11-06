@@ -13,7 +13,8 @@ from test_text import build_text_pdf
 ROOT = Path(__file__).resolve().parent.parent
 LANGUAGES = ("en", "ja")
 PAGES = {language: sorted((ROOT / "docs" / language).glob("*.md")) for language in LANGUAGES}
-EXAMPLE = re.compile(r"^```python\n(.*?)^```", re.MULTILINE | re.DOTALL)
+# A fence may carry options after the language, such as title="edit.py".
+EXAMPLE = re.compile(r"^```python(?: [^\n]*)?\n(.*?)^```", re.MULTILINE | re.DOTALL)
 
 
 def _examples() -> list[tuple[str, str]]:
@@ -51,7 +52,13 @@ def test_the_home_pages_link_to_pages_that_exist() -> None:
         missing = [
             target
             for target in targets
-            if target and not ((pages / f"{target}.md").exists() or (pages / target / "index.md").exists())
+            if target
+            and not (
+                (pages / f"{target}.md").exists()
+                or (pages / target / "index.md").exists()
+                # Files such as the hero's renders live in the English site, at the root.
+                or (ROOT / "docs" / "en" / target).is_file()
+            )
         ]
         assert missing == [], language
 
