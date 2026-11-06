@@ -1563,6 +1563,9 @@ pub fn render_page(
 pub(crate) fn raster_error(error: RasterError) -> PyErr {
     match error {
         RasterError::Geometry(message) => PyValueError::new_err(message),
+        RasterError::ClipPageSide(message) => {
+            LimitError::new_err((LimitCode::ClipPageSide.as_str(), message))
+        }
         RasterError::NoPage(_) | RasterError::Clip(_) => PdfError::new_err(error.to_string()),
     }
 }

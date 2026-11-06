@@ -391,9 +391,10 @@ class Page:
         A raster is at most 65,408 pixels wide, 65,532 high, and 64,000,000
         in all, and a larger one raises ``ValueError``. With ``clip``, the
         limits apply to the clipped raster, so a small region renders at
-        scales at which the whole page would not, and the page under the
-        matrix may measure up to 524,288 pixels a side. The GIL is released
-        while hayro renders.
+        scales at which the whole page would not. If either side of the
+        transformed page exceeds 524,288 pixels, clipped rendering raises
+        :class:`LimitError` with code ``clip_page_side``. The GIL is
+        released while hayro renders.
 
         These dimensions bound the output raster. Image decoding and
         rasterization inside hayro can exceed the document's memory and

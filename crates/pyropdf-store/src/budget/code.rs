@@ -115,6 +115,9 @@ pub enum LimitCode {
     PdfOutputSize,
     /// Encoding a pixmap writes more bytes than the call's `max_size`.
     PixmapOutputSize,
+    /// With `clip`, either side of the page after applying the render matrix
+    /// exceeds 524,288 pixels.
+    ClipPageSide,
     /// A page's SVG holds more UTF-8 bytes than the call's `max_size`.
     SvgOutputSize,
     /// The images that `doc.render` encodes write more bytes in all than the
@@ -223,7 +226,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 74] = [
+    pub const ALL: [Self; 75] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -262,6 +265,7 @@ impl LimitCode {
         Self::ExportOutputSize,
         Self::PdfOutputSize,
         Self::PixmapOutputSize,
+        Self::ClipPageSide,
         Self::SvgOutputSize,
         Self::RenderOutputSize,
         Self::PasswordInputSize,
@@ -342,6 +346,7 @@ impl LimitCode {
             Self::ExportOutputSize => "export_output_size",
             Self::PdfOutputSize => "pdf_output_size",
             Self::PixmapOutputSize => "pixmap_output_size",
+            Self::ClipPageSide => "clip_page_side",
             Self::SvgOutputSize => "svg_output_size",
             Self::RenderOutputSize => "render_output_size",
             Self::PasswordInputSize => "password_input_size",
@@ -424,6 +429,7 @@ impl LimitCode {
             Self::ExportOutputSize => "the exported text is too large",
             Self::PdfOutputSize => "the PDF output is too large",
             Self::PixmapOutputSize => "the encoded image is too large",
+            Self::ClipPageSide => "the transformed page is too large for clipped rendering",
             Self::SvgOutputSize => "the SVG document is too large",
             Self::RenderOutputSize => "the rendered images are too large",
             Self::PasswordInputSize => "the password is too long",
@@ -508,6 +514,7 @@ impl LimitCode {
             Self::ExportOutputSize => Some("bytes"),
             Self::PdfOutputSize => Some("bytes"),
             Self::PixmapOutputSize => Some("bytes"),
+            Self::ClipPageSide => Some("pixels"),
             Self::SvgOutputSize => Some("bytes"),
             Self::RenderOutputSize => Some("bytes"),
             Self::PasswordInputSize => Some("bytes"),
@@ -590,6 +597,7 @@ impl LimitCode {
             Self::ExportOutputSize => Some(67_108_864),
             Self::PdfOutputSize => Some(536_870_912),
             Self::PixmapOutputSize => Some(67_108_864),
+            Self::ClipPageSide => Some(524_288),
             Self::SvgOutputSize => Some(67_108_864),
             Self::RenderOutputSize => Some(536_870_912),
             Self::PasswordInputSize => Some(127),

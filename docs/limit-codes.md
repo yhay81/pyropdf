@@ -41,6 +41,7 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `export_output_size` | 64 MiB | The UTF-8 of the element text that `Document.to_json` or `Document.to_chunks` exports is larger than the call's `max_size`. |
 | `pdf_output_size` | 512 MiB | Saving writes more bytes than the call's `max_size`. |
 | `pixmap_output_size` | 64 MiB | Encoding a pixmap writes more bytes than the call's `max_size`. |
+| `clip_page_side` | 524,288 pixels | With `clip`, either side of the page after applying the render matrix exceeds 524,288 pixels. |
 | `svg_output_size` | 64 MiB | A page's SVG holds more UTF-8 bytes than the call's `max_size`. |
 | `render_output_size` | 512 MiB | The images that `doc.render` encodes write more bytes in all than the call's `max_size`. |
 | `password_input_size` | 127 bytes | A password is longer in UTF-8 than PDF 2.0 allows. |
