@@ -1,13 +1,13 @@
 ---
 title: 状態と安全性
-description: 0.2 alpha が対応するもの、まだ対応しないもの、入力の安全性について pyropdf が主張すること・しないこと。
+description: pyropdf 0.2 が対応するもの、まだ対応しないもの、入力の安全性について pyropdf が主張すること・しないこと。
 ---
 
 # 状態と安全性
 
 ## 状態
 
-pyropdf は **alpha** です。API はマイナーバージョンのあいだで変わることがあり、
+API はマイナーバージョンのあいだで変わることがあり、
 変更は[変更履歴](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md)に
 載せます。土台は [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md) に、
 ISO 32000-2 のどこまでに対応しているかは[仕様の対応状況](specification.md)にあります。

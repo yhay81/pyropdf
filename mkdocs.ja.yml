@@ -1,6 +1,6 @@
 site_name: pyropdf
 site_url: https://pyropdf.haya.works/ja/
-site_description: PythonからPDFを完全に扱う。Rustの版付きオブジェクトストアの上で、すべての編集は版になり、どの変更も取り消せ、失敗したトランザクションは文書を元のまま残す。
+site_description: PDF を、Python の書き心地と Rust の芯で。pyropdf は版付きオブジェクトストアの上で、Python から PDF を読み、描画し、編集し、署名します。どの変更も取り消せ、失敗した編集は文書を元のまま残します。
 site_author: Yusuke Hayashi
 copyright: Copyright &copy; 2026 Yusuke Hayashi · MIT License
 repo_url: https://github.com/yhay81/pyropdf
@@ -23,16 +23,19 @@ theme:
     alternate: material/translate
   features:
     - navigation.footer
+    - navigation.indexes
     - navigation.instant
+    - navigation.instant.prefetch
     - navigation.instant.progress
     - navigation.path
     - navigation.sections
     - navigation.tabs
     - navigation.top
     - search.highlight
-    - search.suggest
+    - content.action.copy
     - content.action.edit
     - content.code.copy
+    - content.tooltips
     - toc.follow
   palette:
     - media: "(prefers-color-scheme: light)"
@@ -90,6 +93,44 @@ markdown_extensions:
 
 plugins:
   - search
+  # Serve the Google Fonts from the site itself. Only the fonts: the theme's
+  # bundle also names video and lightbox scripts that no page loads, and the
+  # plugin would otherwise download them and the ad SDK that they load.
+  - privacy:
+      assets_include:
+        - fonts.googleapis.com/*
+        - fonts.gstatic.com/*
+  # llms.txt, llms-full.txt, and a Markdown copy of each listed page; the
+  # theme's content.action.copy shows "Copy as Markdown" on those pages.
+  - llmstxt:
+      markdown_description: >-
+        ガイドは概念と作業を、プロジェクトのテストで実行される例とともに説明します。
+        API リファレンスは英語のみで、https://pyropdf.haya.works/llms.txt にあります。
+      full_output: llms-full.txt
+      sections:
+        ガイド:
+          - getting-started.md
+          - concepts.md
+          - reading.md
+          - rendering.md
+          - editing.md
+          - versions.md
+          - limits.md
+          - recipes.md
+        プロジェクト:
+          - choosing.md
+          - status.md
+          - specification.md
+  # A social card and Open Graph metadata for every page.
+  - social:
+      cards_layout_options:
+        background_color: "#15120f"
+        color: "#f1ebe0"
+        font_family: Noto Sans JP
+  - minify:
+      minify_html: true
+      minify_inline_css: true
+      minify_inline_js: true
 
 extra:
   current_language: ja

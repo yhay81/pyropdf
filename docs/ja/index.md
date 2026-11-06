@@ -1,121 +1,101 @@
 ---
 title: pyropdf
-description: PythonからPDFを完全に扱う。Rustの版付きオブジェクトストアの上で、すべての編集は版になり、どの変更も取り消せ、失敗したトランザクションは文書を元のまま残します。
+description: PDF を、Python の書き心地と Rust の芯で。Python から PDF を読み、描画し、編集し、署名します。すべての編集は取り消せる版になり、失敗した編集は文書を元のまま残します。
 hide:
   - navigation
   - toc
 ---
 
-<section class="pp-hero" aria-labelledby="pp-hero-title">
+<section class="pp-hero" aria-labelledby="pp-hero-title" markdown>
+<div class="pp-hero__text">
+  <h1 id="pp-hero-title">PDF を、Python の書き心地と Rust の芯で。</h1>
+  <p class="pp-lede">
+    pyropdf は PDF 文書を読み、描画し、編集し、署名します。ページはシーケンス、フォームのフィールドはマッピング、編集はトランザクションとして書けます。
+    その下では Rust の版付きオブジェクトストアがすべての版を保ちます。どの変更も取り消せ、失敗した編集は文書を元のまま残します。
+  </p>
+  <div class="pp-install" aria-label="インストールのコマンド">
+    <code tabindex="0">pip install pyropdf</code>
+    <button type="button" data-copy-command="pip install pyropdf" data-copied-label="コピーしました" aria-label="インストールのコマンドをコピー"><span data-copy-label>コピー</span></button>
+  </div>
+  <p class="pp-actions">
+    <a class="pp-button pp-button--primary" href="getting-started/">はじめる</a>
+    <a class="pp-button" href="recipes/">レシピ</a>
+    <a class="pp-button" href="https://pyropdf.haya.works/api/">API リファレンス（英語）</a>
+  </p>
+  <p class="pp-facts">MIT ライセンス · 必須の依存なし · CPython 3.11–3.15（free-threaded 対応）</p>
+</div>
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    print(page.text())
+
+    with doc.transaction("highlight totals"):
+        hits = page.search("total")
+        page.annotations.add(pyropdf.Highlight(hits))
+
+    doc.save("reviewed.pdf", incremental=True)
+```
+</section>
+
+## できること
+
+<dl class="pp-index">
   <div>
-    <p class="pp-eyebrow">0.2 alpha</p>
-    <h1 id="pp-hero-title">PDF の編集は、すべて<em>版</em>になる。</h1>
-    <p class="pp-lede">
-      pyropdf は、Rust で書かれた一つの版付きオブジェクトストアの上で、Python から PDF を読み、描画し、編集します。
-      編集の代価は触れた分だけ。どの変更も取り消せ、失敗したトランザクションは文書を元のまま残します。
-    </p>
-    <div class="pp-actions">
-      <a class="pp-button pp-button--primary" href="getting-started/">はじめる →</a>
-      <a class="pp-button" href="recipes/">レシピ</a>
-      <a class="pp-button" href="https://pyropdf.haya.works/api/">API リファレンス</a>
-    </div>
-    <div class="pp-install" aria-label="インストールのコマンド">
-      <span class="pp-install__prompt" aria-hidden="true">$</span>
-      <code tabindex="0">pip install pyropdf</code>
-      <button type="button" data-copy-command="pip install pyropdf" data-copied-label="コピーしました" aria-label="インストールのコマンドをコピー"><span data-copy-label>コピー</span></button>
-    </div>
-    <ul class="pp-facts" aria-label="プロジェクトの概要">
-      <li>MIT ライセンス</li>
-      <li>必須の依存なし</li>
-      <li>Python 3.11–3.15（free-threaded 対応）</li>
-    </ul>
+    <dt><a href="reading/">読む</a></dt>
+    <dd>読む順のテキスト、単語、文字、レイアウト、検索、表、Markdown。</dd>
+    <dd><code>page.markdown()</code></dd>
   </div>
-  <div class="pp-stack" role="img" aria-label="文書の三つの版が重なり、それぞれにその版を作った編集と、最新の版を取り消す undo が添えられている図">
-    <div class="pp-version" aria-hidden="true">
-      <div class="pp-version__head"><span><b>v1</b> · 開いた直後</span><span>12 ページ</span></div>
-      <span class="pp-version__line">trailer /Root 1 0 R</span>
-      <span class="pp-version__line">xref · 214 objects</span>
-    </div>
-    <div class="pp-version" aria-hidden="true">
-      <div class="pp-version__head"><span><b>v2</b> · "rotate"</span><span>1 オブジェクト</span></div>
-      <span class="pp-version__line pp-version__line--change">7 0 obj /Rotate 90</span>
-      <span class="pp-version__line">pages[0].rotation = 90</span>
-    </div>
-    <div class="pp-version" aria-hidden="true">
-      <div class="pp-version__head"><span><b>v3</b> · "annotate"</span><span>2 オブジェクト</span></div>
-      <span class="pp-version__line pp-version__line--add">215 0 obj /Subtype /Highlight</span>
-      <span class="pp-version__line pp-version__line--change">7 0 obj /Annots [215 0 R]</span>
-      <span class="pp-version__line">page.annotations.add(Highlight(hits))</span>
-      <div class="pp-version__foot">
-        <span class="pp-chip pp-chip--ember">history.undo()</span>
-        <span class="pp-chip pp-chip--moss">save(incremental=True)</span>
-        <span class="pp-chip">+2 オブジェクト</span>
-      </div>
-    </div>
+  <div>
+    <dt><a href="reading/#offline-ocr">スキャンを認識する</a></dt>
+    <dd><code>ocr</code> extra の PP-OCR モデルによるオフライン OCR。結果は見えないテキスト層として書き戻します。</dd>
+    <dd><code>page.ocr(engine=OcrEngine())</code></dd>
   </div>
-</section>
+  <div>
+    <dt><a href="rendering/">描画する</a></dt>
+    <dd>hayro による pixmap・PNG・JPEG・SVG と、複数ページの並列描画。</dd>
+    <dd><code>page.pixmap(dpi=144)</code></dd>
+  </div>
+  <div>
+    <dt><a href="editing/">ページを編集する</a></dt>
+    <dd>ページの挿入・取り込み・移動・回転・切り抜き・平坦化。メタデータ、ページラベル、しおり、レイヤーの編集。</dd>
+    <dd><code>doc.pages.insert(0, other.pages)</code></dd>
+  </div>
+  <div>
+    <dt><a href="editing/">作図し、注釈を付ける</a></dt>
+    <dd>パス、画像、ページ、テキストの作図。ハイライト、メモ、図形、リンク、フリーテキスト、スタンプ。</dd>
+    <dd><code>page.draw()</code></dd>
+  </div>
+  <div>
+    <dt><a href="editing/#forms">フォームを入力する</a></dt>
+    <dd>フィールドの値を読み書きし、ウィジェットを加え、外観を最新に保ちます。</dd>
+    <dd><code>doc.form["name"].value = "Ada"</code></dd>
+  </div>
+  <div>
+    <dt><a href="versions/">保存し、署名する</a></dt>
+    <dd>変わった分だけを追記する増分保存、AES-256 暗号化、新しいリビジョンへの PAdES 署名。</dd>
+    <dd><code>doc.sign("approval", signer)</code></dd>
+  </div>
+  <div>
+    <dt><a href="editing/#sanitizing">クリーンにし、軽くする</a></dt>
+    <dd>共有の前に JavaScript、添付ファイル、メタデータ、隠れたテキストを取り除き、フォントをサブセット化します。</dd>
+    <dd><code>doc.sanitize("shared.pdf")</code></dd>
+  </div>
+</dl>
 
-<section class="pp-principles" aria-label="オブジェクトストアが保証すること">
-  <article class="pp-principle">
-    <span class="pp-principle__number">01</span>
-    <h2>編集の代価は触れた分だけ</h2>
-    <p>エンジンは書き直したファイルではなくストアを読みます。ページを回転すれば書くのは一つのオブジェクトだけで、次にページを読むときも直列化するのは編集が書いた分だけです。</p>
-  </article>
-  <article class="pp-principle">
-    <span class="pp-principle__number">02</span>
-    <h2>どの変更も取り消せる</h2>
-    <p>トランザクションは <code>doc.history</code> に名前付きの一歩として残ります。undo と redo は文書を複製せずに版のあいだを移ります。</p>
-  </article>
-  <article class="pp-principle">
-    <span class="pp-principle__number">03</span>
-    <h2>失敗は跡を残さない</h2>
-    <p>例外を出した編集は、現在の版を元のまま残します。制限はすべての操作の仕事量に上限を設け、型付きの <code>LimitError</code> で止めます。</p>
-  </article>
-</section>
-
-<div class="pp-section-title">
-<h2>いまできること</h2>
-<p>0.2.2 は文書の読み取り・描画・編集・署名・クリーンアップ・軽量化と、<code>page.draw</code> によるページへの作図に対応します。</p>
-</div>
-
-<div class="pp-cards">
-  <a class="pp-card" href="reading/">
-    <h3>テキストと構造を読む</h3>
-    <p>読む順のテキスト、単語、文字、レイアウト、検索、表、Markdown。</p>
-    <code>page.search("total")</code>
-  </a>
-  <a class="pp-card" href="reading/#offline-ocr">
-    <h3>オフライン OCR</h3>
-    <p><code>ocr</code> extra の PP-OCR モデルでスキャンしたページを認識し、見えないテキスト層を加えます。</p>
-    <code>page.ocr(engine=OcrEngine())</code>
-  </a>
-  <a class="pp-card" href="rendering/">
-    <h3>描画</h3>
-    <p>hayro による pixmap・PNG・JPEG・SVG。複数ページの並列描画もできます。</p>
-    <code>page.pixmap(dpi=144)</code>
-  </a>
-  <a class="pp-card" href="editing/">
-    <h3>ページと注釈を編集する</h3>
-    <p>ページの挿入・取り込み・移動・回転・切り抜き・平坦化。ハイライト、メモ、図形、リンクの追加。メタデータ、ページラベル、レイヤーの編集。</p>
-    <code>doc.pages.insert(0, other.pages)</code>
-  </a>
-  <a class="pp-card" href="editing/#forms">
-    <h3>フォームを入力し、作る</h3>
-    <p>フィールドの値を読み書きし、ウィジェットを加え、外観を整えたまま保ちます。</p>
-    <code>doc.form["name"].value = "Ada"</code>
-  </a>
-  <a class="pp-card" href="versions/">
-    <h3>保存し、クリーンにし、軽くする</h3>
-    <p>変わったオブジェクトだけを追記する増分保存、AES-256 暗号化、共有前のサニタイズ、フォントのサブセット化。</p>
-    <code>doc.save(path, incremental=True)</code>
-  </a>
-</div>
+## 版の上に立つ
 
 <div class="pp-split" markdown>
-<div class="pp-section-title">
-<h2>スナップショットではなく、トランザクション</h2>
-<p>編集を名前付きの一歩にまとめます。ブロックが例外を出せば何も残らず、最後まで進めば一度の undo で戻せます。</p>
-<p><a href="versions/">版と保存 →</a></p>
+<div class="pp-split__text">
+  <p>どの編集も、解析したコピーをその場で書き換えるのではなく、文書の新しい版を書きます。保証はすべてこの一つの決定から来ています。</p>
+  <ul>
+    <li><strong>編集の代価は触れた分だけ。</strong>エンジンは書き直したファイルではなくストアを読みます。ページを回転すれば、書くのは一つのオブジェクトだけです。</li>
+    <li><strong>どの変更も取り消せる。</strong>トランザクションは <code>doc.history</code> の名前付きの一歩で、undo は文書を複製せずに版のあいだを移ります。</li>
+    <li><strong>失敗は跡を残さない。</strong>例外を出した編集は始まったときの版を保ち、制限はどの操作の仕事も型付きの <code>LimitError</code> で止めます。</li>
+  </ul>
+  <p><a href="versions/">版と保存</a> · <a href="concepts/">概念</a></p>
 </div>
 
 ```python
@@ -131,6 +111,9 @@ with pyropdf.open("input.pdf") as doc:
 ```
 </div>
 
-<div class="pp-status">
-  <p><strong>Alpha 版です。</strong>API はマイナーバージョンのあいだで変わることがあります。hayro の bounded construction がリリースされるまで、pyropdf のどのリリースも、信頼できない入力に対する安全性を主張しません。制限が何を約束し、何を約束しないかは<a href="status/">状態と安全性</a>にあります。</p>
+## 採用する前に
+
+<div class="pp-notes">
+  <p>API はまだマイナーバージョンのあいだで変わることがあり、描画は MuPDF より遅いです。hayro の bounded construction がリリースされるまで、pyropdf のどのリリースも、信頼できない入力に対する安全性を主張しません。制限が何を約束し、何を約束しないかは<a href="status/">状態と安全性</a>にあります。</p>
+  <p><a href="choosing/">pyropdf を選ぶ</a>では、PyMuPDF・pypdf・pikepdf と時間を含めて比べています。</p>
 </div>
