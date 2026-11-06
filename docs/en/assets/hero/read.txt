@@ -1,5 +1,4 @@
 Harbor 30 33 60 42
 Lane 62 33 83 42
 Studio 86 33 114 42
-Invoice 30 70 126 98
 35 words

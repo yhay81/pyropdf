@@ -7,41 +7,33 @@ hide:
   - toc
 ---
 
-<section class="pp-hero" aria-labelledby="pp-hero-title">
+<section class="pp-hero pp-reel" aria-labelledby="pp-hero-title" markdown>
+<div class="pp-hero__text">
   <h1 id="pp-hero-title">PDF を、<span class="pp-accent">Python の書き心地</span>と <span class="pp-accent">Rust の芯</span>で。</h1>
-<div class="pp-hero__aside">
   <p class="pp-lede">
-    pyropdf は PDF 文書を読み、描画し、編集し、署名します。ページはシーケンス、フォームのフィールドはマッピング、編集はトランザクションとして書けます。その下では Rust の版付きオブジェクトストアがすべての版を保ちます。どの変更も取り消せ、失敗した編集は文書を元のまま残します。
+    pyropdf は PDF を読み、描画し、編集し、署名します。ページはシーケンス、フィールドはマッピング、編集はトランザクション。その下で Rust の版付きストアが、どの変更も取り消せるようにします。
   </p>
-  <div class="pp-install" aria-label="インストールのコマンド">
+  <div class="pp-hero__start">
+    <div class="pp-install" aria-label="インストールのコマンド">
     <span class="pp-install__prompt" aria-hidden="true">$</span>
     <code tabindex="0">pip install pyropdf</code>
     <button type="button" data-copy-command="pip install pyropdf" data-copied-label="コピーしました" aria-label="インストールのコマンドをコピー"><span data-copy-label>コピー</span></button>
-  </div>
-  <p class="pp-actions">
+    </div>
+    <p class="pp-actions">
     <a class="pp-button pp-button--primary" href="getting-started/">はじめる</a>
-    <a class="pp-button" href="recipes/">レシピ</a>
-    <a class="pp-button" href="https://pyropdf.haya.works/api/">API リファレンス（英語）</a>
+    <a class="pp-button" href="https://pyropdf.haya.works/api/" hreflang="en">API リファレンス</a>
   </p>
-  <ul class="pp-facts" aria-label="プロジェクトの概要">
-    <li>MIT ライセンス</li>
-    <li>必須の依存なし</li>
-    <li>CPython 3.11–3.15（free-threaded 対応）</li>
-  </ul>
+  </div>
 </div>
-</section>
-
-<section class="pp-demo" aria-label="一つの請求書で、pyropdf を一歩ずつ" markdown>
-<div class="pp-reel" markdown>
   <div class="pp-reel__steps" role="radiogroup" aria-label="手順">
     <input type="radio" name="pp-step" id="pp-s1" value="1" checked>
-    <label for="pp-s1"><span class="pp-reel__n">1</span><span class="pp-reel__title">読む</span><span class="pp-reel__desc">すべての単語を、矩形とともに読む順に。</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <label for="pp-s1"><span class="pp-reel__n">1</span><span class="pp-reel__title">読む</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
     <input type="radio" name="pp-step" id="pp-s2" value="2">
-    <label for="pp-s2"><span class="pp-reel__n">2</span><span class="pp-reel__title">注釈</span><span class="pp-reel__desc">ページを検索し、一致をハイライト。</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <label for="pp-s2"><span class="pp-reel__n">2</span><span class="pp-reel__title">注釈</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
     <input type="radio" name="pp-step" id="pp-s3" value="3">
-    <label for="pp-s3"><span class="pp-reel__n">3</span><span class="pp-reel__title">フォーム</span><span class="pp-reel__desc">フィールドを加えて値を入れると、外観が付いてくる。</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <label for="pp-s3"><span class="pp-reel__n">3</span><span class="pp-reel__title">フォーム</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
     <input type="radio" name="pp-step" id="pp-s4" value="4">
-    <label for="pp-s4"><span class="pp-reel__n">4</span><span class="pp-reel__title">スタンプ</span><span class="pp-reel__desc">ゴム印を、それ自身の外観で描く。</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
+    <label for="pp-s4"><span class="pp-reel__n">4</span><span class="pp-reel__title">スタンプ</span><span class="pp-reel__bar" aria-hidden="true"></span></label>
   </div>
 <div class="pp-reel__code" markdown>
 <div class="pp-reel__panel" data-step="1" markdown>
@@ -50,9 +42,8 @@ hide:
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    page = doc.pages[0]
-    words = page.words()
-    for word in words[:4]:
+    words = doc.pages[0].words()
+    for word in words[:3]:
         print(word.text, *(round(v) for v in word.bbox))
     print(len(words), "words")
 ```
@@ -82,12 +73,11 @@ with pyropdf.open("input.pdf") as doc:
 
 ```python title="fill.py"
 import pyropdf
-from pyropdf import TextField
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
     with doc.transaction("approve"):
-        field = TextField("approver", (30, 316, 170, 334))
+        field = pyropdf.TextField("approver", (30, 316, 170, 334))
         page.widgets.add(field)
         doc.form["approver"].value = "Ada Lovelace"
     doc.save("output.pdf", incremental=True)
@@ -98,13 +88,12 @@ with pyropdf.open("input.pdf") as doc:
 
 ```python title="stamp.py"
 import pyropdf
-from pyropdf import Stamp, StampIcon
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
     with doc.transaction("stamp"):
         box = (196, 300, 310, 346)
-        stamp = Stamp(box, icon=StampIcon.APPROVED)
+        stamp = pyropdf.Stamp(box, icon=pyropdf.StampIcon.APPROVED)
         page.annotations.add(stamp)
     doc.save("output.pdf", incremental=True)
 ```
@@ -128,6 +117,12 @@ with pyropdf.open("input.pdf") as doc:
     </figure>
   </div>
 </div>
+<div class="pp-hero__foot">
+  <ul class="pp-facts" aria-label="プロジェクトの概要">
+    <li>MIT ライセンス</li>
+    <li>必須の依存なし</li>
+    <li>CPython 3.11–3.15（free-threaded 対応）</li>
+  </ul>
 <p class="pp-stage__caption">どのコマも pyropdf 自身の描画です。<a href="https://github.com/yhay81/pyropdf/blob/main/tools/hero_invoice.py">tools/hero_invoice.py</a> がこの四つのコードを順に、前の出力に対して実行し、<a href="/assets/hero/reviewed.pdf">reviewed.pdf</a> は四つのリビジョンをすべて保っています。</p>
 </div>
 </section>

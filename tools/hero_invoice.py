@@ -29,7 +29,7 @@ OUT = ROOT / "docs" / "en" / "assets" / "hero"
 HOME = ROOT / "docs" / "en" / "index.md"
 SNIPPET = re.compile(r'^```python title="(\w+\.py)"\n(.*?)^```', re.MULTILINE | re.DOTALL)
 STEPS = ("read.py", "annotate.py", "fill.py", "stamp.py")
-OUTPUT_LINES = 9
+OUTPUT_LINES = 5
 
 WIDTH, HEIGHT = 340, 442
 MARGIN = 30
@@ -94,7 +94,7 @@ def _right_text(  # noqa: PLR0913 - the text options of Canvas.text, and its rig
 def snippets() -> dict[str, str]:
     """Return the hero's snippets by title, as the home page writes them."""
     home = HOME.read_text(encoding="utf-8")
-    start = home.index('<div class="pp-reel"')
+    start = home.index('<section class="pp-hero pp-reel"')
     hero = home[start : home.index("</section>", start)]
     found = dict(SNIPPET.findall(hero))
     missing = [name for name in STEPS if name not in found]

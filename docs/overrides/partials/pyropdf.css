@@ -154,43 +154,67 @@
   border: 0;
 }
 
-/* Hero */
+/* Hero: the promise and the code on the left, the page that the code
+   makes on the right, in one view. The hero is also the demo's reel. */
 .pp-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: clamp(1.5rem, 5vw, 4rem);
-  align-items: end;
-  padding: clamp(1.5rem, 5vw, 4.5rem) 0 clamp(2rem, 4vw, 3rem);
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  grid-template-rows: auto auto 1fr auto;
+  grid-template-areas:
+    "text viewer"
+    "steps viewer"
+    "code viewer"
+    "code foot";
+  gap: 0.9rem clamp(1.5rem, 4vw, 3.5rem);
+  align-items: start;
+  padding: clamp(0.5rem, 2vw, 1.25rem) 0 var(--pp-gap);
 }
-.md-typeset .pp-hero__aside .pp-lede {
-  margin-top: 0;
+.pp-hero__text {
+  grid-area: text;
+  padding-bottom: 0.3rem;
+}
+.pp-hero__foot {
+  grid-area: foot;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.3rem 1rem;
+}
+.md-typeset .pp-hero__foot ul.pp-facts {
+  margin: 0;
 }
 .md-typeset .pp-hero h1 {
-  max-width: 12em;
+  max-width: 16em;
   color: var(--pp-ink);
-  font-size: clamp(2.3rem, 5vw, 3.6rem);
+  font-size: clamp(2rem, 3.5vw, 2.75rem);
   font-weight: 750;
-  line-height: 1.04;
-  letter-spacing: -0.04em;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
   text-wrap: balance;
 }
 .md-typeset .pp-hero .pp-accent {
   color: var(--pp-ember-strong);
 }
 .md-typeset .pp-lede {
-  max-width: 33em;
-  margin: 1.25rem 0 1.75rem;
+  max-width: 34em;
+  margin: 0.9rem 0 1.1rem;
   color: var(--pp-ink-soft);
-  font-size: 0.92rem;
-  line-height: 1.65;
+  font-size: 0.82rem;
+  line-height: 1.6;
   text-wrap: pretty;
+}
+.pp-hero__start {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
 }
 .pp-install {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  max-width: 21rem;
-  height: 2.5rem;
+  width: 14.5rem;
+  height: 2.3rem;
   padding: 0 0.35rem 0 0.9rem;
   border: 1px solid var(--pp-rule);
   border-radius: 10px;
@@ -227,7 +251,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  margin: 1rem 0 0;
+  margin: 0;
 }
 .md-typeset .pp-button {
   display: inline-flex;
@@ -261,7 +285,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem 0;
-  margin: 1.4rem 0 0;
+  margin: 0.9rem 0 0;
   padding: 0;
   list-style: none;
   color: var(--pp-ink-faint);
@@ -303,25 +327,11 @@
   --pp-viewer-bar: #221e19;
   --pp-viewer-canvas: #0f0d0b;
 }
-.pp-demo {
-  padding-bottom: var(--pp-gap);
-}
-.pp-reel {
-  display: grid;
-  grid-template-columns: 11.5rem minmax(0, 1.3fr) minmax(0, 1fr);
-  grid-template-areas:
-    "steps code viewer"
-    ". caption caption";
-  gap: 1rem 1.5rem;
-  align-items: start;
-}
-
-/* Steps */
+/* Steps: one row of tabs over the code. */
 .pp-reel__steps {
   grid-area: steps;
   display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.3rem;
 }
 .pp-reel__steps input {
   position: absolute;
@@ -330,12 +340,13 @@
 }
 .pp-reel__steps label {
   position: relative;
-  display: grid;
-  grid-template-columns: 1.6rem 1fr;
-  gap: 0 0.5rem;
-  padding: 0.75rem 0.8rem 0.8rem 0.9rem;
-  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.75rem 0.45rem 0.45rem;
+  border-radius: 99px;
   color: var(--pp-ink-faint);
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color 150ms, color 150ms;
 }
@@ -343,28 +354,22 @@
   color: var(--pp-ink-soft);
 }
 .pp-reel__n {
-  grid-row: span 2;
   display: grid;
   place-items: center;
-  width: 1.5rem;
-  height: 1.5rem;
+  width: 1.35rem;
+  height: 1.35rem;
   border: 1px solid var(--pp-rule);
   border-radius: 50%;
   font-family: var(--md-code-font-family);
-  font-size: 0.6rem;
+  font-size: 0.56rem;
 }
 .pp-reel__title {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 650;
-  line-height: 1.5rem;
-}
-.pp-reel__desc {
-  font-size: 0.66rem;
-  line-height: 1.5;
 }
 .pp-reel__steps input:checked + label {
   background: var(--pp-surface);
-  box-shadow: inset 0 0 0 1px var(--pp-rule);
+  box-shadow: inset 0 0 0 1px var(--pp-rule), 0 1px 2px rgb(0 0 0 / 6%);
   color: var(--pp-ink-soft);
 }
 .pp-reel__steps input:checked + label .pp-reel__title {
@@ -383,8 +388,8 @@
 .pp-reel__bar {
   position: absolute;
   left: 0.9rem;
-  right: 0.8rem;
-  bottom: 0.35rem;
+  right: 0.9rem;
+  bottom: -0.3rem;
   height: 2px;
   border-radius: 2px;
   background: var(--pp-ember);
@@ -403,6 +408,8 @@
 /* Code */
 .pp-reel__code {
   grid-area: code;
+  /* As tall as the tallest step, so the hero keeps its height. */
+  min-height: 15.2rem;
 }
 .pp-reel__panel {
   display: none;
@@ -418,14 +425,35 @@
   margin: 0;
 }
 .md-typeset .pp-reel__code pre > code {
-  font-size: 0.66rem;
+  padding: 0.75rem 1.1rem;
+  font-size: 0.62rem;
+  line-height: 1.5;
+}
+/* What a step prints hangs under its code, in the same card. */
+.md-typeset .pp-reel__panel .highlight + .pp-reel__label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.md-typeset .pp-reel__panel .pp-reel__label + .highlight {
+  margin-top: -0.6rem;
+  border-top: 1px dashed var(--pp-rule);
+  border-radius: 0 0 14px 14px;
+}
+.md-typeset .pp-reel__panel .pp-reel__label + .highlight pre > code {
+  padding-top: 1.2rem;
+  background: var(--pp-sunken);
+  color: var(--pp-ink-soft);
+  font-size: 0.6rem;
 }
 .md-typeset .pp-reel__code .highlight {
   border-radius: 14px;
   box-shadow: var(--pp-lift);
 }
 .md-typeset .pp-reel__label {
-  margin: 0.9rem 0 0.35rem;
+  margin: 0.6rem 0 0.3rem;
   color: var(--pp-ink-faint);
   font-size: 0.62rem;
   font-weight: 600;
@@ -440,6 +468,9 @@
 /* Viewer */
 .pp-viewer {
   grid-area: viewer;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
   position: relative;
   overflow: hidden;
   border: 1px solid var(--pp-rule);
@@ -511,11 +542,14 @@
   color: var(--pp-ink);
 }
 .pp-viewer__canvas {
-  padding: 1.4rem 1.6rem 1.6rem;
+  flex: 1;
+  display: grid;
+  align-content: center;
+  padding: 1.25rem 1.5rem;
 }
 .md-typeset .pp-viewer__sheet {
   position: relative;
-  width: 88%;
+  width: min(88%, 21rem);
   margin: 0 auto;
   background: #fff;
   box-shadow: 0 1px 2px rgb(0 0 0 / 12%), 0 10px 24px -14px rgb(0 0 0 / 35%);
@@ -546,7 +580,6 @@
   from { opacity: 0; }
 }
 .md-typeset .pp-stage__caption {
-  grid-area: caption;
   margin: 0;
   color: var(--pp-ink-faint);
   font-size: 0.62rem;
@@ -709,29 +742,19 @@
   }
 }
 
-@media screen and (max-width: 76em) {
-  .pp-cards {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .pp-reel {
-    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
-    grid-template-areas:
-      "steps steps"
-      "code viewer"
-      "caption caption";
-  }
-  .pp-reel__steps {
-    flex-direction: row;
-  }
-  .pp-reel__steps label {
-    flex: 1;
-  }
-}
-
 @media screen and (max-width: 60em) {
-  .pp-hero,
   .pp-split {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .pp-hero {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-template-areas:
+      "text"
+      "viewer"
+      "steps"
+      "code"
+      "foot";
   }
   .pp-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -739,16 +762,60 @@
   .pp-split__code {
     position: static;
   }
-  .pp-reel {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "steps"
-      "viewer"
-      "code"
-      "caption";
+}
+
+
+/* On a short screen, the hero still fits: the type steps down and the
+   page in the viewer follows the screen's height. */
+@media screen and (min-width: 60em) and (max-height: 62em) {
+  .pp-hero {
+    row-gap: 0.7rem;
   }
-  .pp-reel__desc {
+  .md-typeset .pp-hero h1 {
+    font-size: clamp(1.8rem, 2.6vw, 2.2rem);
+  }
+  .md-typeset .pp-lede {
+    margin: 0.7rem 0 0.9rem;
+    font-size: 0.78rem;
+  }
+  .pp-reel__code {
+    min-height: 13.4rem;
+  }
+  .md-typeset .pp-reel__code pre > code {
+    padding: 0.6rem 1rem;
+    font-size: 0.58rem;
+    line-height: 1.45;
+  }
+  .md-typeset .pp-viewer__sheet {
+    width: min(88%, 21rem, calc((100vh - 14rem) * 0.7));
+  }
+}
+
+/* On a laptop's shortest screens, the hero steps down once more: the
+   read step's output gives way to the boxes drawn on the page. */
+@media screen and (min-width: 60em) and (max-height: 46em) {
+  .md-typeset .pp-hero h1 {
+    font-size: clamp(1.6rem, 2.3vw, 1.95rem);
+  }
+  .md-typeset .pp-lede {
+    margin: 0.5rem 0 0.7rem;
+    font-size: 0.74rem;
+  }
+  .pp-reel__code {
+    min-height: 10.6rem;
+  }
+  .md-typeset .pp-reel__code pre > code {
+    font-size: 0.56rem;
+    line-height: 1.4;
+  }
+  .md-typeset .pp-reel__panel .pp-reel__label + .highlight {
     display: none;
+  }
+  .md-typeset .pp-viewer__sheet {
+    width: min(88%, 21rem, calc((100vh - 12rem) * 0.66));
+  }
+  .pp-viewer__canvas {
+    padding: 0.9rem 1.2rem;
   }
 }
 
