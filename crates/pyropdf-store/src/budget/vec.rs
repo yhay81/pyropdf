@@ -28,6 +28,8 @@ pub struct BudgetVec<'b, T> {
     items: Vec<T>,
     /// The code that each element counts against, if any.
     counts: Option<LimitCode>,
+    /// A limit on this vector's own length, independent of other vectors.
+    length_limit: Option<LimitCode>,
     /// The bytes of capacity that the vector has charged.
     charged: u64,
 }
@@ -40,6 +42,7 @@ impl<'b, T> BudgetVec<'b, T> {
             budget,
             items: Vec::new(),
             counts: None,
+            length_limit: None,
             charged: 0,
         }
     }
@@ -48,12 +51,20 @@ impl<'b, T> BudgetVec<'b, T> {
     /// `code`.
     #[must_use]
     pub const fn counting(budget: &'b Budget, code: LimitCode) -> Self {
-        Self {
-            budget,
-            items: Vec::new(),
-            counts: Some(code),
-            charged: 0,
+        let mut out = Self::new(budget);
+        out.counts = Some(code);
+        out
+    }
+
+    /// Bounds the length of this vector and its requested capacity by `code`.
+    /// Two buffers under the same budget each get the full length limit.
+    #[must_use]
+    pub const fn with_length_limit(budget: &'b Budget, code: LimitCode) -> Self {
+        let mut out = Self::new(budget);
+        if budget.limit(code).is_some() {
+            out.length_limit = Some(code);
         }
+        out
     }
 
     /// Returns the budget that the vector charges.
@@ -196,13 +207,31 @@ impl<'b, T> BudgetVec<'b, T> {
         }
     }
 
+    /// Returns the required length and the largest capacity to request.
+    fn capacity_bounds(&self, additional: usize) -> Result<(usize, usize), LimitExceeded> {
+        let maximum = if let Some(code) = self.length_limit {
+            let length = to_u64(self.items.len()).saturating_add(to_u64(additional));
+            self.budget.check(code, length)?;
+            self.budget
+                .limit(code)
+                .and_then(|limit| usize::try_from(limit).ok())
+                .unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        };
+        let needed = self
+            .items
+            .len()
+            .checked_add(additional)
+            .ok_or_else(|| LimitExceeded::new(LimitCode::MemorySize))?;
+        Ok((needed, maximum))
+    }
+
     /// Grows the buffer to hold `additional` more elements, doubling it when
     /// `amortized` and the budget allow, and charging the new capacity first.
     fn grow(&mut self, additional: usize, amortized: bool) -> Result<(), LimitExceeded> {
         let capacity = self.items.capacity();
-        let Some(needed) = self.items.len().checked_add(additional) else {
-            return Err(LimitExceeded::new(LimitCode::MemorySize));
-        };
+        let (needed, maximum) = self.capacity_bounds(additional)?;
         // A zero-sized element type never needs to grow: its capacity is the
         // largest `usize`.
         if needed <= capacity {
@@ -212,6 +241,7 @@ impl<'b, T> BudgetVec<'b, T> {
             needed
                 .max(capacity.saturating_mul(2))
                 .max(min_capacity::<T>())
+                .min(maximum)
         } else {
             needed
         };
@@ -257,11 +287,7 @@ impl BudgetVec<'_, u8> {
     /// refusal leaves the original contents, capacity, and charges intact.
     pub(crate) fn try_reserve_polled(&mut self, additional: usize) -> Result<(), LimitExceeded> {
         const CHUNK: usize = 16 * 1024;
-        let needed = self
-            .items
-            .len()
-            .checked_add(additional)
-            .ok_or_else(|| LimitExceeded::new(LimitCode::MemorySize))?;
+        let (needed, maximum) = self.capacity_bounds(additional)?;
         if needed <= self.items.capacity() {
             return Ok(());
         }
@@ -270,7 +296,9 @@ impl BudgetVec<'_, u8> {
             // A moving realloc can copy at most CHUNK bytes in this case.
             return self.try_reserve(additional);
         }
-        let target = needed.max(self.items.capacity().saturating_mul(2));
+        let target = needed
+            .max(self.items.capacity().saturating_mul(2))
+            .min(maximum);
         let mut replacement = Self::new(self.budget);
         // Keep geometric growth. Repeatedly falling back to exact growth
         // under a tight limit would copy the whole prefix for every byte.

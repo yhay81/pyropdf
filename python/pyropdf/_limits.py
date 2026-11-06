@@ -43,6 +43,10 @@ class DocumentLimits:
 
     :meth:`Page.text`, :meth:`Page.words`, :meth:`Page.paths`,
     :meth:`Page.content`, and :meth:`Page.pixmap` all call hayro.
+    ``max_interpretation_size`` bounds the bytes of one PDF handed to
+    hayro, including the original bytes, the bridge's cross-reference
+    update, edited objects, and any appearances synthesized for a render.
+    The web profile sets this limit to 64 MiB.
     When the store decodes a filtered stream, ``max_decompressed_size``
     checks its decoded size. ``max_page_content_size`` also applies when
     the store decodes a page content stream for :attr:`Page.operations`.
