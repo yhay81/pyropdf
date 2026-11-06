@@ -16,6 +16,7 @@ use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::pages::copy::Copies;
 use pyropdf_engine::pages::{import, sources};
+use pyropdf_engine::render::Fallback;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, SharedBudget};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
@@ -38,6 +39,78 @@ const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
 
 /// hayro's default page, A4 in points, for a page without a usable box.
 const A4: (f64, f64) = (595.0, 842.0);
+
+/// The view shared by every page and every pass of one document export.
+#[pyclass(frozen, name = "_PageSnapshot", module = "pyropdf._core")]
+pub struct PageSnapshot {
+    document: Py<_Document>,
+    version: Arc<Version>,
+    index: Arc<PageIndex>,
+    fallback: Fallback,
+    budget: SharedBudget,
+}
+
+#[pyfunction]
+pub fn snapshot_pages(document: Py<_Document>) -> PyResult<PageSnapshot> {
+    crate::errors::boundary(|| {
+        let (version, index, budget) = index(document.get())?;
+        let fallback = document.get().fallback();
+        Ok(PageSnapshot {
+            document,
+            version,
+            index,
+            fallback,
+            budget,
+        })
+    })?
+}
+
+#[pymethods]
+impl PageSnapshot {
+    fn __len__(&self) -> PyResult<usize> {
+        crate::errors::boundary(|| self.index.len())
+    }
+
+    fn page_object(&self, at: usize) -> PyResult<(u32, u16)> {
+        crate::errors::boundary(|| {
+            self.budget.poll().map_err(|error| limit_error(&error))?;
+            object_at(&self.index, at)
+        })?
+    }
+}
+
+/// Page extraction uses the document's caches for both live and pinned reads.
+#[derive(FromPyObject)]
+pub enum PageSource<'py> {
+    Live(PyRef<'py, _Document>),
+    Pinned(PyRef<'py, PageSnapshot>),
+}
+
+impl PageSource<'_> {
+    pub(crate) fn document(&self) -> &_Document {
+        match self {
+            Self::Live(document) => document,
+            Self::Pinned(view) => view.document.get(),
+        }
+    }
+
+    pub(crate) fn index(&self, budget: &Budget) -> PyResult<(Arc<Version>, Arc<PageIndex>)> {
+        match self {
+            Self::Live(document) => index_with(document, None, budget),
+            Self::Pinned(view) => {
+                view.budget.poll().map_err(|error| limit_error(&error))?;
+                Ok((Arc::clone(&view.version), Arc::clone(&view.index)))
+            }
+        }
+    }
+
+    pub(crate) fn fallback(&self) -> Fallback {
+        match self {
+            Self::Live(document) => document.fallback(),
+            Self::Pinned(view) => view.fallback.clone(),
+        }
+    }
+}
 
 pub(crate) fn index(
     document: &_Document,
@@ -107,12 +180,16 @@ pub fn page_count(document: &_Document) -> PyResult<usize> {
 pub fn page_object(document: &_Document, at: usize) -> PyResult<(u32, u16)> {
     crate::errors::boundary(|| {
         let (_, index, _) = index(document)?;
-        let page = index
-            .get(at)
-            .ok_or_else(|| PyIndexError::new_err(format!("page {at} is out of range")))?;
-        let object = indirect(page, at)?;
-        Ok((object.number(), object.generation()))
+        object_at(&index, at)
     })?
+}
+
+fn object_at(index: &PageIndex, at: usize) -> PyResult<(u32, u16)> {
+    let page = index
+        .get(at)
+        .ok_or_else(|| PyIndexError::new_err(format!("page {at} is out of range")))?;
+    let object = indirect(page, at)?;
+    Ok((object.number(), object.generation()))
 }
 
 /// Returns the index of the page whose object is `number` and

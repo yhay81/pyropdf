@@ -40,7 +40,7 @@ from pyropdf._links import Destinations
 from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp, write_entries, write_xmp
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
-from pyropdf._page import _clip_box
+from pyropdf._page import _clip_box, _ExportPage
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
 from pyropdf._pages import Pages, _page_entries, _resolve
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
@@ -926,6 +926,13 @@ class Document:
         _warn_skipped(skipped)
         return text
 
+    def _export_pages(self, pages: Iterable[int] | None) -> list[_ExportPage]:
+        """Resolve the selection and all subsequent reads against one version."""
+        snapshot = _core.snapshot_pages(self._core())
+        count = len(snapshot)
+        indexes = range(count) if pages is None else _page_entries(pages, count)
+        return [_ExportPage(self, snapshot, _resolve(index, count)) for index in indexes]
+
     def markdown(
         self,
         pages: Iterable[int] | None = None,
@@ -934,6 +941,8 @@ class Document:
         max_size: int | None = _markdown._DEFAULT_MAX_MARKDOWN_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the given pages of the current version as Markdown, joined in their order.
+
+        Page selection and extraction use one version even while another thread edits the document.
 
         Headings come from font sizes: the size that holds the most text is
         the body's, and larger sizes map in descending order to ``#``
@@ -952,11 +961,7 @@ class Document:
         ``max_size=None`` lifts the limit.
         """
         _markdown.validate_options(table_strategy, max_size)
-        count = _core.page_count(self._core())
-        indexes = range(count) if pages is None else _page_entries(pages, count)
-        return _markdown.pages_markdown(
-            [self.pages[index] for index in indexes], table_strategy=table_strategy, max_size=max_size
-        )
+        return _markdown.pages_markdown(self._export_pages(pages), table_strategy=table_strategy, max_size=max_size)
 
     def to_json(
         self,
@@ -966,6 +971,8 @@ class Document:
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
     ) -> str:
         """Return the given pages of the current version as JSON: each page's size and its elements.
+
+        Page selection and extraction use one version even while another thread edits the document.
 
         The document is ``{"pages": [...]}``, each page ``{"index",
         "width", "height", "elements"}``, and each element as
@@ -978,11 +985,7 @@ class Document:
         partial result; ``max_size=None`` lifts the limit.
         """
         _chunks.validate_options(table_strategy, max_size)
-        count = _core.page_count(self._core())
-        indexes = range(count) if pages is None else _page_entries(pages, count)
-        return _chunks.export_json(
-            [self.pages[index] for index in indexes], table_strategy=table_strategy, max_size=max_size
-        )
+        return _chunks.export_json(self._export_pages(pages), table_strategy=table_strategy, max_size=max_size)
 
     def to_chunks(
         self,
@@ -993,6 +996,8 @@ class Document:
         max_size: int | None = _chunks._DEFAULT_MAX_EXPORT_SIZE,  # noqa: SLF001
     ) -> list[Chunk]:
         """Return the elements of :meth:`to_json` grouped into retrieval chunks of at most ``max_chars`` characters.
+
+        Page selection and extraction use one version even while another thread edits the document.
 
         A chunk is a run of consecutive elements joined as Markdown, headings
         marked with ``#``; each heading starts a chunk, and
@@ -1006,10 +1011,8 @@ class Document:
         """
         _chunks.validate_max_chars(max_chars)
         _chunks.validate_options(table_strategy, max_size)
-        count = _core.page_count(self._core())
-        indexes = range(count) if pages is None else _page_entries(pages, count)
         return _chunks.export_chunks(
-            [self.pages[index] for index in indexes],
+            self._export_pages(pages),
             max_chars=max_chars,
             table_strategy=table_strategy,
             max_size=max_size,

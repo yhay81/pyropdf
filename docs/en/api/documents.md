@@ -751,6 +751,8 @@ Document.markdown(
 
 Return the given pages of the current version as Markdown, joined in their order.
 
+Page selection and extraction use one version even while another thread edits the document.
+
 Headings come from font sizes: the size that holds the most text is
 the body's, and larger sizes map in descending order to `#`
 through `####`. Wrapped CJK lines join without spaces, leading
@@ -780,6 +782,8 @@ Document.to_json(
 
 Return the given pages of the current version as JSON: each page's size and its elements.
 
+Page selection and extraction use one version even while another thread edits the document.
+
 The document is `{"pages": [...]}`, each page `{"index",
 "width", "height", "elements"}`, and each element as
 `Element.to_dict` gives it: a heading, paragraph, list item,
@@ -803,6 +807,8 @@ Document.to_chunks(
 ```
 
 Return the elements of `to_json` grouped into retrieval chunks of at most `max_chars` characters.
+
+Page selection and extraction use one version even while another thread edits the document.
 
 A chunk is a run of consecutive elements joined as Markdown, headings
 marked with `#`; each heading starts a chunk, and
