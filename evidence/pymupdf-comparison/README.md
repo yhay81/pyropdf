@@ -22,6 +22,23 @@ are the floor). Measured for #354.
 python3 evidence/pymupdf-comparison/run.py
 ```
 
+## Rendering investigations
+
+The Windows investigation is preserved as evidence in #723. Its source
+patches are experimental inputs to separately built wheels; they are not
+applied by the project build. These measurements do not establish that the
+shipped renderer meets #365's performance target. #715 owns the bounded
+worker implementation and validation of the eventual shipping artifact.
+
+| Investigation | Evidence and conclusion |
+| --- | --- |
+| Native hot paths and copies | [Native samples](results/profile-windows-amd64.md) and [copy attribution](results/copy-initialization-windows.md) identify the work to optimize |
+| Exact glyph positions | [Phase measurements](results/glyph-phase.md) quantify reuse without changing subpixel positions |
+| Prepared outlines | [Report](results/prepared-outline/README.md) preserves matching pixels but small, inconsistent full-render gains |
+| Disjoint glyph batches | [Report](results/disjoint-glyphs/README.md) records pixel differences and slower rendering; the candidate was rejected |
+| Per-call workers | [Report](results/two-workers/README.md) records setup costs and resource measurements |
+| Reused workers | [Report](results/reused-workers/README.md) records faster experimental rendering and the lifetime problem that led to #715 |
+
 To measure a checkout, first build a wheel with `maturin build --release --locked`,
 then run the same comparison with that artifact:
 
