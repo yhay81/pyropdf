@@ -1,4 +1,10 @@
-# Document-owned raster workers (#715)
+# Document-owned raster workers: integration evidence
+
+This investigation is preserved by #724. The source patches and measurements
+describe an experimental wheel; the project build does not apply these
+patches or their local dependency overrides. #715 retains production
+implementation and shipping-artifact validation, and #365 retains its
+original performance target.
 
 The prototype keeps only worker threads between consecutive page renders.
 Each page gets a new scene and releases its geometry, paints and raster
@@ -16,25 +22,29 @@ and [bounded-dispatch observations](lifetime-bounded.json).
 
 ## Proposed dependency changes
 
-These are independent local drafts against linebender/vello
+These are independent proposals against linebender/vello
 `a76009ef19bc04fa2d9827293e98a49d06121f68`. Each patch also applies
 to the packaged vello_cpu 0.3.0 used in the integration trial.
 
 - [#718](https://github.com/yhay81/pyropdf/issues/718) separates the worker
   lifetime from scene storage and makes pool creation fallible.
-  [Patch](vello-recycle-workers.patch) and [draft PR text](worker-pr.md).
+  [Patch](vello-recycle-workers.patch), [reviewed PR text](worker-pr.md),
+  and [upstream PR #2059](https://github.com/linebender/vello/pull/2059).
 - [#719](https://github.com/yhay81/pyropdf/issues/719) applies backpressure
   to submitted but unrecorded raster batches. The bound includes ordered
   results waiting for earlier work. This limits batch count; individual
   paths and finished scenes still have variable size.
-  [Patch](vello-bounded-batches.patch) and [draft PR text](backpressure-pr.md).
+  [Patch](vello-bounded-batches.patch), [reviewed PR text](backpressure-pr.md),
+  and [upstream PR #2060](https://github.com/linebender/vello/pull/2060).
 
 Each draft passed the vello_cpu multithreaded library tests and Clippy with
 warnings denied on its own upstream branch. Both together passed 104
 library tests. Disabling the wait at the in-flight limit made the new
 dispatcher regression test fail. The workers branch also passed a serial
-`--no-default-features --features libm,u8_pipeline` build. A human must
-review and own the drafts before requesting upstream review.
+`--no-default-features --features libm,u8_pipeline` build. The owner reviewed
+both patches and descriptions and authorized submission with LLM disclosure.
+Both submitted heads passed their initial upstream CI. Adoption remains
+subject to upstream review and release, tracked by #718 and #719.
 
 ## Integration measurements
 
