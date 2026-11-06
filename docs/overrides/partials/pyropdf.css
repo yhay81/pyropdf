@@ -163,24 +163,16 @@
   padding: clamp(1.5rem, 5vw, 4.5rem) 0 var(--pp-gap);
 }
 .md-typeset .pp-hero h1 {
-  max-width: 11em;
+  max-width: 12em;
   color: var(--pp-ink);
-  font-family: "Fraunces", "Noto Serif JP", Georgia, serif;
-  font-size: clamp(2.5rem, 5.6vw, 4.1rem);
-  font-weight: 600;
-  font-variation-settings: "opsz" 144;
-  line-height: 1.02;
-  letter-spacing: -0.025em;
+  font-size: clamp(2.3rem, 5vw, 3.6rem);
+  font-weight: 750;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
   text-wrap: balance;
 }
-.md-typeset .pp-hero h1 em {
-  font-style: italic;
-  font-weight: 500;
+.md-typeset .pp-hero .pp-accent {
   color: var(--pp-ember-strong);
-}
-.md-typeset .pp-section h2 {
-  font-family: "Fraunces", "Noto Serif JP", Georgia, serif;
-  font-variation-settings: "opsz" 72;
 }
 .md-typeset .pp-lede {
   max-width: 33em;
@@ -294,106 +286,54 @@
   line-height: 1.7;
 }
 
-/* The stage: the example's page, highlighted, over the version before
-   it, with the example itself in front. The sheet is paper in both
-   schemes, as a PDF page is. */
+/* The stage: pyropdf's renders of the example's page, before and after,
+   with the example itself in front. tools/hero_invoice.py makes them. */
 :root {
-  --pp-sheet: #fffdf8;
-  --pp-sheet-ink: #2a241c;
-  --pp-sheet-faint: rgb(42 36 28 / 12%);
-  --pp-highlighter: rgb(250 204 75 / 55%);
   --pp-lift: 0 1px 2px rgb(60 40 20 / 8%), 0 24px 48px -24px rgb(60 40 20 / 40%);
 }
 [data-md-color-scheme="slate"] {
-  --pp-sheet: #efe9de;
-  --pp-highlighter: rgb(240 190 60 / 60%);
   --pp-lift: 0 1px 2px rgb(0 0 0 / 40%), 0 28px 56px -24px rgb(0 0 0 / 85%);
 }
 .pp-stage {
   position: relative;
-  min-height: 34rem;
+  min-height: 35rem;
 }
-.pp-sheet {
+.md-typeset .pp-sheet {
   position: absolute;
   top: 0;
   right: 0.5rem;
   width: min(19rem, 74%);
-  aspect-ratio: 1 / 1.3;
-  padding: 1.5rem 1.45rem;
+  height: auto;
+  margin: 0;
   border-radius: 3px;
-  background: var(--pp-sheet);
+  background: #fff;
   box-shadow: var(--pp-lift);
-  color: var(--pp-sheet-ink);
-  font-size: 0.56rem;
-  line-height: 1.5;
   transform: rotate(1.6deg);
 }
-.pp-sheet--before {
+.md-typeset .pp-sheet img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 3px;
+}
+.md-typeset .pp-sheet--before {
   top: 1.4rem;
   right: 2.4rem;
-  opacity: 0.55;
+  opacity: 0.5;
   transform: rotate(-3.2deg);
 }
-.pp-sheet__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 1.1rem;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid var(--pp-sheet-faint);
+[data-md-color-scheme="slate"] .md-typeset .pp-sheet--before {
+  opacity: 0.3;
 }
-.pp-sheet__title {
-  font-family: "Fraunces", Georgia, serif;
-  font-size: 1.35rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+/* The render after the edit fades in over the one before it, so the
+   highlight appears as the annotation lands. */
+.md-typeset .pp-sheet .pp-sheet__after {
+  position: absolute;
+  inset: 0;
+  animation: pp-reveal 600ms ease-out 700ms both;
 }
-.pp-sheet__meta {
-  opacity: 0.6;
-  text-align: right;
-}
-.pp-bar {
-  display: block;
-  width: var(--w);
-  height: 0.3rem;
-  margin: 0.5rem 0;
-  border-radius: 99px;
-  background: var(--pp-sheet-faint);
-}
-.pp-sheet__table {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  margin: 1.1rem 0;
-  font-variant-numeric: tabular-nums;
-}
-.pp-sheet__table > span {
-  padding: 0.38rem 0;
-  border-bottom: 1px solid var(--pp-sheet-faint);
-}
-.pp-sheet__table > span:nth-child(even) {
-  text-align: right;
-}
-.pp-sheet__table > .pp-mark {
-  border-bottom: 0;
-  font-weight: 700;
-}
-/* The highlight sweeps across the total once, as the annotation lands. */
-.pp-mark {
-  margin-left: -0.3rem;
-  padding-left: 0.3rem !important;
-  background-image: linear-gradient(var(--pp-highlighter), var(--pp-highlighter));
-  background-repeat: no-repeat;
-  background-position: left center;
-  background-size: 100%;
-  animation: pp-sweep 700ms cubic-bezier(0.3, 0.7, 0.2, 1) 500ms both;
-}
-.pp-mark + .pp-mark {
-  margin: 0 -0.3rem 0 0;
-  padding: 0.38rem 0.3rem 0.38rem 0 !important;
-  animation-delay: 750ms;
-}
-@keyframes pp-sweep {
-  from { background-size: 0%; }
+@keyframes pp-reveal {
+  from { opacity: 0; }
 }
 .pp-sheet__tag {
   position: absolute;
@@ -401,14 +341,27 @@
   right: 1.2rem;
   padding: 0.3em 0.75em;
   border-radius: 99px;
-  background: var(--pp-sheet-ink);
-  color: var(--pp-sheet);
+  background: var(--pp-ink);
+  color: var(--pp-paper);
   font-family: var(--md-code-font-family);
   font-size: 0.54rem;
   animation: pp-rise 500ms ease-out 1.2s both;
 }
 @keyframes pp-rise {
   from { opacity: 0; transform: translateY(0.3rem); }
+}
+.md-typeset .pp-stage__caption {
+  position: absolute;
+  right: 0.5rem;
+  bottom: -2.2rem;
+  max-width: 26rem;
+  margin: 0;
+  color: var(--pp-ink-faint);
+  font-size: 0.6rem;
+  text-align: right;
+}
+.md-typeset .pp-stage__caption a {
+  color: var(--pp-ink-soft);
 }
 .pp-stage__code {
   position: absolute;
@@ -599,14 +552,19 @@
   .pp-stage {
     min-height: 0;
   }
-  .pp-sheet--before {
+  .md-typeset .pp-sheet--before {
     display: none;
   }
-  .pp-sheet {
+  .md-typeset .pp-sheet {
     position: relative;
     right: auto;
     width: 82%;
     margin-left: auto;
+  }
+  .md-typeset .pp-stage__caption {
+    position: static;
+    margin-top: 0.8rem;
+    text-align: left;
   }
   .pp-stage__code {
     position: relative;
@@ -621,7 +579,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pp-mark,
+  .md-typeset .pp-sheet .pp-sheet__after,
   .pp-sheet__tag {
     animation: none;
   }

@@ -9,7 +9,7 @@ hide:
 
 <section class="pp-hero" aria-labelledby="pp-hero-title" markdown>
 <div class="pp-hero__text">
-  <h1 id="pp-hero-title">PDF を、<em>Python の書き心地</em>と <em>Rust の芯</em>で。</h1>
+  <h1 id="pp-hero-title">PDF を、<span class="pp-accent">Python の書き心地</span>と <span class="pp-accent">Rust の芯</span>で。</h1>
   <p class="pp-lede">
     pyropdf は PDF 文書を読み、描画し、編集し、署名します。ページはシーケンス、フォームのフィールドはマッピング、編集はトランザクションとして書けます。その下では Rust の版付きオブジェクトストアがすべての版を保ちます。どの変更も取り消せ、失敗した編集は文書を元のまま残します。
   </p>
@@ -30,24 +30,12 @@ hide:
   </ul>
 </div>
 <div class="pp-stage" markdown>
-<div class="pp-sheet pp-sheet--before" aria-hidden="true"></div>
-<div class="pp-sheet" role="img" aria-label="例のコードが合計をハイライトし、版 2 として保存した請求書のページ">
-  <div class="pp-sheet__head">
-    <span class="pp-sheet__title">Invoice</span>
-    <span class="pp-sheet__meta">No. 2026-118<br>6 November 2026</span>
-  </div>
-  <span class="pp-bar" style="--w: 88%"></span>
-  <span class="pp-bar" style="--w: 56%"></span>
-  <div class="pp-sheet__table">
-    <span>Design review</span><span>1,200.00</span>
-    <span>Implementation</span><span>3,400.00</span>
-    <span>Support, 12 months</span><span>600.00</span>
-    <span class="pp-mark">total</span><span class="pp-mark">5,200.00</span>
-  </div>
-  <span class="pp-bar" style="--w: 64%"></span>
-  <span class="pp-bar" style="--w: 40%"></span>
+<img class="pp-sheet pp-sheet--before" src="/assets/hero/invoice.png" width="1057" height="1375" alt="" aria-hidden="true">
+<figure class="pp-sheet">
+  <img src="/assets/hero/invoice.png" width="1057" height="1375" alt="例を実行する前の請求書を pyropdf で描画したもの">
+  <img class="pp-sheet__after" src="/assets/hero/reviewed.png" width="1057" height="1375" alt="例を実行した後の請求書。Total がハイライトされ、版 2 として保存されたページを pyropdf で描画したもの">
   <span class="pp-sheet__tag">v2 · "highlight totals"</span>
-</div>
+</figure>
 <div class="pp-stage__code" markdown>
 
 ```python
@@ -65,6 +53,7 @@ with pyropdf.open("input.pdf") as doc:
 ```
 
 </div>
+<p class="pp-stage__caption">pyropdf が <a href="/assets/hero/reviewed.pdf">reviewed.pdf</a> から描画しました。この PDF は <a href="https://github.com/yhay81/pyropdf/blob/main/tools/hero_invoice.py">tools/hero_invoice.py</a> がこの例で作ります。</p>
 </div>
 </section>
 

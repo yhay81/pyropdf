@@ -34,7 +34,9 @@ theme:
     - search.highlight
     - content.action.copy
     - content.action.edit
+    - content.code.annotate
     - content.code.copy
+    - content.tabs.link
     - content.tooltips
     - toc.follow
   palette:
@@ -101,6 +103,7 @@ nav:
       - Changelog: https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md
 
 markdown_extensions:
+  - abbr
   - admonition
   - attr_list
   - md_in_html
@@ -112,12 +115,27 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
+  # The glossary: its abbreviations show as tooltips on every page.
   - pymdownx.snippets:
       base_path: [docs]
       check_paths: true
-  - pymdownx.superfences
+      auto_append:
+        - includes/abbreviations.md
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
+  # Hovering a link to a heading of these pages previews it in place.
+  - zensical.extensions.preview:
+      configurations:
+        - targets:
+            include:
+              - concepts.md
+              - limits.md
+              - api/*
 
 plugins:
   - search
