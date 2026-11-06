@@ -1,0 +1,661 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -23,6 +23,7 @@
+ # name each other by path and their types agree only from one source.
+ # fuzz/Cargo.toml repeats this table. #603 removes both.
+ [patch.crates-io]
++vello_cpu = { path = "../vello_cpu" }
+ hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+ hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+ hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -281,6 +281,15 @@
+ checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
+ dependencies = [
+  "cfg-if",
++]
++
++[[package]]
++name = "crossbeam-channel"
++version = "0.5.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
++dependencies = [
++ "crossbeam-utils",
+ ]
+
+ [[package]]
+@@ -908,6 +917,15 @@
+ version = "1.21.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
++
++[[package]]
++name = "ordered-channel"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "95be4d57809897b5a7539fc15a7dfe0e84141bc3dfaa2e9b1b27caa90acf61ab"
++dependencies = [
++ "crossbeam-channel",
++]
+
+ [[package]]
+ name = "p256"
+@@ -1235,6 +1253,7 @@
+  "unicode-linebreak",
+  "unicode-script",
+  "unicode-segmentation",
++ "vello_cpu",
+  "x509-cert",
+ ]
+
+@@ -1687,6 +1706,15 @@
+ ]
+
+ [[package]]
++name = "thread_local"
++version = "1.1.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
+ name = "tiff"
+ version = "0.11.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1777,13 +1805,15 @@
+ [[package]]
+ name = "vello_cpu"
+ version = "0.3.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ed1fec424fbba6acf6cbc78bb526447eb77590d95f40419d598870fe37535212"
+ dependencies = [
+  "bytemuck",
++ "crossbeam-channel",
+  "glifo",
+  "hashbrown",
++ "ordered-channel",
+  "png",
++ "rayon",
++ "thread_local",
+  "vello_common",
+ ]
+
+--- a/fuzz/Cargo.toml
++++ b/fuzz/Cargo.toml
+@@ -23,6 +23,7 @@
+ # The hayro commit of the root workspace's [patch.crates-io] (#18), which
+ # #603 removes with it.
+ [patch.crates-io]
++vello_cpu = { path = "../../vello_cpu" }
+ hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+ hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+ hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+--- a/fuzz/Cargo.lock
++++ b/fuzz/Cargo.lock
+@@ -282,6 +282,15 @@
+ checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
+ dependencies = [
+  "cfg-if",
++]
++
++[[package]]
++name = "crossbeam-channel"
++version = "0.5.17"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
++dependencies = [
++ "crossbeam-utils",
+ ]
+
+ [[package]]
+@@ -890,6 +899,15 @@
+ version = "1.21.4"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
++
++[[package]]
++name = "ordered-channel"
++version = "1.2.0"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "95be4d57809897b5a7539fc15a7dfe0e84141bc3dfaa2e9b1b27caa90acf61ab"
++dependencies = [
++ "crossbeam-channel",
++]
+
+ [[package]]
+ name = "p256"
+@@ -1137,6 +1155,7 @@
+  "unicode-linebreak",
+  "unicode-script",
+  "unicode-segmentation",
++ "vello_cpu",
+  "x509-cert",
+ ]
+
+@@ -1545,6 +1564,15 @@
+ ]
+
+ [[package]]
++name = "thread_local"
++version = "1.1.10"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
++dependencies = [
++ "cfg-if",
++]
++
++[[package]]
+ name = "typeid"
+ version = "1.0.3"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+@@ -1615,13 +1643,15 @@
+ [[package]]
+ name = "vello_cpu"
+ version = "0.3.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "ed1fec424fbba6acf6cbc78bb526447eb77590d95f40419d598870fe37535212"
+ dependencies = [
+  "bytemuck",
++ "crossbeam-channel",
+  "glifo",
+  "hashbrown",
++ "ordered-channel",
+  "png",
++ "rayon",
++ "thread_local",
+  "vello_common",
+ ]
+
+--- a/crates/pyropdf-engine/Cargo.toml
++++ b/crates/pyropdf-engine/Cargo.toml
+@@ -48,3 +48,6 @@
+ [dev-dependencies]
+ # Property tests of the bridge (DESIGN.md F9).
+ proptest = { version = "1.12.0", default-features = false, features = ["std"] }
++
++[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
++vello_cpu = { version = "=0.3.0", default-features = false, features = ["multithreading"] }
+--- a/crates/pyropdf-engine/src/render/mod.rs
++++ b/crates/pyropdf-engine/src/render/mod.rs
+@@ -1,9 +1,11 @@
+ //! Rasterizing a page through hayro, as much as `page.pixmap`
+ //! (yhay81/pyropdf#35) needs, and converting it to SVG.
+
+-use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
++use hayro::hayro_interpret::{InterpreterSettings, RenderContent, TransformExt};
++use hayro::kurbo::Affine;
+ use hayro::vello_cpu::color::AlphaColor;
+-use hayro::{PixmapSettings, RenderCache, RenderSettings};
++use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
++use hayro::{RenderCache, RenderSettings};
+
+ use std::cell::RefCell;
+ use std::sync::Arc;
+@@ -17,10 +19,12 @@
+ mod svg;
+ #[cfg(test)]
+ mod tests;
++mod workers;
+
+ pub use batch::{MAX_WORKERS, batch};
+ pub use fallback::{Fallback, FontFile, Language, Source};
+ pub use svg::svg;
++pub use workers::RasterSession;
+
+ /// What hayro renders with: its defaults, with text hinted and glyphs
+ /// cached only on request.
+@@ -62,16 +66,16 @@
+ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
+     let pages = bridged.pdf().pages();
+     let page = pages.get(index).ok_or(Error::NoPage(index))?;
+-    let pixmap = hayro::render(
++    let (w, h) = page.render_dimensions();
++    let mut context = workers::serial((w * scale) as u16, (h * scale) as u16);
++    let pixmap = paint(
+         page,
+         &RenderCache::new(),
+         &InterpreterSettings::default(),
+         &render_settings(false, false),
+-        &PixmapSettings {
+-            x_scale: scale,
+-            y_scale: scale,
+-            bg_color: AlphaColor::TRANSPARENT,
+-        },
++        Affine::scale(f64::from(scale)) * page.initial_transform(true).to_kurbo(),
++        &mut context,
++        AlphaColor::TRANSPARENT,
+     );
+     #[expect(
+         clippy::disallowed_methods,
+@@ -264,8 +268,23 @@
+     options: &Options,
+ ) -> std::result::Result<Raster, RasterError> {
+     with_cache(bridged, fallback, |pdf, cache| {
+-        draw(pdf, cache, fallback, index, options)
++        draw(pdf, cache, fallback, index, options, None)
+     })
++}
++
++impl RasterSession {
++    /// Render a page using resources owned by this document.
++    pub fn raster(
++        &self,
++        bridged: &Arc<Bridged>,
++        fallback: &Fallback,
++        index: usize,
++        options: &Options,
++    ) -> std::result::Result<Raster, RasterError> {
++        with_cache(bridged, fallback, |pdf, cache| {
++            draw(pdf, cache, fallback, index, options, Some(self))
++        })
++    }
+ }
+
+ /// The smallest rectangle `(x0, y0, x1, y1)` holding `corners`.
+@@ -406,11 +425,8 @@
+     fallback: &Fallback,
+     index: usize,
+     options: &Options,
++    session: Option<&RasterSession>,
+ ) -> std::result::Result<Raster, RasterError> {
+-    use hayro::hayro_interpret::TransformExt;
+-    use hayro::kurbo::Affine;
+-    use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
+-
+     let pages = pdf.pages();
+     let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
+     let (left, top, raster_width, raster_height) = extent(page, options)?;
+@@ -426,26 +442,22 @@
+         },
+         ..fallback.settings()
+     };
+-    let mut context = RenderContext::new(raster_width, raster_height);
+-    hayro::render_into(
+-        page,
+-        cache,
+-        &settings,
+-        &render_settings(options.hinting, options.glyph_cache),
+-        &mut context,
+-        transform,
+-    );
+-    context.flush();
+     let [red, green, blue, opacity] = options.background;
+-    let mut pixmap = hayro::vello_cpu::Pixmap::new(raster_width, raster_height);
+-    context.render_with(
+-        &mut pixmap,
+-        &mut Resources::default(),
+-        RasterizerSettings {
+-            target_init: TargetInit::Clear(AlphaColor::from_rgba8(red, green, blue, opacity)),
+-            ..Default::default()
+-        },
+-    );
++    let draw_page = |ctx: &mut RenderContext| {
++        paint(
++            page,
++            cache,
++            &settings,
++            &render_settings(options.hinting, options.glyph_cache),
++            transform,
++            ctx,
++            AlphaColor::from_rgba8(red, green, blue, opacity),
++        )
++    };
++    let pixmap = match session {
++        Some(workers) => workers.render(raster_width, raster_height, index, pages.len(), draw_page),
++        None => draw_page(&mut workers::serial(raster_width, raster_height)),
++    };
+     let data = take_samples(pixmap, options.gray, options.alpha);
+     Ok(Raster {
+         width: raster_width,
+@@ -457,6 +469,29 @@
+     })
+ }
+
++fn paint<'a>(
++    page: &'a hayro::hayro_syntax::page::Page<'a>,
++    cache: &RenderCache<'a>,
++    settings: &InterpreterSettings,
++    render: &RenderSettings,
++    transform: Affine,
++    context: &mut RenderContext,
++    background: AlphaColor<hayro::vello_cpu::color::Srgb>,
++) -> hayro::vello_cpu::Pixmap {
++    hayro::render_into(page, cache, settings, render, context, transform);
++    context.flush();
++    let mut pixmap = hayro::vello_cpu::Pixmap::new(context.width(), context.height());
++    context.render_with(
++        &mut pixmap,
++        &mut Resources::default(),
++        RasterizerSettings {
++            target_init: TargetInit::Clear(background),
++            ..Default::default()
++        },
++    );
++    pixmap
++}
++
+ /// Takes the straight-alpha samples of `pixmap` in the layout of `gray` and
+ /// `alpha`. RGB without alpha goes through vello_cpu's SIMD narrowing, which
+ /// returns RGB whenever the pixmap is opaque, as an opaque background leaves
+--- a/crates/pyropdf-engine/src/render/batch.rs
++++ b/crates/pyropdf-engine/src/render/batch.rs
+@@ -82,7 +82,7 @@
+                 cached = 0;
+             }
+             cached += 1;
+-            match draw(pdf, &cache, fallback, index, options)
++            match draw(pdf, &cache, fallback, index, options, None)
+                 .map_err(E::from)
+                 .and_then(&finish)
+             {
+--- a/crates/pyropdf-engine/src/render/tests.rs
++++ b/crates/pyropdf-engine/src/render/tests.rs
+@@ -3,6 +3,7 @@
+ //! settings, which is what pylopdf renders for an unedited document
+ //! (rust/src/document/rendering.rs at 884af0db).
+
++use hayro::PixmapSettings;
+ use std::fs;
+ use std::path::Path;
+ use std::sync::Arc;
+--- /dev/null
++++ b/crates/pyropdf-engine/src/render/workers.rs
+@@ -0,0 +1,189 @@
++//! Document-owned native raster workers. Only the pool survives a page render.
++
++use hayro::vello_cpu::{Level, RenderContext, RenderSettings};
++
++fn level() -> Level {
++    Level::try_detect().unwrap_or(Level::baseline())
++}
++
++pub(super) fn serial(width: u16, height: u16) -> RenderContext {
++    RenderContext::new_with(
++        width,
++        height,
++        RenderSettings {
++            level: level(),
++            num_threads: 0,
++        },
++    )
++}
++
++/// Scratch-free worker ownership for a single open document.
++#[derive(Debug, Default)]
++pub struct RasterSession {
++    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++    native: native::Session,
++}
++
++impl RasterSession {
++    /// Close the idle pool and prevent an in-flight render from returning one.
++    pub fn close(&self) {
++        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++        self.native.close();
++    }
++
++    pub(super) fn render<T>(
++        &self,
++        width: u16,
++        height: u16,
++        index: usize,
++        pages: usize,
++        paint: impl FnOnce(&mut RenderContext) -> T,
++    ) -> T {
++        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++        if let Some(lease) = self.native.checkout(width, height, index, pages) {
++            let native::Lease { workers, permit } = lease;
++            let mut context = RenderContext::with_workers(width, height, level(), workers);
++            let result = paint(&mut context);
++            let workers = context
++                .into_workers()
++                .expect("context was constructed with workers");
++            self.native
++                .checkin(index, native::Lease { workers, permit });
++            return result;
++        }
++        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
++        let _ = (index, pages);
++        paint(&mut serial(width, height))
++    }
++}
++
++#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
++mod native {
++    use hayro::vello_cpu::RasterWorkers;
++    use std::num::NonZeroU8;
++    use std::sync::atomic::{AtomicBool, Ordering};
++    use std::sync::{Mutex, PoisonError};
++
++    // One accelerated caller in the process. Other callers and batch workers
++    // can continue through the ordinary serial dispatcher without waiting.
++    static RESERVED: AtomicBool = AtomicBool::new(false);
++    #[derive(Debug)]
++    pub(super) struct Permit;
++    impl Drop for Permit {
++        fn drop(&mut self) {
++            RESERVED.store(false, Ordering::Release);
++        }
++    }
++
++    #[derive(Debug)]
++    pub(super) struct Lease {
++        // Drop the pool before advertising the permit.
++        pub(super) workers: RasterWorkers,
++        pub(super) permit: Permit,
++    }
++
++    impl Lease {
++        fn start(
++            count: NonZeroU8,
++            create: impl FnOnce(NonZeroU8) -> std::io::Result<RasterWorkers>,
++        ) -> Option<Self> {
++            RESERVED
++                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
++                .ok()?;
++            let permit = Permit;
++            let workers = create(count).ok()?;
++            Some(Self { workers, permit })
++        }
++    }
++
++    #[derive(Debug, Default)]
++    struct Slot {
++        closed: bool,
++        next: Option<usize>,
++        idle: Option<Lease>,
++    }
++
++    #[derive(Debug, Default)]
++    pub(super) struct Session(Mutex<Slot>);
++
++    impl Session {
++        pub(super) fn close(&self) {
++            let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
++            slot.closed = true;
++            let idle = slot.idle.take();
++            drop(slot);
++            drop(idle);
++        }
++
++        pub(super) fn checkout(
++            &self,
++            width: u16,
++            height: u16,
++            index: usize,
++            pages: usize,
++        ) -> Option<Lease> {
++            let pixels = u32::from(width) * u32::from(height);
++            let eligible = pages > 1 && (262_144..=4_194_304).contains(&pixels);
++            let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
++            if slot.closed {
++                return None;
++            }
++            let sequential = slot.next == Some(index);
++            let last = index + 1 == pages;
++            slot.next = (eligible && !last).then_some(index + 1);
++            let idle = slot.idle.take();
++            drop(slot);
++            if !eligible || !sequential {
++                return None;
++            }
++            if idle.is_some() {
++                return idle;
++            }
++            if last {
++                return None;
++            }
++            let available = std::thread::available_parallelism().ok()?.get();
++            let count = NonZeroU8::new(available.saturating_sub(1).min(4) as u8)?;
++            Lease::start(count, RasterWorkers::new)
++        }
++
++        pub(super) fn checkin(&self, index: usize, lease: Lease) {
++            let mut slot = self.0.lock().unwrap_or_else(PoisonError::into_inner);
++            if !slot.closed && slot.next == Some(index + 1) {
++                slot.idle = Some(lease);
++            }
++        }
++    }
++
++    #[cfg(test)]
++    mod tests {
++        use super::*;
++
++        #[test]
++        fn failed_start_and_concurrent_close_release_the_permit() {
++            let count = NonZeroU8::new(1).unwrap();
++            assert!(
++                Lease::start(count, |_| Err(std::io::Error::other(
++                    "thread startup failed"
++                )))
++                .is_none()
++            );
++            let running = Lease::start(count, RasterWorkers::new).unwrap();
++            assert!(
++                Lease::start(count, |_| panic!(
++                    "occupied permit must select serial rendering"
++                ))
++                .is_none()
++            );
++            let session = Session::default();
++            session.0.lock().unwrap().next = Some(2);
++            std::thread::scope(|s| {
++                s.spawn(|| session.close()).join().unwrap();
++            });
++            session.checkin(1, running);
++            let slot = session.0.lock().unwrap();
++            assert!(slot.closed && slot.idle.is_none());
++            assert!(Lease::start(count, RasterWorkers::new).is_some());
++        }
++    }
++}
+--- a/crates/pyropdf-python/src/document.rs
++++ b/crates/pyropdf-python/src/document.rs
+@@ -71,6 +71,7 @@
+     pub(crate) draft_fill_index: FillCache,
+     /// hayro's reading of the latest version rendered.
+     pub(crate) bridge: pyropdf_engine::bridge::Cache,
++    pub(crate) raster_session: pyropdf_engine::render::RasterSession,
+     /// The faces that render the CJK fonts that the document does not
+     /// embed, which `python/pyropdf/_fonts.py` sets; a setting of this
+     /// object, not of the document, so unlocking keeps it.
+@@ -112,6 +113,7 @@
+             fill_index: FillCache::new(),
+             draft_fill_index: FillCache::new(),
+             bridge: pyropdf_engine::bridge::Cache::new(),
++            raster_session: pyropdf_engine::render::RasterSession::default(),
+             fallback: RwLock::new(Fallback::default()),
+             references: pyropdf_store::refs::Cache::new(),
+             history: Arc::new(crate::history::State::default()),
+@@ -468,6 +470,7 @@
+     /// Releases the document. Later operations raise `DocumentClosedError`.
+     fn close(&self) -> PyResult<()> {
+         crate::errors::boundary(|| {
++            self.raster_session.close();
+             self.document
+                 .write()
+                 .unwrap_or_else(PoisonError::into_inner)
+--- a/crates/pyropdf-python/src/pixmap.rs
++++ b/crates/pyropdf-python/src/pixmap.rs
+@@ -1540,6 +1540,7 @@
+         };
+         let fallback = document.fallback();
+         let raster = py.detach(|| -> PyResult<Raster> {
++            budget.poll().map_err(|e| limit_error(&e))?;
+             let at = index
+                 .index_of(Reference::new(number, generation))
+                 .ok_or_else(|| {
+@@ -1551,7 +1552,12 @@
+                 .bridge
+                 .get_for_render(&version, &index, &budget, annotations)
+                 .map_err(|e| bridge_error(&e))?;
+-            render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
++            let result = document
++                .raster_session
++                .raster(&bridged, &fallback, at, &options)
++                .map_err(raster_error)?;
++            budget.poll().map_err(|e| limit_error(&e))?;
++            Ok(result)
+         })?;
+         Ok(Pixmap::from(raster))
+     })?
+--- a/crates/pyropdf-python/src/annotations.rs
++++ b/crates/pyropdf-python/src/annotations.rs
+@@ -2979,9 +2979,12 @@
+         };
+         let fallback = document.fallback();
+         let raster = py.detach(|| -> PyResult<Raster> {
++            budget.poll().map_err(|e| limit_error(&e))?;
+             let bridged =
+                 Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
+-            render::raster(&bridged, &fallback, at, &options).map_err(raster_error)
++            let result = render::raster(&bridged, &fallback, at, &options).map_err(raster_error)?;
++            budget.poll().map_err(|e| limit_error(&e))?;
++            Ok(result)
+         })?;
+         Ok(Some(Pixmap::from(raster)))
+     })?
+--- /dev/null
++++ b/tests/test_raster_workers.py
+@@ -0,0 +1,36 @@
++"""Raster workers share no graphics state across pages or document versions."""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++import pytest
++
++import pyropdf
++
++PDF = Path(__file__).parent / "assets/real_world/bill-hr815.pdf"
++
++
++def test_sequential_renders_after_a_refusal_and_a_page_edit() -> None:
++    with pyropdf.open(PDF) as doc, pyropdf.open(PDF) as oracle:
++        for page in doc.pages[:2]:
++            page.pixmap(dpi=72)
++        with pytest.raises(ValueError, match="exceeds the limit"):
++            doc.pages[2].pixmap(dpi=20_000)
++        doc.pages[2].obj["Rotate"] = 90
++        oracle.pages[2].obj["Rotate"] = 90
++        actual = doc.pages[2].pixmap(dpi=144, alpha=True)
++        expected = oracle.pages[2].pixmap(dpi=144, alpha=True)
++        assert (actual.width, actual.height, bytes(actual)) == (expected.width, expected.height, bytes(expected))
++
++
++def test_cancellation_after_sequential_raster_use() -> None:
++    token = pyropdf.CancellationToken()
++    with pyropdf.open(PDF, limits=pyropdf.DocumentLimits(cancellation=token)) as doc:
++        pages = [doc.pages[i] for i in range(3)]
++        for page in pages[:2]:
++            page.pixmap(dpi=72)
++        token.cancel()
++        with pytest.raises(pyropdf.LimitError) as refused:
++            pages[2].pixmap(dpi=72)
++        assert refused.value.code == "cancelled"
