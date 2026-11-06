@@ -23,14 +23,10 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
 
 ## What it does not do yet
 
-- Drawing text on a page (`page.draw` draws paths, images, and pages),
-  creating fonts, and free text and stamp annotations.
-- Digital signatures: pyropdf keeps existing signatures valid, but does
-  not sign yet.
 - No pyropdf release claims safety for untrusted input before hayro's
   bounded construction is released; see [Status and safety](status.md).
 - Rendering is slower than MuPDF's (below).
-- The API is alpha and may change between minor versions.
+- The API may change between minor versions.
 
 ## Compared with other libraries
 

@@ -1,13 +1,13 @@
 ---
 title: Status and safety
-description: What the 0.2 alpha covers, what it does not yet, and what pyropdf does and does not claim about input safety.
+description: What pyropdf 0.2 covers, what it does not yet, and what pyropdf does and does not claim about input safety.
 ---
 
 # Status and safety
 
 ## Status
 
-pyropdf is in **alpha**. The API may change between minor versions, and the
+The API may change between minor versions, and the
 [changelog](https://github.com/yhay81/pyropdf/blob/main/CHANGELOG.md) lists
 each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)

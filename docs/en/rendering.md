@@ -138,9 +138,23 @@ Batang. hayro draws such a font in a Standard 14 font, which has no CJK
 glyphs, so its text renders blank, although `page.text()` reads it. The
 font extras install faces that draw it instead:
 
-```bash
-pip install "pyropdf[jp]"
-```
+=== "pip"
+
+    ```bash
+    pip install "pyropdf[jp]"
+    ```
+
+=== "uv"
+
+    ```bash
+    uv add "pyropdf[jp]"
+    ```
+
+=== "Poetry"
+
+    ```bash
+    poetry add "pyropdf[jp]"
+    ```
 
 `jp`, `ko`, `zh-cn`, and `zh-tw` install the Noto Sans and Noto Serif faces
 of Japanese, Korean, Simplified Chinese, and Traditional Chinese. Every

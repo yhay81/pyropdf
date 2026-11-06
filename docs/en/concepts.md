@@ -39,6 +39,17 @@ on the current version, so an edit is visible to the next `text()` or
 `pixmap()` without saving, and a result that depends only on a version is
 computed once for it.
 
+```mermaid
+flowchart LR
+  base["input.pdf<br><small>the base</small>"]
+  v1["version 1<br><small>rotate: 1 object</small>"]
+  v2["version 2<br><small>annotate: 2 objects</small>"]
+  readers["text() · pixmap() · save()"]
+  base --> v1 --> v2
+  v2 -. "doc.history.undo()" .-> v1
+  readers -- "read the current version" --> v2
+```
+
 `doc.history` keeps the steps that undo and redo walk. Each step holds the
 objects that it replaced, and `doc.history.size` counts their bytes:
 `doc.history.max_size` bounds them, and `doc.history.clear()` forgets the
