@@ -291,6 +291,9 @@ pub enum Unmapped {
     /// `TEXT_USE_GID_FOR_UNKNOWN_UNICODE` gives it; U+FFFD for a Type 3 glyph
     /// or a glyph ID that is no character.
     GlyphId,
+    /// Interpret an unmapped Type 3 character code as a Unicode scalar.
+    /// Other unmapped glyphs produce U+FFFD.
+    Type3CharCode,
 }
 
 /// The options of the text of a page.
@@ -877,6 +880,12 @@ impl TextCollector<'_> {
                 return Ok(None);
             }
             (None, Unmapped::Replacement) => BfString::Char(char::REPLACEMENT_CHARACTER),
+            (None, Unmapped::Type3CharCode) => BfString::Char(match glyph {
+                Glyph::Type3(type3) => {
+                    char::from_u32(type3.char_code()).unwrap_or(char::REPLACEMENT_CHARACTER)
+                }
+                Glyph::Outline(_) => char::REPLACEMENT_CHARACTER,
+            }),
             (None, Unmapped::GlyphId) => BfString::Char(match glyph {
                 Glyph::Outline(outline) => char::from_u32(outline.glyph_id().to_u32())
                     .unwrap_or(char::REPLACEMENT_CHARACTER),

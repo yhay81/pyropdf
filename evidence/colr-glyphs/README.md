@@ -3,6 +3,17 @@
 Does canvas text paint every COLR glyph of a real colour face, or refuse it as
 DESIGN.md section 7 says, and what do the drawings cost and look like?
 
+The later [Type 3 line-order experiment](line-order.md) (#670) fixes xpdf's
+reading order at 1.25 em spacing and compares dictionary/procedure candidates
+in four readers, including CBDT and sbix glyphs.
+
+The later [rendering reductions](rendering.md) (#671) separate duplicate
+shading-edge coverage, native-gradient positioning, and full-page soft-mask
+costs with font-free PDFs and upstream report drafts. That investigation
+refines the original mouth-colour observation below: its interior agrees
+closely, while the tooth edge and lower-face gradients account for larger
+differences.
+
 ## Method
 
 ```bash

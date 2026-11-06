@@ -92,6 +92,10 @@ pub enum Extend {
     None,
     /// The colour at each end continues.
     Pad,
+    /// Only the colour at the start continues.
+    PadStart,
+    /// Only the colour at the end continues.
+    PadEnd,
     /// The line starts again.
     Repeat,
     /// The line runs back and forth.
@@ -108,6 +112,17 @@ pub struct Gradient<'a> {
     pub stops: &'a [Stop],
     /// What it paints beyond its line.
     pub extend: Extend,
+}
+
+/// Optional bounds and background retained when repainting an existing shading.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ShadingMetadata {
+    /// The shading-space clip box.
+    pub bbox: Option<[f64; 4]>,
+    /// Background RGBA, already converted to sRGB by the reader.
+    pub background: Option<[f64; 4]>,
+    /// Preserve the reader's bounded approximation with a sampled function.
+    pub sampled: bool,
 }
 
 /// What a caller names to paint a gradient.
@@ -217,21 +232,67 @@ impl Shadings {
         area: [f64; 4],
         budget: &Budget,
     ) -> Result<Painted, ShadingError> {
+        self.paint_with_metadata(
+            transaction,
+            gradient,
+            area,
+            ShadingMetadata::default(),
+            budget,
+        )
+    }
+
+    /// Repaints a gradient with the optional clip box and background of a
+    /// read shading. Metadata participates in sharing, just like its colours.
+    pub fn paint_with_metadata(
+        &mut self,
+        transaction: &mut Transaction,
+        gradient: &Gradient<'_>,
+        area: [f64; 4],
+        metadata: ShadingMetadata,
+        budget: &Budget,
+    ) -> Result<Painted, ShadingError> {
         check_gradient(gradient, area)?;
+        if metadata
+            .bbox
+            .is_some_and(|bbox| bbox.iter().any(|x| !x.is_finite() || x.abs() > REAL_MAX))
+            || metadata
+                .background
+                .is_some_and(|rgba| rgba.iter().any(|x| !(0.0..=1.0).contains(x)))
+        {
+            return Err(ShadingError::Invalid(
+                "invalid shading bounds or background",
+            ));
+        }
         let span = Span::of(gradient, area)?;
         let geometry = span.map_or(gradient.geometry, |span| span.geometry(gradient.geometry));
         check_geometry(&geometry)?;
-        let extended = gradient.extend != Extend::None;
+        let extended = match gradient.extend {
+            Extend::None => [false, false],
+            Extend::PadStart => [true, false],
+            Extend::PadEnd => [false, true],
+            _ => [true, true],
+        };
         let color = self.line(
             transaction,
             gradient.stops,
             |stop| &stop.color,
             span.as_ref(),
+            metadata.sampled,
             budget,
         )?;
-        let shading = self.shading(transaction, &geometry, "DeviceRGB", color, extended, budget)?;
+        let shading = self.shading(
+            transaction,
+            &geometry,
+            "DeviceRGB",
+            color,
+            extended,
+            metadata,
+            budget,
+        )?;
         let alpha = gradient.stops[0].alpha;
-        if gradient.stops.iter().all(|stop| stop.alpha == alpha) {
+        if gradient.stops.iter().all(|stop| stop.alpha == alpha)
+            && metadata.background.is_none_or(|rgba| rgba[3] == alpha)
+        {
             return Ok(Painted {
                 shading,
                 mask: None,
@@ -243,9 +304,18 @@ impl Shadings {
             gradient.stops,
             |stop| slice::from_ref(&stop.alpha),
             span.as_ref(),
+            metadata.sampled,
             budget,
         )?;
-        let gray = self.shading(transaction, &geometry, "DeviceGray", line, extended, budget)?;
+        let gray = self.shading(
+            transaction,
+            &geometry,
+            "DeviceGray",
+            line,
+            extended,
+            metadata,
+            budget,
+        )?;
         let shadings = dict([("S0", Value::Reference(gray))]);
         let resources = dict([("Shading", Value::Dict(shadings))]);
         let group = self.transparency_group(
@@ -346,13 +416,66 @@ impl Shadings {
         stops: &'s [Stop],
         values: impl Fn(&'s Stop) -> &'s [f64],
         span: Option<&Span>,
+        sampled: bool,
         budget: &Budget,
     ) -> Result<Reference, Error> {
-        let function = self.function(transaction, stops, values, budget)?;
+        let function = if sampled {
+            self.sampled_function(transaction, stops, values, budget)?
+        } else {
+            self.function(transaction, stops, values, budget)?
+        };
         match span {
             Some(span) => self.cycles(transaction, function, span, budget),
             None => Ok(function),
         }
+    }
+
+    /// Keep read shadings on the reader's dyadic grid (maximum depth 10).
+    /// Stitching every sampled interval duplicates its boundary stops when
+    /// hayro renders it, which changes vello's LUT resolution at sharp edges.
+    /// A Type 0 function avoids introducing those new stitching boundaries.
+    fn sampled_function<'s>(
+        &mut self,
+        transaction: &mut Transaction,
+        stops: &'s [Stop],
+        values: impl Fn(&'s Stop) -> &'s [f64],
+        budget: &Budget,
+    ) -> Result<Reference, Error> {
+        const INTERVALS: u32 = 1 << 10;
+        let channels = values(&stops[0]).len();
+        let mut samples = BudgetVec::new(budget);
+        let mut index = 0;
+        for sample in 0..=INTERVALS {
+            let offset = f64::from(sample) / f64::from(INTERVALS);
+            while index + 2 < stops.len() && stops[index + 1].offset < offset {
+                index += 1;
+            }
+            let left = &stops[index];
+            let right = &stops[index + 1];
+            let width = right.offset - left.offset;
+            let mix = if width > 0.0 {
+                ((offset - left.offset) / width).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            for (&a, &b) in values(left).iter().zip(values(right)) {
+                let value = ((a + (b - a) * mix) * f64::from(u16::MAX)).round() as u16;
+                samples.try_extend_from_slice(&value.to_be_bytes())?;
+            }
+        }
+        let ranges = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
+        let size = Value::Array(vec![Value::Integer(i64::from(INTERVALS + 1))].into());
+        let dictionary = dict([
+            ("FunctionType", Value::Integer(0)),
+            ("Domain", reals(&[0.0, 1.0])),
+            ("Range", reals(&ranges[..channels * 2])),
+            ("Size", size),
+            ("BitsPerSample", Value::Integer(16)),
+            ("Encode", reals(&[0.0, f64::from(INTERVALS)])),
+            ("Decode", reals(&ranges[..channels * 2])),
+        ]);
+        let function = Value::from(Stream::new(dictionary, Bytes::new(samples.into_vec())));
+        self.shared(transaction, &function, budget)
     }
 
     /// Returns the function from 0 to 1 that interpolates `values` of the
@@ -426,13 +549,18 @@ impl Shadings {
     }
 
     /// Returns the shading of `function` along `geometry`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the fields of the emitted shading dictionary"
+    )]
     fn shading(
         &mut self,
         transaction: &mut Transaction,
         geometry: &Geometry,
         color_space: &str,
         function: Reference,
-        extended: bool,
+        extended: [bool; 2],
+        metadata: ShadingMetadata,
         budget: &Budget,
     ) -> Result<Reference, Error> {
         let (kind, coords) = match *geometry {
@@ -447,15 +575,32 @@ impl Shadings {
                 reals(&[start[0], start[1], start_radius, end[0], end[1], end_radius]),
             ),
         };
-        #[expect(clippy::disallowed_methods, reason = "the array holds two entries")]
-        let extend = Value::Array(vec![Value::Boolean(extended); 2].into());
-        let shading = dict([
+        let extend =
+            Value::Array(vec![Value::Boolean(extended[0]), Value::Boolean(extended[1])].into());
+        let mut shading = dict([
             ("ShadingType", Value::Integer(kind)),
             ("ColorSpace", name(color_space)),
             ("Coords", coords),
             ("Function", Value::Reference(function)),
             ("Extend", extend),
         ]);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "at most two optional entries in this fixed shading dictionary"
+        )]
+        {
+            if let Some(bbox) = metadata.bbox {
+                shading.insert(Name::from("BBox"), reals(&bbox));
+            }
+            if let Some(background) = metadata.background {
+                let values = if color_space == "DeviceGray" {
+                    &background[3..]
+                } else {
+                    &background[..3]
+                };
+                shading.insert(Name::from("Background"), reals(values));
+            }
+        }
         self.shared(transaction, &Value::Dict(shading), budget)
     }
 
@@ -519,7 +664,7 @@ impl Span {
     /// gradient that does not repeat.
     fn of(gradient: &Gradient<'_>, area: [f64; 4]) -> Result<Option<Self>, ShadingError> {
         let reflect = match gradient.extend {
-            Extend::None | Extend::Pad => return Ok(None),
+            Extend::None | Extend::Pad | Extend::PadStart | Extend::PadEnd => return Ok(None),
             Extend::Repeat => false,
             Extend::Reflect => true,
         };

@@ -35,6 +35,7 @@ from pyropdf._content import (
     RadialGradient,
     Segment,
     ShadingPattern,
+    ShadingType,
     Stroke,
     TilingPattern,
 )
@@ -199,9 +200,15 @@ def _color(value: object, name: str) -> Color:
     return value
 
 
-def _paint(value: object, name: str) -> Color | Gradient:
+def _paint(value: object, name: str) -> Color | Gradient | ShadingPattern:
     """Return what a canvas paints with, checked as far as it can be without its stops."""
     if isinstance(value, (LinearGradient, RadialGradient)):
+        return value
+    if (
+        isinstance(value, ShadingPattern)
+        and value.shading_type in (ShadingType.AXIAL, ShadingType.RADIAL)
+        and value._source is not None  # noqa: SLF001 - the content model's retained paint.
+    ):
         return value
     if isinstance(value, (ShadingPattern, TilingPattern)):
         msg = f"{name} is a {type(value).__name__}, which does not hold what it paints; draw a Color or a gradient"
@@ -304,7 +311,11 @@ def _text_paint(
         msg = "text needs a fill or a stroke"
         raise ValueError(msg)
     stroked = _stroke(stroke)
-    return (None if fill is None else _paint(fill, "fill")), stroked
+    filled = None if fill is None else _paint(fill, "fill")
+    if isinstance(filled, ShadingPattern) or (stroked is not None and isinstance(stroked.paint, ShadingPattern)):
+        msg = "text needs a Color or a gradient in place of a ShadingPattern"
+        raise TypeError(msg)
+    return filled, stroked
 
 
 @dataclass(frozen=True, slots=True)
@@ -1245,7 +1256,15 @@ class Canvas:
             self._gstates[key] = name
         return name
 
-    def _gradient(self, gradient: Gradient, area: tuple[float, float, float, float]) -> tuple[int, int | None, float]:
+    def _gradient(
+        self,
+        gradient: Gradient,
+        area: tuple[float, float, float, float],
+        bbox: tuple[float, float, float, float] | None = None,
+        background: tuple[float, float, float, float] | None = None,
+        *,
+        sampled: bool = False,
+    ) -> tuple[int, int | None, float]:
         """Return the objects of ``gradient`` that paints ``area``: its shading, its soft mask, and its alpha."""
         start, end = _point(gradient.start, "start"), _point(gradient.end, "end")
         radii = None
@@ -1272,6 +1291,9 @@ class Canvas:
                 _stops(gradient),
                 extend,
                 area,
+                bbox,
+                background,
+                sampled,
                 self._active,
             )
 
@@ -1291,26 +1313,45 @@ class Canvas:
             if in_page:
                 self._patterns[name] = self._write_pattern(shading, inner * written)
 
-    def _pattern(self, shading: int) -> str:
+    def _pattern(self, shading: int, matrix: Matrix | None = None) -> str:
         """Return the resource name of the pattern that paints ``shading`` in the current space."""
         in_page = len(self._layers) == 1
-        key = (shading, self._matrix, in_page)
+        matrix = self._matrix if matrix is None else matrix
+        key = (shading, matrix, in_page)
         name = self._pattern_names.get(key)
         if name is None:
             name = self._pattern_names[key] = f"PyroP{len(self._pattern_names) + 1}"
             if not in_page:
-                self._patterns[name] = self._write_pattern(shading, self._matrix)
+                self._patterns[name] = self._write_pattern(shading, matrix)
         return name
 
-    def _setting(self, paint: Color | Gradient, segments: list[Segment], stroke: Stroke | None) -> _Painting:
+    def _setting(
+        self, paint: Color | Gradient | ShadingPattern, segments: list[Segment], stroke: Stroke | None
+    ) -> _Painting:
         """Return how to paint ``segments`` with ``paint``, as the fill, or as ``stroke`` if there is one."""
         if isinstance(paint, Color):
             operator = b" rg" if stroke is None else b" RG"
             return _Painting((_numbers(*paint.rgb) + operator,), None if paint.alpha >= 1 else paint.alpha, None)
         # Past the path by half a line, or by a miter or a square cap, and a thin line's own width.
         pad = 1.0 if stroke is None else max(stroke.width, 1.0) / 2 * max(stroke.miter_limit, math.sqrt(2)) + 1.0
-        shading, mask, alpha = self._gradient(paint, _bounds(segments, pad))
-        name = self._pattern(shading).encode()
+        area = _bounds(segments, pad)
+        matrix = self._matrix
+        bbox = background = None
+        if isinstance(paint, ShadingPattern):
+            source = paint._source  # noqa: SLF001 - validated before opening the item's context.
+            if source is None:
+                msg = "the ShadingPattern does not retain its source"
+                raise TypeError(msg)
+            gradient, bbox, background = source.gradient(self._active)
+            matrix = paint.matrix * self._matrix
+            x0, y0, x1, y1 = Rect(*area) / paint.matrix
+            area = (x0, y0, x1, y1)
+        else:
+            gradient = paint
+        shading, mask, alpha = self._gradient(
+            gradient, area, bbox, background, sampled=isinstance(paint, ShadingPattern)
+        )
+        name = self._pattern(shading, matrix).encode()
         space, operator = (b"/Pattern cs", b" scn") if stroke is None else (b"/Pattern CS", b" SCN")
         masked = None if mask is None else self._masks.setdefault(mask, f"PyroM{len(self._masks) + 1}")
         return _Painting((space, b"/" + name + operator), None if alpha >= 1 else alpha, masked)
@@ -1427,7 +1468,7 @@ class Canvas:
         self,
         path: PathLike,
         *,
-        fill: Color | Gradient | None = None,
+        fill: Color | Gradient | ShadingPattern | None = None,
         stroke: Stroke | Color | Gradient | None = None,
         fill_rule: FillRule = FillRule.NONZERO,
     ) -> None:
@@ -1444,7 +1485,9 @@ class Canvas:
         filling = None if painted_fill is None else self._setting(painted_fill, segments, None)
         stroking = None
         if painted_stroke is not None:
-            stroking = self._setting(cast("Color | Gradient", painted_stroke.paint), segments, painted_stroke)
+            stroking = self._setting(
+                cast("Color | Gradient | ShadingPattern", painted_stroke.paint), segments, painted_stroke
+            )
         if filling is not None and stroking is not None and (filling.mask is not None or stroking.mask is not None):
             # A soft mask is one graphics state, so each paints in its own.
             first = self._painted(construction, filling, None, None, even_odd=even_odd)
@@ -2085,22 +2128,25 @@ class Canvas:
         """Paint a :class:`Path` or :class:`Image` item that :meth:`Page.content` returned.
 
         The item's clips, its groups' opacity and blend modes, and its own
-        blend mode are applied; soft masks are not. A pattern paint cannot be
-        drawn, a gradient that a canvas drew included: a :class:`ShadingPattern`
-        or :class:`TilingPattern` reports its kind and its matrix, not its stops
-        or its cell, so draw a :class:`LinearGradient` or :class:`RadialGradient`
-        in place of one. An image is drawn from its object, with the
+        blend mode are applied; soft masks are not. An axial or radial
+        :class:`ShadingPattern` retains the color function read from its
+        document version. Its RGB approximation is sampled on the first
+        drawing, preserving its matrix, domain, opacity, and extension at
+        either end, its clip box, and its background. Sampling is bounded
+        to 1,025 stops; features between the probes can be lost.
+        Function-based and mesh shadings and :class:`TilingPattern`
+        paints cannot be drawn yet. An image is drawn from its object, with the
         image's own masks: a canvas on a page of the item's document draws
         that object again, and one of another document copies it, with the
-        objects it reaches but pages, as it is when this call is made. Images
-        without an object number, inline images and image masks, cannot be
-        drawn yet, and text runs follow in a later release; an item that
-        cannot be drawn raises ``TypeError`` or ``ValueError`` and draws
-        nothing.
+        objects it reaches but pages, as it is when this call is made. Inline
+        images and stencil image masks cannot be drawn yet, and text runs
+        follow in a later release; an item that cannot be drawn raises
+        ``TypeError`` or ``ValueError`` and draws nothing.
 
-        Redrawing the paths and images of a page this way renders within 16
-        levels of 255 per channel of the page at 72 dpi, outside the boxes of
-        the items that cannot be drawn and of those under a soft mask.
+        The round-trip tests allow 16 levels of 255 per channel at 72 dpi,
+        outside the boxes of the items that cannot be drawn and of those
+        under a soft mask. They cover the bundled corpus and axial/radial
+        gradients, including sampled and calculator functions.
         """
         self._check_open()
         if isinstance(item, Image):
@@ -2117,8 +2163,11 @@ class Canvas:
 
     def _draw_image(self, item: Image) -> None:
         """Paint an :class:`Image` item from the object it names."""
+        if item.is_stencil:
+            msg = "a stencil image mask cannot be drawn yet"
+            raise ValueError(msg)
         if item.xref == 0:
-            msg = "an image without an object number, an inline image or an image mask, cannot be drawn yet"
+            msg = "an image without an object number cannot be drawn yet"
             raise ValueError(msg)
         if item._source is None or item._source.document is None:  # noqa: SLF001
             msg = "the image does not name its document; draw an Image that Page.content() returned"

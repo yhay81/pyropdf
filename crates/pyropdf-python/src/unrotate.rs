@@ -75,6 +75,10 @@ fn mapped_rect(m: &Matrix, (x0, y0, x1, y1): Box4) -> Box4 {
     (a.min(c), b.min(d), a.max(c), b.max(d))
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one coordinate per element of the caller's fixed-size matrix or box, or budget-copied point array"
+)]
 fn numbers(values: &[f64]) -> Value {
     Value::Array(Array::from(
         values
@@ -98,6 +102,10 @@ fn as_number(value: &Value) -> Option<f64> {
 
 /// Maps the points of `array`, pairs of numbers, by `m`; `None` when an item
 /// is not a number or a pair is incomplete.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one number per entry of the array copied under the operation budget"
+)]
 fn mapped_points(m: &Matrix, array: &Array, budget: &Budget) -> PyResult<Option<Value>> {
     let mut values = Vec::new();
     for item in array.iter() {
@@ -137,6 +145,10 @@ impl Turn<'_> {
 
     /// Moves the geometry of annotation `dict` to the new user space and
     /// turns its appearances.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "geometry arrays copy budgeted values one-for-one; the inserted keys come only from POINTS and PATHS"
+    )]
     fn annotation(&mut self, transaction: &mut Transaction, dict: &mut Dict) -> PyResult<()> {
         let flags = self
             .resolved(dict.get("F"))?
@@ -157,12 +169,20 @@ impl Turn<'_> {
         };
         if let Some(area) = area {
             let moved = mapped_rect(&map, area);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rect key"
+            )]
             dict.insert(Name::from("Rect"), rect_value(moved));
             if let Some(Value::Array(differences)) = self.resolved(dict.get("RD"))?
                 && let [l, t, r, b] =
                     differences.iter().filter_map(as_number).collect::<Vec<_>>()[..]
             {
                 let inner = mapped_rect(&map, (area.0 + l, area.1 + b, area.2 - r, area.3 - t));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /RD key"
+                )]
                 dict.insert(
                     Name::from("RD"),
                     numbers(&[
@@ -216,6 +236,10 @@ impl Turn<'_> {
     /// Turns the rotation that a widget's appearance characteristics give
     /// its generated appearance, so that a regenerated appearance stays as
     /// upright on the display as before.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "adds at most one old MK reference per budgeted annotation"
+    )]
     fn widget_rotation(&mut self, dict: &mut Dict) -> PyResult<()> {
         let mut mark = match self.resolved(dict.get("MK"))? {
             Some(Value::Dict(mark)) => mark,
@@ -226,7 +250,15 @@ impl Turn<'_> {
         if let Some(Value::Reference(old)) = dict.get("MK") {
             self.unused.push(old.number());
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /R key"
+        )]
         mark.insert(Name::from("R"), Value::Integer(turned));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /MK key"
+        )]
         dict.insert(Name::from("MK"), Value::Dict(mark));
         Ok(())
     }
@@ -234,6 +266,10 @@ impl Turn<'_> {
     /// Replaces the appearance dictionary of `dict` with a direct one whose
     /// streams are copies turned by `linear`. The originals stay for any
     /// other object that uses them.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one output entry per budget-copied AP entry and at most one old reference per such entry"
+    )]
     fn appearances(
         &mut self,
         transaction: &mut Transaction,
@@ -262,10 +298,18 @@ impl Turn<'_> {
             };
             turned.insert(key.clone(), value);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /AP key"
+        )]
         dict.insert(Name::from("AP"), Value::Dict(turned));
         Ok(())
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one output entry per state in the budget-copied appearance dictionary"
+    )]
     fn states(
         &mut self,
         transaction: &mut Transaction,
@@ -289,6 +333,10 @@ impl Turn<'_> {
 
     /// Returns a copy of appearance stream `reference` whose `/Matrix` is
     /// followed by `linear`, made once for all the page's annotations.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "copies one budgeted Matrix array and records one entry per unique budget-read appearance stream"
+    )]
     fn copy(
         &mut self,
         transaction: &mut Transaction,
@@ -311,6 +359,10 @@ impl Turn<'_> {
             _ => IDENTITY,
         };
         let mut dict = stream.dict().clone();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Matrix key"
+        )]
         dict.insert(Name::from("Matrix"), numbers(&then(&matrix, linear)));
         let copy = transaction.allocate().map_err(|e| store_error(&e))?;
         let turned = Stream::new(dict, stream.data().clone());
@@ -332,184 +384,203 @@ impl Turn<'_> {
 /// `/Annots` array that another page lists too raises `ValueError` and
 /// changes nothing. Returns `false` for a stale page.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most two references per indexed page, fixed BOXES keys, and a budget-read Contents array plus two wrapper streams"
+)]
 pub fn remove_page_rotation(
     py: Python<'_>,
     document: &_Document,
     number: u32,
     generation: u16,
 ) -> PyResult<bool> {
-    document.edit(py, |transaction, budget| {
-        let version = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
-            .map_err(|e| store_error(&e))?;
-        let Some(at) = index.index_of(Reference::new(number, generation)) else {
-            return Ok(false);
-        };
-        let page = &index.pages()[at];
-        let turn = rotation(page.rotate());
-        if turn == 0 {
-            return Ok(true);
-        }
-        let boxes = user_boxes(page);
-        let mut state = Turn {
-            version: &version,
-            budget,
-            matrix: unrotation(boxes[0], turn),
-            turn,
-            copies: HashMap::new(),
-            unused: Vec::new(),
-        };
-        charge_copy(CopyPart::Dict(page.dict()), budget)?;
-        let mut dict = page.dict().clone();
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let version = transaction.snapshot();
+            let index = PageIndex::memoized(&document.draft_pages, &version, budget)
+                .map_err(|e| store_error(&e))?;
+            let Some(at) = index.index_of(Reference::new(number, generation)) else {
+                return Ok(false);
+            };
+            let page = &index.pages()[at];
+            let turn = rotation(page.rotate());
+            if turn == 0 {
+                return Ok(true);
+            }
+            let boxes = user_boxes(page);
+            let mut state = Turn {
+                version: &version,
+                budget,
+                matrix: unrotation(boxes[0], turn),
+                turn,
+                copies: HashMap::new(),
+                unused: Vec::new(),
+            };
+            charge_copy(CopyPart::Dict(page.dict()), budget)?;
+            let mut dict = page.dict().clone();
 
-        let others = index
-            .pages()
-            .iter()
-            .enumerate()
-            .filter(|&(other, _)| other != at)
-            .map(|(_, page)| page);
-        let mut listing = HashSet::new();
-        for other in others {
-            if let Some(object) = other.object() {
-                listing.insert(object.number());
+            let others = index
+                .pages()
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != at)
+                .map(|(_, page)| page);
+            let mut listing = HashSet::new();
+            for other in others {
+                if let Some(object) = other.object() {
+                    listing.insert(object.number());
+                }
+                if let Some(Value::Reference(array)) = other.dict().get("Annots") {
+                    listing.insert(array.number());
+                }
             }
-            if let Some(Value::Reference(array)) = other.dict().get("Annots") {
-                listing.insert(array.number());
+            let array = match dict.get("Annots") {
+                Some(Value::Reference(array)) => Some(*array),
+                _ => None,
+            };
+            if array.is_some_and(|array| listing.contains(&array.number())) {
+                return Err(PyValueError::new_err(
+                    "the page shares its /Annots array with another page",
+                ));
             }
-        }
-        let array = match dict.get("Annots") {
-            Some(Value::Reference(array)) => Some(*array),
-            _ => None,
-        };
-        if array.is_some_and(|array| listing.contains(&array.number())) {
-            return Err(PyValueError::new_err(
-                "the page shares its /Annots array with another page",
-            ));
-        }
-        let mut items = match state.resolved(dict.get("Annots"))? {
-            Some(Value::Array(items)) => items,
-            _ => Array::new(),
-        };
-        budget
-            .check(LimitCode::AnnotationCount, items.len() as u64)
-            .map_err(|e| limit_error(&e))?;
-        let references = crate::outline::references(document, transaction, budget)?;
-        let mut direct = false;
-        for item in items.iter_mut() {
-            budget.poll().map_err(|e| limit_error(&e))?;
-            match item {
-                &mut Value::Reference(reference) => {
-                    if references
-                        .referrers(reference.number())
-                        .iter()
-                        .any(|referrer| listing.contains(referrer))
-                    {
-                        return Err(PyValueError::new_err(format!(
-                            "annotation {} is listed by another page too",
-                            reference.number()
-                        )));
+            let mut items = match state.resolved(dict.get("Annots"))? {
+                Some(Value::Array(items)) => items,
+                _ => Array::new(),
+            };
+            budget
+                .check(LimitCode::AnnotationCount, items.len() as u64)
+                .map_err(|e| limit_error(&e))?;
+            let references = crate::outline::references(document, transaction, budget)?;
+            let mut direct = false;
+            for item in items.iter_mut() {
+                budget.poll().map_err(|e| limit_error(&e))?;
+                match item {
+                    &mut Value::Reference(reference) => {
+                        if references
+                            .referrers(reference.number())
+                            .iter()
+                            .any(|referrer| listing.contains(referrer))
+                        {
+                            return Err(PyValueError::new_err(format!(
+                                "annotation {} is listed by another page too",
+                                reference.number()
+                            )));
+                        }
+                        let Some(Value::Dict(mut annotation)) =
+                            state.resolved(Some(&Value::Reference(reference)))?
+                        else {
+                            continue;
+                        };
+                        state.annotation(transaction, &mut annotation)?;
+                        transaction
+                            .write(reference.number(), &Value::Dict(annotation), budget)
+                            .map_err(|e| store_error(&e))?;
                     }
-                    let Some(Value::Dict(mut annotation)) =
-                        state.resolved(Some(&Value::Reference(reference)))?
-                    else {
-                        continue;
-                    };
-                    state.annotation(transaction, &mut annotation)?;
-                    transaction
-                        .write(reference.number(), &Value::Dict(annotation), budget)
-                        .map_err(|e| store_error(&e))?;
-                }
-                Value::Dict(annotation) => {
-                    state.annotation(transaction, annotation)?;
-                    direct = true;
-                }
-                _ => {}
-            }
-        }
-        if direct {
-            match array {
-                Some(array) => {
-                    transaction
-                        .write(array.number(), &Value::Array(items), budget)
-                        .map_err(|e| store_error(&e))?;
-                }
-                None => {
-                    dict.insert(Name::from("Annots"), Value::Array(items));
+                    Value::Dict(annotation) => {
+                        state.annotation(transaction, annotation)?;
+                        direct = true;
+                    }
+                    _ => {}
                 }
             }
-        }
+            if direct {
+                match array {
+                    Some(array) => {
+                        transaction
+                            .write(array.number(), &Value::Array(items), budget)
+                            .map_err(|e| store_error(&e))?;
+                    }
+                    None => {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "this call inserts only the fixed /Annots key"
+                        )]
+                        dict.insert(Name::from("Annots"), Value::Array(items));
+                    }
+                }
+            }
 
-        // The media and crop boxes may be inherited; the page sets its own.
-        dict.insert(
-            Name::from(BOXES[0]),
-            rect_value(mapped_rect(&state.matrix, boxes[0])),
-        );
-        if let Some(crop) = page.crop_box().and_then(rect) {
+            // The media and crop boxes may be inherited; the page sets its own.
             dict.insert(
-                Name::from(BOXES[1]),
-                rect_value(mapped_rect(&state.matrix, crop)),
+                Name::from(BOXES[0]),
+                rect_value(mapped_rect(&state.matrix, boxes[0])),
             );
-        }
-        for key in &BOXES[2..] {
-            if let Some(own) = state.resolved(dict.get(*key))?.as_ref().and_then(rect) {
+            if let Some(crop) = page.crop_box().and_then(rect) {
                 dict.insert(
-                    Name::from(*key),
-                    rect_value(mapped_rect(&state.matrix, own)),
+                    Name::from(BOXES[1]),
+                    rect_value(mapped_rect(&state.matrix, crop)),
                 );
             }
-        }
-        let contents = match state.resolved(dict.get("Contents"))? {
-            Some(Value::Array(items)) => items.iter().cloned().collect(),
-            Some(Value::Stream(_)) => dict.get("Contents").into_iter().cloned().collect(),
-            _ => Vec::new(),
-        };
-        if !contents.is_empty() {
-            if let Some(Value::Reference(old)) = dict.get("Contents")
-                && !contents.contains(&Value::Reference(*old))
-            {
-                state.unused.push(old.number());
+            for key in &BOXES[2..] {
+                if let Some(own) = state.resolved(dict.get(*key))?.as_ref().and_then(rect) {
+                    dict.insert(
+                        Name::from(*key),
+                        rect_value(mapped_rect(&state.matrix, own)),
+                    );
+                }
             }
-            let [a, b, c, d, e, f] = state.matrix.map(|value| value + 0.0);
-            let mut array = Array::new();
-            array.push(content(
-                transaction,
-                format!("q {a} {b} {c} {d} {e} {f} cm\n"),
-                budget,
-            )?);
-            for item in contents {
-                array.push(item);
-            }
-            array.push(content(transaction, "\nQ\n".to_owned(), budget)?);
-            dict.insert(Name::from("Contents"), Value::Array(array));
-        }
-        dict.insert(Name::from("Rotate"), Value::Integer(0));
-        // Destinations in the page's own direct annotations, then in every
-        // other object that names the page.
-        let page = Reference::new(number, generation);
-        state.retarget(dict.iter_mut().map(|(_, value)| value), page)?;
-        transaction
-            .write(number, &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))?;
-        let current = transaction.snapshot();
-        for &referrer in references.referrers(number) {
-            if referrer == number {
-                continue;
-            }
-            let Some(object) = current.get(referrer, budget).map_err(|e| store_error(&e))? else {
-                continue;
+            let contents = match state.resolved(dict.get("Contents"))? {
+                Some(Value::Array(items)) => items.iter().cloned().collect(),
+                Some(Value::Stream(_)) => dict.get("Contents").into_iter().cloned().collect(),
+                _ => Vec::new(),
             };
-            let mut value =
-                refs::copy_for_edit(object.value(), budget).map_err(|e| store_error(&e))?;
-            if state.retarget(std::iter::once(&mut value), page)? {
-                transaction
-                    .write(referrer, &value, budget)
-                    .map_err(|e| store_error(&e))?;
+            if !contents.is_empty() {
+                if let Some(Value::Reference(old)) = dict.get("Contents")
+                    && !contents.contains(&Value::Reference(*old))
+                {
+                    state.unused.push(old.number());
+                }
+                let [a, b, c, d, e, f] = state.matrix.map(|value| value + 0.0);
+                let mut array = Array::new();
+                array.push(content(
+                    transaction,
+                    format!("q {a} {b} {c} {d} {e} {f} cm\n"),
+                    budget,
+                )?);
+                for item in contents {
+                    array.push(item);
+                }
+                array.push(content(transaction, "\nQ\n".to_owned(), budget)?);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Contents key"
+                )]
+                dict.insert(Name::from("Contents"), Value::Array(array));
             }
-        }
-        let unused = std::mem::take(&mut state.unused);
-        free(document, transaction, &unused, budget)?;
-        Ok(true)
-    })
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rotate key"
+            )]
+            dict.insert(Name::from("Rotate"), Value::Integer(0));
+            // Destinations in the page's own direct annotations, then in every
+            // other object that names the page.
+            let page = Reference::new(number, generation);
+            state.retarget(dict.iter_mut().map(|(_, value)| value), page)?;
+            transaction
+                .write(number, &Value::Dict(dict), budget)
+                .map_err(|e| store_error(&e))?;
+            let current = transaction.snapshot();
+            for &referrer in references.referrers(number) {
+                if referrer == number {
+                    continue;
+                }
+                let Some(object) = current.get(referrer, budget).map_err(|e| store_error(&e))?
+                else {
+                    continue;
+                };
+                let mut value =
+                    refs::copy_for_edit(object.value(), budget).map_err(|e| store_error(&e))?;
+                if state.retarget(std::iter::once(&mut value), page)? {
+                    transaction
+                        .write(referrer, &value, budget)
+                        .map_err(|e| store_error(&e))?;
+                }
+            }
+            let unused = std::mem::take(&mut state.unused);
+            free(document, transaction, &unused, budget)?;
+            Ok(true)
+        })
+    })?
 }
 
 impl Turn<'_> {
@@ -551,6 +622,10 @@ impl Turn<'_> {
     /// Moves destination `array`, whose page is the turned one. Each new
     /// coordinate depends on one old one, so a null stays null; on a
     /// quarter turn a horizontal fit becomes a vertical one.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "two fixed entries plus the operands of one destination, at most four"
+    )]
     fn destination(&self, array: &mut Array) -> bool {
         let m = self.matrix;
         let quarter = self.turn % 180 == 90;

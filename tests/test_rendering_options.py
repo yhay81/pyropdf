@@ -420,6 +420,37 @@ def test_the_largest_rasters_render(width: int, height: int) -> None:
     assert bytes(memoryview(pixmap).cast("B")[:3]) == b"\xff\x00\x00"
 
 
+@pytest.mark.parametrize("size", [(1, 1), (3, 5), (65408, 1), (1, 65532)])
+@pytest.mark.parametrize(
+    ("colorspace", "alpha", "background", "pixel"),
+    [
+        ("rgb", False, None, b"\xff\xff\xff"),
+        ("gray", False, None, b"\xff"),
+        ("rgb", True, None, b"\x00\x00\x00\x00"),
+        ("gray", True, None, b"\x00\x00"),
+        ("rgb", False, (255, 0, 0), b"\xff\x00\x00"),
+        ("gray", False, (255, 0, 0), b"\x4d"),
+        ("rgb", True, (0, 0, 255, 128), b"\x00\x00\xff\x80"),
+        ("gray", True, (0, 0, 255, 128), b"\x1d\x80"),
+    ],
+)
+def test_blank_raster_initializes_every_pixel(
+    size: tuple[int, int],
+    colorspace: str,
+    background: tuple[int, int, int] | tuple[int, int, int, int] | None,
+    pixel: bytes,
+    *,
+    alpha: bool,
+) -> None:
+    width, height = size
+    with pyropdf.Document() as doc:
+        page = doc.pages.new((10, 10))
+        page.obj["MediaBox"] = [0, 0, width, height]
+        pixmap = page.pixmap(dpi=72, colorspace=Colorspace(colorspace), alpha=alpha, background=background)
+        assert (pixmap.width, pixmap.height, pixmap.channels) == (width, height, len(pixel))
+        assert bytes(pixmap) == pixel * (width * height)
+
+
 def test_old_names_are_removed() -> None:
     for name in ("render_page", "render_page_svg", "render_pages", "get_page_pixmap"):
         assert not hasattr(pyropdf.Document, name)

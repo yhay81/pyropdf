@@ -57,9 +57,15 @@ pyropdf が出すエラーは、どれも `PdfError` から派生します。
 | エラー | 出るとき |
 | --- | --- |
 | `MalformedPdfError` | 入力が読める PDF ではない。 |
+| `InternalError` | pyropdf またはエンジンで Rust の panic が起きた。メッセージには panic の内容が残るため、ライブラリの不具合として報告できる。 |
 | `PasswordError` | パスワードが違う。 |
 | `EncryptedDocumentError` | ロックされた文書を `unlock` の前に読んだ。 |
 | `LimitError` | 操作が制限に達したか、取り消された。`code` がどれかを示す。 |
 | `StalePageError`、`StaleObjectError` | ハンドルがそのページやオブジェクトより長く使われた。 |
 | `DocumentClosedError` | `close` の後に文書を使った。 |
 | `OcrError` | OCR モデルが見つからないか、失敗した。 |
+
+`InternalError` は `except PdfError` と `except Exception` のどちらでも捕捉できます。
+失敗したトランザクションは破棄され、同じ文書を引き続き利用できます。
+プロセスの panic hook は変更しないため、既定の診断は標準エラー出力に残ります。
+この境界が捕捉するのは unwind する panic であり、ランタイムが abort する場合は復旧できません。

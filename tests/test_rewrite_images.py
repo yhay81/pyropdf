@@ -606,6 +606,34 @@ def test_a_stencil_mask_image_is_downsampled_as_a_stencil() -> None:
     assert gs_difference(gs_before, ghostscript(doc)) < 12
 
 
+@pytest.mark.parametrize("selected", [False, True])
+def test_shared_stencils_are_rewritten_once_and_keep_identity(*, selected: bool) -> None:
+    samples = scan(SIDE)
+    doc = image_document(samples, {"Width": SIDE, "Height": SIDE, "ImageMask": True}, [(18, 18), (36, 36)], pages=2)
+    mask = doc.pages[0].obj["Resources"]["XObject"]["Im0"]
+    original = doc.to_bytes()
+    assert all(image.item.xref == mask.xref for page in doc.pages for image in page.images())
+
+    report = doc.rewrite_images(dpi_threshold=150, dpi_target=72, bitonal=selected)
+
+    assert (report.considered, report.rewritten, report.unsupported) == (int(selected), int(selected), ())
+    if not selected:
+        assert doc.to_bytes() == original
+        return
+    assert (mask["ImageMask"], mask["Width"], mask["Height"]) == (True, 36, 36)
+    assert report.bytes_before == len(samples)
+    assert report.bytes_after == len(mask.read(decode=False))
+    for page in doc.pages:
+        for image in page.images():
+            assert image.item.xref == mask.xref
+            assert image.item.is_stencil
+            assert (image.item.width, image.item.height, image.item.encoded_size) == (36, 36, report.bytes_after)
+            stored = image.stored()
+            assert stored is not None
+            assert stored.filter == "CCITTFaxDecode"
+            assert stored.data == mask.read(decode=False)
+
+
 def test_the_masked_jpegs_of_a_corpus_manuscript_are_rewritten() -> None:
     doc = pyropdf.open(CORPUS / "wdl6812-manuscript.pdf")
     before, gs_before = doc.pages[0].pixmap(dpi=72), ghostscript(doc)

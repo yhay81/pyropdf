@@ -218,29 +218,40 @@ impl _Document {
 
 #[pymethods]
 impl _Document {
+    /// Private regression hook for the pymethods boundary.
+    fn _test_panic(&self) -> PyResult<()> {
+        crate::errors::boundary(|| panic!("pyropdf injected method panic"))
+    }
+
     /// Returns an empty document: a catalog and a page tree without pages.
     #[staticmethod]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the initial trailer contains the two fixed keys Root and Size"
+    )]
     fn empty(limits: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let mut base = MemoryBase::new(
-            [
-                (Name::from("Root"), Value::from(Reference::new(1, 0))),
-                (Name::from("Size"), Value::from(3)),
-            ]
-            .into_iter()
-            .collect::<Dict>(),
-        );
-        base.insert(
-            Reference::new(1, 0),
-            Bytes::new(&b"<</Type/Catalog/Pages 2 0 R>>"[..]),
-        );
-        base.insert(
-            Reference::new(2, 0),
-            Bytes::new(&b"<</Type/Pages/Kids[]/Count 0>>"[..]),
-        );
-        Ok(Self::new(
-            Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)),
-            document_limits(limits)?,
-        ))
+        crate::errors::boundary(|| {
+            let mut base = MemoryBase::new(
+                [
+                    (Name::from("Root"), Value::from(Reference::new(1, 0))),
+                    (Name::from("Size"), Value::from(3)),
+                ]
+                .into_iter()
+                .collect::<Dict>(),
+            );
+            base.insert(
+                Reference::new(1, 0),
+                Bytes::new(&b"<</Type/Catalog/Pages 2 0 R>>"[..]),
+            );
+            base.insert(
+                Reference::new(2, 0),
+                Bytes::new(&b"<</Type/Pages/Kids[]/Count 0>>"[..]),
+            );
+            Ok(Self::new(
+                Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)),
+                document_limits(limits)?,
+            ))
+        })?
     }
 
     /// Opens the file at `path`, unlocking it with `password`.
@@ -252,18 +263,20 @@ impl _Document {
         limits: &Bound<'_, PyAny>,
         password: Option<Vec<u8>>,
     ) -> PyResult<Self> {
-        let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
-        py.detach(|| {
-            let budget = Budget::new(&limits);
-            let bytes = source::file(&path, &budget)?;
-            open(
-                bytes,
-                password.as_deref(),
-                limits.clone(),
-                complete,
-                &budget,
-            )
-        })
+        crate::errors::boundary(|| {
+            let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
+            py.detach(|| {
+                let budget = Budget::new(&limits);
+                let bytes = source::file(&path, &budget)?;
+                open(
+                    bytes,
+                    password.as_deref(),
+                    limits.clone(),
+                    complete,
+                    &budget,
+                )
+            })
+        })?
     }
 
     /// Opens the bytes of a buffer: `bytes` without a copy, other buffers
@@ -276,33 +289,40 @@ impl _Document {
         limits: &Bound<'_, PyAny>,
         password: Option<Vec<u8>>,
     ) -> PyResult<Self> {
-        let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
-        let bytes = source::buffer(data, &Budget::new(&limits))?;
-        py.detach(|| {
-            open(
-                bytes,
-                password.as_deref(),
-                limits.clone(),
-                complete,
-                &Budget::new(&limits),
-            )
-        })
+        crate::errors::boundary(|| {
+            let (limits, complete) = (document_limits(limits)?, complete_checks(limits)?);
+            let bytes = source::buffer(data, &Budget::new(&limits))?;
+            py.detach(|| {
+                open(
+                    bytes,
+                    password.as_deref(),
+                    limits.clone(),
+                    complete,
+                    &Budget::new(&limits),
+                )
+            })
+        })?
     }
 
     /// Returns whether the opened file is linearized.
     fn is_linearized(&self) -> PyResult<bool> {
-        let version = self.current()?;
-        let budget = Budget::new(&self.limits);
-        save::is_linearized(&version, &budget).map_err(|error| crate::errors::store_error(&error))
+        crate::errors::boundary(|| {
+            let version = self.current()?;
+            let budget = Budget::new(&self.limits);
+            save::is_linearized(&version, &budget)
+                .map_err(|error| crate::errors::store_error(&error))
+        })?
     }
 
     /// Returns whether opening recovered damaged cross-reference data.
     fn is_repaired(&self) -> PyResult<bool> {
-        Ok(self
-            .current()?
-            .base()
-            .file()
-            .is_some_and(|index| index.is_repaired()))
+        crate::errors::boundary(|| {
+            Ok(self
+                .current()?
+                .base()
+                .file()
+                .is_some_and(|index| index.is_repaired()))
+        })?
     }
 
     /// Writes the document to the file at `path`, created or truncated; the
@@ -325,37 +345,40 @@ impl _Document {
         dedupe: bool,
         linearize: bool,
     ) -> PyResult<()> {
-        let options = save_options(
-            prune,
-            compress,
-            decompress,
-            renew_id,
-            cross_reference_stream,
-            object_streams,
-            renumber,
-            dedupe,
-            linearize,
-        );
-        let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
-        let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
-        py.detach(|| {
-            let target = path.display().to_string();
-            let result = (|| {
-                let mut out = BufWriter::new(File::create(&path)?);
-                write_version(
-                    &version,
-                    &mut out,
-                    incremental,
-                    encryption.as_ref(),
-                    options,
-                    &budget,
-                )?;
-                let file = out.into_inner().map_err(|e| e.into_error())?;
-                file.sync_all()?;
-                Ok(())
-            })();
-            result.map_err(|error: save::Error| save_error(&error, &target))
-        })
+        crate::errors::boundary(|| {
+            let options = save_options(
+                prune,
+                compress,
+                decompress,
+                renew_id,
+                cross_reference_stream,
+                object_streams,
+                renumber,
+                dedupe,
+                linearize,
+            );
+            let (version, encryption) =
+                crate::security::prepare(py, self, incremental, encryption)?;
+            let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, None);
+            py.detach(|| {
+                let target = path.display().to_string();
+                let result = (|| {
+                    let mut out = BufWriter::new(File::create(&path)?);
+                    write_version(
+                        &version,
+                        &mut out,
+                        incremental,
+                        encryption.as_ref(),
+                        options,
+                        &budget,
+                    )?;
+                    let file = out.into_inner().map_err(|e| e.into_error())?;
+                    file.sync_all()?;
+                    Ok(())
+                })();
+                result.map_err(|error: save::Error| save_error(&error, &target))
+            })
+        })?
     }
 
     /// Returns the document as PDF bytes, at most `max_size` of them.
@@ -377,80 +400,92 @@ impl _Document {
         dedupe: bool,
         linearize: bool,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        let options = save_options(
-            prune,
-            compress,
-            decompress,
-            renew_id,
-            cross_reference_stream,
-            object_streams,
-            renumber,
-            dedupe,
-            linearize,
-        );
-        let (version, encryption) = crate::security::prepare(py, self, incremental, encryption)?;
-        let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
-        let out = py.detach(|| {
-            let mut out = Vec::new();
-            write_version(
-                &version,
-                &mut out,
-                incremental,
-                encryption.as_ref(),
-                options,
-                &budget,
-            )
-            .map_err(|error| save_error(&error, "PDF bytes"))?;
-            Ok::<_, PyErr>(out)
-        })?;
-        Ok(PyBytes::new(py, &out))
+        crate::errors::boundary(|| {
+            let options = save_options(
+                prune,
+                compress,
+                decompress,
+                renew_id,
+                cross_reference_stream,
+                object_streams,
+                renumber,
+                dedupe,
+                linearize,
+            );
+            let (version, encryption) =
+                crate::security::prepare(py, self, incremental, encryption)?;
+            let budget = Budget::new(&self.limits).with_limit(LimitCode::PdfOutputSize, max_size);
+            let out = py.detach(|| {
+                let mut out = Vec::new();
+                write_version(
+                    &version,
+                    &mut out,
+                    incremental,
+                    encryption.as_ref(),
+                    options,
+                    &budget,
+                )
+                .map_err(|error| save_error(&error, "PDF bytes"))?;
+                Ok::<_, PyErr>(out)
+            })?;
+            Ok(PyBytes::new(py, &out))
+        })?
     }
 
     /// Returns each object of the current version that the cross-reference
     /// data lists, as its number, generation, and canonical syntax. Tests
     /// compare documents in value with it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one number and result per budgeted index entry; each canonical syntax buffer also charges the budget"
+    )]
     fn _objects<'py>(&self, py: Python<'py>) -> PyResult<Vec<(u32, u16, Bound<'py, PyBytes>)>> {
-        let version = self.reading()?;
-        let budget = Budget::new(&self.limits);
-        let mut objects = Vec::new();
-        let numbers: Vec<u32> = match version.base().file() {
-            Some(index) => index.entries().map(|(number, _)| number).collect(),
-            None => Vec::new(),
-        };
-        for number in numbers {
-            let Some(object) = version.get(number, &budget).map_err(|e| store_error(&e))? else {
-                continue;
+        crate::errors::boundary(|| {
+            let version = self.reading()?;
+            let budget = Budget::new(&self.limits);
+            let mut objects = Vec::new();
+            let numbers: Vec<u32> = match version.base().file() {
+                Some(index) => index.entries().map(|(number, _)| number).collect(),
+                None => Vec::new(),
             };
-            let mut out = pyropdf_store::budget::BudgetVec::new(&budget);
-            write::value(&mut out, object.value()).map_err(|e| store_error(&e))?;
-            objects.push((
-                number,
-                object.generation(),
-                PyBytes::new(py, &out.into_vec()),
-            ));
-        }
-        Ok(objects)
+            for number in numbers {
+                let Some(object) = version.get(number, &budget).map_err(|e| store_error(&e))?
+                else {
+                    continue;
+                };
+                let mut out = pyropdf_store::budget::BudgetVec::new(&budget);
+                write::value(&mut out, object.value()).map_err(|e| store_error(&e))?;
+                objects.push((
+                    number,
+                    object.generation(),
+                    PyBytes::new(py, &out.into_vec()),
+                ));
+            }
+            Ok(objects)
+        })?
     }
 
     /// Releases the document. Later operations raise `DocumentClosedError`.
-    fn close(&self) {
-        self.document
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        self.pages.clear();
-        self.draft_pages.clear();
-        self.results.clear();
-        self.draft_results.clear();
-        self.destinations.clear();
-        self.draft_destinations.clear();
-        self.outline.clear();
-        self.draft_outline.clear();
-        self.form.clear();
-        self.draft_form.clear();
-        self.fill_index.clear();
-        self.draft_fill_index.clear();
-        self.history.clear();
+    fn close(&self) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            self.document
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            self.pages.clear();
+            self.draft_pages.clear();
+            self.results.clear();
+            self.draft_results.clear();
+            self.destinations.clear();
+            self.draft_destinations.clear();
+            self.outline.clear();
+            self.draft_outline.clear();
+            self.form.clear();
+            self.draft_form.clear();
+            self.fill_index.clear();
+            self.draft_fill_index.clear();
+            self.history.clear();
+        })
     }
 }
 
@@ -596,26 +631,28 @@ fn complete_checks(limits: &Bound<'_, PyAny>) -> PyResult<bool> {
 /// Rust share one profile.
 #[pyfunction]
 pub fn web_limits(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
-    let web = DocumentLimits::web();
-    let fields = PyDict::new(py);
-    for (name, value) in [
-        ("max_file_size", web.max_file_size),
-        ("max_pages", web.max_pages),
-        ("max_objects", web.max_objects),
-        ("max_decompressed_size", web.max_decompressed_size),
-        ("max_page_content_size", web.max_page_content_size),
-        (
-            "max_total_decompressed_size",
-            web.max_total_decompressed_size,
-        ),
-        ("max_object_depth", web.max_object_depth),
-        ("max_interpretation_size", web.max_interpretation_size),
-        ("max_memory_size", web.max_memory_size),
-    ] {
-        fields.set_item(name, value)?;
-    }
-    fields.set_item("max_duration", web.max_duration.map(|d| d.as_secs_f64()))?;
-    Ok(fields)
+    crate::errors::boundary(|| {
+        let web = DocumentLimits::web();
+        let fields = PyDict::new(py);
+        for (name, value) in [
+            ("max_file_size", web.max_file_size),
+            ("max_pages", web.max_pages),
+            ("max_objects", web.max_objects),
+            ("max_decompressed_size", web.max_decompressed_size),
+            ("max_page_content_size", web.max_page_content_size),
+            (
+                "max_total_decompressed_size",
+                web.max_total_decompressed_size,
+            ),
+            ("max_object_depth", web.max_object_depth),
+            ("max_interpretation_size", web.max_interpretation_size),
+            ("max_memory_size", web.max_memory_size),
+        ] {
+            fields.set_item(name, value)?;
+        }
+        fields.set_item("max_duration", web.max_duration.map(|d| d.as_secs_f64()))?;
+        Ok(fields)
+    })?
 }
 
 /// What `probe` reads: the page count, the header's version, whether the
@@ -634,23 +671,25 @@ pub fn probe<'py>(
     max_file_size: Option<u64>,
     password: Option<Vec<u8>>,
 ) -> PyResult<Probe<'py>> {
-    let limits = DocumentLimits {
-        max_file_size,
-        ..DocumentLimits::default()
-    };
-    let budget = Budget::new(&limits);
-    let bytes = match (path, data) {
-        (_, Some(data)) => source::buffer(data, &budget)?,
-        (Some(path), None) => py.detach(|| source::file(&path, &budget))?,
-        (None, None) => return Err(pyo3::exceptions::PyTypeError::new_err("no source")),
-    };
-    let (count, version, encrypted, repaired, metadata) =
-        py.detach(|| read_probe(bytes, password.as_deref(), &budget))?;
-    let dict = PyDict::new(py);
-    for (key, value) in metadata {
-        dict.set_item(key, value)?;
-    }
-    Ok((count, version, encrypted, repaired, dict))
+    crate::errors::boundary(|| {
+        let limits = DocumentLimits {
+            max_file_size,
+            ..DocumentLimits::default()
+        };
+        let budget = Budget::new(&limits);
+        let bytes = match (path, data) {
+            (_, Some(data)) => source::buffer(data, &budget)?,
+            (Some(path), None) => py.detach(|| source::file(&path, &budget))?,
+            (None, None) => return Err(pyo3::exceptions::PyTypeError::new_err("no source")),
+        };
+        let (count, version, encrypted, repaired, metadata) =
+            py.detach(|| read_probe(bytes, password.as_deref(), &budget))?;
+        let dict = PyDict::new(py);
+        for (key, value) in metadata {
+            dict.set_item(key, value)?;
+        }
+        Ok((count, version, encrypted, repaired, dict))
+    })?
 }
 
 /// The Info dictionary entries that `probe` reports.
@@ -667,6 +706,10 @@ const PROBE_KEYS: [&str; 8] = [
 
 type ProbeData = (u64, String, bool, bool, Vec<(&'static str, String)>);
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "PROBE_KEYS is fixed and returned text is capped at MAX_PROBE_METADATA_SIZE"
+)]
 fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResult<ProbeData> {
     use pyropdf_store::version::Base as _;
     let store = |e: Error| store_error(&e);
@@ -738,11 +781,13 @@ fn read_probe(bytes: Bytes, password: Option<&[u8]>, budget: &Budget) -> PyResul
 #[pyfunction]
 #[pyo3(name = "header_version")]
 pub fn document_header_version(document: &_Document) -> PyResult<Option<String>> {
-    let version = document.reading()?;
-    Ok(version
-        .base()
-        .file()
-        .and_then(|index| header_version(&index.bytes()[index.origin()..])))
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        Ok(version
+            .base()
+            .file()
+            .and_then(|index| header_version(&index.bytes()[index.origin()..])))
+    })?
 }
 
 /// Returns the version of a `%PDF-x.y` header, such as `"1.7"`.
@@ -802,12 +847,14 @@ pub(crate) enum PageResult {
 /// Returns how many page results the document's memos reused and how many
 /// they computed, for tests.
 #[pyfunction]
-pub fn page_result_counts(document: &_Document) -> (u64, u64) {
-    let (results, drafts) = (document.results.stats(), document.draft_results.stats());
-    (
-        results.hits + drafts.hits,
-        results.computations + drafts.computations,
-    )
+pub fn page_result_counts(document: &_Document) -> PyResult<(u64, u64)> {
+    crate::errors::boundary(|| {
+        let (results, drafts) = (document.results.stats(), document.draft_results.stats());
+        (
+            results.hits + drafts.hits,
+            results.computations + drafts.computations,
+        )
+    })
 }
 
 /// A failed computation of a page's result.

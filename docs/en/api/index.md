@@ -241,6 +241,7 @@ method and property of its classes with its full description.
 - [`DocumentClosedError`](limits-and-errors.md#documentclosederror): An operation on a closed document.
 - [`DocumentLimits`](limits-and-errors.md#documentlimits): Optional budgets for opening and reading PDFs.
 - [`EncryptedDocumentError`](limits-and-errors.md#encrypteddocumenterror): An operation on an encrypted document that needs a password.
+- [`InternalError`](limits-and-errors.md#internalerror): A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
 - [`LimitError`](limits-and-errors.md#limiterror): A refusal by a limit, whose `code` names the limit.
 - [`MalformedPdfError`](limits-and-errors.md#malformedpdferror): Input that cannot be read as a PDF document, including empty input.
 - [`OcrError`](limits-and-errors.md#ocrerror): OCR model loading or inference failed.

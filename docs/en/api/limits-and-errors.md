@@ -78,6 +78,10 @@ Return pylopdf's web profile, which checks every object at open.
 
 An operation on an encrypted document that needs a password.
 
+## `InternalError`
+
+A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
+
 ## `LimitError`
 
 A refusal by a limit, whose `code` names the limit.

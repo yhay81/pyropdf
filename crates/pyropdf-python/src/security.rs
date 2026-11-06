@@ -42,21 +42,23 @@ type State = (
 /// opened it, its permission flags, and its handler's description.
 #[pyfunction]
 pub fn security_state(document: &_Document) -> PyResult<State> {
-    let version = document.current()?;
-    let encrypted = version
-        .base()
-        .file()
-        .is_some_and(pyropdf_store::index::Index::is_encrypted);
-    Ok(match handler(&version) {
-        Some(handler) => (
-            true,
-            true,
-            Some(access_name(handler.access())),
-            Some(handler.permissions()),
-            Some(handler.description()),
-        ),
-        None => (encrypted, !encrypted, None, None, None),
-    })
+    crate::errors::boundary(|| {
+        let version = document.current()?;
+        let encrypted = version
+            .base()
+            .file()
+            .is_some_and(pyropdf_store::index::Index::is_encrypted);
+        Ok(match handler(&version) {
+            Some(handler) => (
+                true,
+                true,
+                Some(access_name(handler.access())),
+                Some(handler.permissions()),
+                Some(handler.description()),
+            ),
+            None => (encrypted, !encrypted, None, None, None),
+        })
+    })?
 }
 
 /// Unlocks the document with `password`, and returns what it opened:
@@ -65,20 +67,22 @@ pub fn security_state(document: &_Document) -> PyResult<State> {
 /// neither refuses with `PasswordError`.
 #[pyfunction]
 pub fn unlock(py: Python<'_>, document: &_Document, password: Vec<u8>) -> PyResult<&'static str> {
-    let version = document.current()?;
-    let Some(index) = version.base().file().filter(|index| index.is_encrypted()) else {
-        return Ok("owner");
-    };
-    let bytes = index.bytes().clone();
-    let budget = document.budget();
-    let base = py
-        .detach(|| FileBase::open_with_password(bytes, Some(&password), &budget))
-        .map_err(|e| store_error(&e))?;
-    let access = base.security().map_or(Access::Owner, Handler::access);
-    if handler(&version).is_none() {
-        document.replace(Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)));
-    }
-    Ok(access_name(access))
+    crate::errors::boundary(|| {
+        let version = document.current()?;
+        let Some(index) = version.base().file().filter(|index| index.is_encrypted()) else {
+            return Ok("owner");
+        };
+        let bytes = index.bytes().clone();
+        let budget = document.budget();
+        let base = py
+            .detach(|| FileBase::open_with_password(bytes, Some(&password), &budget))
+            .map_err(|e| store_error(&e))?;
+        let access = base.security().map_or(Access::Owner, Handler::access);
+        if handler(&version).is_none() {
+            document.replace(Document::new(Arc::new(base), Some(DEFAULT_HISTORY_LIMIT)));
+        }
+        Ok(access_name(access))
+    })?
 }
 
 /// Returns the version that a save writes and the encryption of a full

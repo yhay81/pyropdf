@@ -13,6 +13,7 @@ from __future__ import annotations
 import math
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import warnings
@@ -1037,10 +1038,75 @@ def test_a_type3_font_has_the_shape_that_readers_need(bitmaps: pyropdf.Font) -> 
     assert font["FontMatrix"][0] == pytest.approx(0.001)
     assert (font["FirstChar"], font["LastChar"]) == (0, 1)
     assert list(font["Widths"]) == [1000, 1000]
-    assert list(font["FontBBox"]) == [0, 0, 1000, 1000]
+    assert font["FontMatrix"][3] == pytest.approx(0.0005)
+    assert list(font["FontBBox"]) == [0, 0, 1000, 2000]
     assert [str(name) for name in font["Encoding"]["Differences"]][1:] == ["g1s120", "g2s120"]
     assert _procedures(document)["g1s120"].startswith(b"1000 0 d0\n")
     assert b"<00> <0052>" in font["ToUnicode"].read()
+
+
+def _colour_with_advance(path: Path, width: int, *, first_zero: bool = False) -> pyropdf.Font:
+    """Change only a fixture's hmtx advances; optionally give its glyph 1 no advance."""
+    data = bytearray(path.read_bytes())
+    (count,) = struct.unpack_from(">H", data, 4)
+    tables = {}
+    for index in range(count):
+        tag, _checksum, offset, _length = struct.unpack_from(">4sIII", data, 12 + 16 * index)
+        tables[tag] = offset
+    (metrics,) = struct.unpack_from(">H", data, tables[b"hhea"] + 34)
+    for index in range(metrics):
+        struct.pack_into(">H", data, tables[b"hmtx"] + 4 * index, 0 if first_zero and index == 1 else width)
+    return pyropdf.Font.from_bytes(data)
+
+
+@pytest.mark.skipif(shutil.which("pdftotext") is None, reason="pdftotext is not installed")
+@pytest.mark.parametrize("face", ["colr0", "colr1", "bitmaps-sbix", "bitmaps-cbdt"])
+@pytest.mark.parametrize("width", [1000, 1500])
+def test_pdftotext_reads_colour_lines_at_the_canvas_line_spacing(tmp_path: Path, face: str, width: int) -> None:
+    font = _colour_with_advance(FONTS / f"colour-{face}.ttf", width)
+    letters = "AB" if face.startswith("colr") else "RG"
+    lines = [letters[index % 2] * 10 for index in range(10)]
+    document, page = _new_page(400, 340)
+    with page.draw() as canvas:
+        for index, line in enumerate(lines):
+            canvas.text(line, (10, 30 + 30 * index), font=font, size=24)
+    pdf = tmp_path / "colour-lines.pdf"
+    document.save(pdf)
+    result = subprocess.run(  # noqa: S603 - the test's own PDF and a discovered fixed tool.
+        [shutil.which("pdftotext") or "pdftotext", "-enc", "UTF-8", str(pdf), "-"],
+        check=True,
+        capture_output=True,
+    ).stdout.decode("utf-8")
+    assert "".join(result.split()) == "".join(lines)
+    assert "".join(page.text().split()) == "".join(lines)
+
+
+@pytest.mark.parametrize("table", ["sbix", "cbdt"])
+@pytest.mark.parametrize("first_zero", [False, True])
+def test_later_colour_glyphs_keep_the_vertical_coordinate_system(table: str, *, first_zero: bool) -> None:
+    font = _colour_with_advance(FONTS / f"colour-bitmaps-{table}.ttf", 1500, first_zero=first_zero)
+    document, page = _new_page(200, 80)
+    with page.draw() as canvas:
+        canvas.text("R", (20, 50), font=font, size=24)
+    before = _glyphs(page)[0]
+    first_procedure = _procedures(document)
+    with page.draw() as canvas:
+        canvas.text("G", (80, 50), font=font, size=24)
+    (written,) = _type3_fonts(document)
+    assert written["FontMatrix"][3] == pytest.approx(1 / 3000)
+    assert list(written["Widths"]) == [0 if first_zero else 1500, 1500]
+    for drawn in (page, pyropdf.open(document.to_bytes()).pages[0]):
+        red, green = _glyphs(drawn)
+        assert red.matrix == before.matrix
+        assert red.bbox == pytest.approx(before.bbox, abs=1e-6)
+        assert green.origin == (80, 50)
+        pixmap = drawn.pixmap(dpi=72)
+        assert pixmap.pixel(32, 38)[:3] == RED
+        assert pixmap.pixel(92, 38)[:3] == GREEN
+    document.history.undo()
+    assert _procedures(document) == first_procedure
+    document.history.redo()
+    assert len(_glyphs(page)) == 2
 
 
 def test_a_fill_does_not_change_a_bitmap_glyph(bitmaps: pyropdf.Font) -> None:

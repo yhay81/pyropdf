@@ -161,6 +161,10 @@ impl Destination {
 
     /// Returns the destination as an array that names `page`, with the
     /// operands that its fit takes; an unknown fit becomes `/Fit`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a destination has two fixed entries and at most four operands from its fixed-size numbers array"
+    )]
     pub(crate) fn array(&self, page: Reference) -> Array {
         let (name, operands) = match self.name {
             Some(name @ ("XYZ" | "FitR")) => (name, if name == "XYZ" { 3 } else { 4 }),
@@ -338,6 +342,10 @@ pub(crate) fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Opt
 /// Walks the `/Names /Dests` tree from `root` and adds its entries to
 /// `found`, under the limits of its entries, nodes, edges, levels, and
 /// name bytes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the visited-set entry is charged to MemorySize and fallibly reserved before insertion"
+)]
 fn walk(
     reads: &mut Reads<'_>,
     root: Value,
@@ -674,27 +682,29 @@ pub fn link_list(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<Record>>> {
-    let (version, pages, budget) = page_index(document)?;
-    let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
-        return Ok(None);
-    };
-    let mut links = Links::new(document, &annots);
-    let mut out = BudgetVec::new(&budget);
-    for (position, item) in annots.items.iter().enumerate() {
-        let Some((id, dict)) = annots.entry(item)? else {
-            continue;
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = page_index(document)?;
+        let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
+            return Ok(None);
         };
-        if let Some((area, target)) = links.link(&dict)? {
-            out.try_push((
-                u32::try_from(position).unwrap_or(u32::MAX),
-                id,
-                area,
-                target,
-            ))
-            .map_err(|e| limit_error(&e))?;
+        let mut links = Links::new(document, &annots);
+        let mut out = BudgetVec::new(&budget);
+        for (position, item) in annots.items.iter().enumerate() {
+            let Some((id, dict)) = annots.entry(item)? else {
+                continue;
+            };
+            if let Some((area, target)) = links.link(&dict)? {
+                out.try_push((
+                    u32::try_from(position).unwrap_or(u32::MAX),
+                    id,
+                    area,
+                    target,
+                ))
+                .map_err(|e| limit_error(&e))?;
+            }
         }
-    }
-    Ok(Some(out.into_vec()))
+        Ok(Some(out.into_vec()))
+    })?
 }
 
 /// Returns the link that a handle names, or `None` for a page that is gone.
@@ -706,49 +716,57 @@ pub fn link_read(
     index: u32,
     id: (u32, u16),
 ) -> PyResult<Option<Record>> {
-    let (version, pages, budget) = page_index(document)?;
-    let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
-        return Ok(None);
-    };
-    let (position, dict) = annots.find(index, id)?;
-    match Links::new(document, &annots).link(&dict)? {
-        Some((area, target)) => Ok(Some((
-            u32::try_from(position).unwrap_or(u32::MAX),
-            id,
-            area,
-            target,
-        ))),
-        None => Err(StaleObjectError::new_err(format!(
-            "annotation {} at index {position} is no longer a link",
-            id.0
-        ))),
-    }
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = page_index(document)?;
+        let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
+            return Ok(None);
+        };
+        let (position, dict) = annots.find(index, id)?;
+        match Links::new(document, &annots).link(&dict)? {
+            Some((area, target)) => Ok(Some((
+                u32::try_from(position).unwrap_or(u32::MAX),
+                id,
+                area,
+                target,
+            ))),
+            None => Err(StaleObjectError::new_err(format!(
+                "annotation {} at index {position} is no longer a link",
+                id.0
+            ))),
+        }
+    })?
 }
 
 /// Returns the named destinations of the document in the order that
 /// `doc.destinations` lists them.
 #[pyfunction]
 pub fn named_destinations(document: &_Document) -> PyResult<Vec<Named>> {
-    let (version, index, budget) = page_index(document)?;
-    let named = named(document, &version, &budget)?;
-    let mut out = BudgetVec::new(&budget);
-    for (name, destination) in &named.names {
-        budget
-            .charge(LimitCode::MemorySize, name.len().saturating_mul(3) as u64)
+    crate::errors::boundary(|| {
+        let (version, index, budget) = page_index(document)?;
+        let named = named(document, &version, &budget)?;
+        let mut out = BudgetVec::new(&budget);
+        for (name, destination) in &named.names {
+            budget
+                .charge(LimitCode::MemorySize, name.len().saturating_mul(3) as u64)
+                .map_err(|e| limit_error(&e))?;
+            out.try_push((
+                String::from_utf8_lossy(name).into_owned(),
+                destination.place(&index),
+            ))
             .map_err(|e| limit_error(&e))?;
-        out.try_push((
-            String::from_utf8_lossy(name).into_owned(),
-            destination.place(&index),
-        ))
-        .map_err(|e| limit_error(&e))?;
-    }
-    Ok(out.into_vec())
+        }
+        Ok(out.into_vec())
+    })?
 }
 
 /// Adds a link over a display rectangle of page object `(number,
 /// generation)` that leads to `target`, and returns its object, or `None`
 /// for a page that is gone.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "adds one target key and one annotation reference; the copied annotation array is charged before growth"
+)]
 pub fn link_add(
     py: Python<'_>,
     document: &_Document,
@@ -757,51 +775,77 @@ pub fn link_add(
     area: Rect,
     target: Target,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            budget
-                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                .map_err(|e| limit_error(&e))?;
-            if !matches!(
-                annots.resolved(annots.page().dict().get("Annots"))?,
-                None | Some(Value::Array(_))
-            ) {
-                return Err(PdfError::new_err("the page's /Annots is not an array"));
-            }
-            let rect = link_rect(annots, area)?;
-            let entry = entry(annots, &target)?;
-            let page = annots.page().object();
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                budget
+                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                    .map_err(|e| limit_error(&e))?;
+                if !matches!(
+                    annots.resolved(annots.page().dict().get("Annots"))?,
+                    None | Some(Value::Array(_))
+                ) {
+                    return Err(PdfError::new_err("the page's /Annots is not an array"));
+                }
+                let rect = link_rect(annots, area)?;
+                let entry = entry(annots, &target)?;
+                let page = annots.page().object();
 
-            let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-            let mut dict = Dict::new();
-            dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
-            dict.insert(Name::from("Subtype"), Value::Name(Name::from("Link")));
-            dict.insert(Name::from("Rect"), rect);
-            dict.insert(
-                Name::from("Border"),
-                Value::Array(Array::from(vec![Value::Integer(0); 3])),
-            );
-            dict.insert(Name::from("F"), Value::Integer(4));
-            if let Some(page) = page {
-                dict.insert(Name::from("P"), Value::Reference(page));
-            }
-            if let Some((key, value)) = entry {
-                dict.insert(Name::from(key), value);
-            }
-            transaction
-                .write(reference.number(), &Value::Dict(dict), budget)
-                .map_err(|e| store_error(&e))?;
-            charge_copy(CopyPart::Array(&annots.items), budget)?;
-            let mut items = annots.items.clone();
-            items.push(Value::Reference(reference));
-            annots.write_items(transaction, items, budget)?;
-            Ok((reference.number(), reference.generation()))
-        },
-    )
+                let reference = transaction.allocate().map_err(|e| store_error(&e))?;
+                let mut dict = Dict::new();
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Type key"
+                )]
+                dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Subtype key"
+                )]
+                dict.insert(Name::from("Subtype"), Value::Name(Name::from("Link")));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Rect key"
+                )]
+                dict.insert(Name::from("Rect"), rect);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Border key"
+                )]
+                dict.insert(
+                    Name::from("Border"),
+                    Value::Array(Array::from(vec![Value::Integer(0); 3])),
+                );
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /F key"
+                )]
+                dict.insert(Name::from("F"), Value::Integer(4));
+                if let Some(page) = page {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /P key"
+                    )]
+                    dict.insert(Name::from("P"), Value::Reference(page));
+                }
+                if let Some((key, value)) = entry {
+                    dict.insert(Name::from(key), value);
+                }
+                transaction
+                    .write(reference.number(), &Value::Dict(dict), budget)
+                    .map_err(|e| store_error(&e))?;
+                charge_copy(CopyPart::Array(&annots.items), budget)?;
+                let mut items = annots.items.clone();
+                items.push(Value::Reference(reference));
+                annots.write_items(transaction, items, budget)?;
+                Ok((reference.number(), reference.generation()))
+            },
+        )
+    })?
 }
 
 /// Moves the link that a handle names to a display rectangle, makes it lead
@@ -813,6 +857,10 @@ pub fn link_add(
     clippy::too_many_arguments,
     reason = "a handle's page and annotation, and the two things a link edit changes"
 )]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "replaces or adds at most one destination or action key"
+)]
 pub fn link_edit(
     py: Python<'_>,
     document: &_Document,
@@ -823,36 +871,42 @@ pub fn link_edit(
     area: Option<Rect>,
     target: Option<Target>,
 ) -> PyResult<Option<(u32, u16)>> {
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, _budget| {
-            let (position, dict) = annots.find(index, id)?;
-            if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Link") {
-                return Err(StaleObjectError::new_err(format!(
-                    "annotation {} at index {position} is no longer a link",
-                    id.0
-                )));
-            }
-            let rect = area.map(|area| link_rect(annots, area)).transpose()?;
-            let entry = target.map(|target| entry(annots, &target)).transpose()?;
-            annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
-                if let Some(rect) = rect {
-                    dict.insert(Name::from("Rect"), rect);
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, _budget| {
+                let (position, dict) = annots.find(index, id)?;
+                if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Link") {
+                    return Err(StaleObjectError::new_err(format!(
+                        "annotation {} at index {position} is no longer a link",
+                        id.0
+                    )));
                 }
-                if let Some(entry) = entry {
-                    dict.remove("Dest");
-                    dict.remove("A");
-                    if let Some((key, value)) = entry {
-                        dict.insert(Name::from(key), value);
+                let rect = area.map(|area| link_rect(annots, area)).transpose()?;
+                let entry = target.map(|target| entry(annots, &target)).transpose()?;
+                annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
+                    if let Some(rect) = rect {
+                        #[expect(
+                            clippy::disallowed_methods,
+                            reason = "this call inserts only the fixed /Rect key"
+                        )]
+                        dict.insert(Name::from("Rect"), rect);
                     }
-                }
-                Ok(false)
-            })
-        },
-    )
+                    if let Some(entry) = entry {
+                        dict.remove("Dest");
+                        dict.remove("A");
+                        if let Some((key, value)) = entry {
+                            dict.insert(Name::from(key), value);
+                        }
+                    }
+                    Ok(false)
+                })
+            },
+        )
+    })?
 }
 
 /// Returns the PDF `/Rect` of a link's display rectangle.
@@ -895,6 +949,10 @@ fn entry(annots: &Annots, target: &Target) -> PyResult<Option<(&'static str, Val
 /// Returns the key and value that make a link or an outline item lead to
 /// `target`, a page of `index` for `"goto"`: `/Dest` for a page of this
 /// document, `/A` for an action, or nothing.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the action entries come from a fixed-size literal array"
+)]
 pub(crate) fn target_entry(
     index: &PageIndex,
     target: &Target,

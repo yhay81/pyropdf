@@ -31,26 +31,32 @@ type Content<'py> = (Vec<Bound<'py, PyAny>>, Bound<'py, PyBytes>);
 /// content with `content_input_size`, and `max_operations` the operations
 /// with `content_operation_count`; `None` lifts either.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "ContentInputSize checks the borrowed Python buffer once before this copy (DESIGN section 9)"
+)]
 pub fn parse_operations<'py>(
     py: Python<'py>,
     data: &[u8],
     max_operations: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<Content<'py>> {
-    let budget = Budget::default()
-        .with_limit(LimitCode::ContentOperationCount, max_operations)
-        .with_limit(LimitCode::ContentInputSize, max_size);
-    budget
-        .check(
-            LimitCode::ContentInputSize,
-            u64::try_from(data.len()).unwrap_or(u64::MAX),
-        )
-        .map_err(|e| limit_error(&e))?;
-    let data = Bytes::new(data.to_vec());
-    let operations = py
-        .detach(|| Operations::parse(data, &budget))
-        .map_err(|e| store_error(&e))?;
-    tagged(py, &operations)
+    crate::errors::boundary(|| {
+        let budget = Budget::default()
+            .with_limit(LimitCode::ContentOperationCount, max_operations)
+            .with_limit(LimitCode::ContentInputSize, max_size);
+        budget
+            .check(
+                LimitCode::ContentInputSize,
+                u64::try_from(data.len()).unwrap_or(u64::MAX),
+            )
+            .map_err(|e| limit_error(&e))?;
+        let data = Bytes::new(data.to_vec());
+        let operations = py
+            .detach(|| Operations::parse(data, &budget))
+            .map_err(|e| store_error(&e))?;
+        tagged(py, &operations)
+    })?
 }
 
 /// Returns the operations of the content of the page whose object is
@@ -63,18 +69,24 @@ pub fn page_operations<'py>(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Content<'py>>> {
-    let (version, index, budget) = crate::pages::index(document)?;
-    let Some(at) = index.index_of(Reference::new(number, generation)) else {
-        return Ok(None);
-    };
-    let page = &index.pages()[at];
-    let content = py
-        .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
-        .map_err(|e| store_error(&e))?;
-    tagged(py, content.operations()).map(Some)
+    crate::errors::boundary(|| {
+        let (version, index, budget) = crate::pages::index(document)?;
+        let Some(at) = index.index_of(Reference::new(number, generation)) else {
+            return Ok(None);
+        };
+        let page = &index.pages()[at];
+        let content = py
+            .detach(|| PageContent::read(&mut Reads::new(&version, &budget), page))
+            .map_err(|e| store_error(&e))?;
+        tagged(py, content.operations()).map(Some)
+    })?
 }
 
 /// Returns the operations in the tagged form.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one item per budgeted content operation, and one operand per value parsed under that budget"
+)]
 fn tagged<'py>(py: Python<'py>, operations: &Operations) -> PyResult<Content<'py>> {
     let mut items = Vec::new();
     items.try_reserve_exact(operations.len()).map_err(|error| {
@@ -119,6 +131,10 @@ fn tagged<'py>(py: Python<'py>, operations: &Operations) -> PyResult<Content<'py
 
 /// Returns an operand in the tagged form; `depth` counts the arrays and
 /// dictionaries around it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one item per parsed array element; content input and parsing are budgeted and nesting is checked"
+)]
 fn operand<'py>(py: Python<'py>, value: &Value, depth: usize) -> PyResult<Bound<'py, PyAny>> {
     match value {
         // hayro-syntax reads no reference in content, and a stream only as
@@ -156,6 +172,10 @@ fn operand<'py>(py: Python<'py>, value: &Value, depth: usize) -> PyResult<Bound<
 }
 
 /// Returns the entries of a dictionary at `depth` as `(key, value)` pairs.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one pair per parsed dictionary entry; content input and parsing are budgeted and nesting is checked"
+)]
 fn entries<'py>(
     py: Python<'py>,
     dict: &Dict,

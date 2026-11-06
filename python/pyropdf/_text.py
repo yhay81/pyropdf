@@ -35,12 +35,16 @@ if TYPE_CHECKING:
     _CoreLine = tuple[_Box, list[_CoreSpan], list[tuple[_Box, str]], _Pt, int, _CoreQuad]
     _CoreBlock = tuple[_Box, list[_CoreLine]]
 
-Unmapped: TypeAlias = Literal["skip", "replacement", "glyph_id"]
+Unmapped: TypeAlias = Literal["skip", "replacement", "glyph_id", "type3_char_code"]
 Unmapped.__doc__ = """What text extraction makes of a glyph without Unicode: ``"skip"`` leaves it
 out with a :class:`PyropdfWarning`, ``"replacement"`` gives U+FFFD, and
-``"glyph_id"`` gives the character whose code point is the glyph ID."""
+``"glyph_id"`` gives the character whose code point is the glyph ID.
+``"type3_char_code"`` treats an unmapped Type 3 font's original character code
+as a Unicode code point. This heuristic can produce unrelated text for custom
+encodings. Other unmapped glyphs give U+FFFD. Font Unicode mappings and
+recognized glyph names take precedence."""
 
-_UNMAPPED_CODES = {"skip": 0, "replacement": 1, "glyph_id": 2}
+_UNMAPPED_CODES = {"skip": 0, "replacement": 1, "glyph_id": 2, "type3_char_code": 3}
 
 #: Glyphs that one page's text collects by default (``text_glyph_count``).
 _DEFAULT_MAX_TEXT_GLYPHS = 262_144
@@ -79,7 +83,7 @@ def text_options(  # noqa: PLR0913 - the shared options of the text views.
             raise TypeError(msg)
     code = _UNMAPPED_CODES.get(unmapped) if isinstance(unmapped, str) else None
     if code is None:
-        msg = f"unmapped must be 'skip', 'replacement', or 'glyph_id': {unmapped!r}"
+        msg = f"unmapped must be 'skip', 'replacement', 'glyph_id', or 'type3_char_code': {unmapped!r}"
         raise ValueError(msg)
     _validate_optional_positive_int("max_glyphs", max_glyphs)
     _validate_optional_positive_int("max_size", max_size)
@@ -92,7 +96,7 @@ def _warn_skipped(skipped: int) -> None:
         msg = (
             f"text extraction skipped {skipped} glyphs with no Unicode mapping "
             "(for example a Type 3 font without a ToUnicode CMap); "
-            "pass unmapped='replacement' or 'glyph_id' to keep them"
+            "pass unmapped='replacement', 'glyph_id', or 'type3_char_code' to keep them"
         )
         warnings.warn(msg, PyropdfWarning, stacklevel=3)
 

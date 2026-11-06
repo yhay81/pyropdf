@@ -78,7 +78,10 @@ impl Graph for Store<'_> {
             _ => None,
         }
     }
-
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one pair per entry of a Value already parsed under the operation budget"
+    )]
     fn entries<'v>(&self, dict: &'v Value) -> Vec<(&'v [u8], &'v Value)> {
         let dict = match dict {
             Value::Dict(dict) => dict,
@@ -108,38 +111,44 @@ impl Graph for Store<'_> {
 
 /// Runs the structural check over the document's current version.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the schema report caps its defects at MAX_DEFECTS (10,000)"
+)]
 pub fn structural_check(
     py: Python<'_>,
     document: &_Document,
 ) -> PyResult<(Vec<DefectRow>, bool, usize, usize, String)> {
-    let version = document.reading()?;
-    let budget = document.budget();
-    py.detach(|| {
-        let report = run(&version, &budget).map_err(|error| store_error(&error))?;
-        let (report, declared) = report;
-        let defects = report
-            .defects
-            .into_iter()
-            .map(|defect| {
-                let kind = defect.kind.as_str();
-                (
-                    defect.object,
-                    defect.path,
-                    defect.clause,
-                    defect.spec,
-                    kind,
-                    defect.message,
-                )
-            })
-            .collect();
-        Ok((
-            defects,
-            report.truncated,
-            report.objects,
-            report.unchecked,
-            declared.to_string(),
-        ))
-    })
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        py.detach(|| {
+            let report = run(&version, &budget).map_err(|error| store_error(&error))?;
+            let (report, declared) = report;
+            let defects = report
+                .defects
+                .into_iter()
+                .map(|defect| {
+                    let kind = defect.kind.as_str();
+                    (
+                        defect.object,
+                        defect.path,
+                        defect.clause,
+                        defect.spec,
+                        kind,
+                        defect.message,
+                    )
+                })
+                .collect();
+            Ok((
+                defects,
+                report.truncated,
+                report.objects,
+                report.unchecked,
+                declared.to_string(),
+            ))
+        })
+    })?
 }
 
 fn run(version: &Version, budget: &Budget) -> Result<(Report, PdfVersion), Error> {

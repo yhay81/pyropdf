@@ -17,6 +17,11 @@ use pyropdf_engine::extract::{
     BBox, BlockTuple, ClipTuple, Contexts, GroupTuple, MarkTuple, PageContent, PaintColumns,
     PaintTuple, PathTable, StateTuple,
 };
+use pyropdf_store::LimitExceeded;
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+
+use crate::errors::{PdfError, limit_error};
+use crate::history::OperationBudget;
 
 /// A table whose columns a [`Column`] exposes.
 trait Columns: Send + Sync {
@@ -48,6 +53,14 @@ fn clear_bits(bits: &[u8], start: usize, stop: usize) -> usize {
 /// One row as `python/pyropdf/_text.py` builds a `Char` from it: `(text,
 /// bbox, origin, synthetic, (stream, operation) or None)`.
 type RowTuple<'a> = (&'a str, BBox, (f64, f64), bool, Option<(u32, u32)>);
+
+/// The clip, group, mark, and graphics-state rows shared by a path table.
+type ContextRows<'a> = (
+    &'a [ClipTuple],
+    &'a [GroupTuple],
+    &'a [MarkTuple],
+    &'a [StateTuple],
+);
 
 /// The characters of a layout, one row per char in layout order, each field
 /// in its own column.
@@ -101,35 +114,56 @@ fn index(index: usize) -> PyResult<u32> {
 impl CharTable {
     /// Returns the columns of the chars of `blocks`, a layout built with
     /// chars.
-    fn new(blocks: &[BlockTuple]) -> PyResult<Self> {
-        let rows: usize = blocks
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "every column reserves its exact row or byte count through the budget before filling it"
+    )]
+    fn new(blocks: &[BlockTuple], budget: &Budget) -> PyResult<Self> {
+        let mut rows = 0usize;
+        let mut text_bytes = 0usize;
+        for span in blocks
             .iter()
             .flat_map(|(_, lines)| lines)
             .flat_map(|line| &line.1)
-            .map(|span| span.1.1.len())
-            .sum();
+        {
+            budget.poll().map_err(|error| limit_error(&error))?;
+            rows = rows
+                .checked_add(span.1.1.len())
+                .ok_or_else(column_overflow)?;
+            for character in &span.1.1 {
+                text_bytes = text_bytes
+                    .checked_add(character.0.len())
+                    .ok_or_else(column_overflow)?;
+            }
+        }
+        let offsets = rows.checked_add(1).ok_or_else(column_overflow)?;
+        i32::try_from(text_bytes)
+            .map_err(|_| PyValueError::new_err("the text of the chars exceeds 2 GiB"))?;
         let mut table = Self {
-            x0: Vec::with_capacity(rows),
-            y0: Vec::with_capacity(rows),
-            x1: Vec::with_capacity(rows),
-            y1: Vec::with_capacity(rows),
-            origin_x: Vec::with_capacity(rows),
-            origin_y: Vec::with_capacity(rows),
-            text_offsets: Vec::with_capacity(rows + 1),
-            text_data: Vec::new(),
-            block: Vec::with_capacity(rows),
-            line: Vec::with_capacity(rows),
-            span: Vec::with_capacity(rows),
-            is_synthetic: Vec::with_capacity(rows),
-            stream: Vec::with_capacity(rows),
-            operation: Vec::with_capacity(rows),
-            synthetic_bits: vec![0; rows.div_ceil(8)],
-            source_bits: vec![0; rows.div_ceil(8)],
+            x0: column_capacity(rows, budget)?,
+            y0: column_capacity(rows, budget)?,
+            x1: column_capacity(rows, budget)?,
+            y1: column_capacity(rows, budget)?,
+            origin_x: column_capacity(rows, budget)?,
+            origin_y: column_capacity(rows, budget)?,
+            text_offsets: column_capacity(offsets, budget)?,
+            text_data: column_capacity(text_bytes, budget)?,
+            block: column_capacity(rows, budget)?,
+            line: column_capacity(rows, budget)?,
+            span: column_capacity(rows, budget)?,
+            is_synthetic: column_capacity(rows, budget)?,
+            stream: column_capacity(rows, budget)?,
+            operation: column_capacity(rows, budget)?,
+            synthetic_bits: column_capacity(rows.div_ceil(8), budget)?,
+            source_bits: column_capacity(rows.div_ceil(8), budget)?,
         };
+        table.synthetic_bits.resize(rows.div_ceil(8), 0);
+        table.source_bits.resize(rows.div_ceil(8), 0);
         table.text_offsets.push(0);
         for (block_index, (_, lines)) in blocks.iter().enumerate() {
             for (line_index, line) in lines.iter().enumerate() {
                 for (span_index, span) in line.1.iter().enumerate() {
+                    budget.poll().map_err(|error| limit_error(&error))?;
                     for (text, (x0, y0, x1, y1), (x, y), synthetic, source) in &span.1.1 {
                         let row = table.x0.len();
                         table.x0.push(*x0);
@@ -187,6 +221,19 @@ impl CharTable {
     }
 }
 
+fn column_overflow() -> PyErr {
+    limit_error(&LimitExceeded::new(LimitCode::MemorySize))
+}
+
+/// Reserves a column once, retaining its memory charge for the operation.
+fn column_capacity<T>(count: usize, budget: &Budget) -> PyResult<Vec<T>> {
+    let mut column = BudgetVec::new(budget);
+    column
+        .try_reserve_exact(count)
+        .map_err(|error| limit_error(&error))?;
+    Ok(column.into_vec())
+}
+
 impl Columns for CharTable {
     /// Returns the bytes of the column `name` for the rows `start..stop`,
     /// with its item format: `text_offsets` holds one offset more, and
@@ -221,9 +268,9 @@ pub struct CharColumns {
 impl CharColumns {
     /// Returns the columns of the chars of `blocks`, a layout built with
     /// chars.
-    pub(crate) fn new(blocks: &[BlockTuple]) -> PyResult<Self> {
+    pub(crate) fn new(blocks: &[BlockTuple], budget: &Budget) -> PyResult<Self> {
         Ok(Self {
-            table: Arc::new(CharTable::new(blocks)?),
+            table: Arc::new(CharTable::new(blocks, budget)?),
         })
     }
 }
@@ -239,37 +286,45 @@ fn rows_of(start: usize, stop: usize, rows: usize) -> PyResult<()> {
 
 #[pymethods]
 impl CharColumns {
-    fn __len__(&self) -> usize {
-        self.table.len()
+    fn __len__(&self) -> PyResult<usize> {
+        crate::errors::boundary(|| self.table.len())
     }
 
     /// Returns the rows `start..stop` as the tuples that `Char` records are
     /// built from.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "rows_of checks the requested range against the already budgeted column table"
+    )]
     fn rows(&self, start: usize, stop: usize) -> PyResult<Vec<RowTuple<'_>>> {
-        rows_of(start, stop, self.table.len())?;
-        Ok((start..stop).map(|row| self.table.row(row)).collect())
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.len())?;
+            Ok((start..stop).map(|row| self.table.row(row)).collect())
+        })?
     }
 
     /// Returns the column `name` for the rows `start..stop`, which
     /// `memoryview` reads without a copy.
     fn column(&self, name: &str, start: usize, stop: usize) -> PyResult<Column> {
-        rows_of(start, stop, self.table.len())?;
-        let Some(at) = COLUMNS.iter().position(|column| *column == name) else {
-            return Err(PyValueError::new_err(format!(
-                "Chars has no column {name:?}"
-            )));
-        };
-        Ok(Column {
-            table: Arc::clone(&self.table) as Arc<dyn Columns>,
-            name: COLUMNS[at],
-            start,
-            stop,
-        })
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.len())?;
+            let Some(at) = COLUMNS.iter().position(|column| *column == name) else {
+                return Err(PyValueError::new_err(format!(
+                    "Chars has no column {name:?}"
+                )));
+            };
+            Ok(Column {
+                table: Arc::clone(&self.table) as Arc<dyn Columns>,
+                name: COLUMNS[at],
+                start,
+                stop,
+            })
+        })?
     }
 
     /// Returns the Arrow schema of the rows as a PyCapsule.
     fn arrow_schema<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
-        schema_capsule(py, &CHAR_STRUCT)
+        crate::errors::boundary(|| schema_capsule(py, &CHAR_STRUCT))?
     }
 
     /// Returns the rows `start..stop` as the PyCapsules of an Arrow schema
@@ -280,9 +335,11 @@ impl CharColumns {
         start: usize,
         stop: usize,
     ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
-        rows_of(start, stop, self.table.len())?;
-        let array = char_array(&self.table, start, stop);
-        Ok((schema_capsule(py, &CHAR_STRUCT)?, array_capsule(py, array)?))
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.len())?;
+            let array = char_array(&self.table, start, stop);
+            Ok((schema_capsule(py, &CHAR_STRUCT)?, array_capsule(py, array)?))
+        })?
     }
 }
 
@@ -457,57 +514,107 @@ impl PathColumns {
 
 #[pymethods]
 impl PathColumns {
-    fn __len__(&self) -> usize {
-        self.table.rows()
+    fn __len__(&self) -> PyResult<usize> {
+        crate::errors::boundary(|| self.table.rows())
     }
 
     /// Returns the rows `start..stop` as the tuples that `Path` records are
     /// built from.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "rows_of checks the requested range against the already budgeted column table"
+    )]
     fn rows(&self, start: usize, stop: usize) -> PyResult<Vec<PathRow<'_>>> {
-        rows_of(start, stop, self.table.rows())?;
-        Ok((start..stop)
-            .map(|row| path_row(&self.table, row))
-            .collect())
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.rows())?;
+            Ok((start..stop)
+                .map(|row| path_row(&self.table, row))
+                .collect())
+        })?
     }
 
     /// Returns the column `name` for the rows `start..stop`, which
     /// `memoryview` reads without a copy.
     fn column(&self, name: &str, start: usize, stop: usize) -> PyResult<Column> {
-        rows_of(start, stop, self.table.rows())?;
-        let Some(at) = PATH_COLUMNS.iter().position(|column| *column == name) else {
-            return Err(PyValueError::new_err(format!(
-                "Paths has no column {name:?}"
-            )));
-        };
-        Ok(Column {
-            table: Arc::clone(&self.table) as Arc<dyn Columns>,
-            name: PATH_COLUMNS[at],
-            start,
-            stop,
-        })
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.rows())?;
+            let Some(at) = PATH_COLUMNS.iter().position(|column| *column == name) else {
+                return Err(PyValueError::new_err(format!(
+                    "Paths has no column {name:?}"
+                )));
+            };
+            Ok(Column {
+                table: Arc::clone(&self.table) as Arc<dyn Columns>,
+                name: PATH_COLUMNS[at],
+                start,
+                stop,
+            })
+        })?
     }
 
     /// Returns the graphics contexts that the `context` column indexes, as
     /// `(clips, groups, marks, states)` in the tuple forms of `page_content`.
-    fn contexts(&self) -> (&[ClipTuple], &[GroupTuple], &[MarkTuple], &[StateTuple]) {
-        let contexts = &*self.contexts;
-        (
-            &contexts.clips,
-            &contexts.groups,
-            &contexts.marks,
-            &contexts.states,
-        )
+    fn contexts(&self) -> PyResult<ContextRows<'_>> {
+        crate::errors::boundary(|| {
+            let contexts = &*self.contexts;
+            (
+                contexts.clips.as_slice(),
+                contexts.groups.as_slice(),
+                contexts.marks.as_slice(),
+                contexts.states.as_slice(),
+            )
+        })
     }
 
     /// Returns the pattern paints that the pattern columns index, in the
     /// tuple form of `page_content`.
-    fn patterns(&self) -> &[PaintTuple] {
-        &self.table.patterns
+    fn patterns(&self) -> PyResult<&[PaintTuple]> {
+        crate::errors::boundary(|| self.table.patterns.as_slice())
+    }
+
+    /// Samples a retained axial/radial shading only when a canvas repaints it.
+    #[expect(
+        clippy::type_complexity,
+        reason = "the private shading tuple crossing into Python"
+    )]
+    fn sample_shading(
+        &self,
+        py: Python<'_>,
+        pattern: usize,
+        operation: &OperationBudget,
+    ) -> PyResult<
+        Option<(
+            bool,
+            [f64; 6],
+            [bool; 2],
+            Vec<[f64; 5]>,
+            Option<BBox>,
+            Option<[f64; 4]>,
+        )>,
+    > {
+        crate::errors::boundary(|| {
+            operation.ensure_active()?;
+            let sampled = py
+                .detach(|| self.table.sample_shading(pattern, &operation.operation))
+                .map_err(|error| match error {
+                    pyropdf_engine::extract::Error::Limit(refusal) => limit_error(&refusal),
+                    other => PdfError::new_err(other.to_string()),
+                })?;
+            if let Some((_, _, _, stops, _, _)) = &sampled {
+                // Python's temporary lists/floats and the retained ColorStop,
+                // Color, and tuple objects, before any conversion creates them.
+                operation
+                    .operation
+                    .charge(LimitCode::MemorySize, stops.len() as u64 * 512 + 256)
+                    .map_err(|refusal| limit_error(&refusal))?;
+            }
+            Ok(sampled)
+        })?
     }
 
     /// Returns the Arrow schema of the rows as a PyCapsule.
     fn arrow_schema<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyCapsule>> {
-        schema_capsule(py, &PATH_STRUCT)
+        crate::errors::boundary(|| schema_capsule(py, &PATH_STRUCT))?
     }
 
     /// Returns the rows `start..stop` as the PyCapsules of an Arrow schema
@@ -518,9 +625,11 @@ impl PathColumns {
         start: usize,
         stop: usize,
     ) -> PyResult<(Bound<'py, PyCapsule>, Bound<'py, PyCapsule>)> {
-        rows_of(start, stop, self.table.rows())?;
-        let array = path_array(&self.table, start, stop);
-        Ok((schema_capsule(py, &PATH_STRUCT)?, array_capsule(py, array)?))
+        crate::errors::boundary(|| {
+            rows_of(start, stop, self.table.rows())?;
+            let array = path_array(&self.table, start, stop);
+            Ok((schema_capsule(py, &PATH_STRUCT)?, array_capsule(py, array)?))
+        })?
     }
 }
 
@@ -542,71 +651,75 @@ impl Column {
         view: *mut ffi::Py_buffer,
         flags: c_int,
     ) -> PyResult<()> {
-        if view.is_null() {
-            return Err(PyBufferError::new_err("buffer view is null"));
-        }
-        if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
-            return Err(PyBufferError::new_err("the columns are read-only"));
-        }
-        let owner = slf.clone().into_any();
-        let column = slf.get();
-        let (bytes, format) = column
-            .table
-            .column(column.name, column.start, column.stop)
-            .ok_or_else(|| PyBufferError::new_err("the column is unknown"))?;
-        let itemsize: isize = match format.to_bytes() {
-            b"d" => 8,
-            b"f" | b"i" | b"I" => 4,
-            _ => 1,
-        };
-        let length = isize::try_from(bytes.len())
-            .map_err(|_| PyBufferError::new_err("the column is too large"))?;
-        // The shape lives in one allocation that `internal` owns until
-        // `__releasebuffer__`; the strides are those of a contiguous view.
-        let mut shape = Box::new([length / itemsize, itemsize]);
-        let shape_ptr = shape.as_mut_ptr();
-        let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
-        let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
-        // SAFETY: `view` was checked for null. The table never changes
-        // after it is built, and the owner reference keeps it alive. The
-        // shape and strides point into the boxed array that `internal` owns.
-        unsafe {
-            (*view).obj = owner.into_ptr();
-            (*view).buf = bytes.as_ptr().cast_mut().cast::<c_void>();
-            (*view).len = length;
-            (*view).readonly = 1;
-            (*view).itemsize = itemsize;
-            (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
-                format.as_ptr().cast_mut()
-            } else {
-                ptr::null_mut()
+        crate::errors::boundary(|| {
+            if view.is_null() {
+                return Err(PyBufferError::new_err("buffer view is null"));
+            }
+            if (flags & ffi::PyBUF_WRITABLE) == ffi::PyBUF_WRITABLE {
+                return Err(PyBufferError::new_err("the columns are read-only"));
+            }
+            let owner = slf.clone().into_any();
+            let column = slf.get();
+            let (bytes, format) = column
+                .table
+                .column(column.name, column.start, column.stop)
+                .ok_or_else(|| PyBufferError::new_err("the column is unknown"))?;
+            let itemsize: isize = match format.to_bytes() {
+                b"d" => 8,
+                b"f" | b"i" | b"I" => 4,
+                _ => 1,
             };
-            (*view).ndim = 1;
-            (*view).shape = if nd { shape_ptr } else { ptr::null_mut() };
-            (*view).strides = if nd && strides {
-                shape_ptr.add(1)
-            } else {
-                ptr::null_mut()
-            };
-            (*view).suboffsets = ptr::null_mut();
-            (*view).internal = Box::into_raw(shape).cast::<c_void>();
-        }
-        Ok(())
+            let length = isize::try_from(bytes.len())
+                .map_err(|_| PyBufferError::new_err("the column is too large"))?;
+            // The shape lives in one allocation that `internal` owns until
+            // `__releasebuffer__`; the strides are those of a contiguous view.
+            let mut shape = Box::new([length / itemsize, itemsize]);
+            let shape_ptr = shape.as_mut_ptr();
+            let nd = (flags & ffi::PyBUF_ND) == ffi::PyBUF_ND;
+            let strides = (flags & ffi::PyBUF_STRIDES) == ffi::PyBUF_STRIDES;
+            // SAFETY: `view` was checked for null. The table never changes
+            // after it is built, and the owner reference keeps it alive. The
+            // shape and strides point into the boxed array that `internal` owns.
+            unsafe {
+                (*view).obj = owner.into_ptr();
+                (*view).buf = bytes.as_ptr().cast_mut().cast::<c_void>();
+                (*view).len = length;
+                (*view).readonly = 1;
+                (*view).itemsize = itemsize;
+                (*view).format = if (flags & ffi::PyBUF_FORMAT) == ffi::PyBUF_FORMAT {
+                    format.as_ptr().cast_mut()
+                } else {
+                    ptr::null_mut()
+                };
+                (*view).ndim = 1;
+                (*view).shape = if nd { shape_ptr } else { ptr::null_mut() };
+                (*view).strides = if nd && strides {
+                    shape_ptr.add(1)
+                } else {
+                    ptr::null_mut()
+                };
+                (*view).suboffsets = ptr::null_mut();
+                (*view).internal = Box::into_raw(shape).cast::<c_void>();
+            }
+            Ok(())
+        })?
     }
 
     /// Releases the shape of one buffer view.
-    unsafe fn __releasebuffer__(&self, view: *mut ffi::Py_buffer) {
-        if view.is_null() {
-            return;
-        }
-        // SAFETY: `__getbuffer__` stored a boxed `[isize; 2]` in `internal`
-        // once for this view; the format is static.
-        unsafe {
-            let internal = (*view).internal;
-            if !internal.is_null() {
-                drop(Box::from_raw(internal.cast::<[isize; 2]>()));
+    unsafe fn __releasebuffer__(&self, view: *mut ffi::Py_buffer) -> PyResult<()> {
+        crate::errors::boundary(|| {
+            if view.is_null() {
+                return;
             }
-        }
+            // SAFETY: `__getbuffer__` stored a boxed `[isize; 2]` in `internal`
+            // once for this view; the format is static.
+            unsafe {
+                let internal = (*view).internal;
+                if !internal.is_null() {
+                    drop(Box::from_raw(internal.cast::<[isize; 2]>()));
+                }
+            }
+        })
     }
 }
 
@@ -781,6 +894,10 @@ unsafe extern "C" fn release_schema(schema: *mut ArrowSchema) {
 
 /// Returns the Arrow schema of `field` and its children. The recursion
 /// follows the static fields of this module, two levels deep at most.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "recursion and collection lengths follow only the static CHAR_STRUCT and PATH_STRUCT fields"
+)]
 fn schema(field: &Field) -> ArrowSchema {
     let (children, private_data) = if field.children.is_empty() {
         (ptr::null_mut(), ptr::null_mut())
@@ -900,6 +1017,10 @@ fn array(
 
 /// Returns the rows `start..stop` of `table` as an Arrow struct array of
 /// [`CHAR_STRUCT`], whose children read the columns from `start`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the child arrays correspond exactly to the 13 static CHAR_STRUCT fields"
+)]
 fn char_array(table: &Arc<CharTable>, start: usize, stop: usize) -> ArrowArray {
     let owner: Owner = table.clone();
     let length = stop - start;

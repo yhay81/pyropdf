@@ -18,6 +18,10 @@ use windows_sys::Win32::Security::{
 use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
 
 /// Copies the DACL of `source` to `destination`, verbatim.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "GetKernelObjectSecurity supplies the OS descriptor size; reserve is fallible and resize uses that capacity"
+)]
 fn copy_dacl(source: &Path, destination: &Path) -> io::Result<()> {
     // Rust's file opening already supports extended-length and UNC paths.
     let source = OpenOptions::new().access_mode(READ_CONTROL).open(source)?;
@@ -85,6 +89,8 @@ fn copy_dacl(source: &Path, destination: &Path) -> io::Result<()> {
 /// Copies the DACL of `source` to `destination`, with the GIL released.
 #[pyfunction]
 pub fn _copy_windows_dacl(py: Python<'_>, source: PathBuf, destination: PathBuf) -> PyResult<()> {
-    py.detach(|| copy_dacl(&source, &destination))?;
-    Ok(())
+    crate::errors::boundary(|| {
+        py.detach(|| copy_dacl(&source, &destination))?;
+        Ok(())
+    })?
 }

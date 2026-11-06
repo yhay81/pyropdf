@@ -56,9 +56,16 @@ Every error that pyropdf raises derives from `PdfError`:
 | Error | Raised when |
 | --- | --- |
 | `MalformedPdfError` | The input is not a readable PDF. |
+| `InternalError` | Rust panics in pyropdf or an engine; the message retains the panic. Please report this library defect. |
 | `PasswordError` | A password is wrong. |
 | `EncryptedDocumentError` | A locked document is read before `unlock`. |
 | `LimitError` | An operation reaches a limit or is cancelled; `code` names it. |
 | `StalePageError`, `StaleObjectError` | A handle outlives its page or object. |
 | `DocumentClosedError` | A document is used after `close`. |
 | `OcrError` | OCR models are missing or fail. |
+
+`InternalError` is caught by both `except PdfError` and `except Exception`.
+Failed transactions are discarded, and the same document remains usable.
+The process panic hook is unchanged: its default diagnostics still go to
+stderr. The boundary catches unwinding panics; it cannot recover from an
+aborting runtime.

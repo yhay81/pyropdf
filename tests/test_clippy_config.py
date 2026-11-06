@@ -4,8 +4,8 @@ DESIGN.md F6 and section 9: a collection that grows from input grows through
 the budget, and `crates/clippy.toml` refuses the methods that grow the
 standard collections and the store's values. Clippy reads the first
 `clippy.toml` that it meets going up from a crate's manifest, so a crate's own
-file replaces the shared one whole. A crate keeps one only until its issue
-adopts the shared configuration, and that file sets nothing.
+file replaces the shared one whole. Every crate adopts the shared
+configuration, so none may keep a configuration of its own.
 """
 
 from __future__ import annotations
@@ -17,10 +17,6 @@ ROOT = Path(__file__).resolve().parent.parent
 CRATES = ROOT / "crates"
 NAMES = ("clippy.toml", ".clippy.toml")
 
-# The crates that the shared configuration does not bind yet, and the issue
-# that adopts it for each one by deleting the crate's own file.
-UNBOUND = {"pyropdf-python": 677}
-
 
 def own_files(directory: Path) -> list[Path]:
     """Return the clippy configurations that `directory` holds itself."""
@@ -29,18 +25,9 @@ def own_files(directory: Path) -> list[Path]:
 
 def test_the_crates_read_the_shared_configuration() -> None:
     crates = sorted(manifest.parent for manifest in CRATES.glob("*/Cargo.toml"))
-    assert {"pyropdf-store", "pyropdf-schema", "pyropdf-engine"} <= {crate.name for crate in crates}
+    assert {"pyropdf-store", "pyropdf-schema", "pyropdf-engine", "pyropdf-python"} <= {crate.name for crate in crates}
     for crate in crates:
-        if crate.name in UNBOUND:
-            continue
         assert own_files(crate) == [], f"{crate.name} would not read crates/clippy.toml"
-
-
-def test_an_unbound_crate_sets_nothing() -> None:
-    for name in UNBOUND:
-        files = own_files(CRATES / name)
-        assert len(files) == 1, f"{name} would read crates/clippy.toml"
-        assert tomllib.loads(files[0].read_text(encoding="utf-8")) == {}
 
 
 def test_nothing_outside_the_crates_reads_a_configuration() -> None:

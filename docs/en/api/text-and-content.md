@@ -363,7 +363,7 @@ The display-space font size.
 
 What a gradient paints beyond the two ends of its line.
 
-Members: `PAD`, `NONE`, `REPEAT`, `REFLECT`.
+Members: `PAD`, `PAD_START`, `PAD_END`, `NONE`, `REPEAT`, `REFLECT`.
 
 ## `GraphicsContext`
 
@@ -420,6 +420,11 @@ Image(
 ```
 
 An image painted on the page.
+
+`xref` is the object number, including for stencil masks, or zero for
+an inline image. `encoded_size` is the byte length reported by the
+interpreter before decoding image filters; for inline images, it can
+include whitespace before `EI`.
 
 ## `ImageMask`
 
@@ -736,6 +741,9 @@ ShadingPattern(*, shading_type: ShadingType | None, matrix: Matrix, opacity: flo
 
 A paint that a shading fills, from a shading pattern or `sh`.
 
+Read axial and radial paints retain their color function without sampling
+it during extraction. `Canvas.draw` samples it when repainting.
+
 ## `ShadingType`
 
 A shading type of ISO 32000-2 §8.7.4.5.
@@ -935,7 +943,7 @@ A transparency group and what it applies to everything inside it.
 
 ## `Unmapped`
 
-`Unmapped = typing.Literal['skip', 'replacement', 'glyph_id']`
+`Unmapped = typing.Literal['skip', 'replacement', 'glyph_id', 'type3_char_code']`
 
 ## `Word`
 

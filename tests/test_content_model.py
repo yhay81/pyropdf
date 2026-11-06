@@ -95,6 +95,31 @@ def assert_color(paint: pyropdf.Paint | None, rgb: tuple[float, float, float], a
     assert paint.alpha == pytest.approx(alpha, abs=1 / 255)
 
 
+def stencil_page(*, inline: bool, nested: bool = False) -> pyropdf.Page:
+    """Paint the same two-by-two stencil twice, optionally through a Form XObject."""
+    samples = "\x40\x00"
+    objects = {}
+    if inline:
+        drawing = f"BI /W 2 /H 2 /IM true /BPC 1 ID {samples} EI"
+        resources = ""
+    else:
+        drawing = "/Im Do"
+        resources = "/XObject << /Im 6 0 R >>"
+        objects[6] = stream_object(
+            samples, "/Type /XObject /Subtype /Image /Width 2 /Height 2 /ImageMask true /BitsPerComponent 1"
+        )
+    if nested:
+        objects[7] = stream_object(
+            drawing, f"/Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << {resources} >>"
+        )
+        drawing, resources = "/Fm Do", "/XObject << /Fm 7 0 R >>"
+    return page_with(
+        f"q 0 0 1 rg 20 0 0 20 10 10 cm {drawing} Q\nq 0 0 1 rg 20 0 0 20 40 10 cm {drawing} Q",
+        resources=resources,
+        objects=objects,
+    )
+
+
 @pytest.mark.spec("paths", "interpret")
 def test_paths_carry_their_fill_stroke_and_line_style() -> None:
     page = page_with(
@@ -374,6 +399,23 @@ def test_stencil_masks_are_images_without_an_object() -> None:
     assert image.xref == 0
     assert image.colorspace == ""
     assert image.bbox == pytest.approx(Rect(10, 70, 30, 90))
+
+
+@pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("nested", [False, True])
+def test_stencil_masks_keep_their_stream_identity_and_placement(*, inline: bool, nested: bool) -> None:
+    page = stencil_page(inline=inline, nested=nested)
+    images = page.content().images
+    assert len(images) == 2
+    for image, x in zip(images, (10, 40), strict=True):
+        assert image.is_stencil
+        assert image.xref == (0 if inline else 6)
+        # hayro's inline stream range includes the space before EI, as for raster images.
+        assert image.encoded_size == (3 if inline else 2)
+        assert (image.width, image.height, image.bits, image.components) == (2, 2, 1, 1)
+        assert image.colorspace == ""
+        assert image.mask is None
+        assert image.bbox == pytest.approx(Rect(x, 70, x + 20, 90))
 
 
 @pytest.mark.spec("type3-fonts", "interpret")

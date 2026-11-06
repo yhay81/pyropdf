@@ -104,6 +104,7 @@ pub(crate) fn text_options(options: OptionsTuple) -> PyResult<TextOptions> {
         0 => Unmapped::Skip,
         1 => Unmapped::Replacement,
         2 => Unmapped::GlyphId,
+        3 => Unmapped::Type3CharCode,
         other => {
             return Err(PyValueError::new_err(format!(
                 "unknown unmapped code {other}"
@@ -144,24 +145,25 @@ pub fn page_text(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(String, usize)> {
-    let key = text_key(options, &Fallback::default());
-    let options = text_options(options)?;
-    let budget = document.call_budget(&[
-        (LimitCode::TextGlyphCount, max_glyphs),
-        (LimitCode::TextSize, max_size),
-    ])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
-    py.detach(|| {
-        let reference = Reference::new(number, generation);
-        let (at, page) = index
-            .index_of(reference)
-            .and_then(|at| Some((at, index.get(at)?)))
-            .ok_or_else(|| stale(number, generation))?;
-        let key = PageKey {
-            page: reference,
-            kind: PageKind::Text(key),
-        };
-        let result = document.page_result(
+    crate::errors::boundary(|| {
+        let key = text_key(options, &Fallback::default());
+        let options = text_options(options)?;
+        let budget = document.call_budget(&[
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        let (version, index) = crate::pages::index_with(document, None, &budget)?;
+        py.detach(|| {
+            let reference = Reference::new(number, generation);
+            let (at, page) = index
+                .index_of(reference)
+                .and_then(|at| Some((at, index.get(at)?)))
+                .ok_or_else(|| stale(number, generation))?;
+            let key = PageKey {
+                page: reference,
+                kind: PageKind::Text(key),
+            };
+            let result = document.page_result(
             &key,
             &version,
             page,
@@ -183,11 +185,12 @@ pub fn page_text(
                 })
             },
         )?;
-        match &*result {
-            PageResult::Text { text, skipped, .. } => Ok((text.clone(), *skipped)),
-            _ => Err(mismatch()),
-        }
-    })
+            match &*result {
+                PageResult::Text { text, skipped, .. } => Ok((text.clone(), *skipped)),
+                _ => Err(mismatch()),
+            }
+        })
+    })?
 }
 
 /// Returns the text of `pages`, every page for `None`, joined in their
@@ -202,30 +205,32 @@ pub fn document_text(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(String, usize)> {
-    let options = text_options(options)?;
-    let budget = document.call_budget(&[
-        (LimitCode::TextGlyphCount, max_glyphs),
-        (LimitCode::TextSize, max_size),
-    ])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
-    let indexes = crate::pages::entries(pages, index.len())?;
-    py.detach(|| {
-        let mut text = String::new();
-        let mut skipped = 0usize;
-        if indexes.is_empty() {
-            return Ok((text, skipped));
-        }
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        for at in indexes {
-            let (page, _) = extract::page_text(&bridged, at, &options, &budget, &mut text)
-                .map_err(text_error)?;
-            skipped = skipped.saturating_add(page);
-        }
-        Ok((text, skipped))
-    })
+    crate::errors::boundary(|| {
+        let options = text_options(options)?;
+        let budget = document.call_budget(&[
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        let (version, index) = crate::pages::index_with(document, None, &budget)?;
+        let indexes = crate::pages::entries(pages, index.len())?;
+        py.detach(|| {
+            let mut text = String::new();
+            let mut skipped = 0usize;
+            if indexes.is_empty() {
+                return Ok((text, skipped));
+            }
+            let bridged = document
+                .bridge
+                .get(&version, &index, &budget)
+                .map_err(|e| bridge_error(&e))?;
+            for at in indexes {
+                let (page, _) = extract::page_text(&bridged, at, &options, &budget, &mut text)
+                    .map_err(text_error)?;
+                skipped = skipped.saturating_add(page);
+            }
+            Ok((text, skipped))
+        })
+    })?
 }
 
 /// The layout of a page as `page_layout` returns it: `(width, height,
@@ -253,29 +258,31 @@ pub fn page_layout(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<LayoutTuple> {
-    let limits = (max_glyphs, max_size);
-    with_layout(
-        py,
-        document,
-        (number, generation),
-        options,
-        chars,
-        limits,
-        |layout| {
-            let columns = if chars {
-                Some(CharColumns::new(&layout.blocks)?)
-            } else {
-                None
-            };
-            Ok((
-                layout.width,
-                layout.height,
-                layout.blocks.clone(),
-                layout.skipped,
-                columns,
-            ))
-        },
-    )
+    crate::errors::boundary(|| {
+        let limits = (max_glyphs, max_size);
+        with_layout(
+            py,
+            document,
+            (number, generation),
+            options,
+            chars,
+            limits,
+            |layout, budget| {
+                let columns = if chars {
+                    Some(CharColumns::new(&layout.blocks, budget)?)
+                } else {
+                    None
+                };
+                Ok((
+                    layout.width,
+                    layout.height,
+                    layout.blocks.clone(),
+                    layout.skipped,
+                    columns,
+                ))
+            },
+        )
+    })?
 }
 
 /// Returns the columns of the characters of the page whose object is
@@ -292,16 +299,18 @@ pub fn page_chars(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(CharColumns, usize)> {
-    let limits = (max_glyphs, max_size);
-    with_layout(
-        py,
-        document,
-        (number, generation),
-        options,
-        true,
-        limits,
-        |layout| Ok((CharColumns::new(&layout.blocks)?, layout.skipped)),
-    )
+    crate::errors::boundary(|| {
+        let limits = (max_glyphs, max_size);
+        with_layout(
+            py,
+            document,
+            (number, generation),
+            options,
+            true,
+            limits,
+            |layout, budget| Ok((CharColumns::new(&layout.blocks, budget)?, layout.skipped)),
+        )
+    })?
 }
 
 /// Calls `then` with the memoized layout of the page `(number,
@@ -315,7 +324,7 @@ fn with_layout<T: Send>(
     options: OptionsTuple,
     chars: bool,
     (max_glyphs, max_size): (Option<u64>, Option<u64>),
-    then: impl FnOnce(&PageLayout) -> PyResult<T> + Send,
+    then: impl FnOnce(&PageLayout, &Budget) -> PyResult<T> + Send,
 ) -> PyResult<T> {
     let fallback = document.fallback();
     let key = text_key(options, &fallback);
@@ -373,7 +382,7 @@ fn with_layout<T: Send>(
             },
         )?;
         match &*result {
-            PageResult::Layout(layout) => then(layout),
+            PageResult::Layout(layout) => then(layout, &budget),
             _ => Err(mismatch()),
         }
     })
@@ -408,32 +417,34 @@ pub fn page_search(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(Hits, usize)> {
-    let options = text_options(options)?;
-    let budget = document.call_budget(&[
-        (LimitCode::SearchHitCount, max_hits),
-        (LimitCode::TextGlyphCount, max_glyphs),
-        (LimitCode::TextSize, max_size),
-    ])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
-    let fallback = document.fallback();
-    py.detach(|| {
-        let reference = Reference::new(number, generation);
-        let at = index
-            .index_of(reference)
-            .ok_or_else(|| stale(number, generation))?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        let (hits, skipped) =
-            extract::page_search(&bridged, &fallback, at, &options, needle, quads, &budget)
-                .map_err(text_error)?;
-        let hits = match hits {
-            SearchHits::Boxes(boxes) => Hits::Boxes(boxes),
-            SearchHits::Quads(quads) => Hits::Quads(quads),
-        };
-        Ok((hits, skipped))
-    })
+    crate::errors::boundary(|| {
+        let options = text_options(options)?;
+        let budget = document.call_budget(&[
+            (LimitCode::SearchHitCount, max_hits),
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        let (version, index) = crate::pages::index_with(document, None, &budget)?;
+        let fallback = document.fallback();
+        py.detach(|| {
+            let reference = Reference::new(number, generation);
+            let at = index
+                .index_of(reference)
+                .ok_or_else(|| stale(number, generation))?;
+            let bridged = document
+                .bridge
+                .get(&version, &index, &budget)
+                .map_err(|e| bridge_error(&e))?;
+            let (hits, skipped) =
+                extract::page_search(&bridged, &fallback, at, &options, needle, quads, &budget)
+                    .map_err(text_error)?;
+            let hits = match hits {
+                SearchHits::Boxes(boxes) => Hits::Boxes(boxes),
+                SearchHits::Quads(quads) => Hits::Quads(quads),
+            };
+            Ok((hits, skipped))
+        })
+    })?
 }
 
 /// Returns the text that a viewer selects by dragging from `start` to `end`
@@ -456,28 +467,30 @@ pub fn page_selection(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(String, usize)> {
-    if ![start.0, start.1, end.0, end.1]
-        .iter()
-        .all(|value| value.is_finite())
-    {
-        return Err(PyValueError::new_err("selection points must be finite"));
-    }
-    let options = text_options(options)?;
-    let budget = document.call_budget(&[
-        (LimitCode::TextGlyphCount, max_glyphs),
-        (LimitCode::TextSize, max_size),
-    ])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
-    py.detach(|| {
-        let at = index
-            .index_of(Reference::new(number, generation))
-            .ok_or_else(|| stale(number, generation))?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        extract::page_selection(&bridged, at, &options, start, end, &budget).map_err(text_error)
-    })
+    crate::errors::boundary(|| {
+        if ![start.0, start.1, end.0, end.1]
+            .iter()
+            .all(|value| value.is_finite())
+        {
+            return Err(PyValueError::new_err("selection points must be finite"));
+        }
+        let options = text_options(options)?;
+        let budget = document.call_budget(&[
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        let (version, index) = crate::pages::index_with(document, None, &budget)?;
+        py.detach(|| {
+            let at = index
+                .index_of(Reference::new(number, generation))
+                .ok_or_else(|| stale(number, generation))?;
+            let bridged = document
+                .bridge
+                .get(&version, &index, &budget)
+                .map_err(|e| bridge_error(&e))?;
+            extract::page_selection(&bridged, at, &options, start, end, &budget).map_err(text_error)
+        })
+    })?
 }
 
 /// Returns the tables on the page whose object is `number` and
@@ -500,19 +513,21 @@ pub fn page_tables(
     max_glyphs: Option<u64>,
     max_size: Option<u64>,
 ) -> PyResult<(Vec<TableTuple>, usize)> {
-    let budget = document.call_budget(&[
-        (LimitCode::TextGlyphCount, max_glyphs),
-        (LimitCode::TextSize, max_size),
-    ])?;
-    let (version, index) = crate::pages::index_with(document, None, &budget)?;
-    py.detach(|| {
-        let at = index
-            .index_of(Reference::new(number, generation))
-            .ok_or_else(|| stale(number, generation))?;
-        let bridged = document
-            .bridge
-            .get(&version, &index, &budget)
-            .map_err(|e| bridge_error(&e))?;
-        extract::page_tables(&bridged, at, text_strategy, clip, &budget).map_err(text_error)
-    })
+    crate::errors::boundary(|| {
+        let budget = document.call_budget(&[
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        let (version, index) = crate::pages::index_with(document, None, &budget)?;
+        py.detach(|| {
+            let at = index
+                .index_of(Reference::new(number, generation))
+                .ok_or_else(|| stale(number, generation))?;
+            let bridged = document
+                .bridge
+                .get(&version, &index, &budget)
+                .map_err(|e| bridge_error(&e))?;
+            extract::page_tables(&bridged, at, text_strategy, clip, &budget).map_err(text_error)
+        })
+    })?
 }

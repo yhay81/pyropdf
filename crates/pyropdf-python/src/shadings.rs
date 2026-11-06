@@ -5,7 +5,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyropdf_engine::content::shading::{Extend, Geometry, Gradient, ShadingError, Shadings, Stop};
+use pyropdf_engine::content::shading::{
+    Extend, Geometry, Gradient, ShadingError, ShadingMetadata, Shadings, Stop,
+};
 use pyropdf_store::value::Reference;
 
 use crate::document::_Document;
@@ -24,8 +26,8 @@ pub(crate) struct CanvasShadings {
 #[pymethods]
 impl CanvasShadings {
     #[new]
-    fn new() -> Self {
-        Self::default()
+    fn new() -> PyResult<Self> {
+        crate::errors::boundary(Self::default)
     }
 }
 
@@ -64,6 +66,10 @@ fn check_active(document: &_Document, operation: &OperationBudget) -> PyResult<(
 /// the canvas charged the memory they hold before it built them.
 #[pyfunction]
 #[allow(clippy::too_many_arguments)] // The fields of a gradient and where it goes.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Canvas._gradient charges _STOP_SIZE per stop before conversion, including this native copy"
+)]
 pub fn canvas_gradient(
     py: Python<'_>,
     document: &_Document,
@@ -74,56 +80,73 @@ pub fn canvas_gradient(
     stops: Vec<(f64, f64, f64, f64, f64)>,
     extend: &str,
     area: [f64; 4],
+    bbox: Option<[f64; 4]>,
+    background: Option<[f64; 4]>,
+    sampled: bool,
     operation: &OperationBudget,
 ) -> PyResult<(u32, Option<u32>, f64)> {
-    check_active(document, operation)?;
-    let extend = match extend {
-        "none" => Extend::None,
-        "pad" => Extend::Pad,
-        "repeat" => Extend::Repeat,
-        "reflect" => Extend::Reflect,
-        other => {
-            return Err(PyValueError::new_err(format!(
-                "unknown gradient extension {other:?}"
-            )));
-        }
-    };
-    let geometry = match radii {
-        None => Geometry::Axial { start, end },
-        Some((start_radius, end_radius)) => Geometry::Radial {
-            start,
-            start_radius,
-            end,
-            end_radius,
-        },
-    };
-    let stops: Vec<Stop> = stops
-        .into_iter()
-        .map(|(offset, red, green, blue, alpha)| Stop {
-            offset,
-            color: [red, green, blue],
-            alpha,
-        })
-        .collect();
-    let gradient = Gradient {
-        geometry,
-        stops: &stops,
-        extend,
-    };
-    let mut table = shadings
-        .table
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let painted = document.edit(py, |transaction, budget| {
-        table
-            .paint(transaction, &gradient, area, budget)
-            .map_err(|error| shading_error(&error))
-    })?;
-    Ok((
-        painted.shading.number(),
-        painted.mask.map(|mask| mask.number()),
-        painted.alpha,
-    ))
+    crate::errors::boundary(|| {
+        check_active(document, operation)?;
+        let extend = match extend {
+            "none" => Extend::None,
+            "pad" => Extend::Pad,
+            "pad_start" => Extend::PadStart,
+            "pad_end" => Extend::PadEnd,
+            "repeat" => Extend::Repeat,
+            "reflect" => Extend::Reflect,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown gradient extension {other:?}"
+                )));
+            }
+        };
+        let geometry = match radii {
+            None => Geometry::Axial { start, end },
+            Some((start_radius, end_radius)) => Geometry::Radial {
+                start,
+                start_radius,
+                end,
+                end_radius,
+            },
+        };
+        let stops: Vec<Stop> = stops
+            .into_iter()
+            .map(|(offset, red, green, blue, alpha)| Stop {
+                offset,
+                color: [red, green, blue],
+                alpha,
+            })
+            .collect();
+        let gradient = Gradient {
+            geometry,
+            stops: &stops,
+            extend,
+        };
+        let mut table = shadings
+            .table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let painted = document.edit(py, |transaction, budget| {
+            table
+                .paint_with_metadata(
+                    transaction,
+                    &gradient,
+                    area,
+                    ShadingMetadata {
+                        bbox,
+                        background,
+                        sampled,
+                    },
+                    budget,
+                )
+                .map_err(|error| shading_error(&error))
+        })?;
+        Ok((
+            painted.shading.number(),
+            painted.mask.map(|mask| mask.number()),
+            painted.alpha,
+        ))
+    })?
 }
 
 /// Writes or shares the shading pattern of object `shading` through `matrix`
@@ -137,15 +160,17 @@ pub fn canvas_gradient_pattern(
     matrix: [f64; 6],
     operation: &OperationBudget,
 ) -> PyResult<u32> {
-    check_active(document, operation)?;
-    let mut table = shadings
-        .table
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner);
-    let pattern = document.edit(py, |transaction, budget| {
-        table
-            .pattern(transaction, Reference::new(shading, 0), matrix, budget)
-            .map_err(|error| shading_error(&error))
-    })?;
-    Ok(pattern.number())
+    crate::errors::boundary(|| {
+        check_active(document, operation)?;
+        let mut table = shadings
+            .table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let pattern = document.edit(py, |transaction, budget| {
+            table
+                .pattern(transaction, Reference::new(shading, 0), matrix, budget)
+                .map_err(|error| shading_error(&error))
+        })?;
+        Ok(pattern.number())
+    })?
 }

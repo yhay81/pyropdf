@@ -54,6 +54,10 @@ pub(crate) enum Step {
 impl<'py> FromPyObject<'_, 'py> for Step {
     type Error = PyErr;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this is PyO3 argument conversion, before the binding body and its operation budget"
+    )]
     fn extract(step: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
         if let Ok(key) = step.cast::<PyBytes>() {
             return Ok(Self::Key(key.as_bytes().to_vec()));
@@ -63,6 +67,10 @@ impl<'py> FromPyObject<'_, 'py> for Step {
 }
 
 /// Describes a handle for errors, as `12 0 R/Kids[3]` or `trailer`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one slash and decoded key per already materialized path step, or one formatted usize index"
+)]
 fn describe(root: Root, path: &[Step]) -> String {
     let mut text = match root {
         Some((number, generation)) => format!("{number} {generation} R"),
@@ -212,12 +220,17 @@ fn tagged<'py>(
 
 /// Returns the value that a tagged Python value writes, reading the
 /// containers that it copies from `version`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each dictionary entry charges enough for its amortized backing capacity before insertion; arrays and bytes use BudgetVec"
+)]
 fn untagged(
     value: &Bound<'_, PyAny>,
     version: &Version,
     depth: usize,
     budget: &Budget,
 ) -> PyResult<Value> {
+    budget.poll().map_err(|error| limit_error(&error))?;
     if value.is_none() {
         return Ok(Value::Null);
     }
@@ -232,19 +245,23 @@ fn untagged(
     match tag.as_str() {
         "f" => {
             let number: f64 = item(1)?.extract()?;
-            let lexeme: Option<Vec<u8>> = item(2)?.extract()?;
+            let lexeme: Option<Bound<'_, PyBytes>> = item(2)?.extract()?;
             match lexeme {
-                Some(lexeme) => Real::from_lexeme(Bytes::from(lexeme))
+                Some(lexeme) => Real::from_lexeme(Bytes::from(input_bytes(&lexeme, budget)?))
                     .map(Value::Real)
                     .ok_or_else(|| PyValueError::new_err("a real's lexeme is not a PDF real")),
                 None if number.is_finite() => Ok(Value::from(number)),
                 None => Err(PyValueError::new_err("a real must be finite")),
             }
         }
-        "n" => Ok(Value::Name(Name::new(item(1)?.extract::<Vec<u8>>()?))),
-        "s" => Ok(Value::String(PdfString::literal(
-            item(1)?.extract::<Vec<u8>>()?,
-        ))),
+        "n" => Ok(Value::Name(Name::new(input_bytes(
+            item(1)?.cast::<PyBytes>()?,
+            budget,
+        )?))),
+        "s" => Ok(Value::String(PdfString::literal(input_bytes(
+            item(1)?.cast::<PyBytes>()?,
+            budget,
+        )?))),
         "r" => Ok(Value::Reference(Reference::new(
             item(1)?.extract()?,
             item(2)?.extract()?,
@@ -257,20 +274,31 @@ fn untagged(
         "a" => {
             let items = item(1)?;
             let items = items.cast::<PyList>()?;
-            let mut array = Array::new();
+            let mut array = BudgetVec::new(budget);
+            array
+                .try_reserve_exact(items.len())
+                .map_err(|error| limit_error(&error))?;
             for element in items.iter() {
-                array.push(untagged(&element, version, depth + 1, budget)?);
+                array
+                    .try_push(untagged(&element, version, depth + 1, budget)?)
+                    .map_err(|error| limit_error(&error))?;
             }
-            Ok(Value::Array(array))
+            Ok(Value::Array(Array::from(array.into_vec())))
         }
         "d" => {
             let entries = item(1)?;
             let entries = entries.cast::<PyList>()?;
             let mut dict = Dict::new();
             for entry in entries.iter() {
-                let (key, element): (Vec<u8>, Bound<'_, PyAny>) = entry.extract()?;
+                let (key, element): (Bound<'_, PyBytes>, Bound<'_, PyAny>) = entry.extract()?;
+                budget
+                    .charge(
+                        LimitCode::MemorySize,
+                        (4 * size_of::<(Name, Value)>()) as u64,
+                    )
+                    .map_err(|error| limit_error(&error))?;
                 dict.insert(
-                    Name::new(key),
+                    Name::new(input_bytes(&key, budget)?),
                     untagged(&element, version, depth + 1, budget)?,
                 );
             }
@@ -280,10 +308,20 @@ fn untagged(
             let root: Root = item(1)?.extract()?;
             let path: Vec<Step> = item(2)?.extract()?;
             let value = root_value(version, root, &path, budget)?;
-            Ok(walk(&value, root, &path)?.clone())
+            refs::copy_for_edit(walk(&value, root, &path)?, budget)
+                .map_err(|error| store_error(&error))
         }
         _ => Err(PyTypeError::new_err(format!("unknown value tag {tag:?}"))),
     }
+}
+
+/// Checks the borrowed Python bytes before allocating their Rust copy.
+fn input_bytes(bytes: &Bound<'_, PyBytes>, budget: &Budget) -> PyResult<Vec<u8>> {
+    let mut copied = BudgetVec::new(budget);
+    copied
+        .try_extend_from_slice(bytes.as_bytes())
+        .map_err(|error| limit_error(&error))?;
+    Ok(copied.into_vec())
 }
 
 /// Writes `value` as the root of a handle: the trailer, or an object that
@@ -320,7 +358,11 @@ fn change(
     change: impl FnOnce(&mut Value, &Version, &Budget) -> PyResult<()>,
 ) -> PyResult<()> {
     document.edit(py, |transaction, budget| {
-        let mut value = (*root_value(transaction.version(), root, path, budget)?).clone();
+        let mut value = refs::copy_for_edit(
+            root_value(transaction.version(), root, path, budget)?.as_ref(),
+            budget,
+        )
+        .map_err(|error| store_error(&error))?;
         change(
             walk_mut(&mut value, root, path)?,
             transaction.version(),
@@ -343,31 +385,35 @@ pub fn object_lookup<'py>(
     document: &_Document,
     number: u32,
 ) -> PyResult<Option<(u16, Bound<'py, PyAny>)>> {
-    let version = document.reading()?;
-    let budget = document.budget();
-    let Some(object) = version.get(number, &budget).map_err(|e| store_error(&e))? else {
-        return Ok(None);
-    };
-    let value = tagged(py, &version, object.value(), None, &budget)?;
-    Ok(Some((object.generation(), value)))
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        let Some(object) = version.get(number, &budget).map_err(|e| store_error(&e))? else {
+            return Ok(None);
+        };
+        let value = tagged(py, &version, object.value(), None, &budget)?;
+        Ok(Some((object.generation(), value)))
+    })?
 }
 
 /// Returns the numbers of the objects in use, ascending.
 #[pyfunction]
 pub fn object_numbers(document: &_Document) -> PyResult<Vec<u32>> {
-    let version = document.reading()?;
-    let budget = document.budget();
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    let mut numbers = BudgetVec::new(&budget);
-    version.base().numbers(&mut numbers).map_err(store)?;
-    for (number, _) in version.slots() {
-        numbers.try_push(number).map_err(|e| limit_error(&e))?;
-    }
-    let mut numbers = numbers.into_vec();
-    numbers.sort_unstable();
-    numbers.dedup();
-    numbers.retain(|&number| version.generation(number).is_some());
-    Ok(numbers)
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let mut numbers = BudgetVec::new(&budget);
+        version.base().numbers(&mut numbers).map_err(store)?;
+        for (number, _) in version.slots() {
+            numbers.try_push(number).map_err(|e| limit_error(&e))?;
+        }
+        let mut numbers = numbers.into_vec();
+        numbers.sort_unstable();
+        numbers.dedup();
+        numbers.retain(|&number| version.generation(number).is_some());
+        Ok(numbers)
+    })?
 }
 
 /// Returns the tagged child at `step` of the container that `root` and
@@ -381,58 +427,72 @@ pub fn object_get<'py>(
     path: Vec<Step>,
     step: Step,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let version = document.reading()?;
-    let budget = document.budget();
-    let value = root_value(&version, root, &path, &budget)?;
-    let container = walk(&value, root, &path)?;
-    let Some(found) = child(container, &step) else {
-        return Err(match step {
-            Step::Key(key) => PyKeyError::new_err(String::from_utf8_lossy(&key).into_owned()),
-            Step::Index(index) => index_error(index),
-        });
-    };
-    tagged(py, &version, found, None, &budget)
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        let value = root_value(&version, root, &path, &budget)?;
+        let container = walk(&value, root, &path)?;
+        let Some(found) = child(container, &step) else {
+            return Err(match step {
+                Step::Key(key) => PyKeyError::new_err(String::from_utf8_lossy(&key).into_owned()),
+                Step::Index(index) => index_error(index),
+            });
+        };
+        tagged(py, &version, found, None, &budget)
+    })?
 }
 
 /// Returns the keys of the dictionary, or the stream's dictionary, that
 /// `root` and `path` name, in order.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one Python key per entry of the dictionary already parsed under the operation budget"
+)]
 pub fn object_keys<'py>(
     py: Python<'py>,
     document: &_Document,
     root: Root,
     path: Vec<Step>,
 ) -> PyResult<Vec<Bound<'py, PyBytes>>> {
-    let version = document.reading()?;
-    let value = root_value(&version, root, &path, &document.budget())?;
-    let dict = match walk(&value, root, &path)? {
-        Value::Dict(dict) => dict,
-        Value::Stream(stream) => stream.dict(),
-        _ => return Err(stale(root, &path)),
-    };
-    Ok(dict
-        .keys()
-        .map(|key| PyBytes::new(py, key.as_bytes()))
-        .collect())
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let value = root_value(&version, root, &path, &document.budget())?;
+        let dict = match walk(&value, root, &path)? {
+            Value::Dict(dict) => dict,
+            Value::Stream(stream) => stream.dict(),
+            _ => return Err(stale(root, &path)),
+        };
+        Ok(dict
+            .keys()
+            .map(|key| PyBytes::new(py, key.as_bytes()))
+            .collect())
+    })?
 }
 
 /// Returns the number of entries or elements of the container that `root`
 /// and `path` name.
 #[pyfunction]
 pub fn object_len(document: &_Document, root: Root, path: Vec<Step>) -> PyResult<usize> {
-    let version = document.reading()?;
-    let value = root_value(&version, root, &path, &document.budget())?;
-    Ok(match walk(&value, root, &path)? {
-        Value::Dict(dict) => dict.len(),
-        Value::Stream(stream) => stream.dict().len(),
-        Value::Array(array) => array.len(),
-        _ => return Err(stale(root, &path)),
-    })
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let value = root_value(&version, root, &path, &document.budget())?;
+        Ok(match walk(&value, root, &path)? {
+            Value::Dict(dict) => dict.len(),
+            Value::Stream(stream) => stream.dict().len(),
+            Value::Array(array) => array.len(),
+            _ => return Err(stale(root, &path)),
+        })
+    })?
 }
 
 /// Writes the tagged `value` at `step` of the container that `root` and
 /// `path` name, in one transaction.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one caller-supplied key is inserted per edit; the value and existing container are copied through the budget"
+)]
 pub fn object_set(
     py: Python<'_>,
     document: &_Document,
@@ -441,22 +501,24 @@ pub fn object_set(
     step: Step,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    change(py, document, root, &path, |container, version, budget| {
-        let value = untagged(value, version, 1, budget)?;
-        match (container, step) {
-            (Value::Dict(dict), Step::Key(key)) => {
-                dict.insert(Name::new(key), value);
+    crate::errors::boundary(|| {
+        change(py, document, root, &path, |container, version, budget| {
+            let value = untagged(value, version, 1, budget)?;
+            match (container, step) {
+                (Value::Dict(dict), Step::Key(key)) => {
+                    dict.insert(Name::new(key), value);
+                }
+                (Value::Stream(stream), Step::Key(key)) => {
+                    stream.dict_mut().insert(Name::new(key), value);
+                }
+                (Value::Array(array), Step::Index(index)) => {
+                    *array.get_mut(index).ok_or_else(|| index_error(index))? = value;
+                }
+                _ => return Err(PyTypeError::new_err("the step does not fit the container")),
             }
-            (Value::Stream(stream), Step::Key(key)) => {
-                stream.dict_mut().insert(Name::new(key), value);
-            }
-            (Value::Array(array), Step::Index(index)) => {
-                *array.get_mut(index).ok_or_else(|| index_error(index))? = value;
-            }
-            _ => return Err(PyTypeError::new_err("the step does not fit the container")),
-        }
-        Ok(())
-    })
+            Ok(())
+        })
+    })?
 }
 
 /// Removes `step` from the container that `root` and `path` name, in one
@@ -469,26 +531,32 @@ pub fn object_delete(
     path: Vec<Step>,
     step: Step,
 ) -> PyResult<()> {
-    change(py, document, root, &path, |container, _, _| {
-        let removed = match (container, &step) {
-            (Value::Dict(dict), Step::Key(key)) => dict.remove(key).is_some(),
-            (Value::Stream(stream), Step::Key(key)) => stream.dict_mut().remove(key).is_some(),
-            (Value::Array(array), Step::Index(index)) => array.remove(*index).is_some(),
-            _ => return Err(PyTypeError::new_err("the step does not fit the container")),
-        };
-        match (removed, step) {
-            (true, _) => Ok(()),
-            (false, Step::Key(key)) => Err(PyKeyError::new_err(
-                String::from_utf8_lossy(&key).into_owned(),
-            )),
-            (false, Step::Index(index)) => Err(index_error(index)),
-        }
-    })
+    crate::errors::boundary(|| {
+        change(py, document, root, &path, |container, _, _| {
+            let removed = match (container, &step) {
+                (Value::Dict(dict), Step::Key(key)) => dict.remove(key).is_some(),
+                (Value::Stream(stream), Step::Key(key)) => stream.dict_mut().remove(key).is_some(),
+                (Value::Array(array), Step::Index(index)) => array.remove(*index).is_some(),
+                _ => return Err(PyTypeError::new_err("the step does not fit the container")),
+            };
+            match (removed, step) {
+                (true, _) => Ok(()),
+                (false, Step::Key(key)) => Err(PyKeyError::new_err(
+                    String::from_utf8_lossy(&key).into_owned(),
+                )),
+                (false, Step::Index(index)) => Err(index_error(index)),
+            }
+        })
+    })?
 }
 
 /// Inserts the tagged `value` before `index`, at most the length, in the
 /// array that `root` and `path` name, in one transaction.
 #[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one element is inserted per edit; the value and existing container are copied through the budget"
+)]
 pub fn object_insert(
     py: Python<'_>,
     document: &_Document,
@@ -497,14 +565,16 @@ pub fn object_insert(
     index: usize,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    change(py, document, root, &path, |container, version, budget| {
-        let value = untagged(value, version, 1, budget)?;
-        let Value::Array(array) = container else {
-            return Err(PyTypeError::new_err("only an array takes an insertion"));
-        };
-        let at = index.min(array.len());
-        array.insert(at, value).map_err(|_| index_error(index))
-    })
+    crate::errors::boundary(|| {
+        change(py, document, root, &path, |container, version, budget| {
+            let value = untagged(value, version, 1, budget)?;
+            let Value::Array(array) = container else {
+                return Err(PyTypeError::new_err("only an array takes an insertion"));
+            };
+            let at = index.min(array.len());
+            array.insert(at, value).map_err(|_| index_error(index))
+        })
+    })?
 }
 
 /// Replaces object `number` with the tagged `value`, in one transaction;
@@ -516,16 +586,18 @@ pub fn object_replace(
     number: u32,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    document.edit(py, |transaction, budget| {
-        if transaction.version().generation(number).is_none() {
-            return Err(PyKeyError::new_err(number));
-        }
-        let value = untagged(value, transaction.version(), 0, budget)?;
-        transaction
-            .write(number, &value, budget)
-            .map_err(|e| store_error(&e))?;
-        Ok(())
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            if transaction.version().generation(number).is_none() {
+                return Err(PyKeyError::new_err(number));
+            }
+            let value = untagged(value, transaction.version(), 0, budget)?;
+            transaction
+                .write(number, &value, budget)
+                .map_err(|e| store_error(&e))?;
+            Ok(())
+        })
+    })?
 }
 
 /// Adds the tagged `value` as a new object, in one transaction, and returns
@@ -536,10 +608,12 @@ pub fn object_add(
     document: &_Document,
     value: &Bound<'_, PyAny>,
 ) -> PyResult<(u32, u16)> {
-    document.edit(py, |transaction, budget| {
-        let value = untagged(value, transaction.version(), 0, budget)?;
-        add(transaction, &value, budget)
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let value = untagged(value, transaction.version(), 0, budget)?;
+            add(transaction, &value, budget)
+        })
+    })?
 }
 
 fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResult<(u32, u16)> {
@@ -554,6 +628,10 @@ fn add(transaction: &mut Transaction, value: &Value, budget: &Budget) -> PyResul
 /// Sets the data of `stream` to `data`, given decoded, compressed with
 /// `/FlateDecode` when `compress`, and drops its previous filters. The copy
 /// and the compression are charged to `budget`, and compression polls it.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "inserts only the fixed Filter key"
+)]
 pub(crate) fn set_data(
     stream: &mut Stream,
     data: &[u8],
@@ -590,16 +668,18 @@ pub fn object_add_stream(
     data: &[u8],
     compress: bool,
 ) -> PyResult<(u32, u16)> {
-    document.edit(py, |transaction, budget| {
-        let Value::Dict(dict) = untagged(dict, transaction.version(), 0, budget)? else {
-            return Err(PyTypeError::new_err(
-                "a stream's dictionary must be a mapping",
-            ));
-        };
-        let mut stream = Stream::new(dict, Bytes::default());
-        set_data(&mut stream, data, compress, budget)?;
-        add(transaction, &Value::Stream(Box::new(stream)), budget)
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let Value::Dict(dict) = untagged(dict, transaction.version(), 0, budget)? else {
+                return Err(PyTypeError::new_err(
+                    "a stream's dictionary must be a mapping",
+                ));
+            };
+            let mut stream = Stream::new(dict, Bytes::default());
+            set_data(&mut stream, data, compress, budget)?;
+            add(transaction, &Value::Stream(Box::new(stream)), budget)
+        })
+    })?
 }
 
 /// Returns the data of the stream that `root` names, decoded through its
@@ -613,26 +693,28 @@ pub fn stream_read<'py>(
     decode: bool,
     max_size: Option<u64>,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let version = document.reading()?;
-    let budget = document.call_budget(&[(LimitCode::StreamDataSize, max_size)])?;
-    let value = root_value(&version, Some(root), &[], &budget)?;
-    let Value::Stream(stream) = &*value else {
-        return Err(stale(Some(root), &[]));
-    };
-    let limit = |len: usize| {
-        budget
-            .check(LimitCode::StreamDataSize, len as u64)
-            .map_err(|e| limit_error(&e))
-    };
-    if !decode {
-        limit(stream.data().len())?;
-        return Ok(PyBytes::new(py, stream.data()));
-    }
-    let data = py
-        .detach(|| stream.decoded(&budget))
-        .map_err(|e| store_error(&e))?;
-    limit(data.len())?;
-    Ok(PyBytes::new(py, &data))
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.call_budget(&[(LimitCode::StreamDataSize, max_size)])?;
+        let value = root_value(&version, Some(root), &[], &budget)?;
+        let Value::Stream(stream) = &*value else {
+            return Err(stale(Some(root), &[]));
+        };
+        let limit = |len: usize| {
+            budget
+                .check(LimitCode::StreamDataSize, len as u64)
+                .map_err(|e| limit_error(&e))
+        };
+        if !decode {
+            limit(stream.data().len())?;
+            return Ok(PyBytes::new(py, stream.data()));
+        }
+        let data = py
+            .detach(|| stream.decoded(&budget))
+            .map_err(|e| store_error(&e))?;
+        limit(data.len())?;
+        Ok(PyBytes::new(py, &data))
+    })?
 }
 
 /// Replaces the data of the stream that `root` names with `data`, given
@@ -645,18 +727,20 @@ pub fn stream_write(
     data: &[u8],
     compress: bool,
 ) -> PyResult<()> {
-    change(py, document, Some(root), &[], |value, _, budget| {
-        let Value::Stream(stream) = value else {
-            return Err(stale(Some(root), &[]));
-        };
-        set_data(stream, data, compress, budget)
-    })
+    crate::errors::boundary(|| {
+        change(py, document, Some(root), &[], |value, _, budget| {
+            let Value::Stream(stream) = value else {
+                return Err(stale(Some(root), &[]));
+            };
+            set_data(stream, data, compress, budget)
+        })
+    })?
 }
 
 /// Decodes a text string, as `String.text` does.
 #[pyfunction]
-pub fn decode_text_string(data: &[u8]) -> String {
-    crate::document::text_string(data)
+pub fn decode_text_string(data: &[u8]) -> PyResult<String> {
+    crate::errors::boundary(|| crate::document::text_string(data))
 }
 
 /// Frees the objects of `candidates` that nothing in the edit's version
@@ -670,23 +754,25 @@ pub fn object_free_unreferenced(
     document: &_Document,
     candidates: Vec<u32>,
 ) -> PyResult<Vec<u32>> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    document.edit(py, |transaction, budget| {
-        let parent = Arc::clone(transaction.parent());
-        let before = transaction.snapshot();
-        let references = document.references.get(&parent, budget).map_err(store)?;
-        let references = match parent.changes(&before, budget).map_err(store)? {
-            Some(changes) if !changes.is_empty() => Arc::new(
-                references
-                    .update(&mut Reads::new(&before, budget), &changes)
-                    .map_err(store)?,
-            ),
-            _ => references,
-        };
-        let freed = refs::unreferenced(&references, &[], &candidates, budget).map_err(store)?;
-        for &number in freed.iter() {
-            transaction.free(number, budget).map_err(store)?;
-        }
-        Ok(freed.into_vec())
-    })
+    crate::errors::boundary(|| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        document.edit(py, |transaction, budget| {
+            let parent = Arc::clone(transaction.parent());
+            let before = transaction.snapshot();
+            let references = document.references.get(&parent, budget).map_err(store)?;
+            let references = match parent.changes(&before, budget).map_err(store)? {
+                Some(changes) if !changes.is_empty() => Arc::new(
+                    references
+                        .update(&mut Reads::new(&before, budget), &changes)
+                        .map_err(store)?,
+                ),
+                _ => references,
+            };
+            let freed = refs::unreferenced(&references, &[], &candidates, budget).map_err(store)?;
+            for &number in freed.iter() {
+                transaction.free(number, budget).map_err(store)?;
+            }
+            Ok(freed.into_vec())
+        })
+    })?
 }

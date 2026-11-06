@@ -275,6 +275,10 @@ fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> PyResult<Option<Value>>
 }
 
 /// Charge a fallible allocation before growing an owned input-sized vector.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "MemorySize is charged before fallible reservation; push uses the reserved capacity"
+)]
 fn push<T>(items: &mut Vec<T>, value: T, budget: &Budget) -> PyResult<()> {
     budget.poll().map_err(|e| limit_error(&e))?;
     if items.len() == items.capacity() {
@@ -293,6 +297,10 @@ fn push<T>(items: &mut Vec<T>, value: T, budget: &Budget) -> PyResult<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "MemorySize pays for an entry and table overhead before fallible reservation"
+)]
 fn reserve_map<K: Eq + std::hash::Hash, V>(
     map: &mut HashMap<K, V>,
     budget: &Budget,
@@ -372,6 +380,10 @@ fn classify(reads: &mut Reads<'_>, kid: &Value) -> PyResult<Kid> {
 
 /// Marks node `id` visited, refusing more than [`MAX_NODES`]; returns
 /// whether it was new.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "MemorySize pays for an entry and table overhead before fallible reservation and insertion"
+)]
 fn insert_set(visited: &mut HashSet<Id>, id: Id, budget: &Budget) -> PyResult<bool> {
     budget.poll().map_err(|e| limit_error(&e))?;
     if visited.contains(&id) {
@@ -1016,33 +1028,37 @@ fn memoized(document: &_Document) -> PyResult<Arc<Form>> {
 /// then object.
 #[pyfunction]
 pub fn form_fields(py: Python<'_>, document: &_Document) -> PyResult<Vec<(String, Id)>> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        let form = memoized_at(document, &version, &budget)?;
-        let mut out = BudgetVec::new(&budget);
-        for field in &form.fields {
-            budget
-                .charge(LimitCode::MemorySize, field.name.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            out.try_push((field.name.clone(), field.id))
-                .map_err(|e| limit_error(&e))?;
-        }
-        Ok(out.into_vec())
-    })
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            let form = memoized_at(document, &version, &budget)?;
+            let mut out = BudgetVec::new(&budget);
+            for field in &form.fields {
+                budget
+                    .charge(LimitCode::MemorySize, field.name.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                out.try_push((field.name.clone(), field.id))
+                    .map_err(|e| limit_error(&e))?;
+            }
+            Ok(out.into_vec())
+        })
+    })?
 }
 
 /// Returns the object of the first terminal field named `name`, or `None`.
 #[pyfunction]
 pub fn form_field(py: Python<'_>, document: &_Document, name: &str) -> PyResult<Option<Id>> {
-    let form = py.detach(|| memoized(document))?;
-    let at = form
-        .fields
-        .partition_point(|field| field.name.as_str() < name);
-    Ok(form
-        .fields
-        .get(at)
-        .filter(|field| field.name == name)
-        .map(|field| field.id))
+    crate::errors::boundary(|| {
+        let form = py.detach(|| memoized(document))?;
+        let at = form
+            .fields
+            .partition_point(|field| field.name.as_str() < name);
+        Ok(form
+            .fields
+            .get(at)
+            .filter(|field| field.name == name)
+            .map(|field| field.id))
+    })?
 }
 
 /// Reads field `id` as a handle does: its full name, kind, inherited `/Ff`,
@@ -1053,27 +1069,29 @@ pub fn form_field_read(
     document: &_Document,
     id: Id,
 ) -> PyResult<(String, &'static str, i64, Option<String>)> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        let form = memoized_at(document, &version, &budget)?;
-        let field = form.field(id).ok_or_else(|| stale(id))?;
-        budget
-            .charge(
-                LimitCode::MemorySize,
-                field
-                    .name
-                    .len()
-                    .saturating_add(field.value.as_ref().map_or(0, |value| value.len()))
-                    as u64,
-            )
-            .map_err(|e| limit_error(&e))?;
-        Ok((
-            field.name.clone(),
-            field.kind,
-            field.flags,
-            field.value.as_deref().map(str::to_owned),
-        ))
-    })
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            let form = memoized_at(document, &version, &budget)?;
+            let field = form.field(id).ok_or_else(|| stale(id))?;
+            budget
+                .charge(
+                    LimitCode::MemorySize,
+                    field
+                        .name
+                        .len()
+                        .saturating_add(field.value.as_ref().map_or(0, |value| value.len()))
+                        as u64,
+                )
+                .map_err(|e| limit_error(&e))?;
+            Ok((
+                field.name.clone(),
+                field.kind,
+                field.flags,
+                field.value.as_deref().map(str::to_owned),
+            ))
+        })
+    })?
 }
 
 /// Returns entry `key` of field `id` or of the nearest field above it that
@@ -1118,56 +1136,58 @@ pub fn form_field_choices(
     document: &_Document,
     id: Id,
 ) -> PyResult<Vec<(String, String)>> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        memoized_at(document, &version, &budget)?
-            .field(id)
-            .ok_or_else(|| stale(id))?;
-        let mut reads = Reads::new(&version, &budget);
-        let Some(options) = inherited(&mut reads, id, "Opt")? else {
-            return Ok(Vec::new());
-        };
-        let Some(Value::Array(options)) = read(&mut reads, Some(&options))? else {
-            return Ok(Vec::new());
-        };
-        if options.len() > MAX_VALUE_ITEMS {
-            return Err(limit(format!(
-                "AcroForm choice options exceed the {MAX_VALUE_ITEMS}-item safety limit"
-            )));
-        }
-        let mut totals = (0, 0);
-        let mut choices = BudgetVec::new(&budget);
-        for option in options.iter() {
-            let mut text = |value: &Value| {
-                text(
-                    &mut reads,
-                    value,
-                    &mut totals,
-                    MAX_VALUE_BYTES,
-                    "choice-option",
-                )
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            memoized_at(document, &version, &budget)?
+                .field(id)
+                .ok_or_else(|| stale(id))?;
+            let mut reads = Reads::new(&version, &budget);
+            let Some(options) = inherited(&mut reads, id, "Opt")? else {
+                return Ok(Vec::new());
             };
-            let choice = match option {
-                Value::Array(pair) if pair.len() == 2 => {
-                    match (text(&pair.as_slice()[0])?, text(&pair.as_slice()[1])?) {
-                        (Some(value), Some(label)) => (value, label),
-                        _ => continue,
-                    }
-                }
-                option => match text(option)? {
-                    Some(value) => {
-                        budget
-                            .charge(LimitCode::MemorySize, value.len() as u64)
-                            .map_err(|e| limit_error(&e))?;
-                        (value.clone(), value)
-                    }
-                    None => continue,
-                },
+            let Some(Value::Array(options)) = read(&mut reads, Some(&options))? else {
+                return Ok(Vec::new());
             };
-            choices.try_push(choice).map_err(|e| limit_error(&e))?;
-        }
-        Ok(choices.into_vec())
-    })
+            if options.len() > MAX_VALUE_ITEMS {
+                return Err(limit(format!(
+                    "AcroForm choice options exceed the {MAX_VALUE_ITEMS}-item safety limit"
+                )));
+            }
+            let mut totals = (0, 0);
+            let mut choices = BudgetVec::new(&budget);
+            for option in options.iter() {
+                let mut text = |value: &Value| {
+                    text(
+                        &mut reads,
+                        value,
+                        &mut totals,
+                        MAX_VALUE_BYTES,
+                        "choice-option",
+                    )
+                };
+                let choice = match option {
+                    Value::Array(pair) if pair.len() == 2 => {
+                        match (text(&pair.as_slice()[0])?, text(&pair.as_slice()[1])?) {
+                            (Some(value), Some(label)) => (value, label),
+                            _ => continue,
+                        }
+                    }
+                    option => match text(option)? {
+                        Some(value) => {
+                            budget
+                                .charge(LimitCode::MemorySize, value.len() as u64)
+                                .map_err(|e| limit_error(&e))?;
+                            (value.clone(), value)
+                        }
+                        None => continue,
+                    },
+                };
+                choices.try_push(choice).map_err(|e| limit_error(&e))?;
+            }
+            Ok(choices.into_vec())
+        })
+    })?
 }
 
 /// Returns where the widgets of field `id` appear, in page order: the page
@@ -1178,41 +1198,43 @@ pub fn form_field_widgets(
     document: &_Document,
     id: Id,
 ) -> PyResult<Vec<(Id, Id, u32)>> {
-    py.detach(|| {
-        let (version, index, budget) = index(document)?;
-        let form = memoized_at(document, &version, &budget)?;
-        let field = form.field(id).ok_or_else(|| stale(id))?;
-        let mut widgets = HashSet::new();
-        for &widget in &field.widgets {
-            insert_set(&mut widgets, widget, &budget)?;
-        }
-        let mut reads = Reads::new(&version, &budget);
-        let mut out = BudgetVec::new(&budget);
-        for page in index.pages() {
-            budget.poll().map_err(|e| limit_error(&e))?;
-            let Some(object) = page.object() else {
-                continue;
-            };
-            let Some(Value::Array(items)) = read(&mut reads, page.dict().get("Annots"))? else {
-                continue;
-            };
-            budget
-                .check(LimitCode::AnnotationCount, items.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            for (at, item) in items.iter().enumerate() {
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, index, budget) = index(document)?;
+            let form = memoized_at(document, &version, &budget)?;
+            let field = form.field(id).ok_or_else(|| stale(id))?;
+            let mut widgets = HashSet::new();
+            for &widget in &field.widgets {
+                insert_set(&mut widgets, widget, &budget)?;
+            }
+            let mut reads = Reads::new(&version, &budget);
+            let mut out = BudgetVec::new(&budget);
+            for page in index.pages() {
                 budget.poll().map_err(|e| limit_error(&e))?;
-                if let Value::Reference(reference) = item
-                    && let Some((actual, _)) = object_location(&mut reads, *reference)?
-                    && widgets.contains(&actual)
-                {
-                    let at = u32::try_from(at).unwrap_or(u32::MAX);
-                    out.try_push((self::id(object), actual, at))
-                        .map_err(|e| limit_error(&e))?;
+                let Some(object) = page.object() else {
+                    continue;
+                };
+                let Some(Value::Array(items)) = read(&mut reads, page.dict().get("Annots"))? else {
+                    continue;
+                };
+                budget
+                    .check(LimitCode::AnnotationCount, items.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                for (at, item) in items.iter().enumerate() {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    if let Value::Reference(reference) = item
+                        && let Some((actual, _)) = object_location(&mut reads, *reference)?
+                        && widgets.contains(&actual)
+                    {
+                        let at = u32::try_from(at).unwrap_or(u32::MAX);
+                        out.try_push((self::id(object), actual, at))
+                            .map_err(|e| limit_error(&e))?;
+                    }
                 }
             }
-        }
-        Ok(out.into_vec())
-    })
+            Ok(out.into_vec())
+        })
+    })?
 }
 
 /// A widget as a handle reads it: its position in the page's `/Annots`;
@@ -1297,41 +1319,46 @@ pub fn widget_list(
     number: u32,
     generation: u16,
 ) -> PyResult<Option<Vec<WidgetRecord>>> {
-    py.detach(|| {
-        let (version, page_index, budget) = crate::pages::index(document)?;
-        let Some(annots) = Annots::read(
-            Arc::clone(&version),
-            page_index,
-            &budget,
-            number,
-            generation,
-        )?
-        else {
-            return Ok(None);
-        };
-        let form = memoized_at(document, &version, &budget)?;
-        let mut records = BudgetVec::new(&budget);
-        let mut reads = Reads::new(&version, &budget);
-        let mut totals = (0, 0);
-        for (index, item) in annots.items.iter().enumerate() {
-            let Some((id, dict)) = annots.entry(item)? else {
-                continue;
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, page_index, budget) = crate::pages::index(document)?;
+            let Some(annots) = Annots::read(
+                Arc::clone(&version),
+                page_index,
+                &budget,
+                number,
+                generation,
+            )?
+            else {
+                return Ok(None);
             };
-            let id = if id == (0, 0) {
-                id
-            } else {
-                let Some((actual, _)) = object_location(&mut reads, Reference::new(id.0, id.1))?
-                else {
+            let form = memoized_at(document, &version, &budget)?;
+            let mut records = BudgetVec::new(&budget);
+            let mut reads = Reads::new(&version, &budget);
+            let mut totals = (0, 0);
+            for (index, item) in annots.items.iter().enumerate() {
+                let Some((id, dict)) = annots.entry(item)? else {
                     continue;
                 };
-                actual
-            };
-            if let Some(record) = widget(&annots, &form, index, id, &dict, &mut totals, &budget)? {
-                records.try_push(record).map_err(|e| limit_error(&e))?;
+                let id = if id == (0, 0) {
+                    id
+                } else {
+                    let Some((actual, _)) =
+                        object_location(&mut reads, Reference::new(id.0, id.1))?
+                    else {
+                        continue;
+                    };
+                    actual
+                };
+                if let Some(record) =
+                    widget(&annots, &form, index, id, &dict, &mut totals, &budget)?
+                {
+                    records.try_push(record).map_err(|e| limit_error(&e))?;
+                }
             }
-        }
-        Ok(Some(records.into_vec()))
-    })
+            Ok(Some(records.into_vec()))
+        })
+    })?
 }
 
 /// Locate the same widget after its annotation reference changes through an alias.
@@ -1392,27 +1419,29 @@ pub fn widget_read(
     index: u32,
     id: Id,
 ) -> PyResult<Option<WidgetRecord>> {
-    py.detach(|| {
-        let (version, page_index, budget) = crate::pages::index(document)?;
-        let Some(annots) = Annots::read(
-            Arc::clone(&version),
-            page_index,
-            &budget,
-            number,
-            generation,
-        )?
-        else {
-            return Ok(None);
-        };
-        let mut reads = Reads::new(&version, &budget);
-        let (position, dict) = find_widget(&annots, index, id, &mut reads)?;
-        let form = memoized_at(document, &version, &budget)?;
-        widget(&annots, &form, position, id, &dict, &mut (0, 0), &budget)?
-            .map(Some)
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!("annotation {} is no longer a widget", id.0))
-            })
-    })
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, page_index, budget) = crate::pages::index(document)?;
+            let Some(annots) = Annots::read(
+                Arc::clone(&version),
+                page_index,
+                &budget,
+                number,
+                generation,
+            )?
+            else {
+                return Ok(None);
+            };
+            let mut reads = Reads::new(&version, &budget);
+            let (position, dict) = find_widget(&annots, index, id, &mut reads)?;
+            let form = memoized_at(document, &version, &budget)?;
+            widget(&annots, &form, position, id, &dict, &mut (0, 0), &budget)?
+                .map(Some)
+                .ok_or_else(|| {
+                    StaleObjectError::new_err(format!("annotation {} is no longer a widget", id.0))
+                })
+        })
+    })?
 }
 
 /// Where the form's `/Fields` array is written: as an object of its own,
@@ -1454,6 +1483,10 @@ type Group = (PdfString, Vec<(Reference, Reference)>);
 
 /// Returns the top-level radio buttons that share a name, each a field
 /// merged with its widget, by name in `/Fields` order.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserve_map charges and fallibly reserves the slot before insertion"
+)]
 fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> PyResult<Vec<Group>> {
     if fields.len() > MAX_EDGES {
         return Err(edges_error());
@@ -1530,16 +1563,22 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> PyResult<Vec<Group>> {
 /// made. Viewers and the walk otherwise see only one of them.
 #[pyfunction]
 pub fn form_repair_radio_groups(py: Python<'_>, document: &_Document) -> PyResult<u32> {
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = repair_radio_groups(transaction, budget);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = repair_radio_groups(transaction, budget);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "field and action keys come from fixed lists; replaced entries are charged through reserve_map"
+)]
 fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResult<u32> {
     let store = |e: pyropdf_store::Error| store_error(&e);
     let before = transaction.snapshot();
@@ -1564,16 +1603,28 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
             )
             .map_err(|e| limit_error(&e))?;
         let mut parent = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /FT key"
+        )]
         parent.insert(Name::from("FT"), Value::Name(Name::from("Btn")));
         budget
             .charge(LimitCode::MemorySize, title.as_bytes().len() as u64)
             .map_err(|e| limit_error(&e))?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /T key"
+        )]
         parent.insert(Name::from("T"), Value::String(title.clone()));
         let mut kids = BudgetVec::new(budget);
         for &(entry, _) in members {
             kids.try_push(Value::Reference(entry))
                 .map_err(|e| limit_error(&e))?;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Kids key"
+        )]
         parent.insert(
             Name::from("Kids"),
             Value::Array(Array::from(kids.into_vec())),
@@ -1593,6 +1644,10 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
                 && let Some(value) = member.get("V")
                 && read(&mut reads, Some(value))?.is_some()
             {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /V key"
+                )]
                 parent.insert(
                     Name::from("V"),
                     copy_for_edit(value, budget).map_err(store)?,
@@ -1615,6 +1670,10 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
             }
         }
         if !field_actions.is_empty() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /AA key"
+            )]
             parent.insert(Name::from("AA"), Value::Dict(field_actions));
         }
         let reference = transaction.allocate().map_err(store)?;
@@ -1644,9 +1703,17 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
                 if actions.is_empty() {
                     dict.remove("AA");
                 } else {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "this call inserts only the fixed /AA key"
+                    )]
                     dict.insert(Name::from("AA"), Value::Dict(actions));
                 }
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Parent key"
+            )]
             dict.insert(Name::from("Parent"), Value::Reference(reference));
             transaction
                 .write(member.number(), &Value::Dict(dict), budget)
@@ -1695,6 +1762,10 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
             let Value::Dict(mut dict) = copy_for_edit(&value, budget).map_err(store)? else {
                 return Ok(0);
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Fields key"
+            )]
             dict.insert(Name::from("Fields"), fields);
             (form.0, Value::Dict(dict))
         }
@@ -1709,6 +1780,10 @@ fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> PyResu
             let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
                 return Ok(0);
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Fields key"
+            )]
             form.insert(Name::from("Fields"), fields);
             (number, Value::Dict(catalog))
         }
@@ -1842,21 +1917,23 @@ pub fn form_field_fill(
     value: &Bound<'_, PyAny>,
     draw: bool,
 ) -> PyResult<()> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let value = FillValue::read(value, budget)?;
-        let savepoint = transaction.savepoint();
-        let result = fill(transaction, id, &value, budget, cache, draft, draw);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let value = FillValue::read(value, budget)?;
+            let savepoint = transaction.savepoint();
+            let result = fill(transaction, id, &value, budget, cache, draft, draw);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 fn fill(
@@ -1908,25 +1985,27 @@ pub fn form_field_draw_face(
     face: &_Font,
     font: Option<(u32, HashMap<u32, String>)>,
 ) -> PyResult<Vec<(u32, String)>> {
-    let Some(face) = face.embedded() else {
-        return Err(PdfError::new_err(
-            "form appearances draw an OpenType face, not a Standard 14 font",
-        ));
-    };
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = draw_face(transaction, id, face, font.as_ref(), budget, cache, draft);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        let Some(face) = face.embedded() else {
+            return Err(PdfError::new_err(
+                "form appearances draw an OpenType face, not a Standard 14 font",
+            ));
+        };
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = draw_face(transaction, id, face, font.as_ref(), budget, cache, draft);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 fn draw_face(
@@ -2067,9 +2146,17 @@ fn change<'v>(
     match text {
         Some(text) if button => {
             plan(&states, text).map_err(limit)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /V key"
+            )]
             dict.insert(Name::from("V"), Value::Name(Name::from(text)));
         }
         Some(text) => {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /V key"
+            )]
             dict.insert(Name::from("V"), encode_value(text, budget)?);
         }
         None => {}
@@ -2240,6 +2327,10 @@ fn state_bytes_error() -> String {
 
 /// Returns the first state of `states` that is not `Off`, refusing more
 /// than 4,096 names.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the set entry and table overhead are charged before fallible reservation and insertion"
+)]
 fn on_state(states: &States, budget: &Budget) -> PyResult<Option<String>> {
     let mut seen = HashSet::new();
     let mut first = None;
@@ -2330,6 +2421,10 @@ fn select<'s>(
             let Value::Dict(mut dict) = copy_for_edit(&original, budget).map_err(store)? else {
                 unreachable!("a copied dictionary remains a dictionary");
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /AS key"
+            )]
             dict.insert(Name::from("AS"), Value::Name(Name::from(state)));
             transaction
                 .write(widget.0, &Value::Dict(dict), budget)
@@ -2371,6 +2466,10 @@ fn set_need_appearances(
                 let Value::Dict(mut form) = copy_for_edit(form, budget).map_err(store)? else {
                     unreachable!("a copied dictionary remains a dictionary");
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /NeedAppearances key"
+                )]
                 form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
                 (reference.number(), Value::Dict(form))
             }
@@ -2387,6 +2486,10 @@ fn set_need_appearances(
             let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
                 unreachable!("the copied catalog retains its form dictionary");
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /NeedAppearances key"
+            )]
             form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
             (root.number(), Value::Dict(catalog))
         }
@@ -2404,13 +2507,15 @@ pub fn form_set_need_appearances(
     document: &_Document,
     value: bool,
 ) -> PyResult<()> {
-    document.edit(py, |transaction, budget| {
-        if set_need_appearances(transaction, value, budget)? {
-            Ok(())
-        } else {
-            Err(PdfError::new_err("the document has no interactive form"))
-        }
-    })
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            if set_need_appearances(transaction, value, budget)? {
+                Ok(())
+            } else {
+                Err(PdfError::new_err("the document has no interactive form"))
+            }
+        })
+    })?
 }
 
 /// Reads field `id`'s label (`/TU`), maximum length (inherited `/MaxLen`,
@@ -2422,46 +2527,50 @@ pub fn form_field_details(
     document: &_Document,
     id: Id,
 ) -> PyResult<(Option<String>, Option<i64>, Option<String>)> {
-    py.detach(|| {
-        let (version, budget) = view(document)?;
-        memoized_at(document, &version, &budget)?
-            .field(id)
-            .ok_or_else(|| stale(id))?;
-        let mut reads = Reads::new(&version, &budget);
-        let mut totals = (0, 0);
-        let field = object(&mut reads, id)?;
-        let label = match field.as_deref() {
-            Some(Value::Dict(dict)) => match own(&mut reads, dict, "TU")? {
-                Some(label) => text(
-                    &mut reads,
-                    label,
+    crate::errors::boundary(|| {
+        py.detach(|| {
+            let (version, budget) = view(document)?;
+            memoized_at(document, &version, &budget)?
+                .field(id)
+                .ok_or_else(|| stale(id))?;
+            let mut reads = Reads::new(&version, &budget);
+            let mut totals = (0, 0);
+            let field = object(&mut reads, id)?;
+            let label = match field.as_deref() {
+                Some(Value::Dict(dict)) => match own(&mut reads, dict, "TU")? {
+                    Some(label) => text(
+                        &mut reads,
+                        label,
+                        &mut totals,
+                        MAX_VALUE_BYTES,
+                        "field label",
+                    )?,
+                    None => None,
+                },
+                _ => None,
+            };
+            let length = inherited(&mut reads, id, "MaxLen")?;
+            let max_length = match read(&mut reads, length.as_ref())? {
+                Some(Value::Integer(length)) if length >= 0 => Some(length),
+                _ => None,
+            };
+            let default = inherited(&mut reads, id, "DV")?;
+            let default = match read(&mut reads, default.as_ref())? {
+                Some(Value::Name(name)) => {
+                    Some(String::from_utf8_lossy(name.as_bytes()).into_owned())
+                }
+                Some(Value::String(encoded)) => Some(decode(
+                    &encoded,
                     &mut totals,
                     MAX_VALUE_BYTES,
-                    "field label",
-                )?,
-                None => None,
-            },
-            _ => None,
-        };
-        let length = inherited(&mut reads, id, "MaxLen")?;
-        let max_length = match read(&mut reads, length.as_ref())? {
-            Some(Value::Integer(length)) if length >= 0 => Some(length),
-            _ => None,
-        };
-        let default = inherited(&mut reads, id, "DV")?;
-        let default = match read(&mut reads, default.as_ref())? {
-            Some(Value::Name(name)) => Some(String::from_utf8_lossy(name.as_bytes()).into_owned()),
-            Some(Value::String(encoded)) => Some(decode(
-                &encoded,
-                &mut totals,
-                MAX_VALUE_BYTES,
-                "field default value",
-                &budget,
-            )?),
-            _ => None,
-        };
-        Ok((label, max_length, default))
-    })
+                    "field default value",
+                    &budget,
+                )?),
+                _ => None,
+            };
+            Ok((label, max_length, default))
+        })
+    })?
 }
 
 /// The `/Ff` bits that decide a field's kind, which an edit keeps: radio,
@@ -2573,21 +2682,23 @@ pub fn form_field_edit(
     id: Id,
     edit: &Bound<'_, PyAny>,
 ) -> PyResult<()> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let edit = FieldEdit::read(edit, budget)?;
-        let savepoint = transaction.savepoint();
-        let result = edit_field(transaction, id, &edit, budget, cache, draft);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let edit = FieldEdit::read(edit, budget)?;
+            let savepoint = transaction.savepoint();
+            let result = edit_field(transaction, id, &edit, budget, cache, draft);
+            if result.is_err() {
+                transaction.rollback(savepoint);
+            }
+            result
+        })
+    })?
 }
 
 /// Returns the key of a field property that an edit can remove.
@@ -2660,12 +2771,24 @@ fn edit_field(
                 _ => None,
             };
             if let Some(label) = &edit.label {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /TU key"
+                )]
                 dict.insert(Name::from("TU"), encode_value(label, budget)?);
             }
             if let Some(length) = edit.max_length {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /MaxLen key"
+                )]
                 dict.insert(Name::from("MaxLen"), Value::Integer(length));
             }
             if let Some(flags) = edit.flags {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Ff key"
+                )]
                 dict.insert(Name::from("Ff"), Value::Integer(flags));
             }
             if let Some(value) = &edit.default_value {
@@ -2674,9 +2797,17 @@ fn edit_field(
                 } else {
                     encode_value(value, budget)?
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /DV key"
+                )]
                 dict.insert(Name::from("DV"), value);
             }
             if let Some(choices) = &edit.choices {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Opt key"
+                )]
                 dict.insert(Name::from("Opt"), options(choices, budget)?);
             }
             for property in &edit.clear {
@@ -2903,6 +3034,10 @@ impl FieldSpec {
     /// Returns the widget dictionary and the field dictionary that the
     /// checked specification makes on the page of `annots`, before either
     /// joins the document.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the collected dictionary entries come from fixed-size literal arrays"
+    )]
     fn dictionaries(&self, annots: &Annots<'_>, budget: &Budget) -> PyResult<(Dict, Dict)> {
         let (field_type, kind_flags) = field_type(&self.kind)?;
         let mut widget: Dict = [
@@ -2915,36 +3050,72 @@ impl FieldSpec {
         .map(|(key, value)| (Name::from(key), value))
         .collect();
         if let Some(page) = annots.page().object() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /P key"
+            )]
             widget.insert(Name::from("P"), Value::Reference(page));
         }
         let mut mark = Dict::new();
         if let Some(color) = self.border_color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BC key"
+            )]
             mark.insert(Name::from("BC"), rgb(color, "border colour")?);
         }
         if let Some(color) = self.background_color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BG key"
+            )]
             mark.insert(Name::from("BG"), rgb(color, "background colour")?);
         }
         if let Some(caption) = &self.caption {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /CA key"
+            )]
             mark.insert(Name::from("CA"), encode_value(caption, budget)?);
         }
         // A widget on a turned page shows upright.
         if annots.rotation != 0 {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /R key"
+            )]
             mark.insert(Name::from("R"), Value::Integer(annots.rotation));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /MK key"
+        )]
         widget.insert(Name::from("MK"), Value::Dict(mark));
         let solid = (1.0, "S".to_owned(), Vec::new());
         let border = self.border.as_ref().unwrap_or(&solid);
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /BS key"
+        )]
         widget.insert(Name::from("BS"), border_style(border, budget)?);
         if shows_text(&self.kind) || self.kind == "pushbutton" {
             let (red, green, blue) = self.text_color.unwrap_or((0.0, 0.0, 0.0));
             let size = self.font_size.unwrap_or(0.0);
             let resource = self.font_resource()?;
             let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /DA key"
+            )]
             widget.insert(
                 Name::from("DA"),
                 Value::String(PdfString::literal(appearance.into_bytes())),
             );
             if let Some(align) = self.align {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /Q key"
+                )]
                 widget.insert(Name::from("Q"), Value::Integer(i64::from(align)));
             }
         }
@@ -2956,15 +3127,31 @@ impl FieldSpec {
         .map(|(key, value)| (Name::from(key), value))
         .collect();
         if kind_flags | self.flags != 0 {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Ff key"
+            )]
             field.insert(Name::from("Ff"), Value::Integer(kind_flags | self.flags));
         }
         if let Some(label) = &self.label {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /TU key"
+            )]
             field.insert(Name::from("TU"), encode_value(label, budget)?);
         }
         if let Some(length) = self.max_length {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /MaxLen key"
+            )]
             field.insert(Name::from("MaxLen"), Value::Integer(length));
         }
         if let Some(choices) = &self.choices {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Opt key"
+            )]
             field.insert(Name::from("Opt"), options(choices, budget)?);
         }
         if let Some(default) = &self.default_value {
@@ -2973,11 +3160,19 @@ impl FieldSpec {
             } else {
                 encode_value(default, budget)?
             };
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /DV key"
+            )]
             field.insert(Name::from("DV"), default);
         }
         if shows_text(&self.kind)
             && let Some(value) = &self.value
         {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /V key"
+            )]
             field.insert(Name::from("V"), encode_value(value, budget)?);
         }
         Ok((widget, field))
@@ -3021,43 +3216,49 @@ pub fn widget_add(
     generation: u16,
     spec: &Bound<'_, PyAny>,
 ) -> PyResult<Option<(Id, u32)>> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let spec = FieldSpec::read(spec, budget)?;
-            budget
-                .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                .map_err(|e| limit_error(&e))?;
-            if !matches!(
-                annots.resolved(annots.page().dict().get("Annots"))?,
-                None | Some(Value::Array(_))
-            ) {
-                return Err(PdfError::new_err("the page's /Annots is not an array"));
-            }
-            let (widget, field) = spec.dictionaries(annots, budget)?;
-            let index = u32::try_from(annots.items.len()).unwrap_or(u32::MAX);
-            let id = add_widget(
-                transaction,
-                annots,
-                &spec,
-                (widget, field),
-                budget,
-                (cache, draft),
-            )?;
-            Ok((id, index))
-        },
-    )
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let spec = FieldSpec::read(spec, budget)?;
+                budget
+                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
+                    .map_err(|e| limit_error(&e))?;
+                if !matches!(
+                    annots.resolved(annots.page().dict().get("Annots"))?,
+                    None | Some(Value::Array(_))
+                ) {
+                    return Err(PdfError::new_err("the page's /Annots is not an array"));
+                }
+                let (widget, field) = spec.dictionaries(annots, budget)?;
+                let index = u32::try_from(annots.items.len()).unwrap_or(u32::MAX);
+                let id = add_widget(
+                    transaction,
+                    annots,
+                    &spec,
+                    (widget, field),
+                    budget,
+                    (cache, draft),
+                )?;
+                Ok((id, index))
+            },
+        )
+    })?
 }
 
+#[expect(
+    clippy::disallowed_methods,
+    reason = "adds one widget reference to each charged array and copies only the new field's bounded dictionary"
+)]
 fn add_widget(
     transaction: &mut Transaction,
     annots: &Annots<'_>,
@@ -3119,6 +3320,10 @@ fn add_widget(
         let (red, green, blue) = spec.text_color.unwrap_or((0.0, 0.0, 0.0));
         let size = spec.font_size.unwrap_or(0.0);
         let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /DA key"
+        )]
         widget.insert(
             Name::from("DA"),
             Value::String(PdfString::literal(appearance.into_bytes())),
@@ -3129,6 +3334,10 @@ fn add_widget(
     let field_id = match existing {
         Some(existing) => {
             let parent = join(transaction, holder, existing.id, budget)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Parent key"
+            )]
             widget.insert(Name::from("Parent"), Value::Reference(parent));
             edit_array(transaction, parent, "Kids", budget, true, |kids| {
                 kids.push(Value::Reference(reference));
@@ -3138,10 +3347,18 @@ fn add_widget(
         None if spec.kind == "radio" => {
             let parent = transaction.allocate().map_err(store)?;
             let kids = Array::from(vec![Value::Reference(reference)]);
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Kids key"
+            )]
             field.insert(Name::from("Kids"), Value::Array(kids));
             transaction
                 .write(parent.number(), &Value::Dict(field), budget)
                 .map_err(store)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Parent key"
+            )]
             widget.insert(Name::from("Parent"), Value::Reference(parent));
             edit_array(transaction, holder, "Fields", budget, true, |fields| {
                 fields.push(Value::Reference(parent));
@@ -3161,6 +3378,10 @@ fn add_widget(
     if buttons {
         // Settling draws the `Off` state and the state that `/AS` names.
         let state = Value::Name(Name::from(spec.on_state()));
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /AS key"
+        )]
         widget.insert(Name::from("AS"), state);
     }
     transaction
@@ -3210,6 +3431,10 @@ fn add_widget(
 /// under `preferred`, its `/DA` abbreviation, or a free `preferred_N` when
 /// another font holds that name; returns the resource name. Existing
 /// resources are copied, not edited through shared references.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "adds one font resource entry to the copied dictionary"
+)]
 fn register_standard_font(
     transaction: &mut Transaction,
     holder: Reference,
@@ -3286,10 +3511,26 @@ fn register_standard_font(
         format!("{preferred}_{suffix}")
     };
     let mut font = Dict::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Type key"
+    )]
     font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Subtype key"
+    )]
     font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /BaseFont key"
+    )]
     font.insert(Name::from("BaseFont"), Value::Name(Name::from(base)));
     if !matches!(base, "Symbol" | "ZapfDingbats") {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Encoding key"
+        )]
         font.insert(
             Name::from("Encoding"),
             Value::Name(Name::from("WinAnsiEncoding")),
@@ -3300,7 +3541,15 @@ fn register_standard_font(
         .write(reference.number(), &Value::Dict(font), budget)
         .map_err(store)?;
     fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Font key"
+    )]
     resources.insert(Name::from("Font"), Value::Dict(fonts));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /DR key"
+    )]
     form.insert(Name::from("DR"), Value::Dict(resources));
     transaction
         .write(holder.number(), &Value::Dict(form), budget)
@@ -3327,6 +3576,10 @@ fn standard_font_matches(value: Option<&Value>, base: &str) -> bool {
 /// Returns the form dictionary's object, after moving one that the catalog
 /// holds into an object of its own, or creating an empty one that names
 /// Helvetica as `/Helv`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "only fixed-size literal dictionaries and the constant default-appearance bytes are constructed"
+)]
 fn form_object(transaction: &mut Transaction, budget: &Budget) -> PyResult<Reference> {
     let store = |e: pyropdf_store::Error| store_error(&e);
     let version = transaction.snapshot();
@@ -3393,6 +3646,10 @@ fn form_object(transaction: &mut Transaction, budget: &Budget) -> PyResult<Refer
     transaction
         .write(reference.number(), &form, budget)
         .map_err(store)?;
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /AcroForm key"
+    )]
     catalog.insert(Name::from("AcroForm"), Value::Reference(reference));
     transaction
         .write(root.number(), &Value::Dict(catalog), budget)
@@ -3503,6 +3760,10 @@ fn located_form(
 
 /// Returns the `/DA`, the `/Q`, and the `/NeedAppearances` of `form`: a
 /// `/Q` other than 0, 1, or 2 is 0.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one copy of the DA string already copied under the read budget"
+)]
 fn form_defaults(reads: &mut Reads<'_>, form: &Dict) -> PyResult<(Option<Vec<u8>>, i64, bool)> {
     let appearance = match read(reads, form.get("DA"))? {
         Some(Value::String(appearance)) => Some(appearance.as_bytes().to_vec()),
@@ -3523,6 +3784,10 @@ fn form_defaults(reads: &mut Reads<'_>, form: &Dict) -> PyResult<(Option<Vec<u8>
 /// whose `/DR` is no dictionary takes the source one; otherwise the
 /// source resources join it ([`defaults::merge`]), and imported default
 /// appearance strings follow their renames.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "fixed form keys plus one value and place per resource returned by the budgeted resource join"
+)]
 pub(crate) fn plan_imported_defaults(
     receiving: &Version,
     source: &Version,
@@ -3599,6 +3864,10 @@ pub(crate) fn plan_imported_defaults(
 /// A copied default appearance string follows the renames, and a copied
 /// top-level field whose `/DA` or `/Q` the form would otherwise give it
 /// differently takes the source form's.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one placed entry per budgeted import result, at most DA and Q overrides per field, and one reference per imported field"
+)]
 pub(crate) fn register_imported(
     transaction: &mut Transaction,
     fields: &[Reference],
@@ -3625,6 +3894,10 @@ pub(crate) fn register_imported(
     let placed = || defaults.places.iter().zip(values);
     let Some((holder, form)) = form else {
         let mut form = Dict::new();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Fields key"
+        )]
         form.insert(Name::from("Fields"), Value::Array(references(fields)?));
         for (place, value) in placed() {
             if let Place::Form(key) = place {
@@ -3632,15 +3905,27 @@ pub(crate) fn register_imported(
             }
         }
         if defaults.need_appearances {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /NeedAppearances key"
+            )]
             form.insert(Name::from("NeedAppearances"), Value::Boolean(true));
         }
         if !order.is_empty() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /CO key"
+            )]
             form.insert(Name::from("CO"), Value::Array(references(order)?));
         }
         let reference = transaction.allocate().map_err(store)?;
         transaction
             .write(reference.number(), &Value::Dict(form), budget)
             .map_err(store)?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /AcroForm key"
+        )]
         catalog.insert(Name::from("AcroForm"), Value::Reference(reference));
         transaction
             .write(root.number(), &Value::Dict(catalog), budget)
@@ -3655,6 +3940,10 @@ pub(crate) fn register_imported(
             transaction
                 .write(reference.number(), &Value::Dict(form), budget)
                 .map_err(store)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /AcroForm key"
+            )]
             catalog.insert(Name::from("AcroForm"), Value::Reference(reference));
             transaction
                 .write(root.number(), &Value::Dict(catalog), budget)
@@ -3722,6 +4011,10 @@ pub(crate) fn register_imported(
         }
         if defaults.need_appearances && !need {
             edit_dict(transaction, holder, &[], budget, |form| {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /NeedAppearances key"
+                )]
                 form.insert(Name::from("NeedAppearances"), Value::Boolean(true));
             })?;
         }
@@ -3744,6 +4037,10 @@ pub(crate) fn register_imported(
 /// Edits the dictionary that `path` leads to from object `holder`, each
 /// key naming a dictionary directly or through references; a path that
 /// leads to no dictionary leaves everything as it is.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the direct-key stack follows the caller's fixed form-resource path of at most two keys"
+)]
 fn edit_dict(
     transaction: &mut Transaction,
     holder: Reference,
@@ -3797,6 +4094,10 @@ fn edit_dict(
 /// Renames the resources that the default appearance strings of `copies`
 /// name, directly or through a string object, after `renames`; a page,
 /// page-tree node, or catalog keeps its own.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one visited string reference per field from the budgeted form walk"
+)]
 fn rename_appearances(
     transaction: &mut Transaction,
     copies: &[Reference],
@@ -3837,6 +4138,10 @@ fn rename_appearances(
                     Value::Stream(stream) => stream.dict_mut(),
                     _ => continue,
                 };
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "this call inserts only the fixed /DA key"
+                )]
                 dict.insert(Name::from("DA"), Value::String(PdfString::literal(renamed)));
                 transaction
                     .write(copy.number(), &value, budget)
@@ -3866,6 +4171,10 @@ fn rename_appearances(
 /// Gives each of the imported top-level `fields` whose partial name a
 /// top-level field of `form` has the smallest `+N` suffix that no
 /// top-level field of either has; see [`register_imported`].
+#[expect(
+    clippy::disallowed_methods,
+    reason = "reserve_map and the following name-byte charge precede insertion"
+)]
 fn rename_imported(
     transaction: &mut Transaction,
     reads: &mut Reads<'_>,
@@ -3937,6 +4246,10 @@ fn rename_imported(
         };
         let partial = read(reads, dict.get("T"))?;
         let suffix = &new_name[name.len()..];
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /T key"
+        )]
         dict.insert(
             Name::from("T"),
             renamed_partial(partial.as_ref(), &new_name, suffix),
@@ -3949,6 +4262,10 @@ fn rename_imported(
 }
 
 /// Adds `name` to `names`, charging the entry and its bytes to `budget`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the name and set overhead are charged before fallible reservation and insertion"
+)]
 fn insert_name(names: &mut HashSet<String>, name: String, budget: &Budget) -> PyResult<()> {
     budget
         .charge(
@@ -3988,6 +4305,10 @@ fn partial_name(
 /// Returns partial name `partial` with `suffix` appended in its own
 /// encoding, UTF-16BE or single bytes, or `renamed` as a new text string
 /// when `partial` is no string or odd UTF-16BE.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the old bytes and candidate name are charged by rename_imported; the suffix adds at most two bytes per character"
+)]
 fn renamed_partial(partial: Option<&Value>, renamed: &str, suffix: &str) -> Value {
     let Some(Value::String(partial)) = partial else {
         return encode_text(renamed);
@@ -4011,6 +4332,10 @@ fn renamed_partial(partial: Option<&Value>, renamed: &str, suffix: &str) -> Valu
 /// object that the entry names, or else the entry itself. An entry that is
 /// no array starts empty with `create`, and stays as it is without. The
 /// copies are charged to `budget`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "replaces one fixed form key with the edited array"
+)]
 fn edit_array(
     transaction: &mut Transaction,
     holder: Reference,
@@ -4059,6 +4384,10 @@ fn edit_array(
 /// itself, or, for a field merged with its widget, a new parent that takes
 /// its field entries and field triggers and its place in the field tree
 /// and the calculation order of form `holder`.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "one Kids entry plus FIELD_KEYS and FIELD_TRIGGERS, both fixed arrays"
+)]
 fn join(
     transaction: &mut Transaction,
     holder: Reference,
@@ -4098,11 +4427,19 @@ fn join(
             .filter_map(|trigger| Some((Name::from(*trigger), actions.remove(trigger)?)))
             .collect();
         if !triggers.is_empty() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /AA key"
+            )]
             dict.insert(Name::from("AA"), Value::Dict(triggers));
         }
         if actions.is_empty() {
             kid.remove("AA");
         } else {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /AA key"
+            )]
             kid.insert(Name::from("AA"), Value::Dict(actions));
         }
     }
@@ -4111,8 +4448,16 @@ fn join(
         _ => None,
     };
     if let Some(grand) = grand {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /Parent key"
+        )]
         dict.insert(Name::from("Parent"), Value::Reference(grand));
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Parent key"
+    )]
     kid.insert(Name::from("Parent"), Value::Reference(parent));
     transaction
         .write(parent.number(), &Value::Dict(dict), budget)
@@ -4150,58 +4495,60 @@ pub fn widget_remove(
     generation: u16,
     handles: Vec<(u32, Id)>,
 ) -> PyResult<bool> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    let removed = editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            budget
-                .check(LimitCode::AnnotationCount, handles.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            let mut positions = BudgetVec::new(budget);
-            let mut widgets = BudgetVec::new(budget);
-            for &(index, handle) in &handles {
-                let (position, dict) = annots.find(index, handle)?;
-                if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
-                    return Err(StaleObjectError::new_err(format!(
-                        "annotation {} is no longer a widget",
-                        handle.0
-                    )));
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        let removed = editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                budget
+                    .check(LimitCode::AnnotationCount, handles.len() as u64)
+                    .map_err(|e| limit_error(&e))?;
+                let mut positions = BudgetVec::new(budget);
+                let mut widgets = BudgetVec::new(budget);
+                for &(index, handle) in &handles {
+                    let (position, dict) = annots.find(index, handle)?;
+                    if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                        return Err(StaleObjectError::new_err(format!(
+                            "annotation {} is no longer a widget",
+                            handle.0
+                        )));
+                    }
+                    if handle == (0, 0) {
+                        positions.try_push(position)
+                    } else {
+                        widgets.try_push(handle)
+                    }
+                    .map_err(|e| limit_error(&e))?;
                 }
-                if handle == (0, 0) {
-                    positions.try_push(position)
-                } else {
-                    widgets.try_push(handle)
+                let mut positions = positions.into_vec();
+                let mut widgets = widgets.into_vec();
+                positions.sort_unstable();
+                positions.dedup();
+                widgets.sort_unstable();
+                widgets.dedup();
+                if positions.is_empty() && widgets.is_empty() {
+                    return Ok(());
                 }
-                .map_err(|e| limit_error(&e))?;
-            }
-            let mut positions = positions.into_vec();
-            let mut widgets = widgets.into_vec();
-            positions.sort_unstable();
-            positions.dedup();
-            widgets.sort_unstable();
-            widgets.dedup();
-            if positions.is_empty() && widgets.is_empty() {
-                return Ok(());
-            }
-            remove_widgets(
-                transaction,
-                annots,
-                &positions,
-                &widgets,
-                budget,
-                (cache, draft),
-            )
-        },
-    )?;
-    Ok(removed.is_some())
+                remove_widgets(
+                    transaction,
+                    annots,
+                    &positions,
+                    &widgets,
+                    budget,
+                    (cache, draft),
+                )
+            },
+        )?;
+        Ok(removed.is_some())
+    })?
 }
 
 /// Implements [`widget_remove`] in its transaction, for the sorted
@@ -4305,91 +4652,93 @@ pub fn flatten(
     annotations: bool,
     widgets: bool,
 ) -> PyResult<bool> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = (|| {
-            let before = base(transaction, draft);
-            let version = transaction.snapshot();
-            let index =
-                PageIndex::memoized(&document.draft_pages, &version, budget).map_err(store)?;
-            let targets = match page {
-                Some((number, generation)) => {
-                    match index.index_of(Reference::new(number, generation)) {
-                        Some(at) => at..at + 1,
-                        None => return Ok(false),
+    crate::errors::boundary(|| {
+        let store = |e: pyropdf_store::Error| store_error(&e);
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = (|| {
+                let before = base(transaction, draft);
+                let version = transaction.snapshot();
+                let index =
+                    PageIndex::memoized(&document.draft_pages, &version, budget).map_err(store)?;
+                let targets = match page {
+                    Some((number, generation)) => {
+                        match index.index_of(Reference::new(number, generation)) {
+                            Some(at) => at..at + 1,
+                            None => return Ok(false),
+                        }
                     }
+                    None => 0..index.pages().len(),
+                };
+                if !annotations && !widgets {
+                    return Ok(true);
                 }
-                None => 0..index.pages().len(),
-            };
-            if !annotations && !widgets {
-                return Ok(true);
-            }
-            let selection = Selection {
-                annotations,
-                widgets,
-            };
-            // Annotations without an appearance are drawn as a render
-            // draws them.
-            let mut missing = if annotations {
-                let objects = synthesized(&version, &index, budget).map_err(store)?;
-                Missing::new(objects, budget).map_err(store)?
-            } else {
-                Missing::default()
-            };
-            let mut flattened = BudgetVec::new(budget);
-            for at in targets {
-                budget.poll().map_err(|e| limit_error(&e))?;
-                let annots = Annots::at(Arc::clone(&version), Arc::clone(&index), budget, at)?;
-                let Some(plan) =
-                    flattening::plan(&annots.reader(), &annots.items, selection).map_err(store)?
-                else {
-                    continue;
+                let selection = Selection {
+                    annotations,
+                    widgets,
                 };
-                let Some(object) = annots.page().object() else {
-                    return Err(PdfError::new_err("the page is not an indirect object"));
+                // Annotations without an appearance are drawn as a render
+                // draws them.
+                let mut missing = if annotations {
+                    let objects = synthesized(&version, &index, budget).map_err(store)?;
+                    Missing::new(objects, budget).map_err(store)?
+                } else {
+                    Missing::default()
                 };
-                if page.is_some() {
-                    for &widget in &plan.widgets {
-                        flattened
-                            .try_push(id(widget))
-                            .map_err(|e| limit_error(&e))?;
+                let mut flattened = BudgetVec::new(budget);
+                for at in targets {
+                    budget.poll().map_err(|e| limit_error(&e))?;
+                    let annots = Annots::at(Arc::clone(&version), Arc::clone(&index), budget, at)?;
+                    let Some(plan) = flattening::plan(&annots.reader(), &annots.items, selection)
+                        .map_err(store)?
+                    else {
+                        continue;
+                    };
+                    let Some(object) = annots.page().object() else {
+                        return Err(PdfError::new_err("the page is not an indirect object"));
+                    };
+                    if page.is_some() {
+                        for &widget in &plan.widgets {
+                            flattened
+                                .try_push(id(widget))
+                                .map_err(|e| limit_error(&e))?;
+                        }
                     }
+                    flattening::draw(
+                        transaction,
+                        object.number(),
+                        annots.page(),
+                        plan,
+                        &mut missing,
+                        budget,
+                    )
+                    .map_err(store)?;
                 }
-                flattening::draw(
-                    transaction,
-                    object.number(),
-                    annots.page(),
-                    plan,
-                    &mut missing,
-                    budget,
-                )
-                .map_err(store)?;
+                if !widgets {
+                } else if page.is_none() {
+                    remove_form(transaction, budget)?;
+                } else {
+                    let mut flattened = flattened.into_vec();
+                    flattened.sort_unstable();
+                    flattened.dedup();
+                    let index = cache.get(&before, budget)?;
+                    let (fields, detached, _) = leaving(&index.topology.form, &flattened, budget)?;
+                    unfield(transaction, &fields, &detached, budget)?;
+                }
+                Ok(true)
+            })();
+            if result.is_err() {
+                transaction.rollback(savepoint);
             }
-            if !widgets {
-            } else if page.is_none() {
-                remove_form(transaction, budget)?;
-            } else {
-                let mut flattened = flattened.into_vec();
-                flattened.sort_unstable();
-                flattened.dedup();
-                let index = cache.get(&before, budget)?;
-                let (fields, detached, _) = leaving(&index.topology.form, &flattened, budget)?;
-                unfield(transaction, &fields, &detached, budget)?;
-            }
-            Ok(true)
-        })();
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+            result
+        })
+    })?
 }
 
 /// Takes the interactive form out of the catalog.
@@ -4422,41 +4771,43 @@ fn remove_form(transaction: &mut Transaction, budget: &Budget) -> PyResult<()> {
 /// kids.
 #[pyfunction]
 pub fn form_field_remove(py: Python<'_>, document: &_Document, field: Id) -> PyResult<()> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    document.edit(py, |transaction, budget| {
-        let savepoint = transaction.savepoint();
-        let result = (|| {
-            let before = base(transaction, draft);
-            let index = cache.get(&before, budget)?;
-            let found = index
-                .topology
-                .form
-                .field(field)
-                .ok_or_else(|| stale(field))?;
-            let mut widgets = BudgetVec::new(budget);
-            for &widget in &found.widgets {
-                widgets.try_push(widget).map_err(|e| limit_error(&e))?;
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        document.edit(py, |transaction, budget| {
+            let savepoint = transaction.savepoint();
+            let result = (|| {
+                let before = base(transaction, draft);
+                let index = cache.get(&before, budget)?;
+                let found = index
+                    .topology
+                    .form
+                    .field(field)
+                    .ok_or_else(|| stale(field))?;
+                let mut widgets = BudgetVec::new(budget);
+                for &widget in &found.widgets {
+                    widgets.try_push(widget).map_err(|e| limit_error(&e))?;
+                }
+                let mut widgets = widgets.into_vec();
+                widgets.sort_unstable();
+                widgets.dedup();
+                let version = transaction.snapshot();
+                let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
+                    .map_err(|e| store_error(&e))?;
+                unlist(transaction, (&version, &pages), &widgets, (0, &[]), budget)?;
+                let holder = form_object(transaction, budget)?;
+                remove_field(transaction, holder, field, budget)
+            })();
+            if result.is_err() {
+                transaction.rollback(savepoint);
             }
-            let mut widgets = widgets.into_vec();
-            widgets.sort_unstable();
-            widgets.dedup();
-            let version = transaction.snapshot();
-            let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
-                .map_err(|e| store_error(&e))?;
-            unlist(transaction, (&version, &pages), &widgets, (0, &[]), budget)?;
-            let holder = form_object(transaction, budget)?;
-            remove_field(transaction, holder, field, budget)
-        })();
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result
-    })
+            result
+        })
+    })?
 }
 
 /// Takes the sorted `widgets` off every page of `pages`, a version and its
@@ -4610,12 +4961,14 @@ fn detach(
 /// Returns how many form walks the document's memos reused and how many
 /// they computed, for tests.
 #[pyfunction]
-pub fn form_walk_counts(document: &_Document) -> (u64, u64) {
-    let (form, drafts) = (document.form.stats(), document.draft_form.stats());
-    (
-        form.hits + drafts.hits,
-        form.computations + drafts.computations,
-    )
+pub fn form_walk_counts(document: &_Document) -> PyResult<(u64, u64)> {
+    crate::errors::boundary(|| {
+        let (form, drafts) = (document.form.stats(), document.draft_form.stats());
+        (
+            form.hits + drafts.hits,
+            form.computations + drafts.computations,
+        )
+    })
 }
 
 /// Whether a widget shows a normal text appearance or a selected button
@@ -6233,54 +6586,56 @@ pub fn widget_style(
     index: u32,
     id: Id,
 ) -> PyResult<Option<WidgetStyle>> {
-    let (version, pages, budget) = crate::pages::index(document)?;
-    py.detach(|| {
-        let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
-            return Ok(None);
-        };
-        let (_, dict) = annots.find(index, id)?;
-        if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
-            return Err(StaleObjectError::new_err(format!(
-                "annotation {} is no longer a widget",
-                id.0
-            )));
-        }
-        let mark = match annots.resolved(dict.get("MK"))? {
-            Some(Value::Dict(mark)) => mark,
-            _ => Dict::new(),
-        };
-        let caption = match annots.resolved(mark.get("CA"))? {
-            Some(Value::String(caption)) => {
-                let caption = widgets::text_string(caption.as_bytes());
-                if caption.len() > MAX_INPUT_BYTES {
-                    return Err(limit(format!(
-                        "a widget caption exceeds the {MAX_INPUT_BYTES}-byte safety limit"
-                    )));
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = crate::pages::index(document)?;
+        py.detach(|| {
+            let Some(annots) = Annots::read(version, pages, &budget, number, generation)? else {
+                return Ok(None);
+            };
+            let (_, dict) = annots.find(index, id)?;
+            if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                return Err(StaleObjectError::new_err(format!(
+                    "annotation {} is no longer a widget",
+                    id.0
+                )));
+            }
+            let mark = match annots.resolved(dict.get("MK"))? {
+                Some(Value::Dict(mark)) => mark,
+                _ => Dict::new(),
+            };
+            let caption = match annots.resolved(mark.get("CA"))? {
+                Some(Value::String(caption)) => {
+                    let caption = widgets::text_string(caption.as_bytes());
+                    if caption.len() > MAX_INPUT_BYTES {
+                        return Err(limit(format!(
+                            "a widget caption exceeds the {MAX_INPUT_BYTES}-byte safety limit"
+                        )));
+                    }
+                    Some(caption)
                 }
-                Some(caption)
-            }
-            _ => None,
-        };
-        let rotation = match annots.resolved(mark.get("R"))? {
-            Some(Value::Integer(rotation)) => rotation.rem_euclid(360),
-            _ => 0,
-        };
-        let colors = (
-            annots.color(&mark, "BC")?,
-            annots.color(&mark, "BG")?,
-            caption,
-            rotation,
-        );
-        let reader = annots.reader();
-        let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
-            Some(da) => {
-                let font = widget_text_font(&annots, &da.font)?;
-                Some((da.font, da.size, da.color, font))
-            }
-            None => None,
-        };
-        Ok(Some((colors, annots.border(&dict)?, appearance)))
-    })
+                _ => None,
+            };
+            let rotation = match annots.resolved(mark.get("R"))? {
+                Some(Value::Integer(rotation)) => rotation.rem_euclid(360),
+                _ => 0,
+            };
+            let colors = (
+                annots.color(&mark, "BC")?,
+                annots.color(&mark, "BG")?,
+                caption,
+                rotation,
+            );
+            let reader = annots.reader();
+            let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
+                Some(da) => {
+                    let font = widget_text_font(&annots, &da.font)?;
+                    Some((da.font, da.size, da.color, font))
+                }
+                None => None,
+            };
+            Ok(Some((colors, annots.border(&dict)?, appearance)))
+        })
+    })?
 }
 
 /// A value read without copying its input-sized contents.
@@ -6480,6 +6835,10 @@ impl WidgetEdit {
         };
         let marked = !mark.is_empty();
         if let Some(caption) = &self.caption {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /CA key"
+            )]
             mark.insert(Name::from("CA"), encode_text(caption));
         }
         if let Some(rotation) = self.rotation {
@@ -6488,12 +6847,24 @@ impl WidgetEdit {
                     "a widget rotation is a multiple of 90 degrees: {rotation}"
                 )));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /R key"
+            )]
             mark.insert(Name::from("R"), Value::Integer(rotation.rem_euclid(360)));
         }
         if let Some(color) = self.border_color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BC key"
+            )]
             mark.insert(Name::from("BC"), rgb(color, "border color")?);
         }
         if let Some(color) = self.background_color {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BG key"
+            )]
             mark.insert(Name::from("BG"), rgb(color, "background color")?);
         }
         for property in &self.clear {
@@ -6514,18 +6885,30 @@ impl WidgetEdit {
             }
         }
         if !mark.is_empty() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /MK key"
+            )]
             dict.insert(Name::from("MK"), Value::Dict(mark));
         } else if marked {
             dict.remove("MK");
         }
         if let Some(border) = &self.border {
             dict.remove("Border");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /BS key"
+            )]
             dict.insert(Name::from("BS"), border_style(border, budget)?);
         }
         if let Some(flags) = self.flags {
             if !(0..=1023).contains(&flags) {
                 return Err(PdfError::new_err("annotation flags are bits 1 to 10"));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /F key"
+            )]
             dict.insert(Name::from("F"), Value::Integer(flags));
         }
         if let Some(area @ (x0, y0, x1, y1)) = self.rect {
@@ -6534,6 +6917,10 @@ impl WidgetEdit {
                     "a widget rectangle is finite and not empty",
                 ));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /Rect key"
+            )]
             dict.insert(Name::from("Rect"), annots.to_pdf(area));
         }
         if self.text_color.is_some() || self.font_name.is_some() || self.font_size.is_some() {
@@ -6554,6 +6941,10 @@ impl WidgetEdit {
             }
             let (red, green, blue) = color;
             let da = format!("/{resource} {size} Tf {red} {green} {blue} rg");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /DA key"
+            )]
             dict.insert(
                 Name::from("DA"),
                 Value::String(PdfString::literal(da.into_bytes())),
@@ -6579,56 +6970,58 @@ pub fn widget_edit(
     id: Id,
     edit: &Bound<'_, PyAny>,
 ) -> PyResult<Option<Id>> {
-    let draft = document.in_transaction();
-    let cache = if draft {
-        &document.draft_fill_index
-    } else {
-        &document.fill_index
-    };
-    editing(
-        py,
-        document,
-        number,
-        generation,
-        |annots, transaction, budget| {
-            let edit = WidgetEdit::read(edit, budget)?;
-            let before = base(transaction, draft);
-            let (position, mut dict) = annots.find(index, id)?;
-            if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
-                return Err(StaleObjectError::new_err(format!(
-                    "annotation {} is no longer a widget",
-                    id.0
-                )));
-            }
-            // The font resolves through the form's /DR, as a created
-            // field's does, so that a name that another font holds there
-            // is not drawn in that font.
-            let font_resource = match edit.font_resource()? {
-                Some((preferred, base)) => {
-                    let holder = form_object(transaction, budget)?;
-                    Some(register_standard_font(
-                        transaction,
-                        holder,
-                        preferred,
-                        base,
-                        budget,
-                    )?)
+    crate::errors::boundary(|| {
+        let draft = document.in_transaction();
+        let cache = if draft {
+            &document.draft_fill_index
+        } else {
+            &document.fill_index
+        };
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let edit = WidgetEdit::read(edit, budget)?;
+                let before = base(transaction, draft);
+                let (position, mut dict) = annots.find(index, id)?;
+                if annots.name(&dict, "Subtype")?.as_deref() != Some(b"Widget") {
+                    return Err(StaleObjectError::new_err(format!(
+                        "annotation {} is no longer a widget",
+                        id.0
+                    )));
                 }
-                None => None,
-            };
-            edit.apply(annots, &mut dict, font_resource, budget)?;
-            annots.write(
-                transaction,
-                position,
-                false,
-                dict,
-                |transaction, reference, dict, _, budget| {
-                    restyle(transaction, reference, dict, budget, (cache, before))?;
-                    Ok(false)
-                },
-            )
-        },
-    )
+                // The font resolves through the form's /DR, as a created
+                // field's does, so that a name that another font holds there
+                // is not drawn in that font.
+                let font_resource = match edit.font_resource()? {
+                    Some((preferred, base)) => {
+                        let holder = form_object(transaction, budget)?;
+                        Some(register_standard_font(
+                            transaction,
+                            holder,
+                            preferred,
+                            base,
+                            budget,
+                        )?)
+                    }
+                    None => None,
+                };
+                edit.apply(annots, &mut dict, font_resource, budget)?;
+                annots.write(
+                    transaction,
+                    position,
+                    false,
+                    dict,
+                    |transaction, reference, dict, _, budget| {
+                        restyle(transaction, reference, dict, budget, (cache, before))?;
+                        Ok(false)
+                    },
+                )
+            },
+        )
+    })?
 }
 
 /// Writes widget `reference`, `dict`, draws it again as [`widget_edit`]

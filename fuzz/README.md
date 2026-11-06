@@ -30,8 +30,8 @@ The store turns a panic of hayro-syntax into an error, so the targets other
 than `interpret` keep Rust's default panic hook instead of libFuzzer's, which
 aborts on any panic: only a panic that escapes a target is a crash.
 `interpret` keeps libFuzzer's hook, so any panic is a crash, even one that
-the store catches (I3, #19). It stays out of CI until the adoption of a
-hayro release after 0.8.0 (#7), whose known panics it would find. Panics that the store catches
+the store catches (I3, #19). It runs in CI with the adopted hayro 0.9-based
+dependency. Panics that the store catches
 still print their message, and are the material of hayro's I3 (#19); the
 `value` target's first run found `[ 2 + R ]` in an array.
 
@@ -57,11 +57,11 @@ and pushes to main that change the store, the engine, or the targets, and for fi
 Mondays. Each job also installs cargo-fuzz and builds the target, about four
 minutes with a warm cache. Linux minutes count once:
 
-- weekly: 8 jobs × (15 + 4) minutes = about 150 minutes, or about 650 a month;
-- pull requests and pushes to main: 8 × (1 + 4) = about 40 minutes each,
+- weekly: 9 jobs × (15 + 4) minutes = about 170 minutes, or about 740 a month;
+- pull requests and pushes to main: 9 × (1 + 4) = about 45 minutes each,
   which Rust changes pay twice: once on the pull request and once on main.
 
 Against the 2,000 minutes a month of a private repository on GitHub Free
-(3,000 on Pro), the weekly run takes under a third (or a fifth). Lower
+(3,000 on Pro), the weekly run takes about 37% (or 25%). Lower
 `SECONDS_TO_RUN` or the `paths` of the pull-request trigger if the minutes
 run short.

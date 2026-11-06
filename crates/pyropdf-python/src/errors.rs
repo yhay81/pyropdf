@@ -1,8 +1,11 @@
-//! The exception hierarchy of pylopdf, and the mapping of the store's typed
+//! The exception hierarchy of pyropdf, and the mapping of the store's typed
 //! errors to it (DESIGN.md section 9).
 //!
 //! `python/pyropdf/_errors.py` re-exports these classes under the package's
 //! name and gives `LimitError` its `code`.
+
+use std::any::Any;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
@@ -19,6 +22,12 @@ pyo3::create_exception!(
     MalformedPdfError,
     PdfError,
     "Input that cannot be read as a PDF document, including empty input."
+);
+pyo3::create_exception!(
+    _core,
+    InternalError,
+    PdfError,
+    "A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect."
 );
 pyo3::create_exception!(
     _core,
@@ -56,6 +65,33 @@ pyo3::create_exception!(
     PdfError,
     "OCR model loading or inference failed."
 );
+
+/// Catches unwinding panics before PyO3 can turn them into `PanicException`.
+///
+/// Every Python entry point runs its entire body here, including attached
+/// work before and after `detach`. PyO3 restores the thread attachment when
+/// a detached closure unwinds. Transactions own their unpublished writes;
+/// helpers that borrow an open transaction also roll back on an unwind.
+/// The process-wide panic hook belongs to the embedding application.
+pub(crate) fn boundary<T>(work: impl FnOnce() -> T) -> PyResult<T> {
+    catch_unwind(AssertUnwindSafe(work)).map_err(panic_error)
+}
+
+fn panic_error(payload: Box<dyn Any + Send>) -> PyErr {
+    let message = if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else {
+        "Rust panic with a non-string payload".to_owned()
+    };
+    // An opaque payload can itself panic when dropped. Do not let that
+    // second unwind escape to PyO3, or run another unknown destructor.
+    if let Err(secondary) = catch_unwind(AssertUnwindSafe(|| drop(payload))) {
+        std::mem::forget(secondary);
+    }
+    InternalError::new_err(message)
+}
 
 /// Returns the `LimitError` of a refusal, whose arguments are its stable code
 /// and its message, as in pylopdf.
