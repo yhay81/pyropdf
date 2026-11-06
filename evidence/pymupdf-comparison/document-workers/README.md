@@ -99,6 +99,16 @@ The public tests exercise a refused raster size, a page rotation edit and
 cancellation after warming the document's caches. The existing ordinary
 wheel failed the warmed-cache cancellation case.
 
+On the final integration sources, all Rust workspace tests, Clippy with
+warnings denied, Rust formatting, Ruff checks and formatting, and ty passed.
+The final release wheel passed 7,434 Python tests with 705 skips on
+Python 3.14.8. The engine compiled for wasm32-unknown-unknown; the target
+dependency graph excluded vello_cpu's multithreading feature. Cargo audit
+passed for both the workspace and fuzz lockfiles, and actionlint passed
+on the five workflows. These local checks cover the proposed patches.
+The final shipping wheel will need validation against the dependency
+versions actually adopted.
+
 ## Reproduce
 
 Place clean `product` and `vello_cpu` source trees side by side. In the
