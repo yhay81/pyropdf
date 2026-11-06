@@ -8,6 +8,14 @@
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15120f">
   <style>{% include "partials/pyropdf.css" %}</style>
   {% if page.meta and page.meta.home %}
+    {# The home page sets its headings in Fraunces; the Japanese one adds
+       Noto Serif JP, subset to the characters of those headings. The
+       privacy plugin serves both from the site. #}
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..700&display=swap">
+    {% if config.theme.language == "ja" %}
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@600&display=swap&text=DFPRhnostuy%E3%80%81%E3%80%82%E3%81%8D%E3%81%99%E3%81%A4%E3%81%A6%E3%81%A7%E3%81%A8%E3%81%AB%E3%81%AE%E3%81%B9%E3%82%8B%E3%82%92%E3%82%B1%E3%82%B8%E3%83%83%E3%83%91%E3%83%BC%E4%B8%80%E4%B8%8A%E5%89%8D%E5%9C%B0%E5%BF%83%E6%8E%A1%E6%96%87%E6%9B%B8%E7%89%88%E7%94%A8%E7%AB%8B%E8%8A%AF">
+    {% endif %}
     {# The home page has no source to edit or copy. #}
     <style>.md-content__button { display: none; }</style>
   {% endif %}

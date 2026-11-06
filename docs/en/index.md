@@ -9,7 +9,7 @@ hide:
 
 <section class="pp-hero" aria-labelledby="pp-hero-title" markdown>
 <div class="pp-hero__text">
-  <h1 id="pp-hero-title">PDFs, with Python ergonomics and a Rust core.</h1>
+  <h1 id="pp-hero-title">PDFs, with <em>Python ergonomics</em> and a <em>Rust core</em>.</h1>
   <p class="pp-lede">
     pyropdf reads, renders, edits, and signs PDF documents. Pages are a sequence, form fields a mapping, and edits a transaction.
     Underneath, one versioned object store in Rust keeps every version: any change can be undone, and an edit that fails leaves the document as it was.
@@ -30,7 +30,26 @@ hide:
     <li>CPython 3.11–3.15, free-threaded too</li>
   </ul>
 </div>
-<div class="pp-hero__code" markdown>
+<div class="pp-stage" markdown>
+<div class="pp-sheet pp-sheet--before" aria-hidden="true"></div>
+<div class="pp-sheet" role="img" aria-label="An invoice page whose total the example has highlighted, saved as version 2">
+  <div class="pp-sheet__head">
+    <span class="pp-sheet__title">Invoice</span>
+    <span class="pp-sheet__meta">No. 2026-118<br>6 November 2026</span>
+  </div>
+  <span class="pp-bar" style="--w: 88%"></span>
+  <span class="pp-bar" style="--w: 56%"></span>
+  <div class="pp-sheet__table">
+    <span>Design review</span><span>1,200.00</span>
+    <span>Implementation</span><span>3,400.00</span>
+    <span>Support, 12 months</span><span>600.00</span>
+    <span class="pp-mark">total</span><span class="pp-mark">5,200.00</span>
+  </div>
+  <span class="pp-bar" style="--w: 64%"></span>
+  <span class="pp-bar" style="--w: 40%"></span>
+  <span class="pp-sheet__tag">v2 · "highlight totals"</span>
+</div>
+<div class="pp-stage__code" markdown>
 
 ```python
 import pyropdf
@@ -46,6 +65,7 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("reviewed.pdf", incremental=True)
 ```
 
+</div>
 </div>
 </section>
 
