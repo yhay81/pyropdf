@@ -955,7 +955,7 @@ A transparency group and what it applies to everything inside it.
 
 ## `Unmapped`
 
-`Unmapped = typing.Literal['skip', 'replacement', 'glyph_id']`
+`Unmapped = typing.Literal['skip', 'replacement', 'glyph_id', 'type3_char_code']`
 
 ## `Word`
 

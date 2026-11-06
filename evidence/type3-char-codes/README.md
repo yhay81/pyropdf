@@ -1,12 +1,29 @@
 # What hayro gives for Type 3 glyphs (issue #437)
 
-This answers the first acceptance item of #437: what hayro's glyph
-callbacks report for a Type 3 glyph, in the release that pyropdf pins
+The original investigation compared what hayro's glyph
+callbacks reported for a Type 3 glyph in the release pyropdf then pinned
 (hayro 0.8.0, hayro-interpret 0.8.0) and on `main`
 (LaurenzV/hayro@04a801de, 2026-11-01), and whether pyropdf needs an
 upstream change.
 
-## Conclusion
+## Adoption in pyropdf
+
+pyropdf uses the hayro 0.9-based revision `394e4a0d`, which includes
+LaurenzV/hayro#1512. The public `unmapped="type3_char_code"` option uses
+the code point with the same numeric value as the original Type 3 character
+code when hayro has exhausted the font's Unicode and glyph-name mappings.
+Custom encodings make this interpretation heuristic. On other fonts it
+uses U+FFFD for missing mappings. The default skips unmapped glyphs and
+warns. Text, words and characters use the same mapping and budget charges.
+
+For `tests/assets/real_world/pdfium-type3.pdf`, PyMuPDF 2.0
+(`doc[0].get_text()`) gives `'A\nA\nA\n'`. PDFium 156.0.8076.0 via
+pypdfium2 5.14.0 (`doc[0].get_textpage().get_text_bounded()`) gives
+`'A\r\nAA'`. Both emit the same three letters with different line breaks.
+The probe below independently records the three source codes as 65. The
+file's custom name `/C1` supplies no evidence of the intended character.
+
+## Original upstream investigation
 
 No new upstream change is needed. The change that #437 needs is already
 merged on hayro `main` and waits on a release:
@@ -65,12 +82,6 @@ labels as heuristic.
   this issue.
 - Interpreting a code as Unicode (for example code 65 as `A`) is a pyropdf
   policy, not something hayro asserts; it must stay opt-in and labelled.
-
-## Next action
-
-When a hayro release contains LaurenzV/hayro#1512, drop `upstream` and
-`upstream:merged` from #437 and label it `adoption`. Then implement the
-remaining acceptance items against `Glyph::char_code()`.
 
 ## Reproduce
 
