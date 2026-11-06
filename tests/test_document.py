@@ -173,7 +173,10 @@ def test_the_web_profile_checks_at_open() -> None:
     assert web.check_at_open
     assert web.max_file_size == 10 * 1024 * 1024
     assert web.max_object_depth == 64
+    assert web.max_page_content_size == 10 * 1024 * 1024
+    assert web.max_decompressed_size == 64 * 1024 * 1024
     assert web.max_memory_size is None
+    assert web.max_duration is None
     damaged = build_pdf([CATALOG, PAGES, b")"])
     assert not pyropdf.open(damaged).is_repaired
     with pytest.raises(MalformedPdfError):

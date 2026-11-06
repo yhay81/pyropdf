@@ -28,8 +28,8 @@ hayro の bounded construction（[#15](https://github.com/yhay81/pyropdf/issues/
 主張しません。それまでは、出どころの分からない PDF は、描画と解釈の経路でメモリや
 時間を使い果たしうるものとして扱ってください。
 
-`DocumentLimits` は pyropdf 自身が行う操作ごとの仕事量に上限を設けます。コードの一覧は
-[制限とエラー](limits.md#limit-codes)にあります。これは上の主張の代わりではありません。
+アップロードを扱う場合は、[読み取りと描画で適用される制限](limits.md#reading-and-rendering)と、
+[別プロセスでメモリと時間を制限する方法](limits.md#reading-a-pdf-in-a-worker)を参照してください。
 
 脆弱性は [GitHub security advisories](https://github.com/yhay81/pyropdf/security/advisories/new)
 から非公開で報告してください。

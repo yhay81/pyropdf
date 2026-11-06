@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -42,6 +43,21 @@ def test_the_example_runs(where: str, code: str, tmp_path: Path, monkeypatch: py
 def test_every_page_has_a_translation() -> None:
     names = {language: [page.name for page in pages] for language, pages in PAGES.items()}
     assert names["ja"] == names["en"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the worker example uses GNU timeout and util-linux prlimit")
+def test_worker_example_reads_the_first_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "input.pdf").write_bytes(build_text_pdf("BT /F1 12 Tf 72 700 Td (two words) Tj ET"))
+    monkeypatch.setenv("PATH", str(Path(sys.executable).parent), prepend=os.pathsep)
+    result = subprocess.run(  # noqa: S603 - run the same script that both guides include.
+        ["/bin/sh", str(ROOT / "docs" / "includes" / "read-in-worker.sh")],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=20,
+    )
+    assert result.stdout.strip() == "2"
 
 
 def test_the_home_pages_link_to_pages_that_exist() -> None:
