@@ -149,8 +149,8 @@ def main() -> None:
         printed = run(code["read.py"], "read.py", work).splitlines()
         if len(printed) > OUTPUT_LINES:
             printed = [*printed[: OUTPUT_LINES - 1], "…"]
-        (OUT / "read.txt").write_text("\n".join(printed) + "\n", encoding="utf-8")
-        (OUT / "words.svg").write_text(word_boxes(invoice), encoding="utf-8")
+        (OUT / "read.txt").write_text("\n".join(printed) + "\n", encoding="utf-8", newline="\n")
+        (OUT / "words.svg").write_text(word_boxes(invoice), encoding="utf-8", newline="\n")
         render(invoice, OUT / "revision-1.png")
         for number, name in enumerate(STEPS[1:], start=2):
             run(code[name], name, work)
