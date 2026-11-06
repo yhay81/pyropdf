@@ -7,6 +7,10 @@
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f3ec">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#15120f">
   <style>{% include "partials/pyropdf.css" %}</style>
+  {% if page.meta and page.meta.home %}
+    {# The home page has no source to edit or copy. #}
+    <style>.md-content__button { display: none; }</style>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}
