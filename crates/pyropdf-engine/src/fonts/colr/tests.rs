@@ -20,6 +20,7 @@ use crate::content::shading::{Geometry, Shadings, Stop};
 const PAINTS: &[u8] = include_bytes!("../testdata/colour-colr-paints.ttf");
 const COLR0: &[u8] = include_bytes!("../testdata/colour-colr0.ttf");
 const COLR1: &[u8] = include_bytes!("../testdata/colour-colr1.ttf");
+const UNCLIPPED: &[u8] = include_bytes!("../testdata/colour-colr-unclipped.ttf");
 const SBIX: &[u8] = include_bytes!("../testdata/colour-bitmaps-sbix.ttf");
 
 const PDF: &[u8] = b"%PDF-1.7\n1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n\
@@ -149,6 +150,39 @@ fn every_glyph_paints_whole_as_the_check_says_or_refuses() {
             None => assert!(matches!(painted, Err(ColrError::Refused(_)))),
         }
     }
+}
+
+#[test]
+fn a_paint_that_nothing_bounds_inks_the_face_box_corners_in_order() {
+    // The face's `head` gives its box from (900, 800) to (100, 0), and each
+    // glyph that paints paints red with nothing around the paint.
+    let font = FontRef::new(UNCLIPPED).unwrap();
+    let colr = Colr::read(&font).unwrap();
+    let document = document();
+    let budget = Budget::default();
+    let mut shadings = Shadings::new();
+    let mut painting = 0;
+    for id in 0..u32::from(font.maxp().unwrap().num_glyphs()) {
+        let glyph = GlyphId::new(id);
+        if colr.check(glyph, &budget).unwrap() != Some(Verdict::Paints) {
+            continue;
+        }
+        let mut transaction = document.begin();
+        let name = Name::from(format!("g{id}c").as_str());
+        let painted = colr
+            .paint(
+                &mut transaction,
+                &mut shadings,
+                glyph,
+                name,
+                1000.0,
+                &budget,
+            )
+            .unwrap();
+        assert_eq!(painted.ink, Some([100.0, 0.0, 900.0, 800.0]), "glyph {id}");
+        painting += 1;
+    }
+    assert_eq!(painting, 4);
 }
 
 #[test]

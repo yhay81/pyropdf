@@ -184,7 +184,8 @@ pub struct Colr<'a> {
     glyphs: ColorGlyphCollection<'a>,
     palettes: ColorPalettes<'a>,
     outlines: OutlineGlyphCollection<'a>,
-    /// What a paint that no clip bounds covers: the face's box.
+    /// What a paint that no clip bounds covers: the face's box, its corners
+    /// in order.
     face_box: Bounds,
     /// The instance whose paints and layers are drawn.
     location: LocationRef<'a>,
@@ -221,13 +222,11 @@ impl<'a> Colr<'a> {
         font.colr().ok()?;
         let outlines = font.outline_glyphs();
         outlines.format()?;
+        // A damaged `head` may give the box with its corners swapped.
         let face_box = font.head().map_or([0.0; 4], |head| {
-            [
-                f64::from(head.x_min()),
-                f64::from(head.y_min()),
-                f64::from(head.x_max()),
-                f64::from(head.y_max()),
-            ]
+            let [x0, x1] = [head.x_min(), head.x_max()].map(f64::from);
+            let [y0, y1] = [head.y_min(), head.y_max()].map(f64::from);
+            [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)]
         });
         Some(Self {
             glyphs: font.color_glyphs(),
