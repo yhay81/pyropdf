@@ -47,13 +47,14 @@ pub struct PageIndex {
     by_number: Box<[(u32, usize)]>,
 }
 
-/// A page: its object, its dictionary, and the inheritable attributes that
-/// apply to it.
+/// A page: its object, its dictionary, the inheritable attributes that
+/// apply to it, and its own `/UserUnit`, resolved.
 #[derive(Clone, Debug)]
 pub struct Page {
     object: Option<Reference>,
     value: Arc<Value>,
     attributes: [Option<Arc<Value>>; 4],
+    unit: Option<Arc<Value>>,
 }
 
 /// A page-tree node whose kids the walk is visiting.
@@ -142,6 +143,7 @@ impl PageIndex {
                         *slot = Some(own.1);
                     }
                 }
+                let unit = resolve(reads, dict.get("UserUnit"), "/UserUnit")?.map(|own| own.1);
                 let object = chain
                     .first_reference()
                     .map(|reference| Reference::new(reference.number(), reference.generation()));
@@ -149,6 +151,7 @@ impl PageIndex {
                     object,
                     value: Arc::clone(&value),
                     attributes,
+                    unit,
                 })?;
             }
         }
@@ -250,6 +253,38 @@ impl Page {
     pub fn rotate(&self) -> Option<&Value> {
         self.attributes[3].as_deref()
     }
+
+    /// Returns the size of the page's default user space unit in points
+    /// (ISO 32000-2 section 14.11.2), as [`user_unit`] reads the page's own
+    /// `/UserUnit`, which pages do not inherit.
+    #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "an integer unit past 2^53 is no less absurd rounded"
+    )]
+    pub fn user_unit(&self) -> f64 {
+        let unit = match self.unit.as_deref() {
+            Some(&Value::Integer(unit)) => Some(unit as f64),
+            Some(Value::Real(unit)) => Some(unit.value()),
+            _ => None,
+        };
+        user_unit(unit)
+    }
+}
+
+/// Returns the size of a page's default user space unit in points: its
+/// `/UserUnit` when that is a finite number greater than 0, and else 1, the
+/// unit of 1/72 inch that PDF 1.6 and earlier fix.
+///
+/// The store and the engine read `/UserUnit` each from its own copy of the
+/// page dictionary; both read it through this one rule, so that the page
+/// boxes, content coordinates and the renderer scale alike
+/// (yhay81/pyropdf#729).
+#[must_use]
+pub fn user_unit(value: Option<f64>) -> f64 {
+    value
+        .filter(|unit| unit.is_finite() && *unit > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// Returns the frame of node `dict`, whose attributes override `inherited`.

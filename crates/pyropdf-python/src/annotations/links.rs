@@ -195,6 +195,7 @@ impl Destination {
         let page = &pages[at];
         let crop = display_box(page);
         let turn = rotation(page.rotate());
+        let unit = page.user_unit();
         let [first, second, third, _] = self.numbers;
         let (point, zoom) = match self.fit {
             Fit::Xyz => (
@@ -202,15 +203,19 @@ impl Destination {
                     to_display(
                         crop,
                         turn,
+                        unit,
                         first.unwrap_or(crop[0]),
                         second.unwrap_or(crop[3]),
                     )
                 }),
                 third.filter(|zoom| *zoom != 0.0),
             ),
-            Fit::Horizontal => (first.map(|top| to_display(crop, turn, crop[0], top)), None),
+            Fit::Horizontal => (
+                first.map(|top| to_display(crop, turn, unit, crop[0], top)),
+                None,
+            ),
             Fit::Vertical => (
-                first.map(|left| to_display(crop, turn, left, crop[3])),
+                first.map(|left| to_display(crop, turn, unit, left, crop[3])),
                 None,
             ),
             Fit::Other => (None, None),
@@ -1002,8 +1007,13 @@ pub(crate) fn target_entry(
                 (point, zoom) => {
                     let (left, top) = match point {
                         Some((x, y)) => {
-                            let (left, top) =
-                                to_pdf(display_box(target), rotation(target.rotate()), *x, *y);
+                            let (left, top) = to_pdf(
+                                display_box(target),
+                                rotation(target.rotate()),
+                                target.user_unit(),
+                                *x,
+                                *y,
+                            );
                             (real(left, "left")?, real(top, "top")?)
                         }
                         None => (Value::Null, Value::Null),

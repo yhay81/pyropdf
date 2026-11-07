@@ -258,6 +258,8 @@ pub(crate) struct Annots<'b> {
     budget: &'b Budget,
     crop: [f64; 4],
     pub(crate) rotation: i64,
+    /// The size of the page's user space unit in points.
+    unit: f64,
     /// The array object that the page's `/Annots` names, if it names one.
     array: Option<Reference>,
     pub(crate) items: Array,
@@ -290,6 +292,7 @@ impl<'b> Annots<'b> {
         let page = &index.pages()[at];
         let crop = display_box(page);
         let rotation = rotation(page.rotate());
+        let unit = page.user_unit();
         let annots = page.dict().get("Annots");
         let array = match annots {
             Some(Value::Reference(reference)) => Some(*reference),
@@ -309,6 +312,7 @@ impl<'b> Annots<'b> {
             budget,
             crop,
             rotation,
+            unit,
             array,
             items,
         })
@@ -387,15 +391,15 @@ impl<'b> Annots<'b> {
 
     /// Converts a PDF rectangle to display space.
     pub(crate) fn to_display(&self, (x0, y0, x1, y1): Rect) -> Rect {
-        let (a, b) = to_display(self.crop, self.rotation, x0, y0);
-        let (c, d) = to_display(self.crop, self.rotation, x1, y1);
+        let (a, b) = to_display(self.crop, self.rotation, self.unit, x0, y0);
+        let (c, d) = to_display(self.crop, self.rotation, self.unit, x1, y1);
         (a.min(c), b.min(d), a.max(c), b.max(d))
     }
 
     /// Converts a display rectangle to a PDF `/Rect` array.
     pub(crate) fn to_pdf(&self, (x0, y0, x1, y1): Rect) -> Value {
-        let (a, b) = to_pdf(self.crop, self.rotation, x0, y0);
-        let (c, d) = to_pdf(self.crop, self.rotation, x1, y1);
+        let (a, b) = to_pdf(self.crop, self.rotation, self.unit, x0, y0);
+        let (c, d) = to_pdf(self.crop, self.rotation, self.unit, x1, y1);
         Value::Array(Array::from(vec![
             number(a.min(c)),
             number(b.min(d)),
@@ -721,22 +725,25 @@ impl<'b> Annots<'b> {
     }
 }
 
-/// Converts a point of PDF user space to display space on a page whose
-/// display box is `crop` and whose normalized `/Rotate` is `rotation`.
-pub(crate) fn to_display(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
+/// Converts a point of PDF user space to display space, in points, on a
+/// page whose display box is `crop`, whose normalized `/Rotate` is
+/// `rotation`, and whose user space unit is `unit` points.
+pub(crate) fn to_display(crop: [f64; 4], rotation: i64, unit: f64, x: f64, y: f64) -> (f64, f64) {
     let [cx0, cy0, cx1, cy1] = crop;
-    match rotation {
+    let (u, v) = match rotation {
         90 => (y - cy0, x - cx0),
         180 => (cx1 - x, y - cy0),
         270 => (cy1 - y, cx1 - x),
         _ => (x - cx0, cy1 - y),
-    }
+    };
+    (u * unit, v * unit)
 }
 
 /// Converts a point of display space to PDF user space, as the inverse of
 /// [`to_display`].
-pub(crate) fn to_pdf(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
+pub(crate) fn to_pdf(crop: [f64; 4], rotation: i64, unit: f64, x: f64, y: f64) -> (f64, f64) {
     let [cx0, cy0, cx1, cy1] = crop;
+    let (x, y) = (x / unit, y / unit);
     match rotation {
         90 => (cx0 + y, cy0 + x),
         180 => (cx1 - x, cy0 + y),
@@ -1296,7 +1303,7 @@ fn point_entry(
             if !(x.is_finite() && y.is_finite()) {
                 return Err(PdfError::new_err("annotation points are finite"));
             }
-            let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
+            let (x, y) = to_pdf(annots.crop, annots.rotation, annots.unit, x, y);
             annots.budget.poll().map_err(|e| limit_error(&e))?;
             array
                 .try_extend_from_slice(&[number(x), number(y)])
@@ -1354,7 +1361,8 @@ pub fn annotation_geometry(
             for list in lists {
                 for point in list {
                     budget.poll().map_err(|e| limit_error(&e))?;
-                    *point = to_display(annots.crop, annots.rotation, point.0, point.1);
+                    *point =
+                        to_display(annots.crop, annots.rotation, annots.unit, point.0, point.1);
                 }
             }
         }
@@ -2193,7 +2201,7 @@ impl Spec {
                 quads
                     .try_push(
                         [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
-                            .map(|(x, y)| to_pdf(annots.crop, annots.rotation, x, y)),
+                            .map(|(x, y)| to_pdf(annots.crop, annots.rotation, annots.unit, x, y)),
                     )
                     .map_err(|e| limit_error(&e))?;
             }
@@ -2262,7 +2270,7 @@ impl Spec {
                 f64::NEG_INFINITY,
             );
             for &(x, y) in lists.iter().flatten() {
-                let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
+                let (x, y) = to_pdf(annots.crop, annots.rotation, annots.unit, x, y);
                 bounds = (
                     bounds.0.min(x),
                     bounds.1.min(y),
@@ -2560,8 +2568,8 @@ impl Spec {
         let Some((x0, y0, x1, y1)) = self.rect else {
             return Err(PdfError::new_err("a free text needs its rectangle"));
         };
-        let (a, b) = to_pdf(annots.crop, annots.rotation, x0, y0);
-        let (c, d) = to_pdf(annots.crop, annots.rotation, x1, y1);
+        let (a, b) = to_pdf(annots.crop, annots.rotation, annots.unit, x0, y0);
+        let (c, d) = to_pdf(annots.crop, annots.rotation, annots.unit, x1, y1);
         let inner = [a.min(c), b.min(d), a.max(c), b.max(d)];
         let width = self.border.as_ref().map_or(0.0, |border| border.0).max(1.0);
         let pad = width / 2.0
@@ -2574,7 +2582,7 @@ impl Spec {
         let mut outer = inner;
         let mut line = Vec::with_capacity(points.len() * 2);
         for &(x, y) in points.iter() {
-            let (x, y) = to_pdf(annots.crop, annots.rotation, x, y);
+            let (x, y) = to_pdf(annots.crop, annots.rotation, annots.unit, x, y);
             outer = [
                 outer[0].min(x - pad),
                 outer[1].min(y - pad),

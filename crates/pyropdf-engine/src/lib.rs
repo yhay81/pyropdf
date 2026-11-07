@@ -13,6 +13,7 @@
 pub mod annotations;
 pub mod bridge;
 pub mod content;
+pub mod display;
 pub mod extract;
 pub mod fonts;
 pub mod forms;

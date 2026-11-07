@@ -253,8 +253,9 @@ def test_a_source_read_reports_geometry_and_content(rotation: int) -> None:
     target = pyropdf.Document()
     operation = _core.begin_canvas(target._core())
     try:
-        actual_rotation, box, width, height, content, snapshot = _read(source, page, operation)
-        assert (actual_rotation, box) == _core.page_space(source._core(), page.xref, page._generation)
+        actual_rotation, box, unit, width, height, content, snapshot = _read(source, page, operation)
+        assert (actual_rotation, box, unit) == _core.page_space(source._core(), page.xref, page._generation)
+        assert unit == 1
         assert (actual_rotation, width, height) == _core.page_geometry(source._core(), page.xref, page._generation)
         assert content == page.operations.to_bytes()
         assert operation.used("memory_size") > 0
@@ -279,7 +280,7 @@ def test_a_source_read_keeps_the_original_operation_bytes(content: bytes) -> Non
     target = pyropdf.Document()
     operation = _core.begin_canvas(target._core())
     try:
-        assert _read(source, page, operation)[4] == expected
+        assert _read(source, page, operation)[5] == expected
     finally:
         _core.end_transaction(target._core(), False)
 
@@ -321,7 +322,7 @@ def test_a_snapshot_reads_one_version_while_the_source_changes() -> None:
     target_core, source_core, generation = target._core(), source._core(), page._generation
     operation = _core.begin_canvas(target_core)
     try:
-        rotation, box, _, _, old_content, snapshot = _read(source, page, operation)
+        rotation, box, unit, _, _, old_content, snapshot = _read(source, page, operation)
 
         def edit_source() -> None:
             page.rotation = 90
@@ -330,7 +331,7 @@ def test_a_snapshot_reads_one_version_while_the_source_changes() -> None:
 
         with ThreadPoolExecutor(max_workers=1) as pool:
             pool.submit(edit_source).result(timeout=30)
-        assert (rotation, box) != _core.page_space(source_core, page.xref, generation)
+        assert (rotation, box, unit) != _core.page_space(source_core, page.xref, generation)
         assert old_content != page.operations.to_bytes()
         number = _core.copy_page_resources(
             target_core, source_core, page.xref, generation, operation=operation, snapshot=snapshot

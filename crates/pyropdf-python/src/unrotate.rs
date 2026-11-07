@@ -60,7 +60,8 @@ fn then(m: &Matrix, n: &Matrix) -> Matrix {
 fn unrotation((x0, y0, x1, y1): Box4, turn: i64) -> Matrix {
     let height = if turn % 180 == 90 { x1 - x0 } else { y1 - y0 };
     let map = |x, y| {
-        let (u, v) = to_display([x0, y0, x1, y1], turn, x, y);
+        // The turn stays in user space, so its unit is the user space unit.
+        let (u, v) = to_display([x0, y0, x1, y1], turn, 1.0, x, y);
         (u, height - v)
     };
     let (e, f) = map(0.0, 0.0);

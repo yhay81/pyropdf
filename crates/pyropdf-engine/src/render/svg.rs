@@ -2,13 +2,15 @@
 //! (yhay81/pyropdf#120).
 
 use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
+use hayro::hayro_syntax::page::Page;
 
 use super::{Fallback, RasterError};
 use crate::bridge::Bridged;
 
 /// Converts page `index` to an SVG document at 72 dpi, with text drawn as
 /// paths and, unless `annotations` is false, annotation appearances;
-/// `fallback` draws the CJK fonts that the document does not embed.
+/// `fallback` draws the CJK fonts that the document does not embed. Its
+/// width and height are the page's display size in points.
 ///
 /// hayro-svg builds the whole document before returning it, so a caller's
 /// size limit applies to the result, not to the conversion's memory.
@@ -28,12 +30,30 @@ pub fn svg(
         },
         ..fallback.settings()
     };
-    Ok(hayro_svg::convert(
+    let converted = hayro_svg::convert(
         page,
         &hayro_svg::RenderCache::new(),
         &settings,
         &hayro_svg::SvgRenderSettings::default(),
-    ))
+    );
+    Ok(sized(converted, page))
+}
+
+/// Sets the `width` and `height` of the root of `svg`, which hayro-svg
+/// writes in user space units as it writes the `viewBox`, to the display
+/// size of `page` in points, so that a viewer scales the drawing by the
+/// page's `/UserUnit`.
+fn sized(svg: String, page: &Page<'_>) -> String {
+    let (width, height) = page.render_dimensions();
+    let (points_wide, points_high) = crate::display::size(page);
+    if (points_wide, points_high) == (f64::from(width), f64::from(height)) {
+        return svg;
+    }
+    svg.replacen(
+        &format!(" width=\"{width}\" height=\"{height}\""),
+        &format!(" width=\"{points_wide}\" height=\"{points_high}\""),
+        1,
+    )
 }
 
 #[cfg(test)]

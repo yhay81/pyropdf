@@ -329,7 +329,7 @@ impl TextOptions {
 }
 
 /// One collected glyph in top-left-origin, downward-y display coordinates after
-/// the renderer's `initial_transform`, with page rotation resolved.
+/// the renderer's display transform, with page rotation resolved.
 struct GlyphRecord {
     /// Unicode representation; ligatures may contain multiple characters.
     text: GlyphText,
@@ -812,7 +812,7 @@ impl TextCollector<'_> {
             })
             .filter(|a| a.is_finite() && *a > 0.0)
             .unwrap_or(size * 0.5);
-        // Context initial_transform already flips y and applies rotation, so
+        // The context's display transform already flips y and applies rotation, so
         // transformed coordinates are directly in top-left-origin display space.
         let source_order = self.shown;
         let bidi_flags = glyph_bidi_flags(&text);
@@ -2836,8 +2836,8 @@ fn collect_page_glyphs(
     let pages = pdf.pages();
     let page = pages.get(index).ok_or(Error::NoPage(index))?;
     let page_box = {
-        let (width, height) = page.render_dimensions();
-        Rect::new(0.0, 0.0, f64::from(width), f64::from(height))
+        let (width, height) = crate::display::size(page);
+        Rect::new(0.0, 0.0, width, height)
     };
     let collector = TextCollector {
         glyphs: Vec::new(),

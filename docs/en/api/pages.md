@@ -162,6 +162,9 @@ The display `Rect` `(0, 0, width, height)`, with the rotation applied.
 
 The visible page is the CropBox clipped to the MediaBox; a box that
 leaves nothing visible gives the A4 page that the renderer draws.
+Display coordinates are points of 1/72 inch: a page's `/UserUnit`
+sets the size of its user space unit, so a 400 by 300 MediaBox with
+`/UserUnit 2` is 800 by 600 points.
 
 ### `Page.media_box`
 

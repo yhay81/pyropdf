@@ -426,12 +426,12 @@ def _affine(function: Callable[[float, float], tuple[float, float]]) -> _Affine:
 
 
 def _display_from_user(
-    rotation: int, box: tuple[float, float, float, float]
+    rotation: int, box: tuple[float, float, float, float], unit: float
 ) -> Callable[[float, float], tuple[float, float]]:
-    """Return the map from a page's user space to its display space."""
+    """Return the map from a page's user space to its display space, in points of ``unit`` per user space unit."""
     x0, y0, x1, y1 = box
 
-    def convert(x: float, y: float) -> tuple[float, float]:
+    def turn(x: float, y: float) -> tuple[float, float]:
         if rotation == 90:  # noqa: PLR2004 - a quarter turn
             return (y - y0, x - x0)
         if rotation == 180:  # noqa: PLR2004 - a half turn
@@ -440,14 +440,19 @@ def _display_from_user(
             return (y1 - y, x1 - x)
         return (x - x0, y1 - y)
 
+    def convert(x: float, y: float) -> tuple[float, float]:
+        u, v = turn(x, y)
+        return (u * unit, v * unit)
+
     return convert
 
 
-def _user_from_display(rotation: int, box: tuple[float, float, float, float]) -> _Affine:
-    """Return the matrix from a page's display space to its user space."""
+def _user_from_display(rotation: int, box: tuple[float, float, float, float], unit: float) -> _Affine:
+    """Return the matrix from a page's display space, in points, to its user space of ``unit`` points a unit."""
     x0, y0, x1, y1 = box
 
     def convert(x: float, y: float) -> tuple[float, float]:
+        x, y = x / unit, y / unit
         if rotation == 90:  # noqa: PLR2004 - a quarter turn
             return (x0 + y, y0 + x)
         if rotation == 180:  # noqa: PLR2004 - a half turn
@@ -1366,8 +1371,8 @@ class Canvas:
                 if not isinstance(group, Dictionary) or group.get("Type") != "OCG":
                     msg = f"object {xref}, a layer that the canvas draws, is no longer an optional content group"
                     raise StaleObjectError(msg)
-        rotation, box = _page_space(page)
-        matrix = _user_from_display(rotation, box)
+        rotation, box, unit = _page_space(page)
+        matrix = _user_from_display(rotation, box, unit)
         self._write_page_patterns(matrix)
         opening = b"q\n" + _numbers(*matrix) + b" cm\n"
         size = len(opening) + self._buffered + 2
@@ -2074,11 +2079,11 @@ class Canvas:
         # from one version of its document, and writes or reuses its Form.
         operation = _core.begin_canvas(core)
 
-        def read() -> tuple[int, tuple[float, float, float, float], Rect, Rect, int]:
+        def read() -> tuple[int, tuple[float, float, float, float], float, Rect, Rect, int]:
             page = _core.canvas_source_page(source_core, source.xref, source._generation, operation)  # noqa: SLF001
             if page is None:
                 raise source._stale()  # noqa: SLF001
-            source_rotation, source_box, width, height, _content, snapshot = page
+            source_rotation, source_box, source_unit, width, height, _content, snapshot = page
             whole = Rect(0, 0, width, height)
             shown = whole if clip is None else _rect(clip, "clip")
             if not shown.intersects(whole):
@@ -2095,10 +2100,10 @@ class Canvas:
             )
             if form is None:
                 raise source._stale()  # noqa: SLF001
-            return source_rotation, source_box, whole, shown, form
+            return source_rotation, source_box, source_unit, whole, shown, form
 
         try:
-            source_rotation, source_box, whole, shown, form = read()
+            source_rotation, source_box, source_unit, whole, shown, form = read()
         except BaseException:
             _core.abort_canvas(core, operation)
             raise
@@ -2106,7 +2111,7 @@ class Canvas:
         # Only the part of the clip on the page is drawn.
         shown &= whole
         covered, place = _placement(box, shown.width, shown.height, keep=bool(keep_aspect), rotation=rotation)
-        to_display = _display_from_user(source_rotation, source_box)
+        to_display = _display_from_user(source_rotation, source_box, source_unit)
 
         def convert(x: float, y: float) -> tuple[float, float]:
             dx, dy = to_display(x, y)
@@ -2578,7 +2583,7 @@ def _font_dict(base: str) -> dict[str, object]:
     return font
 
 
-def _page_space(page: Page) -> tuple[int, tuple[float, float, float, float]]:
+def _page_space(page: Page) -> tuple[int, tuple[float, float, float, float], float]:
     space = _core.page_space(page.document._core(), page.xref, page._generation)  # noqa: SLF001
     if space is None:
         raise page._stale()  # noqa: SLF001

@@ -338,15 +338,10 @@ fn page_extent(
             "alpha=False needs an opaque background".to_owned(),
         ));
     }
-    let (width, height) = page.render_dimensions();
+    let (width, height) = crate::display::size(page);
     let linear = Affine::new([a, b, c, d, 0.0, 0.0]);
-    let corners = [
-        (0.0, 0.0),
-        (f64::from(width), 0.0),
-        (0.0, f64::from(height)),
-        (f64::from(width), f64::from(height)),
-    ]
-    .map(|(x, y)| linear * Point::new(x, y));
+    let corners = [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)]
+        .map(|(x, y)| linear * Point::new(x, y));
     let (x0, y0, x1, y1) = bounds(corners);
     let (x0, y0) = ((x0 - EDGE_TOLERANCE).ceil(), (y0 - EDGE_TOLERANCE).ceil());
     let pixel_width = (x1 + EDGE_TOLERANCE).floor() - x0;
@@ -413,7 +408,6 @@ fn draw<'a>(
     index: usize,
     options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
-    use hayro::hayro_interpret::TransformExt;
     use hayro::kurbo::Affine;
     use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
 
@@ -423,7 +417,7 @@ fn draw<'a>(
     let (a, b, c, d) = options.matrix;
     let transform = Affine::translate((-left, -top))
         * Affine::new([a, b, c, d, 0.0, 0.0])
-        * page.initial_transform(true).to_kurbo();
+        * crate::display::transform(page);
     let settings = InterpreterSettings {
         render_content: if options.annotations {
             RenderContent::all()
