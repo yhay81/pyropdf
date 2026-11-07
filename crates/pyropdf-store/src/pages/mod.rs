@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::memo::{Memo, Reads};
-use crate::value::{Dict, Reference, Value};
+use crate::value::{Array, Dict, Reference, Value};
 use crate::version::Version;
 use crate::{Error, Result};
 
@@ -54,7 +54,10 @@ pub struct Page {
     object: Option<Reference>,
     value: Arc<Value>,
     attributes: [Option<Arc<Value>>; 4],
-    unit: Option<Arc<Value>>,
+    unit: f64,
+    /// Display boxes with indirect coordinates, resolved for scaled pages.
+    /// The original entries remain available to page-tree edits via `inherited`.
+    resolved_boxes: Box<[(usize, Value)]>,
 }
 
 /// A page-tree node whose kids the walk is visiting.
@@ -143,7 +146,15 @@ impl PageIndex {
                         *slot = Some(own.1);
                     }
                 }
-                let unit = resolve(reads, dict.get("UserUnit"), "/UserUnit")?.map(|own| own.1);
+                let unit = user_unit(reads, dict.get("UserUnit"))?;
+                let mut resolved_boxes = BudgetVec::new(budget);
+                if unit != 1.0 {
+                    for at in [1, 2] {
+                        if let Some(bounds) = resolve_box(reads, attributes[at].as_deref())? {
+                            resolved_boxes.try_push((at, bounds))?;
+                        }
+                    }
+                }
                 let object = chain
                     .first_reference()
                     .map(|reference| Reference::new(reference.number(), reference.generation()));
@@ -152,6 +163,7 @@ impl PageIndex {
                     value: Arc::clone(&value),
                     attributes,
                     unit,
+                    resolved_boxes: resolved_boxes.into_vec().into_boxed_slice(),
                 })?;
             }
         }
@@ -239,13 +251,21 @@ impl Page {
     /// Returns the media box that applies to the page.
     #[must_use]
     pub fn media_box(&self) -> Option<&Value> {
-        self.attributes[1].as_deref()
+        self.display_box(1)
     }
 
     /// Returns the crop box that applies to the page.
     #[must_use]
     pub fn crop_box(&self) -> Option<&Value> {
-        self.attributes[2].as_deref()
+        self.display_box(2)
+    }
+
+    fn display_box(&self, at: usize) -> Option<&Value> {
+        self.resolved_boxes
+            .iter()
+            .find(|(slot, _)| *slot == at)
+            .map(|(_, value)| value)
+            .or(self.attributes[at].as_deref())
     }
 
     /// Returns the rotation that applies to the page.
@@ -255,36 +275,52 @@ impl Page {
     }
 
     /// Returns the size of the page's default user space unit in points
-    /// (ISO 32000-2 section 14.11.2), as [`user_unit`] reads the page's own
-    /// `/UserUnit`, which pages do not inherit.
+    /// (ISO 32000-2 section 14.11.2), from its own `/UserUnit`, defaulting to 1.
     #[must_use]
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "an integer unit past 2^53 is no less absurd rounded"
-    )]
-    pub fn user_unit(&self) -> f64 {
-        let unit = match self.unit.as_deref() {
-            Some(&Value::Integer(unit)) => Some(unit as f64),
-            Some(Value::Real(unit)) => Some(unit.value()),
-            _ => None,
-        };
-        user_unit(unit)
+    pub const fn user_unit(&self) -> f64 {
+        self.unit
     }
 }
 
-/// Returns the size of a page's default user space unit in points: its
-/// `/UserUnit` when that is a finite number greater than 0, and else 1, the
-/// unit of 1/72 inch that PDF 1.6 and earlier fix.
-///
-/// The store and the engine read `/UserUnit` each from its own copy of the
-/// page dictionary; both read it through this one rule, so that the page
-/// boxes, content coordinates and the renderer scale alike
-/// (yhay81/pyropdf#729).
-#[must_use]
-pub fn user_unit(value: Option<f64>) -> f64 {
-    value
-        .filter(|unit| unit.is_finite() && *unit > 0.0)
-        .unwrap_or(1.0)
+/// Copies only a numeric scalar. Indirect numbers also record the objects read.
+fn read_number(reads: &mut Reads<'_>, value: Option<&Value>, what: &str) -> Result<Option<Value>> {
+    let resolved;
+    let value = if matches!(value, Some(Value::Reference(_))) {
+        resolved = resolve(reads, value, what)?;
+        resolved.as_ref().map(|(_, value)| value.as_ref())
+    } else {
+        value
+    };
+    Ok(value
+        .filter(|v| matches!(v, Value::Integer(_) | Value::Real(_)))
+        .cloned())
+}
+
+#[expect(clippy::cast_precision_loss, reason = "display coordinates are f64")]
+fn user_unit(reads: &mut Reads<'_>, value: Option<&Value>) -> Result<f64> {
+    Ok(match read_number(reads, value, "/UserUnit")? {
+        Some(Value::Integer(n)) if n > 0 => n as f64,
+        Some(Value::Real(r)) if r.value().is_finite() && r.value() > 0.0 => r.value(),
+        _ => 1.0,
+    })
+}
+
+/// Materializes the four numbers only when the display box contains a reference.
+fn resolve_box(reads: &mut Reads<'_>, value: Option<&Value>) -> Result<Option<Value>> {
+    let Some(Value::Array(items)) = value else {
+        return Ok(None);
+    };
+    if items.len() != 4 || !items.iter().any(|item| matches!(item, Value::Reference(_))) {
+        return Ok(None);
+    }
+    let mut numbers = BudgetVec::new(reads.budget());
+    for item in items.iter() {
+        let Some(number) = read_number(reads, Some(item), "a page box coordinate")? else {
+            return Ok(None);
+        };
+        numbers.try_push(number)?;
+    }
+    Ok(Some(Value::Array(Array::from(numbers.into_vec()))))
 }
 
 /// Returns the frame of node `dict`, whose attributes override `inherited`.

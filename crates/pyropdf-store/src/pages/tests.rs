@@ -157,6 +157,23 @@ fn a_reference_cycle_in_an_attribute_refuses() {
 }
 
 #[test]
+fn the_index_does_not_retain_an_invalid_indirect_unit() {
+    let doc = document(&[
+        (1, "<< /Type /Catalog /Pages 2 0 R >>"),
+        (2, "<< /Type /Pages /Kids [3 0 R] >>"),
+        (3, "<< /Type /Page /UserUnit 4 0 R >>"),
+        (4, "<< /Unused [1 2] >>"),
+    ]);
+    let budget = Budget::default();
+    let version = doc.current();
+    let unit = version.get(4, &budget).unwrap().unwrap();
+    let references = Arc::strong_count(unit.value());
+    let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+    assert_eq!(pages.pages()[0].user_unit(), 1.0);
+    assert_eq!(Arc::strong_count(unit.value()), references);
+}
+
+#[test]
 fn absent_entries_inherit_through_nulls() {
     let index = index(&document(&[
         (1, "<< /Type /Catalog /Pages 2 0 R >>"),

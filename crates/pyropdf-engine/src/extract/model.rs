@@ -21,6 +21,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::display::Display;
 use hayro::hayro_interpret::font::{Glyph, GlyphRun, OutlineGlyph, Type3Glyph};
 use hayro::hayro_interpret::hayro_cmap::BfString;
 use hayro::hayro_interpret::pattern::{Pattern, ShadingPattern};
@@ -30,10 +31,10 @@ use hayro::hayro_interpret::{
     InterpreterCache, InterpreterSettings, MaskType, Paint, RenderContent, SoftMask, StrokeProps,
     interpret_page,
 };
+use hayro::hayro_syntax::Filter;
 use hayro::hayro_syntax::object::dict::keys::{ACTUAL_TEXT, MCID};
 use hayro::hayro_syntax::object::{Array, Dict, Stream, String as PdfString};
 use hayro::hayro_syntax::page::Page;
-use hayro::hayro_syntax::{Filter, Pdf};
 use hayro::kurbo::{Affine, BezPath, Cap, Join, PathEl, Point, Rect, Shape};
 use hayro_font::Font;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -2517,8 +2518,8 @@ impl<'a, S: ContentSink> Device<'a> for ContentCollector<'a, '_, S> {
     reason = "one interpretation and what it collects"
 )]
 pub(crate) fn collect_page_content<'a, S: ContentSink>(
-    pdf: &'a Pdf,
     page: &Page<'a>,
+    display: Display,
     settings: InterpreterSettings,
     cache: &InterpreterCache<'a>,
     sink: S,
@@ -2527,7 +2528,7 @@ pub(crate) fn collect_page_content<'a, S: ContentSink>(
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
     let stretches = Stretches::new(&settings);
-    let mut context = extraction_context(pdf, page, cache, settings);
+    let mut context = extraction_context(page, display, cache, settings);
     let mut collector = ContentCollector::new(sink, kinds, stretches, budget);
     interpret_page(page, &mut context, &mut collector);
     collector.finish(clip)
@@ -2547,8 +2548,8 @@ pub(crate) fn collect_page_content<'a, S: ContentSink>(
 /// applies after the faces have moved them.
 #[expect(clippy::too_many_arguments, reason = "the options of Page.content")]
 pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
-    pdf: &'a Pdf,
     page: &Page<'a>,
+    display: Display,
     fallback: &Fallback,
     render_content: RenderContent,
     sink: S,
@@ -2567,7 +2568,7 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
     };
     let cache = InterpreterCache::new();
     let stretches = Stretches::new(&settings);
-    let mut context = extraction_context(pdf, page, &cache, settings);
+    let mut context = extraction_context(page, display, &cache, settings);
     let mut collector = ContentCollector::new(sink, kinds, stretches, budget);
     interpret_page(page, &mut context, &mut collector);
     if collector.error.is_none() && asked.load(Ordering::Relaxed) {
@@ -2582,8 +2583,8 @@ pub(crate) fn collect_page_content_on_faces<'a, S: ContentSink>(
             error: None,
         };
         let (_, faces) = collect_page_content(
-            pdf,
             page,
+            display,
             settings,
             &InterpreterCache::new(),
             faces,

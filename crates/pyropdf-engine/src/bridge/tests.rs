@@ -35,13 +35,8 @@ fn bridge(version: &Version) -> Bridged {
 
 /// Renders every page of hayro's own reading of `bytes`.
 fn hayro_renders(bytes: Vec<u8>) -> Vec<Rgba> {
-    let pdf = Pdf::new(bytes).unwrap();
-    let pages = pdf.pages().len();
-    let bridged = Bridged {
-        pdf,
-        stats: Stats::default(),
-    };
-    (0..pages)
+    let bridged = Bridged::of_bytes(bytes);
+    (0..bridged.pdf().pages().len())
         .map(|index| render::page(&bridged, index, SCALE).unwrap())
         .collect()
 }
@@ -50,6 +45,25 @@ fn bridge_renders(bridged: &Bridged) -> Vec<Rgba> {
     (0..bridged.pdf().pages().len())
         .map(|index| render::page(bridged, index, SCALE).unwrap())
         .collect()
+}
+
+#[test]
+fn raw_rasters_scale_only_the_page_with_a_user_unit() {
+    let document = three_pages();
+    let version = document.current();
+    let original = bridge(&version);
+    let mut page = page_index(&version).pages()[1].dict().clone();
+    page.insert(Name::from("UserUnit"), 2.into());
+    let budget = Budget::default();
+    let mut transaction = document.begin();
+    transaction.write(5, &Value::Dict(page), &budget).unwrap();
+    let scaled = bridge(&transaction.commit(&budget).unwrap());
+    for (at, expected_scale) in [(0, 0.5), (1, 1.0), (2, 0.5)] {
+        assert_eq!(
+            render::page(&scaled, at, 0.5).unwrap(),
+            render::page(&original, at, expected_scale).unwrap()
+        );
+    }
 }
 
 #[test]

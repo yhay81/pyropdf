@@ -14,6 +14,8 @@ use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
+use pyropdf_engine::display::{A4, Display};
+pub(crate) use pyropdf_engine::display::{display_box, rect, rotation};
 use pyropdf_engine::pages::copy::Copies;
 use pyropdf_engine::pages::{import, sources};
 use pyropdf_engine::render::Fallback;
@@ -36,9 +38,6 @@ use crate::objects::set_data;
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
-
-/// hayro's default page, A4 in points, for a page without a usable box.
-const A4: (f64, f64) = (595.0, 842.0);
 
 /// The view shared by every page and every pass of one document export.
 #[pyclass(frozen, name = "_PageSnapshot", module = "pyropdf._core")]
@@ -222,7 +221,7 @@ pub fn page_objects(document: &_Document) -> PyResult<Vec<(u32, u16)>> {
 }
 
 /// Returns the rotation of a page, normalized to 0, 90, 180, or 270, and
-/// its display width and height in points, as [`display_size`] measures
+/// its display width and height in points, as [`Display::size`] measures
 /// them. `None` for a stale page.
 #[pyfunction]
 pub fn page_geometry(
@@ -236,7 +235,7 @@ pub fn page_geometry(
             return Ok(None);
         };
         let page = &index.pages()[at];
-        let (width, height) = display_size(page);
+        let (width, height) = Display::from_page(page).size();
         Ok(Some((rotation(page.rotate()), width, height)))
     })?
 }
@@ -377,7 +376,7 @@ pub fn canvas_source_page<'py>(
         let rotation = rotation(entry.rotate());
         let [x0, y0, x1, y1] = display_box(entry);
         let unit = entry.user_unit();
-        let (width, height) = display_size(entry);
+        let (width, height) = Display::from_page(entry).size();
         let content = py
             .detach(|| PageContent::read(&mut Reads::new(&version, &budget), entry))
             .map_err(|error| store_error(&error))?;
@@ -893,7 +892,6 @@ pub fn set_page_box(
     display: Box4,
 ) -> PyResult<bool> {
     crate::errors::boundary(|| {
-        const SLACK: f64 = 1e-6;
         let Some(&key) = BOXES.get(kind) else {
             return Err(PyValueError::new_err(format!("no page box {kind}")));
         };
@@ -907,14 +905,16 @@ pub fn set_page_box(
         let (a, b) = to_pdf(frame, rotation, unit, display.0, display.1);
         let (c, d) = to_pdf(frame, rotation, unit, display.2, display.3);
         let user = (a.min(c), b.min(d), a.max(c), b.max(d));
-        if user.2 - user.0 < SLACK || user.3 - user.1 < SLACK {
+        // The setter's tolerance is one millionth of a display point.
+        let slack = 1e-6 / unit;
+        if user.2 - user.0 < slack || user.3 - user.1 < slack {
             return Err(PyValueError::new_err(format!("the {key} is empty")));
         }
         let inside = |inner: Box4, outer: Box4| {
-            inner.0 >= outer.0 - SLACK
-                && inner.1 >= outer.1 - SLACK
-                && inner.2 <= outer.2 + SLACK
-                && inner.3 <= outer.3 + SLACK
+            inner.0 >= outer.0 - slack
+                && inner.1 >= outer.1 - slack
+                && inner.2 <= outer.2 + slack
+                && inner.3 <= outer.3 + slack
         };
         let boxes = user_boxes(page);
         if kind == 0 {
@@ -1976,75 +1976,6 @@ pub(crate) fn resolve(
 fn indirect(page: &Page, at: usize) -> PyResult<Reference> {
     page.object()
         .ok_or_else(|| MalformedPdfError::new_err(format!("page {at} is not an indirect object")))
-}
-
-/// Returns the crop box of `page` clipped to its media box, in unrotated
-/// user space, or `None` when nothing is visible.
-fn visible(page: &Page) -> Option<(f64, f64, f64, f64)> {
-    let media = page
-        .media_box()
-        .and_then(rect)
-        .unwrap_or((0.0, 0.0, A4.0, A4.1));
-    let crop = page.crop_box().and_then(rect).unwrap_or(media);
-    let (x0, y0) = (crop.0.max(media.0), crop.1.max(media.1));
-    let (x1, y1) = (crop.2.min(media.2), crop.3.min(media.3));
-    (x1 - x0 >= 1e-6 && y1 - y0 >= 1e-6).then_some((x0, y0, x1, y1))
-}
-
-/// Returns the display box of `page` in unrotated user space, whose size
-/// [`page_geometry`] reports: the visible crop box, at least one unit on a
-/// side, or hayro's A4.
-pub(crate) fn display_box(page: &Page) -> [f64; 4] {
-    visible(page).map_or([0.0, 0.0, A4.0, A4.1], |(x0, y0, x1, y1)| {
-        [x0, y0, x0 + (x1 - x0).max(1.0), y0 + (y1 - y0).max(1.0)]
-    })
-}
-
-/// Returns the display width and height of `page` in points: the size of
-/// its display box, rotated and scaled by its user space unit, as the
-/// engine's display space measures the page (yhay81/pyropdf#729).
-fn display_size(page: &Page) -> (f64, f64) {
-    let unit = page.user_unit();
-    let (width, height) = visible(page).map_or(A4, |(x0, y0, x1, y1)| {
-        ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
-    });
-    let (width, height) = (width * unit, height * unit);
-    if rotation(page.rotate()) % 180 == 90 {
-        (height, width)
-    } else {
-        (width, height)
-    }
-}
-
-/// Normalizes `/Rotate` to 0, 90, 180, or 270, as hayro reads it.
-pub(crate) fn rotation(value: Option<&Value>) -> i64 {
-    match value {
-        Some(&Value::Integer(rotate)) => match rotate.rem_euclid(360) {
-            r @ (0 | 90 | 180 | 270) => r,
-            _ => 0,
-        },
-        _ => 0,
-    }
-}
-
-/// Reads a rectangle of four numbers, normalized.
-pub(crate) fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
-    let Value::Array(array) = value else {
-        return None;
-    };
-    let mut numbers = [0.0; 4];
-    if array.len() != 4 {
-        return None;
-    }
-    for (slot, item) in numbers.iter_mut().zip(array.iter()) {
-        *slot = match item {
-            Value::Integer(n) => *n as f64,
-            Value::Real(r) => r.value(),
-            _ => return None,
-        };
-    }
-    let [a, b, c, d] = numbers;
-    Some((a.min(c), b.min(d), a.max(c), b.max(d)))
 }
 
 /// Returns `value` as an integer when it is one, else as a real.

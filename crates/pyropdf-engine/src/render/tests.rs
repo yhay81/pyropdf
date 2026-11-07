@@ -424,7 +424,7 @@ fn fallback_faces_draw_the_cjk_fonts_that_a_document_does_not_embed() {
     .unwrap();
     assert!(batched == [drawn.clone(), drawn]);
     let empty_outlines = |fallback| {
-        svg(&bridged, fallback, 0, true)
+        svg(&bridged, fallback, 0, true, &Budget::default())
             .unwrap()
             .matches(" d=\"\"")
             .count()

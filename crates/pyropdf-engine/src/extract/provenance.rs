@@ -13,12 +13,12 @@
 //! checked against its counterpart by its glyph count and the transform of
 //! its first glyph, and a page whose runs disagree has no sources.
 
+use crate::display::Display;
 use hayro::hayro_interpret::font::GlyphRun;
 use hayro::hayro_interpret::{
     BlendMode, ClipPath, Device, DrawMode, DrawProps, Image, ImageDrawProps, InterpreterCache,
     InterpreterSettings, SoftMask, interpret,
 };
-use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::content::TypedIter;
 use hayro::hayro_syntax::object::Dict;
 use hayro::hayro_syntax::page::Page;
@@ -71,8 +71,8 @@ struct Origin {
 /// disagree or when the content's own marked content uses the tags. `cache`
 /// holds what the first interpretation read.
 pub(crate) fn run_sources<'a>(
-    pdf: &'a Pdf,
     page: &Page<'a>,
+    display: Display,
     settings: InterpreterSettings,
     cache: &InterpreterCache<'a>,
     content: &PageContent,
@@ -85,7 +85,7 @@ pub(crate) fn run_sources<'a>(
     let Some(data) = marked(content, budget)? else {
         return Ok(Vec::new());
     };
-    let mut context = extraction_context(pdf, page, cache, settings);
+    let mut context = extraction_context(page, display, cache, settings);
     let mut device = OriginDevice {
         origins: BudgetVec::new(budget),
         // The runs after the last checked one cannot name a glyph.

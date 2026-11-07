@@ -18,10 +18,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::display::Display;
 use hayro::hayro_interpret::font::Glyph;
 use hayro::hayro_interpret::hayro_cmap::BfString;
 use hayro::hayro_interpret::{DrawMode, InterpreterCache, InterpreterSettings, RenderContent};
-use hayro::hayro_syntax::Pdf;
 use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::{Affine, BezPath, Point, Rect};
 use pyropdf_store::LimitExceeded;
@@ -632,8 +632,8 @@ impl ContentSink for FaceInk<'_> {
 /// hayro another font, which shows other glyphs: the records then keep their
 /// boxes.
 fn measure_on_faces<'a>(
-    pdf: &'a Pdf,
     page: &Page<'a>,
+    display: Display,
     fallback: &Fallback,
     glyphs: &mut [GlyphRecord],
     shown: usize,
@@ -648,8 +648,8 @@ fn measure_on_faces<'a>(
         refusal: None,
     };
     let (_, sink) = super::model::collect_page_content(
-        pdf,
         page,
+        display,
         settings,
         &InterpreterCache::new(),
         sink,
@@ -2832,11 +2832,9 @@ fn collect_page_glyphs(
     content: Option<&PageContent>,
     budget: &Budget,
 ) -> Result<CollectedGlyphs, Error> {
-    let pdf = bridged.pdf();
-    let pages = pdf.pages();
-    let page = pages.get(index).ok_or(Error::NoPage(index))?;
+    let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
     let page_box = {
-        let (width, height) = crate::display::size(page);
+        let (width, height) = display.size();
         Rect::new(0.0, 0.0, width, height)
     };
     let collector = TextCollector {
@@ -2876,8 +2874,8 @@ fn collect_page_glyphs(
     };
     let cache = InterpreterCache::new();
     let (_, mut collector) = super::model::collect_page_content(
-        pdf,
         page,
+        display,
         settings.clone(),
         &cache,
         collector,
@@ -2896,15 +2894,15 @@ fn collect_page_glyphs(
     let shown = collector.shown;
     let mut glyphs = collector.glyphs;
     if asked.load(Ordering::Relaxed)
-        && let Err(error) = measure_on_faces(pdf, page, fallback, &mut glyphs, shown, budget)
+        && let Err(error) = measure_on_faces(page, display, fallback, &mut glyphs, shown, budget)
     {
         charge.release(budget);
         return Err(error);
     }
     if let (Some(content), Some(checks)) = (content, &collector.checks)
         && let Err(error) = add_sources(
-            pdf,
             page,
+            display,
             settings,
             &cache,
             content,
@@ -2932,8 +2930,8 @@ fn collect_page_glyphs(
     reason = "the interpretation and what it checks"
 )]
 fn add_sources<'a>(
-    pdf: &'a Pdf,
     page: &Page<'a>,
+    display: Display,
     settings: InterpreterSettings,
     cache: &InterpreterCache<'a>,
     content: &PageContent,
@@ -2941,7 +2939,7 @@ fn add_sources<'a>(
     glyphs: &mut [GlyphRecord],
     budget: &Budget,
 ) -> Result<(), Error> {
-    let sources = run_sources(pdf, page, settings, cache, content, checks, budget)?;
+    let sources = run_sources(page, display, settings, cache, content, checks, budget)?;
     for glyph in glyphs {
         glyph.source = sources.get(glyph.run as usize).copied().flatten();
     }

@@ -22,7 +22,9 @@ CONTENT = "1 0 0 RG 2 w 150 150 m 250 150 l S\n0 0 1 rg 20 20 40 30 re f\nBT /F1
 UNITS = pytest.mark.parametrize("unit", [1, 2])
 
 
-def page_pdf(user_unit: str | None, *, rotate: int = 0, parent: str = "") -> bytes:
+def page_pdf(
+    user_unit: str | None, *, rotate: int = 0, parent: str = "", references: dict[int, str] | None = None
+) -> bytes:
     """Return one page with a ``[0 0 400 300]`` MediaBox whose ``/UserUnit`` is ``user_unit``.
 
     Object 6 holds the number 2, for a unit given by reference.
@@ -37,6 +39,7 @@ def page_pdf(user_unit: str | None, *, rotate: int = 0, parent: str = "") -> byt
             4: f"<< /Length {len(CONTENT)} >>\nstream\n{CONTENT}\nendstream",
             5: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
             6: "2",
+            **(references or {}),
         }
     )
 
@@ -244,7 +247,7 @@ def test_a_positive_unit_scales_however_it_is_written(value: str, unit: float) -
     assert f'width="{400 * unit:g}"' in svg_root(page.svg())
 
 
-@pytest.mark.parametrize("value", ["0", "-2", "/Two", "(2)", "[2]", "null", "7 0 R"])
+@pytest.mark.parametrize("value", ["0", "-2", "/Two", "(2)", "[2]", "<< /Unused [2] >>", "null", "7 0 R"])
 def test_a_unit_that_is_no_positive_number_is_one(value: str) -> None:
     page = pyropdf.open(page_pdf(value)).pages[0]
 
@@ -258,3 +261,106 @@ def test_a_page_does_not_inherit_a_unit() -> None:
 
     assert page.rect == (0, 0, 400, 300)
     assert page.pixmap().width == 400
+
+
+def test_a_chain_resolves_to_the_same_unit_for_every_engine() -> None:
+    doc = pyropdf.open(page_pdf("6 0 R", references={6: "7 0 R", 7: "2"}))
+    page = doc.pages[0]
+    for unit in (2, 3):
+        if unit == 3:
+            doc.objects[7] = unit
+        assert page.rect == (0, 0, 400 * unit, 300 * unit)
+        pixmap = page.pixmap()
+        assert pixmap.width == 400 * unit
+        assert doc.render([0]) == [pixmap.to_bytes()]
+        assert f'width="{400 * unit}"' in svg_root(page.svg())
+        assert page.chars()[0].origin == pytest.approx((100 * unit, 100 * unit))
+        assert tuple(page.content().paths[0].bbox) == pytest.approx(scaled((150, 150, 250, 150), unit))
+
+
+def test_scaled_page_boxes_follow_indirect_coordinates() -> None:
+    doc = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /CropBox [0 0 5 0 R 60] >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 4 0 R 100] /UserUnit 2 /Resources <<>> >>",
+                4: "200",
+                5: "150",
+            }
+        )
+    )
+    page = doc.pages[0]
+    assert page.media_box.width == 400
+    for width in (300, 240):
+        if width == 240:
+            doc.objects[5] = 120
+        assert page.crop_box == page.rect == (0, 0, width, 120)
+        assert page.pixmap().width == width
+        assert f'width="{width}" height="120"' in svg_root(page.svg())
+
+
+@pytest.mark.parametrize("unit", [750, 30_000])
+def test_the_canvas_and_its_pattern_keep_the_inverse_unit(unit: int) -> None:
+    gradient = pyropdf.LinearGradient(
+        start=pyropdf.Point(10, 10),
+        end=pyropdf.Point(50, 10),
+        stops=(pyropdf.ColorStop(0, Color(1, 0, 0)), pyropdf.ColorStop(1, Color(0, 0, 1))),
+    )
+    rasters = []
+    for size, factor in [(1, unit), (unit, 1)]:
+        doc = pyropdf.Document()
+        page = doc.pages.new((size, size))
+        page.obj["UserUnit"] = factor
+        with page.draw() as canvas:
+            canvas.rect((10, 10, 50, 50), fill=gradient)
+        saved = pyropdf.open(doc.to_bytes()).pages[0]
+        assert tuple(saved.content().paths[0].bbox) == pytest.approx((10, 10, 50, 50))
+        pixmap = saved.pixmap(clip=(0, 0, 64, 64))
+        assert pixel(pixmap, 20, 20) != pixel(pixmap, 40, 20)
+        rasters.append(bytes(memoryview(pixmap)))
+    assert rasters[0] == rasters[1]
+
+
+def test_a_one_point_crop_can_be_less_than_one_user_unit() -> None:
+    page = open_page(2)
+    page.crop_box = (0, 0, 1, 100)
+    assert page.rect == page.crop_box == (0, 0, 1, 100)
+    assert page.pixmap().width == 1
+
+
+@pytest.mark.parametrize(
+    ("rotation", "size", "view_box"),
+    [
+        (0, (2, 3), "0 0.25 0.5 0.75"),
+        (90, (3, 2), "0 0 0.75 0.5"),
+        (180, (2, 3), "0.5 0 0.5 0.75"),
+        (270, (3, 2), "0.25 0.5 0.75 0.5"),
+    ],
+)
+def test_a_fractional_crop_has_the_same_visible_origin_after_rotation(
+    rotation: int, size: tuple[int, int], view_box: str
+) -> None:
+    page = open_page(4, rotate=rotation)
+    page.obj["CropBox"] = [10, 20, 10.5, 20.75]
+    assert page.rect == page.crop_box == (0, 0, *size)
+    with page.draw() as canvas:
+        canvas.rect((0, 0, 1, 1), fill=Color(0, 1, 0))
+    pixmap = page.pixmap()
+    assert (pixmap.width, pixmap.height) == size
+    assert pixel(pixmap, 0, 0) == (0, 255, 0)
+    assert f'viewBox="{view_box}"' in svg_root(page.svg())
+
+
+def test_the_last_pixel_of_a_decimal_page_is_visible() -> None:
+    page = open_page(100)
+    page.obj["MediaBox"] = [0, 0, 520.1, 1]
+    assert page.rect.width == 52_010
+    assert page.pixmap().width == 52_010
+    assert page.pixmap(clip=(52_009, 0, 52_010, 1)).width == 1
+    svg = page.svg()
+    assert 'width="52010" height="100"' in svg_root(svg)
+    assert page.svg(max_size=len(svg.encode())) == svg
+    with pytest.raises(pyropdf.LimitError) as refused:
+        page.svg(max_size=len(svg.encode()) - 1)
+    assert refused.value.code == "svg_output_size"
