@@ -84,7 +84,8 @@ pub struct Layer {
 }
 
 /// Builds the layer of `words` on a page whose display box is `crop`, in
-/// unrotated user space, and whose `/Rotate` is `page_rotation`.
+/// unrotated user space, whose `/Rotate` is `page_rotation`, and whose
+/// user space unit is `unit` points.
 ///
 /// `text_rotation` is the clockwise correction that read the words, which
 /// turns their baselines; `font_name` is the font's resource name.
@@ -92,6 +93,7 @@ pub fn layer(
     words: &[LayerWord],
     crop: [f64; 4],
     page_rotation: i64,
+    unit: f64,
     text_rotation: u16,
     font_name: &str,
     budget: &Budget,
@@ -109,8 +111,11 @@ pub fn layer(
     Ok(Layer {
         to_unicode: build_to_unicode(&cid_map, budget)?,
         content: ocr_ops(
-            crop,
-            page_rotation,
+            Space {
+                crop,
+                rotation: page_rotation,
+                unit,
+            },
             words,
             &cid_map,
             font_name,
@@ -194,8 +199,7 @@ fn build_to_unicode(cid_map: &HashMap<char, u16>, budget: &Budget) -> Result<Vec
 /// 0.2 descent inside the box, and a horizontal scale fits the box along
 /// it.
 fn ocr_ops(
-    crop: [f64; 4],
-    page_rotation: i64,
+    space: Space,
     words: &[LayerWord],
     cid_map: &HashMap<char, u16>,
     font_name: &str,
@@ -214,18 +218,13 @@ fn ocr_ops(
             270 => ((x0 + 0.2 * w, *y0), (0.0, 1.0), (1.0, 0.0), w, h),
             _ => ((*x0, y1 - 0.2 * h), (1.0, 0.0), (0.0, -1.0), h, w),
         };
-        let (ox, oy) = display_to_pdf(crop, page_rotation, origin.0, origin.1);
+        let (ox, oy) = space.to_pdf(origin.0, origin.1);
         let (rx, ry) = {
-            let p = display_to_pdf(
-                crop,
-                page_rotation,
-                origin.0 + baseline.0,
-                origin.1 + baseline.1,
-            );
+            let p = space.to_pdf(origin.0 + baseline.0, origin.1 + baseline.1);
             (p.0 - ox, p.1 - oy)
         };
         let (ux, uy) = {
-            let p = display_to_pdf(crop, page_rotation, origin.0 + up.0, origin.1 + up.1);
+            let p = space.to_pdf(origin.0 + up.0, origin.1 + up.1);
             (p.0 - ox, p.1 - oy)
         };
         // Scale the natural width of one em per character to the box.
@@ -251,16 +250,28 @@ fn ocr_ops(
     Ok(out.into_bytes())
 }
 
-/// Maps a display point, from the top left with y downward, to unrotated
-/// user space on a page whose display box is `crop` and whose `/Rotate`,
-/// normalized, is `rotation`. PDF displays a rotation clockwise.
-fn display_to_pdf(crop: [f64; 4], rotation: i64, x: f64, y: f64) -> (f64, f64) {
-    let [cx0, cy0, cx1, cy1] = crop;
-    match rotation {
-        90 => (cx0 + y, cy0 + x),
-        180 => (cx1 - x, cy0 + y),
-        270 => (cx1 - y, cy1 - x),
-        _ => (cx0 + x, cy1 - y),
+/// The display space of a page: its display box `crop` in unrotated user
+/// space, its normalized `/Rotate`, and the size of its user space unit in
+/// points.
+#[derive(Clone, Copy)]
+struct Space {
+    crop: [f64; 4],
+    rotation: i64,
+    unit: f64,
+}
+
+impl Space {
+    /// Maps a display point, in points from the top left with y downward,
+    /// to unrotated user space. PDF displays a rotation clockwise.
+    fn to_pdf(self, x: f64, y: f64) -> (f64, f64) {
+        let [cx0, cy0, cx1, cy1] = self.crop;
+        let (x, y) = (x / self.unit, y / self.unit);
+        match self.rotation {
+            90 => (cx0 + y, cy0 + x),
+            180 => (cx1 - x, cy0 + y),
+            270 => (cx1 - y, cy1 - x),
+            _ => (cx0 + x, cy1 - y),
+        }
     }
 }
 
@@ -286,6 +297,7 @@ mod tests {
             &words,
             [0.0, 0.0, 100.0, 100.0],
             0,
+            1.0,
             0,
             "F",
             &Budget::default(),
@@ -305,6 +317,7 @@ mod tests {
             &words,
             [0.0, 0.0, 200.0, 100.0],
             0,
+            1.0,
             0,
             "OCR",
             &Budget::default(),
@@ -319,12 +332,46 @@ mod tests {
     }
 
     #[test]
+    fn a_user_unit_scales_the_text_matrix_to_user_space() {
+        // The same words on a page half as many units across, whose unit is
+        // two points: the text keeps its display size in points.
+        let words = [(10.0, 20.0, 50.0, 30.0, "ab".to_owned())];
+        let content = layer(
+            &words,
+            [0.0, 0.0, 100.0, 50.0],
+            0,
+            2.0,
+            0,
+            "OCR",
+            &Budget::default(),
+        )
+        .unwrap();
+        let content = String::from_utf8(content.content).unwrap();
+
+        assert_eq!(
+            content,
+            "q\nBT\n/OCR 10 Tf\n3 Tr\n1 0 0 0.5 5 36 Tm\n<00010002> Tj\nET\nQ\n"
+        );
+    }
+
+    #[test]
     fn a_display_point_maps_through_each_rotation() {
         let crop = [10.0, 20.0, 110.0, 220.0];
-        assert_eq!(display_to_pdf(crop, 0, 1.0, 2.0), (11.0, 218.0));
-        assert_eq!(display_to_pdf(crop, 90, 1.0, 2.0), (12.0, 21.0));
-        assert_eq!(display_to_pdf(crop, 180, 1.0, 2.0), (109.0, 22.0));
-        assert_eq!(display_to_pdf(crop, 270, 1.0, 2.0), (108.0, 219.0));
+        let at = |rotation, unit| {
+            Space {
+                crop,
+                rotation,
+                unit,
+            }
+            .to_pdf(1.0, 2.0)
+        };
+        assert_eq!(at(0, 1.0), (11.0, 218.0));
+        assert_eq!(at(90, 1.0), (12.0, 21.0));
+        assert_eq!(at(180, 1.0), (109.0, 22.0));
+        assert_eq!(at(270, 1.0), (108.0, 219.0));
+        // A user space unit of two points halves the display distances.
+        assert_eq!(at(0, 2.0), (10.5, 219.0));
+        assert_eq!(at(90, 2.0), (11.0, 20.5));
         assert_eq!(fmt(-0.00001), "-0.00001");
         assert_eq!(fmt(1.23456), "1.23456");
     }
@@ -340,6 +387,7 @@ mod tests {
             &words,
             [0.0, 0.0, 100.0, 100.0],
             0,
+            1.0,
             0,
             "F",
             &Budget::default(),
@@ -360,11 +408,12 @@ mod tests {
             (LimitCode::MemorySize, 1),
         ] {
             let budget = Budget::default().with_limit(code, Some(limit));
-            let error = layer(&words, [0.0, 0.0, 100.0, 100.0], 0, 0, "F", &budget).unwrap_err();
+            let error =
+                layer(&words, [0.0, 0.0, 100.0, 100.0], 0, 1.0, 0, "F", &budget).unwrap_err();
             assert!(matches!(error, Error::Limit(refusal) if refusal.code() == code));
         }
         let budget = Budget::default().with_timeout(std::time::Duration::ZERO);
-        let error = layer(&words, [0.0, 0.0, 100.0, 100.0], 0, 0, "F", &budget).unwrap_err();
+        let error = layer(&words, [0.0, 0.0, 100.0, 100.0], 0, 1.0, 0, "F", &budget).unwrap_err();
         assert!(matches!(error, Error::Limit(refusal) if refusal.code() == LimitCode::Deadline));
     }
 }

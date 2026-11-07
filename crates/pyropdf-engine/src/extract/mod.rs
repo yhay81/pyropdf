@@ -8,10 +8,8 @@
 //! budget counts its glyphs, path and clip segments, dash lengths, and items
 //! with `content_element_count` (F6).
 
-use hayro::hayro_interpret::{
-    Context, InterpreterCache, InterpreterSettings, RenderContent, TransformExt,
-};
-use hayro::hayro_syntax::Pdf;
+use crate::display::Display;
+use hayro::hayro_interpret::{Context, InterpreterCache, InterpreterSettings, RenderContent};
 use hayro::hayro_syntax::object::{Array, Dict, Name, Object, Stream};
 use hayro::hayro_syntax::page::Page;
 use hayro::kurbo::Rect;
@@ -117,17 +115,15 @@ pub fn page_content_into<S: ContentSink>(
     clip: Option<BBox>,
     budget: &Budget,
 ) -> Result<(PageContent, S), Error> {
-    let pdf = bridged.pdf();
-    let pages = pdf.pages();
-    let page = pages.get(index).ok_or(Error::NoPage(index))?;
+    let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
     let render_content = if annotations {
         RenderContent::all()
     } else {
         RenderContent::PAGE
     };
     model::collect_page_content_on_faces(
-        pdf,
         page,
+        display,
         fallback,
         render_content,
         sink,
@@ -221,20 +217,20 @@ pub(crate) fn image_color_space(dict: &Dict<'_>) -> (u8, String) {
 }
 
 /// Builds the interpretation context of a page, with the renderer's
-/// `initial_transform(true)`, so that the device receives top-left-origin
-/// display coordinates with the rotation applied.
+/// display transform, so that the device receives top-left-origin display
+/// coordinates in points with the rotation applied.
 pub(crate) fn extraction_context<'a>(
-    pdf: &'a Pdf,
     page: &Page<'a>,
+    display: Display,
     cache: &InterpreterCache<'a>,
     settings: InterpreterSettings,
 ) -> Context<'a> {
-    let (width, height) = page.render_dimensions();
+    let (width, height) = display.size();
     Context::new(
-        page.initial_transform(true).to_kurbo(),
-        Rect::new(0.0, 0.0, f64::from(width), f64::from(height)),
+        display.transform(),
+        Rect::new(0.0, 0.0, width, height),
         cache,
-        pdf.xref(),
+        page.xref(),
         settings,
     )
 }

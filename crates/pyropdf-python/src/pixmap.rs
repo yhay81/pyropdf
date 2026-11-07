@@ -1562,6 +1562,9 @@ pub fn render_page(
 
 pub(crate) fn raster_error(error: RasterError) -> PyErr {
     match error {
+        RasterError::Limit(ref refusal) => {
+            LimitError::new_err((refusal.code().as_str(), error.to_string()))
+        }
         RasterError::Geometry(message) => PyValueError::new_err(message),
         RasterError::ClipPageSide(message) => {
             LimitError::new_err((LimitCode::ClipPageSide.as_str(), message))

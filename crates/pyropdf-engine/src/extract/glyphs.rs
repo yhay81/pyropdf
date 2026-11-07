@@ -137,7 +137,8 @@ pub fn used_glyphs(
         targets.try_push((number, generation, index))?;
     }
     sort_budgeted(&mut targets, budget)?;
-    for (index, page) in pdf.pages().iter().enumerate() {
+    for index in 0..pdf.pages().len() {
+        let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
         uses.next_page();
         // A missing/unreadable font or XObject dictionary in the inherited
         // page resources hides the fonts it could name. Keep all programs in
@@ -152,8 +153,8 @@ pub fn used_glyphs(
         };
         super::font_guard::protect(page, version, &targets, &mut protected, unknown, budget)?;
         let (_, sink) = model::collect_page_content(
-            pdf,
             page,
+            display,
             settings.clone(),
             &cache,
             uses,

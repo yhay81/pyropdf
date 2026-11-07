@@ -14,6 +14,8 @@ use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
+use pyropdf_engine::display::{A4, Display};
+pub(crate) use pyropdf_engine::display::{display_box, rect, rotation};
 use pyropdf_engine::pages::copy::Copies;
 use pyropdf_engine::pages::{import, sources};
 use pyropdf_engine::render::Fallback;
@@ -36,9 +38,6 @@ use crate::objects::set_data;
 
 /// The attributes that pages inherit (ISO 32000-2 table 31).
 const INHERITABLE: [&str; 4] = ["Resources", "MediaBox", "CropBox", "Rotate"];
-
-/// hayro's default page, A4 in points, for a page without a usable box.
-const A4: (f64, f64) = (595.0, 842.0);
 
 /// The view shared by every page and every pass of one document export.
 #[pyclass(frozen, name = "_PageSnapshot", module = "pyropdf._core")]
@@ -222,8 +221,8 @@ pub fn page_objects(document: &_Document) -> PyResult<Vec<(u32, u16)>> {
 }
 
 /// Returns the rotation of a page, normalized to 0, 90, 180, or 270, and
-/// its display width and height: the crop box clipped to the media box,
-/// rotated, with hayro's A4 for an empty box. `None` for a stale page.
+/// its display width and height in points, as [`Display::size`] measures
+/// them. `None` for a stale page.
 #[pyfunction]
 pub fn page_geometry(
     document: &_Document,
@@ -236,26 +235,20 @@ pub fn page_geometry(
             return Ok(None);
         };
         let page = &index.pages()[at];
-        let rotation = rotation(page.rotate());
-        let (mut width, mut height) = visible(page).map_or(A4, |(x0, y0, x1, y1)| {
-            ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
-        });
-        if rotation % 180 == 90 {
-            std::mem::swap(&mut width, &mut height);
-        }
-        Ok(Some((rotation, width, height)))
+        let (width, height) = Display::from_page(page).size();
+        Ok(Some((rotation(page.rotate()), width, height)))
     })?
 }
 
-/// Returns the normalized rotation of a page and its display box in
-/// unrotated user space, the box whose size [`page_geometry`] reports.
-/// `None` for a stale page.
+/// Returns the normalized rotation of a page, its display box in unrotated
+/// user space, the box whose size [`page_geometry`] reports, and the size
+/// of its user space unit in points. `None` for a stale page.
 #[pyfunction]
 pub fn page_space(
     document: &_Document,
     number: u32,
     generation: u16,
-) -> PyResult<Option<(i64, Box4)>> {
+) -> PyResult<Option<(i64, Box4, f64)>> {
     crate::errors::boundary(|| {
         let (_, index, _) = index(document)?;
         let Some(at) = index.index_of(Reference::new(number, generation)) else {
@@ -263,7 +256,11 @@ pub fn page_space(
         };
         let page = &index.pages()[at];
         let [x0, y0, x1, y1] = display_box(page);
-        Ok(Some((rotation(page.rotate()), (x0, y0, x1, y1))))
+        Ok(Some((
+            rotation(page.rotate()),
+            (x0, y0, x1, y1),
+            page.user_unit(),
+        )))
     })?
 }
 
@@ -271,6 +268,7 @@ pub fn page_space(
 type CanvasSourcePage<'py> = (
     i64,
     Box4,
+    f64,
     f64,
     f64,
     Bound<'py, PyBytes>,
@@ -351,8 +349,9 @@ impl CanvasSourceSnapshot {
 }
 
 /// Reads a page of `source` for the canvas of `operation`: its normalized
-/// rotation, display box, display width and height, as [`page_space`] and
-/// [`page_geometry`] report them, and its content, all from one version,
+/// rotation, display box, user space unit, display width and height, as
+/// [`page_space`] and [`page_geometry`] report them, and its content, all
+/// from one version,
 /// with a snapshot of that version for [`copy_page_resources`]. The read
 /// charges the operation under the lower of its limits and the source's.
 /// `None` for a stale page.
@@ -376,12 +375,8 @@ pub fn canvas_source_page<'py>(
         };
         let rotation = rotation(entry.rotate());
         let [x0, y0, x1, y1] = display_box(entry);
-        let (mut width, mut height) = visible(entry).map_or(A4, |(x0, y0, x1, y1)| {
-            ((x1 - x0).max(1.0), (y1 - y0).max(1.0))
-        });
-        if rotation % 180 == 90 {
-            std::mem::swap(&mut width, &mut height);
-        }
+        let unit = entry.user_unit();
+        let (width, height) = Display::from_page(entry).size();
         let content = py
             .detach(|| PageContent::read(&mut Reads::new(&version, &budget), entry))
             .map_err(|error| store_error(&error))?;
@@ -422,6 +417,7 @@ pub fn canvas_source_page<'py>(
         Ok(Some((
             rotation,
             (x0, y0, x1, y1),
+            unit,
             width,
             height,
             bytes,
@@ -840,11 +836,11 @@ pub(crate) fn user_boxes(page: &Page) -> [Box4; 5] {
     [media, crop, own(BOXES[2]), own(BOXES[3]), own(BOXES[4])]
 }
 
-/// Converts a user-space rectangle of a page with display box `frame` and
-/// normalized `rotation` to display space.
-fn display_rect(frame: [f64; 4], rotation: i64, (x0, y0, x1, y1): Box4) -> Box4 {
-    let (a, b) = to_display(frame, rotation, x0, y0);
-    let (c, d) = to_display(frame, rotation, x1, y1);
+/// Converts a user-space rectangle of a page with display box `frame`,
+/// normalized `rotation`, and user space unit `unit` to display space.
+fn display_rect(frame: [f64; 4], rotation: i64, unit: f64, (x0, y0, x1, y1): Box4) -> Box4 {
+    let (a, b) = to_display(frame, rotation, unit, x0, y0);
+    let (c, d) = to_display(frame, rotation, unit, x1, y1);
     (a.min(c), b.min(d), a.max(c), b.max(d))
 }
 
@@ -866,11 +862,12 @@ pub fn page_boxes(
             return Ok(None);
         };
         let page = &index.pages()[at];
-        let (frame, rotation) = (display_box(page), rotation(page.rotate()));
+        let (frame, rotation, unit) =
+            (display_box(page), rotation(page.rotate()), page.user_unit());
         Ok(Some(
             user_boxes(page)
                 .into_iter()
-                .map(|b| display_rect(frame, rotation, b))
+                .map(|b| display_rect(frame, rotation, unit, b))
                 .collect(),
         ))
     })?
@@ -895,7 +892,6 @@ pub fn set_page_box(
     display: Box4,
 ) -> PyResult<bool> {
     crate::errors::boundary(|| {
-        const SLACK: f64 = 1e-6;
         let Some(&key) = BOXES.get(kind) else {
             return Err(PyValueError::new_err(format!("no page box {kind}")));
         };
@@ -904,18 +900,21 @@ pub fn set_page_box(
             return Ok(false);
         };
         let page = &index.pages()[at];
-        let (frame, rotation) = (display_box(page), rotation(page.rotate()));
-        let (a, b) = to_pdf(frame, rotation, display.0, display.1);
-        let (c, d) = to_pdf(frame, rotation, display.2, display.3);
+        let (frame, rotation, unit) =
+            (display_box(page), rotation(page.rotate()), page.user_unit());
+        let (a, b) = to_pdf(frame, rotation, unit, display.0, display.1);
+        let (c, d) = to_pdf(frame, rotation, unit, display.2, display.3);
         let user = (a.min(c), b.min(d), a.max(c), b.max(d));
-        if user.2 - user.0 < SLACK || user.3 - user.1 < SLACK {
+        // The setter's tolerance is one millionth of a display point.
+        let slack = 1e-6 / unit;
+        if user.2 - user.0 < slack || user.3 - user.1 < slack {
             return Err(PyValueError::new_err(format!("the {key} is empty")));
         }
         let inside = |inner: Box4, outer: Box4| {
-            inner.0 >= outer.0 - SLACK
-                && inner.1 >= outer.1 - SLACK
-                && inner.2 <= outer.2 + SLACK
-                && inner.3 <= outer.3 + SLACK
+            inner.0 >= outer.0 - slack
+                && inner.1 >= outer.1 - slack
+                && inner.2 <= outer.2 + slack
+                && inner.3 <= outer.3 + slack
         };
         let boxes = user_boxes(page);
         if kind == 0 {
@@ -1977,59 +1976,6 @@ pub(crate) fn resolve(
 fn indirect(page: &Page, at: usize) -> PyResult<Reference> {
     page.object()
         .ok_or_else(|| MalformedPdfError::new_err(format!("page {at} is not an indirect object")))
-}
-
-/// Returns the crop box of `page` clipped to its media box, in unrotated
-/// user space, or `None` when nothing is visible.
-fn visible(page: &Page) -> Option<(f64, f64, f64, f64)> {
-    let media = page
-        .media_box()
-        .and_then(rect)
-        .unwrap_or((0.0, 0.0, A4.0, A4.1));
-    let crop = page.crop_box().and_then(rect).unwrap_or(media);
-    let (x0, y0) = (crop.0.max(media.0), crop.1.max(media.1));
-    let (x1, y1) = (crop.2.min(media.2), crop.3.min(media.3));
-    (x1 - x0 >= 1e-6 && y1 - y0 >= 1e-6).then_some((x0, y0, x1, y1))
-}
-
-/// Returns the display box of `page` in unrotated user space, whose size
-/// [`page_geometry`] reports: the visible crop box, at least one point on a
-/// side, or hayro's A4.
-pub(crate) fn display_box(page: &Page) -> [f64; 4] {
-    visible(page).map_or([0.0, 0.0, A4.0, A4.1], |(x0, y0, x1, y1)| {
-        [x0, y0, x0 + (x1 - x0).max(1.0), y0 + (y1 - y0).max(1.0)]
-    })
-}
-
-/// Normalizes `/Rotate` to 0, 90, 180, or 270, as hayro reads it.
-pub(crate) fn rotation(value: Option<&Value>) -> i64 {
-    match value {
-        Some(&Value::Integer(rotate)) => match rotate.rem_euclid(360) {
-            r @ (0 | 90 | 180 | 270) => r,
-            _ => 0,
-        },
-        _ => 0,
-    }
-}
-
-/// Reads a rectangle of four numbers, normalized.
-pub(crate) fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
-    let Value::Array(array) = value else {
-        return None;
-    };
-    let mut numbers = [0.0; 4];
-    if array.len() != 4 {
-        return None;
-    }
-    for (slot, item) in numbers.iter_mut().zip(array.iter()) {
-        *slot = match item {
-            Value::Integer(n) => *n as f64,
-            Value::Real(r) => r.value(),
-            _ => return None,
-        };
-    }
-    let [a, b, c, d] = numbers;
-    Some((a.min(c), b.min(d), a.max(c), b.max(d)))
 }
 
 /// Returns `value` as an integer when it is one, else as a real.

@@ -51,12 +51,10 @@ where
     T: Send,
     E: Send + From<RasterError>,
 {
-    let pdf = bridged.pdf();
-    let pages = pdf.pages();
     let mut most = 0;
     for &index in indexes {
-        let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
-        let (_, _, width, height) = extent(page, options)?;
+        let (_, display) = bridged.page(index).ok_or(RasterError::NoPage(index))?;
+        let (_, _, width, height) = extent(display, options)?;
         most = u64::max(most, u64::from(width) * u64::from(height));
     }
     let by_memory = usize::try_from(MAX_LIVE_BYTES / (most * BYTES_PER_PIXEL).max(1))
@@ -82,7 +80,7 @@ where
                 cached = 0;
             }
             cached += 1;
-            match draw(pdf, &cache, fallback, index, options)
+            match draw(bridged, &cache, fallback, index, options)
                 .map_err(E::from)
                 .and_then(&finish)
             {

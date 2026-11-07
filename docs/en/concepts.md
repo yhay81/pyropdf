@@ -14,6 +14,14 @@ of the visible page and `y` growing downward. The visible page is the
 CropBox clipped to the MediaBox, with the page's rotation applied, so
 `page.rect` is `(0, 0, width, height)` as a viewer shows it.
 
+A page's `/UserUnit` (PDF 1.6) sets the size of its user space unit in
+multiples of 1/72 inch, so that a page can be larger than 200 inches.
+pyropdf applies it wherever it converts: a page whose MediaBox is
+`[0 0 400 300]` with `/UserUnit 2` is 800 by 600 points in `page.rect`,
+its boxes, text, paths, annotations, and canvas, and renders 800 by 600
+pixels at 72 dpi. A missing unit, or one that is not a positive number,
+is 1.
+
 PDF's own space has its origin at the bottom-left of the MediaBox and does
 not rotate; pyropdf converts for you, so a rectangle found by `search` can go
 straight into an annotation. To map a rectangle to the pixels of a render,

@@ -104,9 +104,7 @@ pub fn page_image(
     annotations: bool,
     budget: &Budget,
 ) -> Result<Option<DecodedImage>, Error> {
-    let pdf = bridged.pdf();
-    let pages = pdf.pages();
-    let page = pages.get(index).ok_or(Error::NoPage(index))?;
+    let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
     let settings = InterpreterSettings {
         render_content: if annotations {
             RenderContent::all()
@@ -128,6 +126,6 @@ pub fn page_image(
         image: None,
     };
     let (_, grab) =
-        model::collect_page_content(pdf, page, settings, &cache, grab, kinds, None, budget)?;
+        model::collect_page_content(page, display, settings, &cache, grab, kinds, None, budget)?;
     Ok(grab.image)
 }

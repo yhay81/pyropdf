@@ -173,6 +173,7 @@ pub fn insert_ocr_layer(
                 &words,
                 crop,
                 page_rotation,
+                page.user_unit(),
                 rotation_correction,
                 &name,
                 budget,

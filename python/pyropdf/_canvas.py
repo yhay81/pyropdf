@@ -55,7 +55,7 @@ from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
 from pyropdf._layers import Layer, LayerMembership
 from pyropdf._objects import Array, Dictionary, Name, Stream
-from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE
+from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, _real
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
@@ -426,12 +426,12 @@ def _affine(function: Callable[[float, float], tuple[float, float]]) -> _Affine:
 
 
 def _display_from_user(
-    rotation: int, box: tuple[float, float, float, float]
+    rotation: int, box: tuple[float, float, float, float], unit: float
 ) -> Callable[[float, float], tuple[float, float]]:
-    """Return the map from a page's user space to its display space."""
+    """Return the map from a page's user space to its display space, in points of ``unit`` per user space unit."""
     x0, y0, x1, y1 = box
 
-    def convert(x: float, y: float) -> tuple[float, float]:
+    def turn(x: float, y: float) -> tuple[float, float]:
         if rotation == 90:  # noqa: PLR2004 - a quarter turn
             return (y - y0, x - x0)
         if rotation == 180:  # noqa: PLR2004 - a half turn
@@ -440,23 +440,24 @@ def _display_from_user(
             return (y1 - y, x1 - x)
         return (x - x0, y1 - y)
 
+    def convert(x: float, y: float) -> tuple[float, float]:
+        u, v = turn(x, y)
+        return (u * unit, v * unit)
+
     return convert
 
 
-def _user_from_display(rotation: int, box: tuple[float, float, float, float]) -> _Affine:
-    """Return the matrix from a page's display space to its user space."""
+def _user_from_display(rotation: int, box: tuple[float, float, float, float], unit: float) -> _Affine:
+    """Return the inverse page transform without subtracting nearly equal translated points."""
     x0, y0, x1, y1 = box
-
-    def convert(x: float, y: float) -> tuple[float, float]:
-        if rotation == 90:  # noqa: PLR2004 - a quarter turn
-            return (x0 + y, y0 + x)
-        if rotation == 180:  # noqa: PLR2004 - a half turn
-            return (x1 - x, y0 + y)
-        if rotation == 270:  # noqa: PLR2004 - three quarter turns
-            return (x1 - y, y1 - x)
-        return (x0 + x, y1 - y)
-
-    return _affine(convert)
+    scale = 1 / unit
+    if rotation == 90:  # noqa: PLR2004 - a quarter turn
+        return (0, scale, scale, 0, x0, y0)
+    if rotation == 180:  # noqa: PLR2004 - a half turn
+        return (-scale, 0, 0, scale, x1, y0)
+    if rotation == 270:  # noqa: PLR2004 - three quarter turns
+        return (0, -scale, -scale, 0, x1, y1)
+    return (scale, 0, 0, -scale, x0, y1)
 
 
 def _placement(
@@ -1306,12 +1307,11 @@ class Canvas:
             self._active,
         )
 
-    def _write_page_patterns(self, matrix: _Affine) -> None:
+    def _write_page_patterns(self, matrix: Matrix) -> None:
         """Write the patterns of the page's content, which reach its default space through its opening ``matrix``."""
-        written = Matrix(*(float(_fmt(value)) for value in matrix))
         for (shading, inner, in_page), name in self._pattern_names.items():
             if in_page:
-                self._patterns[name] = self._write_pattern(shading, inner * written)
+                self._patterns[name] = self._write_pattern(shading, inner * matrix)
 
     def _pattern(self, shading: int, matrix: Matrix | None = None) -> str:
         """Return the resource name of the pattern that paints ``shading`` in the current space."""
@@ -1366,10 +1366,10 @@ class Canvas:
                 if not isinstance(group, Dictionary) or group.get("Type") != "OCG":
                     msg = f"object {xref}, a layer that the canvas draws, is no longer an optional content group"
                     raise StaleObjectError(msg)
-        rotation, box = _page_space(page)
-        matrix = _user_from_display(rotation, box)
-        self._write_page_patterns(matrix)
-        opening = b"q\n" + _numbers(*matrix) + b" cm\n"
+        rotation, box, unit = _page_space(page)
+        matrix = _user_from_display(rotation, box, unit)
+        self._write_page_patterns(Matrix(*matrix))
+        opening = b"q\n" + b" ".join(map(_real, matrix)) + b" cm\n"
         size = len(opening) + self._buffered + 2
         # Check the size and charge the joined content and its framed copy before making them.
         if size > _DEFAULT_MAX_CONTENT_SIZE:
@@ -2074,11 +2074,11 @@ class Canvas:
         # from one version of its document, and writes or reuses its Form.
         operation = _core.begin_canvas(core)
 
-        def read() -> tuple[int, tuple[float, float, float, float], Rect, Rect, int]:
+        def read() -> tuple[int, tuple[float, float, float, float], float, Rect, Rect, int]:
             page = _core.canvas_source_page(source_core, source.xref, source._generation, operation)  # noqa: SLF001
             if page is None:
                 raise source._stale()  # noqa: SLF001
-            source_rotation, source_box, width, height, _content, snapshot = page
+            source_rotation, source_box, source_unit, width, height, _content, snapshot = page
             whole = Rect(0, 0, width, height)
             shown = whole if clip is None else _rect(clip, "clip")
             if not shown.intersects(whole):
@@ -2095,10 +2095,10 @@ class Canvas:
             )
             if form is None:
                 raise source._stale()  # noqa: SLF001
-            return source_rotation, source_box, whole, shown, form
+            return source_rotation, source_box, source_unit, whole, shown, form
 
         try:
-            source_rotation, source_box, whole, shown, form = read()
+            source_rotation, source_box, source_unit, whole, shown, form = read()
         except BaseException:
             _core.abort_canvas(core, operation)
             raise
@@ -2106,7 +2106,7 @@ class Canvas:
         # Only the part of the clip on the page is drawn.
         shown &= whole
         covered, place = _placement(box, shown.width, shown.height, keep=bool(keep_aspect), rotation=rotation)
-        to_display = _display_from_user(source_rotation, source_box)
+        to_display = _display_from_user(source_rotation, source_box, source_unit)
 
         def convert(x: float, y: float) -> tuple[float, float]:
             dx, dy = to_display(x, y)
@@ -2118,7 +2118,7 @@ class Canvas:
             b"q\n"
             + _numbers(covered.x0, covered.y0, covered.width, covered.height)
             + b" re W n\n"
-            + _numbers(*matrix)
+            + b" ".join(map(_real, matrix))
             + b" cm\n/"
             + name.encode()
             + b" Do\nQ"
@@ -2578,7 +2578,7 @@ def _font_dict(base: str) -> dict[str, object]:
     return font
 
 
-def _page_space(page: Page) -> tuple[int, tuple[float, float, float, float]]:
+def _page_space(page: Page) -> tuple[int, tuple[float, float, float, float], float]:
     space = _core.page_space(page.document._core(), page.xref, page._generation)  # noqa: SLF001
     if space is None:
         raise page._stale()  # noqa: SLF001

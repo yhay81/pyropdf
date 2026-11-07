@@ -32,7 +32,9 @@ use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
+use crate::display::Display;
 use hayro::hayro_syntax::Pdf;
+use hayro::hayro_syntax::page::Page;
 use pyropdf_store::Password;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::index::Location;
@@ -61,6 +63,8 @@ pub enum Error {
         /// The pages that hayro lists.
         hayro: usize,
     },
+    /// The requested raster dimensions or viewport could not be rendered.
+    Raster(crate::render::RasterError),
     /// A page index beyond the last page.
     NoPage(usize),
 }
@@ -95,6 +99,7 @@ impl fmt::Display for Error {
                 f,
                 "hayro lists different pages ({hayro}) than the page tree ({store})"
             ),
+            Self::Raster(error) => error.fmt(f),
             Self::NoPage(index) => write!(f, "the document has no page {index}"),
         }
     }
@@ -119,6 +124,8 @@ pub struct Stats {
 /// A version as hayro reads it.
 pub struct Bridged {
     pdf: Pdf,
+    /// Store geometry for pages with a non-default unit, in page order.
+    scaled_pages: Box<[(usize, Display)]>,
     stats: Stats,
 }
 
@@ -182,9 +189,10 @@ impl Bridged {
         let len = bytes.len();
         budget.check(LimitCode::InterpretationSize, len as u64)?;
         let pdf = Pdf::new_with_password(bytes, password).map_err(|_| Error::Unreadable)?;
-        check_pages(&pdf, pages)?;
+        let scaled_pages = check_pages(&pdf, pages, budget)?;
         Ok(Self {
             pdf,
+            scaled_pages,
             stats: Stats {
                 store,
                 hayro: started.elapsed(),
@@ -200,6 +208,7 @@ impl Bridged {
     pub(crate) fn of_bytes(bytes: Vec<u8>) -> Self {
         Self {
             pdf: Pdf::new(bytes).expect("hayro reads the test file"),
+            scaled_pages: Box::default(),
             stats: Stats::default(),
         }
     }
@@ -208,6 +217,16 @@ impl Bridged {
     #[must_use]
     pub const fn pdf(&self) -> &Pdf {
         &self.pdf
+    }
+
+    /// Gets the interpreter's page together with its display geometry.
+    pub(crate) fn page(&self, index: usize) -> Option<(&Page<'_>, Display)> {
+        let page = self.pdf.pages().get(index)?;
+        let display = self
+            .scaled_pages
+            .binary_search_by_key(&index, |&(at, _)| at)
+            .map_or_else(|_| Display::native(page), |at| self.scaled_pages[at].1);
+        Some((page, display))
     }
 
     /// Returns where building it went.
@@ -272,8 +291,9 @@ impl Cache {
     }
 }
 
-/// Checks that hayro lists the pages of the store's index, by object.
-fn check_pages(pdf: &Pdf, pages: &PageIndex) -> Result<()> {
+/// Checks page identities and carries the store's geometry for the pages
+/// whose user unit hayro does not implement.
+fn check_pages(pdf: &Pdf, pages: &PageIndex, budget: &Budget) -> Result<Box<[(usize, Display)]>> {
     let theirs = pdf.pages();
     let mismatch = || Error::PageMismatch {
         store: pages.len(),
@@ -282,7 +302,8 @@ fn check_pages(pdf: &Pdf, pages: &PageIndex) -> Result<()> {
     if theirs.len() != pages.len() {
         return Err(mismatch());
     }
-    for (page, ours) in theirs.iter().zip(pages.pages()) {
+    let mut scaled = BudgetVec::new(budget);
+    for (index, (page, ours)) in theirs.iter().zip(pages.pages()).enumerate() {
         let id = page.raw().obj_id().and_then(|id| {
             Some(Reference::new(
                 id.obj_number,
@@ -293,8 +314,11 @@ fn check_pages(pdf: &Pdf, pages: &PageIndex) -> Result<()> {
         if id.map(|r| r.number()) != ours.object().map(|r| r.number()) {
             return Err(mismatch());
         }
+        if ours.user_unit() != 1.0 {
+            scaled.try_push((index, Display::from_page(ours)))?;
+        }
     }
-    Ok(())
+    Ok(scaled.into_vec().into_boxed_slice())
 }
 
 /// Returns the security handler of an encrypted version: the base's, when

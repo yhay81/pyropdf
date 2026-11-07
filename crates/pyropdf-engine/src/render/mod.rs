@@ -2,13 +2,16 @@
 //! (yhay81/pyropdf#35) needs, and converting it to SVG.
 
 use hayro::hayro_interpret::{InterpreterSettings, RenderContent};
+use hayro::hayro_syntax::page::Page;
+use hayro::vello_cpu::Pixmap;
 use hayro::vello_cpu::color::AlphaColor;
 use hayro::{PixmapSettings, RenderCache, RenderSettings};
 
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use hayro::hayro_syntax::Pdf;
+use crate::display::Display;
+use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::LimitCode;
 
 use crate::bridge::{Bridged, Error, Result};
@@ -61,19 +64,26 @@ pub struct Rgba {
 /// Renders page `index`, counted from 0, at `scale` pixels per point, on a
 /// transparent background.
 pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
-    let pages = bridged.pdf().pages();
-    let page = pages.get(index).ok_or(Error::NoPage(index))?;
-    let pixmap = hayro::render(
-        page,
-        &RenderCache::new(),
-        &InterpreterSettings::default(),
-        &render_settings(false, false),
-        &PixmapSettings {
-            x_scale: scale,
-            y_scale: scale,
-            bg_color: AlphaColor::TRANSPARENT,
-        },
-    );
+    let (page, display) = bridged.page(index).ok_or(Error::NoPage(index))?;
+    let cache = RenderCache::new();
+    let settings = InterpreterSettings::default();
+    let pixmap = if display.unit == 1.0 {
+        hayro::render(
+            page,
+            &cache,
+            &settings,
+            &render_settings(false, false),
+            &PixmapSettings {
+                x_scale: scale,
+                y_scale: scale,
+                bg_color: AlphaColor::TRANSPARENT,
+            },
+        )
+    } else {
+        let scale = f64::from(scale);
+        let options = Options::new((scale, 0.0, 0.0, scale), true);
+        paint(page, display, &cache, &settings, &options).map_err(Error::Raster)?
+    };
     #[expect(
         clippy::disallowed_methods,
         reason = "the four bytes of each pixel of hayro's pixmap, which holds as many already"
@@ -185,6 +195,8 @@ impl Options {
 /// Why a raster was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RasterError {
+    /// The operation exceeded its output or memory budget.
+    Limit(LimitExceeded),
     /// The document has no such page.
     NoPage(usize),
     /// The matrix or the page size gives no raster, or one above the
@@ -197,9 +209,27 @@ pub enum RasterError {
     Clip(String),
 }
 
+impl From<LimitExceeded> for RasterError {
+    fn from(refusal: LimitExceeded) -> Self {
+        Self::Limit(refusal)
+    }
+}
+
 impl std::fmt::Display for RasterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Limit(refusal) => {
+                if refusal.code() == LimitCode::SvgOutputSize
+                    && let Some(limit) = refusal.limit()
+                {
+                    write!(
+                        f,
+                        "rendered SVG exceeds the {limit}-byte UTF-8 output limit"
+                    )
+                } else {
+                    refusal.fmt(f)
+                }
+            }
             Self::NoPage(index) => write!(f, "the document has no page {index}"),
             Self::Geometry(message) | Self::ClipPageSide(message) | Self::Clip(message) => {
                 f.write_str(message)
@@ -235,7 +265,7 @@ thread_local! {
 fn with_cache<T>(
     bridged: &Arc<Bridged>,
     fallback: &Fallback,
-    render: impl FnOnce(&'static Pdf, &RenderCache<'static>) -> T,
+    render: impl FnOnce(&'static Bridged, &RenderCache<'static>) -> T,
 ) -> T {
     CACHE.with(|cell| {
         let mut held = cell.borrow_mut();
@@ -251,11 +281,11 @@ fn with_cache<T>(
             });
         }
         let cached = held.as_ref().expect("the cache was just set");
-        // SAFETY: the cache borrows from this `Pdf`, which `cached.bridged`
-        // keeps alive and never moves or changes; the cache drops first.
+        // SAFETY: the cache borrows the PDF inside this immutable bridge.
+        // The Arc holds it at a fixed address and the cache drops first.
         // Neither reference outlives this call.
-        let pdf: &'static Pdf = unsafe { &*std::ptr::from_ref(cached.bridged.pdf()) };
-        render(pdf, &cached.cache)
+        let bridged: &'static Bridged = unsafe { &*Arc::as_ptr(&cached.bridged) };
+        render(bridged, &cached.cache)
     })
 }
 
@@ -269,8 +299,8 @@ pub fn raster(
     index: usize,
     options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
-    with_cache(bridged, fallback, |pdf, cache| {
-        draw(pdf, cache, fallback, index, options)
+    with_cache(bridged, fallback, |bridged, cache| {
+        draw(bridged, cache, fallback, index, options)
     })
 }
 
@@ -322,7 +352,7 @@ fn clip_viewport(
 /// the offset of their raster from the transformed page's origin and its
 /// size, refused when it holds no pixel.
 fn page_extent(
-    page: &hayro::hayro_syntax::page::Page<'_>,
+    display: Display,
     options: &Options,
 ) -> std::result::Result<(f64, f64, f64, f64), RasterError> {
     use hayro::kurbo::{Affine, Point};
@@ -338,15 +368,10 @@ fn page_extent(
             "alpha=False needs an opaque background".to_owned(),
         ));
     }
-    let (width, height) = page.render_dimensions();
+    let (width, height) = display.size();
     let linear = Affine::new([a, b, c, d, 0.0, 0.0]);
-    let corners = [
-        (0.0, 0.0),
-        (f64::from(width), 0.0),
-        (0.0, f64::from(height)),
-        (f64::from(width), f64::from(height)),
-    ]
-    .map(|(x, y)| linear * Point::new(x, y));
+    let corners = [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)]
+        .map(|(x, y)| linear * Point::new(x, y));
     let (x0, y0, x1, y1) = bounds(corners);
     let (x0, y0) = ((x0 - EDGE_TOLERANCE).ceil(), (y0 - EDGE_TOLERANCE).ceil());
     let pixel_width = (x1 + EDGE_TOLERANCE).floor() - x0;
@@ -367,12 +392,12 @@ fn page_extent(
 /// from the transformed page's origin and its size, refused past the limits
 /// of one raster, or with a clip of a page longer than [`MAX_PAGE_SIDE`].
 fn extent(
-    page: &hayro::hayro_syntax::page::Page<'_>,
+    display: Display,
     options: &Options,
 ) -> std::result::Result<(f64, f64, u16, u16), RasterError> {
     use hayro::kurbo::Affine;
 
-    let (x0, y0, page_width, page_height) = page_extent(page, options)?;
+    let (x0, y0, page_width, page_height) = page_extent(display, options)?;
     let (left, top, width, height) = match options.clip {
         Some(clip) => {
             let side = f64::from(MAX_PAGE_SIDE);
@@ -407,23 +432,13 @@ fn extent(
 }
 
 fn draw<'a>(
-    pdf: &'a Pdf,
+    bridged: &'a Bridged,
     cache: &RenderCache<'a>,
     fallback: &Fallback,
     index: usize,
     options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
-    use hayro::hayro_interpret::TransformExt;
-    use hayro::kurbo::Affine;
-    use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
-
-    let pages = pdf.pages();
-    let page = pages.get(index).ok_or(RasterError::NoPage(index))?;
-    let (left, top, raster_width, raster_height) = extent(page, options)?;
-    let (a, b, c, d) = options.matrix;
-    let transform = Affine::translate((-left, -top))
-        * Affine::new([a, b, c, d, 0.0, 0.0])
-        * page.initial_transform(true).to_kurbo();
+    let (page, display) = bridged.page(index).ok_or(RasterError::NoPage(index))?;
     let settings = InterpreterSettings {
         render_content: if options.annotations {
             RenderContent::all()
@@ -432,11 +447,37 @@ fn draw<'a>(
         },
         ..fallback.settings()
     };
+    let pixmap = paint(page, display, cache, &settings, options)?;
+    Ok(Raster {
+        width: pixmap.width(),
+        height: pixmap.height(),
+        alpha: options.alpha,
+        gray: options.gray,
+        data: take_samples(pixmap, options.gray, options.alpha),
+        resolution: resolution(options.matrix),
+    })
+}
+
+fn paint<'a>(
+    page: &'a Page<'a>,
+    display: Display,
+    cache: &RenderCache<'a>,
+    settings: &InterpreterSettings,
+    options: &Options,
+) -> Result<Pixmap, RasterError> {
+    use hayro::kurbo::Affine;
+    use hayro::vello_cpu::{RasterizerSettings, RenderContext, Resources, TargetInit};
+
+    let (left, top, raster_width, raster_height) = extent(display, options)?;
+    let (a, b, c, d) = options.matrix;
+    let transform = Affine::translate((-left, -top))
+        * Affine::new([a, b, c, d, 0.0, 0.0])
+        * display.transform();
     let mut context = RenderContext::new(raster_width, raster_height);
     hayro::render_into(
         page,
         cache,
-        &settings,
+        settings,
         &render_settings(options.hinting, options.glyph_cache),
         &mut context,
         transform,
@@ -452,15 +493,7 @@ fn draw<'a>(
             ..Default::default()
         },
     );
-    let data = take_samples(pixmap, options.gray, options.alpha);
-    Ok(Raster {
-        width: raster_width,
-        height: raster_height,
-        alpha: options.alpha,
-        gray: options.gray,
-        data,
-        resolution: resolution(options.matrix),
-    })
+    Ok(pixmap)
 }
 
 /// Takes the straight-alpha samples of `pixmap` in the layout of `gray` and
