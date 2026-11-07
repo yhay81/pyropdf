@@ -17,7 +17,9 @@ table, and ``eblc-only`` has that table and no outlines, which a load refuses.
 ``sbix-jpeg`` and ``cbdt-raw`` hold strikes that drawing does not read, and
 ``sbix-damaged`` PNGs that do not decode. ``colr0`` and ``colr1`` paint the
 square in red, which the canvas draws; ``colr-sweep`` paints it with a sweep
-gradient, which it does not.
+gradient, which it does not. ``colr-unclipped`` paints red with no outline or
+clip box around it, so the paint covers the face's box, and its ``head``
+gives that box with its corners swapped, as a damaged face may.
 
 ``colr-paints`` is for drawing COLR v1 in colour. Its em is 1000, and each
 glyph's layers are a square from (100, 0) to (900, 800), or its left or right
@@ -194,9 +196,15 @@ def _colr(font: TTFont, kind: str) -> None:
                 "startAngle": 0,
                 "endAngle": 360,
             }
-        glyphs = dict.fromkeys(COVERED, _glyph("layer", paint))
+        root = paint if kind == "colr-unclipped" else _glyph("layer", paint)
+        glyphs = dict.fromkeys(COVERED, root)
     version = 0 if kind == "colr0" else 1
     font["COLR"] = buildCOLR(glyphs, version=version, glyphMap=font.getReverseGlyphMap())
+    if kind == "colr-unclipped":
+        # Each axis's minimum above its maximum, which the save keeps as set.
+        head = font["head"]
+        head.xMin, head.yMin, head.xMax, head.yMax = 900, 800, 100, 0
+        font.recalcBBoxes = False
 
 
 def face(kind: str) -> bytes:
@@ -213,7 +221,7 @@ def face(kind: str) -> bytes:
     builder.setupOS2()
     builder.setupPost()
     font = builder.font
-    if kind in {"colr0", "colr1", "colr-sweep"}:
+    if kind in {"colr0", "colr1", "colr-sweep", "colr-unclipped"}:
         _colr(font, kind)
     elif kind == "sbix":
         font["sbix"] = _sbix()
@@ -547,7 +555,7 @@ def paints_face() -> bytes:
 def main() -> None:
     """Write every face next to this script."""
     kinds = ("colr0", "colr1", "colr-sweep", "sbix", "cbdt", "eblc", "svg", "svg-cff")
-    for kind in (*kinds, "sbix-jpeg", "cbdt-raw", "sbix-damaged", "eblc-only"):
+    for kind in (*kinds, "sbix-jpeg", "cbdt-raw", "sbix-damaged", "eblc-only", "colr-unclipped"):
         suffix = "otf" if kind == "svg-cff" else "ttf"
         (HERE / f"colour-{kind}.{suffix}").write_bytes(face(kind))
     for table in ("sbix", "cbdt"):
