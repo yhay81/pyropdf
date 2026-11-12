@@ -20,25 +20,106 @@
 //! `rust/src/annotation_appearance.rs` at
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321, without its canvas.
 
+pub mod edit;
+pub mod geometry;
 mod icons;
 mod missing;
+pub mod popup;
+pub mod read;
 mod shapes;
 mod text;
 
+use std::fmt;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
+use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::settle::Settler;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
-use pyropdf_store::{Error, Result};
+use pyropdf_store::{Error, LimitExceeded, Result};
 
 use crate::forms;
 use crate::forms::face::FaceText;
 use shapes::{cloud_radius_in_unit, ending_size_in_unit};
+
+/// The result of an annotation reading or editing operation.
+pub type AnnotationResult<T, E = AnnotationError> = std::result::Result<T, E>;
+
+/// Why an annotation reading or editing operation refused or failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AnnotationError {
+    /// A refusal or failure from the underlying store or budget.
+    Store(Error),
+    /// A limit refusal with a custom message and stable limit code.
+    Limit { code: LimitCode, message: String },
+    /// Malformed PDF structure detected during annotation reading.
+    Malformed(String),
+    /// An annotation handle whose entry no longer exists in this version.
+    Stale(String),
+    /// An invalid caller argument that maps to `ValueError`.
+    Value(String),
+    /// An annotation domain error that maps to `PdfError`.
+    Pdf(String),
+}
+
+impl AnnotationError {
+    /// Returns the limit code if a limit refused the operation.
+    #[must_use]
+    pub const fn limit_code(&self) -> Option<LimitCode> {
+        match self {
+            Self::Store(error) => match error.limit() {
+                Some(refusal) => Some(refusal.code()),
+                None => None,
+            },
+            Self::Limit { code, .. } => Some(*code),
+            Self::Malformed(_) | Self::Stale(_) | Self::Value(_) | Self::Pdf(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for AnnotationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Store(error) => fmt::Display::fmt(error, formatter),
+            Self::Limit { message, .. }
+            | Self::Malformed(message)
+            | Self::Stale(message)
+            | Self::Value(message)
+            | Self::Pdf(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for AnnotationError {}
+
+impl From<Error> for AnnotationError {
+    fn from(error: Error) -> Self {
+        Self::Store(error)
+    }
+}
+
+impl From<LimitExceeded> for AnnotationError {
+    fn from(refusal: LimitExceeded) -> Self {
+        Self::Store(Error::from(refusal))
+    }
+}
+
+impl From<forms::WidgetError> for AnnotationError {
+    fn from(error: forms::WidgetError) -> Self {
+        match error {
+            forms::WidgetError::Malformed(message) => Self::Pdf(message.into_owned()),
+            forms::WidgetError::Lines => Self::Limit {
+                code: LimitCode::TextLineCount,
+                message: error.to_string(),
+            },
+            forms::WidgetError::Store(error) => Self::Store(error),
+        }
+    }
+}
 
 /// The most points that one annotation's geometry holds, a squiggly line's
 /// zigzag included.
@@ -51,7 +132,7 @@ pub const MAX_QUADS: usize = 4_096;
 const KAPPA: f64 = 0.552_284_749_830_793_4;
 
 /// The blend modes of ISO 32000-2 Table 134, which `/BM` may name.
-const BLEND_MODES: [&str; 16] = [
+pub const BLEND_MODES: [&str; 16] = [
     "Normal",
     "Multiply",
     "Screen",
@@ -73,8 +154,22 @@ const BLEND_MODES: [&str; 16] = [
 /// The most dash lengths that a border pattern holds.
 pub const MAX_BORDER_DASHES: usize = 32;
 
+pub use edit::{
+    AnnotationPatch, AnnotationSpec, annotation_add, annotation_draw_face, annotation_edit,
+    annotation_remove,
+};
+pub use geometry::{
+    ADDED_SUBTYPES, AnnotationGeometry, CLEARABLE, CalloutPoints, FILE_ICONS, GeometryTuple,
+    NOTE_ICONS, RECT_SUBTYPES, Rect, STAMP_ICONS, TEXT_KEYS, annotation_geometry, border_style,
+    rgb,
+};
 pub use missing::{
     MAX_SYNTHESIZED_APPEARANCES, MAX_SYNTHESIZED_POINTS, synthesized, synthesized_for,
+};
+pub use popup::{annotation_open, annotation_popup, annotation_reply};
+pub use read::{
+    AnnotationRecord, IsolatedAnnotation, PageAnnots, RecordTuple, annotation_face,
+    annotation_list, annotation_read, isolate_annotation, stale_appearances,
 };
 pub use shapes::{LINE_ENDINGS, cloud_radius, ending_size};
 pub use text::{FACE_RESOURCE, STAMPS, TextFit, default_appearance};
@@ -162,8 +257,9 @@ impl Settler for AppearanceSettler {
             if form.is_none() && rect.is_none() {
                 continue;
             }
-            charge_copy(CopyPart::Dict(dict), budget)?;
-            let mut dict = dict.clone();
+            let Value::Dict(mut dict) = copy_for_edit(object.value(), budget)? else {
+                unreachable!("checked dictionary variant");
+            };
             if let Some(form) = form {
                 let reference = transaction.allocate()?;
                 transaction.write(reference.number(), &Value::from(form), budget)?;
@@ -1549,59 +1645,6 @@ pub(crate) fn fmt(value: f64) -> String {
     } else {
         value.to_string()
     }
-}
-
-/// A borrowed part of an object whose clone allocates owned values.
-enum CopyPart<'a> {
-    Value(&'a Value),
-    Array(&'a Array),
-    Dict(&'a Dict),
-}
-
-/// Charges owned buffers before a clone, including unknown nested fields.
-/// The explicit work stack is budgeted; shared source spans and stream bytes
-/// need no copy. Array and dictionary capacity includes room for an edit.
-fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> Result<()> {
-    let mut pending = BudgetVec::new(budget);
-    pending.try_push(part)?;
-    while let Some(part) = pending.pop() {
-        budget.poll()?;
-        let bytes = match part {
-            CopyPart::Value(value) => match value {
-                Value::Name(name) => name.as_bytes().len(),
-                Value::String(text) => text.as_bytes().len(),
-                Value::Array(array) => {
-                    pending.try_push(CopyPart::Array(array))?;
-                    0
-                }
-                Value::Dict(dict) => {
-                    pending.try_push(CopyPart::Dict(dict))?;
-                    0
-                }
-                Value::Stream(stream) => {
-                    pending.try_push(CopyPart::Dict(stream.dict()))?;
-                    0
-                }
-                _ => 0,
-            },
-            CopyPart::Array(array) => {
-                for value in array {
-                    pending.try_push(CopyPart::Value(value))?;
-                }
-                array.len().saturating_mul(2 * size_of::<Value>())
-            }
-            CopyPart::Dict(dict) => {
-                let mut bytes = dict.len().saturating_mul(2 * size_of::<(Name, Value)>());
-                for (key, value) in dict.iter() {
-                    bytes = bytes.saturating_add(key.as_bytes().len());
-                    pending.try_push(CopyPart::Value(value))?;
-                }
-                bytes
-            }
-        };
-        budget.charge(LimitCode::MemorySize, bytes as u64)?;
-    }
-    Ok(())
 }
 
 /// Returns a number as an integer when it is one, else a real.

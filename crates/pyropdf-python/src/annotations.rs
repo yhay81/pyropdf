@@ -1,168 +1,634 @@
-//! Annotation handles: the annotations that `page.annotations` lists, their
-//! properties, and the edits of them (DESIGN.md section 10).
-//!
-//! A handle names its page, its annotation's object, and the position where
-//! it last found it in the page's `/Annots`; an annotation stored there as a
-//! direct dictionary has object `(0, 0)` and is found by its position alone.
-//! An edit that could shift or rewrite such a dictionary first stores every
-//! direct annotation of the page as an object of its own, so that a handle
-//! made before then goes stale instead of naming another annotation.
-//!
-//! An edit that changes how an annotation looks marks its appearance stale,
-//! and the appearance settler draws it again once per transaction (section
-//! 7).
+//! PyO3 bindings for page annotations (`page.annotations`).
 
 pub(crate) mod input;
 pub mod links;
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::sync::Arc;
 
-use pyo3::Borrowed;
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::pybacked::PyBackedBytes;
+pub(crate) use pyropdf_engine::annotations::Rect;
 use pyropdf_engine::annotations::{
-    FACE_RESOURCE, LINE_ENDINGS, MAX_BORDER_DASHES, MAX_QUADS, Reader, TextFit, appearance,
-    ending_size, face_appearance, has_points, is_text_markup, synthesized_for, valid_dashes,
-    zigzag_points,
+    self, AnnotationError, AnnotationGeometry, AnnotationRecord, GeometryTuple, IsolatedAnnotation,
+    PageAnnots, RecordTuple,
 };
 use pyropdf_engine::bridge::Bridged;
-pub(crate) use pyropdf_engine::display::{encode_text, to_display, to_pdf};
+pub(crate) use pyropdf_engine::display::encode_text;
 use pyropdf_engine::extract;
-use pyropdf_engine::forms::WidgetError;
-use pyropdf_engine::forms::face::{FaceFont, FaceText};
-use pyropdf_engine::forms::flatten::{self as flattening, Missing, Selection};
 use pyropdf_engine::render::{self, Raster};
-use pyropdf_engine::standard::DA_FONTS;
-use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::memo::Reads;
-use pyropdf_store::pages::{MAX_CHAIN, Page, PageIndex};
-use pyropdf_store::settle::{Scope, Structure};
-use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Reference, Stream, Value};
+use pyropdf_store::pages::PageIndex;
+use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use crate::document::{_Document, text_string};
+use crate::document::_Document;
 use crate::errors::{
     LimitError, MalformedPdfError, PdfError, StaleObjectError, limit_error, store_error,
 };
 use crate::fonts::_Font;
-use crate::objects::set_data;
-use crate::pages::{display_box, index as page_index, number, rect, rotation};
+use crate::pages::index as page_index;
 use crate::pixmap::{Pixmap, bridge_error, raster_error};
 use crate::text::{OptionsTuple, text_error, text_options};
 
-/// The text entries of a [`Record`], in its order.
-const TEXT_KEYS: [&str; 8] = [
-    "Contents",
-    "Name",
-    "T",
-    "CreationDate",
-    "M",
-    "Subj",
-    "NM",
-    "IT",
-];
+/// Maps a typed annotation engine error to its Python exception class.
+pub(crate) fn annotation_error(error: AnnotationError) -> PyErr {
+    match error {
+        AnnotationError::Store(error) => store_error(&error),
+        AnnotationError::Limit { code, message } => LimitError::new_err((code.as_str(), message)),
+        AnnotationError::Malformed(message) => MalformedPdfError::new_err(message),
+        AnnotationError::Stale(message) => StaleObjectError::new_err(message),
+        AnnotationError::Value(message) => PyValueError::new_err(message),
+        AnnotationError::Pdf(message) => PdfError::new_err(message),
+    }
+}
 
-/// The blend modes of ISO 32000-2 Table 134, which `/BM` may name.
-const BLEND_MODES: [&str; 16] = [
-    "Normal",
-    "Multiply",
-    "Screen",
-    "Overlay",
-    "Darken",
-    "Lighten",
-    "ColorDodge",
-    "ColorBurn",
-    "HardLight",
-    "SoftLight",
-    "Difference",
-    "Exclusion",
-    "Hue",
-    "Saturation",
-    "Color",
-    "Luminosity",
-];
+struct PyAnnotationError(PyErr);
 
-/// The icons of a note (ISO 32000-2 section 12.5.6.4).
-const NOTE_ICONS: [&str; 7] = [
-    "Comment",
-    "Help",
-    "Insert",
-    "Key",
-    "NewParagraph",
-    "Note",
-    "Paragraph",
-];
+impl From<AnnotationError> for PyAnnotationError {
+    fn from(error: AnnotationError) -> Self {
+        Self(annotation_error(error))
+    }
+}
 
-/// The stamps of ISO 32000-2 section 12.5.6.12.
-const STAMP_ICONS: [&str; 14] = [
-    "Approved",
-    "AsIs",
-    "Confidential",
-    "Departmental",
-    "Experimental",
-    "Expired",
-    "Final",
-    "ForComment",
-    "ForPublicRelease",
-    "NotApproved",
-    "NotForPublicRelease",
-    "Sold",
-    "TopSecret",
-    "Draft",
-];
+/// Lists the annotations of page object `(number, generation)` that
+/// `page.annotations` lists, or returns `None` for a page that is gone.
+#[pyfunction]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "maps already-budgeted AnnotationRecord items one to one into PyO3 tuples"
+)]
+pub fn annotation_list(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<Vec<RecordTuple>>> {
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = page_index(document)?;
+        py.detach(|| {
+            annotations::annotation_list(version, pages, &budget, number, generation).map(
+                |records| {
+                    records.map(|records| {
+                        records
+                            .into_iter()
+                            .map(AnnotationRecord::into_tuple)
+                            .collect()
+                    })
+                },
+            )
+        })
+        .map_err(annotation_error)
+    })?
+}
 
-/// The icons of a file attachment (ISO 32000-2 section 12.5.6.15).
-const FILE_ICONS: [&str; 4] = ["Graph", "PushPin", "Paperclip", "Tag"];
+/// Reads the annotation that a handle names. Returns `None` for a page that
+/// is gone, and raises `StaleObjectError` for an annotation that is.
+#[pyfunction]
+pub fn annotation_read(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<RecordTuple>> {
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = page_index(document)?;
+        py.detach(|| {
+            annotations::annotation_read(version, pages, &budget, number, generation, index, id)
+                .map(|record| record.map(AnnotationRecord::into_tuple))
+        })
+        .map_err(annotation_error)
+    })?
+}
 
-/// The types whose `/Rect` an edit may move; the others follow their points.
-const RECT_SUBTYPES: [&str; 7] = [
-    "Square",
-    "Circle",
-    "Text",
-    "FreeText",
-    "Stamp",
-    "Caret",
-    "FileAttachment",
-];
+/// Reads the points and line endings of the annotation that a handle names,
+/// or returns `None` for a page that is gone.
+#[pyfunction]
+pub fn annotation_geometry(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<GeometryTuple>> {
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = page_index(document)?;
+        py.detach(|| {
+            annotations::annotation_geometry(version, pages, &budget, number, generation, index, id)
+                .map(|geometry| geometry.map(AnnotationGeometry::into_tuple))
+        })
+        .map_err(annotation_error)
+    })?
+}
 
-/// A display rectangle, `(x0, y0, x1, y1)`.
-pub(crate) type Rect = (f64, f64, f64, f64);
+/// Applies `edit` to the annotation that a handle names, marks its appearance
+/// stale unless `face` is set, and returns its object, or `None` for a page
+/// that is gone.
+#[pyfunction]
+#[pyo3(signature = (document, number, generation, index, id, edit, face=false))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a handle's location, the edit, and its flag"
+)]
+pub fn annotation_edit(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    edit: &Bound<'_, PyAny>,
+    face: bool,
+) -> PyResult<Option<(u32, u16)>> {
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let patch = input::read_patch(edit, budget)?;
+                annots
+                    .0
+                    .edit(transaction, index, id, &patch, face)
+                    .map_err(annotation_error)
+            },
+        )
+    })?
+}
 
-/// One annotation that `page.annotations` lists: its position in `/Annots`;
-/// its object, `(0, 0)` for a direct dictionary; its subtype; its display
-/// rectangle; its `/F` flags; the texts of [`TEXT_KEYS`]; its `/C` and
-/// `/IC` components; its `/CA` opacity; its border's width, `/S` style, and
-/// dashes; its `/BM` blend mode; and the object that `/IRT` names, the
-/// display rectangle of its popup, and whether the popup, or else the
-/// annotation, is open.
-type Record = (
-    u32,
-    (u32, u16),
-    Option<String>,
-    Rect,
-    i64,
-    [Option<String>; 8],
-    Vec<f64>,
-    Vec<f64>,
-    Option<f64>,
-    Option<(f64, String, Vec<f64>)>,
-    Option<&'static str>,
-    (Option<(u32, u16)>, Option<Rect>, bool),
-);
+/// Returns the object number of the Type0 font that the normal appearance of
+/// the free text that a handle names draws its text in, or `None`.
+#[pyfunction]
+pub fn annotation_face(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<u32>> {
+    crate::errors::boundary(|| {
+        let (version, pages, budget) = page_index(document)?;
+        py.detach(|| {
+            annotations::annotation_face(version, pages, &budget, number, generation, index, id)
+        })
+        .map_err(annotation_error)
+    })?
+}
 
-/// A borrowed part of an object whose clone allocates owned values.
+/// Draws the free text that a handle names in embedded OpenType `face` and
+/// returns the shaped glyphs with their texts.
+#[pyfunction]
+#[pyo3(signature = (document, number, generation, index, id, face, font=None))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a handle's location, the face, and its font"
+)]
+pub fn annotation_draw_face(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    face: &_Font,
+    font: Option<(u32, HashMap<u32, String>)>,
+) -> PyResult<Option<Vec<(u32, String)>>> {
+    crate::errors::boundary(|| {
+        let Some(face) = face.embedded() else {
+            return Err(PdfError::new_err(
+                "free text draws an OpenType face here, not a Standard 14 font",
+            ));
+        };
+        let font_ref = font.as_ref().map(|(num, mapped)| (*num, mapped));
+        document.edit(py, |transaction, budget| {
+            annotations::annotation_draw_face(
+                transaction,
+                &document.draft_pages,
+                budget,
+                number,
+                generation,
+                index,
+                id,
+                face,
+                font_ref,
+            )
+            .map_err(annotation_error)
+        })
+    })?
+}
+
+/// Moves, adds, or removes (`None`) the popup of the annotation that a handle
+/// names.
+#[pyfunction]
+pub fn annotation_popup(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    area: Option<Rect>,
+) -> PyResult<Option<(u32, u16)>> {
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            annotations::annotation_popup(
+                transaction,
+                &document.draft_pages,
+                budget,
+                number,
+                generation,
+                index,
+                id,
+                area,
+            )
+            .map_err(annotation_error)
+        })
+    })?
+}
+
+/// Opens or closes the popup of the annotation that a handle names, and a
+/// note's own `/Open`.
+#[pyfunction]
+pub fn annotation_open(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    open: bool,
+) -> PyResult<Option<(u32, u16)>> {
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            annotations::annotation_open(
+                transaction,
+                &document.draft_pages,
+                budget,
+                number,
+                generation,
+                index,
+                id,
+                open,
+            )
+            .map_err(annotation_error)
+        })
+    })?
+}
+
+/// Makes the annotation that a handle names a reply to `target` (`/IRT`), or
+/// clears its reply state with `None`.
+#[pyfunction]
+pub fn annotation_reply(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    target: Option<(u32, u16)>,
+) -> PyResult<Option<(u32, u16)>> {
+    crate::errors::boundary(|| {
+        document.edit(py, |transaction, budget| {
+            annotations::annotation_reply(
+                transaction,
+                &document.draft_pages,
+                budget,
+                number,
+                generation,
+                index,
+                id,
+                target,
+            )
+            .map_err(annotation_error)
+        })
+    })?
+}
+
+/// Removes the annotations that `handles` name (and any popups they name on
+/// the page) from the page's `/Annots`.
+#[pyfunction]
+pub fn annotation_remove(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    handles: &Bound<'_, PyAny>,
+) -> PyResult<bool> {
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let handles = input::read_handles(handles, budget)?;
+                annots
+                    .0
+                    .remove(transaction, &handles)
+                    .map_err(annotation_error)
+            },
+        )
+        .map(|page| page.is_some())
+    })?
+}
+
+/// Returns the object numbers whose appearance the current readable version
+/// leaves stale.
+#[pyfunction]
+pub fn _stale_appearances(py: Python<'_>, document: &_Document) -> PyResult<Vec<u32>> {
+    crate::errors::boundary(|| {
+        let version = document.reading()?;
+        let budget = document.budget();
+        py.detach(|| annotations::stale_appearances(&version, &budget))
+            .map_err(annotation_error)
+    })?
+}
+
+/// Adds the annotation that `spec` describes to page `(number, generation)`.
+#[pyfunction]
+#[pyo3(signature = (document, number, generation, spec, face=false))]
+pub fn annotation_add(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    spec: &Bound<'_, PyAny>,
+    face: bool,
+) -> PyResult<Option<(u32, u16)>> {
+    crate::errors::boundary(|| {
+        editing(
+            py,
+            document,
+            number,
+            generation,
+            |annots, transaction, budget| {
+                let spec = input::SpecInput::read(spec, budget)?;
+                annots
+                    .0
+                    .add(transaction, &spec.as_spec(), face)
+                    .map_err(annotation_error)
+            },
+        )
+    })?
+}
+
+fn isolated(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+) -> PyResult<Option<IsolatedAnnotation>> {
+    document.scratch(py, |transaction, budget| {
+        annotations::isolate_annotation(transaction, budget, number, generation, index, id)
+            .map_err(annotation_error)
+    })
+}
+
+/// Renders the appearance of the annotation that a handle names alone over its
+/// display rectangle with the GIL released.
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the handle and the options of Annotation.pixmap"
+)]
+pub fn annotation_pixmap(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    matrix: (f64, f64, f64, f64),
+    alpha: bool,
+    gray: bool,
+    background: (u8, u8, u8, u8),
+) -> PyResult<Option<Pixmap>> {
+    crate::errors::boundary(|| {
+        let Some(isolated) = isolated(py, document, number, generation, index, id)? else {
+            return Ok(None);
+        };
+        let budget = document.budget();
+        let (red, green, blue, opacity) = background;
+        let options = render::Options {
+            matrix,
+            alpha,
+            gray,
+            background: [red, green, blue, opacity],
+            clip: Some(isolated.rect),
+            annotations: false,
+            hinting: false,
+            glyph_cache: false,
+        };
+        let fallback = document.fallback();
+        let raster = py.detach(|| -> PyResult<Raster> {
+            budget.poll().map_err(|e| limit_error(&e))?;
+            let bridged = Arc::new(
+                Bridged::new(&isolated.version, &isolated.pages, &budget)
+                    .map_err(|e| bridge_error(&e))?,
+            );
+            let raster = render::raster(&bridged, &fallback, isolated.page_index, &options)
+                .map_err(raster_error)?;
+            budget.poll().map_err(|e| limit_error(&e))?;
+            Ok(raster)
+        })?;
+        Ok(Some(Pixmap::from(raster)))
+    })?
+}
+
+/// Extracts the text of the appearance of the annotation that a handle names
+/// alone with the GIL released.
+#[pyfunction]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the handle and the options of Annotation.text"
+)]
+pub fn annotation_text(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    index: u32,
+    id: (u32, u16),
+    options: OptionsTuple,
+    max_glyphs: Option<u64>,
+    max_size: Option<u64>,
+) -> PyResult<Option<(String, usize)>> {
+    crate::errors::boundary(|| {
+        let options = text_options(options)?;
+        let Some(isolated) = isolated(py, document, number, generation, index, id)? else {
+            return Ok(None);
+        };
+        let budget = document.call_budget(&[
+            (LimitCode::TextGlyphCount, max_glyphs),
+            (LimitCode::TextSize, max_size),
+        ])?;
+        py.detach(|| {
+            let bridged = Bridged::new(&isolated.version, &isolated.pages, &budget)
+                .map_err(|e| bridge_error(&e))?;
+            let mut text = String::new();
+            let (skipped, _) =
+                extract::page_text(&bridged, isolated.page_index, &options, &budget, &mut text)
+                    .map_err(text_error)?;
+            Ok(Some((text, skipped)))
+        })
+    })?
+}
+
+// --- Compatibility error-mapping shims for `forms.rs` / `pages.rs` ---
+
+/// PyO3 error-mapping adapter around [`PageAnnots`] for `forms.rs`.
+pub(crate) struct Annots<'b>(pub(crate) PageAnnots<'b>);
+
+impl<'b> Deref for Annots<'b> {
+    type Target = PageAnnots<'b>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'b> Annots<'b> {
+    pub(crate) fn read(
+        version: Arc<Version>,
+        index: Arc<PageIndex>,
+        budget: &'b Budget,
+        number: u32,
+        generation: u16,
+    ) -> PyResult<Option<Self>> {
+        PageAnnots::read(version, index, budget, number, generation)
+            .map(|opt| opt.map(Self))
+            .map_err(annotation_error)
+    }
+
+    pub(crate) fn at(
+        version: Arc<Version>,
+        index: Arc<PageIndex>,
+        budget: &'b Budget,
+        at: usize,
+    ) -> PyResult<Self> {
+        PageAnnots::at(version, index, budget, at)
+            .map(Self)
+            .map_err(annotation_error)
+    }
+
+    pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
+        self.0.entry(item).map_err(annotation_error)
+    }
+
+    pub(crate) fn find(&self, index: u32, id: (u32, u16)) -> PyResult<(usize, Dict)> {
+        self.0.find(index, id).map_err(annotation_error)
+    }
+
+    pub(crate) fn resolved(&self, value: Option<&Value>) -> PyResult<Option<Value>> {
+        self.0.resolved(value).map_err(annotation_error)
+    }
+
+    pub(crate) fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
+        self.0.name(dict, key).map_err(annotation_error)
+    }
+
+    pub(crate) fn rect(&self, value: Option<&Value>) -> PyResult<Option<Rect>> {
+        self.0.rect(value).map_err(annotation_error)
+    }
+
+    pub(crate) fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
+        self.0.color(dict, key).map_err(annotation_error)
+    }
+
+    pub(crate) fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
+        self.0.border(dict).map_err(annotation_error)
+    }
+
+    pub(crate) fn write(
+        &self,
+        transaction: &mut Transaction,
+        position: usize,
+        look: bool,
+        dict: Dict,
+        change: impl FnOnce(
+            &mut Transaction,
+            Reference,
+            &mut Dict,
+            &mut Array,
+            &Budget,
+        ) -> PyResult<bool>,
+    ) -> PyResult<(u32, u16)> {
+        self.0
+            .write_with(
+                transaction,
+                position,
+                look,
+                dict,
+                |transaction, reference, dict, items, budget| {
+                    change(transaction, reference, dict, items, budget).map_err(PyAnnotationError)
+                },
+            )
+            .map_err(|error| error.0)
+    }
+
+    pub(crate) fn write_items(
+        &self,
+        transaction: &mut Transaction,
+        items: Array,
+        budget: &Budget,
+    ) -> PyResult<()> {
+        self.0
+            .write_items(transaction, items, budget)
+            .map_err(annotation_error)
+    }
+}
+
+pub(crate) fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
+    annotations::rgb(components, label).map_err(annotation_error)
+}
+
+pub(crate) fn border_style(
+    border: &(f64, String, Vec<f64>),
+    unit: f64,
+    budget: &Budget,
+) -> PyResult<Value> {
+    annotations::border_style(border, unit, budget).map_err(annotation_error)
+}
+
+pub(crate) fn editing<T>(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+    write: impl FnOnce(&Annots<'_>, &mut Transaction, &Budget) -> PyResult<T>,
+) -> PyResult<Option<T>> {
+    document.edit(py, |transaction, budget| {
+        let version = transaction.snapshot();
+        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
+            .map_err(|error| store_error(&error))?;
+        let Some(annots) = Annots::read(version, index, budget, number, generation)? else {
+            return Ok(None);
+        };
+        let savepoint = transaction.savepoint();
+        let result = write(&annots, transaction, budget);
+        if result.is_err() {
+            transaction.rollback(savepoint);
+        }
+        result.map(Some)
+    })
+}
+
+/// Shared deep-copy budget helper retained for `forms.rs` and `pages.rs` until
+/// those modules migrate to `pyropdf_store::refs::copy_for_edit`.
 pub(crate) enum CopyPart<'a> {
     Value(&'a Value),
     Array(&'a Array),
     Dict(&'a Dict),
 }
 
-/// Charges owned buffers before a clone, including unknown nested fields.
-/// The explicit work stack is budgeted; shared source spans and stream bytes
-/// need no copy. Array and dictionary capacity includes room for an edit.
 pub(crate) fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
     let mut pending = BudgetVec::new(budget);
     pending.try_push(part).map_err(|e| limit_error(&e))?;
@@ -216,2829 +682,4 @@ pub(crate) fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
             .map_err(|e| limit_error(&e))?;
     }
     Ok(())
-}
-
-/// Resolves at most MAX_CHAIN references, charging the owned result before
-/// copying it. Reading repeated references still charges each returned copy.
-fn resolve(version: &Version, value: Option<&Value>, budget: &Budget) -> PyResult<Option<Value>> {
-    let mut current = match value {
-        None | Some(Value::Null) => return Ok(None),
-        Some(Value::Reference(reference)) => *reference,
-        Some(value) => {
-            charge_copy(CopyPart::Value(value), budget)?;
-            return Ok(Some(value.clone()));
-        }
-    };
-    for _ in 0..MAX_CHAIN {
-        let Some(object) = version
-            .get(current.number(), budget)
-            .map_err(|e| store_error(&e))?
-            .filter(|object| object.generation() == current.generation())
-        else {
-            return Ok(None);
-        };
-        match &**object.value() {
-            Value::Null => return Ok(None),
-            Value::Reference(next) => current = *next,
-            value => {
-                charge_copy(CopyPart::Value(value), budget)?;
-                return Ok(Some(value.clone()));
-            }
-        }
-    }
-    Err(MalformedPdfError::new_err(
-        "a reference chain is longer than 16 references",
-    ))
-}
-
-/// The annotations of one page in the version that reads see.
-pub(crate) struct Annots<'b> {
-    version: Arc<Version>,
-    index: Arc<PageIndex>,
-    at: usize,
-    budget: &'b Budget,
-    crop: [f64; 4],
-    pub(crate) rotation: i64,
-    /// The size of the page's user space unit in points.
-    pub(crate) unit: f64,
-    /// The array object that the page's `/Annots` names, if it names one.
-    array: Option<Reference>,
-    pub(crate) items: Array,
-}
-
-impl<'b> Annots<'b> {
-    /// Reads the annotations of page object `(number, generation)`, or
-    /// returns `None` when it is not a page of the document.
-    pub(crate) fn read(
-        version: Arc<Version>,
-        index: Arc<PageIndex>,
-        budget: &'b Budget,
-        number: u32,
-        generation: u16,
-    ) -> PyResult<Option<Self>> {
-        let Some(at) = index.index_of(Reference::new(number, generation)) else {
-            return Ok(None);
-        };
-        Self::at(version, index, budget, at).map(Some)
-    }
-
-    /// Reads the annotations of the page at `at` of `index`, a page index
-    /// of `version`.
-    pub(crate) fn at(
-        version: Arc<Version>,
-        index: Arc<PageIndex>,
-        budget: &'b Budget,
-        at: usize,
-    ) -> PyResult<Self> {
-        let page = &index.pages()[at];
-        let crop = display_box(page);
-        let rotation = rotation(page.rotate());
-        let unit = page.user_unit();
-        let annots = page.dict().get("Annots");
-        let array = match annots {
-            Some(Value::Reference(reference)) => Some(*reference),
-            _ => None,
-        };
-        let items = match resolve(&version, annots, budget)? {
-            Some(Value::Array(items)) => items,
-            _ => Array::new(),
-        };
-        budget
-            .check(LimitCode::AnnotationCount, items.len() as u64)
-            .map_err(|e| limit_error(&e))?;
-        Ok(Self {
-            version,
-            index,
-            at,
-            budget,
-            crop,
-            rotation,
-            unit,
-            array,
-            items,
-        })
-    }
-
-    pub(crate) fn page(&self) -> &Page {
-        &self.index.pages()[self.at]
-    }
-
-    /// Returns the version that the annotations were read from, its page
-    /// index, and the position of their page in it.
-    pub(crate) fn pages(&self) -> (&Arc<Version>, &Arc<PageIndex>, usize) {
-        (&self.version, &self.index, self.at)
-    }
-
-    /// Returns a reader of the version that the annotations were read in.
-    pub(crate) fn reader(&self) -> Reader<'_> {
-        Reader::on_page(&self.version, self.budget, self.unit)
-    }
-
-    /// Returns the object and dictionary of the entry `item`, or `None`
-    /// for an entry that is not an annotation dictionary.
-    pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
-        let id = match item {
-            Value::Reference(reference) => (reference.number(), reference.generation()),
-            Value::Dict(dict) => {
-                charge_copy(CopyPart::Dict(dict), self.budget)?;
-                return Ok(Some(((0, 0), dict.clone())));
-            }
-            _ => return Ok(None),
-        };
-        Ok(match resolve(&self.version, Some(item), self.budget)? {
-            Some(Value::Dict(dict)) => Some((id, dict)),
-            _ => None,
-        })
-    }
-
-    /// Returns the position of the annotation that a handle names: object
-    /// `id`, found at `index` or, after an edit moved it, at its first
-    /// position; or, for `(0, 0)`, the direct dictionary at `index`.
-    fn position(&self, index: u32, id: (u32, u16)) -> PyResult<usize> {
-        let names = |item: &Value| {
-            matches!(item, Value::Reference(reference)
-                if (reference.number(), reference.generation()) == id)
-        };
-        let index = index as usize;
-        let position = match self.items.get(index) {
-            Some(item) if id != (0, 0) && names(item) => Some(index),
-            Some(Value::Dict(_)) if id == (0, 0) => Some(index),
-            _ if id != (0, 0) => self.items.iter().position(names),
-            _ => None,
-        };
-        position.ok_or_else(|| {
-            StaleObjectError::new_err(format!(
-                "annotation {} is no longer in the page's /Annots",
-                id.0
-            ))
-        })
-    }
-
-    /// Returns the position and dictionary of the annotation that a handle
-    /// names, as [`Annots::position`] finds it.
-    pub(crate) fn find(&self, index: u32, id: (u32, u16)) -> PyResult<(usize, Dict)> {
-        let position = self.position(index, id)?;
-        match self.entry(&self.items.as_slice()[position])? {
-            Some((_, dict)) => Ok((position, dict)),
-            None => Err(StaleObjectError::new_err(format!(
-                "annotation {} is no longer a dictionary",
-                id.0
-            ))),
-        }
-    }
-
-    /// Converts a PDF rectangle to display space.
-    pub(crate) fn to_display(&self, (x0, y0, x1, y1): Rect) -> Rect {
-        let (a, b) = to_display(self.crop, self.rotation, self.unit, x0, y0);
-        let (c, d) = to_display(self.crop, self.rotation, self.unit, x1, y1);
-        (a.min(c), b.min(d), a.max(c), b.max(d))
-    }
-
-    /// Converts a display rectangle to a PDF `/Rect` array.
-    pub(crate) fn to_pdf(&self, (x0, y0, x1, y1): Rect) -> Value {
-        let (a, b) = to_pdf(self.crop, self.rotation, self.unit, x0, y0);
-        let (c, d) = to_pdf(self.crop, self.rotation, self.unit, x1, y1);
-        Value::Array(Array::from(vec![
-            number(a.min(c)),
-            number(b.min(d)),
-            number(a.max(c)),
-            number(b.max(d)),
-        ]))
-    }
-
-    /// Returns the record of the annotation `dict` at `index`, or `None`
-    /// for a link, a widget, a popup, or an annotation without a rectangle.
-    /// `budget` holds the text bytes that the call encoded and returned.
-    fn record(
-        &self,
-        index: usize,
-        id: (u32, u16),
-        dict: &Dict,
-        budget: &mut (usize, usize),
-    ) -> PyResult<Option<Record>> {
-        let subtype = self.name(dict, "Subtype")?;
-        // Links and widgets have sequences of their own, and a popup
-        // belongs to the annotation that names it.
-        if matches!(subtype.as_deref(), Some(b"Link" | b"Widget" | b"Popup")) {
-            return Ok(None);
-        }
-        let Some(area) = self.rect(dict.get("Rect"))? else {
-            return Ok(None);
-        };
-        let subtype = subtype
-            .map(|name| charge_text(&name, budget, self.budget))
-            .transpose()?;
-        let mut texts: [Option<String>; 8] = Default::default();
-        for (slot, key) in texts.iter_mut().zip(TEXT_KEYS) {
-            *slot = if key == "Name" || key == "IT" {
-                self.name(dict, key)?
-                    .map(|name| charge_text(&name, budget, self.budget))
-                    .transpose()?
-            } else {
-                match self.resolved(dict.get(key))? {
-                    Some(Value::String(text)) => {
-                        Some(charge_decoded(text.as_bytes(), budget, self.budget)?)
-                    }
-                    _ => None,
-                }
-            };
-        }
-        let popup = match self.resolved(dict.get("Popup"))? {
-            Some(Value::Dict(popup)) => Some(popup),
-            _ => None,
-        };
-        let popup_rect = match &popup {
-            Some(popup) => self.rect(popup.get("Rect"))?,
-            None => None,
-        };
-        let open = matches!(
-            self.resolved(popup.as_ref().unwrap_or(dict).get("Open"))?,
-            Some(Value::Boolean(true))
-        );
-        let reply = match dict.get("IRT") {
-            Some(Value::Reference(reference)) => Some((reference.number(), reference.generation())),
-            _ => None,
-        };
-        let blend = self.name(dict, "BM")?.and_then(|name| {
-            BLEND_MODES
-                .iter()
-                .find(|mode| mode.as_bytes() == name.as_slice())
-                .copied()
-        });
-        Ok(Some((
-            u32::try_from(index).unwrap_or(u32::MAX),
-            id,
-            subtype,
-            self.to_display(area),
-            match self.resolved(dict.get("F"))? {
-                Some(Value::Integer(flags)) => flags,
-                _ => 0,
-            },
-            texts,
-            self.color(dict, "C")?,
-            self.color(dict, "IC")?,
-            self.number(dict.get("CA"))?
-                .filter(|opacity| opacity.is_finite()),
-            self.border(dict)?,
-            blend,
-            (reply, popup_rect.map(|area| self.to_display(area)), open),
-        )))
-    }
-
-    pub(crate) fn resolved(&self, value: Option<&Value>) -> PyResult<Option<Value>> {
-        resolve(&self.version, value, self.budget)
-    }
-
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the name bytes are charged to MemorySize before this copy"
-    )]
-    pub(crate) fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
-        Ok(match self.resolved(dict.get(key))? {
-            Some(Value::Name(name)) => {
-                self.budget
-                    .check(LimitCode::AnnotationTextSize, name.as_bytes().len() as u64)
-                    .map_err(|e| limit_error(&e))?;
-                self.budget
-                    .charge(LimitCode::MemorySize, name.as_bytes().len() as u64)
-                    .map_err(|e| limit_error(&e))?;
-                Some(name.as_bytes().to_vec())
-            }
-            _ => None,
-        })
-    }
-
-    fn number(&self, value: Option<&Value>) -> PyResult<Option<f64>> {
-        Ok(match self.resolved(value)? {
-            Some(Value::Integer(value)) => Some(value as f64),
-            Some(Value::Real(value)) => Some(value.value()),
-            _ => None,
-        })
-    }
-
-    /// Reads a rectangle, its numbers resolved.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the array length is checked as exactly four before allocating"
-    )]
-    pub(crate) fn rect(&self, value: Option<&Value>) -> PyResult<Option<Rect>> {
-        let Some(Value::Array(items)) = self.resolved(value)? else {
-            return Ok(None);
-        };
-        if items.len() != 4 {
-            return Ok(None);
-        }
-        let mut numbers = Vec::with_capacity(4);
-        for item in items.iter() {
-            match self.number(Some(item))? {
-                Some(number) => numbers.push(Value::from(number)),
-                None => return Ok(None),
-            }
-        }
-        Ok(rect(&Value::Array(Array::from(numbers))))
-    }
-
-    /// Reads up to `max` numbers of an array, or `None` for anything else.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the input length is checked against the caller's fixed maximum before allocating"
-    )]
-    fn numbers(&self, value: Option<&Value>, max: usize) -> PyResult<Option<Vec<f64>>> {
-        let Some(Value::Array(items)) = self.resolved(value)? else {
-            return Ok(None);
-        };
-        if max == MAX_BORDER_DASHES {
-            self.budget
-                .check(LimitCode::AnnotationDashCount, items.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-        }
-        if items.len() > max {
-            return Ok(None);
-        }
-        let mut numbers = Vec::with_capacity(items.len());
-        for item in items.iter() {
-            match self.number(Some(item))? {
-                Some(number) => numbers.push(number),
-                None => return Ok(None),
-            }
-        }
-        Ok(Some(numbers))
-    }
-
-    /// Reads a `/C` or `/IC` array of up to four numbers, empty otherwise.
-    pub(crate) fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
-        Ok(self.numbers(dict.get(key), 4)?.unwrap_or_default())
-    }
-
-    /// Reads the border that `/BS`, else `/Border`, describes.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the default is the single fixed byte S"
-    )]
-    pub(crate) fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
-        if let Some(Value::Dict(style)) = self.resolved(dict.get("BS"))? {
-            let width = self
-                .number(style.get("W"))?
-                .filter(|width| width.is_finite() && *width >= 0.0)
-                .unwrap_or(1.0)
-                * self.unit;
-            if !width.is_finite() {
-                return Ok(None);
-            }
-            let name = self
-                .name(&style, "S")?
-                .filter(|name| matches!(name.as_slice(), b"S" | b"D" | b"B" | b"I" | b"U"))
-                .unwrap_or_else(|| b"S".to_vec());
-            let dashes = if name == b"D" {
-                let mut dashes = self
-                    .numbers(style.get("D"), MAX_BORDER_DASHES)?
-                    .filter(|dashes| valid_dashes(dashes))
-                    .unwrap_or_else(|| vec![3.0]);
-                for dash in &mut dashes {
-                    *dash *= self.unit;
-                }
-                if !valid_dashes(&dashes) {
-                    return Ok(None);
-                }
-                dashes
-            } else {
-                Vec::new()
-            };
-            return Ok(Some((
-                width,
-                String::from_utf8_lossy(&name).into_owned(),
-                dashes,
-            )));
-        }
-        let Some(Value::Array(items)) = self.resolved(dict.get("Border"))? else {
-            return Ok(None);
-        };
-        if !(3..=4).contains(&items.len()) {
-            return Ok(None);
-        }
-        let Some(width) = self
-            .number(items.get(2))?
-            .filter(|width| width.is_finite() && *width >= 0.0)
-        else {
-            return Ok(None);
-        };
-        let width = width * self.unit;
-        if !width.is_finite() {
-            return Ok(None);
-        }
-        let dashes = match items.get(3) {
-            Some(pattern) => match self.numbers(Some(pattern), MAX_BORDER_DASHES)? {
-                Some(mut dashes) if valid_dashes(&dashes) => {
-                    for dash in &mut dashes {
-                        *dash *= self.unit;
-                    }
-                    if !valid_dashes(&dashes) {
-                        return Ok(None);
-                    }
-                    dashes
-                }
-                _ => return Ok(None),
-            },
-            None => Vec::new(),
-        };
-        let style = if dashes.is_empty() { "S" } else { "D" };
-        Ok(Some((width, style.to_owned(), dashes)))
-    }
-
-    /// Returns whether another page names the array object of `/Annots`.
-    fn shared(&self) -> bool {
-        let Some(array) = self.array else {
-            return false;
-        };
-        self.index.pages().iter().enumerate().any(|(at, page)| {
-            at != self.at
-                && matches!(page.dict().get("Annots"), Some(Value::Reference(other)) if *other == array)
-        })
-    }
-
-    /// Writes the edit of the annotation at `position`: stores the page's
-    /// direct annotations as objects when that annotation is one, lets
-    /// `change` edit the annotation's dictionary and the page's
-    /// `/Annots`, and writes both. `change` gets the annotation's
-    /// reference and returns whether it changed `/Annots`. With `look`, the
-    /// edit marks the annotation's appearance stale. A refused edit
-    /// changes nothing. Returns the annotation's object.
-    pub(crate) fn write(
-        &self,
-        transaction: &mut Transaction,
-        position: usize,
-        look: bool,
-        mut dict: Dict,
-        change: impl FnOnce(
-            &mut Transaction,
-            Reference,
-            &mut Dict,
-            &mut Array,
-            &Budget,
-        ) -> PyResult<bool>,
-    ) -> PyResult<(u32, u16)> {
-        let budget = self.budget;
-        charge_copy(CopyPart::Array(&self.items), budget)?;
-        let mut items = self.items.clone();
-        let mut listed = false;
-        // A handle finds a direct dictionary by its position alone.
-        if matches!(self.items.get(position), Some(Value::Dict(_))) {
-            for item in items.iter_mut() {
-                if let Value::Dict(entry) = item {
-                    charge_copy(CopyPart::Dict(entry), budget)?;
-                    let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-                    transaction
-                        .write(reference.number(), &Value::Dict(entry.clone()), budget)
-                        .map_err(|e| store_error(&e))?;
-                    *item = Value::Reference(reference);
-                    listed = true;
-                }
-            }
-        }
-        let Some(Value::Reference(reference)) = items.get(position).cloned() else {
-            return Err(PdfError::new_err(
-                "the annotation changed while it was edited",
-            ));
-        };
-        listed |= change(transaction, reference, &mut dict, &mut items, budget)?;
-        transaction
-            .write(reference.number(), &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))?;
-        if listed {
-            self.write_items(transaction, items, budget)?;
-        }
-        if look {
-            transaction
-                .mark(Structure::Appearance, reference.number(), budget)
-                .map_err(|e| store_error(&e))?;
-        }
-        Ok((reference.number(), reference.generation()))
-    }
-
-    /// Writes the page's `/Annots` as `items`: into the array object that
-    /// it names, unless another page shares that array, else into the page
-    /// dictionary.
-    pub(crate) fn write_items(
-        &self,
-        transaction: &mut Transaction,
-        items: Array,
-        budget: &Budget,
-    ) -> PyResult<()> {
-        if let Some(array) = self.array
-            && !self.shared()
-        {
-            transaction
-                .write(array.number(), &Value::Array(items), budget)
-                .map_err(|e| store_error(&e))?;
-            return Ok(());
-        }
-        let page = self.page();
-        let Some(object) = page.object() else {
-            return Err(PdfError::new_err("the page is not an indirect object"));
-        };
-        charge_copy(CopyPart::Dict(page.dict()), budget)?;
-        let mut dict = page.dict().clone();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Annots key"
-        )]
-        dict.insert(Name::from("Annots"), Value::Array(items));
-        transaction
-            .write(object.number(), &Value::Dict(dict), budget)
-            .map_err(|e| store_error(&e))?;
-        Ok(())
-    }
-}
-
-/// Adds `amount` to one total of a read's text budget.
-fn charge(total: &mut usize, amount: usize, budget: &Budget) -> PyResult<()> {
-    *total = total.saturating_add(amount);
-    budget
-        .check(LimitCode::AnnotationTextSize, *total as u64)
-        .map_err(|e| limit_error(&e))
-}
-
-/// Returns a name as text, charging before allocating its decoded copy.
-fn charge_text(
-    bytes: &[u8],
-    (encoded, returned): &mut (usize, usize),
-    budget: &Budget,
-) -> PyResult<String> {
-    charge(encoded, bytes.len(), budget)?;
-    budget
-        .charge(LimitCode::MemorySize, bytes.len().saturating_mul(3) as u64)
-        .map_err(|e| limit_error(&e))?;
-    let text = String::from_utf8_lossy(bytes).into_owned();
-    charge(returned, text.len(), budget)?;
-    Ok(text)
-}
-
-/// Decodes a text string within the operation's text and memory budgets.
-fn charge_decoded(
-    bytes: &[u8],
-    (encoded, returned): &mut (usize, usize),
-    budget: &Budget,
-) -> PyResult<String> {
-    charge(encoded, bytes.len(), budget)?;
-    budget
-        .charge(LimitCode::MemorySize, bytes.len().saturating_mul(3) as u64)
-        .map_err(|e| limit_error(&e))?;
-    let text = text_string(bytes);
-    charge(returned, text.len(), budget)?;
-    Ok(text)
-}
-
-pub(crate) fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
-    let (red, green, blue) = components;
-    if ![red, green, blue]
-        .iter()
-        .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
-    {
-        return Err(PdfError::new_err(format!(
-            "an annotation {label} has components from 0 to 1"
-        )));
-    }
-    Ok(Value::Array(Array::from(vec![
-        number(red),
-        number(green),
-        number(blue),
-    ])))
-}
-
-/// Lists the annotations of page object `(number, generation)` that
-/// `page.annotations` lists, or returns `None` for a page that is gone.
-#[pyfunction]
-pub fn annotation_list(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-) -> PyResult<Option<Vec<Record>>> {
-    crate::errors::boundary(|| {
-        let (version, index_of_pages, budget) = page_index(document)?;
-        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
-        else {
-            return Ok(None);
-        };
-        py.detach(|| {
-            let mut records = BudgetVec::new(annots.budget);
-            let mut budget = (0, 0);
-            for (index, item) in annots.items.iter().enumerate() {
-                annots.budget.poll().map_err(|e| limit_error(&e))?;
-                let Some((id, dict)) = annots.entry(item)? else {
-                    continue;
-                };
-                if let Some(record) = annots.record(index, id, &dict, &mut budget)? {
-                    records.try_push(record).map_err(|e| limit_error(&e))?;
-                }
-            }
-            Ok(Some(records.into_vec()))
-        })
-    })?
-}
-
-/// Reads the annotation that a handle names. Returns `None` for a page that
-/// is gone, and raises `StaleObjectError` for an annotation that is.
-#[pyfunction]
-pub fn annotation_read(
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-) -> PyResult<Option<Record>> {
-    crate::errors::boundary(|| {
-        let (version, index_of_pages, budget) = page_index(document)?;
-        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
-        else {
-            return Ok(None);
-        };
-        let (position, dict) = annots.find(index, id)?;
-        annots
-            .record(position, id, &dict, &mut (0, 0))?
-            .map(Some)
-            .ok_or_else(|| {
-                StaleObjectError::new_err(format!(
-                    "annotation {} is no longer one that page.annotations lists",
-                    id.0
-                ))
-            })
-    })?
-}
-
-/// The properties that one edit of an annotation sets, as
-/// `Annotation._set` passes them. Colors are RGB from 0 to 1, the border is
-/// its width, `/S` style, and dash lengths, and the blend mode and the icon
-/// are PDF names.
-pub struct Edit {
-    rect: Option<Rect>,
-    contents: Option<String>,
-    author: Option<String>,
-    subject: Option<String>,
-    name: Option<String>,
-    language: Option<String>,
-    icon: Option<String>,
-    color: Option<(f64, f64, f64)>,
-    interior_color: Option<(f64, f64, f64)>,
-    opacity: Option<f64>,
-    flags: Option<i64>,
-    border: Option<(f64, String, Vec<f64>)>,
-    clouds: Option<f64>,
-    blend_mode: Option<String>,
-    rotate: Option<i64>,
-    modified: Option<String>,
-    points: Option<Vec<Vec<(f64, f64)>>>,
-    line_endings: Option<(String, String)>,
-    clear: Vec<String>,
-}
-
-/// The number of properties that an edit may remove.
-const CLEARABLE: usize = 10;
-
-/// Refuses a date that is longer than any PDF date string.
-fn long_date() -> PyErr {
-    PdfError::new_err("an annotation date is a PDF date string")
-}
-
-/// Refuses a name that is longer than any that `what` may be.
-fn long_name(what: &'static str) -> impl FnOnce() -> PyErr {
-    move || PdfError::new_err(format!("unknown {what}"))
-}
-
-impl Edit {
-    /// Reads an edit from the mapping that Python passes, checking each
-    /// input-derived size against `budget` before copying it.
-    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
-        let fields = input::Fields::new(map, budget);
-        let code = LimitCode::AnnotationInputSize;
-        let mut total = 0;
-        Ok(Self {
-            rect: fields.value("rect")?,
-            contents: fields.text("contents", code, &mut total)?,
-            author: fields.text("author", code, &mut total)?,
-            subject: fields.text("subject", code, &mut total)?,
-            name: fields.text("name", code, &mut total)?,
-            language: fields.text("language", code, &mut total)?,
-            icon: fields.short("icon", input::MAX_NAME, long_name("icon"))?,
-            color: fields.value("color")?,
-            interior_color: fields.value("interior_color")?,
-            opacity: fields.value("opacity")?,
-            flags: fields.value("flags")?,
-            border: fields.border("border")?,
-            clouds: fields.value("clouds")?,
-            blend_mode: fields.short("blend_mode", input::MAX_NAME, long_name("blend mode"))?,
-            rotate: fields.value("rotate")?,
-            modified: fields.short("modified", input::MAX_DATE, long_date)?,
-            points: fields.points("points")?,
-            line_endings: fields.line_endings("line_endings")?,
-            clear: fields.names("clear", CLEARABLE, || {
-                PdfError::new_err("an annotation property that cannot be removed")
-            })?,
-        })
-    }
-
-    /// Applies the edit to `dict`, an annotation of `subtype` on a page of
-    /// `annots`, refusing an edit that does not fit the annotation.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "only the fixed text keys and one geometry key are inserted; their text and point data are charged first"
-    )]
-    fn apply(&self, annots: &Annots, dict: &mut Dict, subtype: &str) -> PyResult<()> {
-        let texts = [
-            (&self.contents, "Contents"),
-            (&self.author, "T"),
-            (&self.subject, "Subj"),
-            (&self.name, "NM"),
-            (&self.language, "Lang"),
-        ];
-        let size = texts
-            .iter()
-            .map(|(text, _)| text.as_deref().map_or(0, str::len))
-            .fold(subtype.len(), usize::saturating_add);
-        annots
-            .budget
-            .charge(LimitCode::AnnotationInputSize, size as u64)
-            .map_err(|e| limit_error(&e))?;
-        annots
-            .budget
-            .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
-            .map_err(|e| limit_error(&e))?;
-        for (text, key) in texts {
-            if let Some(text) = text {
-                dict.insert(Name::from(key), encode_text(text));
-            }
-        }
-        for property in &self.clear {
-            let key = match property.as_str() {
-                "contents" => "Contents",
-                "author" => "T",
-                "subject" => "Subj",
-                "name" => "NM",
-                "language" => "Lang",
-                "color" => "C",
-                "interior_color" => "IC",
-                "blend_mode" => "BM",
-                "border" => {
-                    dict.remove("Border");
-                    "BS"
-                }
-                "clouds" => "BE",
-                other => {
-                    return Err(PdfError::new_err(format!(
-                        "an annotation property that cannot be removed: {other:?}"
-                    )));
-                }
-            };
-            dict.remove(key);
-        }
-        if let Some(icon) = &self.icon {
-            let known: &[&str] = match subtype {
-                "Text" => &NOTE_ICONS,
-                "Stamp" => &STAMP_ICONS,
-                "FileAttachment" => &FILE_ICONS,
-                _ => {
-                    return Err(PdfError::new_err(
-                        "only a note, a stamp, or a file attachment has an icon",
-                    ));
-                }
-            };
-            if !known.contains(&icon.as_str()) {
-                return Err(PdfError::new_err(format!("unknown icon {icon:?}")));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Name key"
-            )]
-            dict.insert(Name::from("Name"), Value::Name(Name::from(icon.as_str())));
-        }
-        if let Some(color) = self.color {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /C key"
-            )]
-            dict.insert(Name::from("C"), rgb(color, "color")?);
-        }
-        if let Some(color) = self.interior_color {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /IC key"
-            )]
-            dict.insert(Name::from("IC"), rgb(color, "interior color")?);
-        }
-        if let Some(opacity) = self.opacity {
-            if !(opacity.is_finite() && opacity > 0.0 && opacity <= 1.0) {
-                return Err(PdfError::new_err(
-                    "an annotation opacity is greater than 0 and at most 1",
-                ));
-            }
-            if opacity < 1.0 {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "this call inserts only the fixed /CA key"
-                )]
-                dict.insert(Name::from("CA"), Value::from(opacity));
-            } else {
-                dict.remove("CA");
-            }
-        }
-        if let Some(flags) = self.flags {
-            if !(0..=1023).contains(&flags) {
-                return Err(PdfError::new_err("annotation flags are bits 1 to 10"));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /F key"
-            )]
-            dict.insert(Name::from("F"), Value::Integer(flags));
-        }
-        if let Some(border) = &self.border {
-            dict.remove("Border");
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /BS key"
-            )]
-            dict.insert(
-                Name::from("BS"),
-                border_style(border, annots.unit, annots.budget)?,
-            );
-        }
-        if let Some(intensity) = self.clouds {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /BE key"
-            )]
-            dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
-        }
-        if let Some(lists) = &self.points {
-            let (key, value) = point_entry(annots, subtype, lists)?;
-            dict.insert(Name::from(key), value);
-        }
-        if let Some(endings) = &self.line_endings {
-            if !matches!(subtype, "Line" | "PolyLine") {
-                return Err(PdfError::new_err(
-                    "only lines and polylines have line endings",
-                ));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /LE key"
-            )]
-            dict.insert(Name::from("LE"), line_endings(endings)?);
-        }
-        if let Some(mode) = &self.blend_mode {
-            if !BLEND_MODES.contains(&mode.as_str()) {
-                return Err(PdfError::new_err(format!("unknown blend mode {mode:?}")));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /BM key"
-            )]
-            dict.insert(Name::from("BM"), Value::Name(Name::from(mode.as_str())));
-        }
-        if let Some(turn) = self.rotate {
-            if !matches!(subtype, "FreeText" | "Stamp" | "Caret" | "FileAttachment")
-                || turn % 90 != 0
-            {
-                return Err(PdfError::new_err(
-                    "free text, stamps, carets, and file attachments turn by multiples of 90 degrees",
-                ));
-            }
-            let user_turn = (annots.rotation - turn).rem_euclid(360);
-            if user_turn == 0 {
-                dict.remove("Rotate");
-            } else {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "this call inserts only the fixed /Rotate key"
-                )]
-                dict.insert(Name::from("Rotate"), Value::Integer(user_turn));
-            }
-        }
-        if let Some(area) = self.rect {
-            if !RECT_SUBTYPES.contains(&subtype) || dict.get("CL").is_some() {
-                return Err(PdfError::new_err(
-                    "this annotation follows its points or callout; edit those instead of its rectangle",
-                ));
-            }
-            let (x0, y0, x1, y1) = area;
-            if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
-                return Err(PdfError::new_err("an annotation rectangle is finite"));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Rect key"
-            )]
-            dict.insert(Name::from("Rect"), annots.to_pdf(area));
-        }
-        if let Some(modified) = &self.modified {
-            if !modified.starts_with("D:") || !modified.is_ascii() || modified.len() > 64 {
-                return Err(PdfError::new_err("an annotation date is a PDF date string"));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /M key"
-            )]
-            dict.insert(
-                Name::from("M"),
-                Value::String(PdfString::literal(modified.as_bytes().to_vec())),
-            );
-        }
-        Ok(())
-    }
-}
-
-/// Returns the `/BS` dictionary of a border: its width, `/S` style, and
-/// dash lengths, which a dashed border needs and no other takes.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the dash count is checked against MAX_BORDER_DASHES before conversion"
-)]
-pub(crate) fn border_style(
-    (width, style, dashes): &(f64, String, Vec<f64>),
-    unit: f64,
-    budget: &Budget,
-) -> PyResult<Value> {
-    budget
-        .check(LimitCode::AnnotationDashCount, dashes.len() as u64)
-        .map_err(|e| limit_error(&e))?;
-    if !(width.is_finite() && *width >= 0.0) {
-        return Err(PdfError::new_err(
-            "an annotation border width is finite and not negative",
-        ));
-    }
-    if !matches!(style.as_str(), "S" | "D" | "B" | "I" | "U") {
-        return Err(PdfError::new_err(format!(
-            "unknown annotation border style {style:?}"
-        )));
-    }
-    if dashes.len() > MAX_BORDER_DASHES
-        || (!dashes.is_empty() && !valid_dashes(dashes))
-        || (style == "D") == dashes.is_empty()
-    {
-        return Err(PdfError::new_err(format!(
-            "a dashed border has 1 to {MAX_BORDER_DASHES} non-negative dash lengths, and only a dashed one"
-        )));
-    }
-    let pdf_width = if *width == 0.0 { 0.0 } else { *width / unit };
-    if !pdf_width.is_finite() {
-        return Err(PdfError::new_err(
-            "an annotation border width is not representable in user space",
-        ));
-    }
-    let mut border = Dict::new();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /W key"
-    )]
-    border.insert(Name::from("W"), number(pdf_width));
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /S key"
-    )]
-    border.insert(Name::from("S"), Value::Name(Name::from(style.as_str())));
-    if !dashes.is_empty() {
-        let pdf_dashes = dashes
-            .iter()
-            .map(|dash| if *dash == 0.0 { 0.0 } else { *dash / unit })
-            .collect::<Vec<_>>();
-        if !valid_dashes(&pdf_dashes) {
-            return Err(PdfError::new_err(
-                "annotation border dashes are not representable in user space",
-            ));
-        }
-        let dashes = pdf_dashes.into_iter().map(number).collect::<Vec<_>>();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /D key"
-        )]
-        border.insert(Name::from("D"), Value::Array(Array::from(dashes)));
-    }
-    Ok(Value::Dict(border))
-}
-
-/// Returns the `/BE` dictionary of a cloudy border of `intensity` on an
-/// annotation of `subtype`.
-fn cloud_effect(subtype: &str, intensity: f64) -> PyResult<Value> {
-    if !matches!(subtype, "Square" | "Circle" | "Polygon") {
-        return Err(PdfError::new_err(
-            "only a square, a circle, or a polygon has a cloudy border",
-        ));
-    }
-    if !(intensity.is_finite() && intensity > 0.0 && intensity <= 2.0) {
-        return Err(PdfError::new_err(
-            "a cloudy border's intensity is greater than 0 and at most 2",
-        ));
-    }
-    let mut effect = Dict::new();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /S key"
-    )]
-    effect.insert(Name::from("S"), Value::Name(Name::from("C")));
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /I key"
-    )]
-    effect.insert(Name::from("I"), number(intensity));
-    Ok(Value::Dict(effect))
-}
-
-/// Returns the `/LE` array of a line's start and end styles.
-fn line_endings((start, end): &(String, String)) -> PyResult<Value> {
-    for style in [start, end] {
-        if !LINE_ENDINGS.contains(&style.as_str()) {
-            return Err(PdfError::new_err(format!("unknown line ending {style:?}")));
-        }
-    }
-    Ok(Value::Array(Array::from(vec![
-        Value::Name(Name::from(start.as_str())),
-        Value::Name(Name::from(end.as_str())),
-    ])))
-}
-
-/// Returns the key and the user-space array of the display points of a
-/// line (`/L`), polygon or polyline (`/Vertices`), or ink annotation
-/// (`/InkList`) on a page of `annots`. Settling fits the rectangle to them.
-fn point_entry(
-    annots: &Annots,
-    subtype: &str,
-    lists: &[Vec<(f64, f64)>],
-) -> PyResult<(&'static str, Value)> {
-    annots
-        .budget
-        .check(LimitCode::AnnotationPointCount, lists.len() as u64)
-        .map_err(|e| limit_error(&e))?;
-    let mut count = 0usize;
-    for points in lists {
-        count = count.saturating_add(points.len());
-        annots
-            .budget
-            .check(LimitCode::AnnotationPointCount, count as u64)
-            .map_err(|e| limit_error(&e))?;
-    }
-    let fits = match subtype {
-        "Line" => lists.len() == 1 && lists[0].len() == 2,
-        "Polygon" | "PolyLine" => lists.len() == 1 && lists[0].len() >= 2,
-        "Ink" => !lists.is_empty() && lists.iter().all(|points| !points.is_empty()),
-        _ => {
-            return Err(PdfError::new_err(
-                "only lines, polygons, polylines, and ink have points",
-            ));
-        }
-    };
-    if !fits {
-        return Err(PdfError::new_err(format!(
-            "a {subtype} annotation has {}",
-            match subtype {
-                "Line" => "two points",
-                "Ink" => "one or more strokes of one or more points",
-                _ => "two or more vertices",
-            }
-        )));
-    }
-    let mut arrays = BudgetVec::new(annots.budget);
-    for points in lists {
-        let mut array = BudgetVec::new(annots.budget);
-        for &(x, y) in points {
-            if !(x.is_finite() && y.is_finite()) {
-                return Err(PdfError::new_err("annotation points are finite"));
-            }
-            let (x, y) = to_pdf(annots.crop, annots.rotation, annots.unit, x, y);
-            annots.budget.poll().map_err(|e| limit_error(&e))?;
-            array
-                .try_extend_from_slice(&[number(x), number(y)])
-                .map_err(|e| limit_error(&e))?;
-        }
-        arrays
-            .try_push(Value::Array(Array::from(array.into_vec())))
-            .map_err(|e| limit_error(&e))?;
-    }
-    Ok(match subtype {
-        "Line" => ("L", arrays.pop().expect("validated one list")),
-        "Ink" => ("InkList", Value::Array(Array::from(arrays.into_vec()))),
-        _ => ("Vertices", arrays.pop().expect("validated one list")),
-    })
-}
-
-/// The display points of a line, polygon, polyline, or ink annotation,
-/// `None` for another kind or a missing or malformed geometry, and the
-/// `/LE` styles of a line or polyline.
-type Geometry = (
-    Option<Vec<Vec<(f64, f64)>>>,
-    Option<(&'static str, &'static str)>,
-);
-
-/// Reads the points and line endings of the annotation that a handle
-/// names, or returns `None` for a page that is gone. More than
-/// `MAX_ANNOTATION_POINTS` points raise rather than read in part.
-#[pyfunction]
-pub fn annotation_geometry(
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-) -> PyResult<Option<Geometry>> {
-    crate::errors::boundary(|| {
-        let (version, index_of_pages, budget) = page_index(document)?;
-        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
-        else {
-            return Ok(None);
-        };
-        let (_, dict) = annots.find(index, id)?;
-        let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
-        if !has_points(&subtype) {
-            return Ok(Some((None, None)));
-        }
-        let reader = annots.reader();
-        let mut points = reader
-            .point_lists(&dict, &subtype)
-            .map_err(|e| store_error(&e))?;
-        if let Some(lists) = &mut points {
-            for list in lists {
-                for point in list {
-                    budget.poll().map_err(|e| limit_error(&e))?;
-                    *point =
-                        to_display(annots.crop, annots.rotation, annots.unit, point.0, point.1);
-                }
-            }
-        }
-        let endings = if matches!(&*subtype, b"Line" | b"PolyLine") {
-            let [start, end] = reader.line_endings(&dict).map_err(|e| store_error(&e))?;
-            Some((LINE_ENDINGS[start], LINE_ENDINGS[end]))
-        } else {
-            None
-        };
-        Ok(Some((points, endings)))
-    })?
-}
-
-/// Reads the draft only after acquiring its writer lock. A refused edit
-/// restores its own writes even when the caller catches it in a transaction.
-pub(crate) fn editing<T>(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    write: impl FnOnce(&Annots<'_>, &mut Transaction, &Budget) -> PyResult<T>,
-) -> PyResult<Option<T>> {
-    document.edit(py, |transaction, budget| {
-        let version = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
-            .map_err(|error| store_error(&error))?;
-        let Some(annots) = Annots::read(version, index, budget, number, generation)? else {
-            return Ok(None);
-        };
-        let savepoint = transaction.savepoint();
-        let result = write(&annots, transaction, budget);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result.map(Some)
-    })
-}
-
-/// Formats a number of a `/DA` string: an integer without a fraction, so
-/// that `13.0` reads `13`.
-fn fmt(value: f64) -> String {
-    if value == 0.0 {
-        "0".to_owned()
-    } else {
-        value.to_string()
-    }
-}
-
-/// Refuses a free text whose text the appearance cannot draw: text that
-/// does not fit its box, or that no Standard 14 font draws.
-fn check_text(annots: &Annots, dict: &Dict) -> PyResult<()> {
-    if !matches!(dict.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"FreeText") {
-        return Ok(());
-    }
-    let drawn = appearance(&annots.reader(), dict).map_err(|e| store_error(&e))?;
-    match drawn.map(|drawn| drawn.text_fit()) {
-        Some(TextFit::Unfit) => Err(PdfError::new_err(
-            "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
-        )),
-        Some(TextFit::NotWinAnsi) => Err(PdfError::new_err(
-            "free text draws in a Standard 14 font, which prints WinAnsi characters only; \
-             an embedded face is known only in the session that added the free text in it",
-        )),
-        _ => Ok(()),
-    }
-}
-
-/// Applies `edit` to the annotation that a handle names, marks its
-/// appearance stale, and returns its object, which a direct dictionary
-/// gains here. With `face`, the caller draws the free text in an embedded
-/// face with [`annotation_draw_face`] in the same transaction, so the edit
-/// neither checks the text against a Standard 14 font nor marks the
-/// appearance stale.
-#[pyfunction]
-#[pyo3(signature = (document, number, generation, index, id, edit, face=false))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a handle's location, the edit, and its flag"
-)]
-pub fn annotation_edit(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    edit: &Bound<'_, PyAny>,
-    face: bool,
-) -> PyResult<Option<(u32, u16)>> {
-    crate::errors::boundary(|| {
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, budget| {
-                let edit = Edit::read(edit, budget)?;
-                let (position, mut dict) = annots.find(index, id)?;
-                let subtype = annots.name(&dict, "Subtype")?.unwrap_or_default();
-                edit.apply(annots, &mut dict, &String::from_utf8_lossy(&subtype))?;
-                if !face {
-                    check_text(annots, &dict)?;
-                }
-                annots.write(transaction, position, !face, dict, |_, _, _, _, _| {
-                    Ok(false)
-                })
-            },
-        )
-    })?
-}
-
-/// Returns the object of the Type0 font that the normal appearance of the
-/// free text that a handle names draws its text in, as
-/// [`annotation_draw_face`] names it, or `None` for an annotation that no
-/// embedded face drew; `None` too for a page that is gone.
-#[pyfunction]
-pub fn annotation_face(
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-) -> PyResult<Option<u32>> {
-    crate::errors::boundary(|| {
-        let (version, index_of_pages, budget) = page_index(document)?;
-        let Some(annots) = Annots::read(version, index_of_pages, &budget, number, generation)?
-        else {
-            return Ok(None);
-        };
-        let (_, dict) = annots.find(index, id)?;
-        if annots.name(&dict, "Subtype")?.as_deref() != Some(b"FreeText".as_slice()) {
-            return Ok(None);
-        }
-        let Some(Value::Dict(appearances)) = annots.resolved(dict.get("AP"))? else {
-            return Ok(None);
-        };
-        let Some(Value::Stream(normal)) = annots.resolved(appearances.get("N"))? else {
-            return Ok(None);
-        };
-        let Some(Value::Dict(resources)) = annots.resolved(normal.dict().get("Resources"))? else {
-            return Ok(None);
-        };
-        let Some(Value::Dict(fonts)) = annots.resolved(resources.get("Font"))? else {
-            return Ok(None);
-        };
-        Ok(match fonts.get(FACE_RESOURCE) {
-            Some(Value::Reference(font)) => Some(font.number()),
-            _ => None,
-        })
-    })?
-}
-
-/// Draws the free text that a handle names with its text in embedded
-/// `face`, as the appearance settler draws it in a Standard 14 font, and
-/// returns the glyphs that it shows with their texts.
-///
-/// Without `font`, it only collects the glyphs and writes nothing. With
-/// `font`, the Type0 font of the face that the appearance names and the
-/// text that its ToUnicode CMap maps each glyph to, it writes the normal
-/// appearance, whose resources name the font [`FACE_RESOURCE`]: that is
-/// where the free text records its face, since an annotation has no
-/// `/DR`. Refuses a character that the face has no glyph for or whose glyph
-/// is a colour glyph with no outline, and text that does not fit, leaving
-/// the document as it was. Returns `None` for a page that is gone.
-#[pyfunction]
-#[pyo3(signature = (document, number, generation, index, id, face, font=None))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "a handle's location, the face, and its font"
-)]
-pub fn annotation_draw_face(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    face: &_Font,
-    font: Option<(u32, HashMap<u32, String>)>,
-) -> PyResult<Option<Vec<(u32, String)>>> {
-    crate::errors::boundary(|| {
-        let Some(face) = face.embedded() else {
-            return Err(PdfError::new_err(
-                "free text draws an OpenType face here, not a Standard 14 font",
-            ));
-        };
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, budget| {
-                let store = |e: pyropdf_store::Error| store_error(&e);
-                let (position, dict) = annots.find(index, id)?;
-                let font = match &font {
-                    Some((number, mapped)) => {
-                        let generation = transaction
-                            .version()
-                            .get(*number, budget)
-                            .map_err(store)?
-                            .map_or(0, |object| object.generation());
-                        Some(FaceFont {
-                            font: Reference::new(*number, generation),
-                            mapped,
-                        })
-                    }
-                    None => None,
-                };
-                let writing = font.is_some();
-                let mut text = FaceText::new(face, font, budget).map_err(face_error)?;
-                let Some(drawn) =
-                    face_appearance(&annots.reader(), &dict, &mut text).map_err(store)?
-                else {
-                    return Err(PdfError::new_err(
-                        "only a free text with a usable rectangle draws in an embedded face",
-                    ));
-                };
-                match drawn.text_fit() {
-                    TextFit::Unfit => {
-                        return Err(PdfError::new_err(
-                            "the text does not fit in the free text's rectangle; enlarge it or use a smaller size",
-                        ));
-                    }
-                    TextFit::NoGlyph(character) => {
-                        return Err(PdfError::new_err(format!(
-                            "{} does not contain all glyphs of the text: no glyph for U+{:04X} ({character:?})",
-                            face.full_name,
-                            u32::from(character)
-                        )));
-                    }
-                    TextFit::NoOutline(character) => {
-                        return Err(PdfError::new_err(format!(
-                            "{} cannot draw U+{:04X} ({character:?}): its glyph is a colour glyph with no outline",
-                            face.full_name,
-                            u32::from(character)
-                        )));
-                    }
-                    TextFit::Fits | TextFit::NotWinAnsi => {}
-                }
-                if writing {
-                    let reference = transaction.allocate().map_err(store)?;
-                    transaction
-                        .write(reference.number(), &Value::from(drawn.form()), budget)
-                        .map_err(store)?;
-                    charge_copy(CopyPart::Dict(&dict), budget)?;
-                    let mut dict = dict;
-                    let mut appearances = Dict::new();
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "this call inserts only the fixed /N key"
-                    )]
-                    appearances.insert(Name::from("N"), Value::Reference(reference));
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "this call inserts only the fixed /AP key"
-                    )]
-                    dict.insert(Name::from("AP"), Value::Dict(appearances));
-                    annots.write(transaction, position, false, dict, |_, _, _, _, _| {
-                        Ok(false)
-                    })?;
-                }
-                Ok(text.into_drawn())
-            },
-        )
-    })?
-}
-
-/// Maps a refusal of an embedded face's drawing to its Python error.
-fn face_error(error: WidgetError) -> PyErr {
-    match error {
-        WidgetError::Malformed(message) => PdfError::new_err(message.into_owned()),
-        WidgetError::Lines => LimitError::new_err(("text_line_count", error.to_string())),
-        WidgetError::Store(error) => store_error(&error),
-    }
-}
-
-/// Moves the popup of the annotation that a handle names to a display
-/// rectangle, adding one that the page lists after it, or removes the popup
-/// with `None`. Returns the annotation's object, or
-/// `None` for a page that is gone.
-#[pyfunction]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "at most one popup reference is added; the filtered copy has at most the charged annotation-array length"
-)]
-pub fn annotation_popup(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    area: Option<Rect>,
-) -> PyResult<Option<(u32, u16)>> {
-    crate::errors::boundary(|| {
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, _budget| {
-                let (position, dict) = annots.find(index, id)?;
-                if let Some((x0, y0, x1, y1)) = area
-                    && !([x0, y0, x1, y1].iter().all(|value| value.is_finite())
-                        && x0 < x1
-                        && y0 < y1)
-                {
-                    return Err(PdfError::new_err(
-                        "a popup rectangle is finite and not empty",
-                    ));
-                }
-                let existing = match dict.get("Popup") {
-                    Some(Value::Reference(popup)) => {
-                        match annots.resolved(Some(&Value::Reference(*popup)))? {
-                            Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                if area.is_some() && existing.is_none() {
-                    annots
-                        .budget
-                        .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                        .map_err(|e| limit_error(&e))?;
-                }
-                let area = area.map(|area| annots.to_pdf(area));
-                let page = annots.page().object();
-                let written = annots.write(
-                    transaction,
-                    position,
-                    false,
-                    dict,
-                    |transaction, reference, dict, items, budget| match (area, existing) {
-                        (Some(area), Some((popup, mut popup_dict))) => {
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Rect key"
-                            )]
-                            popup_dict.insert(Name::from("Rect"), area);
-                            transaction
-                                .write(popup.number(), &Value::Dict(popup_dict), budget)
-                                .map_err(|e| store_error(&e))?;
-                            Ok(false)
-                        }
-                        (Some(area), None) => {
-                            let popup = transaction.allocate().map_err(|e| store_error(&e))?;
-                            let mut popup_dict = Dict::new();
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Type key"
-                            )]
-                            popup_dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
-                            popup_dict
-                                .insert(Name::from("Subtype"), Value::Name(Name::from("Popup")));
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Rect key"
-                            )]
-                            popup_dict.insert(Name::from("Rect"), area);
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Parent key"
-                            )]
-                            popup_dict.insert(Name::from("Parent"), Value::Reference(reference));
-                            if let Some(page) = page {
-                                #[expect(
-                                    clippy::disallowed_methods,
-                                    reason = "this call inserts only the fixed /P key"
-                                )]
-                                popup_dict.insert(Name::from("P"), Value::Reference(page));
-                            }
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Open key"
-                            )]
-                            popup_dict.insert(Name::from("Open"), Value::Boolean(false));
-                            transaction
-                                .write(popup.number(), &Value::Dict(popup_dict), budget)
-                                .map_err(|e| store_error(&e))?;
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Popup key"
-                            )]
-                            dict.insert(Name::from("Popup"), Value::Reference(popup));
-                            items.push(Value::Reference(popup));
-                            Ok(true)
-                        }
-                        (None, existing) => {
-                            dict.remove("Popup");
-                            let Some((popup, _)) = existing else {
-                                return Ok(false);
-                            };
-                            charge_copy(CopyPart::Array(items), budget)?;
-                            let kept = items
-                    .iter()
-                    .filter(|item| !matches!(item, Value::Reference(listed) if *listed == popup))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                            let changed = kept.len() != items.len();
-                            *items = Array::from(kept);
-                            Ok(changed)
-                        }
-                    },
-                )?;
-                Ok(written)
-            },
-        )
-    })?
-}
-
-/// Opens or closes the popup of the annotation that a handle names, and a
-/// note's own `/Open`. Returns the annotation's object, or
-/// `None` for a page that is gone.
-#[pyfunction]
-pub fn annotation_open(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    open: bool,
-) -> PyResult<Option<(u32, u16)>> {
-    crate::errors::boundary(|| {
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, _budget| {
-                let (position, dict) = annots.find(index, id)?;
-                let popup = match dict.get("Popup") {
-                    Some(Value::Reference(popup)) => {
-                        match annots.resolved(Some(&Value::Reference(*popup)))? {
-                            Some(Value::Dict(popup_dict)) => Some((*popup, popup_dict)),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                let is_note = annots.name(&dict, "Subtype")?.as_deref() == Some(b"Text");
-                if popup.is_none() && !is_note {
-                    return Err(PdfError::new_err(
-                        "the annotation has no popup to open; set popup_rect first",
-                    ));
-                }
-                let written = annots.write(
-                    transaction,
-                    position,
-                    false,
-                    dict,
-                    |transaction, _, dict, _, budget| {
-                        if let Some((popup, mut popup_dict)) = popup {
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Open key"
-                            )]
-                            popup_dict.insert(Name::from("Open"), Value::Boolean(open));
-                            transaction
-                                .write(popup.number(), &Value::Dict(popup_dict), budget)
-                                .map_err(|e| store_error(&e))?;
-                        }
-                        if is_note {
-                            #[expect(
-                                clippy::disallowed_methods,
-                                reason = "this call inserts only the fixed /Open key"
-                            )]
-                            dict.insert(Name::from("Open"), Value::Boolean(open));
-                        }
-                        Ok(false)
-                    },
-                )?;
-                Ok(written)
-            },
-        )
-    })?
-}
-
-/// Makes the annotation that a handle names a reply to `target`, another
-/// annotation object that the page lists (`/IRT`), or no reply with
-/// `None`. Returns the annotation's object, or
-/// `None` for a page that is gone.
-#[pyfunction]
-pub fn annotation_reply(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    target: Option<(u32, u16)>,
-) -> PyResult<Option<(u32, u16)>> {
-    crate::errors::boundary(|| {
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, _budget| {
-                let (position, dict) = annots.find(index, id)?;
-                let target = match target {
-                    Some(target) => {
-                        let target = Reference::new(target.0, target.1);
-                        let listed = annots.items.iter().any(
-                            |item| matches!(item, Value::Reference(listed) if *listed == target),
-                        );
-                        if !listed || (target.number(), target.generation()) == id {
-                            return Err(PdfError::new_err(
-                                "an annotation replies to another annotation of its page",
-                            ));
-                        }
-                        Some(target)
-                    }
-                    None => None,
-                };
-                let written =
-                    annots.write(transaction, position, false, dict, |_, _, dict, _, _| {
-                        match target {
-                            Some(target) => {
-                                #[expect(
-                                    clippy::disallowed_methods,
-                                    reason = "this call inserts only the fixed /IRT key"
-                                )]
-                                dict.insert(Name::from("IRT"), Value::Reference(target));
-                            }
-                            None => {
-                                dict.remove("IRT");
-                                dict.remove("RT");
-                            }
-                        }
-                        Ok(false)
-                    })?;
-                Ok(written)
-            },
-        )
-    })?
-}
-
-/// Takes the annotations that `handles` name, each `(index, object)`, and
-/// the popups they name when the page lists those too, out of the page's
-/// `/Annots` in one edit, after storing the page's direct annotations as
-/// objects. The objects stay in the document. Returns `false` for a page
-/// that is gone.
-#[pyfunction]
-pub fn annotation_remove(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    handles: Vec<(u32, (u32, u16))>,
-) -> PyResult<bool> {
-    crate::errors::boundary(|| {
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, budget| {
-                budget
-                    .check(LimitCode::AnnotationCount, handles.len() as u64)
-                    .map_err(|e| limit_error(&e))?;
-                let mut positions = BudgetVec::new(budget);
-                for (index, id) in handles {
-                    let (position, dict) = annots.find(index, id)?;
-                    budget.poll().map_err(|e| limit_error(&e))?;
-                    positions.try_push(position).map_err(|e| limit_error(&e))?;
-                    if let Some(Value::Reference(popup)) = dict.get("Popup")
-                        && let Some(position) = annots.items.iter().position(
-                            |item| matches!(item, Value::Reference(listed) if listed == popup),
-                        )
-                    {
-                        positions.try_push(position).map_err(|e| limit_error(&e))?;
-                    }
-                }
-                if positions.is_empty() {
-                    return Ok(());
-                }
-                // Remove from the end, so that each removal keeps the earlier positions.
-                let mut positions = positions.into_vec();
-                positions.sort_unstable_by(|a, b| b.cmp(a));
-                positions.dedup();
-                charge_copy(CopyPart::Array(&annots.items), budget)?;
-                let mut items = annots.items.clone();
-
-                for item in items.iter_mut() {
-                    if let Value::Dict(entry) = item {
-                        charge_copy(CopyPart::Dict(entry), budget)?;
-                        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-                        transaction
-                            .write(reference.number(), &Value::Dict(entry.clone()), budget)
-                            .map_err(|e| store_error(&e))?;
-                        *item = Value::Reference(reference);
-                    }
-                }
-                for position in positions {
-                    items.remove(position);
-                }
-                annots.write_items(transaction, items, budget)
-            },
-        )
-        .map(|page| page.is_some())
-    })?
-}
-
-/// Returns the numbers of the annotations whose appearance the version that
-/// reads see leaves stale. No public API exposes the marks, so tests read
-/// them here (DESIGN.md section 7).
-#[pyfunction]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "one object number per stale marker already held by the store's version"
-)]
-pub fn _stale_appearances(document: &_Document) -> PyResult<Vec<u32>> {
-    crate::errors::boundary(|| {
-        let version = document.reading()?;
-        Ok(version
-            .stale()
-            .filter(|mark| mark.structure == Structure::Appearance)
-            .map(|mark| mark.number)
-            .collect())
-    })?
-}
-
-/// At most three callout points, extracted without collecting the input.
-struct Callout {
-    points: [(f64, f64); 3],
-    len: usize,
-    too_many: bool,
-}
-
-impl<'py> FromPyObject<'_, 'py> for Callout {
-    type Error = PyErr;
-
-    fn extract(value: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
-        let mut points = [(0.0, 0.0); 3];
-        let mut len = 0;
-        for point in value.try_iter()? {
-            let point = point?;
-            if len == points.len() {
-                return Ok(Self {
-                    points,
-                    len,
-                    too_many: true,
-                });
-            }
-            points[len] = point.extract()?;
-            len += 1;
-        }
-        Ok(Self {
-            points,
-            len,
-            too_many: false,
-        })
-    }
-}
-
-impl std::ops::Deref for Callout {
-    type Target = [(f64, f64)];
-
-    fn deref(&self) -> &Self::Target {
-        &self.points[..self.len]
-    }
-}
-
-/// The annotation that `page.annotations.add` adds, as a specification's
-/// `_payload` gives it: its subtype; the display rectangles of text markup,
-/// the display point lists of a line, polygon, polyline, or ink, or else
-/// its display rectangle; its colors as RGB from 0 to 1, border, cloudy
-/// border, opacity, blend mode, contents, and creation date; a line's
-/// endings; a note's icon and open state; and a file attachment's icon,
-/// data, file name, description, and the bound of its data.
-pub struct Spec {
-    subtype: String,
-    rects: Option<Vec<Rect>>,
-    rect: Option<Rect>,
-    color: Option<(f64, f64, f64)>,
-    opacity: Option<f64>,
-    contents: Option<String>,
-    created: Option<String>,
-    icon: Option<String>,
-    open: Option<bool>,
-    points: Option<Vec<Vec<(f64, f64)>>>,
-    line_endings: Option<(String, String)>,
-    interior_color: Option<(f64, f64, f64)>,
-    border: Option<(f64, String, Vec<f64>)>,
-    clouds: Option<f64>,
-    blend_mode: Option<String>,
-    data: Option<PyBackedBytes>,
-    filename: Option<String>,
-    description: Option<String>,
-    max_size: Option<u64>,
-    text_color: Option<(f64, f64, f64)>,
-    font_size: Option<f64>,
-    font_name: Option<String>,
-    align: Option<i64>,
-    rotate: Option<i64>,
-    callout: Option<Callout>,
-    callout_ending: Option<String>,
-}
-
-/// The subtypes that `page.annotations.add` adds.
-const ADDED_SUBTYPES: [&str; 15] = [
-    "Highlight",
-    "Underline",
-    "StrikeOut",
-    "Squiggly",
-    "Text",
-    "FreeText",
-    "Stamp",
-    "Square",
-    "Circle",
-    "Line",
-    "Polygon",
-    "PolyLine",
-    "Ink",
-    "Caret",
-    "FileAttachment",
-];
-
-impl Spec {
-    /// Reads a specification from the mapping that Python passes, checking
-    /// each input-derived size against `budget` before copying it.
-    fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
-        let fields = input::Fields::new(map, budget);
-        let subtype = fields
-            .short("subtype", input::MAX_NAME, || {
-                PdfError::new_err("pyropdf does not add annotations of this subtype")
-            })?
-            .ok_or_else(|| PyTypeError::new_err("an annotation specification names its subtype"))?;
-        let mut total = 0;
-        let mut file_texts = 0;
-        let file = LimitCode::EmbeddedFileInputSize;
-        let max_size = fields.value("max_size")?;
-        Ok(Self {
-            subtype,
-            rects: fields.rects("rects")?,
-            rect: fields.value("rect")?,
-            color: fields.value("color")?,
-            opacity: fields.value("opacity")?,
-            contents: fields.text("contents", LimitCode::AnnotationInputSize, &mut total)?,
-            created: fields.short("created", input::MAX_DATE, long_date)?,
-            icon: fields.short("icon", input::MAX_NAME, long_name("icon"))?,
-            open: fields.value("open")?,
-            points: fields.points("points")?,
-            line_endings: fields.line_endings("line_endings")?,
-            interior_color: fields.value("interior_color")?,
-            border: fields.border("border")?,
-            clouds: fields.value("clouds")?,
-            blend_mode: fields.short("blend_mode", input::MAX_NAME, long_name("blend mode"))?,
-            data: fields.data("data", max_size)?,
-            filename: fields.text("filename", file, &mut file_texts)?,
-            description: fields.text("description", file, &mut file_texts)?,
-            max_size,
-            text_color: fields.value("text_color")?,
-            font_size: fields.value("font_size")?,
-            font_name: fields.short("font_name", input::MAX_NAME, long_name("font name"))?,
-            align: fields.value("align")?,
-            rotate: fields.value("rotate")?,
-            callout: fields.value("callout")?,
-            callout_ending: fields.short(
-                "callout_ending",
-                input::MAX_NAME,
-                long_name("callout ending"),
-            )?,
-        })
-    }
-
-    /// Returns the dictionary of the annotation, without its page.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "adds one fixed geometry key and copies a date checked as at most 64 bytes"
-    )]
-    fn dictionary(&self, annots: &Annots) -> PyResult<Dict> {
-        let subtype = self.subtype.as_str();
-        let created = self.created.as_deref().unwrap_or_default();
-        let size = [
-            subtype,
-            self.contents.as_deref().unwrap_or_default(),
-            created,
-            created,
-        ]
-        .iter()
-        .map(|text| text.len())
-        .fold(0, usize::saturating_add);
-        annots
-            .budget
-            .charge(LimitCode::AnnotationInputSize, size as u64)
-            .map_err(|e| limit_error(&e))?;
-        annots
-            .budget
-            .charge(LimitCode::MemorySize, size.saturating_mul(3) as u64)
-            .map_err(|e| limit_error(&e))?;
-        let markup = is_text_markup(subtype.as_bytes());
-        if self.rects.is_some() != markup {
-            return Err(PdfError::new_err(format!(
-                "rectangles place text markup, not a {subtype} annotation"
-            )));
-        }
-        if !ADDED_SUBTYPES.contains(&subtype) {
-            return Err(PdfError::new_err(format!(
-                "pyropdf does not add {subtype} annotations"
-            )));
-        }
-        self.check_file(annots.budget)?;
-        let mut dict = Dict::new();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Type key"
-        )]
-        dict.insert(Name::from("Type"), Value::Name(Name::from("Annot")));
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Subtype key"
-        )]
-        dict.insert(Name::from("Subtype"), Value::Name(Name::from(subtype)));
-        if let Some(rects) = &self.rects {
-            if rects.is_empty() {
-                return Err(PdfError::new_err(format!(
-                    "text markup covers 1 to {MAX_QUADS} rectangles"
-                )));
-            }
-            annots
-                .budget
-                .check(LimitCode::AnnotationQuadCount, rects.len() as u64)
-                .map_err(|e| limit_error(&e))?;
-            let mut quads = BudgetVec::new(annots.budget);
-            quads
-                .try_reserve_exact(rects.len())
-                .map_err(|e| limit_error(&e))?;
-            for &(x0, y0, x1, y1) in rects {
-                if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
-                    return Err(PdfError::new_err("text markup rectangles are finite"));
-                }
-                // Display corners TL, TR, BL, BR, as /QuadPoints lists them.
-                quads
-                    .try_push(
-                        [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
-                            .map(|(x, y)| to_pdf(annots.crop, annots.rotation, annots.unit, x, y)),
-                    )
-                    .map_err(|e| limit_error(&e))?;
-            }
-            if subtype == "Squiggly" {
-                annots
-                    .budget
-                    .check(
-                        LimitCode::AnnotationPointCount,
-                        zigzag_points(&quads) as u64,
-                    )
-                    .map_err(|e| limit_error(&e))?;
-            }
-            let mut points = BudgetVec::new(annots.budget);
-            points
-                .try_extend(
-                    quads
-                        .iter()
-                        .flatten()
-                        .flat_map(|&(x, y)| [number(x), number(y)]),
-                )
-                .map_err(|e| limit_error(&e))?;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /QuadPoints key"
-            )]
-            dict.insert(
-                Name::from("QuadPoints"),
-                Value::Array(Array::from(points.into_vec())),
-            );
-            let bounds = quads.iter().flatten().fold(
-                (
-                    f64::INFINITY,
-                    f64::INFINITY,
-                    f64::NEG_INFINITY,
-                    f64::NEG_INFINITY,
-                ),
-                |(x0, y0, x1, y1), &(x, y)| (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
-            );
-            let (x0, y0, x1, y1) = bounds;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Rect key"
-            )]
-            dict.insert(
-                Name::from("Rect"),
-                Value::Array(Array::from(vec![
-                    number(x0),
-                    number(y0),
-                    number(x1),
-                    number(y1),
-                ])),
-            );
-        } else if has_points(subtype.as_bytes()) {
-            let Some(lists) = self.points.as_ref().filter(|_| self.rect.is_none()) else {
-                return Err(PdfError::new_err(format!(
-                    "a {subtype} annotation takes points"
-                )));
-            };
-            let (key, value) = point_entry(annots, subtype, lists)?;
-            // The bounds of the points; settling widens them for the
-            // stroke, the cloudy border, and the line endings.
-            let mut bounds = (
-                f64::INFINITY,
-                f64::INFINITY,
-                f64::NEG_INFINITY,
-                f64::NEG_INFINITY,
-            );
-            for &(x, y) in lists.iter().flatten() {
-                let (x, y) = to_pdf(annots.crop, annots.rotation, annots.unit, x, y);
-                bounds = (
-                    bounds.0.min(x),
-                    bounds.1.min(y),
-                    bounds.2.max(x),
-                    bounds.3.max(y),
-                );
-            }
-            dict.insert(Name::from(key), value);
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Rect key"
-            )]
-            dict.insert(
-                Name::from("Rect"),
-                Value::Array(Array::from(vec![
-                    number(bounds.0),
-                    number(bounds.1),
-                    number(bounds.2),
-                    number(bounds.3),
-                ])),
-            );
-            if let Some(endings) = &self.line_endings {
-                if !matches!(subtype, "Line" | "PolyLine") {
-                    return Err(PdfError::new_err(format!(
-                        "a {subtype} annotation has no line endings"
-                    )));
-                }
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "this call inserts only the fixed /LE key"
-                )]
-                dict.insert(Name::from("LE"), line_endings(endings)?);
-            }
-        } else {
-            let Some(area) = self.rect.filter(|_| self.points.is_none()) else {
-                return Err(PdfError::new_err(format!(
-                    "a {subtype} annotation takes a rectangle"
-                )));
-            };
-            let (x0, y0, x1, y1) = area;
-            if ![x0, y0, x1, y1].iter().all(|value| value.is_finite()) {
-                return Err(PdfError::new_err("an annotation rectangle is finite"));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Rect key"
-            )]
-            dict.insert(Name::from("Rect"), annots.to_pdf(area));
-        }
-        // Printable.
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /F key"
-        )]
-        dict.insert(Name::from("F"), Value::Integer(4));
-        if let Some(color) = self.color {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /C key"
-            )]
-            dict.insert(Name::from("C"), rgb(color, "color")?);
-        }
-        if let Some(color) = self.interior_color {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /IC key"
-            )]
-            dict.insert(Name::from("IC"), rgb(color, "interior color")?);
-        }
-        if let Some(border) = &self.border {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /BS key"
-            )]
-            dict.insert(
-                Name::from("BS"),
-                border_style(border, annots.unit, annots.budget)?,
-            );
-        }
-        if let Some(intensity) = self.clouds {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /BE key"
-            )]
-            dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
-        }
-        if let Some(opacity) = self.opacity {
-            if !(opacity.is_finite() && opacity > 0.0 && opacity <= 1.0) {
-                return Err(PdfError::new_err(
-                    "an annotation opacity is greater than 0 and at most 1",
-                ));
-            }
-            if opacity < 1.0 {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "this call inserts only the fixed /CA key"
-                )]
-                dict.insert(Name::from("CA"), Value::from(opacity));
-            }
-        }
-        if let Some(mode) = &self.blend_mode {
-            if !BLEND_MODES.contains(&mode.as_str()) {
-                return Err(PdfError::new_err(format!("unknown blend mode {mode:?}")));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /BM key"
-            )]
-            dict.insert(Name::from("BM"), Value::Name(Name::from(mode.as_str())));
-        }
-        if let Some(contents) = &self.contents {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Contents key"
-            )]
-            dict.insert(Name::from("Contents"), encode_text(contents));
-        }
-        if self.open.is_some() && subtype != "Text"
-            || self.icon.is_some() && !matches!(subtype, "Text" | "Stamp" | "FileAttachment")
-        {
-            return Err(PdfError::new_err(format!(
-                "an icon and an open state belong to a note, and an icon to a stamp or a file attachment, not a {subtype} annotation"
-            )));
-        }
-        if subtype == "Stamp" {
-            let icon = self.icon.as_deref().unwrap_or("Approved");
-            if !STAMP_ICONS.contains(&icon) {
-                return Err(PdfError::new_err(format!("unknown stamp {icon:?}")));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Name key"
-            )]
-            dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
-        }
-        let text_style = self.text_color.is_some()
-            || self.font_size.is_some()
-            || self.font_name.is_some()
-            || self.align.is_some()
-            || self.callout.is_some()
-            || self.callout_ending.is_some();
-        if text_style && subtype != "FreeText" {
-            return Err(PdfError::new_err(format!(
-                "text style and callouts belong to free text, not a {subtype} annotation"
-            )));
-        }
-        if subtype == "FileAttachment" {
-            let icon = self.icon.as_deref().unwrap_or("PushPin");
-            if !FILE_ICONS.contains(&icon) {
-                return Err(PdfError::new_err(format!(
-                    "unknown file attachment icon {icon:?}"
-                )));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Name key"
-            )]
-            dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
-        }
-        if subtype == "Text" {
-            let icon = self.icon.as_deref().unwrap_or("Note");
-            if !NOTE_ICONS.contains(&icon) {
-                return Err(PdfError::new_err(format!("unknown note icon {icon:?}")));
-            }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Name key"
-            )]
-            dict.insert(Name::from("Name"), Value::Name(Name::from(icon)));
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Open key"
-            )]
-            dict.insert(
-                Name::from("Open"),
-                Value::Boolean(self.open.unwrap_or(false)),
-            );
-            // A note's icon neither zooms nor turns with the page (ISO
-            // 32000-2 section 12.5.6.4); viewers that honor the flags keep
-            // it upright.
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /F key"
-            )]
-            dict.insert(Name::from("F"), Value::Integer(4 | 8 | 16));
-        }
-        if self.rotate.is_some() && !matches!(subtype, "FreeText" | "Stamp") {
-            return Err(PdfError::new_err(format!(
-                "a {subtype} annotation does not turn"
-            )));
-        }
-        let turn = self.rotate.unwrap_or(0);
-        if turn % 90 != 0 {
-            return Err(PdfError::new_err(
-                "an annotation turns by a multiple of 90 degrees",
-            ));
-        }
-        // Display turns are clockwise; /Rotate turns counterclockwise in
-        // user space, which the page then turns clockwise by its own
-        // rotation. A caret points up on the display, and a file
-        // attachment's icon stands upright.
-        let user_turn = (annots.rotation - turn).rem_euclid(360);
-        if matches!(subtype, "FreeText" | "Stamp" | "Caret" | "FileAttachment") && user_turn != 0 {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Rotate key"
-            )]
-            dict.insert(Name::from("Rotate"), Value::Integer(user_turn));
-        }
-        if subtype == "FreeText" {
-            self.free_text_entries(annots, &mut dict)?;
-        }
-        if let Some(created) = &self.created {
-            if !created.starts_with("D:") || !created.is_ascii() || created.len() > 64 {
-                return Err(PdfError::new_err("an annotation date is a PDF date string"));
-            }
-            let date = Value::String(PdfString::literal(created.as_bytes().to_vec()));
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /CreationDate key"
-            )]
-            dict.insert(Name::from("CreationDate"), date.clone());
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /M key"
-            )]
-            dict.insert(Name::from("M"), date);
-        }
-        Ok(dict)
-    }
-
-    /// Writes the entries of a free text: `/DA` and `/Q`, and with a callout
-    /// `/CL`, `/LE`, `/IT`, `/RD`, and a `/Rect` that holds the line and its
-    /// ending as well as the box.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "a callout has two or three points, validated before building its coordinate array"
-    )]
-    fn free_text_entries(&self, annots: &Annots, dict: &mut Dict) -> PyResult<()> {
-        let color = self.text_color.unwrap_or((0.0, 0.0, 0.0));
-        rgb(color, "text color")?;
-        let size = self.font_size.unwrap_or(11.0);
-        if !(size.is_finite() && size > 0.0 && size <= 10_000.0) {
-            return Err(PdfError::new_err(
-                "a font size is greater than 0 and at most 10000",
-            ));
-        }
-        let pdf_size = size / annots.unit;
-        if !(pdf_size.is_finite() && pdf_size > 0.0) {
-            return Err(PdfError::new_err(
-                "a font size is not representable in user space",
-            ));
-        }
-        let name = self.font_name.as_deref().unwrap_or("Helvetica");
-        let resource = DA_FONTS
-            .iter()
-            .find(|(_, font)| *font == name)
-            .map(|(resource, _)| *resource)
-            .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))?;
-        let da = format!(
-            "/{resource} {} Tf {} {} {} rg",
-            fmt(pdf_size),
-            fmt(color.0),
-            fmt(color.1),
-            fmt(color.2),
-        );
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /DA key"
-        )]
-        dict.insert(
-            Name::from("DA"),
-            Value::String(PdfString::literal(da.into_bytes())),
-        );
-        let align = self.align.unwrap_or(0);
-        if !(0..=2).contains(&align) {
-            return Err(PdfError::new_err(
-                "free text aligns left (0), centre (1), or right (2)",
-            ));
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Q key"
-        )]
-        dict.insert(Name::from("Q"), Value::Integer(align));
-        let Some(points) = &self.callout else {
-            if self.callout_ending.is_some() {
-                return Err(PdfError::new_err("a callout ending needs a callout line"));
-            }
-            return Ok(());
-        };
-        if points.too_many
-            || !(2..=3).contains(&points.len())
-            || !points.iter().all(|(x, y)| x.is_finite() && y.is_finite())
-        {
-            return Err(PdfError::new_err(
-                "a callout line has 2 or 3 finite points: the point it shows, an optional knee, and the box",
-            ));
-        }
-        let ending = self.callout_ending.as_deref().unwrap_or("None");
-        if !LINE_ENDINGS.contains(&ending) {
-            return Err(PdfError::new_err(format!("unknown line ending {ending:?}")));
-        }
-        let Some((x0, y0, x1, y1)) = self.rect else {
-            return Err(PdfError::new_err("a free text needs its rectangle"));
-        };
-        let (a, b) = to_pdf(annots.crop, annots.rotation, annots.unit, x0, y0);
-        let (c, d) = to_pdf(annots.crop, annots.rotation, annots.unit, x1, y1);
-        let inner = [a.min(c), b.min(d), a.max(c), b.max(d)];
-        let width = self.border.as_ref().map_or(0.0, |border| border.0).max(1.0);
-        let pad = (width / 2.0
-            + 1.0
-            + if ending == "None" {
-                0.0
-            } else {
-                2.0 * ending_size(width)
-            })
-            / annots.unit;
-        let mut outer = inner;
-        let mut line = Vec::with_capacity(points.len() * 2);
-        for &(x, y) in points.iter() {
-            let (x, y) = to_pdf(annots.crop, annots.rotation, annots.unit, x, y);
-            outer = [
-                outer[0].min(x - pad),
-                outer[1].min(y - pad),
-                outer[2].max(x + pad),
-                outer[3].max(y + pad),
-            ];
-            line.push(number(x));
-            line.push(number(y));
-        }
-        if !outer.iter().all(|value| value.is_finite()) {
-            return Err(PdfError::new_err("a callout line has finite points"));
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /CL key"
-        )]
-        dict.insert(Name::from("CL"), Value::Array(Array::from(line)));
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /IT key"
-        )]
-        dict.insert(Name::from("IT"), Value::Name(Name::from("FreeTextCallout")));
-        if ending != "None" {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /LE key"
-            )]
-            dict.insert(Name::from("LE"), Value::Name(Name::from(ending)));
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Rect key"
-        )]
-        dict.insert(
-            Name::from("Rect"),
-            Value::Array(Array::from(outer.map(number).to_vec())),
-        );
-        let differences = [
-            inner[0] - outer[0],
-            outer[3] - inner[3],
-            outer[2] - inner[2],
-            inner[1] - outer[1],
-        ];
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /RD key"
-        )]
-        dict.insert(
-            Name::from("RD"),
-            Value::Array(Array::from(
-                differences.map(|value| number(value.max(0.0))).to_vec(),
-            )),
-        );
-        Ok(())
-    }
-
-    /// Refuses a file attachment without data and a file name, data and a
-    /// file name for another kind, data past `max_size`
-    /// (`embedded_file_size`), and a file name and description longer
-    /// together than the document allows (`embedded_file_input_size`).
-    fn check_file(&self, budget: &Budget) -> PyResult<()> {
-        let attachment = self.subtype == "FileAttachment";
-        let (Some(data), Some(filename)) = (&self.data, &self.filename) else {
-            if attachment || self.data.is_some() || self.filename.is_some() {
-                return Err(PdfError::new_err(
-                    "a file attachment, and only a file attachment, embeds data with a file name",
-                ));
-            }
-            if self.description.is_some() {
-                return Err(PdfError::new_err(
-                    "only a file attachment has a description",
-                ));
-            }
-            return Ok(());
-        };
-        if !attachment {
-            return Err(PdfError::new_err(
-                "a file attachment, and only a file attachment, embeds data with a file name",
-            ));
-        }
-        if let Some(limit) = self.max_size
-            && data.len() as u64 > limit
-        {
-            return Err(limit_error(&LimitExceeded::over(
-                LimitCode::EmbeddedFileSize,
-                limit,
-                data.len() as u64,
-            )));
-        }
-        let texts = filename
-            .len()
-            .saturating_add(self.description.as_deref().map_or(0, str::len));
-        budget
-            .check(LimitCode::EmbeddedFileInputSize, texts as u64)
-            .map_err(|e| limit_error(&e))?;
-        // The data's copy and its compression.
-        budget
-            .charge(
-                LimitCode::MemorySize,
-                (data.len().saturating_mul(2)).saturating_add(texts.saturating_mul(3)) as u64,
-            )
-            .map_err(|e| limit_error(&e))
-    }
-
-    /// Writes the embedded file of a file attachment and its file
-    /// specification, which `/FS` of `dict` names: the data compressed, its
-    /// size and dates in `/Params`, and the file name as `/F` and `/UF`.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the date passed input::MAX_DATE before this copy"
-    )]
-    fn embed(
-        &self,
-        transaction: &mut Transaction,
-        dict: &mut Dict,
-        budget: &Budget,
-    ) -> PyResult<()> {
-        let (Some(data), Some(filename)) = (&self.data, &self.filename) else {
-            return Ok(());
-        };
-        let mut params = Dict::new();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Size key"
-        )]
-        params.insert(
-            Name::from("Size"),
-            Value::Integer(i64::try_from(data.len()).unwrap_or(i64::MAX)),
-        );
-        if let Some(created) = &self.created {
-            let date = Value::String(PdfString::literal(created.as_bytes().to_vec()));
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /CreationDate key"
-            )]
-            params.insert(Name::from("CreationDate"), date.clone());
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /ModDate key"
-            )]
-            params.insert(Name::from("ModDate"), date);
-        }
-        let mut entries = Dict::new();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Type key"
-        )]
-        entries.insert(Name::from("Type"), Value::Name(Name::from("EmbeddedFile")));
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Params key"
-        )]
-        entries.insert(Name::from("Params"), Value::Dict(params));
-        let mut stream = Stream::new(entries, Bytes::default());
-        set_data(&mut stream, data, true, budget)?;
-        let file = transaction.allocate().map_err(|e| store_error(&e))?;
-        transaction
-            .write(file.number(), &Value::Stream(Box::new(stream)), budget)
-            .map_err(|e| store_error(&e))?;
-        let mut files = Dict::new();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /F key"
-        )]
-        files.insert(Name::from("F"), Value::Reference(file));
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /UF key"
-        )]
-        files.insert(Name::from("UF"), Value::Reference(file));
-        let mut filespec = Dict::new();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Type key"
-        )]
-        filespec.insert(Name::from("Type"), Value::Name(Name::from("Filespec")));
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /F key"
-        )]
-        filespec.insert(Name::from("F"), encode_text(filename));
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /UF key"
-        )]
-        filespec.insert(Name::from("UF"), encode_text(filename));
-        if let Some(description) = &self.description {
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /Desc key"
-            )]
-            filespec.insert(Name::from("Desc"), encode_text(description));
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /EF key"
-        )]
-        filespec.insert(Name::from("EF"), Value::Dict(files));
-        let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-        transaction
-            .write(reference.number(), &Value::Dict(filespec), budget)
-            .map_err(|e| store_error(&e))?;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /FS key"
-        )]
-        dict.insert(Name::from("FS"), Value::Reference(reference));
-        Ok(())
-    }
-}
-
-/// Adds the annotation that `spec` describes to page object `(number,
-/// generation)`, marks its appearance stale so that settling draws it, and
-/// returns its object; or `None` for a page that is gone. With `face`, the
-/// caller draws the free text in an embedded face with
-/// [`annotation_draw_face`] in the same transaction, so the text is not
-/// checked against a Standard 14 font and the appearance is not marked.
-#[pyfunction]
-#[pyo3(signature = (document, number, generation, spec, face=false))]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "one new annotation reference after charging the copied array"
-)]
-pub fn annotation_add(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    spec: &Bound<'_, PyAny>,
-    face: bool,
-) -> PyResult<Option<(u32, u16)>> {
-    crate::errors::boundary(|| {
-        editing(
-            py,
-            document,
-            number,
-            generation,
-            |annots, transaction, budget| {
-                let spec = Spec::read(spec, budget)?;
-                budget
-                    .check(LimitCode::AnnotationCount, (annots.items.len() + 1) as u64)
-                    .map_err(|e| limit_error(&e))?;
-                if !matches!(
-                    annots.resolved(annots.page().dict().get("Annots"))?,
-                    None | Some(Value::Array(_))
-                ) {
-                    return Err(PdfError::new_err("the page's /Annots is not an array"));
-                }
-                let mut dict = spec.dictionary(annots)?;
-                if !face {
-                    check_text(annots, &dict)?;
-                }
-                if let Some(page) = annots.page().object() {
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "this call inserts only the fixed /P key"
-                    )]
-                    dict.insert(Name::from("P"), Value::Reference(page));
-                }
-                spec.embed(transaction, &mut dict, budget)?;
-
-                let reference = transaction.allocate().map_err(|e| store_error(&e))?;
-                transaction
-                    .write(reference.number(), &Value::Dict(dict), budget)
-                    .map_err(|e| store_error(&e))?;
-                charge_copy(CopyPart::Array(&annots.items), budget)?;
-                let mut items = annots.items.clone();
-                items.push(Value::Reference(reference));
-                annots.write_items(transaction, items, budget)?;
-                if !face {
-                    transaction
-                        .mark(Structure::Appearance, reference.number(), budget)
-                        .map_err(|e| store_error(&e))?;
-                }
-                Ok((reference.number(), reference.generation()))
-            },
-        )
-    })?
-}
-
-/// A version where a page draws nothing but one annotation's appearance:
-/// the version, its page index, the page's position in it, and the
-/// annotation's display rectangle.
-type Isolated = (Arc<Version>, Arc<PageIndex>, usize, Rect);
-
-/// Builds the [`Isolated`] version of the annotation that a handle names,
-/// in a transaction whose writes are then discarded: the version that reads
-/// see, with the page's content and every other annotation taken off and
-/// the annotation flattened into the page, as `page.flatten` draws it, or
-/// as a render synthesizes it when it has no appearance. A hidden
-/// annotation, or one whose appearance draws nothing, leaves the page
-/// empty. Returns `None` for a page that is gone.
-fn isolated(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-) -> PyResult<Option<Isolated>> {
-    let store = |e: pyropdf_store::Error| store_error(&e);
-    document.scratch(py, |transaction, budget| {
-        transaction.settle(Scope::Commit, budget).map_err(store)?;
-        let version = transaction.snapshot();
-        let pages = Arc::new(PageIndex::build(&mut Reads::new(&version, budget)).map_err(store)?);
-        let Some(annots) = Annots::read(version, pages, budget, number, generation)? else {
-            return Ok(None);
-        };
-        let (position, dict) = annots.find(index, id)?;
-        let Some(record) = annots.record(position, id, &dict, &mut (0, 0))? else {
-            return Err(StaleObjectError::new_err(format!(
-                "annotation {} is no longer one that page.annotations lists",
-                id.0
-            )));
-        };
-        let (_, _, at) = annots.pages();
-        let page = annots.page();
-        let Some(object) = page.object() else {
-            return Err(PdfError::new_err("the page is not an indirect object"));
-        };
-        charge_copy(CopyPart::Dict(page.dict()), budget)?;
-        let mut blank = page.dict().clone();
-        blank.remove("Contents");
-        blank.remove("Annots");
-        transaction
-            .write(object.number(), &Value::Dict(blank), budget)
-            .map_err(store)?;
-        let item = annots.items.as_slice()[position].clone();
-        let version = transaction.snapshot();
-        let pages = Arc::new(PageIndex::build(&mut Reads::new(&version, budget)).map_err(store)?);
-        let items = Array::from(vec![item]);
-        let reader = Reader::on_page(&version, budget, pages.pages()[at].user_unit());
-        let selection = Selection {
-            annotations: true,
-            widgets: false,
-        };
-        if let Some(plan) = flattening::plan(&reader, &items, selection).map_err(store)? {
-            let objects = match items.as_slice() {
-                [Value::Reference(reference)] => {
-                    synthesized_for(&version, *reference, budget).map_err(store)?
-                }
-                _ => Vec::new(),
-            };
-            let mut missing = Missing::new(objects, budget).map_err(store)?;
-            let page = &pages.pages()[at];
-            flattening::draw(
-                transaction,
-                object.number(),
-                page,
-                plan,
-                &mut missing,
-                budget,
-            )
-            .map_err(store)?;
-        }
-        Ok(Some((transaction.snapshot(), pages, at, record.3)))
-    })
-}
-
-/// Renders the appearance of the annotation that a handle names alone,
-/// over its display rectangle, through the linear `matrix`, with the GIL
-/// released while hayro renders. The Python layer has checked the options
-/// and resolved `background` to straight RGBA. Returns `None` for a page
-/// that is gone.
-#[pyfunction]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the handle and the options of Annotation.pixmap"
-)]
-pub fn annotation_pixmap(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    matrix: (f64, f64, f64, f64),
-    alpha: bool,
-    gray: bool,
-    background: (u8, u8, u8, u8),
-) -> PyResult<Option<Pixmap>> {
-    crate::errors::boundary(|| {
-        let Some((version, pages, at, rect)) =
-            isolated(py, document, number, generation, index, id)?
-        else {
-            return Ok(None);
-        };
-        let budget = document.budget();
-        let (red, green, blue, opacity) = background;
-        let options = render::Options {
-            matrix,
-            alpha,
-            gray,
-            background: [red, green, blue, opacity],
-            clip: Some(rect),
-            annotations: false,
-            hinting: false,
-            glyph_cache: false,
-        };
-        let fallback = document.fallback();
-        let raster = py.detach(|| -> PyResult<Raster> {
-            budget.poll().map_err(|e| limit_error(&e))?;
-            let bridged =
-                Arc::new(Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?);
-            let raster = render::raster(&bridged, &fallback, at, &options).map_err(raster_error)?;
-            budget.poll().map_err(|e| limit_error(&e))?;
-            Ok(raster)
-        })?;
-        Ok(Some(Pixmap::from(raster)))
-    })?
-}
-
-/// Returns the text of the appearance of the annotation that a handle
-/// names alone, and the glyphs without Unicode that it left out, with the
-/// GIL released while hayro interprets it. `max_glyphs` and `max_size`
-/// bound it as they bound `page_text`. Returns `None` for a page that is
-/// gone.
-#[pyfunction]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the handle and the options of Annotation.text"
-)]
-pub fn annotation_text(
-    py: Python<'_>,
-    document: &_Document,
-    number: u32,
-    generation: u16,
-    index: u32,
-    id: (u32, u16),
-    options: OptionsTuple,
-    max_glyphs: Option<u64>,
-    max_size: Option<u64>,
-) -> PyResult<Option<(String, usize)>> {
-    crate::errors::boundary(|| {
-        let options = text_options(options)?;
-        let Some((version, pages, at, _)) = isolated(py, document, number, generation, index, id)?
-        else {
-            return Ok(None);
-        };
-        let budget = document.call_budget(&[
-            (LimitCode::TextGlyphCount, max_glyphs),
-            (LimitCode::TextSize, max_size),
-        ])?;
-        py.detach(|| {
-            let bridged = Bridged::new(&version, &pages, &budget).map_err(|e| bridge_error(&e))?;
-            let mut text = String::new();
-            let (skipped, _) = extract::page_text(&bridged, at, &options, &budget, &mut text)
-                .map_err(text_error)?;
-            Ok(Some((text, skipped)))
-        })
-    })?
 }
