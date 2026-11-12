@@ -1,8 +1,8 @@
-//! `Pixmap`, pylopdf's immutable raster with the buffer protocol and PNG
-//! and JPEG output (pylopdf rust/src/pixmap.rs at 884af0db and 036be111),
-//! the formats of `codecs` beyond them,
-//! and `page.pixmap` and `doc.render` through the hayro bridge, with the
-//! GIL released while rendering.
+//! `Pixmap`, pylopdf's immutable raster with the buffer protocol and
+//! file/bytes output through `pyropdf_engine::pixmap` (pylopdf
+//! rust/src/pixmap.rs at 884af0db and 036be111), and `page.pixmap` and
+//! `doc.render` through the hayro bridge, with the GIL released while
+//! rendering.
 
 use std::ffi::{CString, c_int, c_void};
 use std::fs::{self, File, OpenOptions};
@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jpeg_encoder::{ColorType, Encoder as JpegEncoder, PixelDensity, PixelDensityUnit};
 use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyBufferError, PyImportError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::ffi;
@@ -21,18 +20,19 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyTuple};
 use pyropdf_engine::bridge::Error as BridgeError;
 use pyropdf_engine::ocr;
+use pyropdf_engine::pixmap::{
+    self as pixel_ops, Area, Bounded, BudgetedPngOutput, DecodeError, Decoded, EncodeError,
+    Encoding, FORMATS, Layout, encode, encode_png, format_of,
+};
 use pyropdf_engine::render::{self, Raster, RasterError};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::save::deflate;
 use pyropdf_store::value::Reference;
 
-use crate::codecs;
 use crate::document::_Document;
 use crate::errors::{
     EncryptedDocumentError, LimitError, PdfError, StaleObjectError, limit_error, store_error,
 };
-use crate::pixel_ops::{self, Area, DecodeError, Decoded, Layout};
 
 /// The most distinct colors that `Pixmap.colors` returns by default.
 const DEFAULT_MAX_COLORS: u64 = 65_536;
@@ -43,62 +43,17 @@ const DEFAULT_MAX_INPUT_SIZE: Option<usize> = match LimitCode::ImageInputSize.de
     None => None,
 };
 
-/// Metres per inch, for PNG's pixels per metre.
-const METRES_PER_INCH: f64 = 0.0254;
-
-/// The most compressed data that one PNG `IDAT` chunk holds.
-const PNG_IDAT_SIZE: usize = 1024 * 1024;
-
-/// Why encoding a pixmap failed.
-enum EncodeError {
-    /// The operation's budget refused it.
-    Limit(LimitExceeded),
-    /// The encoder or the output failed.
-    Other(String),
-}
-
-impl EncodeError {
-    /// Returns the Python error, with `context` before an encoder's message.
-    fn into_py(self, context: &str) -> PyErr {
-        match self {
-            Self::Limit(refusal) => limit_error(&refusal),
-            Self::Other(message) => PdfError::new_err(format!("{context}: {message}")),
-        }
+fn encode_error(error: EncodeError, context: &str) -> PyErr {
+    match error {
+        EncodeError::Limit(refusal) => limit_error(&refusal),
+        EncodeError::Other(message) => PdfError::new_err(format!("{context}: {message}")),
     }
 }
 
-/// Writes one PNG chunk: its length, type, `data`, and CRC.
-fn png_chunk(out: &mut dyn Write, kind: &[u8; 4], data: &[u8]) -> io::Result<()> {
-    let length = u32::try_from(data.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "a PNG chunk is too long"))?;
-    let mut crc = flate2::Crc::new();
-    crc.update(kind);
-    crc.update(data);
-    out.write_all(&length.to_be_bytes())?;
-    out.write_all(kind)?;
-    out.write_all(data)?;
-    out.write_all(&crc.sum().to_be_bytes())
-}
-
-/// An encoded image sink whose growth is charged to the operation budget.
-struct BudgetedPngOutput<'b> {
-    bytes: BudgetVec<'b, u8>,
-    refusal: Option<LimitExceeded>,
-}
-
-impl Write for BudgetedPngOutput<'_> {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        match self.bytes.try_extend_from_slice(bytes) {
-            Ok(()) => Ok(bytes.len()),
-            Err(refusal) => {
-                self.refusal = Some(refusal);
-                Err(io::Error::other("PNG output exceeded its budget"))
-            }
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+pub(crate) fn decode_error(error: DecodeError) -> PyErr {
+    match error {
+        DecodeError::Invalid(message) => PyValueError::new_err(message),
+        DecodeError::Limit(refusal) => limit_error(&refusal),
     }
 }
 
@@ -246,109 +201,14 @@ impl Pixmap {
         encoding: Encoding,
         budget: &Budget,
     ) -> Result<(), EncodeError> {
-        if matches!(encoding, Encoding::Png) {
-            return self.encode_png(out, budget);
-        }
-        self.encode_other(out, encoding).map_err(EncodeError::Other)
-    }
-
-    /// Writes the pixels in a format other than PNG.
-    fn encode_other(&self, out: &mut dyn Write, encoding: Encoding) -> Result<(), String> {
-        match encoding {
-            Encoding::Png => unreachable!("PNG goes through encode_png"),
-            Encoding::Jpeg(quality) => {
-                let side = |length: u32| {
-                    u16::try_from(length).map_err(|_| "JPEG sides end at 65535 pixels".to_owned())
-                };
-                let mut encoder = JpegEncoder::new(out, quality);
-                // Resolutions never pass the 65,535 of JFIF's densities.
-                encoder.set_density(PixelDensity {
-                    density: (self.resolution.0 as u16, self.resolution.1 as u16),
-                    unit: PixelDensityUnit::Inches,
-                });
-                let color = if self.gray {
-                    ColorType::Luma
-                } else {
-                    ColorType::Rgb
-                };
-                encoder
-                    .encode(&self.data, side(self.width)?, side(self.height)?, color)
-                    .map_err(|e| e.to_string())
-            }
-            Encoding::Pam => {
-                codecs::write_pam(out, self.layout(), &self.data).map_err(|e| e.to_string())
-            }
-            Encoding::Pbm => {
-                codecs::write_pbm(out, self.layout(), &self.data).map_err(|e| e.to_string())
-            }
-            Encoding::Pnm => {
-                codecs::write_pnm(out, self.layout(), &self.data).map_err(|e| e.to_string())
-            }
-            Encoding::Psd => codecs::write_psd(out, self.layout(), &self.data, self.resolution)
-                .map_err(|e| e.to_string()),
-            Encoding::Ps => codecs::write_ps(out, self.layout(), &self.data, self.resolution)
-                .map_err(|e| e.to_string()),
-        }
-    }
-
-    /// Writes the pixels as an 8-bit PNG with its resolution in `pHYs`.
-    /// Each row is stored unfiltered and the image data is compressed with
-    /// `deflate`, so the buffers are charged to `budget` before they grow
-    /// and the work polls it.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the PNG header and physical-size chunks hold exactly 13 and 9 bytes"
-    )]
-    fn encode_png(&self, out: &mut dyn Write, budget: &Budget) -> Result<(), EncodeError> {
-        let io = |e: io::Error| EncodeError::Other(e.to_string());
-        let limit = |e: LimitExceeded| EncodeError::Limit(e);
-        let row = self.width as usize * self.channels() as usize;
-        let mut filtered = BudgetVec::new(budget);
-        filtered
-            .try_reserve_exact((row + 1).saturating_mul(self.height as usize))
-            .map_err(limit)?;
-        for (index, line) in self.data.chunks_exact(row.max(1)).enumerate() {
-            if index % 256 == 0 {
-                budget.poll().map_err(limit)?;
-            }
-            filtered.try_push(0).map_err(limit)?;
-            filtered.try_extend_from_slice(line).map_err(limit)?;
-        }
-        if row == 0 {
-            filtered
-                .try_extend(std::iter::repeat_n(0, self.height as usize))
-                .map_err(limit)?;
-        }
-        let compressed = deflate(filtered.as_slice(), 1, usize::MAX, budget)
-            .map_err(|e| match e.limit() {
-                Some(refusal) => EncodeError::Limit(*refusal),
-                None => EncodeError::Other(e.to_string()),
-            })?
-            .ok_or_else(|| EncodeError::Other("the image data could not be compressed".into()))?;
-        drop(filtered);
-        let color = match (self.gray, self.alpha) {
-            (true, false) => 0,
-            (true, true) => 4,
-            (false, false) => 2,
-            (false, true) => 6,
-        };
-        let mut header = Vec::with_capacity(13);
-        header.extend_from_slice(&self.width.to_be_bytes());
-        header.extend_from_slice(&self.height.to_be_bytes());
-        header.extend_from_slice(&[8, color, 0, 0, 0]);
-        let per_metre = |dpi: u32| (f64::from(dpi) / METRES_PER_INCH).round() as u32;
-        let mut physical = Vec::with_capacity(9);
-        physical.extend_from_slice(&per_metre(self.resolution.0).to_be_bytes());
-        physical.extend_from_slice(&per_metre(self.resolution.1).to_be_bytes());
-        physical.push(1);
-        out.write_all(b"\x89PNG\r\n\x1a\n").map_err(io)?;
-        png_chunk(out, b"IHDR", &header).map_err(io)?;
-        png_chunk(out, b"pHYs", &physical).map_err(io)?;
-        for part in compressed.chunks(PNG_IDAT_SIZE) {
-            budget.poll().map_err(limit)?;
-            png_chunk(out, b"IDAT", part).map_err(io)?;
-        }
-        png_chunk(out, b"IEND", &[]).map_err(io)
+        encode(
+            out,
+            self.layout(),
+            &self.data,
+            self.resolution,
+            encoding,
+            budget,
+        )
     }
 }
 
@@ -375,134 +235,6 @@ impl From<Decoded> for Pixmap {
             data: Arc::new(decoded.data),
             resolution: decoded.resolution,
         }
-    }
-}
-
-impl From<DecodeError> for PyErr {
-    fn from(error: DecodeError) -> Self {
-        match error {
-            DecodeError::Invalid(message) => PyValueError::new_err(message),
-            DecodeError::Limit(refusal) => limit_error(&refusal),
-        }
-    }
-}
-
-/// An image format that a pixmap encodes to.
-#[derive(Clone, Copy)]
-enum Encoding {
-    Png,
-    /// JPEG at a quality from 1 through 100.
-    Jpeg(u8),
-    Pam,
-    /// PBM, gray thresholded at 128.
-    Pbm,
-    /// PGM for gray or PPM for RGB, as `"pgm"`, `"ppm"`, or `"pnm"` asks.
-    Pnm,
-    Psd,
-    /// PostScript.
-    Ps,
-}
-
-/// The formats that `Encoding::parse` reads.
-const FORMATS: &str = "'png', 'jpeg', 'pam', 'pbm', 'pgm', 'ppm', 'pnm', 'psd', or 'ps'";
-
-impl Encoding {
-    /// Reads `format` at `quality` for samples in gray or RGB, with or
-    /// without alpha: PNG, PAM, and PSD hold every kind; JPEG, PNM, and
-    /// PostScript hold no alpha; PBM and PGM hold only gray, and PPM only
-    /// RGB.
-    fn parse(format: &str, quality: u8, gray: bool, alpha: bool) -> PyResult<Self> {
-        let encoding = match format {
-            "png" => Self::Png,
-            "jpeg" => Self::Jpeg(quality),
-            "pam" => Self::Pam,
-            "pbm" => Self::Pbm,
-            "pgm" | "ppm" | "pnm" => Self::Pnm,
-            "psd" => Self::Psd,
-            "ps" => Self::Ps,
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "format must be {FORMATS}: {format:?}"
-                )));
-            }
-        };
-        let name = format.to_ascii_uppercase();
-        if alpha && !matches!(encoding, Self::Png | Self::Pam | Self::Psd) {
-            return Err(PyValueError::new_err(format!(
-                "{} has no alpha channel; drop alpha or write PNG, PAM, or PSD",
-                encoding.name()
-            )));
-        }
-        if !gray && matches!(format, "pbm" | "pgm") {
-            return Err(PyValueError::new_err(format!(
-                "{name} holds gray samples; convert the pixmap to gray or write PPM"
-            )));
-        }
-        if gray && format == "ppm" {
-            return Err(PyValueError::new_err(
-                "PPM holds RGB samples; convert the pixmap to RGB or write PGM",
-            ));
-        }
-        Ok(encoding)
-    }
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Png => "PNG",
-            Self::Jpeg(_) => "JPEG",
-            Self::Pam => "PAM",
-            Self::Pbm => "PBM",
-            Self::Pnm => "PNM",
-            Self::Psd => "PSD",
-            Self::Ps => "PostScript",
-        }
-    }
-}
-
-/// A `Write` that counts what it keeps in `written`, which the writers of
-/// one batch share, and refuses the write that would take the count past
-/// `limit`.
-struct Bounded<'a> {
-    bytes: Vec<u8>,
-    written: &'a AtomicUsize,
-    limit: Option<usize>,
-    exceeded: bool,
-}
-
-impl<'a> Bounded<'a> {
-    const fn new(written: &'a AtomicUsize, limit: Option<usize>) -> Self {
-        Self {
-            bytes: Vec::new(),
-            written,
-            limit,
-            exceeded: false,
-        }
-    }
-}
-
-impl Write for Bounded<'_> {
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the shared atomic output count checks every extension against the caller output-size limit first"
-    )]
-    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
-        let counted = self
-            .written
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |written| {
-                written
-                    .checked_add(buffer.len())
-                    .filter(|&total| self.limit.is_none_or(|limit| total <= limit))
-            });
-        if counted.is_err() {
-            self.exceeded = true;
-            return Err(std::io::Error::other("the encoded image passes its limit"));
-        }
-        self.bytes.extend_from_slice(buffer);
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 
@@ -984,7 +716,7 @@ impl Pixmap {
             let bytes = image_buffer(data, &budget)?;
             py.detach(|| pixel_ops::decode(&bytes, &budget))
                 .map(Self::from)
-                .map_err(PyErr::from)
+                .map_err(decode_error)
         })?
     }
 
@@ -1011,7 +743,7 @@ impl Pixmap {
             })?;
             py.detach(|| pixel_ops::decode(&bytes, &budget))
                 .map(Self::from)
-                .map_err(PyErr::from)
+                .map_err(decode_error)
         })?
     }
 
@@ -1064,11 +796,12 @@ impl Pixmap {
         #[pyo3(from_py_with = extract_max_size)] max_size: Option<usize>,
     ) -> PyResult<Bound<'py, PyBytes>> {
         crate::errors::boundary(|| {
-            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
+            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)
+                .map_err(PyValueError::new_err)?;
             let written = AtomicUsize::new(0);
             let mut out = Bounded::new(&written, max_size);
             let result = py.detach(|| self.encode(&mut out, encoding, &Budget::default()));
-            if out.exceeded {
+            if out.exceeded() {
                 let limit = max_size.unwrap_or_default();
                 return Err(LimitError::new_err((
                     "pixmap_output_size",
@@ -1078,8 +811,9 @@ impl Pixmap {
                     ),
                 )));
             }
-            result.map_err(|e| e.into_py(&format!("failed to encode {}", encoding.name())))?;
-            Ok(PyBytes::new(py, &out.bytes))
+            result
+                .map_err(|e| encode_error(e, &format!("failed to encode {}", encoding.name())))?;
+            Ok(PyBytes::new(py, out.as_slice()))
         })?
     }
 
@@ -1106,7 +840,8 @@ impl Pixmap {
                     ))
                 })?,
             };
-            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)?;
+            let encoding = Encoding::parse(format, quality, self.gray, self.alpha)
+                .map_err(PyValueError::new_err)?;
             py.detach(|| {
                 let error = |e: &dyn std::fmt::Display| {
                     PdfError::new_err(format!(
@@ -1245,23 +980,6 @@ const MAX_SYMLINKS: usize = 40;
 
 /// The default JPEG quality, as pylopdf sets it.
 const DEFAULT_QUALITY: u8 = 95;
-
-/// The image format that the extension of `path` names.
-fn format_of(path: &Path) -> Option<&'static str> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    match extension.as_str() {
-        "png" => Some("png"),
-        "jpg" | "jpeg" => Some("jpeg"),
-        "pam" => Some("pam"),
-        "pbm" => Some("pbm"),
-        "pgm" => Some("pgm"),
-        "ppm" => Some("ppm"),
-        "pnm" => Some("pnm"),
-        "psd" => Some("psd"),
-        "ps" => Some("ps"),
-        _ => None,
-    }
-}
 
 fn extract_quality(value: &Bound<'_, PyAny>) -> PyResult<u8> {
     let message = "quality must be an integer from 1 through 100";
@@ -1404,9 +1122,6 @@ fn temporary_sibling(target: &Path) -> io::Result<(PathBuf, File)> {
     ))
 }
 
-/// Returns the colors of `pixmap` without its alpha, as the samples of an
-/// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
-/// or as a JPEG at `quality` when it is given, for gray or RGB.
 /// Encodes `pixmap` as PNG for `document`, under a budget from the
 /// document's limits: its memory limit, cancellation token, and deadline.
 #[pyfunction]
@@ -1417,18 +1132,18 @@ pub fn pixmap_png<'py>(
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
         let budget = document.budget();
-        let mut out = BudgetedPngOutput {
-            bytes: BudgetVec::new(&budget),
-            refusal: None,
-        };
-        let result = py.detach(|| pixmap.encode_png(&mut out, &budget));
-        if let Some(refusal) = out.refusal {
+        let mut out = BudgetedPngOutput::new(&budget);
+        let layout = pixmap.layout();
+        let result =
+            py.detach(|| encode_png(&mut out, layout, &pixmap.data, pixmap.resolution, &budget));
+        if let Some(refusal) = out.take_refusal() {
             return Err(limit_error(&refusal));
         }
-        result.map_err(|e| e.into_py("failed to encode PNG"))?;
+        result.map_err(|e| encode_error(e, "failed to encode PNG"))?;
         // Python copies the encoded bytes while the Rust output remains live.
         // Charge both allocations and use the fallible Python allocation API.
-        let len = out.bytes.len();
+        let encoded = out.as_slice();
+        let len = encoded.len();
         budget
             .charge(
                 LimitCode::MemorySize,
@@ -1449,7 +1164,7 @@ pub fn pixmap_png<'py>(
         // The object remains owned and inaccessible to Python while detached, so
         // another thread can cancel the operation while the bytes are copied.
         py.detach(|| -> Result<(), LimitExceeded> {
-            for (index, source) in out.bytes.chunks(16 * 1024).enumerate() {
+            for (index, source) in encoded.chunks(16 * 1024).enumerate() {
                 budget.poll()?;
                 // SAFETY: every chunk fits in the allocated, unshared object, and
                 // the source is a distinct Rust buffer. No uninitialized bytes
@@ -1469,6 +1184,9 @@ pub fn pixmap_png<'py>(
     })?
 }
 
+/// Returns the colors of `pixmap` without its alpha, as the samples of an
+/// image in 1 (gray), 3 (RGB), or 4 (CMYK) `components` (`page.recolor`),
+/// or as a JPEG at `quality` when it is given, for gray or RGB.
 #[pyfunction]
 #[pyo3(signature = (pixmap, components, quality=None))]
 pub fn recolor_samples<'py>(
@@ -1478,30 +1196,10 @@ pub fn recolor_samples<'py>(
     quality: Option<u8>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     crate::errors::boundary(|| {
-        let color = match (components, quality) {
-            (1 | 3 | 4, None) => None,
-            (1, Some(_)) => Some(ColorType::Luma),
-            (3, Some(_)) => Some(ColorType::Rgb),
-            _ => {
-                return Err(PyValueError::new_err(format!(
-                    "no {components}-component samples{}",
-                    if quality.is_some() { " in JPEG" } else { "" }
-                )));
-            }
-        };
         let layout = pixmap.layout();
-        let samples = py.detach(|| pixel_ops::device_samples(&pixmap.data, layout, components));
-        let (Some(color), Some(quality)) = (color, quality) else {
-            return Ok(PyBytes::new(py, &samples));
-        };
-        let side = |length: u32| {
-            u16::try_from(length)
-                .map_err(|_| PyValueError::new_err("JPEG sides end at 65535 pixels"))
-        };
-        let (width, height) = (side(pixmap.width)?, side(pixmap.height)?);
-        let mut out = Vec::new();
-        py.detach(|| JpegEncoder::new(&mut out, quality).encode(&samples, width, height, color))
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let out = py
+            .detach(|| pixel_ops::recolor_samples(&pixmap.data, layout, components, quality))
+            .map_err(PyValueError::new_err)?;
         Ok(PyBytes::new(py, &out))
     })?
 }
@@ -1611,7 +1309,8 @@ pub fn render_pages(
     max_size: Option<usize>,
 ) -> PyResult<Vec<Py<PyBytes>>> {
     crate::errors::boundary(|| {
-        let encoding = Encoding::parse(format, quality, gray, alpha)?;
+        let encoding =
+            Encoding::parse(format, quality, gray, alpha).map_err(PyValueError::new_err)?;
         let (version, index, budget) = crate::pages::index(document)?;
         let indexes = crate::pages::entries(pages, index.len())?;
         let (red, green, blue, opacity) = background;
@@ -1634,16 +1333,30 @@ pub fn render_pages(
                 .map_err(|e| bridge_error(&e))?;
             render::batch(&bridged, &fallback, &indexes, &options, workers, |raster| {
                 let mut out = Bounded::new(&written, max_size);
-                let result = Pixmap::from(raster).encode(&mut out, encoding, &budget);
-                if out.exceeded {
+                let layout = Layout {
+                    width: u32::from(raster.width),
+                    height: u32::from(raster.height),
+                    gray: raster.gray,
+                    alpha: raster.alpha,
+                };
+                let result = encode(
+                    &mut out,
+                    layout,
+                    &raster.data,
+                    raster.resolution,
+                    encoding,
+                    &budget,
+                );
+                if out.exceeded() {
                     let limit = max_size.unwrap_or_default();
                     return Err(Failed(LimitError::new_err((
                         "render_output_size",
                         format!("the rendered batch exceeds the {limit}-byte encoded-output limit"),
                     ))));
                 }
-                result.map_err(|e| Failed(e.into_py("failed to encode the rendered image")))?;
-                Ok(out.bytes)
+                result
+                    .map_err(|e| Failed(encode_error(e, "failed to encode the rendered image")))?;
+                Ok(out.into_bytes())
             })
             .map_err(|Failed(error)| error)
         })?;

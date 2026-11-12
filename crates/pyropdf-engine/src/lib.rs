@@ -19,6 +19,7 @@ pub mod fonts;
 pub mod forms;
 pub mod ocr;
 pub mod pages;
+pub mod pixmap;
 pub mod render;
 pub mod sign;
 pub mod standard;

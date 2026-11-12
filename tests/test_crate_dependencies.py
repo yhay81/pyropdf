@@ -40,6 +40,11 @@ FIRST_ALLOWED = {
     "p256": "pyropdf-engine",
     "p384": "pyropdf-engine",
     "pkcs8": "pyropdf-engine",
+    # Raster image codecs that live in pyropdf-engine (#741).
+    "png": "pyropdf-engine",
+    "jpeg-encoder": "pyropdf-engine",
+    "gif": "pyropdf-engine",
+    "tiff": "pyropdf-engine",
     "pyo3": "pyropdf-python",
 }
 
@@ -114,6 +119,16 @@ def crate_violations(member: str, names: dict[str, str], deps: dict[str, list[De
             elif allowed is not None and CRATES.index(allowed) > rank:
                 found.append(
                     f"{path}: section 11 lists {crate} before {allowed}, the first crate that may reach {name}"
+                )
+            elif (
+                crate == "pyropdf-python"
+                and current == member
+                and name not in CRATES
+                and allowed != "pyropdf-python"
+                and name != "windows-sys"
+            ):
+                found.append(
+                    f"{path}: pyropdf-python may depend directly only on workspace crates, PyO3, and windows-sys"
                 )
             else:
                 queue.append(dep["pkg"])
@@ -209,6 +224,10 @@ def test_dependencies_in_the_order_of_section_11_pass() -> None:
         ([("pyropdf-store", "numpy", None), ("numpy", "pyo3", None)], "pyropdf-store -> numpy -> pyo3"),
         ([("pyropdf-schema", "pyo3-build-config", "build")], "pyropdf-schema -> pyo3-build-config"),
         ([("pyropdf-store", "hayro", "dev")], "pyropdf-store -> hayro"),
+        # Raster image codecs belong to pyropdf-engine, and pyropdf-python adds no third-party domain crates (#741).
+        ([("pyropdf-store", "png", None)], "pyropdf-store -> png"),
+        ([("pyropdf-python", "png", None)], "pyropdf-python -> png"),
+        ([("pyropdf-python", "flate2", None)], "pyropdf-python -> flate2"),
     ],
 )
 def test_a_dependency_against_section_11_fails(edges: list[tuple[str, str, str | None]], path: str) -> None:
