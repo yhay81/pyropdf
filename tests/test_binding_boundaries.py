@@ -1,13 +1,31 @@
-"""Every native entry point must enclose all its work in the panic boundary."""
+"""Check the panic boundary and test coverage boundaries of the Python extension."""
 
 from __future__ import annotations
 
+import re
+import tomllib
 from pathlib import Path
 
 import pytest
-from rust_bindings import entry_points, guarded
+from rust_bindings import entry_points, guarded, mask_rust
 
 ROOT = Path(__file__).resolve().parents[1] / "crates" / "pyropdf-python" / "src"
+
+
+TEST_ATTRIBUTE = re.compile(r"#\s*!?\s*\[\s*(?:test|cfg\s*\(\s*test\s*,?\s*\))\s*\]")
+
+
+def test_extension_has_no_unrunnable_rust_tests() -> None:
+    manifest = tomllib.loads((ROOT.parent / "Cargo.toml").read_text(encoding="utf-8"))
+    if manifest["lib"].get("test", True):
+        return
+    found = []
+    for path in sorted(ROOT.rglob("*.rs")):
+        source = mask_rust(path.read_text(encoding="utf-8"))
+        for match in TEST_ATTRIBUTE.finditer(source):
+            line = source.count("\n", 0, match.start()) + 1
+            found.append(f"{path.relative_to(ROOT)}:{line}")
+    assert not found, "move Rust tests to a crate with a test target: " + ", ".join(found)
 
 
 def test_all_native_entry_points_have_a_boundary() -> None:

@@ -16,6 +16,7 @@ use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
 use pyropdf_engine::display::{BOXES, Box4, Display, to_display, to_pdf, user_boxes};
 pub(crate) use pyropdf_engine::display::{display_box, number, rect, rotation};
+use pyropdf_engine::forms;
 use pyropdf_engine::navigation::{
     self, Destination, Lead, LeadReader, NamedDestinations, lead, read,
 };
@@ -30,10 +31,9 @@ use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Document, ObjectStamps, Transaction, Version};
 
 use crate::annotations::links::{destinations_memo, navigation_error};
-use crate::annotations::{CopyPart, charge_copy};
+use crate::annotations::{CopyPart, annotation_error, charge_copy};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, PdfError, limit_error, store_error};
-use crate::forms;
 use crate::history::OperationBudget;
 use crate::objects::set_data;
 
@@ -1167,7 +1167,8 @@ pub fn import_pages(
                 let defaults = if fields.is_empty() {
                     forms::ImportDefaults::default()
                 } else {
-                    forms::plan_imported_defaults(&transaction.snapshot(), &version, budget)?
+                    forms::plan_imported_defaults(&transaction.snapshot(), &version, budget)
+                        .map_err(annotation_error)?
                 };
                 let along = import::Along {
                     objects: &fields,
@@ -1219,6 +1220,7 @@ pub fn import_pages(
                     &imported.copies,
                     budget,
                 )
+                .map_err(annotation_error)
             })();
             if result.is_err() {
                 transaction.rollback(savepoint);

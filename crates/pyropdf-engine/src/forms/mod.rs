@@ -1,6 +1,8 @@
-//! The appearance streams of form widgets: the value of a text or choice
-//! field in a Standard 14 font, and the states of a check box or radio
-//! button, over the widget's background and border (DESIGN.md section 10).
+//! Interactive form fields, widgets, and their appearance streams.
+//! A text or choice widget draws its value in a Standard 14 or embedded font.
+//! A check box or radio button draws its selected state (DESIGN.md section 10).
+//! Edits write into the caller's transaction. On failure the caller drops
+//! the transaction or rolls it back to the edit's savepoint.
 //!
 //! Setting a field's value marks its widgets' appearances stale, and
 //! [`AppearanceSettler`](crate::annotations::AppearanceSettler) draws each
@@ -11,10 +13,30 @@
 //! `rust/src/form.rs` and the appearances of `rust/src/document/forms.rs`
 //! at ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
+pub mod copy;
 pub mod defaults;
 pub mod face;
+pub mod field_edit;
+pub mod fill;
+mod fill_index;
 pub mod flatten;
+mod import;
+mod radio;
+mod read;
+pub mod remove;
 mod text;
+mod traversal;
+mod tree_edit;
+pub mod widget_edit;
+
+pub use fill_index::FillCache;
+pub use import::{ImportDefaults, plan_imported_defaults, register_imported};
+pub use radio::repair_radio_groups;
+pub use read::{
+    WidgetRecord, find_widget, form_field, form_field_choices, form_field_read, form_field_widgets,
+    form_fields, widget_list, widget_read,
+};
+pub use traversal::{Form, Id, MAX_VALUE_ITEMS, walk};
 
 pub(crate) use text::append_text;
 pub use text::text_string;
