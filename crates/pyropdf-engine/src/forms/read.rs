@@ -8,9 +8,10 @@ use pyropdf_store::pages::PageIndex;
 use pyropdf_store::value::{Dict, Name, Reference, Value};
 use pyropdf_store::version::Version;
 
-use super::traversal::{
-    Form, Id, MAX_STATE_BYTES, MAX_VALUE_BYTES, MAX_VALUE_ITEMS, charge, id, inherited, insert_set,
-    limit, object_location, read, stale, text,
+use super::traversal::{Form, inherited};
+use super::values::{
+    Id, MAX_STATE_BYTES, MAX_VALUE_BYTES, MAX_VALUE_ITEMS, charge, id, insert_set, limit,
+    object_location, read, stale, text,
 };
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result, PageAnnots, Rect};
 

@@ -19,7 +19,7 @@ use crate::standard::{DA_FONTS, DefaultAppearance};
 use super::field_edit::{dict_at, form_object, register_standard_font};
 use super::fill::{base, update_need_appearances};
 use super::fill_index::FillCache;
-use super::traversal::{Id, MAX_INPUT_BYTES, limit, object_location};
+use super::values::{Id, MAX_INPUT_BYTES, limit, object_location};
 
 /// A widget's style: its `/MK` border color, background color, caption,
 /// and rotation; its border, from `/BS` else `/Border`; and the font resource,

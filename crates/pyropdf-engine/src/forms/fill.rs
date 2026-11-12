@@ -14,8 +14,9 @@ use pyropdf_store::version::{Transaction, Version};
 use super as widgets;
 use super::face::{FaceFont, FaceText};
 use super::fill_index::{FillCache, indexed_value};
-use super::traversal::{
-    Field, Id, MAX_INPUT_BYTES, MAX_STATE_BYTES, id, limit, looks_like_widget, object, stale,
+use super::traversal::Field;
+use super::values::{
+    Id, MAX_INPUT_BYTES, MAX_STATE_BYTES, id, limit, looks_like_widget, object, stale,
 };
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result, PageUnits, Reader};
 use crate::fonts::embed::Face;
