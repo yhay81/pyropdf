@@ -15,7 +15,6 @@ use pyropdf_engine::annotations::{
 };
 use pyropdf_engine::bridge::Bridged;
 use pyropdf_engine::extract;
-pub(crate) use pyropdf_engine::forms::copy::CopyPart;
 use pyropdf_engine::render::{self, Raster};
 use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::pages::PageIndex;
@@ -488,9 +487,4 @@ pub(crate) fn editing<T>(
         };
         write(&annots, transaction, budget).map(Some)
     })
-}
-
-/// Map the shared deep-copy budget check for page imports to a Python exception.
-pub(crate) fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
-    pyropdf_engine::forms::copy::charge_copy(part, budget).map_err(|e| store_error(&e))
 }
