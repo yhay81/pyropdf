@@ -93,10 +93,39 @@ pub fn rotation(value: Option<&Value>) -> i64 {
     }
 }
 
+/// The page boxes, in order from media box to art box.
+pub const BOXES: [&str; 5] = ["MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"];
+
+/// A normalized rectangle `(x0, y0, x1, y1)`.
+pub type Box4 = (f64, f64, f64, f64);
+
+/// Returns the page boxes of `page` in unrotated user space: the inherited
+/// media box, or hayro's A4, then the crop, bleed, trim, and art boxes,
+/// each clipped to the media box and defaulting to the crop box
+/// (ISO 32000-2 14.11.2).
+#[must_use]
+pub fn user_boxes(page: &Page) -> [Box4; 5] {
+    let media = page
+        .media_box()
+        .and_then(rect)
+        .unwrap_or((0.0, 0.0, A4.0, A4.1));
+    let clip = |b: Box4| {
+        (
+            b.0.max(media.0),
+            b.1.max(media.1),
+            b.2.min(media.2),
+            b.3.min(media.3),
+        )
+    };
+    let crop = page.crop_box().and_then(rect).map_or(media, clip);
+    let own = |key: &str| page.dict().get(key).and_then(rect).map_or(crop, clip);
+    [media, crop, own(BOXES[2]), own(BOXES[3]), own(BOXES[4])]
+}
+
 /// Reads a rectangle of four numbers, normalized.
 #[must_use]
 #[expect(clippy::cast_precision_loss, reason = "display coordinates are f64")]
-pub fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
+pub fn rect(value: &Value) -> Option<Box4> {
     let Value::Array(array) = value else {
         return None;
     };
