@@ -9,10 +9,12 @@
 //! its count limit. Every copy charges `memory_size` first, and the reads
 //! poll the budget, so a deadline or a cancellation stops a long one.
 
+use pyo3::Borrowed;
 use pyo3::exceptions::{PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::pybacked::PyBackedBytes;
 use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
+use pyropdf_engine::annotations::{AnnotationPatch, AnnotationSpec, CLEARABLE, CalloutPoints};
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 
@@ -421,4 +423,193 @@ fn check_data(max: Option<u64>, len: u64) -> PyResult<()> {
         ))),
         _ => Ok(()),
     }
+}
+
+/// Refuses a date that is longer than any PDF date string.
+fn long_date() -> PyErr {
+    PdfError::new_err("an annotation date is a PDF date string")
+}
+
+/// Refuses a name that is longer than any that `what` may be.
+fn long_name(what: &'static str) -> impl FnOnce() -> PyErr {
+    move || PdfError::new_err(format!("unknown {what}"))
+}
+
+/// At most three callout points, extracted without collecting the input.
+struct Callout(CalloutPoints);
+
+impl<'py> FromPyObject<'_, 'py> for Callout {
+    type Error = PyErr;
+
+    fn extract(value: Borrowed<'_, 'py, PyAny>) -> PyResult<Self> {
+        let mut points = [(0.0, 0.0); 3];
+        let mut len = 0;
+        for point in value.try_iter()? {
+            let point = point?;
+            if len == points.len() {
+                return Ok(Self(CalloutPoints::new(points, len, true)));
+            }
+            points[len] = point.extract()?;
+            len += 1;
+        }
+        Ok(Self(CalloutPoints::new(points, len, false)))
+    }
+}
+
+/// Reads an [`AnnotationPatch`] from the mapping passed to `annotation_edit`.
+pub(crate) fn read_patch(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<AnnotationPatch> {
+    let fields = Fields::new(map, budget);
+    let code = LimitCode::AnnotationInputSize;
+    let mut total = 0;
+    Ok(AnnotationPatch {
+        rect: fields.value("rect")?,
+        contents: fields.text("contents", code, &mut total)?,
+        author: fields.text("author", code, &mut total)?,
+        subject: fields.text("subject", code, &mut total)?,
+        name: fields.text("name", code, &mut total)?,
+        language: fields.text("language", code, &mut total)?,
+        icon: fields.short("icon", MAX_NAME, long_name("icon"))?,
+        color: fields.value("color")?,
+        interior_color: fields.value("interior_color")?,
+        opacity: fields.value("opacity")?,
+        flags: fields.value("flags")?,
+        border: fields.border("border")?,
+        clouds: fields.value("clouds")?,
+        blend_mode: fields.short("blend_mode", MAX_NAME, long_name("blend mode"))?,
+        rotate: fields.value("rotate")?,
+        modified: fields.short("modified", MAX_DATE, long_date)?,
+        points: fields.points("points")?,
+        line_endings: fields.line_endings("line_endings")?,
+        clear: fields.names("clear", CLEARABLE, || {
+            PdfError::new_err("an annotation property that cannot be removed")
+        })?,
+    })
+}
+
+/// Owned PyO3-extracted payload for [`AnnotationSpec`], keeping any borrowed
+/// Python byte buffer alive across [`SpecInput::as_spec`].
+pub(crate) struct SpecInput {
+    subtype: String,
+    rects: Option<Vec<Rect>>,
+    rect: Option<Rect>,
+    color: Option<(f64, f64, f64)>,
+    opacity: Option<f64>,
+    contents: Option<String>,
+    created: Option<String>,
+    icon: Option<String>,
+    open: Option<bool>,
+    points: Option<PointLists>,
+    line_endings: Option<(String, String)>,
+    interior_color: Option<(f64, f64, f64)>,
+    border: Option<(f64, String, Vec<f64>)>,
+    clouds: Option<f64>,
+    blend_mode: Option<String>,
+    data: Option<PyBackedBytes>,
+    filename: Option<String>,
+    description: Option<String>,
+    max_size: Option<u64>,
+    text_color: Option<(f64, f64, f64)>,
+    font_size: Option<f64>,
+    font_name: Option<String>,
+    align: Option<i64>,
+    rotate: Option<i64>,
+    callout: Option<Callout>,
+    callout_ending: Option<String>,
+}
+
+impl SpecInput {
+    /// Reads a specification from the mapping passed to `annotation_add`.
+    pub(crate) fn read(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<Self> {
+        let fields = Fields::new(map, budget);
+        let subtype = fields
+            .short("subtype", MAX_NAME, || {
+                PdfError::new_err("pyropdf does not add annotations of this subtype")
+            })?
+            .ok_or_else(|| PyTypeError::new_err("an annotation specification names its subtype"))?;
+        let mut total = 0;
+        let mut file_texts = 0;
+        let file = LimitCode::EmbeddedFileInputSize;
+        let max_size = fields.value("max_size")?;
+        Ok(Self {
+            subtype,
+            rects: fields.rects("rects")?,
+            rect: fields.value("rect")?,
+            color: fields.value("color")?,
+            opacity: fields.value("opacity")?,
+            contents: fields.text("contents", LimitCode::AnnotationInputSize, &mut total)?,
+            created: fields.short("created", MAX_DATE, long_date)?,
+            icon: fields.short("icon", MAX_NAME, long_name("icon"))?,
+            open: fields.value("open")?,
+            points: fields.points("points")?,
+            line_endings: fields.line_endings("line_endings")?,
+            interior_color: fields.value("interior_color")?,
+            border: fields.border("border")?,
+            clouds: fields.value("clouds")?,
+            blend_mode: fields.short("blend_mode", MAX_NAME, long_name("blend mode"))?,
+            data: fields.data("data", max_size)?,
+            filename: fields.text("filename", file, &mut file_texts)?,
+            description: fields.text("description", file, &mut file_texts)?,
+            max_size,
+            text_color: fields.value("text_color")?,
+            font_size: fields.value("font_size")?,
+            font_name: fields.short("font_name", MAX_NAME, long_name("font name"))?,
+            align: fields.value("align")?,
+            rotate: fields.value("rotate")?,
+            callout: fields.value("callout")?,
+            callout_ending: fields.short(
+                "callout_ending",
+                MAX_NAME,
+                long_name("callout ending"),
+            )?,
+        })
+    }
+
+    /// Borrows this extracted input as an engine [`AnnotationSpec`].
+    pub(crate) fn as_spec(&self) -> AnnotationSpec<'_> {
+        AnnotationSpec {
+            subtype: self.subtype.clone(),
+            rects: self.rects.clone(),
+            rect: self.rect,
+            color: self.color,
+            opacity: self.opacity,
+            contents: self.contents.clone(),
+            created: self.created.clone(),
+            icon: self.icon.clone(),
+            open: self.open,
+            points: self.points.clone(),
+            line_endings: self.line_endings.clone(),
+            interior_color: self.interior_color,
+            border: self.border.clone(),
+            clouds: self.clouds,
+            blend_mode: self.blend_mode.clone(),
+            data: self.data.as_deref(),
+            filename: self.filename.clone(),
+            description: self.description.clone(),
+            max_size: self.max_size,
+            text_color: self.text_color,
+            font_size: self.font_size,
+            font_name: self.font_name.clone(),
+            align: self.align,
+            rotate: self.rotate,
+            callout: self.callout.as_ref().map(|callout| callout.0),
+            callout_ending: self.callout_ending.clone(),
+        }
+    }
+}
+
+/// Reads bounded `(index, id)` handles passed to `annotation_remove`.
+pub(crate) fn read_handles(
+    handles: &Bound<'_, PyAny>,
+    budget: &Budget,
+) -> PyResult<Vec<(u32, (u32, u16))>> {
+    let items = Sequence::new(handles, "handles")?;
+    let mut total = 0;
+    admit_items(
+        budget,
+        LimitCode::AnnotationCount,
+        &mut total,
+        items.len() as u64,
+    )
+    .map_err(|e| limit_error(&e))?;
+    Fields::new(handles, budget).items(&items, |item| item.extract())
 }

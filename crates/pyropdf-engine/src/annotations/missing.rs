@@ -12,13 +12,12 @@ use std::collections::HashSet;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::PageIndex;
+use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Version;
 use pyropdf_store::{Error, LimitExceeded, Result};
 
-use super::{
-    CopyPart, PageUnits, Reader, appearance_for_render, charge_copy, draws, numbers_array,
-};
+use super::{PageUnits, Reader, appearance_for_render, draws, numbers_array};
 
 /// The default maximum synthesized appearances of one render.
 pub const MAX_SYNTHESIZED_APPEARANCES: usize = 4_096;
@@ -162,8 +161,9 @@ fn plan(reader: &Reader<'_>, reference: Reference) -> Result<Option<(Dict, Strea
     reader
         .budget
         .charge(LimitCode::AnnotationSynthesisCount, 1)?;
-    charge_copy(CopyPart::Dict(dict), reader.budget)?;
-    let mut dict = dict.clone();
+    let Value::Dict(mut dict) = copy_for_edit(object.value(), reader.budget)? else {
+        unreachable!("checked dictionary variant");
+    };
     #[expect(
         clippy::disallowed_methods,
         reason = "the annotation grows by one entry at most"
