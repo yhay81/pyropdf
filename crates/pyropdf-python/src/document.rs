@@ -15,6 +15,7 @@ use pyropdf_engine::annotations::AppearanceSettler;
 use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
 use pyropdf_engine::fonts::settle::FontSubsetSettler;
 pub(crate) use pyropdf_engine::forms::text_string;
+use pyropdf_engine::forms::{FillCache, Form};
 use pyropdf_engine::render::Fallback;
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode, SharedBudget};
 use pyropdf_store::memo::Memo;
@@ -28,7 +29,6 @@ use pyropdf_store::{Error, write};
 
 use crate::annotations::links::NamedDestinations;
 use crate::errors::{DocumentClosedError, MalformedPdfError, limit_error, save_error, store_error};
-use crate::forms::{FillCache, Form};
 use crate::history::DEFAULT_HISTORY_LIMIT;
 use crate::outline::Outline;
 use crate::source;

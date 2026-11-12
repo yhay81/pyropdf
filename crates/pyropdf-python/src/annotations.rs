@@ -4,7 +4,6 @@ pub(crate) mod input;
 pub mod links;
 
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
@@ -15,13 +14,12 @@ use pyropdf_engine::annotations::{
     PageAnnots, RecordTuple,
 };
 use pyropdf_engine::bridge::Bridged;
-pub(crate) use pyropdf_engine::display::encode_text;
 use pyropdf_engine::extract;
+pub(crate) use pyropdf_engine::forms::copy::CopyPart;
 use pyropdf_engine::render::{self, Raster};
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, LimitCode};
 use pyropdf_store::pages::PageIndex;
-use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::version::Transaction;
 
 use crate::document::_Document;
 use crate::errors::{
@@ -41,14 +39,6 @@ pub(crate) fn annotation_error(error: AnnotationError) -> PyErr {
         AnnotationError::Stale(message) => StaleObjectError::new_err(message),
         AnnotationError::Value(message) => PyValueError::new_err(message),
         AnnotationError::Pdf(message) => PdfError::new_err(message),
-    }
-}
-
-struct PyAnnotationError(PyErr);
-
-impl From<AnnotationError> for PyAnnotationError {
-    fn from(error: AnnotationError) -> Self {
-        Self(annotation_error(error))
     }
 }
 
@@ -153,7 +143,6 @@ pub fn annotation_edit(
             |annots, transaction, budget| {
                 let patch = input::read_patch(edit, budget)?;
                 annots
-                    .0
                     .edit(transaction, index, id, &patch, face)
                     .map_err(annotation_error)
             },
@@ -329,7 +318,6 @@ pub fn annotation_remove(
             |annots, transaction, budget| {
                 let handles = input::read_handles(handles, budget)?;
                 annots
-                    .0
                     .remove(transaction, &handles)
                     .map_err(annotation_error)
             },
@@ -370,7 +358,6 @@ pub fn annotation_add(
             |annots, transaction, budget| {
                 let spec = input::SpecInput::read(spec, budget)?;
                 annots
-                    .0
                     .add(transaction, &spec.as_spec(), face)
                     .map_err(annotation_error)
             },
@@ -482,204 +469,28 @@ pub fn annotation_text(
     })?
 }
 
-// --- Compatibility error-mapping shims for `forms.rs` / `pages.rs` ---
-
-/// PyO3 error-mapping adapter around [`PageAnnots`] for `forms.rs`.
-pub(crate) struct Annots<'b>(pub(crate) PageAnnots<'b>);
-
-impl<'b> Deref for Annots<'b> {
-    type Target = PageAnnots<'b>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'b> Annots<'b> {
-    pub(crate) fn read(
-        version: Arc<Version>,
-        index: Arc<PageIndex>,
-        budget: &'b Budget,
-        number: u32,
-        generation: u16,
-    ) -> PyResult<Option<Self>> {
-        PageAnnots::read(version, index, budget, number, generation)
-            .map(|opt| opt.map(Self))
-            .map_err(annotation_error)
-    }
-
-    pub(crate) fn at(
-        version: Arc<Version>,
-        index: Arc<PageIndex>,
-        budget: &'b Budget,
-        at: usize,
-    ) -> PyResult<Self> {
-        PageAnnots::at(version, index, budget, at)
-            .map(Self)
-            .map_err(annotation_error)
-    }
-
-    pub(crate) fn entry(&self, item: &Value) -> PyResult<Option<((u32, u16), Dict)>> {
-        self.0.entry(item).map_err(annotation_error)
-    }
-
-    pub(crate) fn find(&self, index: u32, id: (u32, u16)) -> PyResult<(usize, Dict)> {
-        self.0.find(index, id).map_err(annotation_error)
-    }
-
-    pub(crate) fn resolved(&self, value: Option<&Value>) -> PyResult<Option<Value>> {
-        self.0.resolved(value).map_err(annotation_error)
-    }
-
-    pub(crate) fn name(&self, dict: &Dict, key: &str) -> PyResult<Option<Vec<u8>>> {
-        self.0.name(dict, key).map_err(annotation_error)
-    }
-
-    pub(crate) fn rect(&self, value: Option<&Value>) -> PyResult<Option<Rect>> {
-        self.0.rect(value).map_err(annotation_error)
-    }
-
-    pub(crate) fn color(&self, dict: &Dict, key: &str) -> PyResult<Vec<f64>> {
-        self.0.color(dict, key).map_err(annotation_error)
-    }
-
-    pub(crate) fn border(&self, dict: &Dict) -> PyResult<Option<(f64, String, Vec<f64>)>> {
-        self.0.border(dict).map_err(annotation_error)
-    }
-
-    pub(crate) fn write(
-        &self,
-        transaction: &mut Transaction,
-        position: usize,
-        look: bool,
-        dict: Dict,
-        change: impl FnOnce(
-            &mut Transaction,
-            Reference,
-            &mut Dict,
-            &mut Array,
-            &Budget,
-        ) -> PyResult<bool>,
-    ) -> PyResult<(u32, u16)> {
-        self.0
-            .write_with(
-                transaction,
-                position,
-                look,
-                dict,
-                |transaction, reference, dict, items, budget| {
-                    change(transaction, reference, dict, items, budget).map_err(PyAnnotationError)
-                },
-            )
-            .map_err(|error| error.0)
-    }
-
-    pub(crate) fn write_items(
-        &self,
-        transaction: &mut Transaction,
-        items: Array,
-        budget: &Budget,
-    ) -> PyResult<()> {
-        self.0
-            .write_items(transaction, items, budget)
-            .map_err(annotation_error)
-    }
-}
-
-pub(crate) fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
-    annotations::rgb(components, label).map_err(annotation_error)
-}
-
-pub(crate) fn border_style(
-    border: &(f64, String, Vec<f64>),
-    unit: f64,
-    budget: &Budget,
-) -> PyResult<Value> {
-    annotations::border_style(border, unit, budget).map_err(annotation_error)
-}
-
+/// Looks up the page on the version held by the writer.
 pub(crate) fn editing<T>(
     py: Python<'_>,
     document: &_Document,
     number: u32,
     generation: u16,
-    write: impl FnOnce(&Annots<'_>, &mut Transaction, &Budget) -> PyResult<T>,
+    write: impl FnOnce(&PageAnnots<'_>, &mut Transaction, &Budget) -> PyResult<T>,
 ) -> PyResult<Option<T>> {
     document.edit(py, |transaction, budget| {
         let version = transaction.snapshot();
-        let index = PageIndex::memoized(&document.draft_pages, &version, budget)
+        let pages = PageIndex::memoized(&document.draft_pages, &version, budget)
             .map_err(|error| store_error(&error))?;
-        let Some(annots) = Annots::read(version, index, budget, number, generation)? else {
+        let Some(annots) = PageAnnots::read(version, pages, budget, number, generation)
+            .map_err(annotation_error)?
+        else {
             return Ok(None);
         };
-        let savepoint = transaction.savepoint();
-        let result = write(&annots, transaction, budget);
-        if result.is_err() {
-            transaction.rollback(savepoint);
-        }
-        result.map(Some)
+        write(&annots, transaction, budget).map(Some)
     })
 }
 
-/// Shared deep-copy budget helper retained for `forms.rs` and `pages.rs` until
-/// those modules migrate to `pyropdf_store::refs::copy_for_edit`.
-pub(crate) enum CopyPart<'a> {
-    Value(&'a Value),
-    Array(&'a Array),
-    Dict(&'a Dict),
-}
-
+/// Map the shared deep-copy budget check for page imports to a Python exception.
 pub(crate) fn charge_copy(part: CopyPart<'_>, budget: &Budget) -> PyResult<()> {
-    let mut pending = BudgetVec::new(budget);
-    pending.try_push(part).map_err(|e| limit_error(&e))?;
-    while let Some(part) = pending.pop() {
-        budget.poll().map_err(|e| limit_error(&e))?;
-        let bytes = match part {
-            CopyPart::Value(value) => match value {
-                Value::Name(name) => name.as_bytes().len(),
-                Value::String(text) => text.as_bytes().len(),
-                Value::Array(array) => {
-                    pending
-                        .try_push(CopyPart::Array(array))
-                        .map_err(|e| limit_error(&e))?;
-                    0
-                }
-                Value::Dict(dict) => {
-                    pending
-                        .try_push(CopyPart::Dict(dict))
-                        .map_err(|e| limit_error(&e))?;
-                    0
-                }
-                Value::Stream(stream) => {
-                    pending
-                        .try_push(CopyPart::Dict(stream.dict()))
-                        .map_err(|e| limit_error(&e))?;
-                    0
-                }
-                _ => 0,
-            },
-            CopyPart::Array(array) => {
-                for value in array {
-                    pending
-                        .try_push(CopyPart::Value(value))
-                        .map_err(|e| limit_error(&e))?;
-                }
-                array.len().saturating_mul(2 * size_of::<Value>())
-            }
-            CopyPart::Dict(dict) => {
-                let mut bytes = dict.len().saturating_mul(2 * size_of::<(Name, Value)>());
-                for (key, value) in dict.iter() {
-                    bytes = bytes.saturating_add(key.as_bytes().len());
-                    pending
-                        .try_push(CopyPart::Value(value))
-                        .map_err(|e| limit_error(&e))?;
-                }
-                bytes
-            }
-        };
-        budget
-            .charge(LimitCode::MemorySize, bytes as u64)
-            .map_err(|e| limit_error(&e))?;
-    }
-    Ok(())
+    pyropdf_engine::forms::copy::charge_copy(part, budget).map_err(|e| store_error(&e))
 }
