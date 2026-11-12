@@ -110,9 +110,10 @@ def _definitions() -> dict[str, str]:
     """Map each top-level class, function, and alias to the module that defines it."""
     pattern = re.compile(r"^(?:class|def) ([A-Za-z_]\w*)|^([A-Z]\w*)(?:: TypeAlias)? = ", re.MULTILINE)
     found: dict[str, str] = {}
-    for path in sorted(PACKAGE.glob("*.py")):
+    for path in [*sorted(PACKAGE.glob("*.py")), *sorted(PACKAGE.glob("_*/*.py"))]:
+        module = path.stem if path.parent == PACKAGE else path.parent.name
         for match in pattern.finditer(path.read_text(encoding="utf-8")):
-            found.setdefault(match.group(1) or match.group(2), path.stem)
+            found.setdefault(match.group(1) or match.group(2), module)
     return found | EXTENSION
 
 

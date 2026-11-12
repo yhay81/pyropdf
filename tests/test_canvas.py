@@ -1481,3 +1481,43 @@ def test_arbitrary_gradients_draw_or_refuse_and_a_render_survives_them() -> None
         page.pixmap(dpi=36)
         pyropdf.open(doc.to_bytes()).pages[0].content()
     assert drawn > 20
+
+
+def test_canvas_submodules_and_exports_have_no_circular_imports() -> None:
+    from pyropdf import _canvas  # noqa: PLC0415
+    from pyropdf._canvas import (  # noqa: PLC0415
+        Canvas,
+        ListNumbering,
+        TableHeaderScope,
+        TagRole,
+        TextFit,
+        _cache,
+        _Images,
+    )
+
+    exported = (Canvas, _canvas.PathBuilder, TextFit, TagRole, TableHeaderScope, ListNumbering)
+    for public in exported:
+        assert getattr(pyropdf, public.__name__) is public
+        assert public.__module__ == "pyropdf"
+
+    doc = pyropdf.Document()
+    cached = _cache(doc)
+    assert isinstance(cached, _Images)
+    assert _cache(doc) is cached
+
+    submodules = (
+        "pyropdf._canvas._path",
+        "pyropdf._canvas._text",
+        "pyropdf._canvas._tags",
+        "pyropdf._canvas._resources",
+        "pyropdf._canvas._canvas",
+    )
+    script = (
+        "import importlib, sys\n"
+        "for name in sys.argv[1:]:\n"
+        "    for key in [k for k in sys.modules if k == 'pyropdf' or k.startswith('pyropdf.')]:\n"
+        "        if key != 'pyropdf._core':\n"
+        "            del sys.modules[key]\n"
+        "    importlib.import_module(name)\n"
+    )
+    subprocess.run([sys.executable, "-c", script, *submodules], check=True)  # noqa: S603 - fixed interpreter and module names.
