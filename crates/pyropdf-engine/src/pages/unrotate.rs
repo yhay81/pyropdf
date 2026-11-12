@@ -10,7 +10,7 @@ use std::fmt;
 
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
+use pyropdf_store::pages::PageIndex;
 use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
@@ -180,30 +180,6 @@ fn six_numbers(array: &Array) -> Option<Matrix> {
     nums.next().is_none().then_some(six)
 }
 
-/// Follows references from `value`, at most [`MAX_CHAIN`]; a null, an absent
-/// object, or a missing entry is `None`.
-fn resolve(version: &Version, value: Option<&Value>, budget: &Budget) -> Result<Option<Value>> {
-    let mut current = match value {
-        None | Some(Value::Null) => return Ok(None),
-        Some(Value::Reference(reference)) => *reference,
-        Some(value) => return Ok(Some(refs::copy_for_edit(value, budget)?)),
-    };
-    for _ in 0..MAX_CHAIN {
-        let Some(object) = version
-            .get(current.number(), budget)?
-            .filter(|object| object.generation() == current.generation())
-        else {
-            return Ok(None);
-        };
-        match &**object.value() {
-            Value::Null => return Ok(None),
-            Value::Reference(next) => current = *next,
-            value => return Ok(Some(refs::copy_for_edit(value, budget)?)),
-        }
-    }
-    Err(pyropdf_store::Error::malformed("a reference chain is longer than 16 references").into())
-}
-
 /// Maps the points of `array`, pairs of numbers, by `m`; `None` when an item
 /// is not a number or a pair is incomplete.
 fn mapped_points(m: &Matrix, array: &Array, budget: &Budget) -> Result<Option<Value>> {
@@ -241,7 +217,7 @@ struct Turn<'a> {
 
 impl Turn<'_> {
     fn resolved(&self, value: Option<&Value>) -> Result<Option<Value>> {
-        resolve(self.version, value, self.budget)
+        Ok(super::resolve(self.version, value, self.budget)?)
     }
 
     fn copied(&self, reference: Reference) -> Option<Reference> {
