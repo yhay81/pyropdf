@@ -28,6 +28,7 @@ use pyropdf_engine::annotations::{
     zigzag_points,
 };
 use pyropdf_engine::bridge::Bridged;
+pub(crate) use pyropdf_engine::display::{encode_text, to_display, to_pdf};
 use pyropdf_engine::extract;
 use pyropdf_engine::forms::WidgetError;
 use pyropdf_engine::forms::face::{FaceFont, FaceText};
@@ -725,33 +726,6 @@ impl<'b> Annots<'b> {
     }
 }
 
-/// Converts a point of PDF user space to display space, in points, on a
-/// page whose display box is `crop`, whose normalized `/Rotate` is
-/// `rotation`, and whose user space unit is `unit` points.
-pub(crate) fn to_display(crop: [f64; 4], rotation: i64, unit: f64, x: f64, y: f64) -> (f64, f64) {
-    let [cx0, cy0, cx1, cy1] = crop;
-    let (u, v) = match rotation {
-        90 => (y - cy0, x - cx0),
-        180 => (cx1 - x, y - cy0),
-        270 => (cy1 - y, cx1 - x),
-        _ => (x - cx0, cy1 - y),
-    };
-    (u * unit, v * unit)
-}
-
-/// Converts a point of display space to PDF user space, as the inverse of
-/// [`to_display`].
-pub(crate) fn to_pdf(crop: [f64; 4], rotation: i64, unit: f64, x: f64, y: f64) -> (f64, f64) {
-    let [cx0, cy0, cx1, cy1] = crop;
-    let (x, y) = (x / unit, y / unit);
-    match rotation {
-        90 => (cx0 + y, cy0 + x),
-        180 => (cx1 - x, cy0 + y),
-        270 => (cx1 - y, cy1 - x),
-        _ => (cx0 + x, cy1 - y),
-    }
-}
-
 /// Adds `amount` to one total of a read's text budget.
 fn charge(total: &mut usize, amount: usize, budget: &Budget) -> PyResult<()> {
     *total = total.saturating_add(amount);
@@ -788,23 +762,6 @@ fn charge_decoded(
     let text = text_string(bytes);
     charge(returned, text.len(), budget)?;
     Ok(text)
-}
-
-/// Encodes a text string as `String.text` reads it: ASCII as is, anything
-/// else as UTF-16BE.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "at most two bytes per input UTF-8 byte plus the two-byte BOM; callers bound or charge the text first"
-)]
-pub(crate) fn encode_text(text: &str) -> Value {
-    let bytes = if text.is_ascii() {
-        text.as_bytes().to_vec()
-    } else {
-        let mut bytes = vec![0xFE, 0xFF];
-        bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
-        bytes
-    };
-    Value::String(PdfString::literal(bytes))
 }
 
 pub(crate) fn rgb(components: (f64, f64, f64), label: &str) -> PyResult<Value> {
