@@ -276,6 +276,30 @@ def test_insert_pdf_treats_null_page_and_parent_attributes_as_absent(
     assert source.to_bytes() == source_bytes
 
 
+def test_importing_a_cached_page_dictionary_charges_the_receiving_operation() -> None:
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 /MediaBox [0 0 10 10] >>",
+                3: "<< /Type /Page /Parent 2 0 R >>",
+                4: f"<< /Type /Page /Parent 2 0 R /Private ({'x' * 1024**2}) >>",
+            }
+        )
+    )
+    small, large = source.pages
+    target = pyropdf.Document(limits=pyropdf.DocumentLimits(max_memory_size=256 * 1024))
+    with target.transaction("Catch a refused import"):
+        target.pages.new()
+        before = target.to_bytes()
+        with pytest.raises(pyropdf.LimitError) as raised:
+            target.pages.extend([small, large])
+        assert raised.value.code == "memory_size"
+        assert target.to_bytes() == before
+        target.pages.extend(small)
+    assert len(target.pages) == 2
+
+
 def test_an_import_repairs_a_page_whose_parent_is_a_cycle() -> None:
     target = pyropdf.open(
         build_raw_pdf(

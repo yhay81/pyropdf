@@ -30,8 +30,8 @@ use pyropdf_store::refs::{self, Edits, Rule};
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Document, ObjectStamps, Transaction, Version};
 
+use crate::annotations::annotation_error;
 use crate::annotations::links::{destinations_memo, navigation_error};
-use crate::annotations::{CopyPart, annotation_error, charge_copy};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, PdfError, limit_error, store_error};
 use crate::history::OperationBudget;
@@ -1070,8 +1070,11 @@ pub fn import_pages(
                     .index_of(page)
                     .and_then(|at| source_index.get(at))
                     .ok_or_else(|| not_a_page(page))?;
-                charge_copy(CopyPart::Dict(entry.dict()), budget)?;
-                let mut dict = entry.dict().clone();
+                let Some(Value::Dict(mut dict)) =
+                    resolve(&version, Some(&Value::Reference(page)), budget)?
+                else {
+                    return Err(not_a_page(page));
+                };
                 for key in INHERITABLE {
                     match entry.inherited(key) {
                         Some(value) => {
@@ -1391,7 +1394,7 @@ impl Links<'_, '_> {
             let prepared = destination
                 .page_in(self.index)
                 .filter(|page| self.imported.binary_search(&page.number()).is_ok())
-                .map(|page| self.retarget(&annotation, &destination, page))
+                .map(|page| self.retarget(annotation, &destination, page))
                 .transpose()?;
             match item {
                 Value::Reference(reference) => {
@@ -1418,13 +1421,11 @@ impl Links<'_, '_> {
     /// array, in its `/GoTo` action if it has one.
     fn retarget(
         &mut self,
-        link: &Dict,
+        mut link: Dict,
         destination: &Destination,
         page: Reference,
     ) -> PyResult<Dict> {
         let array = Value::Array(destination.array(page));
-        charge_copy(CopyPart::Dict(link), self.budget)?;
-        let mut link = link.clone();
         if let Some(Value::Dict(mut action)) =
             self.resolved(link.get("A")).map_err(navigation_error)?
         {
