@@ -14,8 +14,8 @@ use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
-use pyropdf_engine::display::{A4, Display, to_display, to_pdf};
-pub(crate) use pyropdf_engine::display::{display_box, rect, rotation};
+use pyropdf_engine::display::{BOXES, Box4, Display, to_display, to_pdf, user_boxes};
+pub(crate) use pyropdf_engine::display::{display_box, number, rect, rotation};
 use pyropdf_engine::navigation::{
     self, Destination, Lead, LeadReader, NamedDestinations, lead, read,
 };
@@ -808,33 +808,6 @@ pub fn set_page_rotation(
         })?;
         Ok(true)
     })?
-}
-
-/// The page boxes, in the order that [`page_boxes`] returns them.
-pub(crate) const BOXES: [&str; 5] = ["MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"];
-
-pub(crate) type Box4 = (f64, f64, f64, f64);
-
-/// Returns the page boxes of `page` in unrotated user space: the inherited
-/// media box, or hayro's A4, then the crop, bleed, trim, and art boxes,
-/// each clipped to the media box and defaulting to the crop box
-/// (ISO 32000-2 14.11.2).
-pub(crate) fn user_boxes(page: &Page) -> [Box4; 5] {
-    let media = page
-        .media_box()
-        .and_then(rect)
-        .unwrap_or((0.0, 0.0, A4.0, A4.1));
-    let clip = |b: Box4| {
-        (
-            b.0.max(media.0),
-            b.1.max(media.1),
-            b.2.min(media.2),
-            b.3.min(media.3),
-        )
-    };
-    let crop = page.crop_box().and_then(rect).map_or(media, clip);
-    let own = |key: &str| page.dict().get(key).and_then(rect).map_or(crop, clip);
-    [media, crop, own(BOXES[2]), own(BOXES[3]), own(BOXES[4])]
 }
 
 /// Converts a user-space rectangle of a page with display box `frame`,
@@ -1992,13 +1965,4 @@ pub(crate) fn resolve(
 fn indirect(page: &Page, at: usize) -> PyResult<Reference> {
     page.object()
         .ok_or_else(|| MalformedPdfError::new_err(format!("page {at} is not an indirect object")))
-}
-
-/// Returns `value` as an integer when it is one, else as a real.
-pub(crate) fn number(value: f64) -> Value {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        Value::Integer(value as i64)
-    } else {
-        Value::from(value)
-    }
 }
