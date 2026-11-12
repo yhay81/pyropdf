@@ -16,7 +16,9 @@ use pyropdf_store::value::{Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Version;
 use pyropdf_store::{Error, LimitExceeded, Result};
 
-use super::{CopyPart, Reader, appearance_for_render, charge_copy, draws, numbers_array};
+use super::{
+    CopyPart, PageUnits, Reader, appearance_for_render, charge_copy, draws, numbers_array,
+};
 
 /// The default maximum synthesized appearances of one render.
 pub const MAX_SYNTHESIZED_APPEARANCES: usize = 4_096;
@@ -31,12 +33,12 @@ pub fn synthesized(
     pages: &PageIndex,
     budget: &Budget,
 ) -> Result<Vec<(Reference, Value)>> {
-    let reader = Reader { version, budget };
     let mut objects = BudgetVec::new(budget);
     let mut visited = HashSet::new();
     let mut next = version.next_number();
     for page in pages.pages() {
         budget.poll()?;
+        let reader = Reader::on_page(version, budget, page.user_unit());
         let Some(annots) = reader.entry(page.dict(), "Annots")? else {
             continue;
         };
@@ -87,7 +89,18 @@ pub fn synthesized_for(
     reference: Reference,
     budget: &Budget,
 ) -> Result<Vec<(Reference, Value)>> {
-    let reader = Reader { version, budget };
+    let Some(object) = version
+        .get(reference.number(), budget)?
+        .filter(|object| object.generation() == reference.generation())
+    else {
+        return Ok(Vec::new());
+    };
+    let Value::Dict(dict) = &**object.value() else {
+        return Ok(Vec::new());
+    };
+    let mut units = PageUnits::new(version, budget);
+    let unit = units.unit_of(Some(reference), dict)?;
+    let reader = Reader::on_page(version, budget, unit);
     let Some((dict, form)) = plan(&reader, reference)? else {
         return Ok(Vec::new());
     };

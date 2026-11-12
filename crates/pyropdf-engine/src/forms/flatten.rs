@@ -210,10 +210,7 @@ pub fn draw(
     let mut placed = BudgetVec::new(budget);
     placed.try_reserve_exact(plan.drawn.len())?;
     {
-        let reader = Reader {
-            version: transaction.version(),
-            budget,
-        };
+        let reader = Reader::new(transaction.version(), budget);
         for item in &plan.drawn {
             if let Value::Reference(reference) = item
                 && let Some((dict, form)) = missing.forms.get(reference)
@@ -298,10 +295,7 @@ pub fn draw(
             ops.into_vec(),
             budget,
         )?;
-        let reader = Reader {
-            version: transaction.version(),
-            budget,
-        };
+        let reader = Reader::new(transaction.version(), budget);
         let (resources, name) = with_form(&reader, page.resources(), form)?;
         let contents = contents(&reader, budget, dict.get("Contents"))?;
         let mut array = BudgetVec::new(budget);

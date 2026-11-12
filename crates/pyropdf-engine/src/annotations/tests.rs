@@ -7,10 +7,7 @@ fn free_text_default_appearance_refuses_an_oversized_value() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut dict = Dict::new();
     dict.insert(
         Name::from("DA"),
@@ -34,10 +31,7 @@ fn an_unknown_stamp_name_is_never_silently_truncated() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut dict = Dict::new();
     dict.insert(Name::from("Subtype"), Value::Name(Name::from("Stamp")));
     dict.insert(Name::from("Rect"), numbers_array(&[0.0, 0.0, 200.0, 100.0]));
@@ -57,10 +51,7 @@ fn callout_does_not_copy_an_unknown_line_ending_name() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(65_536));
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut dict = Dict::new();
     dict.insert(Name::from("Subtype"), Value::Name(Name::from("FreeText")));
     dict.insert(Name::from("Rect"), numbers_array(&[0.0, 0.0, 200.0, 100.0]));
@@ -124,6 +115,7 @@ fn every_note_icon_balances_its_paths() {
         interior: None,
         width: 1.0,
         dashes: Vec::new(),
+        unit: 1.0,
     };
     for icon in [
         &b"Comment"[..],
@@ -156,6 +148,7 @@ fn cloud_bumps_stay_inside_the_box_of_a_cloudy_square() {
         interior: Some((1.0, 1.0, 0.0)),
         width: 1.0,
         dashes: Vec::new(),
+        unit: 1.0,
     };
     let budget = Budget::default();
     let mut canvas = Canvas::new(60.0, &budget);
@@ -186,6 +179,7 @@ fn line_endings_fill_only_closed_shapes() {
         interior: Some((1.0, 1.0, 0.0)),
         width: 2.0,
         dashes: vec![4.0, 2.0],
+        unit: 1.0,
     };
     for (ending, closed) in [(1, true), (4, false), (5, true), (6, false), (9, false)] {
         let budget = Budget::default();
@@ -256,10 +250,7 @@ fn excessive_existing_markup_refuses_instead_of_silently_drawing_nothing() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     for dict in [
         marked_dict("Highlight", MAX_QUADS + 1, 10.0),
         marked_dict("Squiggly", 1, 131_072.0),
@@ -274,10 +265,7 @@ fn appearance_output_refuses_before_exceeding_its_memory_budget() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     assert!(appearance(&reader, &marked_dict("Highlight", 1, 10.0)).is_err());
 }
 
@@ -298,10 +286,7 @@ fn a_long_appearance_reference_chain_refuses_instead_of_becoming_null() {
             .unwrap();
     }
     let version = transaction.commit(&budget).unwrap();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     assert!(
         reader
             .resolve(&Value::Reference(Reference::new(1, 0)))
@@ -341,10 +326,7 @@ fn overflowing_geometry_is_refused_without_generating_a_path() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let quad = [
         (-f64::MAX, 10.0),
         (f64::MAX, 10.0),
@@ -370,10 +352,7 @@ fn ink_point_count_counts_points_not_stroke_headers() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut dict = Dict::new();
     dict.insert(
         Name::from("InkList"),
@@ -392,10 +371,7 @@ fn excessive_point_arrays_and_dashes_refuse_instead_of_becoming_absent() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut dict = Dict::new();
     dict.insert(
         Name::from("Vertices"),
@@ -422,10 +398,7 @@ fn returned_point_lists_retain_their_memory_charge() {
     let document = Document::new(Arc::new(MemoryBase::new(Dict::new())), None);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut dict = Dict::new();
     dict.insert(Name::from("Vertices"), numbers_array(&[0.0, 0.0, 1.0, 1.0]));
     let points = reader.point_lists(&dict, b"PolyLine").unwrap().unwrap();
@@ -440,6 +413,7 @@ fn cloudy_polygons_count_all_generated_control_points() {
         interior: None,
         width: 1.0,
         dashes: Vec::new(),
+        unit: 1.0,
     };
     let budget = Budget::default();
     let mut canvas = Canvas::new(10.0, &budget);
@@ -459,5 +433,87 @@ fn cloudy_polygons_count_all_generated_control_points() {
     assert_eq!(
         error.limit().unwrap().code(),
         LimitCode::AnnotationPointCount
+    );
+}
+
+#[test]
+fn page_units_resolve_from_parent_page_or_annots_list() {
+    use pyropdf_store::version::{Document, MemoryBase};
+
+    let mut trailer = Dict::new();
+    trailer.insert(Name::from("Root"), Value::Reference(Reference::new(1, 0)));
+    let document = Document::new(Arc::new(MemoryBase::new(trailer)), None);
+    let budget = Budget::default();
+    let mut tx = document.begin();
+    let mut catalog = Dict::new();
+    catalog.insert(Name::from("Type"), Value::Name(Name::from("Catalog")));
+    catalog.insert(Name::from("Pages"), Value::Reference(Reference::new(2, 0)));
+    tx.write(1, &Value::Dict(catalog), &budget).unwrap();
+
+    let mut pages = Dict::new();
+    pages.insert(Name::from("Type"), Value::Name(Name::from("Pages")));
+    pages.insert(
+        Name::from("Kids"),
+        Value::Array(
+            [
+                Value::Reference(Reference::new(3, 0)),
+                Value::Reference(Reference::new(4, 0)),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    );
+    tx.write(2, &Value::Dict(pages), &budget).unwrap();
+
+    let mut page_one = Dict::new();
+    page_one.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+    page_one.insert(
+        Name::from("Annots"),
+        Value::Array(
+            [Value::Reference(Reference::new(10, 0))]
+                .into_iter()
+                .collect(),
+        ),
+    );
+    tx.write(3, &Value::Dict(page_one), &budget).unwrap();
+
+    let mut page_two = Dict::new();
+    page_two.insert(Name::from("Type"), Value::Name(Name::from("Page")));
+    page_two.insert(Name::from("UserUnit"), Value::from(2.5));
+    page_two.insert(
+        Name::from("Annots"),
+        Value::Array(
+            [Value::Reference(Reference::new(11, 0))]
+                .into_iter()
+                .collect(),
+        ),
+    );
+    tx.write(4, &Value::Dict(page_two), &budget).unwrap();
+
+    let version = tx.commit(&budget).unwrap();
+    let mut units = PageUnits::new(&version, &budget);
+
+    let mut with_parent = Dict::new();
+    with_parent.insert(Name::from("P"), Value::Reference(Reference::new(4, 0)));
+    assert_eq!(units.unit_of(None, &with_parent).unwrap(), 2.5);
+
+    let without_parent = Dict::new();
+    assert_eq!(
+        units
+            .unit_of(Some(Reference::new(11, 0)), &without_parent)
+            .unwrap(),
+        2.5
+    );
+    assert_eq!(
+        units
+            .unit_of(Some(Reference::new(10, 0)), &without_parent)
+            .unwrap(),
+        1.0
+    );
+    assert_eq!(
+        units
+            .unit_of(Some(Reference::new(99, 0)), &without_parent)
+            .unwrap(),
+        1.0
     );
 }

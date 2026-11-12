@@ -29,10 +29,10 @@ use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Transaction;
 use pyropdf_store::{Error, LimitExceeded, Result};
 
-use crate::annotations::{Reader, Resolved, numbers_array};
+use crate::annotations::{PageUnits, Reader, Resolved, numbers_array};
 use crate::standard::{
     self, Align, Base14Font, DefaultAppearance, DeviceColor, FIT_STEP, FORM_LINE_HEIGHT,
-    LayoutError, MAX_DEFAULT_APPEARANCE, MAX_FIT_SIZE, MIN_FIT_SIZE, Style,
+    LayoutError, MAX_DEFAULT_APPEARANCE, MAX_FIT_SIZE, MIN_FIT_SIZE, Style, TextBox,
 };
 use face::FaceText;
 
@@ -226,10 +226,25 @@ pub fn settle(
     widget: &Dict,
     budget: &Budget,
 ) -> Result<()> {
-    let reader = Reader {
-        version: transaction.version(),
-        budget,
-    };
+    let generation = transaction
+        .version()
+        .get(number, budget)?
+        .map_or(0, |object| object.generation());
+    let unit = PageUnits::new(transaction.version(), budget)
+        .unit_of(Some(Reference::new(number, generation)), widget)?;
+    settle_in_unit(transaction, number, widget, unit, budget)
+}
+
+/// Draws the appearance of widget `number`, `widget`, on a page whose
+/// `/UserUnit` is `unit`.
+pub fn settle_in_unit(
+    transaction: &mut Transaction,
+    number: u32,
+    widget: &Dict,
+    unit: f64,
+    budget: &Budget,
+) -> Result<()> {
+    let reader = Reader::on_page(transaction.version(), budget, unit);
     match appearance(&reader, widget) {
         Ok(Some(drawing)) => write(transaction, number, widget, drawing, budget),
         Ok(None) | Err(WidgetError::Malformed(_) | WidgetError::Lines) => Ok(()),
@@ -245,10 +260,7 @@ pub fn write(
     drawing: Drawing,
     budget: &Budget,
 ) -> Result<()> {
-    let reader = Reader {
-        version: transaction.version(),
-        budget,
-    };
+    let reader = Reader::new(transaction.version(), budget);
     let mut appearances = match reader.entry(widget, "AP")?.as_deref() {
         Some(value @ Value::Dict(_)) => match copy_for_edit(value, budget)? {
             Value::Dict(appearances) => appearances,
@@ -1035,6 +1047,7 @@ struct WidgetStyle {
     background: Option<Color>,
     border: Option<Color>,
     border_width: f64,
+    unit: f64,
 }
 
 impl WidgetStyle {
@@ -1102,14 +1115,16 @@ impl WidgetStyle {
             background,
             border,
             border_width,
+            unit: reader.unit,
         })
     }
 
     /// Returns the box that the text is drawn in, inside the border, with
     /// `y` downward from the top.
     fn content_rect(&self) -> [f64; 4] {
-        let inset = (self.border_width + 1.0)
-            .max(2.0)
+        let pt = 1.0 / self.unit;
+        let inset = (self.border_width + pt)
+            .max(2.0 * pt)
             .min(self.width.min(self.height) / 3.0);
         [
             inset,
@@ -1140,7 +1155,7 @@ impl WidgetStyle {
         } else if on {
             let ops = format!(
                 "q\n0 G\n{} w\n{} {} m\n{} {} l\n{} {} l\nS\nQ\n",
-                fmt((width.min(height) * 0.10).max(1.0)),
+                fmt((width.min(height) * 0.10).max(1.0 / self.unit)),
                 fmt(width * 0.20),
                 fmt(height * 0.52),
                 fmt(width * 0.42),
@@ -1289,8 +1304,17 @@ fn text_ops(
         return Ok(());
     }
     let Some(face) = face else {
-        let (layout, font_size) =
-            standard::fit(&value, size, text.font, text.size, multiline, budget)?;
+        let (layout, font_size) = fit_in_unit(
+            &value,
+            size,
+            text.size,
+            multiline,
+            style.unit,
+            budget,
+            |value, size, font_size| {
+                standard::form_layout(value, size, text.font, font_size, FORM_LINE_HEIGHT, budget)
+            },
+        )?;
         standard::text_ops(
             out,
             style.height,
@@ -1301,11 +1325,12 @@ fn text_ops(
         )?;
         return Ok(());
     };
-    let (layout, font_size) = standard::fit_with(
+    let (layout, font_size) = fit_in_unit(
         &value,
         size,
         text.size,
         multiline,
+        style.unit,
         budget,
         |value, size, font_size| face.layout(value, size, font_size, FORM_LINE_HEIGHT),
     )?;
@@ -1319,6 +1344,45 @@ fn text_ops(
         |out, line| face.show(out, line, font_size),
     )?;
     Ok(())
+}
+
+/// Fits `text` in `box_size` as [`standard::fit_with`] does, scaling the
+/// auto-fit bounds (`12` pt down to `0.01` pt) into the page's user space.
+fn fit_in_unit<'t>(
+    text: &'t str,
+    box_size: (f64, f64),
+    font_size: f64,
+    multiline: bool,
+    unit: f64,
+    budget: &Budget,
+    mut lay: impl FnMut(&'t str, (f64, f64), f64) -> std::result::Result<TextBox<'t>, LayoutError>,
+) -> std::result::Result<(TextBox<'t>, f64), LayoutError> {
+    budget.poll()?;
+    if ![box_size.0, box_size.1, font_size]
+        .iter()
+        .all(|value| value.is_finite() && *value >= 0.0)
+    {
+        return Err(LayoutError::InvalidGeometry);
+    }
+    if font_size > 0.0 {
+        let unbounded = (box_size.0, f64::MAX / 4.0);
+        return Ok((lay(text, unbounded, font_size)?, font_size));
+    }
+    let min_size = (MIN_FIT_SIZE / unit).max(f64::MIN_POSITIVE);
+    let mut size = box_size.1.min(MAX_FIT_SIZE / unit);
+    if size < min_size {
+        return Err(LayoutError::Unfit);
+    }
+    loop {
+        let layout = lay(text, box_size, size)?;
+        if layout.fits() && (multiline || layout.lines.len() <= 1) {
+            return Ok((layout, size));
+        }
+        size *= FIT_STEP;
+        if size < min_size {
+            return Err(LayoutError::Unfit);
+        }
+    }
 }
 
 /// Draws a comb value one grapheme to a cell, from the cell that `align`
@@ -1348,7 +1412,11 @@ fn comb_ops(
         reason = "a comb has fewer cells than f64 counts exactly"
     )]
     let cell = size.0 / max_len as f64;
-    let mut font_size = size.1.min(MAX_FIT_SIZE);
+    let min_size = (MIN_FIT_SIZE / style.unit).max(f64::MIN_POSITIVE);
+    let mut font_size = size.1.min(MAX_FIT_SIZE / style.unit);
+    if font_size < min_size {
+        return Err(malformed("comb field text cannot fit inside the widget"));
+    }
     let layouts = loop {
         let mut layouts = BudgetVec::new(budget);
         layouts.try_reserve(graphemes.len())?;
@@ -1372,7 +1440,7 @@ fn comb_ops(
             break layouts;
         }
         font_size *= FIT_STEP;
-        if font_size < MIN_FIT_SIZE {
+        if font_size < min_size {
             return Err(malformed("comb field text cannot fit inside the widget"));
         }
     };

@@ -52,13 +52,7 @@ fn draw(document: &Document) -> Result<Option<Drawing>, WidgetError> {
     let Value::Dict(widget) = &**widget.value() else {
         panic!("the widget is a dictionary");
     };
-    appearance(
-        &Reader {
-            version: &version,
-            budget: &budget,
-        },
-        widget,
-    )
+    appearance(&Reader::new(&version, &budget), widget)
 }
 
 fn content(document: &Document) -> String {
@@ -240,10 +234,7 @@ fn parent_chains_refuse_depth_and_cycles_without_truncation() {
     let document = open(&strings);
     let version = document.current();
     let budget = Budget::default();
-    let reader = Reader {
-        version: &version,
-        budget: &budget,
-    };
+    let reader = Reader::new(&version, &budget);
     let mut value = Arc::clone(version.get(1, &budget).unwrap().unwrap().value());
     let mut visited = Vec::new();
     for _ in 0..MAX_PARENTS {

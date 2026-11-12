@@ -29,14 +29,16 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
-use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::memo::Reads;
+use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
 use pyropdf_store::settle::Settler;
-use pyropdf_store::value::{Array, Bytes, Dict, Name, Stream, Value};
+use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 use pyropdf_store::{Error, Result};
 
 use crate::forms;
 use crate::forms::face::FaceText;
+use shapes::{cloud_radius_in_unit, ending_size_in_unit};
 
 /// The most points that one annotation's geometry holds, a squiggly line's
 /// zigzag included.
@@ -136,6 +138,8 @@ impl Settler for AppearanceSettler {
         numbers: &[u32],
         budget: &Budget,
     ) -> Result<()> {
+        let snapshot = transaction.snapshot();
+        let mut units = PageUnits::new(&snapshot, budget);
         for &number in numbers {
             let Some(object) = transaction.version().get(number, budget)? else {
                 continue;
@@ -143,14 +147,12 @@ impl Settler for AppearanceSettler {
             let Value::Dict(dict) = &**object.value() else {
                 continue;
             };
+            let unit = units.unit_of(Some(Reference::new(number, object.generation())), dict)?;
             if forms::is_widget(dict) {
-                forms::settle(transaction, number, dict, budget)?;
+                forms::settle_in_unit(transaction, number, dict, unit, budget)?;
                 continue;
             }
-            let reader = Reader {
-                version: transaction.version(),
-                budget,
-            };
+            let reader = Reader::on_page(transaction.version(), budget, unit);
             // An annotation that cannot be drawn still has its rectangle
             // fitted to its geometry.
             let (form, rect) = match appearance(&reader, dict)? {
@@ -188,12 +190,149 @@ impl Settler for AppearanceSettler {
     }
 }
 
+enum LoadedPages {
+    Pending,
+    None,
+    Indexed { pages: PageIndex, has_scaled: bool },
+}
+
+#[derive(Clone, Copy)]
+struct AnnotUnit {
+    id: (u32, u16),
+    page_order: usize,
+    unit: f64,
+}
+
+/// Resolves the `/UserUnit` of the page that owns an annotation or widget,
+/// from its `/P` entry or the page whose `/Annots` lists it.
+pub struct PageUnits<'a> {
+    version: &'a Version,
+    budget: &'a Budget,
+    pages: LoadedPages,
+    by_annot: Option<BudgetVec<'a, AnnotUnit>>,
+}
+
+impl<'a> PageUnits<'a> {
+    /// Prepares lazy page-unit lookup over `version`.
+    #[must_use]
+    pub const fn new(version: &'a Version, budget: &'a Budget) -> Self {
+        Self {
+            version,
+            budget,
+            pages: LoadedPages::Pending,
+            by_annot: None,
+        }
+    }
+
+    fn ensure_pages(&mut self) -> Result<()> {
+        if !matches!(self.pages, LoadedPages::Pending) {
+            return Ok(());
+        }
+        let reader = Reader::new(self.version, self.budget);
+        let has_tree = match self.version.trailer().get("Root") {
+            Some(root) => match &*reader.resolve(root)? {
+                Value::Dict(catalog) => match catalog.get("Pages") {
+                    Some(pages) => matches!(&*reader.resolve(pages)?, Value::Dict(_)),
+                    None => false,
+                },
+                _ => false,
+            },
+            None => false,
+        };
+        if !has_tree {
+            self.pages = LoadedPages::None;
+            return Ok(());
+        }
+        let pages = PageIndex::build(&mut Reads::new(self.version, self.budget))?;
+        let has_scaled = pages
+            .pages()
+            .iter()
+            .any(|page| (page.user_unit() - 1.0).abs() > 0.0);
+        self.pages = LoadedPages::Indexed { pages, has_scaled };
+        Ok(())
+    }
+
+    /// Returns the `/UserUnit` of the page that owns `dict` (and `reference`,
+    /// when it is an indirect object), or `1.0` when no scaled page claims it.
+    pub fn unit_of(&mut self, reference: Option<Reference>, dict: &Dict) -> Result<f64> {
+        self.ensure_pages()?;
+        let reader = Reader::new(self.version, self.budget);
+        match &self.pages {
+            LoadedPages::Indexed {
+                has_scaled: false, ..
+            } => Ok(1.0),
+            LoadedPages::Indexed { pages, .. } => {
+                if let Some(parent) = dict.get("P")
+                    && let Some((page_ref, _)) = reader.resolve_object(parent)?
+                    && let Some(at) = pages.index_of(page_ref)
+                {
+                    return Ok(pages.pages()[at].user_unit());
+                }
+                let Some(target) = reference else {
+                    return Ok(1.0);
+                };
+                if self.by_annot.is_none() {
+                    let mut entries = BudgetVec::new(self.budget);
+                    for (at, page) in pages.pages().iter().enumerate() {
+                        self.budget.poll()?;
+                        let Some(annots) = reader.entry(page.dict(), "Annots")? else {
+                            continue;
+                        };
+                        let Value::Array(items) = &*annots else {
+                            continue;
+                        };
+                        self.budget
+                            .check(LimitCode::AnnotationCount, items.len() as u64)?;
+                        for item in items.iter() {
+                            self.budget.poll()?;
+                            if let Value::Reference(annot) = *item {
+                                entries.try_push(AnnotUnit {
+                                    id: (annot.number(), annot.generation()),
+                                    page_order: at,
+                                    unit: page.user_unit(),
+                                })?;
+                            }
+                        }
+                    }
+                    entries.sort_unstable_by_key(|entry| (entry.id, entry.page_order));
+                    self.by_annot = Some(entries);
+                }
+                let key = (target.number(), target.generation());
+                let entries = self
+                    .by_annot
+                    .as_ref()
+                    .expect("by_annot was initialized above");
+                let at = entries.partition_point(|entry| entry.id < key);
+                Ok(entries
+                    .get(at)
+                    .filter(|entry| entry.id == key)
+                    .map_or(1.0, |entry| entry.unit))
+            }
+            LoadedPages::None => {
+                if let Some(Value::Dict(page_dict)) = reader.entry(dict, "P")?.as_deref()
+                    && !matches!(
+                        page_dict.get("Type"),
+                        Some(Value::Name(name)) if name.as_bytes() == b"Pages"
+                    )
+                    && let Some(unit) = page_dict.get("UserUnit")
+                {
+                    return Ok(reader.number(unit)?.filter(|&u| u > 0.0).unwrap_or(1.0));
+                }
+                Ok(1.0)
+            }
+            LoadedPages::Pending => unreachable!("ensure_pages resolved Pending"),
+        }
+    }
+}
+
 /// Reads the values of one version, following references.
 pub struct Reader<'a> {
     /// The version that the values belong to.
     pub version: &'a Version,
     /// The budget of the read.
     pub budget: &'a Budget,
+    /// The `/UserUnit` of the page being drawn, `1.0` by default.
+    pub unit: f64,
 }
 
 /// Resolving a direct value borrows it; only indirect objects need an Arc.
@@ -214,6 +353,55 @@ impl std::ops::Deref for Resolved<'_> {
 }
 
 impl<'b> Reader<'b> {
+    /// Creates a reader with a default `/UserUnit` of `1.0`.
+    #[must_use]
+    pub const fn new(version: &'b Version, budget: &'b Budget) -> Self {
+        Self {
+            version,
+            budget,
+            unit: 1.0,
+        }
+    }
+
+    /// Creates a reader for a page with `/UserUnit` `unit`.
+    #[must_use]
+    pub const fn on_page(version: &'b Version, budget: &'b Budget, unit: f64) -> Self {
+        let unit = if unit.is_finite() && unit > 0.0 {
+            unit
+        } else {
+            1.0
+        };
+        Self {
+            version,
+            budget,
+            unit,
+        }
+    }
+
+    /// Follows at most MAX_CHAIN references to an indirect object, returning
+    /// its final reference and value.
+    fn resolve_object(&self, value: &Value) -> Result<Option<(Reference, Arc<Value>)>> {
+        let &Value::Reference(mut reference) = value else {
+            return Ok(None);
+        };
+        for _ in 0..MAX_CHAIN {
+            let Some(object) = self
+                .version
+                .get(reference.number(), self.budget)?
+                .filter(|object| object.generation() == reference.generation())
+            else {
+                return Ok(None);
+            };
+            match &**object.value() {
+                Value::Reference(next) => reference = *next,
+                _ => return Ok(Some((reference, Arc::clone(object.value())))),
+            }
+        }
+        Err(Error::malformed(
+            "an annotation appearance reference chain is too long",
+        ))
+    }
+
     /// Follows at most MAX_CHAIN references. Missing objects read as null;
     /// exceeding the traversal bound is an error, not missing geometry.
     pub(crate) fn resolve<'v>(&self, value: &'v Value) -> Result<Resolved<'v>> {
@@ -642,6 +830,7 @@ struct Paint {
     interior: Option<(f64, f64, f64)>,
     width: f64,
     dashes: Vec<f64>,
+    unit: f64,
 }
 
 /// A stroke: its color, width, line cap and join, and dash pattern.
@@ -822,13 +1011,13 @@ fn fit(
         return Ok(None);
     }
     let width = reader.border(dict)?.map_or(1.0, |border| border.width);
-    let mut pad = width / 2.0 + 1.0;
+    let mut pad = width / 2.0 + 1.0 / reader.unit;
     let intensity = reader.cloud_intensity(dict)?;
     if intensity > 0.0 && subtype == b"Polygon" {
-        pad += cloud_radius(intensity, width);
+        pad += cloud_radius_in_unit(intensity, width, reader.unit);
     }
     if reader.line_endings(dict)? != [0, 0] {
-        pad += 2.0 * ending_size(width);
+        pad += 2.0 * ending_size_in_unit(width, reader.unit);
     }
     let rect = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
     if !rect.iter().all(|value| value.is_finite()) {
@@ -935,6 +1124,7 @@ fn appearance_with(
         interior: reader.color(dict, "IC")?,
         width: border.as_ref().map_or(1.0, |border| border.width),
         dashes: border.map(|border| border.dashes).unwrap_or_default(),
+        unit: reader.unit,
     };
     // A highlight multiplies unless /BM says otherwise.
     let blend = match reader.blend_mode(dict)? {

@@ -848,10 +848,11 @@ class TextField(_FieldSpecification):
 
     ``rect`` is in display coordinates. ``value`` and ``default_value`` are
     the field's text, drawn in ``font``, a Standard 14 font that is
-    Helvetica by default, at ``font_size`` (0 fits the text), in
-    ``text_color``, aligned by ``align``. ``flags`` adds
-    :class:`FieldFlags` such as ``MULTILINE``, ``PASSWORD``, ``COMB``,
-    ``REQUIRED``, or ``READ_ONLY``; ``max_length`` bounds the text.
+    Helvetica by default, at ``font_size`` points (0 fits the text; written
+    to ``/DA`` in the page's user space), in ``text_color``, aligned by
+    ``align``. ``flags`` adds :class:`FieldFlags` such as ``MULTILINE``,
+    ``PASSWORD``, ``COMB``, ``REQUIRED``, or ``READ_ONLY``; ``max_length``
+    bounds the text.
     """
 
     _kind: ClassVar[str] = "text"
@@ -1144,7 +1145,8 @@ class PushButton(_FieldSpecification):
     """A pushbutton, which holds no value, as ``page.widgets.add`` takes it.
 
     ``caption`` is drawn centred in ``font``, a Standard 14 font that is
-    Helvetica by default, at ``font_size`` in ``text_color``.
+    Helvetica by default, at ``font_size`` points (0 fits the text; written
+    to ``/DA`` in the page's user space) in ``text_color``.
     """
 
     _kind: ClassVar[str] = "pushbutton"

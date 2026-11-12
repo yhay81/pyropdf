@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
-use pyropdf_engine::annotations::{Reader, synthesized};
+use pyropdf_engine::annotations::{PageUnits, Reader, synthesized};
 use pyropdf_engine::fonts::embed::Face;
 use pyropdf_engine::forms::defaults::{self, Joined, Renames, Slot};
 use pyropdf_engine::forms::face::{FaceFont, FaceText};
@@ -2040,15 +2040,20 @@ fn draw_face(
     };
     let writing = font.is_some();
     let mut text = FaceText::new(face, font, budget).map_err(widget_error)?;
+    let snapshot = transaction.snapshot();
+    let mut units = PageUnits::new(&snapshot, budget);
     for &widget in &field.widgets {
         let version = transaction.version();
-        let reader = Reader { version, budget };
         let Some(dict) = widget_of(version, widget, budget)? else {
             continue;
         };
         let Value::Dict(dict) = &*dict else {
             continue;
         };
+        let unit = units
+            .unit_of(Some(Reference::new(widget.0, widget.1)), dict)
+            .map_err(store)?;
+        let reader = Reader::on_page(version, budget, unit);
         let drawing = widgets::face_appearance(&reader, dict, &mut text).map_err(widget_error)?;
         if writing && let Some(drawing) = drawing {
             widgets::write(transaction, widget.0, dict, drawing, budget).map_err(store)?;
@@ -2180,12 +2185,17 @@ fn change<'v>(
     let mut buttons = BudgetVec::new(budget);
     {
         let version = transaction.version();
-        let reader = Reader { version, budget };
+        let mut units = PageUnits::new(version, budget);
+        let reader = Reader::new(version, budget);
         for &widget in field.widgets.iter().filter(|_| own) {
             if let Some(dict) = widget_of(version, widget, budget)?
                 && let Value::Dict(dict) = &*dict
             {
-                widgets::appearance(&reader, dict).map_err(widget_error)?;
+                let unit = units
+                    .unit_of(Some(Reference::new(widget.0, widget.1)), dict)
+                    .map_err(store)?;
+                widgets::appearance(&Reader::on_page(version, budget, unit), dict)
+                    .map_err(widget_error)?;
                 marks.try_push(widget.0).map_err(|e| limit_error(&e))?;
             }
         }
@@ -2233,7 +2243,7 @@ fn change<'v>(
         plan(&states, value).map_err(limit)?;
         for (widget, state) in select(transaction, &states, value, budget)? {
             let version = transaction.version();
-            let reader = Reader { version, budget };
+            let reader = Reader::new(version, budget);
             if let Some(dict) = widget_of(version, widget, budget)?
                 && let Value::Dict(dict) = &*dict
                 && !(widgets::has_state(&reader, dict, widgets::OFF.as_bytes()).map_err(store)?
@@ -2279,7 +2289,7 @@ fn indexed_value<'i>(index: &'i FillIndex, form: &Form, id: Id) -> PyResult<Opti
 /// to `budget`, refusing more than 8,192 entries or 1 MiB of names in all.
 fn button_states(version: &Version, field: &Field, budget: &Budget) -> PyResult<States> {
     let store = |e: pyropdf_store::Error| store_error(&e);
-    let reader = Reader { version, budget };
+    let reader = Reader::new(version, budget);
     let (mut entries, mut bytes) = (0, 0);
     let mut states = BudgetVec::new(budget);
     for &widget in &field.widgets {
@@ -3097,10 +3107,10 @@ impl FieldSpec {
             clippy::disallowed_methods,
             reason = "this call inserts only the fixed /BS key"
         )]
-        widget.insert(Name::from("BS"), border_style(border, budget)?);
+        widget.insert(Name::from("BS"), border_style(border, annots.unit, budget)?);
         if shows_text(&self.kind) || self.kind == "pushbutton" {
             let (red, green, blue) = self.text_color.unwrap_or((0.0, 0.0, 0.0));
-            let size = self.font_size.unwrap_or(0.0);
+            let size = pdf_font_size(self.font_size.unwrap_or(0.0), annots.unit)?;
             let resource = self.font_resource()?;
             let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
             #[expect(
@@ -3318,7 +3328,7 @@ fn add_widget(
             budget,
         )?;
         let (red, green, blue) = spec.text_color.unwrap_or((0.0, 0.0, 0.0));
-        let size = spec.font_size.unwrap_or(0.0);
+        let size = pdf_font_size(spec.font_size.unwrap_or(0.0), annots.unit)?;
         let appearance = format!("/{resource} {size} Tf {red} {green} {blue} rg");
         #[expect(
             clippy::disallowed_methods,
@@ -6628,8 +6638,18 @@ pub fn widget_style(
             let reader = annots.reader();
             let appearance = match widgets::text_appearance(&reader, &dict).map_err(widget_error)? {
                 Some(da) => {
+                    let size = if da.size == 0.0 {
+                        0.0
+                    } else {
+                        da.size * annots.unit
+                    };
+                    if !size.is_finite() {
+                        return Err(MalformedPdfError::new_err(
+                            "a widget font size overflows display space",
+                        ));
+                    }
                     let font = widget_text_font(&annots, &da.font)?;
-                    Some((da.font, da.size, da.color, font))
+                    Some((da.font, size, da.color, font))
                 }
                 None => None,
             };
@@ -6899,7 +6919,7 @@ impl WidgetEdit {
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /BS key"
             )]
-            dict.insert(Name::from("BS"), border_style(border, budget)?);
+            dict.insert(Name::from("BS"), border_style(border, annots.unit, budget)?);
         }
         if let Some(flags) = self.flags {
             if !(0..=1023).contains(&flags) {
@@ -6933,12 +6953,29 @@ impl WidgetEdit {
             let color = self.text_color.unwrap_or(current.color);
             rgb(color, "text color")?;
             let resource = font_resource.unwrap_or(current.font);
-            let size = self.font_size.unwrap_or(current.size);
-            if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
-                return Err(PdfError::new_err(
-                    "a widget font size is from 0, which fits the text, to 10000",
-                ));
-            }
+            let size = match self.font_size {
+                Some(size) => {
+                    if !(size.is_finite() && (0.0..=10_000.0).contains(&size)) {
+                        return Err(PdfError::new_err(
+                            "a widget font size is from 0, which fits the text, to 10000",
+                        ));
+                    }
+                    pdf_font_size(size, annots.unit)?
+                }
+                None => {
+                    let points = current.size * annots.unit;
+                    if !(points.is_finite() && (0.0..=10_000.0).contains(&points)) {
+                        return Err(PdfError::new_err(
+                            "a widget font size is from 0, which fits the text, to 10000",
+                        ));
+                    }
+                    if current.size == 0.0 {
+                        0.0
+                    } else {
+                        current.size
+                    }
+                }
+            };
             let (red, green, blue) = color;
             let da = format!("/{resource} {size} Tf {red} {green} {blue} rg");
             #[expect(
@@ -6952,6 +6989,19 @@ impl WidgetEdit {
         }
         Ok(())
     }
+}
+
+fn pdf_font_size(size: f64, unit: f64) -> PyResult<f64> {
+    if size == 0.0 {
+        return Ok(0.0);
+    }
+    let pdf = size / unit;
+    if !(pdf.is_finite() && pdf > 0.0) {
+        return Err(PdfError::new_err(
+            "a widget font size is not representable in user space",
+        ));
+    }
+    Ok(pdf)
 }
 
 /// Edits the widget that a handle names and draws it again for its
@@ -7009,13 +7059,14 @@ pub fn widget_edit(
                     None => None,
                 };
                 edit.apply(annots, &mut dict, font_resource, budget)?;
+                let unit = annots.unit;
                 annots.write(
                     transaction,
                     position,
                     false,
                     dict,
                     |transaction, reference, dict, _, budget| {
-                        restyle(transaction, reference, dict, budget, (cache, before))?;
+                        restyle(transaction, reference, dict, unit, budget, (cache, before))?;
                         Ok(false)
                     },
                 )
@@ -7032,6 +7083,7 @@ fn restyle(
     transaction: &mut Transaction,
     reference: Reference,
     dict: &mut Dict,
+    unit: f64,
     budget: &Budget,
     (cache, before): (&FillCache, Arc<Version>),
 ) -> PyResult<()> {
@@ -7044,7 +7096,8 @@ fn restyle(
     };
     *dict = written;
     let version = transaction.version();
-    let drawing = widgets::restyled(&Reader { version, budget }, dict).map_err(widget_error)?;
+    let drawing =
+        widgets::restyled(&Reader::on_page(version, budget, unit), dict).map_err(widget_error)?;
     if let Some(drawing) = drawing {
         widgets::write(transaction, number, dict, drawing, budget).map_err(store)?;
         if let Some(drawn) = dict_at(transaction, reference, budget)? {
