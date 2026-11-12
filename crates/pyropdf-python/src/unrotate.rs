@@ -10,16 +10,17 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyropdf_engine::display::to_display;
+use pyropdf_engine::navigation::{free, references};
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use crate::annotations::{CopyPart, charge_copy, to_display};
+use crate::annotations::{CopyPart, charge_copy};
 use crate::document::_Document;
 use crate::errors::{limit_error, store_error};
-use crate::outline::free;
 use crate::pages::{BOXES, Box4, number, rect, resolve, rotation, user_boxes};
 
 /// A matrix `[a b c d e f]` that maps `(x, y)` to
@@ -451,7 +452,8 @@ pub fn remove_page_rotation(
             budget
                 .check(LimitCode::AnnotationCount, items.len() as u64)
                 .map_err(|e| limit_error(&e))?;
-            let references = crate::outline::references(document, transaction, budget)?;
+            let references = references(&document.references, transaction, budget)
+                .map_err(|e| store_error(&e))?;
             let mut direct = false;
             for item in items.iter_mut() {
                 budget.poll().map_err(|e| limit_error(&e))?;
@@ -578,7 +580,8 @@ pub fn remove_page_rotation(
                 }
             }
             let unused = std::mem::take(&mut state.unused);
-            free(document, transaction, &unused, budget)?;
+            free(&document.references, transaction, &unused, budget)
+                .map_err(|e| store_error(&e))?;
             Ok(true)
         })
     })?

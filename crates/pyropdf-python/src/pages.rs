@@ -14,8 +14,11 @@ use pyo3::exceptions::{PyIndexError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyropdf_engine::content::PageContent;
-use pyropdf_engine::display::{A4, Display};
+use pyropdf_engine::display::{A4, Display, to_display, to_pdf};
 pub(crate) use pyropdf_engine::display::{display_box, rect, rotation};
+use pyropdf_engine::navigation::{
+    self, Destination, Lead, LeadReader, NamedDestinations, lead, read,
+};
 use pyropdf_engine::pages::copy::Copies;
 use pyropdf_engine::pages::{import, sources};
 use pyropdf_engine::render::Fallback;
@@ -26,10 +29,8 @@ use pyropdf_store::refs::{self, Edits, Rule};
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Document, ObjectStamps, Transaction, Version};
 
-use crate::annotations::links::{
-    Destination, Lead, LeadReader, NamedDestinations, lead, named, read,
-};
-use crate::annotations::{CopyPart, charge_copy, to_display, to_pdf};
+use crate::annotations::links::{destinations_memo, navigation_error};
+use crate::annotations::{CopyPart, charge_copy};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, PdfError, limit_error, store_error};
 use crate::forms;
@@ -1371,7 +1372,10 @@ impl Links<'_, '_> {
     /// the others; `None` when the page has no annotation array.
     fn annots(&mut self, page: &Dict) -> PyResult<Option<Array>> {
         let store = |e: pyropdf_store::Error| store_error(&e);
-        let Some(Value::Array(items)) = self.resolved(page.get("Annots"))? else {
+        let Some(Value::Array(items)) = self
+            .resolved(page.get("Annots"))
+            .map_err(navigation_error)?
+        else {
             return Ok(None);
         };
         self.reads
@@ -1383,13 +1387,16 @@ impl Links<'_, '_> {
         kept.try_reserve_exact(items.len())
             .map_err(|e| store(e.into()))?;
         for item in items.iter() {
-            let Some(Value::Dict(annotation)) = self.resolved(Some(item))? else {
+            let Some(Value::Dict(annotation)) =
+                self.resolved(Some(item)).map_err(navigation_error)?
+            else {
                 kept.try_push(refs::copy_for_edit(item, budget).map_err(store)?)
                     .map_err(|e| store(e.into()))?;
                 continue;
             };
             let link = matches!(
-                self.resolved(annotation.get("Subtype"))?,
+                self.resolved(annotation.get("Subtype"))
+                    .map_err(navigation_error)?,
                 Some(Value::Name(subtype)) if subtype.as_bytes() == b"Link"
             );
             if !link {
@@ -1397,7 +1404,7 @@ impl Links<'_, '_> {
                     .map_err(|e| store(e.into()))?;
                 continue;
             }
-            let destination = match lead(self, &annotation)? {
+            let destination = match lead(self, &annotation).map_err(navigation_error)? {
                 Lead::Target(_) => {
                     kept.try_push(refs::copy_for_edit(item, budget).map_err(store)?)
                         .map_err(|e| store(e.into()))?;
@@ -1443,7 +1450,9 @@ impl Links<'_, '_> {
         let array = Value::Array(destination.array(page));
         charge_copy(CopyPart::Dict(link), self.budget)?;
         let mut link = link.clone();
-        if let Some(Value::Dict(mut action)) = self.resolved(link.get("A"))? {
+        if let Some(Value::Dict(mut action)) =
+            self.resolved(link.get("A")).map_err(navigation_error)?
+        {
             #[expect(
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /D key"
@@ -1468,7 +1477,14 @@ impl Links<'_, '_> {
 
     fn lookup(&mut self, name: &[u8]) -> PyResult<Destination> {
         if self.named.is_none() {
-            self.named = Some(named(self.source, self.version, self.reads.budget())?);
+            self.named = Some(
+                NamedDestinations::memoized(
+                    destinations_memo(self.source),
+                    self.version,
+                    self.reads.budget(),
+                )
+                .map_err(navigation_error)?,
+            );
         }
         Ok(self
             .named
@@ -1483,12 +1499,12 @@ impl LeadReader for Links<'_, '_> {
         self.reads.budget()
     }
 
-    fn resolved(&mut self, value: Option<&Value>) -> PyResult<Option<Value>> {
+    fn resolved(&mut self, value: Option<&Value>) -> navigation::Result<Option<Value>> {
         read(&mut self.reads, value)
     }
 
     /// The import reads no text of a link.
-    fn text(&mut self, _: &[u8], _: &str, _: bool) -> PyResult<String> {
+    fn text(&mut self, _: &[u8], _: &str, _: bool) -> navigation::Result<String> {
         Ok(String::new())
     }
 }

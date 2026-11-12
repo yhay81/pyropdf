@@ -4,7 +4,7 @@ use hayro::hayro_interpret::TransformExt;
 use hayro::hayro_syntax::page::Page as HayroPage;
 use hayro::kurbo::Affine;
 use pyropdf_store::pages::Page;
-use pyropdf_store::value::Value;
+use pyropdf_store::value::{PdfString, Value};
 
 /// The default page dimensions when there is no usable box.
 pub const A4: (f64, f64) = (595.0, 842.0);
@@ -113,4 +113,61 @@ pub fn rect(value: &Value) -> Option<(f64, f64, f64, f64)> {
     }
     let [a, b, c, d] = numbers;
     Some((a.min(c), b.min(d), a.max(c), b.max(d)))
+}
+
+/// Converts a point of PDF user space to display space, in points, on a
+/// page whose display box is `crop`, whose normalized `/Rotate` is
+/// `rotation`, and whose user space unit is `unit` points.
+#[must_use]
+pub fn to_display(crop: [f64; 4], rotation: i64, unit: f64, x: f64, y: f64) -> (f64, f64) {
+    let [cx0, cy0, cx1, cy1] = crop;
+    let (u, v) = match rotation {
+        90 => (y - cy0, x - cx0),
+        180 => (cx1 - x, y - cy0),
+        270 => (cy1 - y, cx1 - x),
+        _ => (x - cx0, cy1 - y),
+    };
+    (u * unit, v * unit)
+}
+
+/// Converts a point of display space to PDF user space, as the inverse of
+/// [`to_display`].
+#[must_use]
+pub fn to_pdf(crop: [f64; 4], rotation: i64, unit: f64, x: f64, y: f64) -> (f64, f64) {
+    let [cx0, cy0, cx1, cy1] = crop;
+    let (x, y) = (x / unit, y / unit);
+    match rotation {
+        90 => (cx0 + y, cy0 + x),
+        180 => (cx1 - x, cy0 + y),
+        270 => (cx1 - y, cy1 - x),
+        _ => (cx0 + x, cy1 - y),
+    }
+}
+
+/// Encodes a text string as `String.text` reads it: ASCII as is, anything
+/// else as UTF-16BE.
+#[must_use]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "at most two bytes per input UTF-8 byte plus the two-byte BOM; callers bound or charge the text first"
+)]
+pub fn encode_text(text: &str) -> Value {
+    let bytes = if text.is_ascii() {
+        text.as_bytes().to_vec()
+    } else {
+        let mut bytes = vec![0xFE, 0xFF];
+        bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+        bytes
+    };
+    Value::String(PdfString::literal(bytes))
+}
+
+/// Returns `value` as an integer when it is one, else as a real.
+#[must_use]
+pub fn number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        Value::Integer(value as i64)
+    } else {
+        Value::from(value)
+    }
 }
