@@ -46,5 +46,8 @@ that claim.
 
 ## Contributing
 
+For your first contribution, browse the [available good first issues](https://github.com/yhay81/pyropdf/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22+-label%3Ain-progress)
+and leave a comment on the one you would like to take.
+
 [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build, test, and propose
 a change, and [SECURITY.md](SECURITY.md) how to report a vulnerability.
