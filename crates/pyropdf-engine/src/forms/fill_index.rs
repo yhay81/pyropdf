@@ -8,10 +8,10 @@ use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::value::{Dict, Value};
 use pyropdf_store::version::Version;
 
-use super::traversal::{
-    Form, Id, MAX_DEPTH, MAX_VALUE_BYTES, MAX_VALUE_ITEMS, Text, TraceNode, charge, edges_error,
-    field_value, id, limit, looks_like_widget, node_value, object, object_location, own,
-    walk_with_trace,
+use super::traversal::{Form, MAX_DEPTH, TraceNode, edges_error, walk_with_trace};
+use super::values::{
+    Id, MAX_VALUE_BYTES, MAX_VALUE_ITEMS, Text, charge, field_value, id, limit, looks_like_widget,
+    node_value, object, object_location, own,
 };
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
 

@@ -8,9 +8,10 @@ use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::Transaction;
 
-use super::traversal::{
-    FIELD_TRIGGERS, Id, MAX_EDGES, MAX_NAME_BYTES, charge, edges_error, id, insert_set, located,
-    object, object_location, push, read, reserve_map,
+use super::traversal::{MAX_EDGES, edges_error};
+use super::values::{
+    FIELD_TRIGGERS, Id, MAX_NAME_BYTES, charge, id, insert_set, located, object, object_location,
+    push, read, reserve_map,
 };
 use super::{RADIO, text_string};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};

@@ -6,7 +6,7 @@ use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::Transaction;
 
 use super::field_edit::{FIELD_KEYS, dict_at};
-use super::traversal::{FIELD_TRIGGERS, Id, stale};
+use super::values::{FIELD_TRIGGERS, Id, stale};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
 
 /// Edits the array that entry `key` of object `holder` holds: an array

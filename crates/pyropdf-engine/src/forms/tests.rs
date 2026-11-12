@@ -1,10 +1,17 @@
-use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{DocumentLimits, LimitCode};
+use std::sync::Arc;
+
+use pyropdf_store::budget::{Budget, BudgetVec, DocumentLimits, LimitCode};
 use pyropdf_store::index::Index;
 use pyropdf_store::memo::Reads;
 use pyropdf_store::save::FileBase;
+use pyropdf_store::value::{Bytes, Dict, Name, Reference, Value};
 use pyropdf_store::version::Document;
+use pyropdf_store::{LimitExceeded, Result};
 
+use crate::annotations::Reader;
+
+use super::form_font::parent;
+use super::settle::FontEntry;
 use super::*;
 
 fn open(objects: &[&str]) -> Document {
@@ -540,4 +547,77 @@ fn merging_default_resources_grows_through_the_budget() {
         let error = merge(source, &budget).err().unwrap();
         assert_eq!(error.limit().unwrap().code(), LimitCode::MemorySize);
     }
+}
+
+#[test]
+fn field_details_and_standard_font_bootstrap_preserve_bounds() {
+    let document = open(&[
+        "<< /Type /Catalog /AcroForm 2 0 R >>",
+        "<< /Fields [3 0 R] /DR << /Font << /Helv << /Type /Font /Subtype /TrueType /BaseFont /Helvetica >> >> >> >>",
+        "<< /T (group) /FT /Tx /MaxLen 12 /DV (Fallback) /Kids [4 0 R] >>",
+        "<< /Parent 3 0 R /T (leaf) /TU (Full name) >>",
+    ]);
+    let version = document.current();
+    let budget = Budget::default();
+    let walked = walk(&mut Reads::new(&version, &budget)).unwrap();
+    assert_eq!(
+        field_edit::field_details(&version, &budget, &walked, (4, 0)).unwrap(),
+        (
+            Some("Full name".to_owned()),
+            Some(12),
+            Some("Fallback".to_owned()),
+        ),
+    );
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    let error = field_edit::field_details(&version, &tight, &walked, (4, 0)).unwrap_err();
+    assert_eq!(error.limit_code(), Some(LimitCode::MemorySize));
+
+    let mut transaction = document.begin();
+    let holder = Reference::new(2, 0);
+    let tight_error =
+        field_edit::register_standard_font(&mut transaction, holder, "Helv", "Helvetica", &tight)
+            .unwrap_err();
+    assert_eq!(tight_error.limit_code(), Some(LimitCode::MemorySize));
+
+    let allocated =
+        field_edit::register_standard_font(&mut transaction, holder, "Helv", "Helvetica", &budget)
+            .unwrap();
+    assert_eq!(allocated, "Helv_1");
+    let reused =
+        field_edit::register_standard_font(&mut transaction, holder, "Helv", "Helvetica", &budget)
+            .unwrap();
+    assert_eq!(reused, "Helv_1");
+}
+
+#[test]
+fn value_decoding_enforces_item_and_memory_budgets() {
+    use pyropdf_store::value::{Array, PdfString};
+
+    let document = open(&["<< /Type /Catalog >>"]);
+    let version = document.current();
+    let array = Value::Array(Array::from(vec![
+        Value::String(PdfString::literal(b"alpha".to_vec())),
+        Value::String(PdfString::literal(b"beta".to_vec())),
+    ]));
+
+    let budget = Budget::default();
+    let mut reads = Reads::new(&version, &budget);
+    let mut totals = (0, 0);
+    let mut items = 0;
+    assert_eq!(
+        values::field_value(&mut reads, &array, &mut totals, &mut items).unwrap(),
+        Some("alpha, beta".to_owned()),
+    );
+    assert_eq!(items, 2);
+
+    let mut saturated = MAX_VALUE_ITEMS - 1;
+    let over_items =
+        values::field_value(&mut reads, &array, &mut (0, 0), &mut saturated).unwrap_err();
+    assert!(over_items.to_string().contains("item safety limit"));
+
+    let tight = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    let mut tight_reads = Reads::new(&version, &tight);
+    let over_memory =
+        values::field_value(&mut tight_reads, &array, &mut (0, 0), &mut 0).unwrap_err();
+    assert_eq!(over_memory.limit_code(), Some(LimitCode::MemorySize));
 }

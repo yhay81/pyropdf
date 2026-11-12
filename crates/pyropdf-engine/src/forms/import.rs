@@ -11,10 +11,9 @@ use pyropdf_store::version::{Transaction, Version};
 
 use super::defaults::{self, Joined, Renames, Slot};
 use super::field_edit::dict_at;
-use super::traversal::{
-    MAX_NAME_BYTES, id, inherited, object, omitted, push, read, reserve_map, text,
-};
+use super::traversal::inherited;
 use super::tree_edit::edit_array;
+use super::values::{MAX_NAME_BYTES, id, object, omitted, push, read, reserve_map, text};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
 use crate::display::encode_text;
 

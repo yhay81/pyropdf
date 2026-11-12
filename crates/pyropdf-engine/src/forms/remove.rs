@@ -15,8 +15,9 @@ use super::field_edit::form_object;
 use super::fill::base;
 use super::fill_index::FillCache;
 use super::flatten::{self as flattening, Missing, Selection};
-use super::traversal::{Form, Id, id, insert_set, object, stale, visit};
+use super::traversal::{Form, visit};
 use super::tree_edit::edit_array;
+use super::values::{Id, id, insert_set, object, stale};
 use crate::annotations::{
     AnnotationError as Error, AnnotationResult as Result, PageAnnots, synthesized,
 };
