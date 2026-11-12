@@ -9,6 +9,9 @@
 //! the source's page tree never comes along.
 
 mod graft;
+mod selection;
+
+pub use selection::{Source, import_pages};
 
 use std::borrow::Borrow;
 use std::collections::HashMap;
