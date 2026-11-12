@@ -260,7 +260,7 @@ pub(crate) struct Annots<'b> {
     crop: [f64; 4],
     pub(crate) rotation: i64,
     /// The size of the page's user space unit in points.
-    unit: f64,
+    pub(crate) unit: f64,
     /// The array object that the page's `/Annots` names, if it names one.
     array: Option<Reference>,
     pub(crate) items: Array,
@@ -331,10 +331,7 @@ impl<'b> Annots<'b> {
 
     /// Returns a reader of the version that the annotations were read in.
     pub(crate) fn reader(&self) -> Reader<'_> {
-        Reader {
-            version: &self.version,
-            budget: self.budget,
-        }
+        Reader::on_page(&self.version, self.budget, self.unit)
     }
 
     /// Returns the object and dictionary of the entry `item`, or `None`
@@ -582,16 +579,28 @@ impl<'b> Annots<'b> {
         if let Some(Value::Dict(style)) = self.resolved(dict.get("BS"))? {
             let width = self
                 .number(style.get("W"))?
-                .filter(|width| *width >= 0.0)
-                .unwrap_or(1.0);
+                .filter(|width| width.is_finite() && *width >= 0.0)
+                .unwrap_or(1.0)
+                * self.unit;
+            if !width.is_finite() {
+                return Ok(None);
+            }
             let name = self
                 .name(&style, "S")?
                 .filter(|name| matches!(name.as_slice(), b"S" | b"D" | b"B" | b"I" | b"U"))
                 .unwrap_or_else(|| b"S".to_vec());
             let dashes = if name == b"D" {
-                self.numbers(style.get("D"), MAX_BORDER_DASHES)?
+                let mut dashes = self
+                    .numbers(style.get("D"), MAX_BORDER_DASHES)?
                     .filter(|dashes| valid_dashes(dashes))
-                    .unwrap_or_else(|| vec![3.0])
+                    .unwrap_or_else(|| vec![3.0]);
+                for dash in &mut dashes {
+                    *dash *= self.unit;
+                }
+                if !valid_dashes(&dashes) {
+                    return Ok(None);
+                }
+                dashes
             } else {
                 Vec::new()
             };
@@ -607,12 +616,27 @@ impl<'b> Annots<'b> {
         if !(3..=4).contains(&items.len()) {
             return Ok(None);
         }
-        let Some(width) = self.number(items.get(2))?.filter(|width| *width >= 0.0) else {
+        let Some(width) = self
+            .number(items.get(2))?
+            .filter(|width| width.is_finite() && *width >= 0.0)
+        else {
             return Ok(None);
         };
+        let width = width * self.unit;
+        if !width.is_finite() {
+            return Ok(None);
+        }
         let dashes = match items.get(3) {
             Some(pattern) => match self.numbers(Some(pattern), MAX_BORDER_DASHES)? {
-                Some(dashes) if valid_dashes(&dashes) => dashes,
+                Some(mut dashes) if valid_dashes(&dashes) => {
+                    for dash in &mut dashes {
+                        *dash *= self.unit;
+                    }
+                    if !valid_dashes(&dashes) {
+                        return Ok(None);
+                    }
+                    dashes
+                }
                 _ => return Ok(None),
             },
             None => Vec::new(),
@@ -1033,7 +1057,10 @@ impl Edit {
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /BS key"
             )]
-            dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
+            dict.insert(
+                Name::from("BS"),
+                border_style(border, annots.unit, annots.budget)?,
+            );
         }
         if let Some(intensity) = self.clouds {
             #[expect(
@@ -1128,6 +1155,7 @@ impl Edit {
 )]
 pub(crate) fn border_style(
     (width, style, dashes): &(f64, String, Vec<f64>),
+    unit: f64,
     budget: &Budget,
 ) -> PyResult<Value> {
     budget
@@ -1151,19 +1179,34 @@ pub(crate) fn border_style(
             "a dashed border has 1 to {MAX_BORDER_DASHES} non-negative dash lengths, and only a dashed one"
         )));
     }
+    let pdf_width = if *width == 0.0 { 0.0 } else { *width / unit };
+    if !pdf_width.is_finite() {
+        return Err(PdfError::new_err(
+            "an annotation border width is not representable in user space",
+        ));
+    }
     let mut border = Dict::new();
     #[expect(
         clippy::disallowed_methods,
         reason = "this call inserts only the fixed /W key"
     )]
-    border.insert(Name::from("W"), number(*width));
+    border.insert(Name::from("W"), number(pdf_width));
     #[expect(
         clippy::disallowed_methods,
         reason = "this call inserts only the fixed /S key"
     )]
     border.insert(Name::from("S"), Value::Name(Name::from(style.as_str())));
     if !dashes.is_empty() {
-        let dashes = dashes.iter().map(|dash| number(*dash)).collect::<Vec<_>>();
+        let pdf_dashes = dashes
+            .iter()
+            .map(|dash| if *dash == 0.0 { 0.0 } else { *dash / unit })
+            .collect::<Vec<_>>();
+        if !valid_dashes(&pdf_dashes) {
+            return Err(PdfError::new_err(
+                "annotation border dashes are not representable in user space",
+            ));
+        }
+        let dashes = pdf_dashes.into_iter().map(number).collect::<Vec<_>>();
         #[expect(
             clippy::disallowed_methods,
             reason = "this call inserts only the fixed /D key"
@@ -1307,10 +1350,7 @@ pub fn annotation_geometry(
         if !has_points(&subtype) {
             return Ok(Some((None, None)));
         }
-        let reader = Reader {
-            version: &annots.version,
-            budget: annots.budget,
-        };
+        let reader = annots.reader();
         let mut points = reader
             .point_lists(&dict, &subtype)
             .map_err(|e| store_error(&e))?;
@@ -2302,7 +2342,10 @@ impl Spec {
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /BS key"
             )]
-            dict.insert(Name::from("BS"), border_style(border, annots.budget)?);
+            dict.insert(
+                Name::from("BS"),
+                border_style(border, annots.unit, annots.budget)?,
+            );
         }
         if let Some(intensity) = self.clouds {
             #[expect(
@@ -2472,6 +2515,12 @@ impl Spec {
                 "a font size is greater than 0 and at most 10000",
             ));
         }
+        let pdf_size = size / annots.unit;
+        if !(pdf_size.is_finite() && pdf_size > 0.0) {
+            return Err(PdfError::new_err(
+                "a font size is not representable in user space",
+            ));
+        }
         let name = self.font_name.as_deref().unwrap_or("Helvetica");
         let resource = DA_FONTS
             .iter()
@@ -2480,7 +2529,7 @@ impl Spec {
             .ok_or_else(|| PdfError::new_err(format!("unknown Standard 14 font {name:?}")))?;
         let da = format!(
             "/{resource} {} Tf {} {} {} rg",
-            fmt(size),
+            fmt(pdf_size),
             fmt(color.0),
             fmt(color.1),
             fmt(color.2),
@@ -2529,13 +2578,14 @@ impl Spec {
         let (c, d) = to_pdf(annots.crop, annots.rotation, annots.unit, x1, y1);
         let inner = [a.min(c), b.min(d), a.max(c), b.max(d)];
         let width = self.border.as_ref().map_or(0.0, |border| border.0).max(1.0);
-        let pad = width / 2.0
+        let pad = (width / 2.0
             + 1.0
             + if ending == "None" {
                 0.0
             } else {
                 2.0 * ending_size(width)
-            };
+            })
+            / annots.unit;
         let mut outer = inner;
         let mut line = Vec::with_capacity(points.len() * 2);
         for &(x, y) in points.iter() {
@@ -2871,10 +2921,7 @@ fn isolated(
         let version = transaction.snapshot();
         let pages = Arc::new(PageIndex::build(&mut Reads::new(&version, budget)).map_err(store)?);
         let items = Array::from(vec![item]);
-        let reader = Reader {
-            version: &version,
-            budget,
-        };
+        let reader = Reader::on_page(&version, budget, pages.pages()[at].user_unit());
         let selection = Selection {
             annotations: true,
             widgets: false,

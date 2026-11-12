@@ -185,7 +185,7 @@ Settable.
 Annotation.border: Border | None
 ```
 
-Or set the border that `/BS`, else `/Border`, describes, or `None` without either.
+Or set the border that `/BS`, else `/Border`, describes, in points, or `None` without either.
 
 Settable.
 
@@ -571,10 +571,11 @@ Border(
 
 The border of an annotation: its line width, style, and dash pattern.
 
-`dashes` lists 1 to 32 dash and gap lengths in points, which a
-`BorderStyle.DASHED` border needs and no other style takes; giving
-`dashes` without a style selects the dashed style. A width of 0 draws
-no border.
+`width` and the 1 to 32 dash and gap lengths of `dashes` are in
+points, scaled to and from user space by the page's `/UserUnit`. A
+`BorderStyle.DASHED` border needs `dashes` and no other style
+takes them; giving `dashes` without a style selects the dashed style.
+A width of 0 draws no border.
 
 ## `BorderStyle`
 
@@ -675,9 +676,10 @@ Text written on the page in a box, as `page.annotations.add` takes it.
 
 `rect` is the box in display coordinates and `text` its text,
 wrapped as `Canvas.textbox` wraps it, `align`-ed, and in
-`font`, Helvetica by default, at `size` points and `text_color`.
-A Standard 14 font is named in the annotation's `/DA`, so other
-viewers can redraw it; it prints WinAnsi characters only. An embedded
+`font`, Helvetica by default, at `size` points (written to `/DA`
+in the page's user space) and `text_color`. A Standard 14 font is
+named in the annotation's `/DA`, so other viewers can redraw it; it
+prints WinAnsi characters only. An embedded
 `Font` shapes any text that it has glyphs for; the appearance
 names its font, and edits in the same session draw the text in it
 again. A later session knows no face and redraws the text in the

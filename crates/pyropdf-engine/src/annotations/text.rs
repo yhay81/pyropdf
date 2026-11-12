@@ -83,7 +83,7 @@ pub fn default_appearance(reader: &Reader<'_>, dict: &Dict) -> Result<DefaultApp
         .or_else(|| DefaultAppearance::parse(b"").ok())
         .ok_or_else(|| Error::malformed("an empty default appearance is refused"))?;
     if result.size <= 0.0 {
-        result.size = 12.0;
+        result.size = 12.0 / reader.unit;
     }
     Ok(result)
 }
@@ -152,7 +152,7 @@ pub(super) fn free_text(
         _ => String::new(),
     };
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let inset = width + FREE_TEXT_PADDING;
+    let inset = width + FREE_TEXT_PADDING / reader.unit;
     let area = [
         inner[0] + inset,
         inner[1] + inset,
@@ -349,7 +349,7 @@ fn callout(
         .iter()
         .map(|&[x, y]| (x, y))
         .collect();
-    let line_width = width.max(1.0);
+    let line_width = width.max(1.0 / reader.unit);
     polyline(canvas, &points, to_canvas);
     canvas.stroke(da.color, line_width, 0, 0, &[]);
     let ending_index = |name: &Name| {
@@ -374,6 +374,7 @@ fn callout(
         interior: reader.color(dict, "IC")?,
         width: line_width,
         dashes: Vec::new(),
+        unit: reader.unit,
     };
     draw_ending(canvas, &paint, ending, points[0], points[1], to_canvas)
 }

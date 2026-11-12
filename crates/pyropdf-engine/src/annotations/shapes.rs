@@ -26,14 +26,26 @@ const TARGET_CLOUD_BUMPS: usize = 1_024;
 /// Returns the half size of a line ending drawn with stroke `width`.
 #[must_use]
 pub fn ending_size(width: f64) -> f64 {
-    3.0 * width.max(1.0)
+    ending_size_in_unit(width, 1.0)
+}
+
+/// Returns [`ending_size`] in a user space whose unit is `unit` points.
+#[must_use]
+pub(crate) fn ending_size_in_unit(width: f64, unit: f64) -> f64 {
+    3.0 * width.max(1.0 / unit)
 }
 
 /// Returns how far the bumps of a cloudy border of `intensity`, stroked
 /// `width` wide, reach beyond its outline.
 #[must_use]
 pub fn cloud_radius(intensity: f64, width: f64) -> f64 {
-    4.0f64.mul_add(intensity, width).max(2.0)
+    cloud_radius_in_unit(intensity, width, 1.0)
+}
+
+/// Returns [`cloud_radius`] in a user space whose unit is `unit` points.
+#[must_use]
+pub(crate) fn cloud_radius_in_unit(intensity: f64, width: f64, unit: f64) -> f64 {
+    (4.0 / unit).mul_add(intensity, width).max(2.0 / unit)
 }
 
 /// Emits a polyline directly without an input-sized intermediate path.
@@ -69,7 +81,7 @@ pub(super) fn boxed(
     }
     let [left, top, right, bottom] = insets;
     let bumps = if intensity > 0.0 {
-        cloud_radius(intensity, paint.width)
+        cloud_radius_in_unit(intensity, paint.width, paint.unit)
     } else {
         0.0
     };
@@ -139,7 +151,11 @@ pub(super) fn lines(
         if intensity > 0.0 && vertices.len() >= 3 {
             let mut points = BudgetVec::new(canvas.out.bytes.budget());
             points.try_extend(vertices.iter().copied().map(to_canvas))?;
-            cloud(canvas, &points, cloud_radius(intensity, paint.width))?;
+            cloud(
+                canvas,
+                &points,
+                cloud_radius_in_unit(intensity, paint.width, paint.unit),
+            )?;
         } else {
             polyline(canvas, vertices, to_canvas);
             canvas.path("h", &[]);
@@ -183,7 +199,7 @@ pub(super) fn draw_ending(
     if length <= 0.0 {
         return Ok(());
     }
-    let size = ending_size(paint.width);
+    let size = ending_size_in_unit(paint.width, paint.unit);
     // u points out of the line at the tip, n across it.
     let u = (dx / length, dy / length);
     let n = (-u.1, u.0);

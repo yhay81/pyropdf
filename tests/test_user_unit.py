@@ -10,6 +10,7 @@ each case with unit 1 and unit 2.
 from __future__ import annotations
 
 import pytest
+from test_acroform import NOTO_SANS_HEBREW
 from test_pages import build_raw_pdf
 
 import pyropdf
@@ -364,3 +365,180 @@ def test_the_last_pixel_of_a_decimal_page_is_visible() -> None:
     with pytest.raises(pyropdf.LimitError) as refused:
         page.svg(max_size=len(svg.encode()) - 1)
     assert refused.value.code == "svg_output_size"
+
+
+def _same_display_pages() -> tuple[pyropdf.Page, pyropdf.Page]:
+    """Return a unit-1 ``[0 0 800 600]`` page and a unit-2 ``[0 0 400 300]`` page."""
+    one_doc = pyropdf.Document()
+    one = one_doc.pages.new((800, 600))
+    two_doc = pyropdf.Document()
+    two = two_doc.pages.new((400, 300))
+    two.obj["UserUnit"] = 2
+    assert one.rect == two.rect == (0, 0, 800, 600)
+    return one, two
+
+
+def _assert_rasters_close(first: Pixmap, second: Pixmap, *, max_channel_diff: int = 2) -> None:
+    assert (first.width, first.height) == (second.width, second.height)
+    diff = max(abs(a - b) for a, b in zip(bytes(memoryview(first)), bytes(memoryview(second)), strict=True))
+    assert diff <= max_channel_diff
+
+
+def test_annotation_lengths_render_the_same_pixels_at_72_dpi() -> None:
+    one, two = _same_display_pages()
+    specs: list[pyropdf.AnnotationSpecification] = [
+        pyropdf.Square((40, 40, 240, 160), border=pyropdf.Border(width=3, dashes=(6, 3))),
+        pyropdf.FreeText(
+            (300, 40, 600, 140),
+            "Scaled free text",
+            size=12,
+            border=pyropdf.Border(width=2, dashes=(4, 2)),
+        ),
+        pyropdf.FreeText(
+            (300, 200, 600, 300),
+            "Callout note",
+            size=12,
+            border=pyropdf.Border(width=2),
+            callout=((220, 250), (300, 250)),
+            callout_ending=pyropdf.LineEnding.OPEN_ARROW,
+        ),
+        pyropdf.LineAnnotation(
+            (40, 240),
+            (180, 240),
+            border=pyropdf.Border(width=2, dashes=(6, 2)),
+            line_endings=(pyropdf.LineEnding.NONE, pyropdf.LineEnding.CLOSED_ARROW),
+        ),
+        pyropdf.Polygon(
+            ((40, 340), (180, 340), (180, 460), (40, 460)),
+            border=pyropdf.Border(width=2),
+            clouds=1.5,
+        ),
+    ]
+    for page in (one, two):
+        for spec in specs:
+            page.annotations.add(spec)
+
+    assert two.annotations[1].obj["DA"].text == "/Helv 6 Tf 0 0 0 rg"
+    assert two.annotations[1].text().strip() == "Scaled free text"
+    for a, b in zip(one.annotations, two.annotations, strict=True):
+        assert tuple(a.rect) == pytest.approx(tuple(b.rect))
+    _assert_rasters_close(one.pixmap(), two.pixmap())
+
+    # Render-time synthesis without stored /AP draws the same display geometry.
+    for page in (one, two):
+        for annot in page.annotations:
+            del annot.obj["AP"]
+    _assert_rasters_close(one.pixmap(), two.pixmap())
+    _assert_rasters_close(one.annotations[0].pixmap(), two.annotations[0].pixmap())
+
+
+def test_border_width_and_dashes_round_trip_in_points() -> None:
+    one, two = _same_display_pages()
+    solid = pyropdf.Border(width=2)
+    annot_one = one.annotations.add(pyropdf.Square((20, 20, 120, 80), border=solid))
+    annot_two = two.annotations.add(pyropdf.Square((20, 20, 120, 80), border=solid))
+
+    assert float(annot_one.obj["BS"]["W"]) == pytest.approx(2)
+    assert float(annot_two.obj["BS"]["W"]) == pytest.approx(1)
+    assert annot_one.border == annot_two.border == solid
+
+    dashed = pyropdf.Border(width=3, dashes=(6, 3))
+    annot_one.border = dashed
+    annot_two.border = dashed
+
+    assert float(annot_one.obj["BS"]["W"]) == pytest.approx(3)
+    assert [float(d) for d in annot_one.obj["BS"]["D"]] == pytest.approx([6, 3])
+    assert float(annot_two.obj["BS"]["W"]) == pytest.approx(1.5)
+    assert [float(d) for d in annot_two.obj["BS"]["D"]] == pytest.approx([3, 1.5])
+    assert annot_one.border == annot_two.border == dashed
+
+    # Legacy /Border and omitted /BS defaults also convert from user space to points.
+    del annot_two.obj["BS"]
+    annot_two.obj["Border"] = [0, 0, 1.5, [3, 1]]
+    assert annot_two.border == pyropdf.Border(width=3, dashes=(6, 2))
+    del annot_two.obj["Border"]
+    annot_two.obj["BS"] = {pyropdf.Name("S"): pyropdf.Name("D")}
+    assert annot_two.border == pyropdf.Border(width=2, dashes=(6,))
+
+
+def test_widget_font_size_and_border_scale_by_each_widgets_page_unit() -> None:
+    doc = pyropdf.Document()
+    page_one = doc.pages.new((800, 600))
+    page_two = doc.pages.new((400, 300))
+    page_two.obj["UserUnit"] = 2
+
+    border = pyropdf.Border(width=2, dashes=(6, 4))
+    w1 = page_one.widgets.add(
+        pyropdf.TextField("shared", (40, 40, 300, 80), value="Hello", font_size=12, border=border)
+    )
+    w2 = page_two.widgets.add(
+        pyropdf.TextField("shared", (40, 40, 300, 80), value="Hello", font_size=12, border=border)
+    )
+    f1 = page_one.widgets.add(
+        pyropdf.TextField("fitted", (40, 120, 300, 160), value="Auto", font_size=0, border=pyropdf.Border(width=2))
+    )
+    f2 = page_two.widgets.add(
+        pyropdf.TextField("fitted", (40, 120, 300, 160), value="Auto", font_size=0, border=pyropdf.Border(width=2))
+    )
+    page_one.widgets.add(pyropdf.CheckBox("agreed", (40, 200, 70, 230), checked=True, border=pyropdf.Border(width=2)))
+    page_two.widgets.add(pyropdf.CheckBox("agreed", (40, 200, 70, 230), checked=True, border=pyropdf.Border(width=2)))
+    c1 = page_one.widgets.add(
+        pyropdf.ComboBox(
+            "combo", (340, 40, 600, 80), choices=("Alpha", "Beta"), value="Alpha", font_size=12, border=border
+        )
+    )
+    c2 = page_two.widgets.add(
+        pyropdf.ComboBox(
+            "combo", (340, 40, 600, 80), choices=("Alpha", "Beta"), value="Alpha", font_size=12, border=border
+        )
+    )
+    l1 = page_one.widgets.add(
+        pyropdf.ListBox(
+            "listbox", (340, 120, 600, 220), choices=("Alpha", "Beta"), value="Beta", font_size=12, border=border
+        )
+    )
+    l2 = page_two.widgets.add(
+        pyropdf.ListBox(
+            "listbox", (340, 120, 600, 220), choices=("Alpha", "Beta"), value="Beta", font_size=12, border=border
+        )
+    )
+    p1 = page_one.widgets.add(
+        pyropdf.PushButton("submit", (340, 260, 500, 300), caption="Submit", font_size=12, border=border)
+    )
+    p2 = page_two.widgets.add(
+        pyropdf.PushButton("submit", (340, 260, 500, 300), caption="Submit", font_size=12, border=border)
+    )
+
+    assert w1.obj["DA"].text == "/Helv 12 Tf 0 0 0 rg"
+    assert w2.obj["DA"].text == "/Helv 6 Tf 0 0 0 rg"
+    assert c2.obj["DA"].text == "/Helv 6 Tf 0 0 0 rg"
+    assert l2.obj["DA"].text == "/Helv 6 Tf 0 0 0 rg"
+    assert p2.obj["DA"].text == "/Helv 6 Tf 0 0 0 rg"
+    assert float(w1.obj["BS"]["W"]) == pytest.approx(2)
+    assert float(w2.obj["BS"]["W"]) == pytest.approx(1)
+    assert [float(d) for d in w2.obj["BS"]["D"]] == pytest.approx([3, 2])
+    assert w1.font_size == w2.font_size == c1.font_size == c2.font_size == pytest.approx(12)
+    assert l1.font_size == l2.font_size == p1.font_size == p2.font_size == pytest.approx(12)
+    assert [w.font_size for w in doc.form["shared"].widgets] == pytest.approx([12, 12])
+    assert w1.border == w2.border == border
+    assert f1.font_size == f2.font_size == 0
+    _assert_rasters_close(page_one.pixmap(), page_two.pixmap())
+
+    # Without /P on the unit-2 widget, filling still resolves its page through /Annots.
+    del f2.obj["P"]
+    doc.form["fitted"].value = "Refilled without /P"
+    _assert_rasters_close(page_one.pixmap(), page_two.pixmap())
+
+    # Editing another style property preserves the scaled /DA size; editing font_size rescales it.
+    w2.text_color = Color(1, 0, 0)
+    assert w2.obj["DA"].text == "/Helv 6 Tf 1 0 0 rg"
+    assert w2.font_size == pytest.approx(12)
+    w1.text_color = Color(1, 0, 0)
+    w1.font_size = 16
+    w2.font_size = 16
+    assert w2.obj["DA"].text == "/Helv 8 Tf 1 0 0 rg"
+    assert [w.font_size for w in doc.form["shared"].widgets] == pytest.approx([16, 16])
+
+    doc.form.font = pyropdf.Font.from_file(NOTO_SANS_HEBREW)
+    doc.form["shared"].value = "שלום"
+    _assert_rasters_close(page_one.pixmap(), page_two.pixmap())
