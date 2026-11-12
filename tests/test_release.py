@@ -6,6 +6,7 @@ import re
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote_plus
 
 from test_text import build_text_pdf
 
@@ -41,6 +42,13 @@ def test_the_github_release_is_checked_to_be_immutable() -> None:
     assert job.index("gh release create") < checked
     assert 'if [ "${immutable}" != true ]; then' in job[checked:]
     assert "exit 1" in job[checked:]
+
+
+def test_the_readme_links_to_available_good_first_issues() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    links = re.findall(r"\]\(([^)\s]+)\)", readme)
+    expected = 'https://github.com/yhay81/pyropdf/issues?q=is:issue is:open label:"good first issue" -label:in-progress'
+    assert expected in [unquote_plus(link) for link in links]
 
 
 def test_the_readme_example_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
