@@ -1,16 +1,15 @@
 //! The Pixmap codecs beyond PNG and JPEG (issues 431 and 446): decoding
 //! portable anymaps (PBM, PGM, PPM, plain and raw), PAM, BMP, GIF, TIFF,
-//! and JPEG 2000, and
-//! encoding PAM, PBM, PGM, PPM, PSD, and PostScript. Every decoder checks
-//! the pixel count against [`pixel_ops::MAX_PIXELS`] and the input length
-//! against the samples it promises before it allocates them.
+//! and JPEG 2000, and encoding PAM, PBM, PGM, PPM, PSD, and PostScript.
+//! Every decoder checks the pixel count against [`MAX_PIXELS`] and the input
+//! length against the samples it promises before it allocates them.
 
 use std::io::{self, Write};
 
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec};
 
-use crate::pixel_ops::{self, DecodeError, Decoded, Layout};
+use super::{DecodeError, Decoded, Layout, MAX_PIXELS, check_size};
 
 /// The resolution of formats that state none.
 const DEFAULT_RESOLUTION: (u32, u32) = (96, 96);
@@ -81,7 +80,7 @@ impl Fields<'_> {
 }
 
 /// Whether `data` starts like a portable anymap or PAM.
-pub fn is_pnm(data: &[u8]) -> bool {
+pub(super) fn is_pnm(data: &[u8]) -> bool {
     data.len() > 2
         && data[0] == b'P'
         && (b'1'..=b'7').contains(&data[1])
@@ -94,7 +93,7 @@ pub fn is_pnm(data: &[u8]) -> bool {
     clippy::disallowed_methods,
     reason = "check_size bounds dimensions to MAX_PIXELS before producing at most four samples per pixel"
 )]
-pub fn decode_pnm(data: &[u8]) -> Result<Decoded, String> {
+pub(super) fn decode_pnm(data: &[u8]) -> Result<Decoded, String> {
     let kind = data[1];
     if kind == b'7' {
         return decode_pam(data);
@@ -102,7 +101,7 @@ pub fn decode_pnm(data: &[u8]) -> Result<Decoded, String> {
     let mut fields = Fields { data, at: 2 };
     let width = fields.number(u32::MAX)?;
     let height = fields.number(u32::MAX)?;
-    pixel_ops::check_size(width, height)?;
+    check_size(width, height)?;
     let bitmap = matches!(kind, b'1' | b'4');
     let max = if bitmap { 1 } else { fields.number(65535)? };
     if max == 0 {
@@ -247,7 +246,7 @@ fn decode_pam(data: &[u8]) -> Result<Decoded, String> {
     let missing = || "the PAM header lacks WIDTH, HEIGHT, DEPTH, or MAXVAL".to_owned();
     let (width, height) = (width.ok_or_else(missing)?, height.ok_or_else(missing)?);
     let (depth, max) = (depth.ok_or_else(missing)?, max.ok_or_else(missing)?);
-    pixel_ops::check_size(width, height)?;
+    check_size(width, height)?;
     if !(1..=65535).contains(&max) {
         return Err("the PAM maximum value is outside 1 through 65535".to_owned());
     }
@@ -312,15 +311,15 @@ impl Field {
     }
 }
 
-/// Decodes an uncompressed BMP: 1, 4, or 8 bits through a palette, which
-/// decodes to gray when every entry is gray, 24-bit BGR, and 16 or 32 bits
-/// in the default or stated bit fields, with alpha when a field holds it.
-/// Run-length and embedded JPEG or PNG data is refused.
+/// Decodes an uncompressed or RLE BMP: 1, 4, or 8 bits through a palette,
+/// which decodes to gray when every entry is gray, 24-bit BGR, and 16 or 32
+/// bits in the default or stated bit fields, with alpha when a field holds it.
+/// Embedded JPEG or PNG data is refused.
 #[expect(
     clippy::disallowed_methods,
     reason = "check_size bounds the raster to MAX_PIXELS and the indexed palette to at most 256 entries"
 )]
-pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
+pub(super) fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
     let offset = u32_at(data, 10)? as usize;
     let header = u32_at(data, 14)? as usize;
     let core = header == 12;
@@ -352,7 +351,7 @@ pub fn decode_bmp(data: &[u8]) -> Result<Decoded, String> {
         u32::try_from(height.unsigned_abs())
             .map_err(|_| "the BMP height is too large".to_owned())?,
     );
-    pixel_ops::check_size(width, height)?;
+    check_size(width, height)?;
     let rle = matches!(compression, 1 | 2);
     let fields = match (compression, bits) {
         (0, 1 | 4 | 8 | 24) | (1, 8) | (2, 4) => None,
@@ -591,7 +590,7 @@ fn expand_rle(
 }
 
 /// Returns whether `data` begins as a GIF.
-pub fn is_gif(data: &[u8]) -> bool {
+pub(super) fn is_gif(data: &[u8]) -> bool {
     data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a")
 }
 
@@ -602,17 +601,17 @@ pub fn is_gif(data: &[u8]) -> bool {
     clippy::disallowed_methods,
     reason = "check_size bounds the logical screen to MAX_PIXELS before producing at most four samples per pixel"
 )]
-pub fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
+pub(super) fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
     let invalid = |error: gif::DecodingError| format!("not a GIF image: {error}");
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::RGBA);
     // The frame's RGBA samples stay within the limit of a pixmap's.
     options.set_memory_limit(gif::MemoryLimit::Bytes(
-        std::num::NonZeroU64::new(pixel_ops::MAX_PIXELS * 4).expect("the limit is not 0"),
+        std::num::NonZeroU64::new(MAX_PIXELS * 4).expect("the limit is not 0"),
     ));
     let mut decoder = options.read_info(io::Cursor::new(data)).map_err(invalid)?;
     let (width, height) = (u32::from(decoder.width()), u32::from(decoder.height()));
-    pixel_ops::check_size(width, height)?;
+    check_size(width, height)?;
     let frame = decoder
         .read_next_frame()
         .map_err(invalid)?
@@ -657,7 +656,7 @@ pub fn decode_gif(data: &[u8]) -> Result<Decoded, String> {
 }
 
 /// Returns whether `data` begins as a TIFF, classic or BigTIFF.
-pub fn is_tiff(data: &[u8]) -> bool {
+pub(super) fn is_tiff(data: &[u8]) -> bool {
     [b"II*\0", b"MM\0*", b"II+\0", b"MM\0+"]
         .iter()
         .any(|magic| data.starts_with(*magic))
@@ -671,7 +670,7 @@ pub fn is_tiff(data: &[u8]) -> bool {
     clippy::disallowed_methods,
     reason = "decoder limits bound decoded buffers and IFD values; check_size bounds final output to MAX_PIXELS"
 )]
-pub fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError> {
+pub(super) fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError> {
     use tiff::ColorType;
     use tiff::decoder::{Decoder, DecodingResult, Limits};
     use tiff::tags::{ExtraSamples, Tag};
@@ -680,7 +679,7 @@ pub fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError>
     let open = |data| {
         let mut limits = Limits::default();
         // Sixteen-bit RGBA samples of the largest pixmap.
-        limits.decoding_buffer_size = (pixel_ops::MAX_PIXELS * 8) as usize;
+        limits.decoding_buffer_size = (MAX_PIXELS * 8) as usize;
         Decoder::new(io::Cursor::new(data))
             .map(|decoder| decoder.with_limits(limits))
             .map_err(invalid)
@@ -705,7 +704,7 @@ pub fn decode_tiff(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError>
         None => decoder,
     };
     let (width, height) = decoder.dimensions().map_err(invalid)?;
-    pixel_ops::check_size(width, height)?;
+    check_size(width, height)?;
     let color = decoder.colortype().map_err(invalid)?;
     let associated = decoder
         .find_tag_unsigned_vec::<u16>(Tag::ExtraSamples)
@@ -885,20 +884,20 @@ fn resolution<R: io::Read + io::Seek>(
 }
 
 /// Returns whether `data` begins as JPEG 2000: a JP2 file or a codestream.
-pub fn is_jpx(data: &[u8]) -> bool {
+pub(super) fn is_jpx(data: &[u8]) -> bool {
     data.starts_with(b"\0\0\0\x0cjP  \r\n\x87\n") || data.starts_with(b"\xff\x4f\xff\x51")
 }
 
 /// Decodes JPEG 2000 with the decoder that hayro reads PDF images with:
 /// gray or RGB, with or without alpha, palettes resolved, every bit depth
 /// scaled to 8 bits.
-pub fn decode_jpx(data: &[u8]) -> Result<Decoded, String> {
+pub(super) fn decode_jpx(data: &[u8]) -> Result<Decoded, String> {
     use hayro_jpeg2000::{ColorSpace, DecodeSettings, DecoderContext, Image};
 
     let invalid = |error| format!("not a JPEG 2000 image the decoder reads: {error:?}");
     let image = Image::new(data, &DecodeSettings::default()).map_err(invalid)?;
     let (width, height) = (image.width(), image.height());
-    pixel_ops::check_size(width, height)?;
+    check_size(width, height)?;
     let gray = match image.color_space() {
         ColorSpace::Gray
         | ColorSpace::Icc {
@@ -942,12 +941,12 @@ pub fn decode_jpx(data: &[u8]) -> Result<Decoded, String> {
 
 /// Returns whether `data` begins as JPEG XR, which no maintained Rust
 /// decoder reads, so that decoding refuses it by name.
-pub fn is_jxr(data: &[u8]) -> bool {
+pub(super) fn is_jxr(data: &[u8]) -> bool {
     data.starts_with(b"II\xbc")
 }
 
 /// Writes PAM: the samples as they are, with their alpha.
-pub fn write_pam(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
+pub(super) fn write_pam(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
     let tuple = match (layout.gray, layout.alpha) {
         (true, false) => "GRAYSCALE",
         (true, true) => "GRAYSCALE_ALPHA",
@@ -965,7 +964,7 @@ pub fn write_pam(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result
 }
 
 /// Writes raw PGM for gray or PPM for RGB samples without alpha.
-pub fn write_pnm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
+pub(super) fn write_pnm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
     let kind = if layout.gray { 5 } else { 6 };
     write!(out, "P{kind}\n{} {}\n255\n", layout.width, layout.height)?;
     out.write_all(data)
@@ -977,7 +976,7 @@ pub fn write_pnm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result
     clippy::disallowed_methods,
     reason = "one packed scanline of a Pixmap whose pixel count is bounded by MAX_PIXELS"
 )]
-pub fn write_pbm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
+pub(super) fn write_pbm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result<()> {
     write!(out, "P4\n{} {}\n", layout.width, layout.height)?;
     let width = layout.width as usize;
     let mut row = vec![0; width.div_ceil(8)];
@@ -999,7 +998,7 @@ pub fn write_pbm(out: &mut dyn Write, layout: Layout, data: &[u8]) -> io::Result
     clippy::disallowed_methods,
     reason = "one scanline of a Pixmap whose pixel count is bounded by MAX_PIXELS"
 )]
-pub fn write_psd(
+pub(super) fn write_psd(
     out: &mut dyn Write,
     layout: Layout,
     data: &[u8],
@@ -1049,7 +1048,7 @@ pub fn write_psd(
     clippy::disallowed_methods,
     reason = "the ASCII85 line is flushed at ASCII85_LINE and can exceed it by at most one five-byte group"
 )]
-pub fn write_ps(
+pub(super) fn write_ps(
     out: &mut dyn Write,
     layout: Layout,
     data: &[u8],

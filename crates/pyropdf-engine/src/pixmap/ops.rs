@@ -1,53 +1,20 @@
 //! The pixel operations of `Pixmap` (issue 398): new samples from old, on
 //! 8-bit gray or RGB pixels with or without straight alpha, and decoding
-//! PNG and JPEG data into them, and through `codecs`, portable anymap, PAM,
-//! and BMP data.
+//! PNG and JPEG data into them, and through [`super::codecs`], portable
+//! anymap, PAM, BMP, GIF, TIFF, and JPEG 2000 data.
 
 use std::io::Cursor;
 
-use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::Budget;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use zune_jpeg::zune_core::colorspace::ColorSpace;
 use zune_jpeg::zune_core::options::DecoderOptions;
 
-use crate::codecs;
-
-/// The most pixels of a decoded image or a scaled pixmap, as rendering
-/// bounds one raster.
-pub const MAX_PIXELS: u64 = 64_000_000;
+use super::{Area, DecodeError, Decoded, Layout, check_size, codecs};
 
 /// The ITU-R BT.601 luma weights, which rendering to gray uses.
 const LUMA: [f64; 3] = [0.299, 0.587, 0.114];
-
-/// The shape of a pixmap's samples.
-#[derive(Clone, Copy, Debug)]
-pub struct Layout {
-    pub width: u32,
-    pub height: u32,
-    pub gray: bool,
-    pub alpha: bool,
-}
-
-impl Layout {
-    /// The color components of a pixel, without alpha.
-    pub const fn colors(self) -> usize {
-        if self.gray { 1 } else { 3 }
-    }
-
-    /// The bytes of a pixel.
-    pub const fn channels(self) -> usize {
-        self.colors() + self.alpha as usize
-    }
-
-    const fn stride(self) -> usize {
-        self.width as usize * self.channels()
-    }
-}
-
-/// A rectangle of whole pixels, `x0 <= x < x1` and `y0 <= y < y1`.
-pub type Area = (u32, u32, u32, u32);
 
 /// Returns a byte rounded from `value`, clamped to 0 through 255.
 fn byte(value: f64) -> u8 {
@@ -55,11 +22,13 @@ fn byte(value: f64) -> u8 {
 }
 
 /// Returns the luma of an RGB pixel.
+#[must_use]
 pub fn luma(rgb: [u8; 3]) -> u8 {
     byte(LUMA[0] * f64::from(rgb[0]) + LUMA[1] * f64::from(rgb[1]) + LUMA[2] * f64::from(rgb[2]))
 }
 
 /// Inverts the colors of the pixels in `area`, keeping alpha.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "copies a validated Pixmap with at most MAX_PIXELS pixels and four bytes per pixel"
@@ -82,6 +51,7 @@ pub fn invert(data: &[u8], layout: Layout, area: Area) -> Vec<u8> {
 
 /// Maps each color component through its table, keeping alpha; a gray
 /// pixmap uses the first table.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "copies a validated Pixmap with at most MAX_PIXELS pixels and four bytes per pixel"
@@ -100,18 +70,21 @@ pub fn map_colors(data: &[u8], layout: Layout, tables: &[[u8; 256]; 3]) -> Vec<u
 
 /// Returns the table that raises each component, as a fraction of 255, to
 /// the power `exponent`.
+#[must_use]
 pub fn gamma_table(exponent: f64) -> [u8; 256] {
     std::array::from_fn(|value| byte(255.0 * (value as f64 / 255.0).powf(exponent)))
 }
 
 /// Returns the table that maps 0 to `black`, 255 to `white`, and the
 /// values between linearly.
+#[must_use]
 pub fn tint_table(black: u8, white: u8) -> [u8; 256] {
     let (black, white) = (f64::from(black), f64::from(white));
     std::array::from_fn(|value| byte(black + (white - black) * value as f64 / 255.0))
 }
 
 /// Returns the samples converted to gray or to RGB, keeping alpha.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "one to four output samples per validated pixel, with at most MAX_PIXELS pixels"
@@ -141,6 +114,7 @@ pub fn convert(data: &[u8], layout: Layout, gray: bool) -> Vec<u8> {
 /// by `components`. Gray and RGB are as `convert` makes them; CMYK takes
 /// the gray of each pixel into black, the conversion of ISO 32000-2
 /// 10.4.2.3 with full black generation and undercolor removal.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "recolor_samples checks components as 1, 3, or 4; the Pixmap has at most MAX_PIXELS pixels"
@@ -168,6 +142,7 @@ pub fn device_samples(data: &[u8], layout: Layout, components: usize) -> Vec<u8>
 }
 
 /// Returns the samples with an opaque alpha byte after each pixel.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "adds one byte per validated pixel; the result has at most four times MAX_PIXELS samples"
@@ -184,6 +159,7 @@ pub fn add_alpha(data: &[u8], layout: Layout) -> Vec<u8> {
 
 /// Returns the samples composited over `background` without alpha; a
 /// gray pixmap uses the luma of `background`.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "at most three background components and three output bytes per validated pixel, bounded by MAX_PIXELS"
@@ -208,6 +184,7 @@ pub fn drop_alpha(data: &[u8], layout: Layout, background: [u8; 3]) -> Vec<u8> {
 }
 
 /// Returns the pixels of `area`.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "the checked crop lies inside a Pixmap of at most MAX_PIXELS pixels and four samples each"
@@ -314,6 +291,7 @@ fn resample_columns(data: &[u8], width: u32, height: u32, channels: usize, targe
 /// Returns the pixels resampled to `width` by `height` with a bilinear
 /// filter, through premultiplied alpha, along the axis that keeps the
 /// intermediate raster smaller first.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "copies the validated source Pixmap, bounded by MAX_PIXELS and four samples per pixel"
@@ -357,6 +335,7 @@ pub fn scale(data: &[u8], layout: Layout, width: u32, height: u32) -> Vec<u8> {
 /// Returns the samples of `layout` turned clockwise by `quarters` quarter
 /// turns, 1 through 3, whose layout swaps width and height for an odd
 /// count.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "one output pixel per validated source pixel, bounded by MAX_PIXELS and four samples each"
@@ -386,6 +365,7 @@ pub fn rotate(data: &[u8], layout: Layout, quarters: u8) -> Vec<u8> {
 
 /// Returns the samples mirrored left to right, or top to bottom when
 /// `vertical`.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "one output pixel per validated source pixel, bounded by MAX_PIXELS and four samples each"
@@ -423,6 +403,7 @@ impl Projection {
     /// `(1, 0)`, `(0, 1)`, and `(1, 1)` to `ul`, `ur`, `ll`, and `lr`, as
     /// Heckbert's square-to-quadrilateral mapping computes it; `None` for a
     /// quadrilateral with three corners on a line, or that is not convex.
+    #[must_use]
     pub fn new(quad: [(f64, f64); 4]) -> Option<Self> {
         let [(x0, y0), (x1, y1), (x3, y3), (x2, y2)] = quad;
         if !quad.iter().all(|(x, y)| x.is_finite() && y.is_finite()) {
@@ -474,6 +455,7 @@ impl Projection {
 /// center maps into the source, which is sampled bilinearly between pixel
 /// centers, with alpha weighting the colors, and clamped to its edge
 /// pixels.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "Pixmap.warp checks the output against MAX_PIXELS; the source has at most four channels"
@@ -599,6 +581,7 @@ pub fn color_runs(
 
 /// Returns the samples with every pixel of `area` set to `pixel`, one byte
 /// per channel.
+#[must_use]
 #[expect(
     clippy::disallowed_methods,
     reason = "copies the validated Pixmap with at most MAX_PIXELS pixels and four samples each"
@@ -616,34 +599,8 @@ pub fn fill(data: &[u8], layout: Layout, area: Area, pixel: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A decoded image: its layout, samples, and resolution in dots per inch.
-pub struct Decoded {
-    pub layout: Layout,
-    pub data: Vec<u8>,
-    pub resolution: (u32, u32),
-}
-
-/// A malformed image or an operation budget that refused decoding.
-#[derive(Debug)]
-pub enum DecodeError {
-    Invalid(String),
-    Limit(LimitExceeded),
-}
-
-impl From<String> for DecodeError {
-    fn from(message: String) -> Self {
-        Self::Invalid(message)
-    }
-}
-
-impl From<LimitExceeded> for DecodeError {
-    fn from(refusal: LimitExceeded) -> Self {
-        Self::Limit(refusal)
-    }
-}
-
 /// Decodes PNG, JPEG, portable anymap, PAM, BMP, GIF, TIFF, or JPEG 2000
-/// `data`, refusing more than [`MAX_PIXELS`] pixels.
+/// `data`, refusing more than [`super::MAX_PIXELS`] pixels.
 pub fn decode(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError> {
     let result = if data.starts_with(b"\x89PNG\r\n\x1a\n") {
         decode_png(data)
@@ -668,16 +625,6 @@ pub fn decode(data: &[u8], budget: &Budget) -> Result<Decoded, DecodeError> {
         )
     };
     result.map_err(DecodeError::Invalid)
-}
-
-pub fn check_size(width: u32, height: u32) -> Result<(), String> {
-    let pixels = u64::from(width) * u64::from(height);
-    if pixels == 0 || pixels > MAX_PIXELS {
-        return Err(format!(
-            "the image has {pixels} pixels; a pixmap holds 1 to {MAX_PIXELS}"
-        ));
-    }
-    Ok(())
 }
 
 #[expect(

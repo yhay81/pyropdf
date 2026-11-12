@@ -1216,44 +1216,44 @@ version = "0.3.0"
 dependencies = [
  "cms",
  "der",
+ "flate2",
+ "gif",
  "harfrust",
  "hayro",
  "hayro-font",
+ "hayro-jpeg2000",
  "hayro-svg",
  "hmac",
+ "jpeg-encoder",
  "p256",
  "p384",
  "pdf-base14-metrics",
  "pkcs8",
+ "png",
  "proptest",
  "pyropdf-store",
  "rten",
  "rten-tensor",
  "sha2",
  "skrifa 0.49.0",
+ "tiff",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-script",
  "unicode-segmentation",
  "x509-cert",
+ "zune-jpeg",
 ]
 
 [[package]]
 name = "pyropdf-python"
 version = "0.3.0"
 dependencies = [
- "flate2",
- "gif",
- "hayro-jpeg2000",
- "jpeg-encoder",
- "png",
  "pyo3",
  "pyropdf-engine",
  "pyropdf-schema",
  "pyropdf-store",
- "tiff",
  "windows-sys",
- "zune-jpeg",
 ]
 
 [[package]]
