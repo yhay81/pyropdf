@@ -19,12 +19,15 @@ from pyropdf import _core
 from pyropdf._errors import PdfError
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
-from pyropdf._recolor import (
+from pyropdf._xobjects import (
     _MAX_FORM_DEPTH,
     _MAX_FORMS,
     _MAX_INLINE_PIXELS,
     _STREAM_KEYS,
+    _appearance_streams,
+    _copy_form,
     _inline_data,
+    _parse_form,
     _repoint_page,
     _resources,
     _set_appearance,
@@ -1278,11 +1281,10 @@ class _Nested:
 
     def parse(self, form: Stream, number: int) -> Operations | None:
         if number not in self.parsed:
-            try:
-                self.parsed[number] = Operations.parse(form.read())
-            except (PdfError, ValueError):
+            operations = _parse_form(form)
+            if operations is None:
                 self.tally.report(f"object {number}: a Form XObject that cannot be read")
-                self.parsed[number] = None
+            self.parsed[number] = operations
         return self.parsed[number]
 
     def annotations(self, page: Page) -> int:
@@ -1290,19 +1292,16 @@ class _Nested:
         annotations = page.obj.get("Annots")
         reached = 0
         for annotation in annotations if isinstance(annotations, Array) else ():
-            appearances = annotation.get("AP") if isinstance(annotation, Dictionary) else None
-            entry = appearances.get("N") if isinstance(appearances, Dictionary) else None
-            states = [(None, entry)] if isinstance(entry, Stream) else []
-            if isinstance(entry, Dictionary) and not isinstance(entry, Stream):
-                states = [(str(state), value) for state, value in entry.items() if isinstance(value, Stream)]
-            for state, stream in states:
+            if not isinstance(annotation, Dictionary):
+                continue
+            for key, state, stream in _appearance_streams(annotation, ("N",)):
                 matrix = _appearance_matrix(annotation, stream)
                 if matrix is None:
                     continue
                 number, count = self.form(stream, (None, {}), matrix, 1)
                 reached += count
                 if number is not None:
-                    self.appearances.append((annotation, "N", state, number))
+                    self.appearances.append((annotation, key, state, number))
         return reached
 
     def write(self, document: Document, options: _Options) -> None:
@@ -1335,14 +1334,9 @@ class _Nested:
         children = {name: self.copies[child] for name, child in record.drawn.items() if child in self.copies}
         if not (changed or children):
             return
-        dictionary = {key: value for key, value in record.stream.items() if key not in _STREAM_KEYS}
-        if children and record.resources is not None:
-            own = dict(record.resources.items())
-            xobjects = own.get("XObject")
-            own["XObject"] = {**(dict(xobjects.items()) if isinstance(xobjects, Dictionary) else {}), **children}
-            dictionary["Resources"] = own
         data = Operations(out, tail=record.operations.tail).to_bytes()
-        self.copies[number] = document.objects[document.objects.add_stream(data, dictionary)]
+        added = _copy_form(document, record.stream, data, record.resources, children)
+        self.copies[number] = document.objects[added]
 
 
 def _rewrite_stencil(stream: Stream, lengths: tuple[float, float], options: _Options, tally: _Tally) -> None:
