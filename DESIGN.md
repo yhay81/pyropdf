@@ -476,18 +476,28 @@ an unsupported composite mode), draws its monochrome fallback outline instead,
 or refuses when that outline is empty. The `SVG ` table is not rendered because
 parsing XML from font input offers no hook for the operation's budget.
 
-Dependent structures are settled rather than rebuilt by every call. A
-transaction marks what its writes make stale: appearance streams, outline
-counts, the structure tree's parent tree, name- and number-tree limits, and
-font subsets. Settling runs:
+Dependent structures that cross into the engine or span the document are
+settled lazily rather than rebuilt on every write. A transaction marks two
+kinds of stale structure:
 
-- before any read that depends on a stale structure;
-- at the end of every top-level transaction;
-- before a save, which is the only point where font subsets settle.
+- **Appearance streams** (`Appearance`), settled before any read that depends
+  on them (including intra-transaction reads) and at the end of every
+  top-level transaction. A program never observes an unsettled appearance, so
+  the rule that setters apply immediately (section 10) keeps its meaning while
+  three setters on one annotation draw its appearance once.
+- **Font subsets** (`FontSubset`), settled only before a save, as above.
 
-A program never observes an unsettled structure, so the rule that setters
-apply immediately (section 10) keeps its meaning, while three setters on one
-annotation draw its appearance once.
+By contrast, outline `/Count`, the structure tree's `/ParentTree`
+(`/ParentTreeNextKey`), and name- and number-tree `/Limits` are maintained
+immediately at each mutation site by canonical store and engine helpers:
+bounded tree helpers in `pyropdf-store` for name trees, number trees, and
+`/ParentTree`, and `/Parent`-chain delta propagation in `pyropdf-engine` for
+outline `/Count` (`evidence/structure-settling`, #765). Because
+intra-transaction reads settle commit-scoped marks to preserve
+read-your-own-writes, commit-scoped settlers do not coalesce across
+interleaved read-write loops, whereas immediate path updates run in tree depth
+under the mutating call's budget, attribute `LimitError` and structural
+refusals to that call, and keep store-native tree invariants inside the store.
 
 ## 8. Typed objects and referential rules
 
@@ -653,8 +663,8 @@ changes this section first.
 - **Mutation.**
   - A method that changes the document is one transaction: it plans its
     fallible work before it commits, and on refusal nothing changes.
-  - Setters on handles apply immediately, and the structures that depend on
-    them, such as appearances, settle before anything reads them
+  - Setters on handles apply immediately, and deferred structures that depend
+    on them, such as appearances, settle before anything reads them
     (section 7), so no handle has an `update()`.
   - A builder that collects drawing before it writes, such as the canvas,
     is a context manager that commits once on a clean exit and writes
