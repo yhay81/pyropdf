@@ -23,8 +23,6 @@ DeviceN, and what cannot be read are left as they are and reported.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import struct
 import zlib
 from dataclasses import dataclass, field
@@ -34,12 +32,26 @@ from pyropdf import _core
 from pyropdf._errors import PdfError
 from pyropdf._objects import Array, Dictionary, Name, Real, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
+from pyropdf._xobjects import (
+    _MAX_FORM_DEPTH,
+    _MAX_FORMS,
+    _MAX_INLINE_PIXELS,
+    _STREAM_KEYS,
+    _appearance_streams,
+    _copy_form,
+    _inline_data,
+    _parse_form,
+    _repoint_page,
+    _resources,
+    _set_appearance,
+    _sub,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from pyropdf import PageImage
     from pyropdf._document import Document
-    from pyropdf._images import PageImage
     from pyropdf._page import Page
 
 #: A target of :meth:`Page.recolor`.
@@ -67,14 +79,8 @@ _FAMILY_SPACES = {
 }
 #: The ITU-R BT.601 luma weights, which rendering and images use for gray.
 _LUMA = (0.299, 0.587, 0.114)
-#: Nesting of Form XObjects that a recoloring follows from the page.
-_MAX_FORM_DEPTH = 16
-#: Drawings of Form XObjects that one call reads; the others are reported.
-_MAX_FORMS = 4096
 #: The entries that a report keeps; it counts the others.
 _MAX_UNCONVERTED = 1024
-#: The pixels of an inline image that a recoloring converts.
-_MAX_INLINE_PIXELS = 1 << 20
 #: Nesting of color spaces that a recoloring follows, as Indexed over Separation.
 _MAX_SPACE_DEPTH = 4
 #: The JPEG quality when an image's quantization tables cannot be read.
@@ -86,19 +92,8 @@ _LUMINANCE = (
     18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113, 92,
     49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
 )  # fmt: skip
-#: The stream entries that a copy sets from its new data.
-_STREAM_KEYS = frozenset({"Length", "Filter", "DecodeParms", "DL"})
 #: The image entries that describe the samples a conversion replaces.
 _SAMPLE_KEYS = frozenset({*_STREAM_KEYS, "ColorSpace", "BitsPerComponent", "Decode", "SMaskInData"})
-#: The inline image filters that a recoloring decodes.
-_INLINE_FILTERS = {
-    "AHx": "hex",
-    "ASCIIHexDecode": "hex",
-    "A85": "a85",
-    "ASCII85Decode": "a85",
-    "Fl": "flate",
-    "FlateDecode": "flate",
-}
 #: The annotation entries that hold a color array (ISO 32000-2 12.5.2, 12.5.6.2, and 12.5.6.19).
 _ANNOTATION_COLORS = ("C", "IC")
 _APPEARANCE_COLORS = ("BC", "BG")
@@ -328,18 +323,10 @@ class _Recoloring:
         if isinstance(characteristics, Dictionary):
             for key in _APPEARANCE_COLORS:
                 self._color_array(annotation, "MK", key, edit)
-        appearances = annotation.get("AP")
-        if not isinstance(appearances, Dictionary):
-            return
-        for key in ("N", "R", "D"):
-            entry = appearances.get(key)
-            states = [(None, entry)] if isinstance(entry, Stream) else []
-            if isinstance(entry, Dictionary) and not isinstance(entry, Stream):
-                states = [(str(state), value) for state, value in entry.items() if isinstance(value, Stream)]
-            for state, stream in states:
-                copy = self._form(stream, None, _State(), 1)
-                if copy is not None:
-                    edit.appearances.append((annotation, key, state, copy))
+        for key, state, stream in _appearance_streams(annotation):
+            copy = self._form(stream, None, _State(), 1)
+            if copy is not None:
+                edit.appearances.append((annotation, key, state, copy))
 
     def _color_array(self, annotation: Dictionary, inner: str | None, key: str, edit: _PageEdit) -> None:
         dictionary = annotation if inner is None else annotation[inner]
@@ -516,9 +503,8 @@ class _Recoloring:
         self.forms += 1
         operations = self.parsed.get(number)
         if operations is None:
-            try:
-                operations = Operations.parse(form.read())
-            except (PdfError, ValueError):
+            operations = _parse_form(form)
+            if operations is None:
                 self.report("form", f"object {number} cannot be read")
                 return None
             self.parsed[number] = operations
@@ -662,10 +648,9 @@ class _Recoloring:
         return self.document.objects[self.pending[value].number] if isinstance(value, int) else value
 
     def _add(self, pending: _Pending) -> int:
-        objects = self.document.objects
-        dictionary = {key: value for key, value in pending.source.items() if key not in _STREAM_KEYS}
         if pending.entries:
-            dictionary = {key: value for key, value in dictionary.items() if key not in _SAMPLE_KEYS}
+            objects = self.document.objects
+            dictionary = {key: value for key, value in pending.source.items() if key not in _SAMPLE_KEYS}
             dictionary.update(pending.entries)
             if not pending.jpeg:
                 return objects.add_stream(pending.data, dictionary)
@@ -674,14 +659,8 @@ class _Recoloring:
             stream.write(pending.data, filter=None)
             stream["Filter"] = Name("DCTDecode")
             return number
-        if pending.drawn:
-            own = dict(pending.resources.items()) if pending.resources is not None else {}
-            xobjects = own.get("XObject")
-            own["XObject"] = dict(xobjects.items()) if isinstance(xobjects, Dictionary) else {}
-            for name, value in pending.drawn.items():
-                own["XObject"][name] = self._object(value)
-            dictionary["Resources"] = own
-        return objects.add_stream(pending.data, dictionary)
+        drawn = {name: self._object(value) for name, value in pending.drawn.items()}
+        return _copy_form(self.document, pending.source, pending.data, pending.resources, drawn)
 
 
 def _simple_space(family: str, value: Array | tuple[Any, ...]) -> _Space | None:
@@ -721,28 +700,6 @@ def _exponential(function: object, outputs: int) -> tuple[tuple[float, ...], tup
     return first, last, float(exponent)
 
 
-def _inline_data(filters: object, data: bytes) -> bytes | None:
-    """Return an inline image's samples, decoding the filters that a recoloring reads, or ``None``."""
-    names = [filters] if isinstance(filters, Name) else list(filters) if isinstance(filters, tuple) else []
-    if filters is not None and not names:
-        return None
-    try:
-        for name in names:
-            kind = _INLINE_FILTERS.get(str(name))
-            if kind == "hex":
-                text = bytes(byte for byte in data.split(b">", 1)[0] if byte not in b" \t\r\n\f\x00")
-                data = binascii.unhexlify(text + b"0" * (len(text) % 2))
-            elif kind == "a85":
-                data = base64.a85decode(data.split(b"~>", 1)[0], ignorechars=b" \t\r\n\f\x00")
-            elif kind == "flate":
-                data = zlib.decompressobj().decompress(data, _MAX_INLINE_PIXELS * 4)
-            else:
-                return None
-    except (ValueError, zlib.error):
-        return None
-    return data
-
-
 def _jpeg_quality(data: bytes) -> int:
     """Estimate the IJG quality of a JPEG from its first quantization table (ITU T.81 B.2.4.1)."""
     at = 2
@@ -777,22 +734,6 @@ def _set_color(annotation: Dictionary, inner: str | None, key: str, values: list
     dictionary[key] = values
 
 
-def _set_appearance(annotation: Dictionary, key: str, state: str | None, appearance: Stream) -> None:
-    """Make an annotation show ``appearance``, through appearance dictionaries of its own."""
-    appearances = annotation["AP"]
-    if appearances.is_indirect:
-        annotation["AP"] = dict(appearances.items())
-        appearances = annotation["AP"]
-    if state is None:
-        appearances[key] = appearance
-        return
-    states = appearances[key]
-    if states.is_indirect:
-        appearances[key] = dict(states.items())
-        states = appearances[key]
-    states[state] = appearance
-
-
 def _xref(stream: Stream) -> int:
     """Return a stream's object number: a stream is always an indirect object."""
     return stream.xref or 0
@@ -810,38 +751,6 @@ def _fresh(name: str, xobjects: Dictionary | None, bound: dict[str, int | Stream
     while f"{name}_{number}" in bound or (xobjects is not None and f"{name}_{number}" in xobjects):
         number += 1
     return f"{name}_{number}"
-
-
-def _repoint_page(page: Page, drawn: dict[str, Stream]) -> None:
-    """Make the page draw the new objects, through resources of its own."""
-    own = page.obj.get("Resources")
-    if own is None or own.is_indirect:
-        inherited = own if own is not None else _resources(page)
-        page.obj["Resources"] = {} if inherited is None else dict(inherited.items())
-    resources = page.obj["Resources"]
-    xobjects = resources.get("XObject")
-    if xobjects is None or xobjects.is_indirect:
-        resources["XObject"] = {} if xobjects is None else dict(xobjects.items())
-    for name, value in drawn.items():
-        resources["XObject"][name] = value
-
-
-def _resources(page: Page) -> Dictionary | None:
-    """Return the page's resources, its own or inherited from the page tree."""
-    node: Any = page.obj
-    for _ in range(64):
-        if not isinstance(node, Dictionary):
-            return None
-        resources = node.get("Resources")
-        if isinstance(resources, Dictionary):
-            return resources
-        node = node.get("Parent")
-    return None
-
-
-def _sub(resources: Dictionary | None, key: str) -> Dictionary | None:
-    value = resources.get(key) if resources is not None else None
-    return value if isinstance(value, Dictionary) else None
 
 
 def _key(dictionary: Dictionary | None) -> object:
