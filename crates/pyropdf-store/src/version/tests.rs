@@ -1732,3 +1732,139 @@ fn stamps_keep_neither_the_version_nor_its_objects() {
     assert!(weak_object.upgrade().is_none());
     assert!(!stamps.unchanged(&later, &budget).unwrap());
 }
+
+#[test]
+fn saved_history_format_1_preserves_appearance_and_font_subset_wire_tags() {
+    let budget = Budget::default();
+
+    // FontSubset keeps wire tag 4 in FORMAT = 1 even though Structure::ALL no
+    // longer carries the three retired commit-scoped variants.
+    let font_only = document(None);
+    let mut transaction = font_only.begin();
+    transaction.mark(Structure::FontSubset, 9, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    let labels = [String::from("embed font")];
+    let saved_font = font_only.save_history(&labels, 1, &budget).unwrap();
+    assert_eq!(&saved_font[..16], b"PYROPDF-HISTORY\n");
+    assert_eq!(&saved_font[16..20], &1_u32.to_le_bytes());
+    let body_end = saved_font.len() - 32;
+    assert_eq!(
+        &saved_font[body_end - 9..body_end],
+        &[1, 0, 0, 0, 4, 9, 0, 0, 0]
+    );
+
+    let restored_font = document(None);
+    assert_eq!(
+        restored_font.restore_history(&saved_font, &budget).unwrap(),
+        RestoredHistory::Restored {
+            labels: vec![String::from("embed font")],
+            position: 1,
+        }
+    );
+    assert_eq!(
+        restored_font.current().stale().collect::<Vec<_>>(),
+        [Mark {
+            structure: Structure::FontSubset,
+            number: 9,
+        }]
+    );
+
+    // Appearance uses wire tag 0 alongside FontSubset's wire tag 4.
+    let both = document(None);
+    let mut transaction = both.begin();
+    transaction.mark(Structure::Appearance, 5, &budget).unwrap();
+    transaction.mark(Structure::FontSubset, 9, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    let saved_both = both
+        .save_history(&[String::from("marks")], 1, &budget)
+        .unwrap();
+    let both_end = saved_both.len() - 32;
+    assert_eq!(
+        &saved_both[both_end - 14..both_end],
+        &[2, 0, 0, 0, 0, 5, 0, 0, 0, 4, 9, 0, 0, 0]
+    );
+
+    let restored_both = document(None);
+    assert_eq!(
+        restored_both.restore_history(&saved_both, &budget).unwrap(),
+        RestoredHistory::Restored {
+            labels: vec![String::from("marks")],
+            position: 1,
+        }
+    );
+    assert_eq!(
+        restored_both.current().stale().collect::<Vec<_>>(),
+        [
+            Mark {
+                structure: Structure::Appearance,
+                number: 5,
+            },
+            Mark {
+                structure: Structure::FontSubset,
+                number: 9,
+            },
+        ]
+    );
+    assert!(restored_both.undo().unwrap().stale().next().is_none());
+    assert!(
+        restored_both
+            .redo()
+            .unwrap()
+            .is_stale(Structure::FontSubset, 9)
+    );
+}
+
+#[test]
+fn restore_history_refuses_retired_and_unknown_structure_wire_tags() {
+    use sha2::{Digest, Sha256};
+
+    let budget = Budget::default();
+    let source = document(None);
+    let mut transaction = source.begin();
+    transaction.mark(Structure::FontSubset, 9, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    let saved = source
+        .save_history(&[String::from("font")], 1, &budget)
+        .unwrap();
+    let body_end = saved.len() - 32;
+    let tag_offset = body_end - 5;
+    assert_eq!(saved[tag_offset], 4);
+
+    for invalid_tag in [1_u8, 2, 3, 5, u8::MAX] {
+        let mut tampered = saved.clone();
+        tampered[tag_offset] = invalid_tag;
+        let checksum: [u8; 32] = Sha256::digest(&tampered[..body_end]).into();
+        tampered[body_end..].copy_from_slice(&checksum);
+
+        let target = document(None);
+        let opened = target.current();
+        let error = target.restore_history(&tampered, &budget).unwrap_err();
+        assert!(
+            matches!(
+                error.kind(),
+                ErrorKind::Malformed(message) if message.contains("a stale mark names no structure")
+            ),
+            "tag {invalid_tag} produced {error:?}"
+        );
+        assert!(Arc::ptr_eq(&target.current(), &opened));
+        assert_eq!(
+            target.history(),
+            HistoryStatus {
+                undo: 0,
+                redo: 0,
+                size: 0,
+                limit: None,
+            }
+        );
+    }
+
+    // The test-only Dependent structure also has no saved-history wire tag.
+    let dependent = document(None);
+    let mut transaction = dependent.begin();
+    transaction.mark(Structure::Dependent, 7, &budget).unwrap();
+    transaction.commit(&budget).unwrap();
+    let error = dependent
+        .save_history(&[String::from("dependent")], 1, &budget)
+        .unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Malformed(_)));
+}

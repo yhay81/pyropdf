@@ -30,12 +30,10 @@ use crate::{Error, Result};
 pub enum Structure {
     /// The appearance streams of the annotation that the mark names.
     Appearance,
-    /// The `/Count` of the outline or outline item that the mark names.
-    OutlineCount,
-    /// The parent tree of the structure tree root that the mark names.
-    ParentTree,
-    /// The `/Limits` of the name- or number-tree node that the mark names.
-    TreeLimits,
+    /// Second commit-scoped structure used by unit tests to exercise
+    /// multi-structure settling without enlarging non-test [`Self::ALL`].
+    #[cfg(test)]
+    Dependent,
     /// The subset of the provisional font that the mark names. Only a save
     /// settles it.
     FontSubset,
@@ -44,13 +42,20 @@ pub enum Structure {
 impl Structure {
     /// Every structure, in the order that settling visits them. Font
     /// subsets come last, since the others may draw with fonts.
-    pub const ALL: [Self; 5] = [
-        Self::Appearance,
-        Self::OutlineCount,
-        Self::ParentTree,
-        Self::TreeLimits,
-        Self::FontSubset,
-    ];
+    ///
+    /// ```
+    /// use pyropdf_store::settle::{MAX_ROUNDS, Structure};
+    ///
+    /// assert_eq!(Structure::ALL, [Structure::Appearance, Structure::FontSubset]);
+    /// assert_eq!(MAX_ROUNDS, 4);
+    /// ```
+    #[cfg(not(test))]
+    pub const ALL: [Self; 2] = [Self::Appearance, Self::FontSubset];
+
+    /// Every structure, including the unit-test commit-scoped variant, in
+    /// the order that settling visits them.
+    #[cfg(test)]
+    pub const ALL: [Self; 3] = [Self::Appearance, Self::Dependent, Self::FontSubset];
 
     pub(crate) const fn index(self) -> usize {
         self as usize
