@@ -23,10 +23,12 @@ except pyropdf.LimitError as error:
 ```
 
 `DocumentLimits.web()` checks every object when the document opens. It
-sets a 10 MiB limit for a page content stream and a 64 MiB limit for an
-individual stream decoded through the store. A PDF can pass those checks
-and still expand to a much larger size during text extraction or rendering.
-The profile leaves `max_memory_size` and `max_duration` unset.
+sets a 10 MiB limit for a page content stream, a 64 MiB limit for an
+individual stream decoded through the store, and a 64 MiB
+`max_interpretation_size` limit on the PDF bytes handed to hayro. A PDF
+can pass those checks and still expand to a much larger size during text
+extraction or rendering. The profile leaves `max_memory_size` and
+`max_duration` unset.
 
 A `CancellationToken` lets another thread request cancellation. pyropdf
 checks the token when it polls the operation's budget.
@@ -52,6 +54,7 @@ all five methods.
 
 | Field | What pyropdf checks | What can exceed the limit |
 | --- | --- | --- |
+| `max_interpretation_size` | The bytes of the PDF handed to hayro, including the original bytes, the bridge's cross-reference update, edited objects, and synthesized appearances. | Filtered streams and images inside those bytes can still expand much further when hayro decodes them. |
 | `max_page_content_size` | The size of a page content stream after the store decodes its filters, for example for `page.operations`. | hayro decodes the page's content directly for these five methods. |
 | `max_decompressed_size` | The decoded size of an individual stream read through the store. A filter can allocate its output before the store checks its size. | Streams decoded directly by hayro bypass this check, including images decoded during rendering. |
 | `max_memory_size` | Allocations that pyropdf charges to the operation's memory budget. | hayro's working memory and raster buffers can take the process over this limit. |

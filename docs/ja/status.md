@@ -17,11 +17,10 @@ ISO 32000-2 のどこまでに対応しているかは[仕様の対応状況](sp
 - 墨消しと、矩形の外側の内容の削除。hayro でレビュー中の変更による、描画要素の出どころ情報を必要とします。
 - 描画と解釈の仕事量を抑えるインタプリタの fuel とキャンセル。これも hayro でレビュー中の変更です。
 - CMYK の pixmap と、SVG の選択できるテキスト。hayro を待っています。
-- CFF2 の可変フォントによるキャンバスへの文字の描画。`SVG ` テーブル、JPEG・TIFF・raw のストライクのカラーグリフと、sweep グラデーションや PDF にない合成モードを必要とする COLR グリフ。これらは単色のアウトラインで描くか、拒否します。フォームフィールドとフリーテキスト注釈のカラーグリフ（アウトラインだけを描きます）。
 
 進み具合は [issue tree](https://github.com/yhay81/pyropdf/issues/1) で追えます。
 
-## 安全性
+## 安全性 {#safety}
 
 hayro の bounded construction（[#15](https://github.com/yhay81/pyropdf/issues/15)）が
 リリースされるまで、pyropdf のどのリリースも、信頼できない入力に対する安全性を

@@ -141,7 +141,7 @@ with pyropdf.open("input.pdf") as doc:
     <a class="pp-card" href="reading/#offline-ocr">
       <h3>Recognize scans</h3>
       <p>Offline OCR with the PP-OCR models of the <code>ocr</code> extra, written back as an invisible text layer.</p>
-      <code>page.ocr(engine=OcrEngine())</code>
+      <code>page.apply_ocr(engine=OcrEngine())</code>
     </a>
     <a class="pp-card" href="rendering/">
       <h3>Render</h3>

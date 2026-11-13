@@ -7,7 +7,11 @@
     <div class="md-select__inner">
       <ul class="md-select__list">
         {% for alt in config.extra.alternate %}
-          {% set alternate_url = alt.link ~ page.url %}
+          {% if alt.lang == "ja" and page.url[:4] == "api/" %}
+            {% set alternate_url = alt.link %}
+          {% else %}
+            {% set alternate_url = alt.link ~ page.url %}
+          {% endif %}
           <li class="md-select__item">
             <a
               href="{{ alternate_url }}"
