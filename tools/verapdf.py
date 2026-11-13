@@ -18,6 +18,7 @@ on a rejection that is not listed, and on a listed one that passes.
 from __future__ import annotations
 
 import argparse
+import re
 import runpy
 import subprocess
 import sys
@@ -38,6 +39,14 @@ FIXTURES: dict[Path, str] = {
     for name, (_, _, flavour) in runpy.run_path(str(corpus / "generate.py"))["FLAVOURS"].items()
 }
 
+#: Rules caused solely by deliberately leaving a new annotation/widget untagged.
+UNTAGGED_RULES = {
+    "add_annotation": {"7.18.1-1", "7.18.3-1"},
+    "edit_annotation": {"7.18.1-1", "7.18.3-1"},
+    "add_field": {"7.18.3-1", "7.18.4-1"},
+    "fill_field": {"7.18.3-1", "7.18.4-1"},
+}
+
 #: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
 REJECTED: dict[str, str] = {
     # PDF/A-1 forbids embedded files, and PDF/A-2 and PDF/A-4 allow only
@@ -48,6 +57,15 @@ REJECTED: dict[str, str] = {
         for edit in ("add", "write")
         for mode in ("full", "incremental")
     },
+    # These cases deliberately create an annotation without a structure tag.
+    # Require both the change report and the exact annotation-only rules below.
+    **{f"ua1 pdfua-1-{edit}-{mode}.pdf": "#794" for edit in UNTAGGED_RULES for mode in ("full", "incremental")},
+}
+
+REJECTED_RULES = {
+    f"ua1 pdfua-1-{edit}-{mode}.pdf": rules
+    for edit, rules in UNTAGGED_RULES.items()
+    for mode in ("full", "incremental")
 }
 
 #: The Arlington extensions that a PDF/A part adds to the PDF version it is based on, by flavour.
@@ -58,15 +76,30 @@ def saves(directory: Path) -> dict[Path, str]:
     """Write every save of every edit of every fixture into ``directory``; return all files with their flavour."""
     out = dict(FIXTURES)
     for source, flavour in FIXTURES.items():
-        for edit, apply in sorted(EDITS.items()):
+        for edit, case in sorted(EDITS.items()):
             for incremental in (False, True):
                 doc = pyropdf.open(source)
-                apply(doc)
+                case.prepare(doc)
+                case.apply(doc)
+                check_claims(doc, flavour, edit, incremental=incremental)
                 mode = "incremental" if incremental else "full"
                 path = directory / f"{source.stem}-{edit}-{mode}.pdf"
                 path.write_bytes(doc.to_bytes(incremental=incremental))
                 out[path] = flavour
     return out
+
+
+def check_claims(doc: pyropdf.Document, flavour: str, edit: str, *, incremental: bool) -> None:
+    """Require the deliberately untagged annotation to be reported before saving."""
+    if flavour != "ua1" or edit not in UNTAGGED_RULES:
+        return
+    page = doc.pages[0]
+    items = page.annotations if edit.endswith("annotation") else page.widgets
+    expected = {item.xref for item in items}
+    claims = doc.changes(incremental=incremental).claims
+    if len(claims) != 1 or claims[0].claim != "PDF/UA-1" or set(claims[0].objects) != expected or not expected:
+        msg = f"{edit} must report only the untagged annotations {expected}, got {claims}"
+        raise ValueError(msg)
 
 
 def arlington(path: Path, flavour: str) -> str:
@@ -120,6 +153,11 @@ def details(jar: Path, flavour: str, path: Path) -> str:
     return result.stdout
 
 
+def failed_rules(report: str) -> set[str]:
+    """Read the rule identifiers from a verbose veraPDF text report."""
+    return set(re.findall(r"^\s+FAIL (\S+)\s*$", report, re.MULTILINE))
+
+
 def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
     """Validate ``files`` under their flavours; print each verdict and return the unexpected ones."""
     failures = []
@@ -130,7 +168,9 @@ def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
             key = f"{flavour} {path.name}"
             note = f" ({REJECTED[key]})" if key in REJECTED else ""
             sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
-            if accepted == (key in REJECTED):
+            if accepted == (key in REJECTED) or (
+                key in REJECTED_RULES and failed_rules(details(jar, flavour, path)) != REJECTED_RULES[key]
+            ):
                 failures.append((flavour, path))
     for flavour, path in failures:
         sys.stdout.write(f"\nunexpected verdict for {path.name} under {flavour}:\n{details(jar, flavour, path)}\n")

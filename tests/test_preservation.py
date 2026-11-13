@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import pytest
 from corpus import ASSETS, NAMES
 from test_pages import build_raw_pdf
+from test_preservation_operations import NEW_EDITS, Edit, face
 
 import pyropdf
 from pyropdf import Array, Dictionary, Name, Operation, Real, Stream, typed
@@ -273,7 +274,7 @@ def redo(doc: pyropdf.Document) -> set[int]:
 
 
 #: Each edit, which returns the object numbers it touched among those that existed before it.
-EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
+_EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "none": lambda _: set(),
     "rotate": rotate,
     "add_object": add_object,
@@ -295,6 +296,8 @@ EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
     "redo": redo,
 }
 
+EDITS = {name: Edit(apply=apply) for name, apply in _EDITS.items()} | NEW_EDITS
+
 
 def page_state(doc: pyropdf.Document, index: int) -> tuple[str, bytes]:
     """Return the text and a low-resolution rendering of page ``index``."""
@@ -306,15 +309,20 @@ def page_state(doc: pyropdf.Document, index: int) -> tuple[str, bytes]:
 @pytest.mark.parametrize("edit", sorted(EDITS))
 @pytest.mark.parametrize("name", NAMES)
 def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *, incremental: bool) -> None:
-    doc = pyropdf.open(ASSETS / name)
+    case = EDITS[edit]
+    doc = case.open(ASSETS / name)
     before = snapshot(doc)
-    # The last page, which no edit of the table touches unless it is the
-    # first; it is found again by its object number, since edits move pages.
-    last = len(doc.pages) - 1
-    untouched = number(doc.pages[last].obj)
-    state = page_state(doc, last) if last else None
-    touched = EDITS[edit](doc)
+    # A page outside the declared effect, found by object number after edits
+    # move pages. Creating a field may also draw existing missing appearances.
+    affected = case.affected_pages(doc)
+    candidates = [index for index in range(1, len(doc.pages)) if number(doc.pages[index].obj) not in affected]
+    last = candidates[-1] if candidates else None
+    untouched = number(doc.pages[last].obj) if last is not None else None
+    state = page_state(doc, last) if last is not None else None
+    touched = case.apply(doc)
+    case.check(doc)
     reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
+    case.check(reopened)
     after = snapshot(reopened)
     changed = [xref for xref, value in before.items() if xref not in touched and after.get(xref) != value]
     assert changed == []
@@ -334,11 +342,57 @@ def test_attachment_edits_record_an_indirect_tree_root(edit: str, *, indirect_na
     doc.catalog["Names"] = doc.objects[doc.objects.add(names)] if indirect_names else names
     before = snapshot(doc)
 
-    touched = EDITS[edit](doc)
+    touched = EDITS[edit].apply(doc)
 
     assert number(root) in touched
     after = snapshot(pyropdf.open(doc.to_bytes()))
     assert all(after.get(xref) == value for xref, value in before.items() if xref not in touched)
+
+
+@pytest.mark.parametrize("edit", sorted(NEW_EDITS))
+def test_each_added_case_rejects_a_no_op(edit: str) -> None:
+    doc = pyropdf.Document()
+    doc.pages.new((200, 200))
+    case = EDITS[edit]
+    prepared = case.open(doc.to_bytes())
+
+    with pytest.raises((AssertionError, KeyError, StopIteration)):
+        case.check(prepared)
+
+    case.apply(prepared)
+    case.check(prepared)
+    case.check(pyropdf.open(prepared.to_bytes()))
+
+
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.parametrize("edit", sorted(NEW_EDITS))
+def test_added_cases_preserve_siblings_with_indirect_annotation_and_field_lists(
+    edit: str, *, incremental: bool
+) -> None:
+    doc = pyropdf.Document()
+    doc.pages.new((200, 200))
+    other = doc.pages.new((200, 200))
+    other.widgets.add(pyropdf.TextField("untouched", (10, 50, 100, 70)))
+    doc.form.font = face()
+    doc.form["untouched"].value = "office"
+    doc = EDITS[edit].open(doc.to_bytes())
+    form = doc.catalog["AcroForm"]
+    form["Fields"] = doc.objects[doc.objects.add(list(form["Fields"]))]
+    doc.catalog["AcroForm"] = doc.objects[doc.objects.add(dict(form))]
+    page = doc.pages[0]
+    page.obj["Annots"] = doc.objects[doc.objects.add(list(page.obj.get("Annots", [])))]
+    doc = pyropdf.open(doc.to_bytes())
+    before = snapshot(doc)
+    state = page_state(doc, 1)
+
+    touched = EDITS[edit].apply(doc)
+    reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
+
+    EDITS[edit].check(reopened)
+    after = snapshot(reopened)
+    assert [xref for xref, value in before.items() if xref not in touched and after.get(xref) != value] == []
+    assert reopened.form["untouched"].value == "office"
+    assert page_state(reopened, 1) == state
 
 
 #: Reals that a float cannot hold exactly, as the synthetic document writes them.
@@ -369,8 +423,8 @@ def synthetic() -> bytes:
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
 @pytest.mark.parametrize("edit", sorted(EDITS))
 def test_exact_reals_keep_their_tokens_through_every_edit(edit: str, *, incremental: bool) -> None:
-    doc = pyropdf.open(synthetic())
-    touched = EDITS[edit](doc)
+    doc = EDITS[edit].open(synthetic())
+    touched = EDITS[edit].apply(doc)
     data = doc.to_bytes(incremental=incremental)
     # The saved bytes are searched for the source tokens, independently of
     # the parser: a real read from bytes has no lexeme until I7 (#16).
