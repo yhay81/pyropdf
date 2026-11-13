@@ -39,8 +39,8 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 
 `doc.pages.new_from_image(source)` adds a page per image frame, sized by
 the image's resolution. JPEG and JPEG 2000 are embedded without
-recompression; TIFF, GIF, and other formats go through Pillow when it is
-installed:
+recompression, and PNG is read directly, keeping its alpha as a soft mask;
+TIFF, GIF, and other formats go through Pillow when it is installed:
 
 ```python
 import pyropdf
@@ -94,8 +94,8 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 `canvas.image` takes JPEG, PNG, or JPEG 2000 data, a path, a `Pixmap`, or
 an image of the document; `canvas.page` places a page of any open document,
 optionally clipped and turned. An image or a page drawn several times is
-stored once. `clip`, `transform`, `opacity`, and `blend` are scopes for
-everything drawn inside them.
+stored once. `clip`, `transform`, `opacity`, `blend`, `layer`, and `tag` are
+scopes for everything drawn inside them.
 
 ### Gradients
 
@@ -137,13 +137,15 @@ with page.draw() as canvas:
 ```
 
 `extend` says what a gradient paints beyond its line: the end colors continue
-(`PAD`, the default), nothing (`NONE`), or the line runs again (`REPEAT`) or
-back and forth (`REFLECT`). Equal functions and shadings are written once in a
-canvas. `page.content()` reads a drawn gradient back as a `ShadingPattern`,
-which reports its kind and its matrix but not its stops, so `canvas.draw` cannot
-paint it again. Text fills and strokes also accept gradients. When a soft mask
-requires separate fill and stroke objects, the second has empty `ActualText`
-so that text extraction reads the text once.
+(`PAD`, the default), only the start or end color continues (`PAD_START`,
+`PAD_END`), nothing (`NONE`), or the line runs again (`REPEAT`) or back and
+forth (`REFLECT`). Equal functions and shadings are written once in a canvas.
+`page.content()` and `page.paths()` read axial and radial shadings back as a
+`ShadingPattern` with their color function, and `canvas.draw` repaints their
+fills and strokes as a bounded sampled approximation (other shading types and
+`TilingPattern` are not repainted). When a soft mask requires separate text
+fill and stroke objects, the second has empty `ActualText` so that text
+extraction reads the text once.
 
 ### Text
 
@@ -216,8 +218,9 @@ with pyropdf.open("input.pdf") as doc:
         print(annotation.type, annotation.rect)
 ```
 
-Text markup (highlight, underline, squiggly, strike-out), notes, lines,
-squares, circles, polygons, polylines, ink, and file attachments are
+Text markup (highlight, underline, squiggly, strike-out), notes, free text
+(`FreeText`), stamps (`Stamp`), carets (`Caret`), lines, squares, circles,
+polygons, polylines, ink, sounds (`Sound`), and file attachments are
 available; the [API reference](api/annotations.md) lists their options.
 
 ## Links

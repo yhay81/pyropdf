@@ -39,17 +39,18 @@ description: What pyropdf is good at, what it does not do yet, and how it compar
 | Undo and atomic transactions | yes | journalling | no | no |
 
 PyMuPDF is the most complete of these and the one pyropdf measures itself
-against. On a corpus of 14 real-world documents, as the ratio of pyropdf's
-time to PyMuPDF's (lower is faster):
+against. On the 15-document real-world corpus on Apple Silicon macOS (with
+rendered pixels read via `bytes(pixmap)`), as the ratio of pyropdf's time to
+PyMuPDF's (lower is faster):
 
 | Operation | pyropdf / PyMuPDF |
 | --- | ---: |
-| Open | 0.19 |
-| Text | 0.79 |
-| Words | 0.75 |
-| Search | 1.16 |
-| Render 72 dpi | 2.65 |
-| Render 144 dpi | 3.97 |
+| Open | 0.21 |
+| Text | 0.80 |
+| Words | 0.79 |
+| Search | 1.19 |
+| Render 72 dpi | 2.03 |
+| Render 144 dpi | 2.34 |
 | Full save | 0.15 |
 
 The method, the raw timings, and the feature-by-feature comparison are in

@@ -141,19 +141,19 @@ with pyropdf.open("input.pdf") as doc:
     <a class="pp-card" href="reading/#offline-ocr">
       <h3>スキャンを認識する</h3>
       <p><code>ocr</code> extra の PP-OCR モデルによるオフライン OCR。結果は見えないテキスト層として書き戻します。</p>
-      <code>page.ocr(engine=OcrEngine())</code>
+      <code>page.apply_ocr(engine=OcrEngine())</code>
     </a>
     <a class="pp-card" href="rendering/">
       <h3>描画する</h3>
       <p>hayro による pixmap・PNG・JPEG・SVG と、複数ページの並列描画。</p>
       <code>page.pixmap(dpi=144)</code>
     </a>
-    <a class="pp-card" href="editing/">
+    <a class="pp-card" href="editing/#pages">
       <h3>ページを編集する</h3>
       <p>ページの挿入・取り込み・移動・回転・切り抜き・平坦化。メタデータ、ページラベル、しおり、レイヤーの編集。</p>
       <code>page.rotation = 90</code>
     </a>
-    <a class="pp-card" href="editing/">
+    <a class="pp-card" href="editing/#drawing">
       <h3>作図し、注釈を付ける</h3>
       <p>パス、画像、ページ、テキストの作図。ハイライト、メモ、図形、リンク、フリーテキスト、スタンプ。</p>
       <code>page.draw()</code>
@@ -163,7 +163,7 @@ with pyropdf.open("input.pdf") as doc:
       <p>フィールドの値を読み書きし、ウィジェットを加え、外観を最新に保ちます。</p>
       <code>doc.form["name"].value = "Ada"</code>
     </a>
-    <a class="pp-card" href="versions/">
+    <a class="pp-card" href="versions/#saving">
       <h3>保存し、署名する</h3>
       <p>変わった分だけを追記する増分保存、AES-256 暗号化、新しいリビジョンへの PAdES 署名。</p>
       <code>doc.sign("approval", signer)</code>

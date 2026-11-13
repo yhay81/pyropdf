@@ -1,14 +1,11 @@
 ---
 title: Versions and saving
-description: Versions, transactions, undo and redo, change reports, incremental and full saves, and encryption.
+description: Transactions, undo and redo, change reports, incremental and full saves, encryption, and PAdES signing.
 ---
 
 # Versions and saving
 
-pyropdf keeps a document as a base, the file it opened, and a chain of
-versions above it. An edit writes the objects it changes into a new version
-and leaves the others where they are. Every reader, renderer, and save works
-from the current version.
+See [Concepts](concepts.md) for the version model behind edits and handles.
 
 ## Transactions
 
@@ -106,4 +103,34 @@ with pyropdf.open("input.pdf") as doc:
 
 with pyropdf.open("locked.pdf", password="reader") as doc:
     print(doc.encryption_method, doc.permissions)
+```
+
+## Signing
+
+`Signer.from_pem` and `Signer.from_pkcs12` load ECDSA P-256 or P-384 keys with
+their certificate chains, and `Signer.callback` delegates signing to an
+external RSA key, HSM, or PKCS#11 token. `doc.sign(field, signer)` writes a CMS
+/ PAdES signature (`B-B`, or `B-T` when a `timestamper` callback returns an
+RFC 3161 token) in a new incremental revision, so earlier signed bytes stay
+unchanged, and returns the signed PDF bytes. `doc.signatures` lists the signed
+fields of the opened file, and `sig.verify(trust=...)` checks each signature,
+its timestamp, and later modifications offline.
+
+```python
+from pathlib import Path
+
+import pyropdf
+
+
+def sign_pdf(key_pem: bytes, cert_pem: bytes) -> None:
+    signer = pyropdf.Signer.from_pem(key_pem, cert_pem)
+    with pyropdf.open("input.pdf") as doc:
+        signed = doc.sign("approval", signer, reason="Approved")
+    Path("signed.pdf").write_bytes(signed)
+
+
+with pyropdf.open("input.pdf") as doc:
+    for sig in doc.signatures:
+        check = sig.verify()
+        print(sig.field, check.intact, check.valid, check.modifications)
 ```

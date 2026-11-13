@@ -1,13 +1,11 @@
 ---
 title: 版と保存
-description: 版、トランザクション、undo と redo、変更レポート、増分保存と全体保存、暗号化。
+description: トランザクション、undo と redo、変更レポート、増分保存と全体保存、暗号化、PAdES 署名。
 ---
 
 # 版と保存
 
-pyropdf は文書を、開いたファイルである base と、その上に積み重なる版の列として
-持ちます。編集は変えたオブジェクトだけを新しい版に書き、ほかはそのまま残します。
-読み取り・描画・保存はどれも現在の版から働きます。
+編集とハンドルの土台になる版モデルは[概念](concepts.md)を参照してください。
 
 ## トランザクション
 
@@ -51,7 +49,7 @@ with pyropdf.open("input.pdf") as doc:
     print(page.rotation)                             # 90
 ```
 
-## 保存
+## 保存 {#saving}
 
 `doc.save(path)` と `doc.to_bytes()` は現在の版を書きます。
 
@@ -102,4 +100,32 @@ with pyropdf.open("input.pdf") as doc:
 
 with pyropdf.open("locked.pdf", password="reader") as doc:
     print(doc.encryption_method, doc.permissions)
+```
+
+## 署名 {#signing}
+
+`Signer.from_pem` と `Signer.from_pkcs12` は ECDSA（P-256・P-384）の鍵と証明書チェーンを読み込み、
+`Signer.callback` は外部の RSA 鍵・HSM・PKCS#11 トークンに署名を委ねます。`doc.sign(field, signer)` は
+CMS / PAdES 署名（`B-B`、`timestamper` コールバックが RFC 3161 トークンを返すときは `B-T`）を新しい
+増分リビジョンとして追記するため、前の署名対象のバイト列は変わらず、署名済み PDF のバイト列が返ります。
+`doc.signatures` は開いたファイルの署名済みフィールドを並べ、`sig.verify(trust=...)` は各署名・
+タイムスタンプ・後続リビジョンでの変更をオフラインで検証します。
+
+```python
+from pathlib import Path
+
+import pyropdf
+
+
+def sign_pdf(key_pem: bytes, cert_pem: bytes) -> None:
+    signer = pyropdf.Signer.from_pem(key_pem, cert_pem)
+    with pyropdf.open("input.pdf") as doc:
+        signed = doc.sign("approval", signer, reason="承認")
+    Path("signed.pdf").write_bytes(signed)
+
+
+with pyropdf.open("input.pdf") as doc:
+    for sig in doc.signatures:
+        check = sig.verify()
+        print(sig.field, check.intact, check.valid, check.modifications)
 ```

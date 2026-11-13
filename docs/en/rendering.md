@@ -32,7 +32,7 @@ without a copy: `numpy.asarray(pixmap)` has the shape
 | Option | Effect |
 | --- | --- |
 | `dpi` | Scales the page uniformly; 72, the default, is one pixel per point. |
-| `matrix` | A `Matrix`, such as `Matrix(90)` for a quarter turn, or six numbers that scale, rotate, or skew the page; the raster covers the transformed page, so its translation is dropped. |
+| `matrix` | A `Matrix`, such as `Matrix(90)` for a quarter turn, or four or six numbers that scale, rotate, or skew the page; the raster covers the transformed page, so any translation is dropped. |
 | `clip` | A display rectangle `(x0, y0, x1, y1)`; only its pixels are rasterized. |
 | `alpha` | Keeps transparency instead of painting the page on white. |
 | `background` | An RGB or RGBA tuple, 0 to 255, painted beneath the page; it must be opaque without `alpha`. |

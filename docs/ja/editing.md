@@ -9,7 +9,7 @@ description: ページ、注釈、リンク、フォーム、しおり、添付�
 `doc.transaction(name)` で包むと、履歴の一歩にまとまります。詳しくは
 [版と保存](versions.md)を見てください。
 
-## ページ
+## ページ {#pages}
 
 `doc.pages` は `Page` ハンドルの列です。ハンドルはページが動いても同じページを
 指し続け、ページが削除されると `StalePageError` を出します。
@@ -37,8 +37,8 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 ```
 
 `doc.pages.new_from_image(source)` は画像のフレームごとに、その解像度に合わせた大きさのページを
-加えます。JPEG と JPEG 2000 は再圧縮せずに埋め込み、TIFF や GIF などは Pillow があれば
-Pillow を通して読みます：
+加えます。JPEG と JPEG 2000 は再圧縮せずに埋め込み、PNG も Pillow なしで直接読んでアルファを
+ソフトマスクに保ちます。TIFF や GIF などは Pillow があれば Pillow を通して読みます：
 
 ```python
 import pyropdf
@@ -66,7 +66,7 @@ with pyropdf.open("input.pdf") as doc:
 
 `page.flatten()` は注釈とウィジェットの外観をページの内容に描き込み、ページから取り除きます。
 
-## 作図
+## 作図 {#drawing}
 
 `page.draw()` が返す `Canvas` は、パス、画像、他のページ、テキストを表示空間で描きます。
 ページの内容の上に描き、`underlay=True` なら下に描きます。`with` ブロックが一つの
@@ -89,12 +89,12 @@ with pyropdf.open("input.pdf") as doc, pyropdf.open("input.pdf") as other:
 `canvas.image` は JPEG、PNG、JPEG 2000 のデータ、パス、`Pixmap`、文書内の画像を
 受け取ります。`canvas.page` は開いている任意の文書のページを、切り抜きや回転を付けて
 配置します。何度も描いた画像やページは一度だけ保存されます。`clip`、`transform`、
-`opacity`、`blend` は、その中で描くもの全体に効くスコープです。
+`opacity`、`blend`、`layer`、`tag` は、その中で描くもの全体に効くスコープです。
 
 ### グラデーション
 
-`LinearGradient` と `RadialGradient` は、パスと図形の上で `Color` が使える場所、
-つまり `fill` と `Stroke` の `paint` で使えます。テキストにも使えます。座標は描くものと同じ空間にあるので、
+`LinearGradient` と `RadialGradient` は、パス・図形・テキストで `Color` が使える場所、
+つまり `fill` と `Stroke` の `paint` で使えます。座標は描くものと同じ空間にあるので、
 `canvas.transform` に合わせて動きます。
 
 ```python
@@ -111,7 +111,7 @@ sun = RadialGradient(
     start_radius=0,
     end=Point(100, 100),
     end_radius=40,
-    # A stop's alpha fades the color out, through a soft mask.
+    # ストップのアルファはソフトマスクを通して色をフェードアウトさせる
     stops=(ColorStop(0, Color(1, 0.8, 0)), ColorStop(1, Color(1, 0.8, 0, 0))),
 )
 stripes = LinearGradient(
@@ -129,13 +129,14 @@ with page.draw() as canvas:
     canvas.line((0, 180), (200, 180), stroke=Stroke(paint=stripes, width=6))
 ```
 
-`extend` はグラデーションの線の外側に何を描くかを決めます。両端の色を伸ばす `PAD`
-(既定)、何も描かない `NONE`、線を繰り返す `REPEAT`、往復させる `REFLECT` があります。
-同じ関数とシェーディングは 1 つの canvas の中で一度だけ書かれます。`page.content()` は
-描かれたグラデーションを `ShadingPattern` として読み戻します。これは種類と行列を報告しますが
-ストップは持たないので、`canvas.draw` で描き直すことはできません。テキストの塗りと線にもグラデーションを使えます。
-ソフトマスクのために塗りと線を分けて描く場合は、二度目に空の `ActualText` を付け、
-文字抽出では一度だけ読み取れるようにします。
+`extend` はグラデーションの線の外側に何を描くかを決めます。両端の色を伸ばす `PAD`（既定）、
+始点または終点の色だけを伸ばす `PAD_START` と `PAD_END`、何も描かない `NONE`、
+線を繰り返す `REPEAT`、往復させる `REFLECT` があります。同じ関数とシェーディングは
+1 つの canvas の中で一度だけ書かれます。`page.content()` と `page.paths()` は軸方向と
+放射状のシェーディングを色関数つきの `ShadingPattern` として読み戻し、`canvas.draw` は
+その塗りと線を上限つきのサンプル近似で描き直します（他の種類のシェーディングと
+`TilingPattern` は描き直しません）。ソフトマスクのためにテキストの塗りと線を分けて描く場合は、
+二度目に空の `ActualText` を付け、文字抽出では一度だけ読み取れるようにします。
 
 ### テキスト
 
@@ -205,8 +206,9 @@ with pyropdf.open("input.pdf") as doc:
         print(annotation.type, annotation.rect)
 ```
 
-テキストマークアップ（ハイライト、下線、波線、取り消し線）、メモ、線、四角、円、
-多角形、折れ線、手書き、添付ファイルを使えます。オプションは
+テキストマークアップ（ハイライト、下線、波線、取り消し線）、メモ、フリーテキスト（`FreeText`）、
+スタンプ（`Stamp`）、キャレット（`Caret`）、線、四角、円、多角形、折れ線、手書き、
+音声（`Sound`）、添付ファイルを使えます。オプションは
 [API リファレンス](https://pyropdf.haya.works/api/annotations/)にあります。
 
 ## リンク

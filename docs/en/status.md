@@ -19,12 +19,7 @@ Not yet in 0.3.0:
   content provenance of a hayro change under review;
 - the interpreter fuel and cancellation that would bound rendering and
   interpretation, also a hayro change under review;
-- pixmaps in CMYK, and selectable text in SVG, which wait on hayro;
-- canvas text in CFF2 variable faces; color glyphs from `SVG ` tables, from
-  JPEG, TIFF, or raw strikes, and COLR glyphs that need a sweep gradient or
-  a compositing mode that PDF lacks, which draw their monochrome outline or
-  refuse; and color glyphs in form fields and free text annotations, which
-  draw outlines only.
+- pixmaps in CMYK, and selectable text in SVG, which wait on hayro.
 
 Progress is tracked in the
 [issue tree](https://github.com/yhay81/pyropdf/issues/1).

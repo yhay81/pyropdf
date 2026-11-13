@@ -24,9 +24,10 @@ except pyropdf.LimitError as error:
 
 `DocumentLimits.web()` は文書を開くときにすべてのオブジェクトを検査します。
 ストア経由で展開するストリームには 1 本あたり 64 MiB、ページのコンテンツストリームには
-さらに 1 本あたり 10 MiB の上限を設けます。この検査を通った PDF でも、テキスト抽出や
-描画でデータを展開するとサイズが大きくなることがあります。このプロファイルでは
-`max_memory_size` と `max_duration` は未設定です。
+さらに 1 本あたり 10 MiB、hayro に渡す PDF のバイト数（`max_interpretation_size`）には
+64 MiB の上限を設けます。この検査を通った PDF でも、テキスト抽出や描画でデータを展開すると
+サイズが大きくなることがあります。このプロファイルでは `max_memory_size` と `max_duration`
+は未設定です。
 
 `CancellationToken` を使うと、別のスレッドから操作の取り消しを要求できます。
 pyropdf は操作の予算を確認する際に、このトークンを検査します。
@@ -52,6 +53,7 @@ with pyropdf.open("input.pdf", limits=limits) as doc:
 
 | 項目 | pyropdf が検査する範囲 | 制限を超えうる処理 |
 | --- | --- | --- |
+| `max_interpretation_size` | 元のバイト列、ブリッジの相互参照の更新、編集したオブジェクト、描画のために合成した外観を含む、hayro に渡す PDF のバイト数。 | その中のフィルタ付きストリームや画像は、hayro が展開するときにさらに大きく膨らみうる。 |
 | `max_page_content_size` | `page.operations` などでストアがフィルタを使って展開した、ページのコンテンツストリーム 1 本あたりのサイズ。 | 上記 5 メソッドでは hayro がページのコンテンツを直接展開する。 |
 | `max_decompressed_size` | ストア経由で読み取るストリーム 1 本あたりの展開後のサイズ。フィルタが出力用のメモリを確保してから検査する場合がある。 | 描画時の画像など、hayro が直接展開するストリームはこの検査を通らない。 |
 | `max_memory_size` | pyropdf が操作の予算に計上するメモリ。 | hayro の作業用メモリや描画バッファにより、プロセスの使用量は上限を超えうる。 |
@@ -76,7 +78,7 @@ util-linux の `prlimit` で Python が起動する前に仮想アドレス空�
 ```
 
 上限は処理内容に合わせて選び、終了コードが 0 以外ならそのリクエストを失敗として扱います。
-ページの描画が必要な場合は、同じプロセス内で `pixmap()` を呼べます。[状態と安全性](status.md)も参照してください。
+ページの描画が必要な場合は、同じプロセス内で `pixmap()` を呼べます。[状態と安全性](status.md#safety)も参照してください。
 
 ## 制限コード {#limit-codes}
 
@@ -91,7 +93,7 @@ pyropdf が出すエラーは、どれも `PdfError` から派生します。
 | エラー | 出るとき |
 | --- | --- |
 | `MalformedPdfError` | 入力が読める PDF ではない。 |
-| `InternalError` | pyropdf またはエンジンで Rust の panic が起きた。メッセージには panic の内容が残るため、ライブラリの不具合として報告できる。 |
+| `InternalError` | pyropdf またはエンジンで Rust の panic が起きた。メッセージには panic の内容が残る。ライブラリの不具合として報告してください。 |
 | `PasswordError` | パスワードが違う。 |
 | `EncryptedDocumentError` | ロックされた文書を `unlock` の前に読んだ。 |
 | `LimitError` | 操作が制限に達したか、取り消された。`code` がどれかを示す。 |
