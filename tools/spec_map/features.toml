@@ -6,8 +6,8 @@
 # Every object of the Arlington PDF Model is a feature of the map.
 [arlington]
 interpret = { status = "planned", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Typed views write every key as declared, but nothing yet adds the references and settles the structures that a new object needs.", issue = 219, milestone = "Phase 3: Typed objects" }
-edit = { status = "partial", missing = "Typed views change and remove every key as declared, but no reference rule yet keeps the structures that depend on an object consistent.", issue = 219, milestone = "Phase 3: Typed objects" }
+create = { status = "partial", missing = "Typed views write every key as declared, but nothing yet adds the references and settles the structures that a new object needs.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Typed views change and remove every key as declared, but no reference rule yet keeps the structures that depend on an object consistent.", issue = 256, milestone = "Phase 4: Specification" }
 preserve = { status = "planned", milestone = "Phase 4: Specification" }
 
 [features.flate-filter]
