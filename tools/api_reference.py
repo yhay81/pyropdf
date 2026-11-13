@@ -195,7 +195,8 @@ def _clean_doc(raw: str) -> str:
 
 def _doc(obj: object) -> str:
     """Return the cleaned docstring of an object, with reST roles as code."""
-    return _clean_doc(getattr(obj, "__doc__", None) or "")
+    target = obj.__func__ if isinstance(obj, classmethod | staticmethod) else obj
+    return _clean_doc(getattr(target, "__doc__", None) or "")
 
 
 def _preceding_comment(lines: list[str], lineno: int) -> str:
@@ -542,12 +543,6 @@ def _is_package_type(cls: type) -> bool:
     return cls.__module__ == "pyropdf" or cls.__module__.startswith("pyropdf.")
 
 
-def _member_doc(member: object) -> str:
-    """Return the cleaned docstring of a class attribute or method descriptor."""
-    target = member.__func__ if isinstance(member, classmethod | staticmethod) else member
-    return _doc(target)
-
-
 def _format_tuple_constant(qualified: str, type_text: str, values: tuple[str, ...]) -> str:
     """Format a small string-tuple constant with its items."""
     single = f"{qualified}: {type_text} = {values!r}"
@@ -647,7 +642,7 @@ def _members(cls: type, owner: str, info: _SourceInfo) -> list[str]:
             if name in constant_names:
                 continue
             if name.startswith("_") and not (
-                name in _CONTAINER_DUNDERS or (name in _DOCUMENTED_DUNDERS and bool(_member_doc(member)))
+                name in _CONTAINER_DUNDERS or (name in _DOCUMENTED_DUNDERS and bool(_doc(member)))
             ):
                 continue
             is_attr = (
