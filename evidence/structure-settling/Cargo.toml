@@ -1,0 +1,36 @@
+# The measurements behind issue #765: evaluating lazy Settler coalescing
+# (Option A) against immediate maintenance with consolidated helpers (Option B)
+# across OutlineCount, ParentTree, and TreeLimits. The empty table below makes
+# this directory a workspace of its own, so the root Cargo.toml and Cargo.lock
+# stay unchanged.
+[workspace]
+
+[package]
+name = "structure-settling-bench"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[dependencies]
+pyropdf-engine = { path = "../../crates/pyropdf-engine" }
+pyropdf-store = { path = "../../crates/pyropdf-store" }
+
+# The hayro commit of the root workspace's [patch.crates-io] (#18, #603).
+[patch.crates-io]
+hayro = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-ccitt = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-cmap = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-font = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-interpret = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jbig2 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-jpeg2000 = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-postscript = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-svg = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+hayro-syntax = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8af513f6ebda15f4bada85d6f23" }
+
+# The release profile of the repository's workspace, matching shipped wheels.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
