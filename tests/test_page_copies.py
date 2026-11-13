@@ -145,11 +145,15 @@ def _tagged() -> bytes:
 
 def _parent_tree(root: pyropdf.Dictionary) -> dict[int, list[pyropdf.Dictionary]]:
     """Return the parent tree as keys to lists of elements; a lone element reads as a list of one."""
-    nums = list(root["ParentTree"]["Nums"])
-    return {
-        key: list(value) if isinstance(value, pyropdf.Array) else [value]
-        for key, value in zip(nums[::2], nums[1::2], strict=True)
-    }
+    entries: dict[int, list[pyropdf.Dictionary]] = {}
+    nodes = [root["ParentTree"]]
+    while nodes:
+        node = nodes.pop()
+        nums = list(node.get("Nums") or [])
+        for key, value in zip(nums[::2], nums[1::2], strict=True):
+            entries[key] = list(value) if isinstance(value, pyropdf.Array) else [value]
+        nodes.extend(node.get("Kids") or [])
+    return entries
 
 
 def test_tagged_copies_get_elements_and_keys_of_their_own() -> None:
@@ -414,20 +418,23 @@ def test_copy_replaces_an_aliased_merged_field_instead_of_adding_a_duplicate() -
 
 @pytest.mark.parametrize("key", ["Kids", "Nums"])
 def test_copy_extends_parent_tree_arrays_through_aliases(key: str) -> None:
+    leaf_nums = "0 [7 0 R] " + " ".join(f"{index} []" for index in range(1, 64))
+    high = 63 if key == "Kids" else 0
     extra = {
-        8: f"<< /{key} 9 0 R /Limits [0 0] >>",
+        8: f"<< /{key} 9 0 R /Limits [0 {high}] >>",
         9: "10 0 R",
         10: "[11 0 R]" if key == "Kids" else "[0 [7 0 R]]",
-        11: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>",
+        11: f"<< /Nums [{leaf_nums}] /Limits [0 63] >>",
     }
     doc = pyropdf.open(build_raw_pdf(_minimal_tagged(extra)))
     doc.pages.extend(doc.pages[0])
     tree = doc.catalog["StructTreeRoot"]["ParentTree"]
-    assert list(tree["Limits"]) == [0, 1]
+    assert list(tree["Limits"]) == [0, high + 1]
     if key == "Kids":
+        assert tree["Kids"].xref == 10
         assert len(tree["Kids"]) == 2
         assert next(iter(tree["Kids"][0]["Nums"])) == 0
-        assert next(iter(tree["Kids"][1]["Nums"])) == 1
+        assert next(iter(tree["Kids"][1]["Nums"])) == 64
     else:
         assert list(tree["Nums"])[::2] == [0, 1]
 
@@ -449,3 +456,34 @@ def test_copy_joins_a_direct_child_widget_to_its_existing_field() -> None:
     assert copied.xref is not None
     assert copied["Parent"].xref == 5
     assert len(doc.objects[5]["Kids"]) == 2
+
+
+def test_copy_preserves_multi_level_parent_tree_and_bounds_leaves_at_64() -> None:
+    leaf_nums = "0 [7 0 R] " + " ".join(f"{index} []" for index in range(1, 64))
+    objects = _minimal_tagged(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R /MarkInfo << /Marked true >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << >> >>",
+            6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /ParentTreeNextKey 64 >>",
+            8: "<< /Kids [9 0 R] >>",
+            9: "<< /Kids [10 0 R] /Limits [0 63] >>",
+            10: f"<< /Nums [{leaf_nums}] /Limits [0 63] >>",
+        }
+    )
+    doc = pyropdf.open(build_raw_pdf(objects))
+    doc.pages.extend([doc.pages[0], doc.pages[0], doc.pages[0]])
+
+    root = doc.catalog["StructTreeRoot"]
+    tree = root["ParentTree"]
+    assert "Limits" not in tree
+    assert "Nums" not in tree
+    (mid,) = tree["Kids"]
+    assert list(mid["Limits"]) == [0, 66]
+    leaves = list(mid["Kids"])
+    assert len(leaves) == 2
+    assert len(leaves[0]["Nums"]) == 128
+    assert list(leaves[0]["Limits"]) == [0, 63]
+    assert len(leaves[1]["Nums"]) == 6
+    assert list(leaves[1]["Limits"]) == [64, 66]
+    assert root["ParentTreeNextKey"] == 67
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()

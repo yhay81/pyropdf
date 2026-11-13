@@ -967,3 +967,73 @@ def test_embedding_a_large_file_is_refused_without_changes(
     assert attached is not None
     assert attached.read() == b"small"
     assert len(doc.pages[0].annotations) == 1
+
+
+@pytest.mark.parametrize("canonical", [True, False])
+def test_embedded_files_mutations_free_retired_kids_without_defects(*, canonical: bool) -> None:
+    mid_limits = " /Limits [(a.txt) (c.txt)]" if canonical else ""
+    leaf_a_limits = " /Limits [(a.txt) (a.txt)]" if canonical else ""
+    leaf_c_limits = " /Limits [(c.txt) (c.txt)]" if canonical else ""
+    pdf = build_raw_pdf(
+        {
+            1: "<< /Type /Catalog /Pages 2 0 R /Names << /EmbeddedFiles 4 0 R >> >>",
+            2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << >> >>",
+            4: "<< /Kids [5 0 R] >>",
+            5: f"<< /Kids [6 0 R 7 0 R]{mid_limits} >>",
+            6: f"<< /Names [(a.txt) 8 0 R]{leaf_a_limits} >>",
+            7: f"<< /Names [(c.txt) 9 0 R]{leaf_c_limits} >>",
+            8: "<< /Type /Filespec /F (a.txt) /UF (a.txt) /EF << /F 10 0 R /UF 10 0 R >> >>",
+            9: "<< /Type /Filespec /F (c.txt) /UF (c.txt) /EF << /F 11 0 R /UF 11 0 R >> >>",
+            10: b"<< /Type /EmbeddedFile /Params << /Size 1 >> /Length 1 >>\nstream\nA\nendstream",
+            11: b"<< /Type /EmbeddedFile /Params << /Size 1 >> /Length 1 >>\nstream\nC\nendstream",
+        }
+    )
+    doc = pyropdf.open(pdf)
+
+    doc.attachments.add("b.txt", b"B")
+    assert list(doc.attachments) == ["a.txt", "b.txt", "c.txt"]
+    if not canonical:
+        assert not ({5, 6, 7} & set(doc.objects))
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+    doc.attachments["b.txt"].filename = "renamed.txt"
+    assert doc.attachments["b.txt"].filename == "renamed.txt"
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+    payload = doc.attachments["b.txt"].read()
+    del doc.attachments["b.txt"]
+    doc.attachments.add("b2.txt", payload)
+    assert list(doc.attachments) == ["a.txt", "b2.txt", "c.txt"]
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+    del doc.attachments["a.txt"]
+    del doc.attachments["b2.txt"]
+    assert list(doc.attachments) == ["c.txt"]
+    assert not ({5, 6, 7} & set(doc.objects))
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+    del doc.attachments["c.txt"]
+    assert list(doc.attachments) == []
+    assert 4 not in doc.objects
+    assert "Names" not in doc.catalog
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+
+def test_adding_many_attachments_splits_leaves_at_64_pairs_without_defects() -> None:
+    doc = pyropdf.Document()
+    doc.pages.new((100, 100))
+    for i in range(70):
+        doc.attachments.add(f"file-{i:03d}.txt", f"payload-{i}".encode())
+
+    root = doc.catalog["Names"]["EmbeddedFiles"]
+    assert "Limits" not in root
+    assert "Names" not in root
+    kids = list(root["Kids"])
+    assert len(kids) == 2
+    assert all(len(kid["Names"]) <= 128 for kid in kids)
+    assert list(kids[0]["Limits"]) == [b"file-000.txt", b"file-031.txt"]
+    assert list(kids[1]["Limits"]) == [b"file-032.txt", b"file-069.txt"]
+    assert len(doc.attachments) == 70
+    assert doc.attachments["file-069.txt"].read() == b"payload-69"
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()

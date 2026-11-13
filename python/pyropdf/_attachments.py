@@ -2,8 +2,9 @@
 
 The attachments are the entries of the catalog's ``/EmbeddedFiles`` name tree
 (ISO 32000-2, 7.11.4). Every access walks the tree within its bounds: 32
-levels and 4,096 entries. Adding and deleting write the tree again as one
-node whose ``/Names`` holds the entries sorted by key.
+levels and 4,096 entries. Adding and deleting delegate to ``pyropdf_store``'s
+bounded name-tree helpers, maintaining sorted 64-pair leaves and freeing
+retired ``/Kids`` nodes.
 
 A document that claims PDF/A-3 or PDF/A-4 requires each embedded file to be
 an associated file with a MIME type (ISO 19005-3 section 6.8, ISO 19005-4
@@ -20,7 +21,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 from pyropdf import _core
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._limits import _validate_optional_positive_int
-from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode_text_string
+from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode, _encode_text_string
 from pyropdf._profiles import pdfa_claim
 
 if TYPE_CHECKING:
@@ -574,38 +575,6 @@ def _writable(document: Document) -> list[_Entry]:
     return entries
 
 
-def _rewrite(document: Document, entries: list[_Entry]) -> None:
-    """Write the name tree as one node whose ``/Names`` holds ``entries``, sorted by key.
-
-    Without entries the tree is removed, and so is a name dictionary that it
-    leaves empty, since a name tree node has at least one entry.
-    """
-    if not entries:
-        catalog = document.catalog
-        names = catalog.get("Names")
-        if isinstance(names, Dictionary) and "EmbeddedFiles" in names:
-            del names["EmbeddedFiles"]
-            if not len(names):
-                del catalog["Names"]
-        return
-    pairs: list[object] = []
-    for entry in sorted(entries, key=lambda entry: entry.key):
-        pairs += [String(entry.key), entry.filespec]
-    root = _root(document)
-    if root is not None:
-        root["Names"] = pairs
-        for key in ("Kids", "Limits"):
-            if key in root:
-                del root[key]
-        return
-    catalog = document.catalog
-    names = catalog.get("Names")
-    if isinstance(names, Dictionary):
-        names["EmbeddedFiles"] = {"Names": pairs}
-    else:
-        catalog["Names"] = {"EmbeddedFiles": {"Names": pairs}}
-
-
 class Attachments(Mapping[str, Attachment]):
     """The embedded files of a document, keyed by name, as ``doc.attachments`` returns them.
 
@@ -658,16 +627,23 @@ class Attachments(Mapping[str, Attachment]):
             # Read the tree under the transaction's lock, so that a
             # concurrent edit is not overwritten by a stale snapshot.
             entries = _writable(self._document)
-            removed = [entry.filespec for entry in entries if entry.name == name]
+            removed = [entry for entry in entries if entry.name == name]
             if not removed:
                 raise KeyError(name)
-            candidates = sorted({number for filespec in removed for number in _objects(filespec)})
-            _rewrite(self._document, [entry for entry in entries if entry.name != name])
-            for filespec in removed:
-                _dissociate(self._document, filespec)
-            # The file specification and its embedded files go unless
-            # something else, such as an annotation's /FS, refers to them.
-            _core.object_free_unreferenced(self._document._core(), candidates)  # noqa: SLF001
+            candidates = sorted({number for entry in removed for number in _objects(entry.filespec)})
+            fallback = [
+                (entry.key, _encode(self._document, entry.filespec, 1)) for entry in entries if entry.name != name
+            ]
+            for entry in removed:
+                _dissociate(self._document, entry.filespec)
+            # The file specification, its embedded files, and any retired /Kids
+            # nodes go unless something else, such as an annotation's /FS, refers to them.
+            _core.embedded_files_remove(
+                self._document._core(),  # noqa: SLF001
+                [entry.key for entry in removed],
+                fallback,
+                candidates,
+            )
 
     def add(
         self,
@@ -746,7 +722,16 @@ class Attachments(Mapping[str, Attachment]):
                 filespec["Desc"] = description
             filespec["EF"] = {"F": stream, "UF": stream} if unicode else {"F": stream}
             added = objects[objects.add(filespec)]
-            _rewrite(self._document, [*entries, _Entry(_encode_text_string(name), name, added)])
+            raw_key = _encode_text_string(name)
+            _core.embedded_files_insert(
+                self._document._core(),  # noqa: SLF001
+                raw_key,
+                _encode(self._document, added, 1),
+                [
+                    (entry.key, _encode(self._document, entry.filespec, 1))
+                    for entry in [*entries, _Entry(raw_key, name, added)]
+                ],
+            )
             if associated:
                 _associate(self._document, added, stream)
         return Attachment(self._document, name)

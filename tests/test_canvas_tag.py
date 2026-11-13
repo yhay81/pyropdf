@@ -325,3 +325,74 @@ def test_a_lone_document_element_reference_takes_the_new_elements() -> None:
     (paragraph,) = doc.objects[document]["K"]
     assert (str(paragraph["S"]), paragraph["P"].xref) == ("P", document)
     _check_consistency(doc)
+
+
+def _verify_number_tree(node: pyropdf.Dictionary, *, is_root: bool = True) -> tuple[int, int, int]:
+    """Verify homogeneous depth, <= 64-pair leaves, and exact non-root /Limits; return (depth, low, high)."""
+    if is_root:
+        assert "Limits" not in node
+    if "Kids" in node:
+        assert "Nums" not in node
+        kids = list(node["Kids"])
+        assert 1 <= len(kids) <= 64
+        child_stats = [_verify_number_tree(kid, is_root=False) for kid in kids]
+        depths = {d for d, _, _ in child_stats}
+        assert len(depths) == 1
+        low = child_stats[0][1]
+        high = child_stats[-1][2]
+        for (_, prev_high), (_, next_low, _) in zip(
+            [(d, hi) for d, _, hi in child_stats], child_stats[1:], strict=False
+        ):
+            assert prev_high < next_low
+        if not is_root:
+            assert list(node["Limits"]) == [low, high]
+        return next(iter(depths)) + 1, low, high
+    nums = list(node["Nums"])
+    assert 2 <= len(nums) <= 128
+    assert len(nums) % 2 == 0
+    keys = [int(k) for k in nums[::2]]
+    assert keys == sorted(set(keys))
+    if not is_root:
+        assert list(node["Limits"]) == [keys[0], keys[-1]]
+    return 0, keys[0], keys[-1]
+
+
+def test_canvas_tags_preserve_multi_level_parent_tree_and_split_at_64_pairs() -> None:
+    doc = pyropdf.Document()
+    page = doc.pages.new((300, 300))
+    document_elem = _with_document_element(doc, [])
+    root = _structure(doc)
+    doc.catalog["MarkInfo"] = {"Marked": True}
+
+    elems: list[pyropdf.Dictionary] = []
+    nums_flat: list[object] = []
+    for i in range(64):
+        elem_num = doc.objects.add(
+            {
+                "Type": Name("StructElem"),
+                "S": Name("P"),
+                "P": doc.objects[document_elem],
+                "Pg": page.obj,
+                "K": [0],
+            }
+        )
+        elem = doc.objects[elem_num]
+        elems.append(elem)
+        nums_flat.extend([i, [elem]])
+    doc.objects[document_elem]["K"] = elems
+    leaf = doc.objects.add({"Limits": [0, 63], "Nums": nums_flat})
+    mid = doc.objects.add({"Limits": [0, 63], "Kids": [doc.objects[leaf]]})
+    root["ParentTree"] = doc.objects[doc.objects.add({"Kids": [doc.objects[mid]]})]
+    root["ParentTreeNextKey"] = 64
+
+    for index in range(2):
+        with page.draw() as canvas, canvas.tag(TagRole.PARAGRAPH):
+            canvas.text(f"Item {index}", (20, 40 + 20 * index))
+
+    depth, low, high = _verify_number_tree(root["ParentTree"])
+    assert (depth, low, high) == (2, 0, 65)
+    assert len(doc.objects[mid]["Kids"]) == 2
+    assert list(doc.objects[mid]["Limits"]) == [0, 65]
+    assert root["ParentTreeNextKey"] == 66
+    _check_consistency(doc)
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()

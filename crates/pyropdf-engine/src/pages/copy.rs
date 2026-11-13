@@ -17,6 +17,7 @@ use std::hash::Hash;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map};
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::tree::{append_parent_tree, number_tree_pairs};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::Transaction;
 use pyropdf_store::{Error, LimitExceeded, Result};
@@ -120,11 +121,8 @@ pub(super) fn extend_entry(
 const MAX_PAGE_ANNOTATIONS: usize = 4_096;
 /// The deepest element chain that copying follows up to the root.
 const MAX_ELEMENT_DEPTH: usize = 256;
-/// The most elements that the copy of one page copies, and the most nodes
-/// and pairs of the parent tree that reading it visits.
+/// The most elements that the copy of one page copies.
 const MAX_TREE_NODES: usize = 1 << 20;
-/// The deepest parent tree that reading it follows.
-const MAX_TREE_DEPTH: usize = 32;
 /// The field entries that a merged field and widget dictionary moves to a
 /// new parent when the field gains a second widget.
 const FIELD_KEYS: [&str; 11] = [
@@ -345,7 +343,7 @@ impl<'b> Structure<'b> {
         editable(&root_dict)?;
         let mut pairs = BudgetVec::new(budget);
         if let Some(tree) = root_dict.get("ParentTree") {
-            parent_tree_pairs(transaction, tree, &mut pairs, budget)?;
+            number_tree_pairs(transaction.version(), tree, &mut pairs, budget)?;
         }
         budget.charge(
             LimitCode::MemorySize,
@@ -654,157 +652,17 @@ impl<'b> Structure<'b> {
             return Err(Error::malformed("the structure root disappeared"));
         };
         editable(&root)?;
-        let (tree_object, mut tree) = match located(transaction, root.get("ParentTree"), budget)? {
-            Some((Value::Dict(tree), object)) => {
-                editable(&tree)?;
-                (object, tree)
-            }
-            None | Some((Value::Null, _)) => (None, Dict::new()),
-            _ => return Err(Error::malformed("the parent tree is not a dictionary")),
-        };
-        let smallest = self
-            .pairs
-            .first()
-            .map(|(key, _)| *key)
-            .into_iter()
-            .chain(self.added.first().map(|(key, _)| *key))
-            .min();
-        let largest = self
-            .pairs
-            .last()
-            .map(|(key, _)| *key)
-            .into_iter()
-            .chain(self.added.last().map(|(key, _)| *key))
-            .max();
-        let mut flat = BudgetVec::new(budget);
-        flat.try_reserve_exact(2 * self.added.len())?;
-        for (key, value) in self.added.into_vec() {
-            flat.try_push(Value::Integer(key))?;
-            flat.try_push(value)?;
-        }
-        if !flat.is_empty() {
-            if tree.get("Nums").is_none() && tree.get("Kids").is_some() {
-                let limits = Array::from(vec![flat[0].clone(), flat[flat.len() - 2].clone()]);
-                let mut leaf = Dict::new();
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "each key is a constant, so the leaf holds two entries"
-                )]
-                {
-                    leaf.insert(
-                        Name::from("Nums"),
-                        Value::Array(Array::from(flat.into_vec())),
-                    );
-                    leaf.insert(Name::from("Limits"), Value::Array(limits));
-                }
-                let object = transaction.allocate()?;
-                transaction.write(object.number(), &Value::Dict(leaf), budget)?;
-                extend_entry(
-                    transaction,
-                    &mut tree,
-                    "Kids",
-                    std::iter::once(Value::Reference(object)),
-                    false,
-                    budget,
-                )?;
-            } else {
-                extend_entry(
-                    transaction,
-                    &mut tree,
-                    "Nums",
-                    flat.into_vec().into_iter(),
-                    false,
-                    budget,
-                )?;
-            }
-            if tree.get("Limits").is_some()
-                && let (Some(first), Some(last)) = (smallest, largest)
-            {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the tree already has /Limits, which this replaces"
-                )]
-                tree.insert(
-                    Name::from("Limits"),
-                    Value::Array(Array::from(vec![
-                        Value::Integer(first),
-                        Value::Integer(last),
-                    ])),
-                );
-            }
-        }
-        match tree_object {
-            Some(object) => {
-                transaction.write(object.number(), &Value::Dict(tree), budget)?;
-            }
-            None => {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the root grows by one entry at most"
-                )]
-                root.insert(Name::from("ParentTree"), Value::Dict(tree));
-            }
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the root grows by one entry at most"
-        )]
-        root.insert(
-            Name::from("ParentTreeNextKey"),
-            Value::Integer(self.next_key),
-        );
+        append_parent_tree(
+            transaction,
+            &mut root,
+            Some(self.root),
+            &self.added,
+            self.next_key,
+            budget,
+        )?;
         transaction.write(self.root.number(), &Value::Dict(root), budget)?;
         Ok(())
     }
-}
-
-/// Adds the pairs of the parent tree `tree` to `pairs`, bounded and
-/// following each node once.
-fn parent_tree_pairs<'b>(
-    transaction: &Transaction,
-    tree: &Value,
-    pairs: &mut BudgetVec<'b, (i64, Value)>,
-    budget: &'b Budget,
-) -> Result<()> {
-    let mut visited: HashMap<Reference, ()> = HashMap::new();
-    let mut pending = BudgetVec::new(budget);
-    pending.try_push((copy_for_edit(tree, budget)?, 0_usize))?;
-    let mut nodes = 0_usize;
-    while let Some((node, depth)) = pending.pop() {
-        budget.poll()?;
-        let (node, object) = match located(transaction, Some(&node), budget)? {
-            None | Some((Value::Null, _)) => continue,
-            Some((Value::Dict(node), object)) => (node, object),
-            _ => return Err(Error::malformed("a parent-tree node is not a dictionary")),
-        };
-        if let Some(reference) = object
-            && map_put(&mut visited, reference, (), budget)?.is_some()
-        {
-            continue;
-        }
-        editable(&node)?;
-        nodes += 1;
-        if nodes > MAX_TREE_NODES || depth > MAX_TREE_DEPTH {
-            return Err(LimitExceeded::new(LimitCode::StructureTreeCount).into());
-        }
-        if let Some(Value::Array(nums)) = resolve(transaction, node.get("Nums"), budget)? {
-            let mut items = nums.iter();
-            while let (Some(key), Some(value)) = (items.next(), items.next()) {
-                if let Some(Value::Integer(key)) = resolve(transaction, Some(key), budget)? {
-                    if pairs.len() >= MAX_TREE_NODES {
-                        return Err(LimitExceeded::new(LimitCode::StructureTreeCount).into());
-                    }
-                    pairs.try_push((key, copy_for_edit(value, budget)?))?;
-                }
-            }
-        }
-        if let Some(Value::Array(kids)) = resolve(transaction, node.get("Kids"), budget)? {
-            for kid in kids.iter() {
-                pending.try_push((copy_for_edit(kid, budget)?, depth + 1))?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Adds `widget` as another widget of field `field` and returns it. A

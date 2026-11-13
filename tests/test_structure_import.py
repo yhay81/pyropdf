@@ -333,21 +333,23 @@ def test_import_resolves_aliased_elements_before_reconciling_roles_and_ids() -> 
 
 
 def test_import_extends_receiving_parent_tree_kids_behind_an_array_alias() -> None:
+    leaf_nums = "0 [7 0 R] " + " ".join(f"{index} []" for index in range(1, 64))
     target = pyropdf.open(
         _one_tagged(
             {
-                8: "<< /Kids 9 0 R /Limits [0 0] >>",
+                8: "<< /Kids 9 0 R /Limits [0 63] >>",
                 9: "10 0 R",
                 10: "[11 0 R]",
-                11: "<< /Nums [0 [7 0 R]] /Limits [0 0] >>",
+                11: f"<< /Nums [{leaf_nums}] /Limits [0 63] >>",
             }
         )
     )
     source = pyropdf.open(_one_tagged())
     target.pages.extend(source.pages[0])
     tree = target.catalog["StructTreeRoot"]["ParentTree"]
+    assert tree["Kids"].xref == 10
     assert len(tree["Kids"]) == 2
-    assert list(tree["Limits"]) == [0, 1]
+    assert list(tree["Limits"]) == [0, 64]
     _check(target)
 
 
@@ -442,3 +444,68 @@ def test_import_accepts_a_role_map_chain_at_the_limit() -> None:
     )
     target.pages.extend(source.pages[0])
     assert _kids(target.catalog["StructTreeRoot"])[1]["S"] == "P"
+
+
+def test_import_preserves_multi_level_parent_tree_and_cleans_up_id_tree_kids() -> None:
+    leaf_nums = "0 [7 0 R] " + " ".join(f"{index} []" for index in range(1, 64))
+    target = pyropdf.open(
+        _one_tagged(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R /MarkInfo << /Marked true >> >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << >> >>",
+                6: "<< /Type /StructTreeRoot /K [7 0 R] /ParentTree 8 0 R /ParentTreeNextKey 64 /IDTree 12 0 R >>",
+                7: "<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K 0 /ID (id-000) >>",
+                8: "<< /Kids [9 0 R] >>",
+                9: "<< /Kids [10 0 R] /Limits [0 63] >>",
+                10: f"<< /Nums [{leaf_nums}] /Limits [0 63] >>",
+                12: "<< /Kids [13 0 R] >>",
+                13: "<< /Kids [14 0 R] /Limits [(id-000) (id-000)] >>",
+                14: "<< /Names [(id-000) 7 0 R] /Limits [(id-000) (id-000)] >>",
+            }
+        )
+    )
+    source_elems = {
+        10 + i: f"<< /Type /StructElem /S /P /P 6 0 R /Pg 3 0 R /K [{i}] /ID (src-{i:03d}) >>" for i in range(65)
+    }
+    elem_refs = " ".join(f"{10 + i} 0 R" for i in range(65))
+    source_names = " ".join(f"(src-{i:03d}) {10 + i} 0 R" for i in range(65))
+    source = pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 6 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources << >> >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /StructParents 0 >>",
+                6: (
+                    f"<< /Type /StructTreeRoot /K [{elem_refs}] /ParentTree 8 0 R "
+                    f"/IDTree << /Names [{source_names}] >> >>"
+                ),
+                8: f"<< /Nums [0 [{elem_refs}]] >>",
+                **source_elems,
+            }
+        )
+    )
+
+    target.pages.extend(source.pages[0])
+    target.pages.extend(source.pages[0])
+
+    root = target.catalog["StructTreeRoot"]
+    parent_tree = root["ParentTree"]
+    assert "Limits" not in parent_tree
+    assert "Nums" not in parent_tree
+    (mid,) = parent_tree["Kids"]
+    assert list(mid["Limits"]) == [0, 65]
+    leaves = list(mid["Kids"])
+    assert len(leaves) == 2
+    assert len(leaves[0]["Nums"]) == 128
+    assert list(leaves[0]["Limits"]) == [0, 63]
+    assert len(leaves[1]["Nums"]) == 4
+    assert list(leaves[1]["Limits"]) == [64, 65]
+
+    assert not ({13, 14} & set(target.objects))
+    id_tree = root["IDTree"]
+    assert "Limits" not in id_tree
+    assert "Names" not in id_tree
+    id_kids = list(id_tree["Kids"])
+    assert len(id_kids) == 3
+    assert all(len(kid["Names"]) <= 128 for kid in id_kids)
+    assert pyropdf.open(target.to_bytes()).check().defects == ()

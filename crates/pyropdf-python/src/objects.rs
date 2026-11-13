@@ -224,7 +224,7 @@ fn tagged<'py>(
     clippy::disallowed_methods,
     reason = "each dictionary entry charges enough for its amortized backing capacity before insertion; arrays and bytes use BudgetVec"
 )]
-fn untagged(
+pub(crate) fn untagged(
     value: &Bound<'_, PyAny>,
     version: &Version,
     depth: usize,
@@ -316,7 +316,7 @@ fn untagged(
 }
 
 /// Checks the borrowed Python bytes before allocating their Rust copy.
-fn input_bytes(bytes: &Bound<'_, PyBytes>, budget: &Budget) -> PyResult<Vec<u8>> {
+pub(crate) fn input_bytes(bytes: &Bound<'_, PyBytes>, budget: &Budget) -> PyResult<Vec<u8>> {
     let mut copied = BudgetVec::new(budget);
     copied
         .try_extend_from_slice(bytes.as_bytes())
