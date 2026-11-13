@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from pyropdf._document import Document
+    from pyropdf._limit_codes import LimitCode
     from pyropdf._page import Page
 
 #: The font program keys of a font descriptor (ISO 32000-2 table 124).
@@ -176,7 +177,7 @@ def _page_resources(page: Page) -> object:
     if not isinstance(node, Dictionary):
         return None
     msg = f"the page inherits its resources through more than {_MAX_TREE_DEPTH} parents"
-    code = "page_fonts_tree"
+    code: LimitCode = "page_fonts_tree"
     raise LimitError(code, msg)
 
 
@@ -196,7 +197,7 @@ class _Budget:
         self.left -= entries
         if self.left < 0:
             msg = f"the page's resources and forms hold more than {_MAX_PAGE_ENTRIES} font and XObject entries"
-            code = "page_fonts_entries"
+            code: LimitCode = "page_fonts_entries"
             raise LimitError(code, msg)
 
 
@@ -261,7 +262,7 @@ def page_fonts(page: Page) -> list[FontInfo]:
             seen.add(xobject.xref)
             if len(seen) > _MAX_PAGE_FORMS:
                 msg = f"the page reaches more than {_MAX_PAGE_FORMS} form XObjects"
-                code = "page_fonts_forms"
+                code: LimitCode = "page_fonts_forms"
                 raise LimitError(code, msg)
             pending.append((xobject.get("Resources"), xobject.xref))
     return [_info(*entry) for entry in found.values()]
@@ -357,7 +358,7 @@ def _resource_fonts(roots: list[object]) -> Iterator[Dictionary]:
         seen.add(value.xref)
         if len(seen) > _MAX_APPEARANCE_FORMS:
             msg = f"the appearances reach more than {_MAX_APPEARANCE_FORMS} form XObjects"
-            code = "font_subset_appearances"
+            code: LimitCode = "font_subset_appearances"
             raise LimitError(code, msg)
         resources = value.get("Resources")
         if not isinstance(resources, Dictionary):
@@ -571,7 +572,7 @@ def _text_input(text: object, max_text_size: int | None) -> str:
         for char in str.__iter__(text):
             size += len(char.encode("utf-8", "surrogatepass"))
             if size > max_text_size:
-                code = "text_input_size"
+                code: LimitCode = "text_input_size"
                 msg = f"the text exceeds the {max_text_size}-byte UTF-8 limit"
                 raise LimitError(code, msg)
     return text
@@ -609,8 +610,9 @@ def _font_index(index: object) -> int:
 
 
 def _font_input_limit(size: int, max_size: int) -> LimitError:
+    code: LimitCode = "font_input_size"
     msg = f"the font data is {size} bytes, over the {max_size}-byte limit"
-    return LimitError("font_input_size", msg)
+    return LimitError(code, msg)
 
 
 def _describe_weight(weight: int) -> str:

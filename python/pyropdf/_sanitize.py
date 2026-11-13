@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
     from pyropdf._changes import ChangeReport
     from pyropdf._document import Document
+    from pyropdf._limit_codes import LimitCode
     from pyropdf._operations import InlineImage
 
 #: Actions of one ``/Next`` chain that a check follows.
@@ -114,7 +115,7 @@ def _chain(action: object) -> Iterator[Dictionary]:
         count += 1
         if count > _MAX_ACTION_CHAIN:
             msg = f"an action chain has more than {_MAX_ACTION_CHAIN} actions"
-            code = "sanitize_action_chain"
+            code: LimitCode = "sanitize_action_chain"
             raise LimitError(code, msg)
         yield item
         if "Next" in item:
@@ -274,7 +275,7 @@ class _Forms:
         if xref not in self.streams:
             if len(self.streams) >= _MAX_FORMS:
                 msg = f"hidden text removal reaches more than {_MAX_FORMS} form XObjects"
-                code = "sanitize_forms"
+                code: LimitCode = "sanitize_forms"
                 raise LimitError(code, msg)
             self.streams[xref] = form
             self.entries[xref] = _UNSEEN

@@ -68,6 +68,10 @@ LimitCode: TypeAlias = Literal[
     "text_input_size",
     "shaped_glyph_count",
     "font_input_size",
+    "page_fonts_tree",
+    "page_fonts_entries",
+    "page_fonts_forms",
+    "font_subset_appearances",
     "named_destination_count",
     "named_destination_edge_count",
     "named_destination_depth",
@@ -77,6 +81,15 @@ LimitCode: TypeAlias = Literal[
     "toc_input_size",
     "structure_tree_count",
     "page_entry_count",
+    "page_label_tree_depth",
+    "page_label_tree_edges",
+    "page_label_ranges",
+    "page_label_text_size",
+    "page_label_input_size",
+    "optional_content_count",
+    "optional_content_expression",
+    "sanitize_action_chain",
+    "sanitize_forms",
     "memory_size",
     "deadline",
     "cancelled",
@@ -120,13 +133,16 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them."
         ),
         "content_input_size": (
-            "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an "
-            "assignment to `Page.operations` writes is larger than 64 MiB."
+            "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that "
+            "`Canvas`, `Page.operations`, `Page.clean_contents`, `Page.replace_text`, `Page.recolor`, "
+            "`Document.recolor`, `Document.rewrite_images`, or `Document.sanitize` parses or writes is larger than 64 "
+            "MiB."
         ),
         "content_element_count": (
-            "`Page.content` or `Page.paths` reads more glyphs, path and clip segments, dash lengths, and items than "
-            "the call's `max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels "
-            "of one image."
+            "`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, "
+            "and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` "
+            "holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or "
+            "`Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image."
         ),
         "text_glyph_count": (
             "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the "
@@ -207,7 +223,10 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "text_edit_forms": (
             "`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them."
         ),
-        "image_input_size": "The encoded image that `Pages.new_from_image` reads is larger than 256 MiB.",
+        "image_input_size": (
+            "The encoded image that `Pixmap.from_bytes` or `Pixmap.open` reads is larger than the call's `max_size`, "
+            "or the encoded image that `Pages.new_from_image` reads is larger than 256 MiB."
+        ),
         "text_line_count": (
             "The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or "
             "`Font.text_height` lays out, takes more than 4,096 lines."
@@ -220,6 +239,18 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
             "Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit."
         ),
         "font_input_size": "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB.",
+        "page_fonts_tree": (
+            "`Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources."
+        ),
+        "page_fonts_entries": (
+            "`Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its "
+            "Form XObjects."
+        ),
+        "page_fonts_forms": "`Page.fonts` reaches more than 4,096 Form XObjects from the page's resources.",
+        "font_subset_appearances": (
+            "`Document.subset_fonts` visits more than 4,096 appearance streams and Form XObjects reached from "
+            "annotation appearances."
+        ),
         "named_destination_count": (
             "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more "
             "than 65,536 entries or tree nodes."
@@ -248,6 +279,32 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "page_entry_count": (
             "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page "
             "count and 4,096."
+        ),
+        "page_label_tree_depth": "The document's `/PageLabels` number tree is deeper than 32 levels below its root.",
+        "page_label_tree_edges": "The document's `/PageLabels` number tree has more than 4,096 child edges.",
+        "page_label_ranges": "The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs.",
+        "page_label_text_size": (
+            "The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 "
+            "together."
+        ),
+        "page_label_input_size": (
+            "The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together."
+        ),
+        "optional_content_count": (
+            "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or "
+            "`LayerMembership` would give it, more than 4,096 entries."
+        ),
+        "optional_content_expression": (
+            "`Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 "
+            "operands."
+        ),
+        "sanitize_action_chain": (
+            "`Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for "
+            "JavaScript."
+        ),
+        "sanitize_forms": (
+            "`Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden "
+            "text."
         ),
         "memory_size": (
             "The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or "

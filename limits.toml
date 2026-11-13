@@ -108,13 +108,13 @@ reached = "A page's content streams, decoded and joined, are larger than 64 MiB 
 message = "the content is too large to parse"
 unit = "bytes"
 default = 67_108_864
-reached = "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an assignment to `Page.operations` writes is larger than 64 MiB."
+reached = "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that `Canvas`, `Page.operations`, `Page.clean_contents`, `Page.replace_text`, `Page.recolor`, `Document.recolor`, `Document.rewrite_images`, or `Document.sanitize` parses or writes is larger than 64 MiB."
 
 [codes.content_element_count]
 message = "the page paints too many items"
 unit = "elements"
 default = 262_144
-reached = "`Page.content` or `Page.paths` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image."
+reached = "`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image."
 
 [codes.text_glyph_count]
 message = "the page holds too many glyphs to read as text"
@@ -348,7 +348,7 @@ reached = "`Page.replace_text` reaches Form XObjects nested deeper than 16, or m
 message = "the image data is too large"
 unit = "bytes"
 default = 268_435_456
-reached = "The encoded image that `Pages.new_from_image` reads is larger than 256 MiB."
+reached = "The encoded image that `Pixmap.from_bytes` or `Pixmap.open` reads is larger than the call's `max_size`, or the encoded image that `Pages.new_from_image` reads is larger than 256 MiB."
 
 [codes.text_line_count]
 message = "the text has too many lines"
@@ -373,6 +373,30 @@ message = "the font file is too large"
 unit = "bytes"
 default = 67_108_864
 reached = "The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB."
+
+[codes.page_fonts_tree]
+message = "the page inherits its resources through too many parents"
+unit = "levels"
+default = 64
+reached = "`Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources."
+
+[codes.page_fonts_entries]
+message = "the page's resources and forms hold too many font and XObject entries"
+unit = "entries"
+default = 65_536
+reached = "`Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its Form XObjects."
+
+[codes.page_fonts_forms]
+message = "the page reaches too many form XObjects"
+unit = "forms"
+default = 4_096
+reached = "`Page.fonts` reaches more than 4,096 Form XObjects from the page's resources."
+
+[codes.font_subset_appearances]
+message = "the appearances reach too many form XObjects"
+unit = "forms"
+default = 4_096
+reached = "`Document.subset_fonts` visits more than 4,096 appearance streams and Form XObjects reached from annotation appearances."
 
 [codes.named_destination_count]
 message = "the named destinations are too many"
@@ -426,6 +450,60 @@ reached = "A structural edit of pages walks a structure tree deeper than 256 lev
 message = "the list of pages is too long"
 unit = "entries"
 reached = "A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096."
+
+[codes.page_label_tree_depth]
+message = "the page-label tree is too deep"
+unit = "levels"
+default = 32
+reached = "The document's `/PageLabels` number tree is deeper than 32 levels below its root."
+
+[codes.page_label_tree_edges]
+message = "the page-label tree has too many kids"
+unit = "edges"
+default = 4_096
+reached = "The document's `/PageLabels` number tree has more than 4,096 child edges."
+
+[codes.page_label_ranges]
+message = "the page-label tree has too many ranges"
+unit = "ranges"
+default = 4_096
+reached = "The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs."
+
+[codes.page_label_text_size]
+message = "the page-label text is too long"
+unit = "bytes"
+default = 1_048_576
+reached = "The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together."
+
+[codes.page_label_input_size]
+message = "the page-label prefixes are too long"
+unit = "bytes"
+default = 1_048_576
+reached = "The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together."
+
+[codes.optional_content_count]
+message = "the optional content has too many entries"
+unit = "entries"
+default = 4_096
+reached = "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries."
+
+[codes.optional_content_expression]
+message = "the visibility expression is too deep or has too many operands"
+unit = "operands"
+default = 4_096
+reached = "`Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands."
+
+[codes.sanitize_action_chain]
+message = "an action chain has too many actions"
+unit = "actions"
+default = 256
+reached = "`Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript."
+
+[codes.sanitize_forms]
+message = "hidden text removal reaches too many form XObjects"
+unit = "forms"
+default = 4_096
+reached = "`Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text."
 
 # The operation as a whole.
 

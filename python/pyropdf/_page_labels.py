@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
 
     from pyropdf._document import Document
+    from pyropdf._limit_codes import LimitCode
 
 #: Ranges that one tree holds or that one assignment writes.
 _MAX_PAGE_LABEL_RANGES = 4096
@@ -190,7 +191,7 @@ def _nodes(root: Dictionary) -> Iterator[Dictionary]:
         if not isinstance(kids, Array):
             continue
         if depth == _MAX_TREE_DEPTH:
-            code = "page_label_tree_depth"
+            code: LimitCode = "page_label_tree_depth"
             msg = f"the page label tree is deeper than {_MAX_TREE_DEPTH} levels"
             raise LimitError(code, msg)
         # Reversed, so that the stack visits the kids in order.
@@ -227,7 +228,7 @@ def _read_page_labels(document: Document) -> list[PageLabelRange]:
         for at in range(0, len(nums) - 1, 2):
             entries += 1
             if entries > _MAX_PAGE_LABEL_RANGES:
-                code = "page_label_ranges"
+                code: LimitCode = "page_label_ranges"
                 msg = f"the page label tree has more than {_MAX_PAGE_LABEL_RANGES} ranges"
                 raise LimitError(code, msg)
             read = _range(nums[at], nums[at + 1])
@@ -257,7 +258,7 @@ def _validated(ranges: Iterable[PageLabelRange]) -> list[PageLabelRange]:
         text += _text_size(page_range.prefix)
         if text > _MAX_PAGE_LABEL_TEXT_SIZE:
             msg = f"the page label prefixes are longer than {_MAX_PAGE_LABEL_TEXT_SIZE} bytes in UTF-8"
-            code = "page_label_input_size"
+            code: LimitCode = "page_label_input_size"
             raise LimitError(code, msg)
         items.append(page_range)
     starts = [page_range.start for page_range in items]

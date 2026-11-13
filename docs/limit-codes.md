@@ -17,8 +17,8 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `interpretation_fuel` | No limit | Interpretation uses more fuel than the operation allows. |
 | `content_operation_count` | 1,048,576 operations | Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576. |
 | `content_stream_size` | 64 MiB | A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them. |
-| `content_input_size` | 64 MiB | The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that an assignment to `Page.operations` writes is larger than 64 MiB. |
-| `content_element_count` | 262,144 elements | `Page.content` or `Page.paths` reads more glyphs, path and clip segments, dash lengths, and items than the call's `max_elements`, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image. |
+| `content_input_size` | 64 MiB | The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that `Canvas`, `Page.operations`, `Page.clean_contents`, `Page.replace_text`, `Page.recolor`, `Document.recolor`, `Document.rewrite_images`, or `Document.sanitize` parses or writes is larger than 64 MiB. |
+| `content_element_count` | 262,144 elements | `Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image. |
 | `text_glyph_count` | 262,144 glyphs | `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`. |
 | `text_size` | 64 MiB | The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`. |
 | `search_input_size` | 4 KiB | The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8. |
@@ -56,11 +56,15 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `form_field_parent_depth` | 64 levels | A form widget's field parent chain contains more than 64 existing fields. |
 | `script_size` | 1 MiB | A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written. |
 | `text_edit_forms` | 4,096 drawings | `Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them. |
-| `image_input_size` | 256 MiB | The encoded image that `Pages.new_from_image` reads is larger than 256 MiB. |
+| `image_input_size` | 256 MiB | The encoded image that `Pixmap.from_bytes` or `Pixmap.open` reads is larger than the call's `max_size`, or the encoded image that `Pages.new_from_image` reads is larger than 256 MiB. |
 | `text_line_count` | 4,096 lines | The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines. |
 | `text_input_size` | 1 MiB | The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8. |
 | `shaped_glyph_count` | 1,048,576 glyphs | Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit. |
 | `font_input_size` | 64 MiB | The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB. |
+| `page_fonts_tree` | 64 levels | `Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources. |
+| `page_fonts_entries` | 65,536 entries | `Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its Form XObjects. |
+| `page_fonts_forms` | 4,096 forms | `Page.fonts` reaches more than 4,096 Form XObjects from the page's resources. |
+| `font_subset_appearances` | 4,096 forms | `Document.subset_fonts` visits more than 4,096 appearance streams and Form XObjects reached from annotation appearances. |
 | `named_destination_count` | 65,536 entries | The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes. |
 | `named_destination_edge_count` | 131,072 edges | The named-destination tree has more than 131,072 child edges. |
 | `named_destination_depth` | 32 levels | The named-destination tree has more than 32 levels. |
@@ -70,6 +74,15 @@ file: change the registry and run `uv run python tools/generate_limits.py`. -->
 | `toc_input_size` | 16 MiB | The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB together in UTF-8 or as PDF text strings, or leave the outline's text above that. |
 | `structure_tree_count` | 256 levels | A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references. |
 | `page_entry_count` | No limit | A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096. |
+| `page_label_tree_depth` | 32 levels | The document's `/PageLabels` number tree is deeper than 32 levels below its root. |
+| `page_label_tree_edges` | 4,096 edges | The document's `/PageLabels` number tree has more than 4,096 child edges. |
+| `page_label_ranges` | 4,096 ranges | The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs. |
+| `page_label_text_size` | 1 MiB | The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together. |
+| `page_label_input_size` | 1 MiB | The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together. |
+| `optional_content_count` | 4,096 entries | The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries. |
+| `optional_content_expression` | 4,096 operands | `Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands. |
+| `sanitize_action_chain` | 256 actions | `Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript. |
+| `sanitize_forms` | 4,096 forms | `Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text. |
 | `memory_size` | No limit | The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or the allocator refuses it. |
 | `deadline` | No limit | The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets. |
 | `cancelled` | — | A cancellation token of the operation is cancelled. |

@@ -21,6 +21,7 @@ from pyropdf._objects import Array, Dictionary, Name, String
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
+    from pyropdf._limit_codes import LimitCode
 
 #: Levels of a ``/VE`` visibility expression that an evaluation follows.
 _MAX_EXPRESSION_DEPTH = 32
@@ -28,8 +29,8 @@ _MAX_EXPRESSION_DEPTH = 32
 _MAX_EXPRESSION_OPERANDS = 4096
 #: Groups and configurations that one listing reads.
 _MAX_LAYERS = 4096
-_COUNT = "optional_content_count"
-_EXPRESSION = "optional_content_expression"
+_COUNT: LimitCode = "optional_content_count"
+_EXPRESSION: LimitCode = "optional_content_expression"
 
 
 @dataclass(frozen=True, slots=True)
