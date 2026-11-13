@@ -3,7 +3,8 @@
 pypdfium2, pymupdf, and pdf.js read each document of the real-world corpus
 and of the generated PDF/A and PDF/UA corpora, and each save of each edit of
 the preservation harness's EDITS applied to it, in full and incrementally.
-Each reader's reading of a save must match its reading of the original: the
+Each reader's reading of a save must match its reading before the edit, after
+any preparation of an existing annotation or field: the
 edited document's page count, and on every page that the edit did not touch,
 found again by its object number, the same size and extracted text. The readers are
 development-only oracles, outside the package's dependencies:
@@ -126,11 +127,17 @@ def check(source: Path, readers: list[str]) -> list[str]:
     data = source.read_bytes()
     files = [data]
     cases = []
-    for edit, apply in sorted(EDITS.items()):
+    for edit, case in sorted(EDITS.items()):
         for incremental in (False, True):
-            doc = pyropdf.open(data)
+            baseline = case.baseline(data)
+            doc = pyropdf.open(baseline)
+            baseline_index = 0
+            if baseline != data:
+                baseline_index = len(files)
+                files.append(baseline)
             pages = [page.obj.xref for page in doc.pages]
-            touched = apply(doc)
+            affected = case.affected_pages(doc)
+            touched = case.apply(doc) | affected
             after = [page.obj.xref for page in doc.pages]
             files.append(doc.to_bytes(incremental=incremental))
             untouched = [
@@ -138,13 +145,18 @@ def check(source: Path, readers: list[str]) -> list[str]:
                 for index, number in enumerate(pages)
                 if number not in touched and number in after
             ]
-            cases.append((edit, "incremental" if incremental else "full", untouched, len(after)))
+            cases.append(
+                (edit, "incremental" if incremental else "full", baseline_index, len(files) - 1, untouched, len(after))
+            )
     unexplained = []
     for reader in readers:
-        original, *saved = READERS[reader](files)
-        sys.stdout.write(f"{source.relative_to(ASSETS)} {reader}: {len(original)} pages\n")
-        for (edit, mode, untouched, count), reading in zip(cases, saved, strict=True):
-            for difference in differences(original, reading, untouched, count=count):
+        readings = READERS[reader](files)
+        if len(readings) != len(files):
+            msg = f"{reader} returned {len(readings)} readings for {len(files)} files"
+            raise ValueError(msg)
+        sys.stdout.write(f"{source.relative_to(ASSETS)} {reader}: {len(readings[0])} pages\n")
+        for edit, mode, baseline_index, saved_index, untouched, count in cases:
+            for difference in differences(readings[baseline_index], readings[saved_index], untouched, count=count):
                 key = f"{reader} {source.name} {edit} {mode} {difference.split(' size')[0].split(' text')[0]}"
                 note = EXPLAINED.get(key)
                 sys.stdout.write(f"  {reader} {edit} {mode}: {difference}{f' ({note})' if note else ''}\n")
