@@ -16,6 +16,7 @@ use pyropdf_engine::extract::{PageContent, PageLayout, TextPeak, read_page};
 use pyropdf_engine::fonts::settle::FontSubsetSettler;
 pub(crate) use pyropdf_engine::forms::text_string;
 use pyropdf_engine::forms::{FillCache, Form};
+use pyropdf_engine::navigation::CountCache;
 use pyropdf_engine::render::Fallback;
 use pyropdf_store::budget::{Budget, DocumentLimits, LimitCode, SharedBudget};
 use pyropdf_store::memo::Memo;
@@ -61,6 +62,8 @@ pub struct _Document {
     pub(crate) outline: Memo<(), Outline>,
     /// The outline items of what an open transaction has written.
     pub(crate) draft_outline: Memo<(), Outline>,
+    /// Verified outline counts, with the dependencies of their recount.
+    pub(crate) outline_counts: CountCache,
     /// The terminal fields of the form, memoized by what walking its field
     /// tree read.
     pub(crate) form: Memo<(), Form>,
@@ -107,6 +110,7 @@ impl _Document {
             draft_destinations: Memo::new(1),
             outline: Memo::new(1),
             draft_outline: Memo::new(1),
+            outline_counts: CountCache::default(),
             form: Memo::new(1),
             draft_form: Memo::new(1),
             fill_index: FillCache::new(),
@@ -165,6 +169,7 @@ impl _Document {
         self.draft_destinations.clear();
         self.outline.clear();
         self.draft_outline.clear();
+        self.outline_counts.clear();
         self.form.clear();
         self.draft_form.clear();
         self.fill_index.clear();
@@ -480,6 +485,7 @@ impl _Document {
             self.draft_destinations.clear();
             self.outline.clear();
             self.draft_outline.clear();
+            self.outline_counts.clear();
             self.form.clear();
             self.draft_form.clear();
             self.fill_index.clear();

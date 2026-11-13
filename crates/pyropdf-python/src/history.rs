@@ -412,6 +412,7 @@ impl _Document {
         let parent = Arc::clone(transaction.parent());
         let anchor = transaction.derived_anchor().cloned();
         let committed = transaction.commit(budget).map_err(|e| store_error(&e))?;
+        self.outline_counts.carry_to(&committed, budget);
         if let Some(anchor) = anchor {
             self.fill_index
                 .carry_from(&self.draft_fill_index, &anchor, &committed, budget);
