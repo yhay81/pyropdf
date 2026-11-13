@@ -28,12 +28,10 @@ cargo-fuzz targets of the store and the engine (DESIGN.md section 12, F9):
 
 The store turns a panic of hayro-syntax into an error, so the targets other
 than `interpret` keep Rust's default panic hook instead of libFuzzer's, which
-aborts on any panic: only a panic that escapes a target is a crash.
-`interpret` keeps libFuzzer's hook, so any panic is a crash, even one that
-the store catches (I3, #19). It runs in CI with the adopted hayro 0.9-based
-dependency. Panics that the store catches
-still print their message, and are the material of hayro's I3 (#19); the
-`value` target's first run found `[ 2 + R ]` in an array.
+aborts on any panic: only a panic that escapes a target is a crash, while
+caught panics still print their message. `interpret` keeps libFuzzer's hook
+to guard I3 (#19): any panic in interpretation or parsing is a crash, even
+one that the store or the engine would catch.
 
 ## Running
 
@@ -50,18 +48,9 @@ are Flate data, as seeds of `content`, and the engine's subset test faces
 as seeds of `fonts`, and its colour faces as seeds of `bitmaps` and `colr`, to
 `fuzz/corpus/`, which git ignores.
 
-## CI and Actions minutes
+## CI
 
-`.github/workflows/fuzz.yml` runs each target for one minute on pull requests
-and pushes to main that change the store, the engine, or the targets, and for fifteen minutes on
-Mondays. Each job also installs cargo-fuzz and builds the target, about four
-minutes with a warm cache. Linux minutes count once:
-
-- weekly: 9 jobs × (15 + 4) minutes = about 170 minutes, or about 740 a month;
-- pull requests and pushes to main: 9 × (1 + 4) = about 45 minutes each,
-  which Rust changes pay twice: once on the pull request and once on main.
-
-Against the 2,000 minutes a month of a private repository on GitHub Free
-(3,000 on Pro), the weekly run takes about 37% (or 25%). Lower
-`SECONDS_TO_RUN` or the `paths` of the pull-request trigger if the minutes
-run short.
+`.github/workflows/fuzz.yml` runs each target on Linux for one minute on pull
+requests and pushes to `main` that change the store, the engine, or `fuzz/`,
+and for fifteen minutes weekly on Mondays. A crash fails the job and uploads
+its input as an artifact.

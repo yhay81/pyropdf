@@ -1,7 +1,6 @@
 # Rust and Python checks, and an audit of the dependencies and the workflows,
 # on Linux, for every pull request and every push to main. Other systems join
-# only when an issue needs them: Actions minutes are limited, and macOS and
-# Windows runners count several times as much.
+# only when an issue needs macOS or Windows.
 name: CI
 
 on:

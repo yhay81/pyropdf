@@ -1,11 +1,11 @@
 # The shape of the change report (#157)
 
-DESIGN.md section 10 lists change reports: before a save, what the edits
+DESIGN.md section 10.2 defines change reports: before a save, what the edits
 since opening invalidate, namely the signatures whose objects they touched
-and the PDF/A or PDF/UA claims they break. Section 16 leaves the shape
-open between a method, a value that `save` returns, and a refusal that an
-option turns into a report. This directory holds the evidence for the
-recommendation on #157. It builds nothing.
+and the PDF/A or PDF/UA claims they break. Issue #157 compared three shapes:
+a method, a value that `save` returns, and a refusal that an option turns
+into a report. This directory holds the evidence for the recommendation on
+#157. It builds nothing.
 
 ## What the report speaks about
 
