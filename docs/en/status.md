@@ -13,7 +13,7 @@ each change. [DESIGN.md](https://github.com/yhay81/pyropdf/blob/main/DESIGN.md)
 describes its foundation, and [Specification coverage](specification.md)
 how much of ISO 32000-2 each part covers.
 
-Not yet in 0.3.0:
+Not yet in 0.3.1:
 
 - redaction, and removing the content outside a rectangle, which need the
   content provenance of a hayro change under review;
