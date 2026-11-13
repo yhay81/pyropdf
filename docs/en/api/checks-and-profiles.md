@@ -10,7 +10,17 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ## `DefectKind`
 
-`DefectKind = typing.Literal['type', 'required', 'version', 'indirect', 'value', 'invariant', 'profile']`
+```python
+DefectKind: TypeAlias = Literal[
+    'type',
+    'required',
+    'version',
+    'indirect',
+    'value',
+    'invariant',
+    'profile',
+]
+```
 
 The category of a `StructuralDefect`.
 
@@ -52,6 +62,14 @@ Each claim is a name such as `"PDF/A-2B"`, `"PDF/UA-1"`,
 declare it. A claim is what the document says of itself; whether it
 holds is for a validator such as veraPDF to decide.
 
+### `Profiles.__bool__`
+
+```python
+Profiles.__bool__() -> bool
+```
+
+Return whether the document claims a profile or has an output intent.
+
 ## `StructuralDefect`
 
 ```python
@@ -92,3 +110,11 @@ later of its header and the catalog's `/Version`. `objects` counts
 the indirect objects that the walk reached, and `unchecked` the
 predicates of the model that it met but cannot decide. `truncated` is
 whether defects past the report's limit were dropped.
+
+### `StructuralReport.__bool__`
+
+```python
+StructuralReport.__bool__() -> bool
+```
+
+Return whether the report names a defect.

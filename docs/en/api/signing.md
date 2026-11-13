@@ -69,47 +69,21 @@ default diff policy does: `"none"`, `"form filling"`, or `"other"`,
 which an added or changed annotation other than a widget is.
 `problems` explains each check that failed or could not be made.
 
-## `Signer`
+### `SignatureVerification.__bool__`
 
 ```python
-Signer()
+SignatureVerification.__bool__() -> bool
 ```
+
+Return whether the signature is intact, covers its revision, verifies, and chains to any anchors given.
+
+## `Signer`
 
 A signing key or callback, with its certificate chain, which `Document.sign` signs with.
 
 `from_pem` and `from_pkcs12` read ECDSA P-256 and P-384
 keys, which pyropdf signs with itself. `callback` signs with a
 key that stays outside pyropdf: an RSA key, an HSM, or PKCS#11.
-
-### `Signer.callback`
-
-```python
-Signer.callback(certificates: Sequence[bytes], sign: Callable[[bytes], bytes]) -> Signer
-```
-
-Sign with `sign`, which holds the key of the first of the DER `certificates`.
-
-`sign` receives the bytes to sign, the DER of the signed
-attributes, and returns their signature: PKCS#1 v1.5 with SHA-256
-for an RSA key, and the DER of an ECDSA signature with SHA-256 for a
-P-256 key or SHA-384 for a P-384 key. Its exceptions propagate from
-`Document.sign`.
-
-### `Signer.certificates`
-
-```python
-Signer.certificates: tuple[bytes, ...]
-```
-
-The DER certificates that the signature embeds, the signer's first.
-
-### `Signer.digest_algorithm`
-
-```python
-Signer.digest_algorithm: str
-```
-
-The name of the signature's digest algorithm: `"sha256"` or `"sha384"`.
 
 ### `Signer.from_pem`
 
@@ -144,9 +118,41 @@ Python's `cryptography` write it; `None` is the empty password.
 Legacy encryption, a wrong password, or a file without exactly one
 key and its certificate raises `ValueError`.
 
+### `Signer.callback`
+
+```python
+Signer.callback(certificates: Sequence[bytes], sign: Callable[[bytes], bytes]) -> Signer
+```
+
+Sign with `sign`, which holds the key of the first of the DER `certificates`.
+
+`sign` receives the bytes to sign, the DER of the signed
+attributes, and returns their signature: PKCS#1 v1.5 with SHA-256
+for an RSA key, and the DER of an ECDSA signature with SHA-256 for a
+P-256 key or SHA-384 for a P-384 key. Its exceptions propagate from
+`Document.sign`.
+
+### `Signer.certificates`
+
+```python
+Signer.certificates: tuple[bytes, ...]
+```
+
+The DER certificates that the signature embeds, the signer's first.
+
+### `Signer.digest_algorithm`
+
+```python
+Signer.digest_algorithm: str
+```
+
+The name of the signature's digest algorithm: `"sha256"` or `"sha384"`.
+
 ## `Timestamper`
 
-`Timestamper = typing.Callable[[bytes, str], bytes]`
+```python
+Timestamper: TypeAlias = Callable[[bytes, str], bytes]
+```
 
 A time-stamp callback: it receives the digest of the signature value and
 the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns

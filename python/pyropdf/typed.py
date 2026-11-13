@@ -4,13 +4,19 @@ The descriptors that ``pyropdf-schema`` generates from the Arlington PDF
 Model give each key of an object type its types, the object types it links
 to, whether it is required or inheritable, its default, and its possible
 values. A view reads and writes a :class:`~pyropdf.Dictionary`,
-:class:`~pyropdf.Stream`, or :class:`~pyropdf.Array` handle by those rules::
+:class:`~pyropdf.Stream`, or :class:`~pyropdf.Array` handle by those rules:
 
+```python
+import pyropdf
+from pyropdf import typed
+
+with pyropdf.open("input.pdf") as doc:
     catalog = typed.Catalog(doc.catalog)
     root = catalog.Pages              # a PageTreeNodeRoot view
     page = typed.PageObject(doc.pages[0].obj)
-    page.Rotate                       # inherited from the page tree, else 0
+    rotate = page.Rotate              # inherited from the page tree, else 0
     page.Rotate = 90                  # checked against the declared types
+```
 
 Each object type is a subclass of :class:`View` named after it; a name that
 begins with ``3D`` begins with ``ThreeD`` instead. An attribute reads or

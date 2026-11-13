@@ -45,6 +45,10 @@ ascender and descender, or its outline with `exact_bboxes=True`.
 
 ## `Chars`
 
+```python
+class Chars(Sequence[Char])
+```
+
 The chars of a page as columns, from `Page.chars` and `Layout.chars`.
 
 Each row is one `Char` of the layout with chars, in layout order,
@@ -76,6 +80,35 @@ fields are those of the columns, with one `text` field (`utf8`) for
 `text_offsets` and `text_data`, `is_synthetic` as Arrow
 booleans, and `stream` and `operation` null where they are `None`.
 
+### `Chars.names`
+
+```python
+Chars.names: tuple[str, ...] = (
+    'x0',
+    'y0',
+    'x1',
+    'y1',
+    'origin_x',
+    'origin_y',
+    'text_offsets',
+    'text_data',
+    'block',
+    'line',
+    'span',
+    'is_synthetic',
+    'stream',
+    'operation',
+)
+```
+
+The names of the columns, in the order of the Arrow fields.
+
+### `Chars.__len__`
+
+```python
+Chars.__len__() -> int
+```
+
 ### `Chars.__getitem__`
 
 ```python
@@ -88,12 +121,6 @@ Chars.__getitem__(index: int | slice) -> Char | Chars
 Chars.__iter__() -> Iterator[Char]
 ```
 
-### `Chars.__len__`
-
-```python
-Chars.__len__() -> int
-```
-
 ### `Chars.column`
 
 ```python
@@ -101,6 +128,25 @@ Chars.column(name: str) -> memoryview
 ```
 
 Return the column `name` of `names` as a read-only `memoryview`, without a copy.
+
+### `Chars.__arrow_c_schema__`
+
+```python
+Chars.__arrow_c_schema__() -> object
+```
+
+Return the Arrow schema of the rows as a PyCapsule.
+
+### `Chars.__arrow_c_array__`
+
+```python
+Chars.__arrow_c_array__(requested_schema: object | None = None) -> tuple[object, object]
+```
+
+Return the rows as the PyCapsules of an Arrow schema and struct array.
+
+The array's buffers are the columns; `requested_schema` is ignored,
+as the interface allows.
 
 ## `Chunk`
 
@@ -169,7 +215,7 @@ are not exposed yet.
 Color.rgb: tuple[float, float, float]
 ```
 
-Return `(red, green, blue)`.
+`(red, green, blue)`.
 
 ## `ColorStop`
 
@@ -182,6 +228,7 @@ A place on a gradient's line, and the color and alpha there.
 ## `Content`
 
 ```python
+class Content(Sequence[ContentItem])
 Content(items: tuple[ContentItem, ...])
 ```
 
@@ -254,7 +301,9 @@ outside the page box.
 
 ## `ContentItem`
 
-`ContentItem = pyropdf.TextRun | pyropdf.Path | pyropdf.Image`
+```python
+ContentItem: TypeAlias = TextRun | Path | Image
+```
 
 ## `CurveTo`
 
@@ -296,7 +345,9 @@ Return the element as JSON-safe values: `kind`, `page`, `bbox`, `text`, and `lev
 
 ## `ElementKind`
 
-`ElementKind = typing.Literal['heading', 'paragraph', 'list_item', 'table', 'image']`
+```python
+ElementKind: TypeAlias = Literal['heading', 'paragraph', 'list_item', 'table', 'image']
+```
 
 The kind of a structured page `Element`.
 
@@ -358,7 +409,9 @@ The display-space font size.
 
 ## `Gradient`
 
-`Gradient = pyropdf.LinearGradient | pyropdf.RadialGradient`
+```python
+Gradient: TypeAlias = LinearGradient | RadialGradient
+```
 
 ## `GradientExtend`
 
@@ -526,7 +579,7 @@ LinearGradient(
     start: Point,
     end: Point,
     stops: tuple[ColorStop, ...],
-    extend: GradientExtend = <GradientExtend.PAD: 'pad'>,
+    extend: GradientExtend = GradientExtend.PAD,
 )
 ```
 
@@ -576,7 +629,9 @@ Start a new subpath at `to`.
 
 ## `Paint`
 
-`Paint = pyropdf.Color | pyropdf.ShadingPattern | pyropdf.TilingPattern | pyropdf.LinearGradient | pyropdf.RadialGradient`
+```python
+Paint: TypeAlias = Color | ShadingPattern | TilingPattern | Gradient
+```
 
 ## `Path`
 
@@ -597,6 +652,10 @@ Path(
 A path that is filled, stroked, or both.
 
 ## `Paths`
+
+```python
+class Paths(Sequence[Path])
+```
 
 The paths of a page as columns, from `Page.paths`.
 
@@ -664,6 +723,20 @@ a list of structs of the segment columns whose control points are null
 for verbs other than `c`, and `stroke_dashes`, a list of float64,
 null without a stroke.
 
+### `Paths.names`
+
+```python
+Paths.names: tuple[str, ...]
+```
+
+The names of the columns, in the order of the Arrow fields.
+
+### `Paths.__len__`
+
+```python
+Paths.__len__() -> int
+```
+
 ### `Paths.__getitem__`
 
 ```python
@@ -675,20 +748,6 @@ Paths.__getitem__(index: int | slice) -> Path | Paths
 ```python
 Paths.__iter__() -> Iterator[Path]
 ```
-
-### `Paths.__len__`
-
-```python
-Paths.__len__() -> int
-```
-
-### `Paths.column`
-
-```python
-Paths.column(name: str) -> memoryview
-```
-
-Return the column `name` of `names` as a read-only `memoryview`, without a copy.
 
 ### `Paths.contexts`
 
@@ -706,6 +765,33 @@ Paths.patterns: tuple[ShadingPattern | TilingPattern, ...]
 
 The distinct pattern paints, which `fill_pattern` and `stroke_pattern` index.
 
+### `Paths.column`
+
+```python
+Paths.column(name: str) -> memoryview
+```
+
+Return the column `name` of `names` as a read-only `memoryview`, without a copy.
+
+### `Paths.__arrow_c_schema__`
+
+```python
+Paths.__arrow_c_schema__() -> object
+```
+
+Return the Arrow schema of the rows as a PyCapsule.
+
+### `Paths.__arrow_c_array__`
+
+```python
+Paths.__arrow_c_array__(requested_schema: object | None = None) -> tuple[object, object]
+```
+
+Return the rows as the PyCapsules of an Arrow schema and struct array.
+
+The array's buffers are the columns; `requested_schema` is ignored,
+as the interface allows.
+
 ## `RadialGradient`
 
 ```python
@@ -716,7 +802,7 @@ RadialGradient(
     end: Point,
     end_radius: float,
     stops: tuple[ColorStop, ...],
-    extend: GradientExtend = <GradientExtend.PAD: 'pad'>,
+    extend: GradientExtend = GradientExtend.PAD,
 )
 ```
 
@@ -728,7 +814,9 @@ stops and `extend` are those of a `LinearGradient`.
 
 ## `Segment`
 
-`Segment = pyropdf.MoveTo | pyropdf.LineTo | pyropdf.CurveTo | pyropdf.ClosePath`
+```python
+Segment: TypeAlias = MoveTo | LineTo | CurveTo | ClosePath
+```
 
 ## `ShadingPattern`
 
@@ -804,8 +892,8 @@ Stroke(
     *,
     paint: Paint,
     width: float = 1.0,
-    cap: LineCap = <LineCap.BUTT: 'butt'>,
-    join: LineJoin = <LineJoin.MITER: 'miter'>,
+    cap: LineCap = LineCap.BUTT,
+    join: LineJoin = LineJoin.MITER,
     miter_limit: float = 10.0,
     dashes: tuple[float, ...] = (),
     dash_offset: float = 0.0,
@@ -939,7 +1027,17 @@ A transparency group and what it applies to everything inside it.
 
 ## `Unmapped`
 
-`Unmapped = typing.Literal['skip', 'replacement', 'glyph_id', 'type3_char_code']`
+```python
+Unmapped: TypeAlias = Literal['skip', 'replacement', 'glyph_id', 'type3_char_code']
+```
+
+What text extraction makes of a glyph without Unicode: `"skip"` leaves it
+out with a `PyropdfWarning`, `"replacement"` gives U+FFFD, and
+`"glyph_id"` gives the character whose code point is the glyph ID.
+`"type3_char_code"` treats an unmapped Type 3 font's original character code
+as a Unicode code point. This heuristic can produce unrelated text for custom
+encodings. Other unmapped glyphs give U+FFFD. Font Unicode mappings and
+recognized glyph names take precedence.
 
 ## `Word`
 

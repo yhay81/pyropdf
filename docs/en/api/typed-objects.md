@@ -16,13 +16,19 @@ The descriptors that `pyropdf-schema` generates from the Arlington PDF
 Model give each key of an object type its types, the object types it links
 to, whether it is required or inheritable, its default, and its possible
 values. A view reads and writes a `pyropdf.Dictionary`,
-`pyropdf.Stream`, or `pyropdf.Array` handle by those rules::
+`pyropdf.Stream`, or `pyropdf.Array` handle by those rules:
 
+```python
+import pyropdf
+from pyropdf import typed
+
+with pyropdf.open("input.pdf") as doc:
     catalog = typed.Catalog(doc.catalog)
     root = catalog.Pages              # a PageTreeNodeRoot view
     page = typed.PageObject(doc.pages[0].obj)
-    page.Rotate                       # inherited from the page tree, else 0
+    rotate = page.Rotate              # inherited from the page tree, else 0
     page.Rotate = 90                  # checked against the declared types
+```
 
 Each object type is a subclass of `View` named after it; a name that
 begins with `3D` begins with `ThreeD` instead. An attribute reads or
@@ -55,3 +61,299 @@ an attribute removes the key, unless the key may be `null`.
 
 `typed.pyi`, which tools/arlington/generate.py writes, declares each view's
 keys with their types for type checkers.
+
+## `typed.ArrayView`
+
+```python
+class ArrayView(View)
+```
+
+The base of the views of array types.
+
+### `typed.ArrayView.obj`
+
+```python
+typed.ArrayView.obj: pyropdf.Dictionary | pyropdf.Array
+```
+
+The viewed handle.
+
+### `typed.ArrayView.__getitem__`
+
+```python
+typed.ArrayView.__getitem__(key: str | int) -> Any
+```
+
+Return the typed value of `key`; raise `KeyError` when it is absent.
+
+### `typed.ArrayView.__getattr__`
+
+```python
+typed.ArrayView.__getattr__(name: str) -> Any
+```
+
+Return the typed value of the key `name`, or `None` when it is absent.
+
+### `typed.ArrayView.__setitem__`
+
+```python
+typed.ArrayView.__setitem__(key: str | int, value: object)
+```
+
+Write `value` under `key` as one of its declared types.
+
+### `typed.ArrayView.__setattr__`
+
+```python
+typed.ArrayView.__setattr__(name: str, value: object)
+```
+
+Write the key `name`; `None` removes it unless it may be `null`.
+
+### `typed.ArrayView.__delitem__`
+
+```python
+typed.ArrayView.__delitem__(key: str | int)
+```
+
+Remove `key`; raise `KeyError` when it is absent.
+
+### `typed.ArrayView.__delattr__`
+
+```python
+typed.ArrayView.__delattr__(name: str)
+```
+
+Remove the key `name`.
+
+### `typed.ArrayView.__contains__`
+
+```python
+typed.ArrayView.__contains__(key: object) -> bool
+```
+
+Return whether `key` is stored in the object itself.
+
+## `typed.DictionaryView`
+
+```python
+class DictionaryView(View)
+```
+
+The base of the views of dictionary types.
+
+### `typed.DictionaryView.obj`
+
+```python
+typed.DictionaryView.obj: pyropdf.Dictionary | pyropdf.Array
+```
+
+The viewed handle.
+
+### `typed.DictionaryView.__getitem__`
+
+```python
+typed.DictionaryView.__getitem__(key: str | int) -> Any
+```
+
+Return the typed value of `key`; raise `KeyError` when it is absent.
+
+### `typed.DictionaryView.__getattr__`
+
+```python
+typed.DictionaryView.__getattr__(name: str) -> Any
+```
+
+Return the typed value of the key `name`, or `None` when it is absent.
+
+### `typed.DictionaryView.__setitem__`
+
+```python
+typed.DictionaryView.__setitem__(key: str | int, value: object)
+```
+
+Write `value` under `key` as one of its declared types.
+
+### `typed.DictionaryView.__setattr__`
+
+```python
+typed.DictionaryView.__setattr__(name: str, value: object)
+```
+
+Write the key `name`; `None` removes it unless it may be `null`.
+
+### `typed.DictionaryView.__delitem__`
+
+```python
+typed.DictionaryView.__delitem__(key: str | int)
+```
+
+Remove `key`; raise `KeyError` when it is absent.
+
+### `typed.DictionaryView.__delattr__`
+
+```python
+typed.DictionaryView.__delattr__(name: str)
+```
+
+Remove the key `name`.
+
+### `typed.DictionaryView.__contains__`
+
+```python
+typed.DictionaryView.__contains__(key: object) -> bool
+```
+
+Return whether `key` is stored in the object itself.
+
+## `typed.StreamView`
+
+```python
+class StreamView(DictionaryView)
+```
+
+The base of the views of stream types.
+
+### `typed.StreamView.obj`
+
+```python
+typed.StreamView.obj: pyropdf.Dictionary | pyropdf.Array
+```
+
+The viewed handle.
+
+### `typed.StreamView.__getitem__`
+
+```python
+typed.StreamView.__getitem__(key: str | int) -> Any
+```
+
+Return the typed value of `key`; raise `KeyError` when it is absent.
+
+### `typed.StreamView.__getattr__`
+
+```python
+typed.StreamView.__getattr__(name: str) -> Any
+```
+
+Return the typed value of the key `name`, or `None` when it is absent.
+
+### `typed.StreamView.__setitem__`
+
+```python
+typed.StreamView.__setitem__(key: str | int, value: object)
+```
+
+Write `value` under `key` as one of its declared types.
+
+### `typed.StreamView.__setattr__`
+
+```python
+typed.StreamView.__setattr__(name: str, value: object)
+```
+
+Write the key `name`; `None` removes it unless it may be `null`.
+
+### `typed.StreamView.__delitem__`
+
+```python
+typed.StreamView.__delitem__(key: str | int)
+```
+
+Remove `key`; raise `KeyError` when it is absent.
+
+### `typed.StreamView.__delattr__`
+
+```python
+typed.StreamView.__delattr__(name: str)
+```
+
+Remove the key `name`.
+
+### `typed.StreamView.__contains__`
+
+```python
+typed.StreamView.__contains__(key: object) -> bool
+```
+
+Return whether `key` is stored in the object itself.
+
+## `typed.TYPES`
+
+```python
+typed.TYPES: tuple[str, ...]
+```
+
+The object types of the model, sorted.
+
+## `typed.View`
+
+```python
+typed.View(obj: pyropdf.Dictionary | pyropdf.Array, /)
+```
+
+A typed view of one object: the base of the views of every object type.
+
+### `typed.View.obj`
+
+```python
+typed.View.obj: pyropdf.Dictionary | pyropdf.Array
+```
+
+The viewed handle.
+
+### `typed.View.__getitem__`
+
+```python
+typed.View.__getitem__(key: str | int) -> Any
+```
+
+Return the typed value of `key`; raise `KeyError` when it is absent.
+
+### `typed.View.__getattr__`
+
+```python
+typed.View.__getattr__(name: str) -> Any
+```
+
+Return the typed value of the key `name`, or `None` when it is absent.
+
+### `typed.View.__setitem__`
+
+```python
+typed.View.__setitem__(key: str | int, value: object)
+```
+
+Write `value` under `key` as one of its declared types.
+
+### `typed.View.__setattr__`
+
+```python
+typed.View.__setattr__(name: str, value: object)
+```
+
+Write the key `name`; `None` removes it unless it may be `null`.
+
+### `typed.View.__delitem__`
+
+```python
+typed.View.__delitem__(key: str | int)
+```
+
+Remove `key`; raise `KeyError` when it is absent.
+
+### `typed.View.__delattr__`
+
+```python
+typed.View.__delattr__(name: str)
+```
+
+Remove the key `name`.
+
+### `typed.View.__contains__`
+
+```python
+typed.View.__contains__(key: object) -> bool
+```
+
+Return whether `key` is stored in the object itself.

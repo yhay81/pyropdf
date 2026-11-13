@@ -46,6 +46,26 @@ content; a gradient has at most 1,048,576 stops, and repeats at most
 ends are one point or whose circles are one circle, raises `ValueError`
 when it is drawn.
 
+### `Canvas.__enter__`
+
+```python
+Canvas.__enter__() -> Self
+```
+
+Open the canvas's transaction and return the canvas; leaving the block writes it.
+
+### `Canvas.__exit__`
+
+```python
+Canvas.__exit__(
+    exc_type: type[BaseException] | None,
+    exc: BaseException | None,
+    traceback: TracebackType | None,
+)
+```
+
+Write the drawing after a normal exit; discard it after an exception.
+
 ### `Canvas.path`
 
 ```python
@@ -54,7 +74,7 @@ Canvas.path(
     *,
     fill: Color | Gradient | ShadingPattern | None = None,
     stroke: Stroke | Color | Gradient | None = None,
-    fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
+    fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
 
@@ -123,7 +143,7 @@ Canvas.polygon(
     close: bool = True,
     fill: Color | Gradient | None = None,
     stroke: Stroke | Color | Gradient | None = None,
-    fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
+    fill_rule: FillRule = FillRule.NONZERO,
 )
 ```
 
@@ -303,7 +323,7 @@ nothing.
 Canvas.clip(
     path: PathInput,
     *,
-    fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
+    fill_rule: FillRule = FillRule.NONZERO,
 ) -> AbstractContextManager[None]
 ```
 
@@ -406,21 +426,13 @@ The constructors (`rect`, `ellipse`, `circle`,
 `polygon`, `sector`, `zigzag`, and `wave`) each
 add complete subpaths.
 
-### `PathBuilder.circle`
+### `PathBuilder.segments`
 
 ```python
-PathBuilder.circle(center: Sequence[float], radius: float) -> Self
+PathBuilder.segments: tuple[Segment, ...]
 ```
 
-Add a circle.
-
-### `PathBuilder.close`
-
-```python
-PathBuilder.close() -> Self
-```
-
-Close the current subpath with a line to its start.
+The segments added so far.
 
 ### `PathBuilder.current_point`
 
@@ -429,6 +441,22 @@ PathBuilder.current_point: Point | None
 ```
 
 The end of the last segment, or `None` before the first.
+
+### `PathBuilder.move_to`
+
+```python
+PathBuilder.move_to(point: Sequence[float]) -> Self
+```
+
+Start a subpath at `point`.
+
+### `PathBuilder.line_to`
+
+```python
+PathBuilder.line_to(point: Sequence[float]) -> Self
+```
+
+Add a line to `point`.
 
 ### `PathBuilder.curve_to`
 
@@ -442,38 +470,6 @@ PathBuilder.curve_to(
 
 Add a cubic Bézier curve to `point`.
 
-### `PathBuilder.ellipse`
-
-```python
-PathBuilder.ellipse(rect: Sequence[float]) -> Self
-```
-
-Add the ellipse inside `rect`.
-
-### `PathBuilder.line_to`
-
-```python
-PathBuilder.line_to(point: Sequence[float]) -> Self
-```
-
-Add a line to `point`.
-
-### `PathBuilder.move_to`
-
-```python
-PathBuilder.move_to(point: Sequence[float]) -> Self
-```
-
-Start a subpath at `point`.
-
-### `PathBuilder.polygon`
-
-```python
-PathBuilder.polygon(points: Iterable[Sequence[float]], *, close: bool = True) -> Self
-```
-
-Add straight segments through `points`, closed unless `close` is false.
-
 ### `PathBuilder.quad_to`
 
 ```python
@@ -482,6 +478,14 @@ PathBuilder.quad_to(control: Sequence[float], point: Sequence[float]) -> Self
 
 Add a quadratic Bézier curve to `point`, as the equal cubic curve.
 
+### `PathBuilder.close`
+
+```python
+PathBuilder.close() -> Self
+```
+
+Close the current subpath with a line to its start.
+
 ### `PathBuilder.rect`
 
 ```python
@@ -489,6 +493,30 @@ PathBuilder.rect(rect: Sequence[float], *, radius: float = 0) -> Self
 ```
 
 Add a rectangle, with corners rounded by `radius` points.
+
+### `PathBuilder.ellipse`
+
+```python
+PathBuilder.ellipse(rect: Sequence[float]) -> Self
+```
+
+Add the ellipse inside `rect`.
+
+### `PathBuilder.circle`
+
+```python
+PathBuilder.circle(center: Sequence[float], radius: float) -> Self
+```
+
+Add a circle.
+
+### `PathBuilder.polygon`
+
+```python
+PathBuilder.polygon(points: Iterable[Sequence[float]], *, close: bool = True) -> Self
+```
+
+Add straight segments through `points`, closed unless `close` is false.
 
 ### `PathBuilder.sector`
 
@@ -508,13 +536,18 @@ Add an arc of `sweep` degrees around `center`, from `start` degrees.
 Angles run clockwise on the page from the positive x axis. With
 `pie`, lines join the arc's ends to the centre, which closes it.
 
-### `PathBuilder.segments`
+### `PathBuilder.zigzag`
 
 ```python
-PathBuilder.segments: tuple[Segment, ...]
+PathBuilder.zigzag(
+    start: Sequence[float],
+    end: Sequence[float],
+    *,
+    breadth: float = 2,
+) -> Self
 ```
 
-The segments added so far.
+Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
 
 ### `PathBuilder.wave`
 
@@ -529,22 +562,11 @@ PathBuilder.wave(
 
 Add a wavy line from `start` to `end` whose waves are `breadth` points wide.
 
-### `PathBuilder.zigzag`
-
-```python
-PathBuilder.zigzag(
-    start: Sequence[float],
-    end: Sequence[float],
-    *,
-    breadth: float = 2,
-) -> Self
-```
-
-Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
-
 ## `PathInput`
 
-`PathInput = pyropdf.PathBuilder | pyropdf.Path | collections.abc.Iterable[pyropdf.MoveTo | pyropdf.LineTo | pyropdf.CurveTo | pyropdf.ClosePath]`
+```python
+PathInput: TypeAlias = PathBuilder | Path | Iterable[Segment]
+```
 
 Geometry accepted by `Canvas.path` and `Canvas.clip`: a
 `PathBuilder`, a `Path`, or segments.

@@ -38,7 +38,7 @@ An optional content configuration: the default `/D` at index 0, then each of `/C
 LayerMembership(
     layers: tuple[Layer, ...] = (),
     *,
-    policy: VisibilityPolicy = <VisibilityPolicy.ANY_ON: 'AnyOn'>,
+    policy: VisibilityPolicy = VisibilityPolicy.ANY_ON,
 )
 ```
 
@@ -51,6 +51,7 @@ without groups is visible.
 ## `Layers`
 
 ```python
+class Layers(Sequence[Layer])
 Layers(document: Document)
 ```
 

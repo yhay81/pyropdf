@@ -113,6 +113,7 @@ becomes the new length, `modified` the current time, and a stale
 ## `Attachments`
 
 ```python
+class Attachments(Mapping[str, Attachment])
 Attachments(document: Document)
 ```
 
@@ -145,6 +146,22 @@ Attachments.__len__() -> int
 ```
 
 Return the number of attachments.
+
+### `Attachments.__contains__`
+
+```python
+Attachments.__contains__(name: object) -> bool
+```
+
+Return whether an attachment is called `name`.
+
+### `Attachments.__delitem__`
+
+```python
+Attachments.__delitem__(name: str)
+```
+
+Delete the attachment called `name`; raise `KeyError` when absent.
 
 ### `Attachments.add`
 

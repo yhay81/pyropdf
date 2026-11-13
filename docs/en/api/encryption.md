@@ -21,7 +21,7 @@ Encryption(
     *,
     user_password: str = '',
     owner_password: str | None = None,
-    permissions: Permissions = <Permissions.ALL: 3900>,
+    permissions: Permissions = Permissions.ALL,
     method: Literal['aes-256', 'aes-128', 'keep'] = 'aes-256',
 )
 ```
@@ -39,6 +39,14 @@ encryption that the document was opened with, copying its untouched
 encrypted bytes. Without `encryption`, a full save writes the document
 decrypted, and an incremental save keeps its encryption.
 
+### `Encryption.KEEP`
+
+```python
+Encryption.KEEP: Encryption
+```
+
+Keep the encryption that the document was opened with.
+
 ## `Permissions`
 
 What an encrypted document permits the user password, combined with `|`.
@@ -47,4 +55,4 @@ What an encrypted document permits the user password, combined with `|`.
 sets them. The values are the `/P` bits of ISO 32000-2 Table 22, and
 `ALL` combines every member.
 
-Members: `PRINT`, `MODIFY`, `COPY`, `ANNOTATE`, `FORM`, `ACCESSIBILITY`, `ASSEMBLE`, `PRINT_HQ`.
+Members: `PRINT`, `MODIFY`, `COPY`, `ANNOTATE`, `FORM`, `ACCESSIBILITY`, `ASSEMBLE`, `PRINT_HQ`, `ALL`.
