@@ -882,3 +882,212 @@ def test_outline_handle_refuses_a_parent_cycle() -> None:
     doc = pyropdf.open(_build_outline_fixture({4: "<< /First 5 0 R >>", 5: "<< /Title (cycle) /Parent 5 0 R >>"}))
     with pytest.raises(pyropdf.PdfError, match="parent cycle"):
         _ = doc.outline[0].level
+
+
+def test_open_state_differential_across_multi_level_toggles_and_closed_ancestors(
+    three_page_pdf: bytes,
+) -> None:
+    setup = pyropdf.open(three_page_pdf)
+    setup.outline = [
+        OutlineEntry(1, "P1", Destination(0), is_open=True),  # 0
+        OutlineEntry(2, "C1.1", Destination(0), is_open=True),  # 1
+        OutlineEntry(3, "S1.1.1", Destination(1), is_open=True),  # 2
+        OutlineEntry(4, "L1", Destination(1)),  # 3
+        OutlineEntry(4, "L2", Destination(1)),  # 4
+        OutlineEntry(3, "S1.1.2", Destination(1), is_open=False),  # 5
+        OutlineEntry(4, "L3", Destination(1)),  # 6
+        OutlineEntry(2, "C1.2", Destination(2), is_open=False),  # 7
+        OutlineEntry(3, "L4", Destination(2)),  # 8
+        OutlineEntry(1, "P2", Destination(2), is_open=True),  # 9
+        OutlineEntry(2, "C2.1", Destination(2), is_open=True),  # 10
+        OutlineEntry(3, "L5", Destination(2)),  # 11
+    ]
+    doc = pyropdf.open(setup.to_bytes())
+
+    def snapshot(target: pyropdf.Document) -> tuple[object, list[object], list[OutlineEntry]]:
+        return (
+            target.catalog["Outlines"]["Count"],
+            [item.obj.get("Count") for item in target.outline.walk()],
+            target.outline.entries(),
+        )
+
+    def assert_matches_oracle() -> None:
+        oracle = pyropdf.open(three_page_pdf)
+        oracle.outline = doc.outline.entries()
+        assert snapshot(doc) == snapshot(oracle)
+        assert doc.check().defects == ()
+
+    steps = [
+        (0, False),  # Collapse P1 while C1.1 and S1.1.1 stay open.
+        (2, False),  # Collapse S1.1.1 underneath closed P1 and open C1.1.
+        (2, False),  # No-op on closed S1.1.1.
+        (5, True),  # Expand S1.1.2 underneath closed P1.
+        (1, False),  # Collapse C1.1 underneath closed P1.
+        (2, True),  # Expand S1.1.1 underneath two closed ancestors (P1 and C1.1).
+        (5, False),  # Collapse S1.1.2 underneath two closed ancestors.
+        (7, True),  # Expand C1.2 underneath closed P1.
+        (0, True),  # Re-open P1 while C1.1 remains closed and C1.2 is open.
+        (0, True),  # No-op on open P1.
+        (1, True),  # Re-open C1.1 (exposing S1.1.1's 2 leaves).
+        (10, False),  # Collapse C2.1 under open P2.
+        (9, False),  # Collapse P2.
+        (10, True),  # Re-open C2.1 under closed P2.
+    ]
+    for index, flag in steps:
+        items = list(doc.outline.walk())
+        items[index].is_open = flag
+        assert items[index].is_open is flag
+        assert_matches_oracle()
+
+    # Interleaved reads and writes inside an explicit transaction also match `outline_write`.
+    with doc.transaction("Toggle nested outline items"):
+        for item in doc.outline.walk():
+            if item.children:
+                item.is_open = not item.is_open
+        assert doc.check().defects == ()
+    assert_matches_oracle()
+
+
+def test_open_state_skips_noop_writes_and_stops_above_closed_ancestors(three_page_pdf: bytes) -> None:
+    setup = pyropdf.open(three_page_pdf)
+    setup.outline = [
+        OutlineEntry(1, "P1", Destination(0), is_open=False),
+        OutlineEntry(2, "C1", Destination(1), is_open=True),
+        OutlineEntry(3, "S1", Destination(2), is_open=True),
+        OutlineEntry(4, "Leaf", Destination(2)),
+    ]
+    base_bytes = setup.to_bytes()
+
+    doc = pyropdf.open(base_bytes)
+    p1, c1, s1, _ = doc.outline.walk()
+    outlines_xref = doc.catalog["Outlines"].xref
+    assert outlines_xref is not None
+
+    # A no-op toggle leaves the document unchanged for incremental save.
+    s1.is_open = True
+    assert doc.to_bytes(incremental=True) == base_bytes
+
+    # Toggling S1 underneath closed P1 updates S1, C1, and P1, leaving /Outlines untouched.
+    s1.is_open = False
+    assert doc.check().defects == ()
+    assert (p1.obj["Count"], c1.obj["Count"], s1.obj["Count"]) == (-2, 1, -1)
+    assert doc.catalog["Outlines"]["Count"] == 1
+    incremental = doc.to_bytes(incremental=True)
+    appended = incremental[len(base_bytes) :]
+    assert f"\n{s1.xref} 0 obj\n".encode() in appended or appended.startswith(f"{s1.xref} 0 obj\n".encode())
+    assert f"\n{c1.xref} 0 obj\n".encode() in appended or appended.startswith(f"{c1.xref} 0 obj\n".encode())
+    assert f"\n{p1.xref} 0 obj\n".encode() in appended or appended.startswith(f"{p1.xref} 0 obj\n".encode())
+    assert f"{outlines_xref} 0 obj\n".encode() not in appended
+
+
+@pytest.mark.parametrize(
+    ("outline_objects", "target_xref", "new_open", "expected_counts"),
+    [
+        # Target item missing /Count despite /First.
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>",
+                5: "<< /Title (P) /Parent 4 0 R /First 6 0 R /Last 6 0 R >>",
+                6: "<< /Title (C) /Parent 5 0 R >>",
+            },
+            5,
+            True,
+            {4: 2, 5: 1},
+        ),
+        # Target item has /Count 0 despite /First.
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>",
+                5: "<< /Title (P) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Count 0 >>",
+                6: "<< /Title (C) /Parent 5 0 R >>",
+            },
+            5,
+            False,
+            {4: 1, 5: -1},
+        ),
+        # Ancestor missing /Count or storing /Count 0.
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 2 >>",
+                5: "<< /Title (P) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Count 0 >>",
+                6: "<< /Title (C) /Parent 5 0 R /First 7 0 R /Last 7 0 R /Count -1 >>",
+                7: "<< /Title (L) /Parent 6 0 R >>",
+            },
+            6,
+            True,
+            {4: 1, 5: -2, 6: 1},
+        ),
+        # Ancestor /Count inconsistent (`|anc_count| + delta <= 0`).
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 4 >>",
+                5: "<< /Title (P) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Count 1 >>",
+                6: "<< /Title (C) /Parent 5 0 R /First 7 0 R /Last 8 0 R /Count 2 >>",
+                7: "<< /Title (L1) /Parent 6 0 R /Next 8 0 R >>",
+                8: "<< /Title (L2) /Parent 6 0 R /Prev 7 0 R >>",
+            },
+            6,
+            False,
+            {4: 2, 5: 1, 6: -2},
+        ),
+        # /Outlines root missing /Count, /Count 0, or `root_count + delta <= 0`.
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 0 >>",
+                5: "<< /Title (P) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Count -1 >>",
+                6: "<< /Title (C) /Parent 5 0 R >>",
+            },
+            5,
+            True,
+            {4: 2, 5: 1},
+        ),
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>",
+                5: "<< /Title (P) /Parent 4 0 R /First 6 0 R /Last 7 0 R /Count 2 >>",
+                6: "<< /Title (L1) /Parent 5 0 R /Next 7 0 R >>",
+                7: "<< /Title (L2) /Parent 5 0 R /Prev 6 0 R >>",
+            },
+            5,
+            False,
+            {4: 1, 5: -2},
+        ),
+        # Missing /Parent on an ancestor above a closed parent, with missing root /Count.
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R >>",
+                5: "<< /Title (P) /First 6 0 R /Last 6 0 R /Count -2 >>",
+                6: "<< /Title (C) /Parent 5 0 R /First 7 0 R /Last 7 0 R /Count 1 >>",
+                7: "<< /Title (L) /Parent 6 0 R >>",
+            },
+            6,
+            False,
+            {4: 1, 5: -1, 6: -1},
+        ),
+        # Cyclic /Parent chain (`5 -> 6 -> 5`) on an acyclic `/First` tree falls back to `counts()`.
+        (
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 2 >>",
+                5: "<< /Title (P) /Parent 6 0 R /First 6 0 R /Last 6 0 R /Count 1 >>",
+                6: "<< /Title (C) /Parent 5 0 R /First 7 0 R /Last 7 0 R /Count -1 >>",
+                7: "<< /Title (L) /Parent 6 0 R >>",
+            },
+            6,
+            True,
+            {4: 3, 5: 2, 6: 1},
+        ),
+    ],
+)
+def test_open_state_falls_back_and_repairs_missing_or_inconsistent_counts_and_parents(
+    outline_objects: dict[int, str],
+    target_xref: int,
+    expected_counts: dict[int, int],
+    *,
+    new_open: bool,
+) -> None:
+    doc = pyropdf.open(_build_outline_fixture(outline_objects))
+    items_by_xref = {item.xref: item for item in doc.outline.walk()}
+    items_by_xref[target_xref].is_open = new_open
+    assert (doc.objects[target_xref]["Count"] > 0) is new_open
+    for obj_num, expected in expected_counts.items():
+        assert doc.objects[obj_num]["Count"] == expected

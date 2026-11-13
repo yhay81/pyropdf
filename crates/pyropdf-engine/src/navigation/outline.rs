@@ -19,7 +19,7 @@ use pyropdf_store::memo::{Memo, Reads};
 use pyropdf_store::pages::{MAX_CHAIN, PageIndex, PageTree};
 use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
-use pyropdf_store::version::{Transaction, Version};
+use pyropdf_store::version::{Object, Transaction, Version};
 
 use crate::display::{encode_text, number};
 use crate::forms::text_string;
@@ -1078,8 +1078,9 @@ pub fn outline_set_style(
     })
 }
 
-/// Shows or hides the children of item `id`, and counts every `/Count` of
-/// the outline again (ISO 32000-2 Table 151).
+/// Shows or hides the children of item `id`, updating `/Count` along its
+/// `/Parent` chain in `O(depth)` when `/Parent` and `/Count` are consistent
+/// and falling back to a full outline recount otherwise (ISO 32000-2 Table 151).
 pub fn outline_set_open(
     transaction: &mut Transaction,
     budget: &Budget,
@@ -1115,7 +1116,10 @@ pub fn outline_set_open(
                 }
             }
         };
-        let counts = counts(&mut reads, &root, location, (id, open))?;
+        let counts = match delta_counts(&mut reads, &dict, &location, id, open)? {
+            Some(counts) => counts,
+            None => counts(&mut reads, &root, location, (id, open))?,
+        };
         for (location, count) in counts {
             // Read previous writes from this operation, so several direct nodes
             // in one holder cannot overwrite each other's updated counts.
@@ -1153,6 +1157,189 @@ pub fn outline_set_open(
         }
         Ok(())
     })
+}
+
+/// Resolves an indirect reference (through up to [`MAX_CHAIN`] aliases) to an
+/// outline dictionary object and its resolved [`Reference`], without copying
+/// the dictionary.
+fn indirect_dict(
+    reads: &mut Reads<'_>,
+    mut reference: Reference,
+) -> Result<Option<(Object, Reference)>> {
+    for _ in 0..MAX_CHAIN {
+        let Some(object) = reads
+            .get(reference.number())?
+            .filter(|object| object.generation() == reference.generation())
+        else {
+            return Ok(None);
+        };
+        match &**object.value() {
+            Value::Reference(next) => reference = *next,
+            Value::Dict(dict) => {
+                outline_dict(dict)?;
+                return Ok(Some((object, reference)));
+            }
+            _ => return Ok(None),
+        }
+    }
+    Err(Error::Pdf(format!(
+        "a reference cycle or a chain of more than {MAX_CHAIN} references"
+    )))
+}
+
+/// Computes `O(depth)` `/Count` updates along `id`'s `/Parent` chain when `id`
+/// and every ancestor up to `root_location` carry consistent `/Parent` and
+/// `/Count` entries. Returns `Ok(None)` when any link or count is missing,
+/// cyclic, deeper than [`MAX_DEPTH`], or inconsistent, falling back to [`counts`].
+fn delta_counts(
+    reads: &mut Reads<'_>,
+    dict: &Dict,
+    root_location: &Location,
+    id: (u32, u16),
+    open: bool,
+) -> Result<Option<Vec<Count>>> {
+    let max_items = i64::try_from(MAX_ITEMS).unwrap_or(i64::MAX);
+    if !root_location.path.is_empty() || root_location.id == id {
+        return Ok(None);
+    }
+    if matches!(dict.get("Type"), Some(Value::Name(kind)) if kind.as_bytes() == b"Outlines") {
+        return Ok(None);
+    }
+    let Some(&Value::Integer(old_count)) = dict.get("Count") else {
+        return Ok(None);
+    };
+    let Some(magnitude) = old_count.checked_abs() else {
+        return Ok(None);
+    };
+    if magnitude == 0 || magnitude > max_items {
+        return Ok(None);
+    }
+    let Some(&Value::Reference(mut parent)) = dict.get("Parent") else {
+        return Ok(None);
+    };
+
+    let budget = reads.budget();
+    let was_open = old_count > 0;
+    let mut updates = BudgetVec::new(budget);
+    let delta = if was_open == open {
+        0
+    } else {
+        let signed = if open { magnitude } else { -magnitude };
+        updates.try_push((
+            Location {
+                id,
+                path: Vec::new(),
+            },
+            signed,
+        ))?;
+        signed
+    };
+
+    let mut seen = HashSet::new();
+    visit(&mut seen, id, budget)?;
+    let mut level = 1_usize;
+    let mut steps = 0_i64;
+    let mut propagating = true;
+
+    loop {
+        budget.poll()?;
+        steps += 1;
+        let Some((anc_obj, reference)) = indirect_dict(reads, parent)? else {
+            return Ok(None);
+        };
+        let anc_id = (reference.number(), reference.generation());
+        if !visit(&mut seen, anc_id, budget)? {
+            return Ok(None);
+        }
+        let Value::Dict(anc_dict) = &**anc_obj.value() else {
+            unreachable!("indirect_dict returns a dictionary object");
+        };
+        let Some(&Value::Integer(anc_count)) = anc_dict.get("Count") else {
+            return Ok(None);
+        };
+
+        let min_before = if propagating {
+            steps + if was_open { magnitude } else { 0 }
+        } else {
+            1
+        };
+
+        if anc_id == root_location.id {
+            if anc_count < min_before || anc_count > max_items {
+                return Ok(None);
+            }
+            if propagating && delta != 0 {
+                let new_root = anc_count + delta;
+                if new_root < 1 || new_root > max_items {
+                    return Ok(None);
+                }
+                updates.try_push((
+                    Location {
+                        id: anc_id,
+                        path: Vec::new(),
+                    },
+                    new_root,
+                ))?;
+            }
+            return Ok(Some(updates.into_vec()));
+        }
+
+        level += 1;
+        if level > MAX_DEPTH {
+            return Ok(None);
+        }
+        if matches!(anc_dict.get("Type"), Some(Value::Name(kind)) if kind.as_bytes() == b"Outlines")
+        {
+            return Ok(None);
+        }
+        if anc_dict.get("First").is_none() {
+            return Ok(None);
+        }
+        let Some(anc_mag) = anc_count.checked_abs() else {
+            return Ok(None);
+        };
+        if anc_mag < min_before || anc_mag > max_items {
+            return Ok(None);
+        }
+
+        if propagating {
+            if anc_count > 0 {
+                if delta != 0 {
+                    let new_anc = anc_count + delta;
+                    if new_anc < 1 || new_anc > max_items {
+                        return Ok(None);
+                    }
+                    updates.try_push((
+                        Location {
+                            id: anc_id,
+                            path: Vec::new(),
+                        },
+                        new_anc,
+                    ))?;
+                }
+            } else {
+                if delta != 0 {
+                    let new_mag = anc_mag + delta;
+                    if new_mag < 1 || new_mag > max_items {
+                        return Ok(None);
+                    }
+                    updates.try_push((
+                        Location {
+                            id: anc_id,
+                            path: Vec::new(),
+                        },
+                        -new_mag,
+                    ))?;
+                }
+                propagating = false;
+            }
+        }
+
+        let Some(&Value::Reference(next_parent)) = anc_dict.get("Parent") else {
+            return Ok(None);
+        };
+        parent = next_parent;
+    }
 }
 
 fn generation(reads: &mut Reads<'_>, number: u32) -> Result<u16> {
@@ -1270,4 +1457,281 @@ fn counts(
     }
     counts.try_push((root_location, root_visible))?;
     Ok(counts.into_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+    use pyropdf_store::budget::DocumentLimits;
+    use pyropdf_store::index::Index;
+    use pyropdf_store::save::FileBase;
+    use pyropdf_store::value::Bytes;
+    use pyropdf_store::version::Document;
+
+    use crate::navigation::none;
+
+    use super::*;
+
+    fn minimal_doc() -> Document {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>",
+        ];
+        let mut out = b"%PDF-1.7\n".to_vec();
+        let mut offsets = Vec::new();
+        for (number, object) in (1..).zip(objects) {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{number} 0 obj\n{object}\nendobj\n").as_bytes());
+        }
+        let xref = out.len();
+        out.extend_from_slice(
+            format!("xref\n0 {}\n0000000000 65535 f \n", offsets.len() + 1).as_bytes(),
+        );
+        for offset in offsets {
+            out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+                objects.len() + 1
+            )
+            .as_bytes(),
+        );
+        let budget = Budget::default();
+        let index = Index::open(Bytes::new(out), &budget).unwrap();
+        Document::new(Arc::new(FileBase::new(index, &budget).unwrap()), None)
+    }
+
+    fn root_and_item_counts(version: &Arc<Version>, budget: &Budget) -> (i64, Vec<Option<i64>>) {
+        let mut reads = Reads::new(version, budget);
+        let (root_dict, _) = root(&mut reads).unwrap().expect("outline root exists");
+        let Some(&Value::Integer(root_count)) = root_dict.get("Count") else {
+            panic!("missing integer /Outlines /Count");
+        };
+        let outline = walk(&mut reads, None).unwrap();
+        let mut item_counts = Vec::with_capacity(outline.items.len());
+        for item in &outline.items {
+            let obj = version.get(item.id.0, budget).unwrap().unwrap();
+            let Value::Dict(d) = &**obj.value() else {
+                panic!("item is dict");
+            };
+            let count = match d.get("Count") {
+                Some(&Value::Integer(c)) => Some(c),
+                None => None,
+                other => panic!("unexpected /Count: {other:?}"),
+            };
+            item_counts.push(count);
+        }
+        (root_count, item_counts)
+    }
+
+    #[test]
+    fn delta_counts_reads_and_writes_in_o_depth_and_stops_above_closed_ancestors() {
+        let doc = minimal_doc();
+        let budget = Budget::default();
+        let pages_memo = Memo::new(1);
+        let outline_memo = Memo::new(1);
+        let dests_memo = Memo::new(1);
+        let refs_cache = refs::Cache::new();
+
+        // Build 1,024 items across 4 levels: 16 parts * (1 + 7 chapters * (1 + 2 sections * (1 + 3 leaves))) = 16 * (1 + 7 * 9) = 1,024.
+        let mut specs: Vec<Spec> = Vec::with_capacity(1024);
+        for p in 0..16 {
+            specs.push((1, format!("P{p}"), none(), None, 0, true));
+            for c in 0..7 {
+                specs.push((2, format!("C{p}.{c}"), none(), None, 0, true));
+                for s in 0..2 {
+                    specs.push((3, format!("S{p}.{c}.{s}"), none(), None, 0, true));
+                    for l in 0..3 {
+                        specs.push((4, format!("L{p}.{c}.{s}.{l}"), none(), None, 0, false));
+                    }
+                }
+            }
+        }
+        assert_eq!(specs.len(), 1024);
+
+        let mut tx = doc.begin();
+        outline_write(&mut tx, &pages_memo, &refs_cache, &budget, specs).unwrap();
+        let base_v = tx.commit(&budget).unwrap();
+
+        let entries =
+            outline_entries(&outline_memo, &pages_memo, &dests_memo, &base_v, &budget).unwrap();
+        let part0 = entries[0].0;
+        let chap0 = entries[1].0;
+        let sec0 = entries[2].0;
+
+        let mut probe_reads = Reads::new(&base_v, &budget);
+        let (_, Some(root_num)) = root(&mut probe_reads).unwrap().unwrap() else {
+            panic!("indirect outline root");
+        };
+        let root_loc = Location {
+            id: (root_num, 0),
+            path: Vec::new(),
+        };
+        let sec0_dict = item(&mut probe_reads, sec0).unwrap().unwrap();
+
+        // Direct `delta_counts` probe on a 1,024-item outline reads only the 3 ancestors along `/Parent`.
+        let mut fast_reads = Reads::new(&base_v, &budget);
+        let fast = delta_counts(&mut fast_reads, &sec0_dict, &root_loc, sec0, false)
+            .unwrap()
+            .expect("well-formed outline uses fast path");
+        assert_eq!(fast.len(), 4); // sec0, chap0, part0, root
+        let read_set = fast_reads.finish().unwrap();
+        assert_eq!(read_set.objects().len(), 3); // chap0, part0, root
+
+        // 1. No-op (`sec0` is already open) writes zero objects and reuses `base_v`.
+        let mut tx = doc.begin();
+        outline_set_open(&mut tx, &budget, sec0, true).unwrap();
+        let v_noop = tx.commit(&budget).unwrap();
+        assert!(Arc::ptr_eq(&v_noop, &base_v));
+        assert!(
+            v_noop
+                .changes(&base_v, &budget)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+
+        // 2. Collapse `part0` (level 1): writes only `part0` and `root_num`.
+        let mut tx = doc.begin();
+        outline_set_open(&mut tx, &budget, part0, false).unwrap();
+        let v_part_closed = tx.commit(&budget).unwrap();
+        let mut expected = vec![part0.0, root_num];
+        expected.sort_unstable();
+        assert_eq!(v_part_closed.written().objects(), expected.as_slice());
+
+        // 3. Collapse `sec0` (level 3) while `chap0` (level 2) is open and `part0` (level 1) is closed:
+        //    updates `sec0`, `chap0`, and `part0` (negative magnitude), stopping BEFORE `root_num`.
+        let mut tx = doc.begin();
+        outline_set_open(&mut tx, &budget, sec0, false).unwrap();
+        let v_under_closed_part = tx.commit(&budget).unwrap();
+        let mut expected = vec![sec0.0, chap0.0, part0.0];
+        expected.sort_unstable();
+        assert_eq!(v_under_closed_part.written().objects(), expected.as_slice());
+        assert!(!v_under_closed_part.written().contains(root_num));
+
+        // 4. Collapse `chap0` (level 2), then re-open `sec0` (level 3):
+        //    now `chap0` is closed, so propagation stops at `chap0` without writing `part0` or `root_num`.
+        let mut tx = doc.begin();
+        outline_set_open(&mut tx, &budget, chap0, false).unwrap();
+        tx.commit(&budget).unwrap();
+
+        let mut tx = doc.begin();
+        outline_set_open(&mut tx, &budget, sec0, true).unwrap();
+        let v_under_closed_chap = tx.commit(&budget).unwrap();
+        let mut expected = vec![sec0.0, chap0.0];
+        expected.sort_unstable();
+        assert_eq!(v_under_closed_chap.written().objects(), expected.as_slice());
+        assert!(!v_under_closed_chap.written().contains(part0.0));
+        assert!(!v_under_closed_chap.written().contains(root_num));
+
+        // 5. Budget charging: a 16 KiB memory budget succeeds on the 1,024-item outline
+        //    (whereas full `counts()` requires > 32 KiB), while a 1-byte budget refuses.
+        let small_budget =
+            Budget::new(&DocumentLimits::default()).with_limit(LimitCode::MemorySize, Some(16_384));
+        let mut tx = doc.begin();
+        outline_set_open(&mut tx, &small_budget, sec0, false).unwrap();
+        tx.commit(&small_budget).unwrap();
+
+        let tiny_budget =
+            Budget::new(&DocumentLimits::default()).with_limit(LimitCode::MemorySize, Some(1));
+        let mut tx = doc.begin();
+        let err = outline_set_open(&mut tx, &tiny_budget, sec0, true).unwrap_err();
+        assert_eq!(err.limit_code(), Some(LimitCode::MemorySize));
+    }
+
+    type OutlinePlan = (Vec<(u32, bool)>, Vec<(usize, bool)>);
+
+    fn outline_strategy() -> impl Strategy<Value = OutlinePlan> {
+        proptest::collection::vec((0_u8..=2, any::<bool>()), 2..=32).prop_flat_map(|raw| {
+            let mut nodes = Vec::with_capacity(raw.len());
+            let mut prev_level = 0_u32;
+            for (step, open) in raw {
+                let level = match step {
+                    0 => 1,
+                    1 => prev_level.max(1),
+                    _ => (prev_level + 1).min(5),
+                };
+                nodes.push((level, open));
+                prev_level = level;
+            }
+            let len = nodes.len();
+            (
+                Just(nodes),
+                proptest::collection::vec((0..len, any::<bool>()), 1..=24),
+            )
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn outline_set_open_matches_outline_write_across_multi_level_toggles(
+            (nodes, toggles) in outline_strategy()
+        ) {
+            let doc = minimal_doc();
+            let budget = Budget::default();
+            let pages_memo = Memo::new(1);
+            let outline_memo = Memo::new(1);
+            let dests_memo = Memo::new(1);
+            let refs_cache = refs::Cache::new();
+
+            let has_child: Vec<bool> = (0..nodes.len())
+                .map(|i| i + 1 < nodes.len() && nodes[i + 1].0 > nodes[i].0)
+                .collect();
+
+            let mut current_open: Vec<bool> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, &(_, open))| has_child[i] && open)
+                .collect();
+
+            let initial_specs: Vec<Spec> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, &(level, _))| {
+                    (level, format!("Item {i}"), none(), None, 0, current_open[i])
+                })
+                .collect();
+
+            let mut tx = doc.begin();
+            outline_write(&mut tx, &pages_memo, &refs_cache, &budget, initial_specs).unwrap();
+            let v0 = tx.commit(&budget).unwrap();
+
+            let initial_entries =
+                outline_entries(&outline_memo, &pages_memo, &dests_memo, &v0, &budget).unwrap();
+            let ids: Vec<(u32, u16)> = initial_entries.iter().map(|e| e.0).collect();
+
+            let mut tx = doc.begin();
+            for (idx, open) in toggles {
+                if has_child[idx] {
+                    outline_set_open(&mut tx, &budget, ids[idx], open).unwrap();
+                    current_open[idx] = open;
+                } else {
+                    let err = outline_set_open(&mut tx, &budget, ids[idx], open).unwrap_err();
+                    prop_assert!(matches!(err, Error::Pdf(_)));
+                }
+            }
+            let mutated = tx.commit(&budget).unwrap();
+
+            let oracle_doc = minimal_doc();
+            let final_specs: Vec<Spec> = nodes
+                .iter()
+                .enumerate()
+                .map(|(i, &(level, _))| {
+                    (level, format!("Item {i}"), none(), None, 0, current_open[i])
+                })
+                .collect();
+            let mut oracle_tx = oracle_doc.begin();
+            outline_write(&mut oracle_tx, &pages_memo, &refs_cache, &budget, final_specs).unwrap();
+            let expected = oracle_tx.commit(&budget).unwrap();
+
+            prop_assert_eq!(
+                root_and_item_counts(&mutated, &budget),
+                root_and_item_counts(&expected, &budget)
+            );
+        }
+    }
 }
