@@ -15,8 +15,8 @@ An immutable integer rectangle `(x0, y0, x1, y1)`.
 Accept the same arguments as `Rect`. Fractional coordinates
 move outward: `x0` and `y0` round down and `x1` and `y1` round
 up, also for the results of arithmetic. The operators and members are
-those of `Rect`, apart from `abs()`, truth testing, and
-`round()`, which pymupdf's IRect does not define.
+those of `Rect`, except `abs()`, truth testing, and
+`round()`, which `IRect` omits.
 
 ### `IRect.height`
 

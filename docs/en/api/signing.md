@@ -16,7 +16,6 @@ Signature(
     xref: int | None,
     byte_range: tuple[int, ...],
     revision: int | None,
-    _document: Document,
 )
 ```
 
@@ -144,3 +143,11 @@ The file is PBES2-encrypted with a SHA-2 MAC, as OpenSSL 3 and
 Python's `cryptography` write it; `None` is the empty password.
 Legacy encryption, a wrong password, or a file without exactly one
 key and its certificate raises `ValueError`.
+
+## `Timestamper`
+
+`Timestamper = typing.Callable[[bytes, str], bytes]`
+
+A time-stamp callback: it receives the digest of the signature value and
+the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns
+the DER of an RFC 3161 time-stamp token over that digest.

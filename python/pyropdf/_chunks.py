@@ -24,7 +24,7 @@ import json
 import re
 from collections import Counter
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pyropdf import _markdown
 from pyropdf._errors import LimitError
@@ -38,7 +38,9 @@ if TYPE_CHECKING:
     from pyropdf._tables import Table
     from pyropdf._text import Word
 
-ElementKind = Literal["heading", "paragraph", "list_item", "table", "image"]
+#: The kind of a structured page :class:`Element`.
+ElementKind: TypeAlias = Literal["heading", "paragraph", "list_item", "table", "image"]
+ElementKind.__doc__ = "The kind of a structured page :class:`Element`."
 
 #: The characters of one chunk by default.
 _DEFAULT_MAX_CHARS = 2000
@@ -364,3 +366,7 @@ def validate_max_chars(max_chars: object) -> None:
     if max_chars < 1:
         msg = f"max_chars must be a positive integer: {max_chars!r}"
         raise ValueError(msg)
+
+
+for _public in (Chunk, Element):
+    _public.__module__ = "pyropdf"

@@ -248,8 +248,8 @@ fn read_fill_value(value: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<FillVa
 /// that has it, or else in its first widget. `True` names a button's first
 /// state that is not `Off`, or `Yes`, and `False` names `Off`. Then sets
 /// the form's `/NeedAppearances` when a widget is left without an
-/// appearance. Refuses what pylopdf refuses, leaving the document as it
-/// was.
+/// appearance. Refuses read-only or incompatible fields and invalid or
+/// oversized values, leaving the document as it was.
 ///
 /// Without `draw`, the field's own widgets are left as they are, for
 /// [`form_field_draw_face`] to draw.
@@ -453,8 +453,8 @@ fn read_field_spec(map: &Bound<'_, PyAny>, budget: &Budget) -> PyResult<FieldSpe
 /// object and position in the page's `/Annots`; or `None` for a page that
 /// is gone. The page and the form are read after the edit takes the
 /// document's writer lock. Refuses a name with dots or one of a field that
-/// has fields below it, a kind other than the existing field's, and what
-/// pylopdf refuses in a specification, leaving the document as it was.
+/// has fields below it, a kind other than the existing field's, and an
+/// invalid or oversized field specification, leaving the document as it was.
 #[pyfunction]
 pub fn widget_add(
     py: Python<'_>,

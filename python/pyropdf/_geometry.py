@@ -76,7 +76,7 @@ def _named_components(args: tuple[object, ...], kwargs: dict[str, float], names:
 
 
 def _unit_scale(unit: str, measure: str) -> float:
-    """Return the length scale of a pymupdf measurement unit."""
+    """Return the length scale in points per ``'px'``, ``'in'``, ``'cm'``, or ``'mm'``."""
     if unit not in _UNIT_SCALES:
         msg = f"{measure} unit must be 'px', 'in', 'cm', or 'mm'"
         raise PdfError(msg)
@@ -132,7 +132,7 @@ class Matrix(_MatrixTuple):
     def __new__(cls, a: float, b: float, c: float, d: float, e: float, f: float) -> Self: ...
 
     def __new__(cls, *args: float | Sequence[float], **kwargs: float) -> Self:
-        """Construct a matrix using pymupdf's coordinate and transform forms."""
+        """Construct a zero, rotation, scaling, shear, or explicit six-element matrix."""
         if kwargs:
             values = _named_components(args, kwargs, cls._fields)
         elif not args:
@@ -448,7 +448,7 @@ def _inverse(value: object) -> Matrix:
 def _rect_arguments(  # noqa: PLR0911 - one return per constructor form.
     args: tuple[object, ...], kwargs: dict[str, float]
 ) -> tuple[float, float, float, float]:
-    """Bind pymupdf's rectangle constructor forms to four coordinates."""
+    """Bind the rectangle constructor forms to four ``(x0, y0, x1, y1)`` coordinates."""
     if kwargs:
         x0, y0, x1, y1 = _named_components(args, kwargs, ("x0", "y0", "x1", "y1"))
         return x0, y0, x1, y1
@@ -784,7 +784,7 @@ class Rect(_Rectangle, _RectTuple):
     def __new__(cls, x0: float, y0: float, x1: float, y1: float) -> Self: ...
 
     def __new__(cls, *args: float | Sequence[float], **kwargs: float) -> Self:
-        """Construct a rectangle from pymupdf's coordinate and corner forms."""
+        """Construct a rectangle from coordinates, corner points, or another rectangle."""
         if len(args) == _RECT_COORDINATES and not kwargs:
             # Extraction returns many rectangles of four floats. A finite sum
             # proves every coordinate finite; anything else, including a sum
@@ -847,8 +847,8 @@ class IRect(_Rectangle, _IRectTuple):
     Accept the same arguments as :class:`Rect`. Fractional coordinates
     move outward: ``x0`` and ``y0`` round down and ``x1`` and ``y1`` round
     up, also for the results of arithmetic. The operators and members are
-    those of :class:`Rect`, apart from ``abs()``, truth testing, and
-    ``round()``, which pymupdf's IRect does not define.
+    those of :class:`Rect`, except ``abs()``, truth testing, and
+    ``round()``, which ``IRect`` omits.
     """
 
     __slots__ = ()

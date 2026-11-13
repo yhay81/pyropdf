@@ -37,8 +37,8 @@ use pyropdf_store::version::{Transaction, Version};
 use crate::document::_Document;
 use crate::errors::{MalformedPdfError, StaleObjectError, limit_error, store_error};
 
-/// How deeply a written value may nest arrays and dictionaries, as in
-/// pylopdf; `python/pyropdf/_objects.py` checks it first.
+/// Maximum nesting depth of written arrays and dictionaries (32,
+/// `object_value_depth`); `python/pyropdf/_objects.py` checks it first.
 const MAX_VALUE_DEPTH: usize = 32;
 
 /// The object that a handle starts from: an indirect object, by number and

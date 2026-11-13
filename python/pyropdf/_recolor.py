@@ -26,7 +26,7 @@ from __future__ import annotations
 import struct
 import zlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from pyropdf import _core
 from pyropdf._errors import PdfError
@@ -54,8 +54,9 @@ if TYPE_CHECKING:
     from pyropdf._document import Document
     from pyropdf._page import Page
 
-#: A target of :meth:`Page.recolor`.
-RecolorTarget = Literal["gray", "rgb", "cmyk"]
+#: A target color space of :meth:`Page.recolor` and :meth:`Document.recolor`.
+RecolorTarget: TypeAlias = Literal["gray", "rgb", "cmyk"]
+RecolorTarget.__doc__ = "A target color space of :meth:`Page.recolor` and :meth:`Document.recolor`."
 
 _COMPONENTS = {"gray": 1, "rgb": 3, "cmyk": 4}
 _FAMILIES = {1: "gray", 3: "rgb", 4: "cmyk"}

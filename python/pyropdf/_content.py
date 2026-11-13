@@ -21,6 +21,7 @@ from pyropdf._geometry import Matrix, Point, Rect
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Self
 
     from pyropdf._core import PathColumns, _OperationBudget, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
@@ -605,11 +606,10 @@ class Content(Sequence[ContentItem]):
         within ``x_tolerance`` points horizontally and ``y_tolerance`` points
         vertically, until no path and no other group comes that near; the
         boxes are sorted from top to bottom and left to right. Paths whose box
-        holds no area once a stroke's half width widens it are left out, as
-        pymupdf leaves them out. This replaces pymupdf's ``cluster_drawings``, which
-        finds the vector graphics that make up a figure or a table; read the
-        paths of ``page.content(clip=page.rect)`` to leave out those outside
-        the page, as pymupdf does by default.
+        holds no area once widened by half their stroke width are left out. Use
+        this to group the vector strokes and fills of a figure or diagram; call
+        ``page.content(clip=page.rect).path_clusters()`` to exclude paths
+        outside the page box.
         """
         for name, value in (("x_tolerance", x_tolerance), ("y_tolerance", y_tolerance)):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
@@ -729,11 +729,30 @@ class Paths(Sequence[Path]):
         "soft_mask",
     )
 
-    def __init__(self, columns: PathColumns, start: int = 0, stop: int | None = None) -> None:
-        self._columns = columns
-        self._start = start
-        self._stop = len(columns) if stop is None else stop
-        self._values = _PathValues(columns)
+    _columns: PathColumns
+    _start: int
+    _stop: int
+    _values: _PathValues
+
+    def __new__(cls) -> Self:
+        """Refuse direct construction; read paths with :meth:`Page.paths`."""
+        msg = "Paths is returned by Page.paths"
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_columns(
+        cls,
+        columns: PathColumns,
+        start: int = 0,
+        stop: int | None = None,
+        values: _PathValues | None = None,
+    ) -> Paths:
+        paths = object.__new__(cls)
+        paths._columns = columns
+        paths._start = start
+        paths._stop = len(columns) if stop is None else stop
+        paths._values = _PathValues(columns) if values is None else values
+        return paths
 
     def __len__(self) -> int:
         return self._stop - self._start
@@ -748,10 +767,12 @@ class Paths(Sequence[Path]):
             if step != 1:
                 msg = f"a slice of Paths takes a step of 1: {index!r}"
                 raise ValueError(msg)
-            view = Paths(self._columns, self._start + start, self._start + max(start, stop))
-            # A view shares the values of its page.
-            view._values = self._values
-            return view
+            return Paths._from_columns(
+                self._columns,
+                self._start + start,
+                self._start + max(start, stop),
+                self._values,
+            )
         row = range(self._start, self._stop)[index]
         return self._values.path(self._columns.rows(row, row + 1)[0])
 

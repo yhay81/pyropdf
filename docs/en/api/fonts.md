@@ -101,9 +101,7 @@ palette entry that the default palette lacks) draws its fallback outline,
 and one whose paints form a cycle, or nest or number past skrifa's bounds,
 refuses with `PdfError` whatever its outline. What a glyph writes counts
 against the canvas's limits before it is written, so a glyph draws whole or
-raises. `tests/test_canvas_embedded.py` checks each kind of paint against a
-reference render to within 8 levels in each 8-bit channel, in hayro and in
-poppler.
+raises.
 
 A CIDFont draws outlines, so any other colour glyph (a JPEG, TIFF or raw
 strike, or `SVG`), and any colour glyph in a form field or annotation, draws
@@ -393,7 +391,6 @@ FontInfo(
     program: str | None,
     subset: bool,
     forms: tuple[int, ...],
-    _font: Dictionary,
 )
 ```
 
@@ -410,6 +407,8 @@ An embedded font program, from `Document.font_program`.
 ## `StandardFontName`
 
 `StandardFontName = typing.Literal['Courier', 'Courier-Oblique', 'Courier-Bold', 'Courier-BoldOblique', 'Helvetica', 'Helvetica-Oblique', 'Helvetica-Bold', 'Helvetica-BoldOblique', 'Times-Roman', 'Times-Italic', 'Times-Bold', 'Times-BoldItalic', 'Symbol', 'ZapfDingbats']`
+
+The PostScript names of the Standard 14 fonts (ISO 32000-2 section 9.6.2.2).
 
 ## `SubsetFont`
 

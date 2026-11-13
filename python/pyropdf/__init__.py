@@ -35,10 +35,10 @@ from pyropdf._annotations import (
     Underline,
 )
 from pyropdf._attachments import Attachment, Attachments
-from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, TableHeaderScope, TagRole, TextFit
+from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, PathInput, TableHeaderScope, TagRole, TextFit
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
-from pyropdf._check import StructuralDefect, StructuralReport
-from pyropdf._chunks import Chunk, Element
+from pyropdf._check import DefectKind, StructuralDefect, StructuralReport
+from pyropdf._chunks import Chunk, Element, ElementKind
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -116,9 +116,10 @@ from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, PageImage, StoredImage
 from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy
+from pyropdf._limit_codes import LIMIT_CODES, LimitCode
 from pyropdf._limits import CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
-from pyropdf._metadata import Metadata, parse_pdf_date, pdf_date
+from pyropdf._metadata import METADATA_KEYS, Metadata, parse_pdf_date, pdf_date
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String
 from pyropdf._ocr import OcrEngine, OcrRotation, OcrWord
 from pyropdf._operations import InlineImage, Operation, Operations
@@ -128,22 +129,36 @@ from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
-from pyropdf._recolor import RecolorReport, Unconverted
+from pyropdf._recolor import RecolorReport, RecolorTarget, Unconverted
 from pyropdf._sanitize import SanitizeReport
-from pyropdf._signing import Signature, SignatureVerification, Signer
+from pyropdf._signing import Signature, SignatureVerification, Signer, Timestamper
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
 from pyropdf._widgets import Widget, Widgets
 
-for _public in (
+_PUBLIC_MODULE_EXPORTS = (
     Attachment,
     Attachments,
     Array,
+    Block,
+    Char,
+    Chars,
+    Chunk,
     Dictionary,
+    Element,
+    FallbackFont,
+    FallbackFonts,
+    Layout,
+    Line,
     Name,
     Objects,
+    OutputIntent,
+    Profiles,
     Real,
+    Sound,
+    SoundEncoding,
+    Span,
     Stream,
     String,
     Document,
@@ -165,14 +180,20 @@ for _public in (
     Page,
     Pages,
     Transaction,
+    Word,
     open,
     parse_pdf_date,
     pdf_date,
     probe,
-):
+)
+for _public in _PUBLIC_MODULE_EXPORTS:
     _public.__module__ = "pyropdf"
 
+LimitCode.__doc__ = "A stable code that :attr:`LimitError.code` carries."
+
 __all__ = [
+    "LIMIT_CODES",
+    "METADATA_KEYS",
     "Access",
     "Annotation",
     "AnnotationFile",
@@ -207,6 +228,7 @@ __all__ = [
     "Content",
     "ContentItem",
     "CurveTo",
+    "DefectKind",
     "Destination",
     "Destinations",
     "Dictionary",
@@ -214,6 +236,7 @@ __all__ = [
     "DocumentClosedError",
     "DocumentLimits",
     "Element",
+    "ElementKind",
     "EncryptedDocumentError",
     "Encryption",
     "FallbackFont",
@@ -250,6 +273,7 @@ __all__ = [
     "LayerMembership",
     "Layers",
     "Layout",
+    "LimitCode",
     "LimitError",
     "Line",
     "LineAnnotation",
@@ -292,6 +316,7 @@ __all__ = [
     "PasswordError",
     "Path",
     "PathBuilder",
+    "PathInput",
     "Paths",
     "PdfError",
     "Permissions",
@@ -308,6 +333,7 @@ __all__ = [
     "RadioButton",
     "Real",
     "RecolorReport",
+    "RecolorTarget",
     "Rect",
     "RemoteDestination",
     "SanitizeReport",
@@ -352,6 +378,7 @@ __all__ = [
     "TextRenderMode",
     "TextRun",
     "TilingPattern",
+    "Timestamper",
     "Transaction",
     "TransparencyGroup",
     "Unconverted",

@@ -23,6 +23,12 @@ RecolorReport(
 
 What `Page.recolor` or `Document.recolor` converted, and what it could not.
 
+## `RecolorTarget`
+
+`RecolorTarget = typing.Literal['gray', 'rgb', 'cmyk']`
+
+A target color space of `Page.recolor` and `Document.recolor`.
+
 ## `Unconverted`
 
 ```python

@@ -9,6 +9,7 @@ pyHanko.
 
 from __future__ import annotations
 
+import typing
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -27,7 +28,12 @@ if TYPE_CHECKING:
 #: A time-stamp callback: it receives the digest of the signature value and
 #: the name of its hash algorithm (``"sha256"`` or ``"sha384"``) and returns
 #: the DER of an RFC 3161 time-stamp token over that digest.
-Timestamper: TypeAlias = Callable[[bytes, str], bytes]
+Timestamper: TypeAlias = typing.Callable[[bytes, str], bytes]
+Timestamper.__doc__ = (
+    "A time-stamp callback: it receives the digest of the signature value and "
+    'the name of its hash algorithm (``"sha256"`` or ``"sha384"``) and returns '
+    "the DER of an RFC 3161 time-stamp token over that digest."
+)
 
 #: The bytes reserved for the CMS signature by default.
 DEFAULT_RESERVE = 16_384
@@ -321,7 +327,7 @@ class Signature:
     xref: int | None
     byte_range: tuple[int, ...]
     revision: int | None
-    _document: Document = field(repr=False, compare=False)
+    _document: Document = field(init=False, repr=False, compare=False)
 
     def verify(self, trust: Sequence[bytes] | None = None) -> SignatureVerification:
         """Verify the signature against the opened file, with ``trust`` the DER or PEM certificates to trust.
@@ -377,7 +383,9 @@ def signatures(document: Document) -> list[Signature]:
         revision = None
         if len(ranges) == 4 and found is not None:  # noqa: PLR2004 - two ranges of start and length
             revision = _revision(found[0], origin + ranges[2] + ranges[3], ends)
-        out.append(Signature(name, value.xref, ranges, revision, document))
+        sig = Signature(name, value.xref, ranges, revision)
+        object.__setattr__(sig, "_document", document)
+        out.append(sig)
     return out
 
 
@@ -417,7 +425,8 @@ def _failure(problem: str, *, covers: bool = False, valid: bool | None = None) -
 
 def _verify(signature: Signature, anchors: list[bytes] | None) -> SignatureVerification:  # noqa: C901
     problems: list[str] = []
-    found = _core.document_file(signature._document._core())  # noqa: SLF001
+    document = getattr(signature, "_document", None)
+    found = None if document is None else _core.document_file(document._core())  # noqa: SLF001
     if found is None or len(signature.byte_range) != 4:  # noqa: PLR2004 - two ranges
         reason = "the document was not read from a file" if found is None else "the /ByteRange is not two ranges"
         return _failure(reason)

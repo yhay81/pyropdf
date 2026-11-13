@@ -972,13 +972,13 @@ impl Pixmap {
     }
 }
 
-/// The default bound of encoded output, 64 MiB, as pylopdf bounds it.
+/// The default bound of encoded output: 64 MiB.
 const DEFAULT_MAX_OUTPUT_SIZE: usize = 64 * 1024 * 1024;
 
 /// The symbolic links that a save follows from its path at most.
 const MAX_SYMLINKS: usize = 40;
 
-/// The default JPEG quality, as pylopdf sets it.
+/// The default JPEG quality: 95.
 const DEFAULT_QUALITY: u8 = 95;
 
 fn extract_quality(value: &Bound<'_, PyAny>) -> PyResult<u8> {

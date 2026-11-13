@@ -91,7 +91,7 @@ class FontInfo:
     """Whether ``base_font`` carries a subset tag (ISO 32000-2 9.9.2)."""
     forms: tuple[int, ...]
     """The object numbers of the Form XObjects whose resources name the font; empty when only the page's do."""
-    _font: Dictionary = field(repr=False, compare=False)
+    _font: Dictionary = field(init=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +225,7 @@ def _collect(found: _Found, budget: _Budget, resources: Dictionary, form: int) -
 def _info(font: Dictionary, names: list[str], forms: list[int]) -> FontInfo:
     base = _name(font.get("BaseFont"))
     embedded = _embedded(font)
-    return FontInfo(
+    info = FontInfo(
         xref=font.xref,
         names=tuple(names),
         base_font=base,
@@ -234,8 +234,9 @@ def _info(font: Dictionary, names: list[str], forms: list[int]) -> FontInfo:
         program=embedded[1] if embedded is not None else None,
         subset=_TAG.match(base) is not None,
         forms=tuple(forms),
-        _font=font,
     )
+    object.__setattr__(info, "_font", font)
+    return info
 
 
 def page_fonts(page: Page) -> list[FontInfo]:
@@ -271,10 +272,16 @@ def page_fonts(page: Page) -> list[FontInfo]:
 def font_program(document: Document, font: int | FontInfo) -> FontProgram | None:
     """Return the decoded embedded program of ``font``, or ``None`` when it embeds none."""
     if isinstance(font, FontInfo):
-        dictionary: object = font._font  # noqa: SLF001 - the module's own record.
-        if font._font._document is not document:  # noqa: SLF001 - the package's own handle.
-            msg = "the FontInfo comes from another document"
-            raise ValueError(msg)
+        attached = getattr(font, "_font", None)
+        if isinstance(attached, Dictionary):
+            dictionary: object = attached
+            if attached._document is not document:  # noqa: SLF001 - the package's own handle.
+                msg = "the FontInfo comes from another document"
+                raise ValueError(msg)
+        elif font.xref is not None:
+            dictionary = document.objects.get(font.xref)
+        else:
+            dictionary = None
     else:
         dictionary = document.objects.get(font)
     if not isinstance(dictionary, Dictionary) or dictionary.get("Subtype") not in _FONT_SUBTYPES:
@@ -688,9 +695,7 @@ class Font:
     and one whose paints form a cycle, or nest or number past skrifa's bounds,
     refuses with :class:`PdfError` whatever its outline. What a glyph writes counts
     against the canvas's limits before it is written, so a glyph draws whole or
-    raises. ``tests/test_canvas_embedded.py`` checks each kind of paint against a
-    reference render to within 8 levels in each 8-bit channel, in hayro and in
-    poppler.
+    raises.
 
     A CIDFont draws outlines, so any other colour glyph (a JPEG, TIFF or raw
     strike, or ``SVG``), and any colour glyph in a form field or annotation, draws
@@ -1395,5 +1400,5 @@ def add_glyphs(document: Document, xref: int, face: Font, glyphs: Sequence[tuple
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
-for _public in (FontInfo, FontProgram, SubsetFont, Font):
+for _public in (FallbackFont, FallbackFonts, FontInfo, FontProgram, SubsetFont, Font):
     _public.__module__ = "pyropdf"

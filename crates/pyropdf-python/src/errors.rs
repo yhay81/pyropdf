@@ -93,8 +93,7 @@ fn panic_error(payload: Box<dyn Any + Send>) -> PyErr {
     InternalError::new_err(message)
 }
 
-/// Returns the `LimitError` of a refusal, whose arguments are its stable code
-/// and its message, as in pylopdf.
+/// Returns the `LimitError` of a refusal, initialized with `(code, message)`.
 pub fn limit_error(refusal: &LimitExceeded) -> PyErr {
     LimitError::new_err((refusal.code().as_str(), refusal.to_string()))
 }
@@ -114,8 +113,8 @@ pub fn store_error(error: &Error) -> PyErr {
     }
 }
 
-/// Maps an error of a save; `target` names the output in the message of an
-/// I/O error, as pylopdf names it.
+/// Maps an error of a save; `target` names the output in
+/// `"failed to save {target}: {error}"`.
 pub fn save_error(error: &save::Error, target: &str) -> PyErr {
     match error {
         save::Error::Store(error) => store_error(error),

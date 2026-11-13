@@ -141,9 +141,8 @@ when they are known, and travels with the value through copies, other
 documents, and `pickle`. `Real("35.68123456789012345")` and
 `Real(Decimal(...))` keep digits beyond a `float`'s precision;
 `Real(1.5)` has no lexeme and is written in the shortest form that
-reads back as its `float`. As DESIGN.md section 10 says, assigning a
-`Real` writes its lexeme, a `float` its shortest form, and a
-`Decimal` its exact digits.
+reads back as its `float`. Assigning a `Real` writes its lexeme, a
+`float` its shortest form, and a `Decimal` its exact digits.
 
 ### `Real.lexeme`
 

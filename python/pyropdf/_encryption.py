@@ -1,4 +1,4 @@
-"""Passwords, permissions, and the encryption of saves (DESIGN.md section 4.5)."""
+"""Passwords, permissions, and the encryption of saves."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import ClassVar, Literal
 
 from pyropdf._errors import LimitError
 
-#: The longest password, in UTF-8 bytes, as PDF 2.0 and pylopdf bound it.
+#: The longest password, 127 UTF-8 bytes (ISO 32000-2 §7.6.4.3.3).
 _MAX_PASSWORD_BYTES = 127
 #: RC4 methods, which pyropdf reads but never writes.
 _RC4_METHODS = frozenset({"rc4", "rc4-40", "rc4-128"})
