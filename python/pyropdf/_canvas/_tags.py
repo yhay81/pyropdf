@@ -7,8 +7,8 @@ import re
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, cast
 
-from pyropdf._errors import LimitError
-from pyropdf._objects import Array, Dictionary, Name
+from pyropdf import _core
+from pyropdf._objects import Array, Dictionary, Name, _encode
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -18,8 +18,6 @@ if TYPE_CHECKING:
     from pyropdf._geometry import Matrix
     from pyropdf._page import Page
 
-#: Levels of a parent tree that adding a key follows down its last kids.
-_MAX_TREE_DEPTH = 32
 #: The shape of a BCP 47 language tag, and its longest form.
 _LANGUAGE_TAG = re.compile(r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*", re.ASCII)
 _MAX_LANGUAGE_TAG = 256
@@ -224,41 +222,9 @@ def _top_element(root: Dictionary) -> Dictionary:
     return root
 
 
-def _add_parent_tree_entry(document: Document, root: Dictionary, owners: list[Dictionary | None]) -> int:
-    """Add the elements that own a Form's MCIDs to the root's parent tree under a new key; return the key.
-
-    The key follows ``/ParentTreeNextKey`` and every key of the tree, whose
-    largest key its last kids hold. A tree whose last kids go deeper than
-    32 levels raises :class:`LimitError` (``structure_tree_count``).
-    """
-    tree = root.get("ParentTree")
-    if not isinstance(tree, Dictionary):
-        root["ParentTree"] = document.objects[document.objects.add({"Nums": []})]
-        tree = cast("Dictionary", root["ParentTree"])
-    path = [tree]
-    node = tree
-    while not isinstance(node.get("Nums"), Array):
-        kids = node.get("Kids")
-        if not isinstance(kids, Array) or not len(kids) or not isinstance(kids[-1], Dictionary):
-            node["Nums"] = []
-            break
-        if len(path) == _MAX_TREE_DEPTH:
-            code = "structure_tree_count"
-            msg = f"the parent tree is deeper than {_MAX_TREE_DEPTH} levels"
-            raise LimitError(code, msg)
-        node = kids[-1]
-        path.append(node)
-    nums = cast("Array", node["Nums"])
-    following = root.get("ParentTreeNextKey")
-    key = following if isinstance(following, int) and not isinstance(following, bool) and following >= 0 else 0
-    if len(nums) >= 2 and isinstance(nums[-2], int):  # noqa: PLR2004 - a key and its value
-        key = max(key, nums[-2] + 1)
-    nums.extend([key, owners])
-    for held in path[1:]:
-        limits = held.get("Limits")
-        held["Limits"] = [limits[0] if isinstance(limits, Array) and len(limits) else key, key]
-    root["ParentTreeNextKey"] = key + 1
-    return key
+def _add_parent_tree_entry(document: Document, owners: list[Dictionary | None]) -> int:
+    """Add the elements that own a Form's MCIDs to the root's parent tree under a new key; return the key."""
+    return _core.parent_tree_append(document._core(), _encode(document, owners, 1))  # noqa: SLF001
 
 
 def _write_structure(page: Page, elements: list[_Element], mcids: int, form: int) -> int:
@@ -309,7 +275,7 @@ def _write_structure(page: Page, elements: list[_Element], mcids: int, form: int
         holder["K"] = [] if held is None else [held]
         held = cast("Array", holder["K"])
     held.extend(nodes[id(element)] for element in elements)
-    return _add_parent_tree_entry(document, root, owners)
+    return _add_parent_tree_entry(document, owners)
 
 
 for _public in (ListNumbering, TableHeaderScope, TagRole):

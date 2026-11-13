@@ -37,6 +37,7 @@ mod shadings;
 mod sign;
 mod source;
 mod text;
+mod tree;
 mod unrotate;
 #[cfg(windows)]
 mod windows_permissions;
@@ -141,6 +142,10 @@ mod _core {
     #[pymodule_export]
     use super::text::{
         document_text, page_chars, page_layout, page_search, page_selection, page_tables, page_text,
+    };
+    #[pymodule_export]
+    use super::tree::{
+        embedded_files_insert, embedded_files_remove, page_labels_write, parent_tree_append,
     };
     #[pymodule_export]
     use super::unrotate::remove_page_rotation;

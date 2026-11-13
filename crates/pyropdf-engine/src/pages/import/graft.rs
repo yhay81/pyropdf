@@ -16,7 +16,8 @@
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::pages::MAX_CHAIN;
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::{self, copy_for_edit};
+use pyropdf_store::tree::{self, MAX_TREE_DEPTH};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 use pyropdf_store::{Error, LimitExceeded, Result};
@@ -29,8 +30,6 @@ use super::{Charged, Keys, Walk};
 const MAX_NODES: usize = 1 << 20;
 /// Role-map links that resolving one role follows.
 const MAX_ROLE_CHAIN: usize = 16;
-/// Levels of a number or name tree.
-const MAX_TREE_DEPTH: usize = 32;
 
 /// Reads objects by reference: the source through the walk, the receiving
 /// document through its version.
@@ -72,10 +71,7 @@ struct Receiving {
     /// The root object, or `None` when the catalog holds no root object.
     root: Option<Reference>,
     root_dict: Dict,
-    tree: Option<Reference>,
-    tree_dict: Dict,
     next_key: i64,
-    first_key: Option<i64>,
     roles: Option<Dict>,
     classes: Option<Dict>,
     /// The single `Document` element under the root.
@@ -445,64 +441,9 @@ impl<'b> Graft<'b> {
             catalog: (catalog, mut catalog_dict),
             root: old_root,
             mut root_dict,
-            tree,
-            mut tree_dict,
             document,
-            first_key,
             ..
         } = self.receiving;
-        let first_new = self.pairs.first().map(|(key, _)| *key);
-        let last_new = self.pairs.last().map(|(key, _)| *key);
-        let mut flat = BudgetVec::new(budget);
-        flat.try_reserve_exact(2 * self.pairs.len())?;
-        for (key, value) in self.pairs.into_vec() {
-            flat.try_push(Value::Integer(key))?;
-            flat.try_push(value)?;
-        }
-        let mut leaf = None;
-        if !flat.is_empty() {
-            if tree_dict.get("Nums").is_none() && tree_dict.get("Kids").is_some() {
-                let limits = Array::from(vec![flat[0].clone(), flat[flat.len() - 2].clone()]);
-                let mut node = Dict::new();
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "each key is a constant, so the leaf holds two entries"
-                )]
-                {
-                    node.insert(
-                        Name::from("Nums"),
-                        Value::Array(Array::from(flat.into_vec())),
-                    );
-                    node.insert(Name::from("Limits"), Value::Array(limits));
-                }
-                leaf = Some(node);
-            } else {
-                extend_entry(
-                    transaction,
-                    &mut tree_dict,
-                    "Nums",
-                    flat.into_vec().into_iter(),
-                    false,
-                    budget,
-                )?;
-            }
-            if tree_dict.get("Limits").is_some()
-                && let (Some(first), Some(last)) =
-                    (first_key.into_iter().chain(first_new).min(), last_new)
-            {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the tree already has /Limits, which this replaces"
-                )]
-                tree_dict.insert(
-                    Name::from("Limits"),
-                    Value::Array(Array::from(vec![
-                        Value::Integer(first),
-                        Value::Integer(last),
-                    ])),
-                );
-            }
-        }
         if let Some(namespaces) = &self.namespaces {
             let known = match follow(
                 &Target {
@@ -563,42 +504,22 @@ impl<'b> Graft<'b> {
                 None
             }
         };
-        if let Some(leaf) = leaf {
-            let object = transaction.allocate()?;
-            transaction.write(object.number(), &Value::Dict(leaf), budget)?;
-            extend_entry(
-                transaction,
-                &mut tree_dict,
-                "Kids",
-                std::iter::once(Value::Reference(object)),
-                false,
-                budget,
-            )?;
-        }
         if let Some((element, dict)) = document {
             transaction.write(element.number(), &Value::Dict(dict), budget)?;
         }
-        match tree {
-            Some(object) => {
-                transaction.write(object.number(), &Value::Dict(tree_dict), budget)?;
-            }
-            None => {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "the root grows by one entry at most"
-                )]
-                root_dict.insert(Name::from("ParentTree"), Value::Dict(tree_dict));
-            }
-        }
+        tree::append_parent_tree(
+            transaction,
+            &mut root_dict,
+            Some(self.root),
+            &self.pairs,
+            self.next_key,
+            budget,
+        )?;
         #[expect(
             clippy::disallowed_methods,
-            reason = "each key is a constant, so the root grows by three entries at most"
+            reason = "each key is a constant, so the root grows by two entries at most"
         )]
         {
-            root_dict.insert(
-                Name::from("ParentTreeNextKey"),
-                Value::Integer(self.next_key),
-            );
             if let Some(roles) = self.roles {
                 root_dict.insert(Name::from("RoleMap"), Value::Dict(roles));
             }
@@ -606,31 +527,20 @@ impl<'b> Graft<'b> {
                 root_dict.insert(Name::from("ClassMap"), Value::Dict(classes));
             }
         }
-        if let Some(mut ids) = self.ids {
-            budget.charge(
-                LimitCode::MemorySize,
-                ids.len().saturating_mul(size_of::<(PdfString, Value)>()) as u64,
-            )?;
-            ids.sort_by(|(left, _), (right, _)| left.as_bytes().cmp(right.as_bytes()));
-            let mut names = BudgetVec::new(budget);
-            names.try_reserve_exact(2 * ids.len())?;
-            for (name, value) in ids.into_vec() {
-                names.try_push(Value::String(name))?;
-                names.try_push(value)?;
+        let retired_id_nodes = match self.ids {
+            Some(ids) => {
+                tree::replace_name_tree_entry(
+                    transaction,
+                    &mut root_dict,
+                    "IDTree",
+                    ids,
+                    Some(self.root),
+                    budget,
+                )?
+                .1
             }
-            let mut node = Dict::new();
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "each key is a constant: the node holds one entry, and the root gains one"
-            )]
-            {
-                node.insert(
-                    Name::from("Names"),
-                    Value::Array(Array::from(names.into_vec())),
-                );
-                root_dict.insert(Name::from("IDTree"), Value::Dict(node));
-            }
-        }
+            None => BudgetVec::new(budget),
+        };
         transaction.write(self.root.number(), &Value::Dict(root_dict), budget)?;
         if old_root.is_none() {
             #[expect(
@@ -639,6 +549,15 @@ impl<'b> Graft<'b> {
             )]
             catalog_dict.insert(Name::from("StructTreeRoot"), Value::Reference(self.root));
             transaction.write(catalog.number(), &Value::Dict(catalog_dict), budget)?;
+        }
+        if !retired_id_nodes.is_empty() {
+            refs::free_unreferenced(
+                &refs::Cache::new(),
+                transaction,
+                &[],
+                &retired_id_nodes,
+                budget,
+            )?;
         }
         Ok(())
     }
@@ -670,12 +589,12 @@ impl Receiving {
         };
         let roles = dict_of(&target, root_dict.get("RoleMap"))?;
         let classes = dict_of(&target, root_dict.get("ClassMap"))?;
-        let (tree, tree_dict) = match located(&target, root_dict.get("ParentTree"))? {
+        let tree = match located(&target, root_dict.get("ParentTree"))? {
             Some((Value::Dict(dict), object)) => {
                 editable(&dict)?;
-                (object, dict)
+                object
             }
-            None | Some((Value::Null, _)) => (None, Dict::new()),
+            None | Some((Value::Null, _)) => None,
             _ => {
                 return Err(Error::malformed(
                     "the receiving parent tree is not a dictionary",
@@ -683,12 +602,10 @@ impl Receiving {
             }
         };
         let mut largest = None;
-        let mut first_key = None;
         if let Some(tree) = root_dict.get("ParentTree") {
             tree_pairs(&target, tree, "Nums", budget, |key, _| {
                 if let Value::Integer(key) = key {
                     largest = largest.max(Some(key));
-                    first_key = first_key.min(Some(key)).or(Some(key));
                 }
                 Ok(())
             })?;
@@ -723,10 +640,7 @@ impl Receiving {
             catalog: (catalog, catalog_dict),
             root,
             root_dict,
-            tree,
-            tree_dict,
             next_key,
-            first_key,
             roles,
             classes,
             document,

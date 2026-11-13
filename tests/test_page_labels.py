@@ -227,3 +227,38 @@ def test_assigning_refuses_over_limit_ranges_atomically() -> None:
         doc.page_labels = [PageLabelRange(0, prefix="x" * (1024 * 1024 + 1))]
     assert caught.value.code == "page_label_input_size"
     assert doc.to_bytes() == before
+
+
+def test_replacing_page_labels_frees_retired_kids_and_bounds_leaves() -> None:
+    doc = pyropdf.open(numbered(70))
+    doc.catalog["Pages"]["Resources"] = {}
+    leaf_a = doc.objects.add({"Limits": [0, 0], "Nums": [0, {"S": pyropdf.Name("r")}]})
+    leaf_b = doc.objects.add({"Limits": [3, 3], "Nums": [3, {"S": pyropdf.Name("D"), "P": "A-"}]})
+    mid = doc.objects.add({"Limits": [0, 3], "Kids": [doc.objects[leaf_a], doc.objects[leaf_b]]})
+    root_num = doc.objects.add({"Kids": [doc.objects[mid]]})
+    doc.catalog["PageLabels"] = doc.objects[root_num]
+
+    doc.page_labels = [PageLabelRange(0, PageLabelStyle.LOWER_ROMAN), PageLabelRange(4, PageLabelStyle.DECIMAL, "P-")]
+    assert not ({mid, leaf_a, leaf_b} & set(doc.objects))
+    assert doc.catalog["PageLabels"].xref == root_num
+    assert "Limits" not in doc.catalog["PageLabels"]
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+    doc.page_labels = [PageLabelRange(i, PageLabelStyle.DECIMAL, f"S{i}-") for i in range(70)]
+    tree = doc.catalog["PageLabels"]
+    assert "Limits" not in tree
+    assert "Nums" not in tree
+    kids = list(tree["Kids"])
+    assert len(kids) == 2
+    assert len(kids[0]["Nums"]) == 128
+    assert list(kids[0]["Limits"]) == [0, 63]
+    assert len(kids[1]["Nums"]) == 12
+    assert list(kids[1]["Limits"]) == [64, 69]
+    assert doc.pages[69].label == "S69-1"
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()
+
+    split_kids = {kid.xref for kid in kids}
+    doc.page_labels = []
+    assert "PageLabels" not in doc.catalog
+    assert not ((split_kids | {root_num}) & set(doc.objects))
+    assert pyropdf.open(doc.to_bytes()).check().defects == ()

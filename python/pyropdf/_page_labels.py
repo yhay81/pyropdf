@@ -11,8 +11,9 @@ import enum
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from pyropdf import _core
 from pyropdf._errors import LimitError
-from pyropdf._objects import Array, Dictionary, Name, String
+from pyropdf._objects import Array, Dictionary, Name, String, _encode
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
@@ -286,11 +287,10 @@ def _entry(page_range: PageLabelRange) -> dict[str, object]:
 def _write_page_labels(document: Document, ranges: Iterable[PageLabelRange]) -> None:
     """Replace the page labels with ``ranges``; an empty iterable removes them."""
     items = _validated(ranges)
-    catalog = document.catalog
-    if items:
-        catalog["PageLabels"] = {"Nums": [value for item in items for value in (item.start, _entry(item))]}
-    elif "PageLabels" in catalog:
-        del catalog["PageLabels"]
+    _core.page_labels_write(
+        document._core(),  # noqa: SLF001
+        [(item.start, _encode(document, _entry(item), 1)) for item in items],
+    )
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.
