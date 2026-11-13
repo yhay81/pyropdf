@@ -21,13 +21,11 @@ from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
+from pyropdf._fallback_fonts import FallbackFonts, _replace_fallback_fonts, _set_fallback
 from pyropdf._fonts import (
-    FallbackFonts,
     FontInfo,
     FontProgram,
     SubsetFont,
-    _replace_fallback_fonts,
-    _set_fallback,
     font_program,
     subset_fonts,
 )
@@ -63,7 +61,8 @@ if TYPE_CHECKING:
     from pyropdf._changes import ChangeReport
     from pyropdf._check import StructuralReport
     from pyropdf._chunks import Chunk
-    from pyropdf._fonts import FallbackFont, Font, _FontPackage
+    from pyropdf._fallback_fonts import FallbackFont, _FontPackage
+    from pyropdf._fonts import Font
     from pyropdf._profiles import Profiles
     from pyropdf._signing import Signature, Signer, Timestamper
 

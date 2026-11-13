@@ -277,7 +277,7 @@ def test_each_collection_takes_the_faces_of_its_language(spec: tuple[str, str, s
 
 
 def test_without_installed_faces_the_text_renders_blank(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("pyropdf._fonts._font_packages", tuple)
+    monkeypatch.setattr("pyropdf._fallback_fonts._font_packages", tuple)
     with pyropdf.open(nonembedded_cjk_pdf(PAGES[0])) as doc:
         assert list(doc.fallback_fonts) == []
         assert repr(doc.fallback_fonts) == "FallbackFonts([])"
@@ -293,11 +293,11 @@ def test_discovery_imports_the_four_cjk_font_packages(monkeypatch: pytest.Monkey
     def absent(name: str) -> None:
         requested.append(name)
 
-    discover = pyropdf._fonts._font_packages  # noqa: SLF001 - the discovery under test.
+    discover = pyropdf._fallback_fonts._font_packages  # noqa: SLF001 - the discovery under test.
     discover.cache_clear()
     try:
         with monkeypatch.context() as patch:
-            patch.setattr("pyropdf._fonts._import_font_package", absent)
+            patch.setattr("pyropdf._fallback_fonts._import_font_package", absent)
             assert discover() == ()
     finally:
         discover.cache_clear()
@@ -308,7 +308,7 @@ def test_a_broken_font_package_is_not_taken_for_an_absent_one(monkeypatch: pytes
     (tmp_path / "pyropdf_test_broken_fonts").mkdir()
     (tmp_path / "pyropdf_test_broken_fonts" / "__init__.py").write_text("import pyropdf_test_absent_dependency\n")
     monkeypatch.syspath_prepend(str(tmp_path))
-    load = pyropdf._fonts._import_font_package  # noqa: SLF001 - the import under test.
+    load = pyropdf._fallback_fonts._import_font_package  # noqa: SLF001 - the import under test.
 
     assert load("pyropdf_test_absent_fonts") is None
     with pytest.raises(ModuleNotFoundError, match="pyropdf_test_absent_dependency"):
@@ -319,7 +319,7 @@ def test_each_font_package_has_its_extra() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     extras = project["project"]["optional-dependencies"]
     development = project["dependency-groups"]["dev"]
-    for language, extra, module in pyropdf._fonts._FONT_PACKAGES:  # noqa: SLF001 - the packages that discovery finds.
+    for language, extra, module in pyropdf._fallback_fonts._FONT_PACKAGES:  # noqa: SLF001 - the packages discovery finds.
         assert PACKAGES[language] == module
         requirement = f"{module.replace('_', '-')}>=0.1.1,<0.2"
         assert extras[extra] == [requirement]

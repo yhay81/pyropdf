@@ -93,7 +93,8 @@ from pyropdf._errors import (
     StaleObjectError,
     StalePageError,
 )
-from pyropdf._fonts import FallbackFont, FallbackFonts, Font, FontInfo, FontProgram, StandardFontName, SubsetFont
+from pyropdf._fallback_fonts import FallbackFont, FallbackFonts
+from pyropdf._fonts import Font, FontInfo, FontProgram, StandardFontName, SubsetFont
 from pyropdf._form import (
     CheckBox,
     ComboBox,
