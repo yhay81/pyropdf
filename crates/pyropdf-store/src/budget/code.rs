@@ -49,13 +49,17 @@ pub enum LimitCode {
     /// when `Page.operations` reads them.
     ContentStreamSize,
     /// The content that `Operations.parse` reads is larger than the call's
-    /// `max_size`, or the content that an assignment to `Page.operations`
-    /// writes is larger than 64 MiB.
+    /// `max_size`, or the content that `Canvas`, `Page.operations`,
+    /// `Page.clean_contents`, `Page.replace_text`, `Page.recolor`,
+    /// `Document.recolor`, `Document.rewrite_images`, or `Document.sanitize`
+    /// parses or writes is larger than 64 MiB.
     ContentInputSize,
-    /// `Page.content` or `Page.paths` reads more glyphs, path and clip
-    /// segments, dash lengths, and items than the call's `max_elements`, or
-    /// `Pages.new_from_image` reads more than 4,096 frames or 256 million
-    /// pixels of one image.
+    /// `Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path
+    /// and clip segments, dash lengths, and items than `max_elements` (or
+    /// `Document.subset_fonts` counts more than 262,144 elements), `Canvas`
+    /// holds more than 1,048,576 path points or gradient stops or repeats a
+    /// gradient more than 4,096 cycles, or `Pages.new_from_image` reads more
+    /// than 4,096 frames or 256 million pixels of one image.
     ContentElementCount,
     /// `Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects
     /// more glyphs of one page than the call's `max_glyphs`.
@@ -156,8 +160,9 @@ pub enum LimitCode {
     /// `Page.replace_text` reaches Form XObjects nested deeper than 16, or more
     /// than 4,096 drawings of them.
     TextEditForms,
-    /// The encoded image that `Pages.new_from_image` reads is larger than 256
-    /// MiB.
+    /// The encoded image that `Pixmap.from_bytes` or `Pixmap.open` reads is
+    /// larger than the call's `max_size`, or the encoded image that
+    /// `Pages.new_from_image` reads is larger than 256 MiB.
     ImageInputSize,
     /// The text that a form field's appearance draws, or that `Canvas.text`,
     /// `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096
@@ -172,6 +177,18 @@ pub enum LimitCode {
     /// The font data that `Font.from_file` or `Font.from_bytes` loads is larger
     /// than 64 MiB.
     FontInputSize,
+    /// `Page.fonts` follows more than 64 `/Parent` links when looking up
+    /// inherited page resources.
+    PageFontsTree,
+    /// `Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries
+    /// across the page's resources and its Form XObjects.
+    PageFontsEntries,
+    /// `Page.fonts` reaches more than 4,096 Form XObjects from the page's
+    /// resources.
+    PageFontsForms,
+    /// `Document.subset_fonts` visits more than 4,096 appearance streams and
+    /// Form XObjects reached from annotation appearances.
+    FontSubsetAppearances,
     /// The document's named destinations, its `/Names /Dests` tree and its
     /// legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.
     NamedDestinationCount,
@@ -200,6 +217,34 @@ pub enum LimitCode {
     /// A list of pages, such as the `pages` of `doc.render`, holds more entries
     /// than the larger of the page count and 4,096.
     PageEntryCount,
+    /// The document's `/PageLabels` number tree is deeper than 32 levels below
+    /// its root.
+    PageLabelTreeDepth,
+    /// The document's `/PageLabels` number tree has more than 4,096 child
+    /// edges.
+    PageLabelTreeEdges,
+    /// The document's `/PageLabels` number tree holds more than 4,096 `/Nums`
+    /// pairs.
+    PageLabelRanges,
+    /// The prefixes and style names of the document's `/PageLabels` number tree
+    /// are longer than 1 MiB in UTF-8 together.
+    PageLabelTextSize,
+    /// The prefixes that setting `Document.page_labels` writes are longer than
+    /// 1 MiB in UTF-8 together.
+    PageLabelInputSize,
+    /// The document's `/OCGs`, `/Configs`, or an optional-content configuration
+    /// array holds, or `Layers.add` or `LayerMembership` would give it, more
+    /// than 4,096 entries.
+    OptionalContentCount,
+    /// `Layers.visible` evaluates a `/VE` visibility expression deeper than 32
+    /// levels or with more than 4,096 operands.
+    OptionalContentExpression,
+    /// `Document.sanitize` follows more than 256 actions along a `/Next` action
+    /// chain when checking for JavaScript.
+    SanitizeActionChain,
+    /// `Document.sanitize` reaches more than 4,096 Form XObjects and appearance
+    /// streams while removing hidden text.
+    SanitizeForms,
     /// The collections of one operation would hold more memory than
     /// `DocumentLimits.max_memory_size` allows, or the allocator refuses it.
     MemorySize,
@@ -226,7 +271,7 @@ pub enum LimitCode {
 
 impl LimitCode {
     /// Every code, in the order of the registry.
-    pub const ALL: [Self; 75] = [
+    pub const ALL: [Self; 88] = [
         Self::FileSize,
         Self::PageCount,
         Self::ObjectCount,
@@ -285,6 +330,10 @@ impl LimitCode {
         Self::TextInputSize,
         Self::ShapedGlyphCount,
         Self::FontInputSize,
+        Self::PageFontsTree,
+        Self::PageFontsEntries,
+        Self::PageFontsForms,
+        Self::FontSubsetAppearances,
         Self::NamedDestinationCount,
         Self::NamedDestinationEdgeCount,
         Self::NamedDestinationDepth,
@@ -294,6 +343,15 @@ impl LimitCode {
         Self::TocInputSize,
         Self::StructureTreeCount,
         Self::PageEntryCount,
+        Self::PageLabelTreeDepth,
+        Self::PageLabelTreeEdges,
+        Self::PageLabelRanges,
+        Self::PageLabelTextSize,
+        Self::PageLabelInputSize,
+        Self::OptionalContentCount,
+        Self::OptionalContentExpression,
+        Self::SanitizeActionChain,
+        Self::SanitizeForms,
         Self::MemorySize,
         Self::Deadline,
         Self::Cancelled,
@@ -366,6 +424,10 @@ impl LimitCode {
             Self::TextInputSize => "text_input_size",
             Self::ShapedGlyphCount => "shaped_glyph_count",
             Self::FontInputSize => "font_input_size",
+            Self::PageFontsTree => "page_fonts_tree",
+            Self::PageFontsEntries => "page_fonts_entries",
+            Self::PageFontsForms => "page_fonts_forms",
+            Self::FontSubsetAppearances => "font_subset_appearances",
             Self::NamedDestinationCount => "named_destination_count",
             Self::NamedDestinationEdgeCount => "named_destination_edge_count",
             Self::NamedDestinationDepth => "named_destination_depth",
@@ -375,6 +437,15 @@ impl LimitCode {
             Self::TocInputSize => "toc_input_size",
             Self::StructureTreeCount => "structure_tree_count",
             Self::PageEntryCount => "page_entry_count",
+            Self::PageLabelTreeDepth => "page_label_tree_depth",
+            Self::PageLabelTreeEdges => "page_label_tree_edges",
+            Self::PageLabelRanges => "page_label_ranges",
+            Self::PageLabelTextSize => "page_label_text_size",
+            Self::PageLabelInputSize => "page_label_input_size",
+            Self::OptionalContentCount => "optional_content_count",
+            Self::OptionalContentExpression => "optional_content_expression",
+            Self::SanitizeActionChain => "sanitize_action_chain",
+            Self::SanitizeForms => "sanitize_forms",
             Self::MemorySize => "memory_size",
             Self::Deadline => "deadline",
             Self::Cancelled => "cancelled",
@@ -449,6 +520,12 @@ impl LimitCode {
             Self::TextInputSize => "the text is too large",
             Self::ShapedGlyphCount => "the text shapes into too many glyphs",
             Self::FontInputSize => "the font file is too large",
+            Self::PageFontsTree => "the page inherits its resources through too many parents",
+            Self::PageFontsEntries => {
+                "the page's resources and forms hold too many font and XObject entries"
+            }
+            Self::PageFontsForms => "the page reaches too many form XObjects",
+            Self::FontSubsetAppearances => "the appearances reach too many form XObjects",
             Self::NamedDestinationCount => "the named destinations are too many",
             Self::NamedDestinationEdgeCount => "the named-destination tree has too many edges",
             Self::NamedDestinationDepth => "the named-destination tree is too deep",
@@ -458,6 +535,17 @@ impl LimitCode {
             Self::TocInputSize => "the outline input text is too long",
             Self::StructureTreeCount => "the structure tree is too deep",
             Self::PageEntryCount => "the list of pages is too long",
+            Self::PageLabelTreeDepth => "the page-label tree is too deep",
+            Self::PageLabelTreeEdges => "the page-label tree has too many kids",
+            Self::PageLabelRanges => "the page-label tree has too many ranges",
+            Self::PageLabelTextSize => "the page-label text is too long",
+            Self::PageLabelInputSize => "the page-label prefixes are too long",
+            Self::OptionalContentCount => "the optional content has too many entries",
+            Self::OptionalContentExpression => {
+                "the visibility expression is too deep or has too many operands"
+            }
+            Self::SanitizeActionChain => "an action chain has too many actions",
+            Self::SanitizeForms => "hidden text removal reaches too many form XObjects",
             Self::MemorySize => "the operation needs too much memory",
             Self::Deadline => "the operation ran past its deadline",
             Self::Cancelled => "the operation was cancelled",
@@ -534,6 +622,10 @@ impl LimitCode {
             Self::TextInputSize => Some("bytes"),
             Self::ShapedGlyphCount => Some("glyphs"),
             Self::FontInputSize => Some("bytes"),
+            Self::PageFontsTree => Some("levels"),
+            Self::PageFontsEntries => Some("entries"),
+            Self::PageFontsForms => Some("forms"),
+            Self::FontSubsetAppearances => Some("forms"),
             Self::NamedDestinationCount => Some("entries"),
             Self::NamedDestinationEdgeCount => Some("edges"),
             Self::NamedDestinationDepth => Some("levels"),
@@ -543,6 +635,15 @@ impl LimitCode {
             Self::TocInputSize => Some("bytes"),
             Self::StructureTreeCount => Some("levels"),
             Self::PageEntryCount => Some("entries"),
+            Self::PageLabelTreeDepth => Some("levels"),
+            Self::PageLabelTreeEdges => Some("edges"),
+            Self::PageLabelRanges => Some("ranges"),
+            Self::PageLabelTextSize => Some("bytes"),
+            Self::PageLabelInputSize => Some("bytes"),
+            Self::OptionalContentCount => Some("entries"),
+            Self::OptionalContentExpression => Some("operands"),
+            Self::SanitizeActionChain => Some("actions"),
+            Self::SanitizeForms => Some("forms"),
             Self::MemorySize => Some("bytes"),
             Self::Deadline => Some("milliseconds"),
             Self::Cancelled => None,
@@ -617,6 +718,10 @@ impl LimitCode {
             Self::TextInputSize => Some(1_048_576),
             Self::ShapedGlyphCount => Some(1_048_576),
             Self::FontInputSize => Some(67_108_864),
+            Self::PageFontsTree => Some(64),
+            Self::PageFontsEntries => Some(65_536),
+            Self::PageFontsForms => Some(4_096),
+            Self::FontSubsetAppearances => Some(4_096),
             Self::NamedDestinationCount => Some(65_536),
             Self::NamedDestinationEdgeCount => Some(131_072),
             Self::NamedDestinationDepth => Some(32),
@@ -626,6 +731,15 @@ impl LimitCode {
             Self::TocInputSize => Some(16_777_216),
             Self::StructureTreeCount => Some(256),
             Self::PageEntryCount => None,
+            Self::PageLabelTreeDepth => Some(32),
+            Self::PageLabelTreeEdges => Some(4_096),
+            Self::PageLabelRanges => Some(4_096),
+            Self::PageLabelTextSize => Some(1_048_576),
+            Self::PageLabelInputSize => Some(1_048_576),
+            Self::OptionalContentCount => Some(4_096),
+            Self::OptionalContentExpression => Some(4_096),
+            Self::SanitizeActionChain => Some(256),
+            Self::SanitizeForms => Some(4_096),
             Self::MemorySize => None,
             Self::Deadline => None,
             Self::Cancelled => None,
