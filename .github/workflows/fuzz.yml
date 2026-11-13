@@ -1,7 +1,7 @@
 # The cargo-fuzz targets of fuzz/ (DESIGN.md section 12, F9): a short run on
 # pull requests and pushes to main that change the store, the engine, or the
-# targets, and a longer weekly run. A crash fails the job and uploads its input. Linux only:
-# Actions minutes are limited, and fuzz/README.md states the budget.
+# targets, and a longer weekly run on Linux. A crash fails the job and uploads
+# its input.
 name: Fuzz
 
 on:

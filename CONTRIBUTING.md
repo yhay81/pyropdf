@@ -68,6 +68,7 @@ under the [MIT License](LICENSE).
 The public API is what `pyropdf.__all__` exports and the
 [API reference](https://pyropdf.haya.works/api/) describes. A release that
 only adds to it or fixes it is a patch release, such as 0.2.1 after 0.2.0.
-A minor release is for a change that breaks it, such as removing or
-renaming a public name or parameter, and follows a deprecation where
-possible. [CHANGELOG.md](CHANGELOG.md) lists what each release holds.
+Before 1.0, a minor release may remove or rename a public name or parameter
+in the same release without deprecated twins ([DESIGN.md](DESIGN.md) section
+10.1), and [CHANGELOG.md](CHANGELOG.md) names what replaces it and lists what
+each release holds.

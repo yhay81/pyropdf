@@ -2,7 +2,7 @@
 
 The measurements behind issue #9: the persistent map from object number to
 written object that every version holds ([DESIGN.md](../../DESIGN.md)
-sections 4.1 and 16). The recommendation is a comment on the issue; this
+section 4.1). The recommendation is a comment on the issue; this
 directory holds the benchmark, its results, and the machine they ran on.
 
 ## Candidates

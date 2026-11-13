@@ -1,5 +1,5 @@
 # The measurements behind issue #9: the persistent map that versions use
-# (DESIGN.md sections 4.1 and 16). The empty table below makes this directory
+# (DESIGN.md section 4.1). The empty table below makes this directory
 # a workspace of its own, so it is no member of the repository's workspace
 # and the root Cargo.toml and Cargo.lock stay unchanged.
 [workspace]

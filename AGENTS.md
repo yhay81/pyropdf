@@ -156,13 +156,11 @@ and the phase is the milestone.
 
 ## Porting from pylopdf
 
-pylopdf is the reference implementation and the differential oracle. Port a
-module together with its Python tests, and name the pylopdf commit it came
-from in the pull request. Do not port what DESIGN.md section 14 lists as not
-ported: the guards, the reconciliation between lopdf and hayro, the
-replacements for lopdf's helpers, and the rules of pylopdf's AGENTS.md.
-pylopdf's checkout may be in use by other agents: read it, and never commit
-to it from pyropdf work.
+pylopdf is archived at `0.16.1`, and commit `ebb01d3c` is the frozen
+differential oracle ([DESIGN.md](DESIGN.md#14-moving-from-pylopdf) section 14).
+Port a module together with its Python tests, name the pylopdf commit it came
+from in the pull request, and omit the exclusions listed in DESIGN.md section
+14. Read pylopdf at `ebb01d3c`; never commit to a local pylopdf checkout.
 
 ## Commands
 
@@ -247,9 +245,8 @@ every later turn, so read only what the task needs:
 
 ## Repository facts
 
-- The repository is public. GitHub Actions minutes are limited, and macOS
-  and Windows runners count several times as much as Linux, so CI runs on
-  Linux unless an issue needs another system.
+- The repository is public. CI runs on Linux by default for speed and runner
+  availability unless an issue needs macOS or Windows.
 - `rust-toolchain.toml` pins the one Rust toolchain, and `uv.lock` pins the
   Python tools. `.github/workflows/ci.yml` runs the commands above on every
   pull request and on `main`.
