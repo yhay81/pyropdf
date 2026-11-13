@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.3.1 (2026-11-13)
+
+A patch release with fixes and additional public type exports. No public
+names are removed.
+
+### Added
+
+- `DefectKind`, `ElementKind`, `LIMIT_CODES`, `LimitCode`, `METADATA_KEYS`,
+  `PathInput`, `RecolorTarget`, and `Timestamper` are exported from
+  `pyropdf` and documented in the API reference. Public classes consistently
+  report `pyropdf` as their module, and constructor signatures omit private
+  implementation state (#776).
+
+### Changed
+
+- A page's `/UserUnit` now scales its display coordinates to physical
+  points (1/72 inch), including page boxes, rendering dimensions, text
+  geometry, annotations, links, canvas drawing, page placement, OCR, and
+  rotation removal. A 400 by 300 page with `/UserUnit 2` measures 800 by
+  600 points and renders at 800 by 600 pixels at 72 dpi (#729).
+- Annotation and widget border widths, dash lengths, and font sizes also
+  use physical points on `/UserUnit` pages. They convert to PDF user-space
+  units when written and back to points when read (#736).
+
+### Fixed
+
+- Setting `OutlineItem.is_open` repairs incorrect stored `/Count` values,
+  including when the requested state is unchanged. A parent with one child
+  and `/Count 10` now collapses to `-1` and expands to `1`, with the root
+  count repaired too. After validation, repeated toggles update the parent
+  chain without recounting the whole outline; raw edits and history changes
+  cannot reuse stale validation (#785, #795).
+- Cached page and annotation rendering observes cancellation and deadlines
+  immediately before and after native rasterization (#717).
+- `DocumentLimits.max_interpretation_size` bounds every PDF input handed
+  to hayro, including the original file prefix, edited objects, synthesized
+  appearances, and the bridge's cross-reference stream. A cached bridge
+  also respects the current operation's limit (#733).
+- A clipped render whose transformed page exceeds 524,288 pixels on either
+  side raises `LimitError` with code `clip_page_side` and reports the
+  transformed dimensions and bound (#728).
+- `Document.markdown()`, `to_json()`, and `to_chunks()` read one document
+  version throughout page selection, extraction, and formatting, so a
+  concurrent edit cannot mix old and new content in one result (#731).
+- COLR colour glyphs whose font has inverted face-box corners use ordered
+  bounds, preventing invalid ink boxes (#738).
+- Page imports charge editable copies of source values to the receiving
+  operation's memory budget and preserve earlier transaction edits when
+  the import is refused (#759).
+- The limit registry and API reference include every limit code raised by
+  Python operations, including page-label, font, optional-content, and
+  sanitization bounds (#775).
+
+### Documentation
+
+- English and Japanese guides reflect the current API, and Japanese API
+  links reach the English reference. The generated reference includes
+  constructors, properties, enum values, and public aliases and constants
+  (#774, #776, #790).
+
 ## 0.3.0 (2026-11-06)
 
 A minor release: it removes one public property, deprecated in 0.2.2, and
