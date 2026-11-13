@@ -10,7 +10,43 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ## `Array`
 
+```python
+class Array(MutableSequence[Any])
+```
+
 A PDF array; elements resolve and write as `Dictionary` values do.
+
+### `Array.xref`
+
+```python
+Array.xref: int | None
+```
+
+The object number of an indirect object, `None` for a direct value or the trailer.
+
+### `Array.generation`
+
+```python
+Array.generation: int | None
+```
+
+The generation number of an indirect object, `None` for a direct value or the trailer.
+
+### `Array.is_indirect`
+
+```python
+Array.is_indirect: bool
+```
+
+Whether this is an indirect object rather than a direct value inside one.
+
+### `Array.__len__`
+
+```python
+Array.__len__() -> int
+```
+
+Return the number of entries or elements.
 
 ### `Array.__getitem__`
 
@@ -19,6 +55,22 @@ Array.__getitem__(index: int | slice) -> Any
 ```
 
 Return the resolved element at `index`, or a list for a slice.
+
+### `Array.__setitem__`
+
+```python
+Array.__setitem__(index: int | slice, value: object)
+```
+
+Write `value` at `index`; slices are not supported.
+
+### `Array.__delitem__`
+
+```python
+Array.__delitem__(index: int | slice)
+```
+
+Remove the element at `index`; slices are not supported.
 
 ### `Array.insert`
 
@@ -30,6 +82,10 @@ Insert `value` before `index`, clamped as `list.insert` clamps it.
 
 ## `Dictionary`
 
+```python
+class Dictionary(MutableMapping[str, Any])
+```
+
 A PDF dictionary keyed by name text without the slash.
 
 Reading a key resolves references: an array, dictionary, or stream comes
@@ -37,6 +93,38 @@ back as a handle, and anything else as a plain value. Assigning a value
 writes it at once, in one transaction. Plain values, lists, and mappings
 are written as direct objects; an indirect handle from the same document
 is written as a reference to it; and a direct handle is copied.
+
+### `Dictionary.xref`
+
+```python
+Dictionary.xref: int | None
+```
+
+The object number of an indirect object, `None` for a direct value or the trailer.
+
+### `Dictionary.generation`
+
+```python
+Dictionary.generation: int | None
+```
+
+The generation number of an indirect object, `None` for a direct value or the trailer.
+
+### `Dictionary.is_indirect`
+
+```python
+Dictionary.is_indirect: bool
+```
+
+Whether this is an indirect object rather than a direct value inside one.
+
+### `Dictionary.__len__`
+
+```python
+Dictionary.__len__() -> int
+```
+
+Return the number of entries or elements.
 
 ### `Dictionary.__getitem__`
 
@@ -46,6 +134,22 @@ Dictionary.__getitem__(key: str) -> Any
 
 Return the resolved value of `key`.
 
+### `Dictionary.__setitem__`
+
+```python
+Dictionary.__setitem__(key: str, value: object)
+```
+
+Write `value` under `key`.
+
+### `Dictionary.__delitem__`
+
+```python
+Dictionary.__delitem__(key: str)
+```
+
+Remove `key`.
+
 ### `Dictionary.__iter__`
 
 ```python
@@ -54,7 +158,20 @@ Dictionary.__iter__() -> Iterator[str]
 
 Iterate over the keys as `Name` values.
 
+### `Dictionary.__contains__`
+
+```python
+Dictionary.__contains__(key: object) -> bool
+```
+
+Return whether `key` is present, without resolving its value.
+
 ## `Name`
+
+```python
+class Name(str)
+Name(name: str)
+```
 
 A PDF name, such as `/Type`, held without its leading slash.
 
@@ -67,6 +184,7 @@ surrogate escapes, so a name read from a file is written back unchanged.
 ## `Objects`
 
 ```python
+class Objects(Mapping[int, Any])
 Objects(document: Document)
 ```
 
@@ -87,6 +205,14 @@ Objects.__getitem__(xref: int) -> Any
 
 Return the object stored under `xref`.
 
+### `Objects.__setitem__`
+
+```python
+Objects.__setitem__(xref: int, value: object)
+```
+
+Replace the object stored under `xref`, which must exist, in one transaction.
+
 ### `Objects.__iter__`
 
 ```python
@@ -102,6 +228,14 @@ Objects.__len__() -> int
 ```
 
 Return the number of object numbers in use.
+
+### `Objects.__contains__`
+
+```python
+Objects.__contains__(xref: object) -> bool
+```
+
+Return whether an object is stored under `xref`.
 
 ### `Objects.add`
 
@@ -131,6 +265,11 @@ Add a stream of decoded `data`, in one transaction, and return its object number
 data as given with `None`.
 
 ## `Real`
+
+```python
+class Real(float)
+Real(value: float | str | bytes | Decimal)
+```
 
 A PDF real: a `float` that keeps the digits it is written with.
 
@@ -162,7 +301,83 @@ Return the exact decimal that the real is written as.
 
 ## `Stream`
 
+```python
+class Stream(Dictionary)
+```
+
 A PDF stream: its dictionary, plus `read` and `write`.
+
+### `Stream.xref`
+
+```python
+Stream.xref: int | None
+```
+
+The object number of an indirect object, `None` for a direct value or the trailer.
+
+### `Stream.generation`
+
+```python
+Stream.generation: int | None
+```
+
+The generation number of an indirect object, `None` for a direct value or the trailer.
+
+### `Stream.is_indirect`
+
+```python
+Stream.is_indirect: bool
+```
+
+Whether this is an indirect object rather than a direct value inside one.
+
+### `Stream.__len__`
+
+```python
+Stream.__len__() -> int
+```
+
+Return the number of entries or elements.
+
+### `Stream.__getitem__`
+
+```python
+Stream.__getitem__(key: str) -> Any
+```
+
+Return the resolved value of `key`.
+
+### `Stream.__setitem__`
+
+```python
+Stream.__setitem__(key: str, value: object)
+```
+
+Write `value` under `key`.
+
+### `Stream.__delitem__`
+
+```python
+Stream.__delitem__(key: str)
+```
+
+Remove `key`.
+
+### `Stream.__iter__`
+
+```python
+Stream.__iter__() -> Iterator[str]
+```
+
+Iterate over the keys as `Name` values.
+
+### `Stream.__contains__`
+
+```python
+Stream.__contains__(key: object) -> bool
+```
+
+Return whether `key` is present, without resolving its value.
 
 ### `Stream.read`
 
@@ -192,6 +407,12 @@ uncompressed. Either way the previous `/Filter` and `/DecodeParms`
 are removed and `/Length` is updated.
 
 ## `String`
+
+```python
+class String(bytes)
+String(source: bytes | bytearray | memoryview | Iterable[int] = b'', /)
+String(source: str, encoding: str, errors: str = 'strict')
+```
 
 A PDF string: its bytes, with `text` decoding a text string.
 

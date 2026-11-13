@@ -25,6 +25,7 @@ when it loaded. `Document.fallback_fonts` maps each language to one.
 ## `FallbackFonts`
 
 ```python
+class FallbackFonts(MutableMapping[str, FallbackFont])
 FallbackFonts(document: Document)
 ```
 
@@ -46,6 +47,30 @@ FallbackFonts.__getitem__(language: str) -> FallbackFont
 
 Return the faces that render `language`, loading an installed extra's once per process.
 
+### `FallbackFonts.__setitem__`
+
+```python
+FallbackFonts.__setitem__(language: str, value: FallbackFont)
+```
+
+Render `language` with `value`'s faces.
+
+### `FallbackFonts.__delitem__`
+
+```python
+FallbackFonts.__delitem__(language: str)
+```
+
+Render `language` without a fallback font, as a Standard 14 font draws it: without CJK glyphs.
+
+### `FallbackFonts.__contains__`
+
+```python
+FallbackFonts.__contains__(language: object) -> bool
+```
+
+Return whether `language` has a fallback font.
+
 ### `FallbackFonts.__iter__`
 
 ```python
@@ -63,10 +88,6 @@ FallbackFonts.__len__() -> int
 Return the number of languages that have a fallback font.
 
 ## `Font`
-
-```python
-Font(*_args: object, **_kwargs: object)
-```
 
 A font face that draws and measures text.
 
@@ -110,108 +131,6 @@ its monochrome fallback outline. Drawing one with no outline raises
 than draw nothing under text that reads back, though it measures as any
 glyph does.
 
-### `Font.ascender`
-
-```python
-Font.ascender: float
-```
-
-The ascent above the baseline as a fraction of the font size.
-
-A Standard 14 font reports the bounding box of the URW font that
-renderers commonly substitute for it, such as 1.075 for Helvetica.
-The canvas places lines of text with `ascender` and
-`descender`.
-
-### `Font.bbox`
-
-```python
-Font.bbox: Rect
-```
-
-The font bounding box in fractions of the em, y upward from the baseline.
-
-A Standard 14 font reports the box of the URW font that renderers
-commonly substitute for it, whose top and bottom are its
-`ascender` and `descender`, such as
-`Rect(-0.21, -0.299, 1.032, 1.075)` for Helvetica.
-
-### `Font.char_bbox`
-
-```python
-Font.char_bbox(char: str) -> Rect
-```
-
-Return the ink box of the glyph for the one-character string `char`.
-
-The box is in fractions of the em, y upward from the glyph's origin
-on the baseline: Adobe's AFM box for a Standard 14 font. A glyph
-without ink, such as a space, has an empty box at its origin. A
-character the font has no glyph for raises `PdfError`.
-
-### `Font.char_widths`
-
-```python
-Font.char_widths(
-    text: str,
-    size: float,
-    *,
-    max_text_size: int | None = 1048576,
-) -> tuple[float, ...]
-```
-
-Return the advance of each character of `text` drawn alone at `size` points.
-
-A character the font has no glyph for raises `PdfError`. Text
-is limited to 1 MiB of UTF-8 by default (`max_text_size`, `None`
-for trusted input), refused with `LimitError` code
-`text_input_size`.
-
-### `Font.chars`
-
-```python
-Font.chars() -> str
-```
-
-Return every character that `has_glyph` accepts, in code point order.
-
-A Standard 14 text font has the WinAnsi characters (roughly
-Latin-1), and Symbol and ZapfDingbats the characters whose WinAnsi
-byte their built-in encoding maps to a glyph.
-
-### `Font.descender`
-
-```python
-Font.descender: float
-```
-
-The descent below the baseline as a negative fraction of the font size.
-
-### `Font.family`
-
-```python
-Font.family: str | None
-```
-
-The family name, such as `"Times"` for `"Times-Bold"`.
-
-### `Font.from_bytes`
-
-```python
-Font.from_bytes(
-    data: bytes | bytearray | memoryview,
-    /,
-    *,
-    index: int = 0,
-    weight: int | None = None,
-    max_size: int | None = 67108864,
-) -> Font
-```
-
-Load an OpenType face from the bytes of a font file.
-
-`index`, `weight`, and `max_size` work as for `from_file`.
-
 ### `Font.from_file`
 
 ```python
@@ -240,24 +159,58 @@ program of an instance, are limited to 64 MiB by default (`max_size`,
 `None` for trusted input), refused with `LimitError` code
 `font_input_size`.
 
-### `Font.glyph_count`
+### `Font.from_bytes`
 
 ```python
-Font.glyph_count: int
+Font.from_bytes(
+    data: bytes | bytearray | memoryview,
+    /,
+    *,
+    index: int = 0,
+    weight: int | None = None,
+    max_size: int | None = 67108864,
+) -> Font
 ```
 
-The number of glyphs: those of a Standard 14 font's AFM metrics.
+Load an OpenType face from the bytes of a font file.
 
-### `Font.has_glyph`
+`index`, `weight`, and `max_size` work as for `from_file`.
+
+### `Font.standard`
 
 ```python
-Font.has_glyph(char: str) -> bool
+Font.standard(name: StandardFontName) -> Font
 ```
 
-Return whether the face has a glyph for the one-character string `char`.
+Return a Standard 14 font by its PostScript name, such as `"Helvetica-Bold"`.
 
-A Standard 14 font has one when its encoding, WinAnsi for the text
-fonts, maps the character to a glyph of the font.
+The 14 names are those of `StandardFontName`. A Standard 14 font
+is drawn without embedding, so it prints WinAnsi (roughly Latin-1)
+text only.
+
+### `Font.name`
+
+```python
+Font.name: str | None
+```
+
+The PostScript name of a Standard 14 font, or the full name of an embedded face.
+
+### `Font.family`
+
+```python
+Font.family: str | None
+```
+
+The family name, such as `"Times"` for `"Times-Bold"`.
+
+### `Font.weight`
+
+```python
+Font.weight: int
+```
+
+The weight class, such as 400 for a regular and 700 for a bold face, of the instance that it draws.
 
 ### `Font.is_bold`
 
@@ -275,14 +228,6 @@ Font.is_italic: bool
 
 Whether the face is italic or oblique.
 
-### `Font.is_monospaced`
-
-```python
-Font.is_monospaced: bool
-```
-
-Whether every glyph has the same advance, as Adobe's AFM metrics declare for the Courier fonts.
-
 ### `Font.is_serif`
 
 ```python
@@ -291,13 +236,106 @@ Font.is_serif: bool
 
 Whether the face has serifs.
 
-### `Font.name`
+### `Font.units_per_em`
 
 ```python
-Font.name: str | None
+Font.units_per_em: int
 ```
 
-The PostScript name of a Standard 14 font, or the full name of an embedded face.
+The design units per em of the face; 1000 for Standard 14 fonts.
+
+### `Font.ascender`
+
+```python
+Font.ascender: float
+```
+
+The ascent above the baseline as a fraction of the font size.
+
+A Standard 14 font reports the bounding box of the URW font that
+renderers commonly substitute for it, such as 1.075 for Helvetica.
+The canvas places lines of text with `ascender` and
+`descender`.
+
+### `Font.descender`
+
+```python
+Font.descender: float
+```
+
+The descent below the baseline as a negative fraction of the font size.
+
+### `Font.bbox`
+
+```python
+Font.bbox: Rect
+```
+
+The font bounding box in fractions of the em, y upward from the baseline.
+
+A Standard 14 font reports the box of the URW font that renderers
+commonly substitute for it, whose top and bottom are its
+`ascender` and `descender`, such as
+`Rect(-0.21, -0.299, 1.032, 1.075)` for Helvetica.
+
+### `Font.glyph_count`
+
+```python
+Font.glyph_count: int
+```
+
+The number of glyphs: those of a Standard 14 font's AFM metrics.
+
+### `Font.is_monospaced`
+
+```python
+Font.is_monospaced: bool
+```
+
+Whether every glyph has the same advance, as Adobe's AFM metrics declare for the Courier fonts.
+
+### `Font.chars`
+
+```python
+Font.chars() -> str
+```
+
+Return every character that `has_glyph` accepts, in code point order.
+
+A Standard 14 text font has the WinAnsi characters (roughly
+Latin-1), and Symbol and ZapfDingbats the characters whose WinAnsi
+byte their built-in encoding maps to a glyph.
+
+### `Font.char_widths`
+
+```python
+Font.char_widths(
+    text: str,
+    size: float,
+    *,
+    max_text_size: int | None = 1048576,
+) -> tuple[float, ...]
+```
+
+Return the advance of each character of `text` drawn alone at `size` points.
+
+A character the font has no glyph for raises `PdfError`. Text
+is limited to 1 MiB of UTF-8 by default (`max_text_size`, `None`
+for trusted input), refused with `LimitError` code
+`text_input_size`.
+
+### `Font.char_bbox`
+
+```python
+Font.char_bbox(char: str) -> Rect
+```
+
+Return the ink box of the glyph for the one-character string `char`.
+
+The box is in fractions of the em, y upward from the glyph's origin
+on the baseline: Adobe's AFM box for a Standard 14 font. A glyph
+without ink, such as a space, has an empty box at its origin. A
+character the font has no glyph for raises `PdfError`.
 
 ### `Font.program`
 
@@ -311,17 +349,19 @@ The program is the face alone with all its glyphs, as an OpenType
 file, even when it was loaded from a collection; a save subsets it
 to the glyphs that the document draws.
 
-### `Font.standard`
+### `Font.text_width`
 
 ```python
-Font.standard(name: StandardFontName) -> Font
+Font.text_width(text: str, size: float, *, max_text_size: int | None = 1048576) -> float
 ```
 
-Return a Standard 14 font by its PostScript name, such as `"Helvetica-Bold"`.
+Return the width of one line of `text` at `size` points.
 
-The 14 names are those of `StandardFontName`. A Standard 14 font
-is drawn without embedding, so it prints WinAnsi (roughly Latin-1)
-text only.
+Standard 14 text sums the AFM widths of its WinAnsi characters.
+Measure each line separately: a line break raises `PdfError`,
+as does a character the font has no glyph for. Text is limited to
+1 MiB of UTF-8 by default (`max_text_size`, `None` for trusted
+input), refused with `LimitError` code `text_input_size`.
 
 ### `Font.text_height`
 
@@ -349,35 +389,16 @@ lines by default (`max_text_size`, `None` for trusted input),
 refused with `LimitError` code `text_input_size` or
 `text_line_count`.
 
-### `Font.text_width`
+### `Font.has_glyph`
 
 ```python
-Font.text_width(text: str, size: float, *, max_text_size: int | None = 1048576) -> float
+Font.has_glyph(char: str) -> bool
 ```
 
-Return the width of one line of `text` at `size` points.
+Return whether the face has a glyph for the one-character string `char`.
 
-Standard 14 text sums the AFM widths of its WinAnsi characters.
-Measure each line separately: a line break raises `PdfError`,
-as does a character the font has no glyph for. Text is limited to
-1 MiB of UTF-8 by default (`max_text_size`, `None` for trusted
-input), refused with `LimitError` code `text_input_size`.
-
-### `Font.units_per_em`
-
-```python
-Font.units_per_em: int
-```
-
-The design units per em of the face; 1000 for Standard 14 fonts.
-
-### `Font.weight`
-
-```python
-Font.weight: int
-```
-
-The weight class, such as 400 for a regular and 700 for a bold face, of the instance that it draws.
+A Standard 14 font has one when its encoding, WinAnsi for the text
+fonts, maps the character to a glyph of the font.
 
 ## `FontInfo`
 
@@ -406,7 +427,24 @@ An embedded font program, from `Document.font_program`.
 
 ## `StandardFontName`
 
-`StandardFontName = typing.Literal['Courier', 'Courier-Oblique', 'Courier-Bold', 'Courier-BoldOblique', 'Helvetica', 'Helvetica-Oblique', 'Helvetica-Bold', 'Helvetica-BoldOblique', 'Times-Roman', 'Times-Italic', 'Times-Bold', 'Times-BoldItalic', 'Symbol', 'ZapfDingbats']`
+```python
+StandardFontName = Literal[
+    'Courier',
+    'Courier-Oblique',
+    'Courier-Bold',
+    'Courier-BoldOblique',
+    'Helvetica',
+    'Helvetica-Oblique',
+    'Helvetica-Bold',
+    'Helvetica-BoldOblique',
+    'Times-Roman',
+    'Times-Italic',
+    'Times-Bold',
+    'Times-BoldItalic',
+    'Symbol',
+    'ZapfDingbats',
+]
+```
 
 The PostScript names of the Standard 14 fonts (ISO 32000-2 section 9.6.2.2).
 

@@ -16,6 +16,14 @@ ChangeReport(signatures: tuple[SignatureChange, ...], claims: tuple[ClaimChange,
 
 What the edits since opening invalidate, for a save that is incremental or not.
 
+### `ChangeReport.__bool__`
+
+```python
+ChangeReport.__bool__() -> bool
+```
+
+Return whether the report names anything.
+
 ## `ClaimChange`
 
 ```python
@@ -178,3 +186,23 @@ edits. Reads inside the block see its edits.
 A transaction belongs to the thread that opened it. Other threads read
 the version before it until it commits, and their edits, transactions,
 undo, and redo wait until it ends.
+
+### `Transaction.__enter__`
+
+```python
+Transaction.__enter__() -> Self
+```
+
+Open the transaction, or nest it in the open one.
+
+### `Transaction.__exit__`
+
+```python
+Transaction.__exit__(
+    exc_type: type[BaseException] | None,
+    exc_value: BaseException | None,
+    traceback: TracebackType | None,
+)
+```
+
+Commit the edits, or discard them when the block raised.

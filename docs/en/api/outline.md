@@ -11,6 +11,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 ## `Outline`
 
 ```python
+class Outline(Sequence[OutlineItem])
 Outline(document: Document)
 ```
 

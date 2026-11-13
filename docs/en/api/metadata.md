@@ -11,6 +11,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 ## `Metadata`
 
 ```python
+class Metadata(MutableMapping[str, str])
 Metadata(document: Document)
 ```
 
@@ -49,6 +50,22 @@ Metadata.__len__() -> int
 ```
 
 Return the number of entries present.
+
+### `Metadata.__setitem__`
+
+```python
+Metadata.__setitem__(key: str, value: str | datetime)
+```
+
+Store `value` under `key`.
+
+### `Metadata.__delitem__`
+
+```python
+Metadata.__delitem__(key: str)
+```
+
+Remove `key`; an absent key raises `KeyError`.
 
 ### `Metadata.update`
 

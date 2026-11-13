@@ -18,8 +18,8 @@ CheckBox(
     checked: bool = False,
     on_state: str = 'Yes',
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = None,
 )
@@ -45,8 +45,8 @@ ComboBox(
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     align: Literal['left', 'center', 'right'] = 'left',
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = None,
 )
@@ -108,7 +108,7 @@ The field's kind.
 Field.flags: FieldFlags
 ```
 
-Or set the field flags, inherited from ancestors that set `/Ff`; undefined bits are dropped.
+The field flags, inherited from ancestors that set `/Ff`; undefined bits are dropped.
 
 Assigning writes the field's own `/Ff`; the bits that decide its kind
 (`RADIO`, `PUSHBUTTON`, and `COMBO`) cannot change.
@@ -121,7 +121,7 @@ Settable.
 Field.choices: tuple[FieldChoice, ...]
 ```
 
-Or set a choice field's options in `/Opt` order, or `()` without them.
+A choice field's options in `/Opt` order, or `()` without them.
 
 `/Opt` is inherited from the fields above. Reads stop at 4,096
 options or 1 MiB of option text. Assigning takes `FieldChoice`
@@ -136,7 +136,7 @@ Settable.
 Field.label: str | None
 ```
 
-Or set the field's description for users, `/TU`; `del` removes it.
+The field's description for users, `/TU`; `del` removes it.
 
 Settable.
 
@@ -146,7 +146,7 @@ Settable.
 Field.max_length: int | None
 ```
 
-Or set the most characters that a text field holds, `/MaxLen`; `del` removes it.
+The most characters that a text field holds, `/MaxLen`; `del` removes it.
 
 `/MaxLen` is inherited from the fields above.
 
@@ -158,7 +158,7 @@ Settable.
 Field.default_value: str | None
 ```
 
-Or set the value that `reset` restores, `/DV`; `del` removes it.
+The value that `reset` restores, `/DV`; `del` removes it.
 
 Settable.
 
@@ -246,11 +246,21 @@ The field flags of `/Ff` (ISO 32000-2 Tables 227, 229, 231, and 233).
 Bits 26 and 27 mean different things for buttons and for text and choice
 fields, so `RADIOS_IN_UNISON` is the same bit as `RICH_TEXT`.
 
-Members: `READ_ONLY`, `REQUIRED`, `NO_EXPORT`, `MULTILINE`, `PASSWORD`, `NO_TOGGLE_TO_OFF`, `RADIO`, `PUSHBUTTON`, `COMBO`, `EDIT`, `SORT`, `FILE_SELECT`, `MULTI_SELECT`, `DO_NOT_SPELL_CHECK`, `DO_NOT_SCROLL`, `COMB`, `RICH_TEXT`, `COMMIT_ON_SEL_CHANGE`.
+Members: `READ_ONLY`, `REQUIRED`, `NO_EXPORT`, `MULTILINE`, `PASSWORD`, `NO_TOGGLE_TO_OFF`, `RADIO`, `PUSHBUTTON`, `COMBO`, `EDIT`, `SORT`, `FILE_SELECT`, `MULTI_SELECT`, `DO_NOT_SPELL_CHECK`, `DO_NOT_SCROLL`, `COMB`, `RICH_TEXT`, `RADIOS_IN_UNISON`, `COMMIT_ON_SEL_CHANGE`.
 
 ## `FieldSpecification`
 
-`FieldSpecification = pyropdf.TextField | pyropdf.CheckBox | pyropdf.RadioButton | pyropdf.ComboBox | pyropdf.ListBox | pyropdf.PushButton | pyropdf.SignatureField`
+```python
+FieldSpecification: TypeAlias = (
+    TextField
+    | CheckBox
+    | RadioButton
+    | ComboBox
+    | ListBox
+    | PushButton
+    | SignatureField
+)
+```
 
 The specifications that `page.widgets.add` takes.
 
@@ -263,6 +273,7 @@ Members: `TEXT`, `CHECKBOX`, `RADIO`, `PUSHBUTTON`, `COMBOBOX`, `LISTBOX`, `SIGN
 ## `Form`
 
 ```python
+class Form(Mapping[str, Field])
 Form(document: Document)
 ```
 
@@ -303,7 +314,7 @@ The AcroForm's `/SigFlags`, without undefined bits; a document without a form re
 Form.font: Font | None
 ```
 
-Or set the OpenType face that text and choice values draw in, or `None`.
+The OpenType face that text and choice values draw in, or `None`.
 
 Without one, Helvetica draws WinAnsi values and other values are
 left for the viewer to draw. With one, setting a text or choice
@@ -321,7 +332,7 @@ Settable.
 Form.need_appearances: bool
 ```
 
-Or set the AcroForm's `/NeedAppearances`, which asks viewers to draw the widgets again.
+The AcroForm's `/NeedAppearances`, which asks viewers to draw the widgets again.
 
 Filling a field draws its widgets and clears the flag once every
 widget that shows a value has an appearance. A document without
@@ -337,6 +348,18 @@ Form.__getitem__(name: str) -> Field
 ```
 
 Return the field named `name`; another name raises `KeyError`.
+
+### `Form.__delitem__`
+
+```python
+Form.__delitem__(name: str)
+```
+
+Remove the field named `name` with its widgets, in one transaction; another name raises `KeyError`.
+
+The widgets leave every page that lists them, and the field leaves
+the field tree and the calculation order with each named parent
+that it leaves without kids.
 
 ### `Form.__iter__`
 
@@ -369,8 +392,8 @@ ListBox(
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     align: Literal['left', 'center', 'right'] = 'left',
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = None,
 )
@@ -393,8 +416,8 @@ PushButton(
     font_size: float = 0,
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = Color(red=0.75, green=0.75, blue=0.75, alpha=1.0),
 )
@@ -416,8 +439,8 @@ RadioButton(
     on_state: str,
     selected: bool = False,
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = None,
 )
@@ -431,6 +454,7 @@ Buttons that share `name` form one group, each selecting its own
 ## `Scripts`
 
 ```python
+class Scripts(MutableMapping[ScriptTrigger, str])
 Scripts(
     document: Document,
     holder: Callable[[], Dictionary],
@@ -455,6 +479,22 @@ Scripts.__getitem__(trigger: ScriptTrigger) -> str
 ```
 
 Return the script of `trigger`; a trigger without one raises `KeyError`.
+
+### `Scripts.__setitem__`
+
+```python
+Scripts.__setitem__(trigger: ScriptTrigger, source: str)
+```
+
+Set the JavaScript that `trigger` runs.
+
+### `Scripts.__delitem__`
+
+```python
+Scripts.__delitem__(trigger: ScriptTrigger)
+```
+
+Remove the script of `trigger`; a trigger without one raises `KeyError`.
 
 ### `Scripts.__iter__`
 
@@ -488,8 +528,8 @@ SignatureField(
     rect: Sequence[float],
     *,
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = None,
 )
@@ -518,8 +558,8 @@ TextField(
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     align: Literal['left', 'center', 'right'] = 'left',
     label: str | None = None,
-    flags: FieldFlags = <FieldFlags: 0>,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    flags: FieldFlags = FieldFlags(0),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     border_color: Color | None = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     background_color: Color | None = None,
 )
@@ -596,7 +636,7 @@ The terminal form field that the widget shows, or `None` when no field owns it.
 Widget.rect: Rect
 ```
 
-Or set the widget rectangle in display coordinates.
+The widget rectangle in display coordinates.
 
 Settable.
 
@@ -606,7 +646,7 @@ Settable.
 Widget.flags: AnnotationFlags
 ```
 
-Or set the widget's `/F` flags, such as `AnnotationFlags.HIDDEN`.
+The widget's `/F` flags, such as `AnnotationFlags.HIDDEN`.
 
 Settable.
 
@@ -616,7 +656,7 @@ Settable.
 Widget.border: Border | None
 ```
 
-Or set the border, `/BS` else `/Border`; `del` removes it.
+The border, `/BS` else `/Border`; `del` removes it.
 
 Settable.
 
@@ -626,7 +666,7 @@ Settable.
 Widget.border_color: Color | None
 ```
 
-Or set the border color, `/MK /BC`; `del` removes it.
+The border color, `/MK /BC`; `del` removes it.
 
 Settable.
 
@@ -636,7 +676,7 @@ Settable.
 Widget.background_color: Color | None
 ```
 
-Or set the background color, `/MK /BG`; `del` removes it.
+The background color, `/MK /BG`; `del` removes it.
 
 Settable.
 
@@ -646,7 +686,7 @@ Settable.
 Widget.caption: str | None
 ```
 
-Or set the caption of a pushbutton, `/MK /CA`; `del` removes it.
+The caption of a pushbutton, `/MK /CA`; `del` removes it.
 
 A caption with a character outside WinAnsi is kept but not drawn.
 
@@ -658,7 +698,7 @@ Settable.
 Widget.rotation: int
 ```
 
-Or set the rotation of the widget's appearance, `/MK /R`: 0, 90, 180, or 270 degrees.
+The rotation of the widget's appearance, `/MK /R`: 0, 90, 180, or 270 degrees.
 
 Settable.
 
@@ -668,7 +708,7 @@ Settable.
 Widget.text_color: Color
 ```
 
-Or set the color of the widget's text, from the `/DA` that it draws with.
+The color of the widget's text, from the `/DA` that it draws with.
 
 Settable.
 
@@ -678,7 +718,7 @@ Settable.
 Widget.font: Font | None
 ```
 
-Or set the font named by the widget's `/DA`.
+The font named by the widget's `/DA`.
 
 The `/DA` font resolves through the form's `/DR`. When its
 resource is absent, a Standard 14 abbreviation such as `/Cour`
@@ -694,7 +734,7 @@ Settable.
 Widget.font_size: float
 ```
 
-Or set the size of the widget's text in points, 0 to fit the text to the widget.
+The size of the widget's text in points, 0 to fit the text to the widget.
 
 Settable.
 
@@ -717,6 +757,7 @@ The state that selects a check box or radio button, or `None` without one.
 ## `Widgets`
 
 ```python
+class Widgets(Sequence[Widget])
 Widgets(page: Page)
 ```
 
@@ -732,6 +773,19 @@ Widgets.__getitem__(index: int | slice) -> Widget | list[Widget]
 ```
 
 Return one widget, or a list of them for a slice.
+
+### `Widgets.__delitem__`
+
+```python
+Widgets.__delitem__(index: int | slice)
+```
+
+Remove widgets from the page and from the form, in one transaction.
+
+A widget of a field leaves every page that lists it and the field's
+`/Kids`; the field leaves the form with its last widget, as
+`del doc.form[name]` removes it. The widget objects stay in the
+document.
 
 ### `Widgets.add`
 

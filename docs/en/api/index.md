@@ -14,6 +14,7 @@ method and property of its classes with its full description.
 
 ## [Documents](documents.md)
 
+- [`__version__`](documents.md#__version__): The version string of the installed pyropdf package.
 - [`Document`](documents.md#document): A PDF document.
 - [`open`](documents.md#open): Open a PDF from a file path or from the bytes of a document.
 - [`Probe`](documents.md#probe): What `probe` reads without loading the whole document.
@@ -129,13 +130,13 @@ method and property of its classes with its full description.
 - [`TextRun`](text-and-content.md#textrun): The glyphs that one text-showing operator paints.
 - [`TilingPattern`](text-and-content.md#tilingpattern): A paint that repeats a pattern cell.
 - [`TransparencyGroup`](text-and-content.md#transparencygroup): A transparency group and what it applies to everything inside it.
-- [`Unmapped`](text-and-content.md#unmapped)
+- [`Unmapped`](text-and-content.md#unmapped): What text extraction makes of a glyph without Unicode: `"skip"` leaves it out with a `PyropdfWarning`, `"replacement"` gives U+FFFD, and `"glyph_id"` gives the character whose code point is the glyph ID. `"type3_char_code"` treats an unmapped Type 3 font's original character code as a Unicode code point. This heuristic can produce unrelated text for custom encodings. Other unmapped glyphs give U+FFFD. Font Unicode mappings and recognized glyph names take precedence.
 - [`Word`](text-and-content.md#word): One word of `Page.words`, in reading order.
 
 ## [OCR](ocr.md)
 
 - [`OcrEngine`](ocr.md#ocrengine): Reusable, pure-Rust PP-OCR engine.
-- [`OcrRotation`](ocr.md#ocrrotation)
+- [`OcrRotation`](ocr.md#ocrrotation): A clockwise correction of sideways OCR input, in degrees.
 - [`OcrWord`](ocr.md#ocrword): One recognized word: its text, its box, and the engine's confidence from 0 to 1.
 
 ## [Rendering](rendering.md)
@@ -293,3 +294,8 @@ method and property of its classes with its full description.
 ## [Typed objects](typed-objects.md)
 
 - [`typed`](typed-objects.md#pyropdftyped): Typed views of PDF objects, one per object type of the Arlington PDF Model.
+- [`typed.ArrayView`](typed-objects.md#typedarrayview): The base of the views of array types.
+- [`typed.DictionaryView`](typed-objects.md#typeddictionaryview): The base of the views of dictionary types.
+- [`typed.StreamView`](typed-objects.md#typedstreamview): The base of the views of stream types.
+- [`typed.TYPES`](typed-objects.md#typedtypes): The object types of the model, sorted.
+- [`typed.View`](typed-objects.md#typedview): A typed view of one object: the base of the views of every object type.

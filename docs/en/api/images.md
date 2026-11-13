@@ -39,7 +39,7 @@ The image objects left as they were: `considered - rewritten`.
 ImageRewriteReport.bytes_saved: int
 ```
 
-Return `bytes_before - bytes_after`.
+`bytes_before - bytes_after`.
 
 ## `PageImage`
 

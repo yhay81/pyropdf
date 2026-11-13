@@ -13,7 +13,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 ```python
 PageLabelRange(
     start: int,
-    style: PageLabelStyle | str | None = <PageLabelStyle.DECIMAL: 'D'>,
+    style: PageLabelStyle | str | None = PageLabelStyle.DECIMAL,
     prefix: str = '',
     first: int = 1,
 )

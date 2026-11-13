@@ -8,6 +8,14 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Documents
 
+## `__version__`
+
+```python
+__version__: str
+```
+
+The version string of the installed pyropdf package.
+
 ## `Document`
 
 ```python
@@ -676,7 +684,7 @@ Document.render(
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     annotations: bool = True,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
     format: Literal['png', 'jpeg'] = 'png',
@@ -917,6 +925,26 @@ Document.close()
 ```
 
 Close the document and release its data; later operations raise `DocumentClosedError`.
+
+### `Document.__enter__`
+
+```python
+Document.__enter__() -> Self
+```
+
+Enter a context manager and return this document.
+
+### `Document.__exit__`
+
+```python
+Document.__exit__(
+    exc_type: type[BaseException] | None,
+    exc_value: BaseException | None,
+    traceback: TracebackType | None,
+)
+```
+
+Close the document when leaving a context manager.
 
 ## `open`
 

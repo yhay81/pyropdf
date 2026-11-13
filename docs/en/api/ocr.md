@@ -59,7 +59,11 @@ deadline between model calls; an individual model call runs to completion.
 
 ## `OcrRotation`
 
-`OcrRotation = typing.Literal[0, 90, 180, 270]`
+```python
+OcrRotation: TypeAlias = Literal[0, 90, 180, 270]
+```
+
+A clockwise correction of sideways OCR input, in degrees.
 
 ## `OcrWord`
 

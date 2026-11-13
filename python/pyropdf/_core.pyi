@@ -6,6 +6,7 @@ from typing import Any, Literal, TypeAlias, final
 
 from pyropdf._pixmap import Colorspace
 
+#: The version string of the installed pyropdf package.
 __version__: str
 
 class PdfError(Exception): ...
@@ -195,7 +196,7 @@ class Pixmap:
     @staticmethod
     def open(path: str | PathLike[str], *, max_size: int | None = 268435456) -> Pixmap: ...
     def to_pil(self) -> Any: ...  # noqa: ANN401 - a PIL.Image.Image; Pillow is optional
-    def to_bytes(self, format: str = "png", *, quality: int = 95, max_size: int | None = ...) -> bytes: ...  # noqa: A002
+    def to_bytes(self, format: str = "png", *, quality: int = 95, max_size: int | None = 67108864) -> bytes: ...  # noqa: A002
     def save(self, path: str | PathLike[str], /, *, format: str | None = None, quality: int = 95) -> None: ...  # noqa: A002
     def __buffer__(self, flags: int, /) -> memoryview: ...
 

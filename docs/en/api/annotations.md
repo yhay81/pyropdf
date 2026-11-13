@@ -61,7 +61,7 @@ The annotation type, `AnnotationType.UNKNOWN` for a subtype pyropdf does not kno
 Annotation.rect: Rect
 ```
 
-Or set the annotation rectangle in display coordinates.
+The annotation rectangle in display coordinates.
 
 Settable.
 
@@ -71,7 +71,7 @@ Settable.
 Annotation.contents: str | None
 ```
 
-Or set the text that the annotation shows or describes, `/Contents`.
+The text that the annotation shows or describes, `/Contents`.
 
 Settable.
 
@@ -81,7 +81,7 @@ Settable.
 Annotation.author: str | None
 ```
 
-Or set the author, `/T`.
+The author, `/T`.
 
 Settable.
 
@@ -91,7 +91,7 @@ Settable.
 Annotation.subject: str | None
 ```
 
-Or set the subject, `/Subj`.
+The subject, `/Subj`.
 
 Settable.
 
@@ -117,7 +117,7 @@ The modification date as the PDF date string stored, `/M`.
 Annotation.name: str | None
 ```
 
-Or set the annotation's unique name on its page, `/NM`.
+The annotation's unique name on its page, `/NM`.
 
 Settable.
 
@@ -127,7 +127,7 @@ Settable.
 Annotation.icon: str | None
 ```
 
-Or set the icon name of a note, stamp, or file attachment, `/Name`.
+The icon name of a note, stamp, or file attachment, `/Name`.
 
 Settable.
 
@@ -145,7 +145,7 @@ The intent, `/IT`, such as `"FreeTextCallout"`.
 Annotation.color: Color | None
 ```
 
-Or set the color of the border, title bar, or text markup, `/C`; CMYK converts to RGB.
+The color of the border, title bar, or text markup, `/C`; CMYK converts to RGB.
 
 Settable.
 
@@ -155,7 +155,7 @@ Settable.
 Annotation.interior_color: Color | None
 ```
 
-Or set the fill color of a shape or line ending, `/IC`; CMYK converts to RGB.
+The fill color of a shape or line ending, `/IC`; CMYK converts to RGB.
 
 Settable.
 
@@ -165,7 +165,7 @@ Settable.
 Annotation.opacity: float
 ```
 
-Or set the constant opacity, `/CA`, 1.0 when absent.
+The constant opacity, `/CA`, 1.0 when absent.
 
 Settable.
 
@@ -175,7 +175,7 @@ Settable.
 Annotation.flags: AnnotationFlags
 ```
 
-Or set the `/F` flags.
+The `/F` flags.
 
 Settable.
 
@@ -185,7 +185,7 @@ Settable.
 Annotation.border: Border | None
 ```
 
-Or set the border that `/BS`, else `/Border`, describes, in points, or `None` without either.
+The border that `/BS`, else `/Border`, describes, in points, or `None` without either.
 
 Settable.
 
@@ -195,7 +195,7 @@ Settable.
 Annotation.clouds: float
 ```
 
-Or set the intensity of a cloudy border, `/BE`, from 0 (none) to 2.
+The intensity of a cloudy border, `/BE`, from 0 (none) to 2.
 
 Squares, circles, and polygons take one; `del` and 0 remove it.
 
@@ -207,7 +207,7 @@ Settable.
 Annotation.blend_mode: BlendMode | None
 ```
 
-Or set the blend mode that the appearance is drawn with, `/BM`, or `None` without one.
+The blend mode that the appearance is drawn with, `/BM`, or `None` without one.
 
 Settable.
 
@@ -217,7 +217,7 @@ Settable.
 Annotation.vertices: tuple[Point, ...] | None
 ```
 
-Or set the display points of a line (its two ends), polygon, or polyline.
+The display points of a line (its two ends), polygon, or polyline.
 
 `None` for another type or a missing or malformed geometry. Reads
 refuse more than 65,536 points (`annotation_point_count`).
@@ -230,7 +230,7 @@ Settable.
 Annotation.strokes: tuple[tuple[Point, ...], ...] | None
 ```
 
-Or set the display points of each stroke of an ink annotation, `None` for another type.
+The display points of each stroke of an ink annotation, `None` for another type.
 
 Settable.
 
@@ -240,7 +240,7 @@ Settable.
 Annotation.line_endings: tuple[LineEnding, LineEnding] | None
 ```
 
-Or set the start and end shapes of a line or polyline, `None` for another type.
+The start and end shapes of a line or polyline, `None` for another type.
 
 Settable.
 
@@ -250,7 +250,7 @@ Settable.
 Annotation.rotation: int
 ```
 
-Or set how far the annotation's content is turned clockwise as the page is displayed.
+How far the annotation's content is turned clockwise as the page is displayed.
 
 That is the page's rotation less the annotation's `/Rotate`, which
 turns the content counterclockwise in PDF user space. Free text,
@@ -264,7 +264,7 @@ Settable.
 Annotation.language: str | None
 ```
 
-Or set the BCP 47 language of the annotation's text, `/Lang`; `del` removes it.
+The BCP 47 language of the annotation's text, `/Lang`; `del` removes it.
 
 Settable.
 
@@ -274,7 +274,7 @@ Settable.
 Annotation.popup_rect: Rect | None
 ```
 
-Or set the display rectangle of the annotation's popup, `None` without one.
+The display rectangle of the annotation's popup, `None` without one.
 
 Assigning a rectangle moves the popup, or adds one that the page
 lists after the annotation; `del` removes it.
@@ -287,7 +287,7 @@ Settable.
 Annotation.is_open: bool
 ```
 
-Or set whether the popup, or a note without one, opens when the page is shown.
+Whether the popup, or a note without one, opens when the page is shown.
 
 Assigning needs a popup or a note.
 
@@ -299,7 +299,7 @@ Settable.
 Annotation.in_reply_to: Annotation | None
 ```
 
-Or set the annotation that this one replies to, `/IRT`, or `None`.
+The annotation that this one replies to, `/IRT`, or `None`.
 
 The annotation replied to belongs to the same page; a reply to an
 annotation that is not listed in `page.annotations`, such as a
@@ -324,7 +324,7 @@ Annotation.pixmap(
     matrix: Sequence[float] | None = None,
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
 ) -> Pixmap
 ```
 
@@ -495,6 +495,7 @@ Members: `INVISIBLE`, `HIDDEN`, `PRINT`, `NO_ZOOM`, `NO_ROTATE`, `NO_VIEW`, `REA
 ## `Annotations`
 
 ```python
+class Annotations(Sequence[Annotation])
 Annotations(page: Page)
 ```
 
@@ -531,6 +532,14 @@ Annotations.__iter__() -> Iterator[Annotation]
 
 Iterate over the annotations that the page lists now.
 
+### `Annotations.__delitem__`
+
+```python
+Annotations.__delitem__(index: int | slice)
+```
+
+Remove annotations and their popups from the page, in one transaction.
+
 ### `Annotations.add`
 
 ```python
@@ -544,7 +553,25 @@ read in the transaction, so that every viewer draws it alike.
 
 ## `AnnotationSpecification`
 
-`AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret | pyropdf.FileAttachment | pyropdf.FreeText | pyropdf.Stamp`
+```python
+AnnotationSpecification: TypeAlias = (
+    Highlight
+    | Underline
+    | StrikeOut
+    | Squiggly
+    | Note
+    | Square
+    | Circle
+    | LineAnnotation
+    | Polygon
+    | PolyLine
+    | Ink
+    | Caret
+    | FileAttachment
+    | FreeText
+    | Stamp
+)
+```
 
 The specifications that `page.annotations.add` takes.
 
@@ -613,7 +640,7 @@ Circle(
     *,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     clouds: float = 0,
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
@@ -635,7 +662,7 @@ FileAttachment(
     *,
     filename: str,
     description: str | None = None,
-    icon: AttachmentIcon = <AttachmentIcon.PUSH_PIN: 'push_pin'>,
+    icon: AttachmentIcon = AttachmentIcon.PUSH_PIN,
     color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0),
     opacity: float = 1.0,
     contents: str | None = None,
@@ -665,11 +692,11 @@ FreeText(
     size: float = 11.0,
     text_color: Color = Color(red=0.0, green=0.0, blue=0.0, alpha=1.0),
     color: Color | None = None,
-    border: Border = Border(width=0.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    border: Border = Border(width=0.0, style=BorderStyle.SOLID, dashes=()),
     align: Literal['left', 'center', 'right'] = 'left',
     rotate: int = 0,
     callout: Sequence[Point | Sequence[float]] | None = None,
-    callout_ending: LineEnding = <LineEnding.NONE: 'none'>,
+    callout_ending: LineEnding = LineEnding.NONE,
     opacity: float = 1.0,
 )
 ```
@@ -721,7 +748,7 @@ Ink(
     strokes: Iterable[Iterable[Point | Sequence[float]]],
     *,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
     contents: str | None = None,
@@ -742,8 +769,8 @@ LineAnnotation(
     *,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
-    line_endings: tuple[LineEnding, LineEnding] = (<LineEnding.NONE: 'none'>, <LineEnding.NONE: 'none'>),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
+    line_endings: tuple[LineEnding, LineEnding] = (LineEnding.NONE, LineEnding.NONE),
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
     contents: str | None = None,
@@ -767,7 +794,9 @@ Members: `NONE`, `SQUARE`, `CIRCLE`, `DIAMOND`, `OPEN_ARROW`, `CLOSED_ARROW`, `B
 
 ## `MarkupRects`
 
-`MarkupRects = collections.abc.Sequence[float] | pyropdf.Quad | collections.abc.Iterable[collections.abc.Sequence[float] | pyropdf.Quad]`
+```python
+MarkupRects: TypeAlias = Sequence[float] | Quad | Iterable[Sequence[float] | Quad]
+```
 
 Rectangles or quads that text markup covers: one, or a sequence of them.
 
@@ -778,7 +807,7 @@ Note(
     at: Point | Sequence[float],
     *,
     contents: str | None = None,
-    icon: NoteIcon = <NoteIcon.NOTE: 'note'>,
+    icon: NoteIcon = NoteIcon.NOTE,
     color: Color = Color(red=1.0, green=1.0, blue=0.0, alpha=1.0),
     opacity: float = 1.0,
     is_open: bool = False,
@@ -808,7 +837,7 @@ Polygon(
     *,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     clouds: float = 0,
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
@@ -830,8 +859,8 @@ PolyLine(
     *,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
-    line_endings: tuple[LineEnding, LineEnding] = (<LineEnding.NONE: 'none'>, <LineEnding.NONE: 'none'>),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
+    line_endings: tuple[LineEnding, LineEnding] = (LineEnding.NONE, LineEnding.NONE),
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
     contents: str | None = None,
@@ -877,7 +906,7 @@ Square(
     *,
     color: Color | None = Color(red=1.0, green=0.0, blue=0.0, alpha=1.0),
     interior_color: Color | None = None,
-    border: Border = Border(width=1.0, style=<BorderStyle.SOLID: 'solid'>, dashes=()),
+    border: Border = Border(width=1.0, style=BorderStyle.SOLID, dashes=()),
     clouds: float = 0,
     opacity: float = 1.0,
     blend_mode: BlendMode | None = None,
@@ -918,7 +947,7 @@ in all (`annotation_point_count`).
 Stamp(
     rect: Sequence[float],
     *,
-    icon: StampIcon = <StampIcon.APPROVED: 'approved'>,
+    icon: StampIcon = StampIcon.APPROVED,
     color: Color | None = None,
     opacity: float = 1.0,
     rotate: int = 0,

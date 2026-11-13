@@ -250,7 +250,7 @@ Page.pixmap(
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     annotations: bool = True,
-    colorspace: Colorspace | Literal['gray', 'rgb'] = <Colorspace.RGB: 'rgb'>,
+    colorspace: Colorspace | Literal['gray', 'rgb'] = Colorspace.RGB,
     hinting: bool = False,
     glyph_cache: bool = False,
 ) -> Pixmap
@@ -838,6 +838,7 @@ Settable.
 ## `Pages`
 
 ```python
+class Pages(Sequence[Page])
 Pages(document: Document)
 ```
 
@@ -882,6 +883,14 @@ Pages.__iter__() -> Iterator[Page]
 
 Iterate over the pages; a structural edit during the iteration raises `RuntimeError`.
 
+### `Pages.__contains__`
+
+```python
+Pages.__contains__(page: object) -> bool
+```
+
+Return whether `page` is a current page of this document.
+
 ### `Pages.index`
 
 ```python
@@ -889,6 +898,14 @@ Pages.index(page: object, start: int = 0, stop: int | None = None) -> int
 ```
 
 Return the index of `page`, in time that does not grow with the page count.
+
+### `Pages.__delitem__`
+
+```python
+Pages.__delitem__(index: int | slice)
+```
+
+Delete page `index`, or the pages of a slice, in one transaction.
 
 ### `Pages.new`
 

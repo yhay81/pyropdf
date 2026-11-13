@@ -10,6 +10,10 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ## `CancellationToken`
 
+```python
+CancellationToken()
+```
+
 A flag that stops the operations of every document whose limits carry it.
 
 Any thread may call `cancel`, also while another thread's
@@ -29,12 +33,16 @@ Cancels every operation whose limits carry this token.
 ### `CancellationToken.cancelled`
 
 ```python
-CancellationToken.cancelled
+CancellationToken.cancelled: bool
 ```
 
 Whether `cancel` was called.
 
 ## `DocumentClosedError`
+
+```python
+class DocumentClosedError(PdfError)
+```
 
 An operation on a closed document.
 
@@ -97,9 +105,17 @@ unset. Give the worker its own memory and wall-clock limits.
 
 ## `EncryptedDocumentError`
 
+```python
+class EncryptedDocumentError(PdfError)
+```
+
 An operation on an encrypted document that needs a password.
 
 ## `InternalError`
+
+```python
+class InternalError(PdfError)
+```
 
 A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
 
@@ -202,11 +218,106 @@ Each code and when an operation reaches it, in the order of the registry.
 
 ## `LimitCode`
 
-`LimitCode = typing.Literal['file_size', 'page_count', 'object_count', 'object_depth', 'object_parse_size', 'decompressed_size', 'page_content_size', 'total_decompressed_size', 'decompression_unverifiable', 'stream_filter_count', 'interpretation_size', 'interpretation_fuel', 'content_operation_count', 'content_stream_size', 'content_input_size', 'content_element_count', 'text_glyph_count', 'text_size', 'search_input_size', 'search_hit_count', 'text_rule_count', 'table_cell_count', 'table_span_candidate_count', 'table_column_count', 'ocr_layer_word_count', 'ocr_layer_text_size', 'ocr_layer_character_count', 'ocr_raster_size', 'ocr_detection_count', 'ocr_text_size', 'ocr_model_size', 'ocr_dictionary_entries', 'stream_data_size', 'object_value_depth', 'markdown_output_size', 'export_output_size', 'pdf_output_size', 'pixmap_output_size', 'clip_page_side', 'svg_output_size', 'render_output_size', 'password_input_size', 'embedded_file_size', 'embedded_file_input_size', 'annotation_count', 'annotation_text_size', 'annotation_dash_count', 'annotation_input_size', 'form_field_input_size', 'form_default_appearance_size', 'form_field_parent_depth', 'script_size', 'text_edit_forms', 'image_input_size', 'text_line_count', 'text_input_size', 'shaped_glyph_count', 'font_input_size', 'page_fonts_tree', 'page_fonts_entries', 'page_fonts_forms', 'font_subset_appearances', 'named_destination_count', 'named_destination_edge_count', 'named_destination_depth', 'named_destination_text_size', 'toc_entry_count', 'toc_text_size', 'toc_input_size', 'structure_tree_count', 'page_entry_count', 'page_label_tree_depth', 'page_label_tree_edges', 'page_label_ranges', 'page_label_text_size', 'page_label_input_size', 'optional_content_count', 'optional_content_expression', 'sanitize_action_chain', 'sanitize_forms', 'memory_size', 'deadline', 'cancelled', 'annotation_quad_count', 'annotation_point_count', 'annotation_appearance_size', 'annotation_synthesis_count', 'annotation_synthesis_point_count']`
+```python
+LimitCode: TypeAlias = Literal[
+    'file_size',
+    'page_count',
+    'object_count',
+    'object_depth',
+    'object_parse_size',
+    'decompressed_size',
+    'page_content_size',
+    'total_decompressed_size',
+    'decompression_unverifiable',
+    'stream_filter_count',
+    'interpretation_size',
+    'interpretation_fuel',
+    'content_operation_count',
+    'content_stream_size',
+    'content_input_size',
+    'content_element_count',
+    'text_glyph_count',
+    'text_size',
+    'search_input_size',
+    'search_hit_count',
+    'text_rule_count',
+    'table_cell_count',
+    'table_span_candidate_count',
+    'table_column_count',
+    'ocr_layer_word_count',
+    'ocr_layer_text_size',
+    'ocr_layer_character_count',
+    'ocr_raster_size',
+    'ocr_detection_count',
+    'ocr_text_size',
+    'ocr_model_size',
+    'ocr_dictionary_entries',
+    'stream_data_size',
+    'object_value_depth',
+    'markdown_output_size',
+    'export_output_size',
+    'pdf_output_size',
+    'pixmap_output_size',
+    'clip_page_side',
+    'svg_output_size',
+    'render_output_size',
+    'password_input_size',
+    'embedded_file_size',
+    'embedded_file_input_size',
+    'annotation_count',
+    'annotation_text_size',
+    'annotation_dash_count',
+    'annotation_input_size',
+    'form_field_input_size',
+    'form_default_appearance_size',
+    'form_field_parent_depth',
+    'script_size',
+    'text_edit_forms',
+    'image_input_size',
+    'text_line_count',
+    'text_input_size',
+    'shaped_glyph_count',
+    'font_input_size',
+    'page_fonts_tree',
+    'page_fonts_entries',
+    'page_fonts_forms',
+    'font_subset_appearances',
+    'named_destination_count',
+    'named_destination_edge_count',
+    'named_destination_depth',
+    'named_destination_text_size',
+    'toc_entry_count',
+    'toc_text_size',
+    'toc_input_size',
+    'structure_tree_count',
+    'page_entry_count',
+    'page_label_tree_depth',
+    'page_label_tree_edges',
+    'page_label_ranges',
+    'page_label_text_size',
+    'page_label_input_size',
+    'optional_content_count',
+    'optional_content_expression',
+    'sanitize_action_chain',
+    'sanitize_forms',
+    'memory_size',
+    'deadline',
+    'cancelled',
+    'annotation_quad_count',
+    'annotation_point_count',
+    'annotation_appearance_size',
+    'annotation_synthesis_count',
+    'annotation_synthesis_point_count',
+]
+```
 
 A stable code that `LimitError.code` carries.
 
 ## `LimitError`
+
+```python
+class LimitError(PdfError)
+```
 
 A refusal by a limit, whose `code` names the limit.
 
@@ -220,29 +331,57 @@ The stable code of the limit, from `LIMIT_CODES`.
 
 ## `MalformedPdfError`
 
+```python
+class MalformedPdfError(PdfError)
+```
+
 Input that cannot be read as a PDF document, including empty input.
 
 ## `OcrError`
+
+```python
+class OcrError(PdfError)
+```
 
 OCR model loading or inference failed.
 
 ## `PasswordError`
 
+```python
+class PasswordError(PdfError)
+```
+
 A password that matches neither the user password nor the owner password.
 
 ## `PdfError`
+
+```python
+class PdfError(Exception)
+```
 
 The base class of the errors that pyropdf raises for a document.
 
 ## `PyropdfWarning`
 
+```python
+class PyropdfWarning(UserWarning)
+```
+
 A recoverable condition of reading a PDF, such as glyphs that text extraction left out.
 
 ## `StaleObjectError`
 
+```python
+class StaleObjectError(PdfError)
+```
+
 Use of a handle whose object the current version no longer has.
 
 ## `StalePageError`
+
+```python
+class StalePageError(StaleObjectError)
+```
 
 Use of a `Page` whose page object the page tree no longer lists.
 

@@ -24,6 +24,7 @@ viewer's zoom.
 ## `Destinations`
 
 ```python
+class Destinations(Mapping[str, Destination | None])
 Destinations(document: Document)
 ```
 
@@ -136,6 +137,7 @@ Settable.
 ## `Links`
 
 ```python
+class Links(Sequence[Link])
 Links(page: Page)
 ```
 
@@ -174,6 +176,14 @@ Links.__iter__() -> Iterator[Link]
 
 Iterate over the links that the page lists now.
 
+### `Links.__delitem__`
+
+```python
+Links.__delitem__(index: int | slice)
+```
+
+Remove links from the page, in one transaction.
+
 ### `Links.add`
 
 ```python
@@ -209,7 +219,9 @@ A place in another PDF file: a zero-based page or a named destination.
 
 ## `Target`
 
-`Target = pyropdf.Destination | pyropdf.RemoteDestination | pyropdf.Launch | pyropdf.NamedAction | str`
+```python
+Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | str
+```
 
 Where a link leads: a place in this document or in another file, a file
 to open, a viewer action, or a URI as a string.

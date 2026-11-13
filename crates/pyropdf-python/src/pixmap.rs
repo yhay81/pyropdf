@@ -59,6 +59,10 @@ pub(crate) fn decode_error(error: DecodeError) -> PyErr {
 
 /// A rendered page: immutable pixels, row by row from the top, RGB or gray,
 /// each with or without straight alpha, 8 bits per channel.
+///
+/// Implements Python's buffer protocol without copying: `memoryview(pixmap)`
+/// and `numpy.asarray(pixmap)` expose the samples read-only as `uint8` (`"B"`)
+/// values shaped `(height, width, channels)`.
 #[pyclass(frozen, module = "pyropdf._core")]
 pub struct Pixmap {
     width: u32,

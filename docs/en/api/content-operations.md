@@ -28,7 +28,7 @@ writing adds back.
 InlineImage.operator: str
 ```
 
-Return `"BI"`, so that every item of `Operations` has an operator.
+`"BI"`, so that every item of `Operations` has an operator.
 
 ### `InlineImage.operands`
 
@@ -36,7 +36,7 @@ Return `"BI"`, so that every item of `Operations` has an operator.
 InlineImage.operands: tuple[Any, ...]
 ```
 
-Return `()`: an inline image holds its dictionary and data instead.
+`()`: an inline image holds its dictionary and data instead.
 
 ## `Operation`
 
@@ -57,6 +57,7 @@ shows.
 ## `Operations`
 
 ```python
+class Operations(Sequence['Operation | InlineImage'])
 Operations(items: Iterable[Operation | InlineImage] = (), *, tail: bytes = b'')
 ```
 
@@ -69,30 +70,6 @@ write their original bytes, comments and white space included, so
 written from their values. Bytes after the last operation that hayro
 reads, such as content after an operation that it cannot read, stay in
 `tail` and are written last.
-
-### `Operations.__getitem__`
-
-```python
-Operations.__getitem__(index: int | slice) -> Operation | InlineImage | Operations
-```
-
-Return one operation, or the operations of a slice without the tail.
-
-### `Operations.__iter__`
-
-```python
-Operations.__iter__() -> Iterator[Operation | InlineImage]
-```
-
-Iterate over the operations.
-
-### `Operations.__len__`
-
-```python
-Operations.__len__() -> int
-```
-
-Return the number of operations.
 
 ### `Operations.parse`
 
@@ -128,3 +105,27 @@ Operations.to_bytes() -> bytes
 ```
 
 Write the operations as content-stream bytes.
+
+### `Operations.__getitem__`
+
+```python
+Operations.__getitem__(index: int | slice) -> Operation | InlineImage | Operations
+```
+
+Return one operation, or the operations of a slice without the tail.
+
+### `Operations.__len__`
+
+```python
+Operations.__len__() -> int
+```
+
+Return the number of operations.
+
+### `Operations.__iter__`
+
+```python
+Operations.__iter__() -> Iterator[Operation | InlineImage]
+```
+
+Iterate over the operations.
