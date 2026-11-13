@@ -3,21 +3,20 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_set};
 use pyropdf_store::memo::{Memo, Reads};
 use pyropdf_store::pages::{PageIndex, PageTree};
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
-use super::copy::copy_value;
 use super::field_edit::form_object;
 use super::fill::base;
 use super::fill_index::FillCache;
 use super::flatten::{self as flattening, Missing, Selection};
 use super::traversal::{Form, visit};
 use super::tree_edit::edit_array;
-use super::values::{Id, id, insert_set, object, stale};
+use super::values::{Id, id, object, stale};
 use crate::annotations::{
     AnnotationError as Error, AnnotationResult as Result, PageAnnots, synthesized,
 };
@@ -117,7 +116,7 @@ fn leaving(form: &Form, widgets: &[Id], budget: &Budget) -> Result<Leaving> {
                 .all(|kid| widgets.binary_search(kid).is_ok());
         if !last {
             detached.try_push(widget)?;
-        } else if insert_set(&mut seen, owner, budget)? {
+        } else if try_insert_set(&mut seen, owner, budget)? {
             fields.try_push(owner)?;
             for &kid in &field.widgets {
                 unlisted.try_push(kid)?;
@@ -315,7 +314,7 @@ fn unlist(
             if listed(position, item) {
                 continue;
             }
-            let item = match copy_value(item, budget)? {
+            let item = match copy_for_edit(item, budget)? {
                 entry @ Value::Dict(_) => {
                     let reference = transaction.allocate()?;
                     transaction.write(reference.number(), &entry, budget)?;

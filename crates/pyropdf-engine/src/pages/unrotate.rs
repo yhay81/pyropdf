@@ -16,7 +16,6 @@ use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use crate::display::{BOXES, Box4, number, rect, rotation, to_display, user_boxes};
-use crate::navigation::{free, references};
 
 /// The result of removing a page's rotation.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -686,7 +685,7 @@ fn apply_unrotation(
         _ => Array::new(),
     };
     budget.check(LimitCode::AnnotationCount, items.len() as u64)?;
-    let references = references(references_cache, transaction, budget)?;
+    let references = references_cache.in_transaction(transaction, budget)?;
     let mut direct = false;
     for item in items.iter_mut() {
         budget.poll()?;
@@ -834,7 +833,7 @@ fn apply_unrotation(
         }
     }
     let unused = state.unused.into_vec();
-    free(references_cache, transaction, &unused, budget)?;
+    refs::free_unreferenced(references_cache, transaction, &[], &unused, budget)?;
     Ok(true)
 }
 

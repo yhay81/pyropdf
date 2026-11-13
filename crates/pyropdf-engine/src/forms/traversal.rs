@@ -7,14 +7,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_set};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Reference, Value};
 
 use super::values::{
-    Id, MAX_NAME_BYTES, MAX_VALUE_BYTES, Text, charge, id, insert_set, limit, looks_like_widget,
-    node_value, object, object_location, omitted, own, read, text,
+    Id, MAX_NAME_BYTES, MAX_VALUE_BYTES, Text, charge, id, limit, looks_like_widget, node_value,
+    object, object_location, omitted, own, read, text,
 };
 use super::{MAX_PARENTS, RADIO};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
@@ -176,7 +176,7 @@ fn classify(reads: &mut Reads<'_>, kid: &Value) -> Result<Kid> {
 /// Marks node `id` visited, refusing more than [`MAX_NODES`]; returns
 /// whether it was new.
 pub(super) fn visit(visited: &mut HashSet<Id>, id: Id, budget: &Budget) -> Result<bool> {
-    if !insert_set(visited, id, budget)? {
+    if !try_insert_set(visited, id, budget)? {
         return Ok(false);
     }
     if visited.len() > MAX_NODES {
@@ -595,7 +595,7 @@ pub(super) fn inherited(reads: &mut Reads<'_>, id: Id, key: &str) -> Result<Opti
         let Value::Dict(dict) = &*value else {
             return Ok(None);
         };
-        if !insert_set(&mut visited, actual, reads.budget())? {
+        if !try_insert_set(&mut visited, actual, reads.budget())? {
             return Ok(None);
         }
         if visited.len() > MAX_PARENTS {

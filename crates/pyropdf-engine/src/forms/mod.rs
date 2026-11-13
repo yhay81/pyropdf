@@ -14,7 +14,6 @@
 //! at ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
 mod appearance;
-pub mod copy;
 pub mod defaults;
 pub mod face;
 pub mod field_edit;

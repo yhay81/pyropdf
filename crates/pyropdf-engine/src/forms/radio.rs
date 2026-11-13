@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map, try_insert_set};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
@@ -10,8 +10,7 @@ use pyropdf_store::version::Transaction;
 
 use super::traversal::{MAX_EDGES, edges_error};
 use super::values::{
-    FIELD_TRIGGERS, Id, MAX_NAME_BYTES, charge, id, insert_set, located, object, object_location,
-    push, read, reserve_map,
+    FIELD_TRIGGERS, Id, MAX_NAME_BYTES, charge, id, located, object, object_location, read,
 };
 use super::{RADIO, text_string};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
@@ -59,16 +58,13 @@ type Group = (PdfString, Vec<(Reference, Reference)>);
 
 /// Returns the top-level radio buttons that share a name, each a field
 /// merged with its widget, by name in `/Fields` order.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "reserve_map charges and fallibly reserves the slot before insertion"
-)]
 fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> Result<Vec<Group>> {
     if fields.len() > MAX_EDGES {
         return Err(edges_error());
     }
     let budget = reads.budget();
-    let mut groups: Vec<Group> = Vec::new();
+    let mut groups: BudgetVec<'_, (PdfString, BudgetVec<'_, (Reference, Reference)>)> =
+        BudgetVec::new(budget);
     let mut positions: HashMap<String, usize> = HashMap::new();
     let mut totals = (0, 0);
     let mut seen = HashSet::new();
@@ -80,7 +76,7 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> Result<Vec<Group>> {
         let Some((actual, value)) = object_location(reads, *reference)? else {
             continue;
         };
-        if !insert_set(&mut seen, actual, budget)? {
+        if !try_insert_set(&mut seen, actual, budget)? {
             continue;
         }
         let actual = Reference::new(actual.0, actual.1);
@@ -117,18 +113,22 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> Result<Vec<Group>> {
             "decoded field name",
         )?;
         match positions.get(decoded.as_str()) {
-            Some(&at) => push(&mut groups[at].1, (*reference, actual), budget)?,
+            Some(&at) => groups[at].1.try_push((*reference, actual))?,
             None => {
-                reserve_map(&mut positions, budget)?;
-                positions.insert(decoded, groups.len());
-                let mut members = Vec::new();
-                push(&mut members, (*reference, actual), budget)?;
-                push(&mut groups, (title, members), budget)?;
+                try_insert_map(&mut positions, decoded, groups.len(), budget)?;
+                let mut members = BudgetVec::new(budget);
+                members.try_push((*reference, actual))?;
+                groups.try_push((title, members))?;
             }
         }
     }
-    groups.retain(|(_, members)| members.len() > 1);
-    Ok(groups)
+    let mut kept = BudgetVec::new(budget);
+    for (title, members) in groups.into_vec() {
+        if members.len() > 1 {
+            kept.try_push((title, members.into_vec()))?;
+        }
+    }
+    Ok(kept.into_vec())
 }
 /// Gathers the top-level radio buttons that share a name, each a field
 /// merged with its widget, under one new parent field of that name, which
@@ -136,7 +136,7 @@ fn radio_groups(reads: &mut Reads<'_>, fields: &Array) -> Result<Vec<Group>> {
 /// made. Viewers and the walk otherwise see only one of them.
 #[expect(
     clippy::disallowed_methods,
-    reason = "field and action keys come from fixed lists; replaced entries are charged through reserve_map"
+    reason = "field and action keys come from fixed lists"
 )]
 pub fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> Result<u32> {
     let before = transaction.snapshot();
@@ -261,8 +261,12 @@ pub fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> Re
             )]
             dict.insert(Name::from("Parent"), Value::Reference(reference));
             transaction.write(member.number(), &Value::Dict(dict), budget)?;
-            reserve_map(&mut replaced, budget)?;
-            replaced.insert(member, (member == members[0].1).then_some(reference));
+            try_insert_map(
+                &mut replaced,
+                member,
+                (member == members[0].1).then_some(reference),
+                budget,
+            )?;
         }
     }
     let mut changed_fields = BudgetVec::new(budget);
@@ -278,7 +282,7 @@ pub fn repair_radio_groups(transaction: &mut Transaction, budget: &Budget) -> Re
                         .map(|replacement| (actual, replacement))
                 }) {
                     Some((actual, Some(parent)))
-                        if insert_set(&mut emitted, id(actual), budget)? =>
+                        if try_insert_set(&mut emitted, id(actual), budget)? =>
                     {
                         Some(Value::Reference(*parent))
                     }

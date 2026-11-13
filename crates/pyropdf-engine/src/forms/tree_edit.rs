@@ -1,7 +1,7 @@
 //! Update field-tree arrays and split merged field/widget dictionaries.
 
-use super::copy::copy_array;
-use pyropdf_store::budget::Budget;
+use pyropdf_store::budget::{Budget, BudgetVec};
+use pyropdf_store::refs::{copy_array_for_edit, copy_dict_for_edit};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::Transaction;
 
@@ -35,7 +35,7 @@ pub(super) fn edit_array(
             && object.generation() == array.generation()
             && let Value::Array(items) = object.value().as_ref()
         {
-            let mut items = copy_array(items, budget)?;
+            let mut items = copy_array_for_edit(items, budget)?;
             edit(&mut items);
             transaction.write(array.number(), &Value::Array(items), budget)?;
             return Ok(());
@@ -50,6 +50,40 @@ pub(super) fn edit_array(
     dict.insert(Name::from(key), Value::Array(items));
     transaction.write(holder.number(), &Value::Dict(dict), budget)?;
     Ok(())
+}
+
+/// Appends `added` to the array that entry `key` of object `holder` holds,
+/// creating an empty array when the entry is none, with every copy and
+/// allocation charged to `budget`.
+pub(super) fn append_references(
+    transaction: &mut Transaction,
+    holder: Reference,
+    key: &str,
+    added: &[Reference],
+    budget: &Budget,
+) -> Result<()> {
+    let mut error = None;
+    edit_array(transaction, holder, key, budget, true, |items| {
+        let mut combined = BudgetVec::new(budget);
+        let result = (|| -> Result<()> {
+            combined.try_reserve_exact(items.len().saturating_add(added.len()))?;
+            for item in items.iter_mut() {
+                combined.try_push(std::mem::replace(item, Value::Null))?;
+            }
+            for &field in added {
+                combined.try_push(Value::Reference(field))?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => *items = Array::from(combined.into_vec()),
+            Err(err) => error = Some(err),
+        }
+    })?;
+    match error {
+        Some(err) => Err(err),
+        None => Ok(()),
+    }
 }
 
 /// Returns the field that takes another widget of field `field`: the field
@@ -89,7 +123,7 @@ pub(super) fn join(
     // triggers move to the parent.
     let actions = match kid.get("AA") {
         Some(Value::Reference(actions)) => dict_at(transaction, *actions, budget)?,
-        Some(Value::Dict(actions)) => Some(actions.clone()),
+        Some(Value::Dict(actions)) => Some(copy_dict_for_edit(actions, budget)?),
         _ => None,
     };
     if let Some(mut actions) = actions {

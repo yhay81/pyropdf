@@ -2,7 +2,7 @@
 
 use pyropdf_store::budget::{Budget, BudgetVec};
 use pyropdf_store::memo::Reads;
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::copy_dict_for_edit;
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::Transaction;
 
@@ -177,7 +177,7 @@ pub(in crate::forms) fn form_object(
             }
             None
         }
-        Some(form @ Value::Dict(_)) => Some(copy_for_edit(form, budget)?),
+        Some(Value::Dict(form)) => Some(Value::Dict(copy_dict_for_edit(form, budget)?)),
         _ => None,
     };
     let form = match form {
@@ -212,9 +212,7 @@ pub(in crate::forms) fn form_object(
             )
         }
     };
-    let Value::Dict(mut catalog) = copy_for_edit(&catalog, budget)? else {
-        unreachable!("a copied dictionary remains a dictionary");
-    };
+    let mut catalog = copy_dict_for_edit(catalog_dict, budget)?;
     let reference = transaction.allocate()?;
     transaction.write(reference.number(), &form, budget)?;
     #[expect(
@@ -236,15 +234,10 @@ pub(in crate::forms) fn dict_at(
 ) -> Result<Option<Dict>> {
     let object = transaction.version().get(reference.number(), budget)?;
     match object.as_ref() {
-        Some(object)
-            if object.generation() == reference.generation()
-                && matches!(**object.value(), Value::Dict(_)) =>
-        {
-            match copy_for_edit(object.value(), budget)? {
-                Value::Dict(dict) => Ok(Some(dict)),
-                _ => unreachable!("a copied dictionary remains a dictionary"),
-            }
-        }
+        Some(object) if object.generation() == reference.generation() => match &**object.value() {
+            Value::Dict(dict) => Ok(Some(copy_dict_for_edit(dict, budget)?)),
+            _ => Ok(None),
+        },
         _ => Ok(None),
     }
 }

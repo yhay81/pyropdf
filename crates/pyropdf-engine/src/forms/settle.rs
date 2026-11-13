@@ -2,7 +2,7 @@
 //! interactive form widgets.
 
 use pyropdf_store::budget::{Budget, LimitCode};
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::copy_dict_for_edit;
 use pyropdf_store::value::{Bytes, Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Transaction;
 use pyropdf_store::{Error, Result};
@@ -167,10 +167,7 @@ pub fn write(
 ) -> Result<()> {
     let reader = Reader::new(transaction.version(), budget);
     let mut appearances = match reader.entry(widget, "AP")?.as_deref() {
-        Some(value @ Value::Dict(_)) => match copy_for_edit(value, budget)? {
-            Value::Dict(appearances) => appearances,
-            _ => unreachable!("a copied dictionary remains a dictionary"),
-        },
+        Some(Value::Dict(appearances)) => copy_dict_for_edit(appearances, budget)?,
         _ => Dict::new(),
     };
     match drawing {
@@ -190,7 +187,7 @@ pub fn write(
         Drawing::States(states) => {
             let mut normal = match appearances.get("N") {
                 Some(normal) => match &*reader.resolve(normal)? {
-                    Value::Dict(normal) => normal.clone(),
+                    Value::Dict(normal) => copy_dict_for_edit(normal, budget)?,
                     _ => Dict::new(),
                 },
                 None => Dict::new(),
@@ -215,9 +212,10 @@ pub fn write(
             "a widget disappeared while settling its appearance",
         ));
     };
-    let Value::Dict(mut widget) = copy_for_edit(original.value(), budget)? else {
+    let Value::Dict(original_widget) = &**original.value() else {
         return Err(Error::malformed("a widget is no longer a dictionary"));
     };
+    let mut widget = copy_dict_for_edit(original_widget, budget)?;
     if appearances.is_empty() {
         widget.remove("AP");
     } else {

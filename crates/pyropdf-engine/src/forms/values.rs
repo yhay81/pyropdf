@@ -1,7 +1,6 @@
-//! Shared PDF object resolution, text and field-value decoding, and budgeted
-//! collection helpers for AcroForm operations.
+//! Shared PDF object resolution and text and field-value decoding for AcroForm
+//! operations.
 
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
@@ -130,40 +129,6 @@ pub(super) fn read(reads: &mut Reads<'_>, value: Option<&Value>) -> Result<Optio
     Ok(located(reads, value)?.map(|(value, _)| value))
 }
 
-/// Charge a fallible allocation before growing an owned input-sized vector.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "MemorySize is charged before fallible reservation; push uses the reserved capacity"
-)]
-pub(super) fn push<T>(items: &mut Vec<T>, value: T, budget: &Budget) -> Result<()> {
-    budget.poll()?;
-    if items.len() == items.capacity() {
-        let count = items.len().max(4);
-        budget.charge(
-            LimitCode::MemorySize,
-            count.saturating_mul(2 * size_of::<T>()) as u64,
-        )?;
-        items
-            .try_reserve(count)
-            .map_err(|_| pyropdf_store::LimitExceeded::new(LimitCode::MemorySize))?;
-    }
-    items.push(value);
-    Ok(())
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "MemorySize pays for an entry and table overhead before fallible reservation"
-)]
-pub(super) fn reserve_map<K: Eq + std::hash::Hash, V>(
-    map: &mut HashMap<K, V>,
-    budget: &Budget,
-) -> Result<()> {
-    budget.charge(LimitCode::MemorySize, (64 + 2 * size_of::<(K, V)>()) as u64)?;
-    map.try_reserve(1)
-        .map_err(|_| pyropdf_store::LimitExceeded::new(LimitCode::MemorySize).into())
-}
-
 pub(super) const fn id(reference: Reference) -> Id {
     (reference.number(), reference.generation())
 }
@@ -199,23 +164,6 @@ pub(super) fn own<'d>(
 pub(super) fn looks_like_widget(dict: &Dict) -> bool {
     matches!(dict.get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"Widget")
         || dict.get("Rect").is_some()
-}
-
-/// Marks node `id` visited in `visited`; returns whether it was new.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "MemorySize pays for an entry and table overhead before fallible reservation and insertion"
-)]
-pub(super) fn insert_set(visited: &mut HashSet<Id>, id: Id, budget: &Budget) -> Result<bool> {
-    budget.poll()?;
-    if visited.contains(&id) {
-        return Ok(false);
-    }
-    budget.charge(LimitCode::MemorySize, (64 + 2 * size_of::<Id>()) as u64)?;
-    visited
-        .try_reserve(1)
-        .map_err(|_| pyropdf_store::LimitExceeded::new(LimitCode::MemorySize))?;
-    Ok(visited.insert(id))
 }
 
 /// Decodes text string `encoded`, charging its encoded and decoded bytes

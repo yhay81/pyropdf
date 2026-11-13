@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map};
 use pyropdf_store::pages::MAX_CHAIN;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
@@ -22,23 +22,13 @@ use pyropdf_store::version::Transaction;
 use pyropdf_store::{Error, LimitExceeded, Result};
 
 /// Hash table keys, values, slack, and rehash space share the operation budget.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "each new entry is charged to the budget before the map grows"
-)]
 fn map_put<K: Eq + Hash, V>(
     map: &mut HashMap<K, V>,
     key: K,
     value: V,
     budget: &Budget,
 ) -> Result<Option<V>> {
-    budget.poll()?;
-    if !map.contains_key(&key) {
-        budget.charge(LimitCode::MemorySize, (64 + 2 * size_of::<(K, V)>()) as u64)?;
-        map.try_reserve(1)
-            .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
-    }
-    Ok(map.insert(key, value))
+    Ok(try_insert_map(map, key, value, budget)?)
 }
 
 /// Array growth includes transient allocation while the old buffer is live.

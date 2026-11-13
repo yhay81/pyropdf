@@ -42,13 +42,13 @@ use crate::budget::{Budget, BudgetVec, LimitCode};
 use crate::memo::Reads;
 use crate::value::{Dict, Name, Reference, Value};
 use crate::version::table::Table;
-use crate::version::{ChangeSet, Version};
+use crate::version::{ChangeSet, Transaction, Version};
 
-pub use copy::copy_for_edit;
+pub use copy::{copy_array_for_edit, copy_dict_for_edit, copy_for_edit};
 pub use form_impact::affected_form_objects;
 pub use labels::{Labels, relabel};
 pub use roles::{Link, Role};
-pub use rules::{Edits, Rule, unreferenced};
+pub use rules::{Edits, Rule, free_unreferenced, unreferenced};
 
 /// Plans in `edits` the rules for `removed`, the pages that leave the
 /// version that `reads` reads, whose index is `index`. `retained` lists
@@ -592,6 +592,25 @@ impl Cache {
         let index = Arc::new(index);
         *self.lock() = Some((Arc::downgrade(version), Arc::clone(&index)));
         Ok(index)
+    }
+
+    /// Returns the index of what `transaction` has written so far: the cached
+    /// index of `transaction.parent()`, updated across any uncommitted changes
+    /// in `transaction`.
+    pub fn in_transaction(
+        &self,
+        transaction: &Transaction,
+        budget: &Budget,
+    ) -> Result<Arc<References>> {
+        let parent = transaction.parent();
+        let index = self.get(parent, budget)?;
+        let current = transaction.snapshot();
+        Ok(match parent.changes(&current, budget)? {
+            Some(changes) if !changes.is_empty() => {
+                Arc::new(index.update(&mut Reads::new(&current, budget), &changes)?)
+            }
+            _ => index,
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<(Weak<Version>, Arc<References>)>> {

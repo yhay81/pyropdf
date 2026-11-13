@@ -3067,3 +3067,261 @@ fn a_link_that_no_role_names_is_its_own_role() {
         [(vec![key("Kids"), Step::Index(0)], None)]
     );
 }
+
+#[test]
+fn array_and_dict_edit_copies_preserve_lexemes_headroom_and_bounds() {
+    let parsed_array = Value::parse(
+        &Bytes::from(&b"[ 1.000  << /Odd#20Key 2 >> ]"[..]),
+        &Budget::default(),
+    )
+    .unwrap();
+    let Value::Array(source_array) = &parsed_array else {
+        panic!("expected array");
+    };
+    let mut copied_array = copy_array_for_edit(source_array, &Budget::default()).unwrap();
+    assert_eq!(
+        copied_array.lexeme().map(Bytes::as_slice),
+        Some(&b"[ 1.000  << /Odd#20Key 2 >> ]"[..])
+    );
+    for extra in 0..8 {
+        copied_array.push(Value::Integer(extra));
+    }
+    assert!(copied_array.lexeme().is_none());
+    assert_eq!(source_array.len(), 2);
+    let Some(Value::Dict(nested)) = copied_array.get(1) else {
+        panic!("expected nested dictionary");
+    };
+    assert_eq!(
+        nested.lexeme().map(Bytes::as_slice),
+        Some(&b"<< /Odd#20Key 2 >>"[..])
+    );
+
+    let parsed_dict = Value::parse(
+        &Bytes::from(&b"<< /Outer  [ 1.000  2 0 R ] >>"[..]),
+        &Budget::default(),
+    )
+    .unwrap();
+    let Value::Dict(source_dict) = &parsed_dict else {
+        panic!("expected dictionary");
+    };
+    let mut copied_dict = copy_dict_for_edit(source_dict, &Budget::default()).unwrap();
+    assert_eq!(
+        copied_dict.lexeme().map(Bytes::as_slice),
+        Some(&b"<< /Outer  [ 1.000  2 0 R ] >>"[..])
+    );
+    for extra in 0..4 {
+        copied_dict.insert(
+            Name::from(format!("Extra{extra}").as_str()),
+            Value::Integer(extra),
+        );
+    }
+    assert!(copied_dict.lexeme().is_none());
+    assert_eq!(source_dict.len(), 1);
+    let Some(Value::Array(nested)) = copied_dict.get("Outer") else {
+        panic!("expected nested array");
+    };
+    assert_eq!(
+        nested.lexeme().map(Bytes::as_slice),
+        Some(&b"[ 1.000  2 0 R ]"[..])
+    );
+
+    // Headroom is charged up front even for empty containers.
+    let zero_memory = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    assert_eq!(
+        copy_array_for_edit(&Array::new(), &zero_memory)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert_eq!(
+        copy_dict_for_edit(&Dict::new(), &zero_memory)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+
+    // Depth 1 is the container itself; nested values add to it up to ObjectDepth.
+    let zero_depth = Budget::default().with_limit(LimitCode::ObjectDepth, Some(0));
+    assert_eq!(
+        copy_array_for_edit(&Array::new(), &zero_depth)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    assert_eq!(
+        copy_dict_for_edit(&Dict::new(), &zero_depth)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    let mut deep = Value::Null;
+    for _ in 0..63 {
+        deep = array(vec![deep]);
+    }
+    let at_limit_array = Array::from(vec![deep.clone()]);
+    let at_limit_dict: Dict = [(Name::from("K"), deep)].into_iter().collect();
+    assert!(copy_array_for_edit(&at_limit_array, &Budget::default()).is_ok());
+    assert!(copy_dict_for_edit(&at_limit_dict, &Budget::default()).is_ok());
+    let over_array = Array::from(vec![Value::Array(at_limit_array)]);
+    let over_dict: Dict = [(Name::from("Outer"), Value::Dict(at_limit_dict))]
+        .into_iter()
+        .collect();
+    assert_eq!(
+        copy_array_for_edit(&over_array, &Budget::default())
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+    assert_eq!(
+        copy_dict_for_edit(&over_dict, &Budget::default())
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::ObjectDepth)
+    );
+
+    let token = crate::budget::CancellationToken::new();
+    token.cancel();
+    let cancelled = Budget::default().with_cancellation(token);
+    assert_eq!(
+        copy_array_for_edit(&Array::new(), &cancelled)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+    assert_eq!(
+        copy_dict_for_edit(&Dict::new(), &cancelled)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::Cancelled)
+    );
+}
+
+#[test]
+fn in_transaction_updates_references_and_keeps_the_parent_cached() {
+    let document = tagged();
+    let budget = Budget::default();
+    let cache = Cache::new();
+    let parent = document.current();
+
+    // Cold cache builds `parent` and updates across uncommitted changes.
+    let mut transaction = document.begin();
+    transaction.write(5, &Value::Null, &budget).unwrap();
+    let allocated = transaction.allocate().unwrap();
+    transaction
+        .write(
+            allocated.number(),
+            &dict(vec![("Target", reference(3))]),
+            &budget,
+        )
+        .unwrap();
+    let in_flight = cache.in_transaction(&transaction, &budget).unwrap();
+    assert_eq!(*in_flight, build(&transaction.snapshot(), &budget).unwrap());
+    assert!(in_flight.referrers(3).contains(&allocated.number()));
+    assert!(!in_flight.referrers(3).contains(&5));
+
+    // Dropping the uncommitted transaction leaves `parent` cached.
+    drop(transaction);
+    let cached_parent = cache.get(&parent, &budget).unwrap();
+    assert!(cached_parent.referrers(3).contains(&5));
+    assert!(Arc::ptr_eq(
+        &cached_parent,
+        &cache.get(&document.current(), &budget).unwrap()
+    ));
+
+    // An untouched transaction reuses the cached parent index directly.
+    let clean = document.begin();
+    assert!(Arc::ptr_eq(
+        &cached_parent,
+        &cache.in_transaction(&clean, &budget).unwrap()
+    ));
+}
+
+#[test]
+fn free_unreferenced_frees_seeds_and_orphaned_candidates_in_a_transaction() {
+    let objects = vec![
+        (
+            1,
+            dict(vec![
+                ("Type", name("Catalog")),
+                ("Outlines", reference(2)),
+                ("Keep", reference(6)),
+            ]),
+        ),
+        (
+            2,
+            dict(vec![("Type", name("Outlines")), ("First", reference(3))]),
+        ),
+        (
+            3,
+            dict(vec![
+                ("Parent", reference(2)),
+                ("A", reference(4)),
+                ("Dest", reference(5)),
+            ]),
+        ),
+        (4, dict(vec![("S", name("URI"))])),
+        (5, array(vec![Value::Null])),
+        (6, dict(vec![("Dest", reference(5))])),
+        // A cyclic pair rooted at seed 7 that also points to shared object 5.
+        (
+            7,
+            dict(vec![("Child", reference(8)), ("Shared", reference(5))]),
+        ),
+        (8, dict(vec![("Back", reference(7))])),
+    ];
+    let trailer = [(Name::from("Root"), reference(1))].into_iter().collect();
+    let document = document_of(&objects, trailer);
+    let budget = Budget::default();
+    let cache = Cache::new();
+
+    let mut transaction = document.begin();
+    assert!(
+        free_unreferenced(&cache, &mut transaction, &[], &[], &budget)
+            .unwrap()
+            .is_empty()
+    );
+
+    transaction
+        .write(
+            1,
+            &dict(vec![("Type", name("Catalog")), ("Keep", reference(6))]),
+            &budget,
+        )
+        .unwrap();
+
+    // A refused budget frees nothing.
+    let zero_memory = Budget::default().with_limit(LimitCode::MemorySize, Some(0));
+    assert_eq!(
+        free_unreferenced(&cache, &mut transaction, &[7], &[2, 3, 6], &zero_memory)
+            .unwrap_err()
+            .limit()
+            .map(LimitExceeded::code),
+        Some(LimitCode::MemorySize)
+    );
+    assert!(transaction.version().get(2, &budget).unwrap().is_some());
+    assert!(transaction.version().get(7, &budget).unwrap().is_some());
+
+    let freed = free_unreferenced(&cache, &mut transaction, &[7], &[2, 3, 6], &budget).unwrap();
+    assert_eq!(&*freed, &[2, 3, 4, 7, 8]);
+    let committed = transaction.commit(&budget).unwrap();
+    for gone in [2, 3, 4, 7, 8] {
+        assert!(
+            committed.get(gone, &budget).unwrap().is_none(),
+            "object {gone}"
+        );
+    }
+    for kept in [1, 5, 6] {
+        assert!(
+            committed.get(kept, &budget).unwrap().is_some(),
+            "object {kept}"
+        );
+    }
+}

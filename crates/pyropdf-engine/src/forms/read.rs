@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_set};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::value::{Dict, Name, Reference, Value};
@@ -10,8 +10,8 @@ use pyropdf_store::version::Version;
 
 use super::traversal::{Form, inherited};
 use super::values::{
-    Id, MAX_STATE_BYTES, MAX_VALUE_BYTES, MAX_VALUE_ITEMS, charge, id, insert_set, limit,
-    object_location, read, stale, text,
+    Id, MAX_STATE_BYTES, MAX_VALUE_BYTES, MAX_VALUE_ITEMS, charge, id, limit, object_location,
+    read, stale, text,
 };
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result, PageAnnots, Rect};
 
@@ -127,7 +127,7 @@ pub fn form_field_widgets(
     let field = form.field(id).ok_or_else(|| stale(id))?;
     let mut widgets = HashSet::new();
     for &widget in &field.widgets {
-        insert_set(&mut widgets, widget, budget)?;
+        try_insert_set(&mut widgets, widget, budget)?;
     }
     let mut reads = Reads::new(version, budget);
     let mut out = BudgetVec::new(budget);
