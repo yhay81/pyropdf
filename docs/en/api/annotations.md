@@ -431,7 +431,7 @@ Settable.
 AnnotationFile.size: int
 ```
 
-The uncompressed size that the file declares (`/Params /Size`), or -1, as pymupdf does.
+The uncompressed size that the file declares (`/Params /Size`), or -1 when absent.
 
 ### `AnnotationFile.created`
 
@@ -479,7 +479,7 @@ AnnotationFile.write(
 )
 ```
 
-Replace the file's contents, as pymupdf's `embfile_upd` does.
+Replace the embedded file's contents.
 
 The file name, description, and creation date stay; `size` becomes
 the new length, `modified` the current time, and a stale
@@ -488,7 +488,7 @@ copied and defaults to 64 MiB (`embedded_file_size`).
 
 ## `AnnotationFlags`
 
-Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.
+Annotation `/F` bit flags (ISO 32000-2 Table 167).
 
 Members: `INVISIBLE`, `HIDDEN`, `PRINT`, `NO_ZOOM`, `NO_ROTATE`, `NO_VIEW`, `READ_ONLY`, `LOCKED`, `TOGGLE_NO_VIEW`, `LOCKED_CONTENTS`.
 
@@ -546,9 +546,11 @@ read in the transaction, so that every viewer draws it alike.
 
 `AnnotationSpecification = pyropdf.Highlight | pyropdf.Underline | pyropdf.StrikeOut | pyropdf.Squiggly | pyropdf.Note | pyropdf.Square | pyropdf.Circle | pyropdf.LineAnnotation | pyropdf.Polygon | pyropdf.PolyLine | pyropdf.Ink | pyropdf.Caret | pyropdf.FileAttachment | pyropdf.FreeText | pyropdf.Stamp`
 
+The specifications that `page.annotations.add` takes.
+
 ## `AnnotationType`
 
-Annotation types by `/Subtype`; the values are pymupdf's `PDF_ANNOT_*` codes.
+Annotation types by `/Subtype` (ISO 32000-2 §12.5.6); `UNKNOWN` (-1) marks an unrecognized subtype.
 
 Members: `UNKNOWN`, `TEXT`, `LINK`, `FREE_TEXT`, `LINE`, `SQUARE`, `CIRCLE`, `POLYGON`, `POLY_LINE`, `HIGHLIGHT`, `UNDERLINE`, `SQUIGGLY`, `STRIKE_OUT`, `REDACT`, `STAMP`, `CARET`, `INK`, `POPUP`, `FILE_ATTACHMENT`, `SOUND`, `MOVIE`, `RICH_MEDIA`, `WIDGET`, `SCREEN`, `PRINTER_MARK`, `TRAP_NET`, `WATERMARK`, `THREE_D`, `PROJECTION`.
 
@@ -767,6 +769,8 @@ Members: `NONE`, `SQUARE`, `CIRCLE`, `DIAMOND`, `OPEN_ARROW`, `CLOSED_ARROW`, `B
 
 `MarkupRects = collections.abc.Sequence[float] | pyropdf.Quad | collections.abc.Iterable[collections.abc.Sequence[float] | pyropdf.Quad]`
 
+Rectangles or quads that text markup covers: one, or a sequence of them.
+
 ## `Note`
 
 ```python
@@ -932,7 +936,7 @@ displayed.
 
 ## `StampIcon`
 
-The stamps of ISO 32000-2 §12.5.6.12, `/Name`; pymupdf's `STAMP_*` codes in their order.
+Standard rubber-stamp icon names, `/Name` (ISO 32000-2 §12.5.6.12).
 
 Members: `APPROVED`, `AS_IS`, `CONFIDENTIAL`, `DEPARTMENTAL`, `EXPERIMENTAL`, `EXPIRED`, `FINAL`, `FOR_COMMENT`, `FOR_PUBLIC_RELEASE`, `NOT_APPROVED`, `NOT_FOR_PUBLIC_RELEASE`, `SOLD`, `TOP_SECRET`, `DRAFT`.
 

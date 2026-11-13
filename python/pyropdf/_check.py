@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 from pyropdf import _core
 from pyropdf._objects import Array, Dictionary, _catalog, _trailer
@@ -12,7 +12,9 @@ from pyropdf._profiles import profiles
 if TYPE_CHECKING:
     from pyropdf._document import Document
 
-DefectKind = Literal["type", "required", "version", "indirect", "value", "invariant", "profile"]
+#: The category of a :class:`StructuralDefect`.
+DefectKind: TypeAlias = Literal["type", "required", "version", "indirect", "value", "invariant", "profile"]
+DefectKind.__doc__ = "The category of a :class:`StructuralDefect`."
 
 
 @dataclass(frozen=True, slots=True)

@@ -3,7 +3,7 @@
 The attachments are the entries of the catalog's ``/EmbeddedFiles`` name tree
 (ISO 32000-2, 7.11.4). Every access walks the tree within its bounds: 32
 levels and 4,096 entries. Adding and deleting write the tree again as one
-node whose ``/Names`` holds the entries sorted, as pylopdf does.
+node whose ``/Names`` holds the entries sorted by key.
 
 A document that claims PDF/A-3 or PDF/A-4 requires each embedded file to be
 an associated file with a MIME type (ISO 19005-3 section 6.8, ISO 19005-4
@@ -124,8 +124,8 @@ def _validate_text(value: object, field: str) -> str:
 def _check_edit(edit: object) -> dict[str, str | None]:
     """Check an edit of file fields as a whole, raising :class:`PdfError`, before anything is written.
 
-    The setters check each value first; this repeats the checks for any
-    caller, as pylopdf's core ``embfile_edit`` does. ``None`` removes a
+    The setters check each value first; this repeats the checks so every edit
+    validates the whole dictionary before writing. ``None`` removes a
     field, except the file name, which a file specification keeps.
     """
     if not isinstance(edit, dict):
@@ -395,7 +395,7 @@ class Attachment:
 
     @property
     def size(self) -> int:
-        """Return the uncompressed size that the file declares (``/Params /Size``), or -1, as pymupdf does."""
+        """Return the uncompressed size that the file declares (``/Params /Size``), or -1 when absent."""
         params = self._params()
         size = params.get("Size") if params is not None else None
         return size if isinstance(size, int) and not isinstance(size, bool) else -1
@@ -436,7 +436,7 @@ class Attachment:
         self._edit_file({"modified": None})
 
     def read(self, *, max_size: int | None = _DEFAULT_MAX_EMBEDDED_FILE_SIZE) -> bytes:
-        """Return the attachment's contents, as pymupdf's ``embfile_get`` does.
+        """Return the decoded bytes of the attachment's embedded file stream.
 
         ``max_size`` bounds the decoded data and defaults to 64 MiB, and the
         document's limits bound the decoding. Pass a larger positive integer
@@ -468,7 +468,7 @@ class Attachment:
             raise PdfError(msg) from error
 
     def write(self, data: bytes, /, *, max_size: int | None = _DEFAULT_MAX_EMBEDDED_FILE_SIZE) -> None:
-        """Replace the attachment's contents, as pymupdf's ``embfile_upd`` does with ``buffer_``.
+        """Replace the attachment's embedded file stream with ``data``.
 
         The name, file name, description, and creation date stay; ``size``
         becomes the new length, ``modified`` the current time, and a stale
@@ -609,10 +609,9 @@ def _rewrite(document: Document, entries: list[_Entry]) -> None:
 class Attachments(Mapping[str, Attachment]):
     """The embedded files of a document, keyed by name, as ``doc.attachments`` returns them.
 
-    This live view replaces pymupdf's ``embfile_*`` methods: iterate it for
-    the sorted names, index it for an :class:`Attachment`, ``add`` a file, and
-    ``del`` one. The EmbeddedFiles name tree is read within its bounds on
-    every access.
+    Iterate this live view for the sorted names, index it for an
+    :class:`Attachment`, :meth:`add` a file, and ``del`` one. The
+    ``/EmbeddedFiles`` name tree is read within its bounds on every access.
     """
 
     __slots__ = ("_document",)
@@ -638,7 +637,7 @@ class Attachments(Mapping[str, Attachment]):
         return iter(self._names())
 
     def __len__(self) -> int:
-        """Return the number of attachments, as pymupdf's ``embfile_count`` does."""
+        """Return the number of attachments."""
         return len(self._names())
 
     def __contains__(self, name: object) -> bool:
@@ -680,7 +679,7 @@ class Attachments(Mapping[str, Attachment]):
         description: str | None = None,
         max_size: int | None = _DEFAULT_MAX_EMBEDDED_FILE_SIZE,
     ) -> Attachment:
-        """Add an attachment and return its handle, as pymupdf's ``embfile_add`` does.
+        """Add an attachment to the document and return its :class:`Attachment` handle.
 
         ``name`` is the unique key; adding an existing name raises
         :class:`PdfError`. ``filename`` is the viewer-facing file name and

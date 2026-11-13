@@ -508,8 +508,8 @@ fn open(
     Ok(_Document::new(document, limits))
 }
 
-/// Opens `bytes` with `password`. A wrong password still opens a document
-/// whose user password is empty, as MuPDF and pylopdf open it.
+/// Opens `bytes` with `password`. When `password` is rejected, falls back to
+/// the empty user password so documents with an empty user password still open.
 pub(crate) fn open_base(
     bytes: Bytes,
     password: Option<&[u8]>,

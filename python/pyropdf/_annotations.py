@@ -44,7 +44,7 @@ _CONTENTS, _ICON, _AUTHOR, _CREATED, _MODIFIED, _SUBJECT, _NAME, _INTENT = range
 
 
 class AnnotationType(enum.IntEnum):
-    """Annotation types by ``/Subtype``; the values are pymupdf's ``PDF_ANNOT_*`` codes."""
+    """Annotation types by ``/Subtype`` (ISO 32000-2 §12.5.6); ``UNKNOWN`` (-1) marks an unrecognized subtype."""
 
     UNKNOWN = -1
     TEXT = 0
@@ -111,7 +111,7 @@ _SUBTYPE_TYPES: dict[str, AnnotationType] = {
 
 
 class AnnotationFlags(enum.IntFlag):
-    """Annotation ``/F`` flags (ISO 32000-2 Table 167); the values are pymupdf's ``PDF_ANNOT_IS_*``."""
+    """Annotation ``/F`` bit flags (ISO 32000-2 Table 167)."""
 
     INVISIBLE = 1 << 0
     HIDDEN = 1 << 1
@@ -256,7 +256,7 @@ class NoteIcon(enum.StrEnum):
 
 
 class StampIcon(enum.StrEnum):
-    """The stamps of ISO 32000-2 §12.5.6.12, ``/Name``; pymupdf's ``STAMP_*`` codes in their order."""
+    """Standard rubber-stamp icon names, ``/Name`` (ISO 32000-2 §12.5.6.12)."""
 
     APPROVED = "approved"
     AS_IS = "as_is"
@@ -508,7 +508,7 @@ class AnnotationFile:
 
     @property
     def size(self) -> int:
-        """Return the uncompressed size that the file declares (``/Params /Size``), or -1, as pymupdf does."""
+        """Return the uncompressed size that the file declares (``/Params /Size``), or -1 when absent."""
         params = self._params()
         size = params.get("Size") if params is not None else None
         return size if isinstance(size, int) and not isinstance(size, bool) else -1
@@ -568,7 +568,7 @@ class AnnotationFile:
             raise LimitError(code, msg) from error
 
     def write(self, data: bytes | bytearray | memoryview, /, *, max_size: int | None = _DEFAULT_MAX_FILE_SIZE) -> None:
-        """Replace the file's contents, as pymupdf's ``embfile_upd`` does.
+        """Replace the embedded file's contents.
 
         The file name, description, and creation date stay; ``size`` becomes
         the new length, ``modified`` the current time, and a stale
@@ -2354,6 +2354,8 @@ for _public in (
     NoteIcon,
     Polygon,
     PolyLine,
+    Sound,
+    SoundEncoding,
     Square,
     Squiggly,
     Stamp,

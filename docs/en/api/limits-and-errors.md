@@ -103,6 +103,109 @@ An operation on an encrypted document that needs a password.
 
 A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
 
+## `LIMIT_CODES`
+
+```python
+LIMIT_CODES = {
+    'file_size': 'The input is larger than `DocumentLimits.max_file_size`.',
+    'page_count': 'The document has more pages than `DocumentLimits.max_pages`.',
+    'object_count': 'The document has more objects than `DocumentLimits.max_objects`.',
+    'object_depth': 'An object nests arrays and dictionaries deeper than `DocumentLimits.max_object_depth`.',
+    'object_parse_size': 'The bytes of one object of the input, up to the next object or cross-reference section, exceed 256 MiB, which hayro-syntax would parse in one call that cannot be cancelled.',
+    'decompressed_size': 'A stream decodes to more than `DocumentLimits.max_decompressed_size`.',
+    'page_content_size': 'A content stream of a page decodes to more than `DocumentLimits.max_page_content_size`.',
+    'total_decompressed_size': 'The streams that one operation decodes are larger together than `DocumentLimits.max_total_decompressed_size`.',
+    'decompression_unverifiable': 'A stream uses a filter whose decoded size cannot be bounded while a decoding limit applies.',
+    'stream_filter_count': 'A stream chains more filters than its limit.',
+    'interpretation_size': 'The PDF data handed to the interpreter is larger than `DocumentLimits.max_interpretation_size`.',
+    'interpretation_fuel': 'Interpretation uses more fuel than the operation allows.',
+    'content_operation_count': "Content holds more operations than the call's `max_operations`, or `Page.operations` reads more than 1,048,576.",
+    'content_stream_size': "A page's content streams, decoded and joined, are larger than 64 MiB when `Page.operations` reads them.",
+    'content_input_size': "The content that `Operations.parse` reads is larger than the call's `max_size`, or the content that `Canvas`, `Page.operations`, `Page.clean_contents`, `Page.replace_text`, `Page.recolor`, `Document.recolor`, `Document.rewrite_images`, or `Document.sanitize` parses or writes is larger than 64 MiB.",
+    'content_element_count': '`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or `Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image.',
+    'text_glyph_count': "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the call's `max_glyphs`.",
+    'text_size': "The UTF-8 of a page's glyphs, of the text that `Page.text` or `Document.text` returns, or of the strings of the records that `Page.words` or `Page.layout` returns, is larger than the call's `max_size`.",
+    'search_input_size': 'The text that `Page.search` looks for is longer than 4,096 bytes in UTF-8.',
+    'search_hit_count': "`Page.search` finds more matches than the call's `max_hits`.",
+    'text_rule_count': 'Styled text or table extraction collects more than 4,096 vector rules, including inferred table dividers.',
+    'table_cell_count': 'A candidate table needs more than 4,096 row-column slots.',
+    'table_span_candidate_count': 'Reconstructing merged cells in one table examines more than 65,536 candidate spans.',
+    'table_column_count': 'Text table detection encounters a row with more than 32 separated columns.',
+    'ocr_layer_word_count': 'An invisible OCR layer has more than 4,096 words.',
+    'ocr_layer_text_size': 'An invisible OCR layer has more than 1 MiB of UTF-8 text.',
+    'ocr_layer_character_count': 'An invisible OCR layer needs more than 65,534 distinct character IDs.',
+    'ocr_raster_size': 'The raster expanded to RGBA for OCR exceeds 512 MiB.',
+    'ocr_detection_count': 'OCR detection finds more than 4,096 candidate regions across its tiles before merging overlaps.',
+    'ocr_text_size': 'OCR recognition produces more than 32 MiB of UTF-8 text before confidence filtering.',
+    'ocr_model_size': 'The detector, recognizer, and dictionary that `OcrEngine` loads hold more bytes together than its `max_model_size`.',
+    'ocr_dictionary_entries': 'The dictionary that `OcrEngine` loads has more lines than the limit.',
+    'stream_data_size': "Reading a stream returns more bytes than the call's `max_size`.",
+    'object_value_depth': 'A value written to the document nests arrays and dictionaries deeper than its limit.',
+    'markdown_output_size': "The UTF-8 of the Markdown that `Page.markdown`, `Document.markdown`, or `Table.markdown` returns is larger than the call's `max_size`.",
+    'export_output_size': "The UTF-8 of the element text that `Document.to_json` or `Document.to_chunks` exports is larger than the call's `max_size`.",
+    'pdf_output_size': "Saving writes more bytes than the call's `max_size`.",
+    'pixmap_output_size': "Encoding a pixmap writes more bytes than the call's `max_size`.",
+    'clip_page_side': 'With `clip`, either side of the page after applying the render matrix exceeds 524,288 pixels.',
+    'svg_output_size': "A page's SVG holds more UTF-8 bytes than the call's `max_size`.",
+    'render_output_size': "The images that `doc.render` encodes write more bytes in all than the call's `max_size`.",
+    'password_input_size': 'A password is longer in UTF-8 than PDF 2.0 allows.',
+    'embedded_file_size': "An attachment that `Attachment.read`, `Attachment.write`, or `Attachments.add` handles is larger than the call's `max_size`.",
+    'embedded_file_input_size': "An attachment's name, file name, or description is longer in UTF-8 than 1 MiB.",
+    'annotation_count': "A page's Annots array, including popups, links, and widgets, or an annotation removal batch has more than 4,096 entries.",
+    'annotation_text_size': 'An annotation read returns more than 1 MiB of text, or its encoded text exceeds 1 MiB, counted across the page for a listing.',
+    'annotation_dash_count': 'An annotation border has more than 32 dash lengths.',
+    'annotation_input_size': 'The texts that one edit of an annotation writes, such as its contents, author, subject, and name, are longer than 1 MiB in UTF-8 together.',
+    'form_field_input_size': 'The value that setting `Field.value` writes is longer than 1 MiB in UTF-8.',
+    'form_default_appearance_size': "A form widget's inherited default appearance is longer than 4,096 bytes.",
+    'form_field_parent_depth': "A form widget's field parent chain contains more than 64 existing fields.",
+    'script_size': 'A form script, or the scripts of one field or widget together, are longer than 1 MiB in UTF-8, read or written.',
+    'text_edit_forms': '`Page.replace_text` reaches Form XObjects nested deeper than 16, or more than 4,096 drawings of them.',
+    'image_input_size': "The encoded image that `Pixmap.from_bytes` or `Pixmap.open` reads is larger than the call's `max_size`, or the encoded image that `Pages.new_from_image` reads is larger than 256 MiB.",
+    'text_line_count': "The text that a form field's appearance draws, or that `Canvas.text`, `Canvas.textbox`, or `Font.text_height` lays out, takes more than 4,096 lines.",
+    'text_input_size': 'The text that `Canvas.text`, `Canvas.textbox`, or a `Font` measurement takes is larger than 1 MiB of UTF-8.',
+    'shaped_glyph_count': 'Shaping one string in an embedded face takes more characters, or gives more glyphs, than the limit.',
+    'font_input_size': 'The font data that `Font.from_file` or `Font.from_bytes` loads is larger than 64 MiB.',
+    'page_fonts_tree': '`Page.fonts` follows more than 64 `/Parent` links when looking up inherited page resources.',
+    'page_fonts_entries': "`Page.fonts` visits more than 65,536 `/Font` and `/XObject` entries across the page's resources and its Form XObjects.",
+    'page_fonts_forms': "`Page.fonts` reaches more than 4,096 Form XObjects from the page's resources.",
+    'font_subset_appearances': '`Document.subset_fonts` visits more than 4,096 appearance streams and Form XObjects reached from annotation appearances.',
+    'named_destination_count': "The document's named destinations, its `/Names /Dests` tree and its legacy `/Dests` dictionary, hold more than 65,536 entries or tree nodes.",
+    'named_destination_edge_count': 'The named-destination tree has more than 131,072 child edges.',
+    'named_destination_depth': 'The named-destination tree has more than 32 levels.',
+    'named_destination_text_size': "The names of the document's named destinations are longer than 16 MiB together.",
+    'toc_entry_count': 'The outline holds more than 65,536 items or 131,072 links between them, a list of items holds more than 65,536 children, or `doc.outline` is set to more than 65,536 entries.',
+    'toc_text_size': 'The titles and target texts of the outline are longer than 16 MiB together, as the document encodes them or as they are returned.',
+    'toc_input_size': "The titles and target texts that setting `doc.outline` or editing an item writes are longer than 16 MiB together in UTF-8 or as PDF text strings, or leave the outline's text above that.",
+    'structure_tree_count': 'A structural edit of pages walks a structure tree deeper than 256 levels including its root, a parent tree or ID tree deeper than 32 levels, or an acyclic reference chain longer than 32 references.',
+    'page_entry_count': 'A list of pages, such as the `pages` of `doc.render`, holds more entries than the larger of the page count and 4,096.',
+    'page_label_tree_depth': "The document's `/PageLabels` number tree is deeper than 32 levels below its root.",
+    'page_label_tree_edges': "The document's `/PageLabels` number tree has more than 4,096 child edges.",
+    'page_label_ranges': "The document's `/PageLabels` number tree holds more than 4,096 `/Nums` pairs.",
+    'page_label_text_size': "The prefixes and style names of the document's `/PageLabels` number tree are longer than 1 MiB in UTF-8 together.",
+    'page_label_input_size': 'The prefixes that setting `Document.page_labels` writes are longer than 1 MiB in UTF-8 together.',
+    'optional_content_count': "The document's `/OCGs`, `/Configs`, or an optional-content configuration array holds, or `Layers.add` or `LayerMembership` would give it, more than 4,096 entries.",
+    'optional_content_expression': '`Layers.visible` evaluates a `/VE` visibility expression deeper than 32 levels or with more than 4,096 operands.',
+    'sanitize_action_chain': '`Document.sanitize` follows more than 256 actions along a `/Next` action chain when checking for JavaScript.',
+    'sanitize_forms': '`Document.sanitize` reaches more than 4,096 Form XObjects and appearance streams while removing hidden text.',
+    'memory_size': 'The collections of one operation would hold more memory than `DocumentLimits.max_memory_size` allows, or the allocator refuses it.',
+    'deadline': 'The operation runs past its deadline, which `DocumentLimits.max_duration` or the call sets.',
+    'cancelled': 'A cancellation token of the operation is cancelled.',
+    'annotation_quad_count': 'A text-markup annotation has more than 4,096 quadrilaterals.',
+    'annotation_point_count': "An annotation's geometry, including generated squiggly points, has more than 65,536 points.",
+    'annotation_appearance_size': 'One generated annotation appearance contains more than 16 MiB of content.',
+    'annotation_synthesis_count': 'One render synthesizes more than 4,096 missing annotation appearances across the document.',
+    'annotation_synthesis_point_count': 'Missing annotation appearances generated for one render contain more than 262,144 path points together.',
+}
+```
+
+Each code and when an operation reaches it, in the order of the registry.
+
+## `LimitCode`
+
+`LimitCode = typing.Literal['file_size', 'page_count', 'object_count', 'object_depth', 'object_parse_size', 'decompressed_size', 'page_content_size', 'total_decompressed_size', 'decompression_unverifiable', 'stream_filter_count', 'interpretation_size', 'interpretation_fuel', 'content_operation_count', 'content_stream_size', 'content_input_size', 'content_element_count', 'text_glyph_count', 'text_size', 'search_input_size', 'search_hit_count', 'text_rule_count', 'table_cell_count', 'table_span_candidate_count', 'table_column_count', 'ocr_layer_word_count', 'ocr_layer_text_size', 'ocr_layer_character_count', 'ocr_raster_size', 'ocr_detection_count', 'ocr_text_size', 'ocr_model_size', 'ocr_dictionary_entries', 'stream_data_size', 'object_value_depth', 'markdown_output_size', 'export_output_size', 'pdf_output_size', 'pixmap_output_size', 'clip_page_side', 'svg_output_size', 'render_output_size', 'password_input_size', 'embedded_file_size', 'embedded_file_input_size', 'annotation_count', 'annotation_text_size', 'annotation_dash_count', 'annotation_input_size', 'form_field_input_size', 'form_default_appearance_size', 'form_field_parent_depth', 'script_size', 'text_edit_forms', 'image_input_size', 'text_line_count', 'text_input_size', 'shaped_glyph_count', 'font_input_size', 'page_fonts_tree', 'page_fonts_entries', 'page_fonts_forms', 'font_subset_appearances', 'named_destination_count', 'named_destination_edge_count', 'named_destination_depth', 'named_destination_text_size', 'toc_entry_count', 'toc_text_size', 'toc_input_size', 'structure_tree_count', 'page_entry_count', 'page_label_tree_depth', 'page_label_tree_edges', 'page_label_ranges', 'page_label_text_size', 'page_label_input_size', 'optional_content_count', 'optional_content_expression', 'sanitize_action_chain', 'sanitize_forms', 'memory_size', 'deadline', 'cancelled', 'annotation_quad_count', 'annotation_point_count', 'annotation_appearance_size', 'annotation_synthesis_count', 'annotation_synthesis_point_count']`
+
+A stable code that `LimitError.code` carries.
+
 ## `LimitError`
 
 A refusal by a limit, whose `code` names the limit.

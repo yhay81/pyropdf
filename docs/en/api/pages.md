@@ -665,9 +665,8 @@ of the face that draws it. Dehyphenation removes the hyphen from the end
 of the line and keeps both lines. `styles=True` also reads the
 page's vector rules and sets `Span.is_underlined` and
 `Span.is_struck` where a horizontal rule underlines or strikes
-out horizontal text, as pymupdf's `TEXT_COLLECT_STYLES` does. The
-other options are those of `text`, and `max_size` also bounds
-the UTF-8 of the layout's strings.
+out horizontal text. The other options are those of `text`, and
+`max_size` also bounds the UTF-8 of the layout's strings.
 
 ### `Page.chars`
 

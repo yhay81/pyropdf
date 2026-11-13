@@ -758,7 +758,7 @@ class Page:
             )
         except StaleObjectError as error:
             raise self._stale() from error
-        return Paths(columns)
+        return Paths._from_columns(columns)  # noqa: SLF001 - package constructor.
 
     def text(  # noqa: PLR0913 - the text options are all keyword-only
         self,
@@ -903,9 +903,8 @@ class Page:
         of the line and keeps both lines. ``styles=True`` also reads the
         page's vector rules and sets :attr:`Span.is_underlined` and
         :attr:`Span.is_struck` where a horizontal rule underlines or strikes
-        out horizontal text, as pymupdf's ``TEXT_COLLECT_STYLES`` does. The
-        other options are those of :meth:`text`, and ``max_size`` also bounds
-        the UTF-8 of the layout's strings.
+        out horizontal text. The other options are those of :meth:`text`, and
+        ``max_size`` also bounds the UTF-8 of the layout's strings.
         """
         if not isinstance(chars, bool):
             msg = f"chars must be True or False: {chars!r}"
@@ -970,7 +969,7 @@ class Page:
         except StaleObjectError as error:
             raise self._stale() from error
         _warn_skipped(skipped)
-        return Chars(columns)
+        return Chars._from_columns(columns)  # noqa: SLF001 - package constructor.
 
     def _layout(
         self, options: _TextOptions, *, chars: bool, max_glyphs: int | None, max_size: int | None

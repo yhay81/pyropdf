@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 from pyropdf._content import (
     BlendMode,
@@ -31,16 +31,15 @@ from pyropdf._geometry import Matrix, Point, Rect
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from typing import Self, TypeAlias
+    from typing import Self
 
-    PathLike: TypeAlias = "PathBuilder | Path | Iterable[Segment]"
     _Affine: TypeAlias = tuple[float, float, float, float, float, float]
 
 #: The control-point factor that approximates a quarter circle with a cubic curve.
 _KAPPA = 4 * (math.sqrt(2) - 1) / 3
 #: The height of a wavy line's turning points in units of its breadth.
 _WAVE_HEIGHT = 2.4142135623765633
-#: The control-point factor of a curve pulled toward a corner, as pymupdf's ``draw_curve``.
+#: The control-point factor of a curve pulled toward a corner.
 _KAPPA_CURVE = 0.55228474983
 #: The largest magnitude of a PDF real that readers hold as a 32-bit float.
 _FLOAT32_MAX = 3.4028234663852886e38
@@ -599,3 +598,7 @@ class PathBuilder:
 
 
 PathBuilder.__module__ = "pyropdf"
+
+#: Geometry accepted by :meth:`Canvas.path` and :meth:`Canvas.clip`: a
+#: :class:`PathBuilder`, a :class:`Path`, or segments.
+PathInput: TypeAlias = PathBuilder | Path | Iterable[Segment]

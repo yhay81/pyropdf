@@ -77,7 +77,7 @@ def _metadata(document: Document, max_size: int | None) -> str | None:
 
 
 def pdfa_claim(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -> tuple[int, str] | None:
-    """Return the PDF/A part and conformance level that the metadata declares, as pylopdf does."""
+    """Return the PDF/A ``(part, conformance)`` pair declared in XMP metadata, or ``None``."""
     xmp = _metadata(document, max_size)
     if xmp is None:
         return None
@@ -125,3 +125,7 @@ def profiles(document: Document, max_size: int | None = _DEFAULT_MAX_XMP_SIZE) -
         pdfvt=pdfvt or None,
         output_intents=tuple(_output_intent(entry) for entry in entries if isinstance(entry, Dictionary)),
     )
+
+
+for _public in (OutputIntent, Profiles):
+    _public.__module__ = "pyropdf"

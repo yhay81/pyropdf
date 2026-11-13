@@ -69,6 +69,25 @@ Metadata.clear()
 
 Remove every entry, and the matching XMP properties.
 
+## `METADATA_KEYS`
+
+```python
+METADATA_KEYS = {
+    'title': 'Title',
+    'author': 'Author',
+    'subject': 'Subject',
+    'keywords': 'Keywords',
+    'creator': 'Creator',
+    'producer': 'Producer',
+    'created': 'CreationDate',
+    'modified': 'ModDate',
+    'trapped': 'Trapped',
+}
+```
+
+The Info dictionary entries that `Document.metadata` holds, by their
+names in pyropdf, and their PDF keys.
+
 ## `parse_pdf_date`
 
 ```python

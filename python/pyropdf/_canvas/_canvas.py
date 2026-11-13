@@ -95,7 +95,7 @@ if TYPE_CHECKING:
     from types import TracebackType
     from typing import Self, TypeAlias
 
-    from pyropdf._canvas._path import PathLike
+    from pyropdf._canvas._path import PathInput
     from pyropdf._canvas._tags import ListNumbering, TableHeaderScope, TagRole, _Element
     from pyropdf._canvas._text import TextFit
     from pyropdf._content import Segment
@@ -143,8 +143,7 @@ class Canvas:
     changes and from the edges of what it paints. The scopes :meth:`clip`, :meth:`transform`,
     :meth:`opacity`, :meth:`blend`, :meth:`layer`, and :meth:`tag` are
     context managers that apply to everything drawn inside them. :meth:`text` and :meth:`textbox` draw
-    text in a :class:`Font`; embedded fonts come with issue 153 (DESIGN.md
-    section 7).
+    text in a Standard 14 or embedded OpenType :class:`Font`.
 
     A canvas holds at most 1,048,576 path points, of paths and clips
     together, nests at most 16 scopes, and writes at most 64 MiB of
@@ -640,7 +639,7 @@ class Canvas:
 
     def path(
         self,
-        path: PathLike,
+        path: PathInput,
         *,
         fill: Color | Gradient | ShadingPattern | None = None,
         stroke: Stroke | Color | Gradient | None = None,
@@ -1260,14 +1259,9 @@ class Canvas:
         image's own masks: a canvas on a page of the item's document draws
         that object again, and one of another document copies it, with the
         objects it reaches but pages, as it is when this call is made. Inline
-        images and stencil image masks cannot be drawn yet, and text runs
-        follow in a later release; an item that cannot be drawn raises
-        ``TypeError`` or ``ValueError`` and draws nothing.
-
-        The round-trip tests allow 16 levels of 255 per channel at 72 dpi,
-        outside the boxes of the items that cannot be drawn and of those
-        under a soft mask. They cover the bundled corpus and axial/radial
-        gradients, including sampled and calculator functions.
+        images, stencil image masks, and text runs cannot be drawn; an item
+        that cannot be drawn raises ``TypeError`` or ``ValueError`` and draws
+        nothing.
         """
         self._check_open()
         if isinstance(item, Image):
@@ -1338,7 +1332,7 @@ class Canvas:
 
     # Scopes.
 
-    def clip(self, path: PathLike, *, fill_rule: FillRule = FillRule.NONZERO) -> AbstractContextManager[None]:
+    def clip(self, path: PathInput, *, fill_rule: FillRule = FillRule.NONZERO) -> AbstractContextManager[None]:
         """Clip what the block draws to a path."""
         self._check_open()
         construction, points = _path_bytes(_segments(path))

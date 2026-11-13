@@ -57,7 +57,7 @@ class Table:
     diagnostics: TableDiagnostics
     #: The row-major index of the top-left slot of the cell that covers each
     #: slot, from the detector; Markdown fills a covered slot from it.
-    _anchors: tuple[int, ...] | None = field(default=None, repr=False, compare=False)
+    _anchors: tuple[int, ...] | None = field(default=None, init=False, repr=False, compare=False)
 
     def markdown(
         self,
@@ -92,21 +92,20 @@ def build_tables(raw: Sequence[_CoreTable], strategy: Literal["lines", "text"]) 
         boxes = [None if cell is None else Rect(*cell[0]) for cell in cells]
         texts = [None if cell is None else cell[1] for cell in cells]
         starts = range(0, row_count * col_count, col_count)
-        tables.append(
-            Table(
-                bbox=Rect(*bbox),
-                rows=tuple(tuple(texts[start : start + col_count]) for start in starts),
-                cells=tuple(tuple(boxes[start : start + col_count]) for start in starts),
-                diagnostics=TableDiagnostics(
-                    strategy=strategy,
-                    confidence=confidence,
-                    alignment_error_em=alignment,
-                    minimum_gutter_em=gutter,
-                    row_gap_variation_em=row_gap,
-                ),
-                _anchors=tuple(anchors),
-            )
+        table = Table(
+            bbox=Rect(*bbox),
+            rows=tuple(tuple(texts[start : start + col_count]) for start in starts),
+            cells=tuple(tuple(boxes[start : start + col_count]) for start in starts),
+            diagnostics=TableDiagnostics(
+                strategy=strategy,
+                confidence=confidence,
+                alignment_error_em=alignment,
+                minimum_gutter_em=gutter,
+                row_gap_variation_em=row_gap,
+            ),
         )
+        object.__setattr__(table, "_anchors", tuple(anchors))
+        tables.append(table)
     return tables
 
 

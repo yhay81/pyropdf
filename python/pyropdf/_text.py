@@ -16,6 +16,7 @@ from pyropdf._limits import _validate_optional_positive_int
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Self
 
     from pyropdf._core import CharColumns
 
@@ -198,10 +199,22 @@ class Chars(Sequence[Char]):
         "operation",
     )
 
-    def __init__(self, columns: CharColumns, start: int = 0, stop: int | None = None) -> None:
-        self._columns = columns
-        self._start = start
-        self._stop = len(columns) if stop is None else stop
+    _columns: CharColumns
+    _start: int
+    _stop: int
+
+    def __new__(cls) -> Self:
+        """Refuse direct construction; read chars with :meth:`Page.chars` or :attr:`Layout.chars`."""
+        msg = "Chars is returned by Page.chars and Layout.chars"
+        raise TypeError(msg)
+
+    @classmethod
+    def _from_columns(cls, columns: CharColumns, start: int = 0, stop: int | None = None) -> Chars:
+        chars = object.__new__(cls)
+        chars._columns = columns
+        chars._start = start
+        chars._stop = len(columns) if stop is None else stop
+        return chars
 
     def __len__(self) -> int:
         return self._stop - self._start
@@ -216,7 +229,7 @@ class Chars(Sequence[Char]):
             if step != 1:
                 msg = f"a slice of Chars takes a step of 1: {index!r}"
                 raise ValueError(msg)
-            return Chars(self._columns, self._start + start, self._start + max(start, stop))
+            return Chars._from_columns(self._columns, self._start + start, self._start + max(start, stop))
         row = range(self._start, self._stop)[index]
         return _row_char(self._columns.rows(row, row + 1)[0])
 
@@ -363,15 +376,15 @@ class Layout:
     def to_dict(self) -> dict[str, Any]:
         """Return the layout as dictionaries, lists, and tuples for JSON.
 
-        The shape is that of pymupdf's ``get_text("dict")``: blocks with
-        ``number``, ``type`` (0 for text), ``bbox``, and ``lines``; lines with
-        ``bbox``, ``wmode``, ``dir``, and ``spans``; and spans with ``bbox``,
-        ``origin``, ``size``, ``font``, ``flags``, ``char_flags``, ``color``,
-        ``alpha``, ``ascender``, ``descender``, and ``text``. When the layout
-        holds characters, each span has ``chars`` in place of ``text``, a list
-        of ``c``, ``bbox``, ``origin``, and ``synthetic``, as in pymupdf's
-        ``"rawdict"``. ``Char.stream`` and ``Char.operation`` stay on the
-        records, out of pymupdf's shape.
+        The top-level dictionary holds ``width``, ``height``, and ``blocks``:
+        blocks with ``number``, ``type`` (0 for text), ``bbox``, and ``lines``;
+        lines with ``bbox``, ``wmode``, ``dir``, and ``spans``; and spans with
+        ``bbox``, ``origin``, ``size``, ``font``, ``flags``, ``char_flags``,
+        ``color``, ``alpha``, ``ascender``, ``descender``, and ``text``. When
+        the layout holds characters, each span has ``chars`` in place of
+        ``text``, a list of ``c``, ``bbox``, ``origin``, and ``synthetic``
+        dictionaries; ``Char.stream`` and ``Char.operation`` remain on the
+        :class:`Char` records.
         """
         return {
             "width": self.width,
@@ -396,7 +409,7 @@ class Layout:
         }
 
     def to_html(self) -> str:
-        """Return the layout as a positioned HTML fragment, as pymupdf's ``"html"`` output.
+        """Return the layout as a positioned HTML fragment.
 
         The fragment is one ``<div>`` the size of the page, in points, with one
         absolutely positioned ``<p>`` per line at the top-left corner of its
@@ -410,7 +423,7 @@ class Layout:
         return "\n".join(parts)
 
     def to_xml(self) -> str:
-        """Return the layout as XML, as pymupdf's ``"xml"`` output.
+        """Return the layout as an XML ``<page>`` element.
 
         A ``<page>`` holds ``<block>``, ``<line>``, and ``<font>`` elements
         with their boxes, writing mode, baseline direction, and font, size,
@@ -433,14 +446,14 @@ class Layout:
         return "\n".join(parts)
 
 
-# The span flags that pymupdf reports; the core passes all but the
+# Style flag bits serialized by Layout.to_dict; the core passes all but
 # superscript as flags.
 _SUPERSCRIPT = 1
 _ITALIC = 2
 _SERIF = 4
 _MONOSPACED = 8
 _BOLD = 16
-# The char flags of pymupdf's span dictionaries.
+# Character flag bits serialized in Layout.to_dict span dictionaries.
 _STRIKEOUT = 1
 _UNDERLINE = 2
 _FILLED = 16
@@ -477,7 +490,7 @@ def _hex(color: Color | None) -> str:
 
 
 def _flags(span: Span) -> int:
-    """Return pymupdf's span flags of a span."""
+    """Return the style bit flags of a span for :meth:`Layout.to_dict`."""
     return (
         (_SUPERSCRIPT if span.is_superscript else 0)
         | (_ITALIC if span.is_italic else 0)
@@ -656,7 +669,7 @@ def build_layout(
         width=width,
         height=height,
         blocks=tuple(_build_block(bbox, [_build_line(line, colors) for line in lines]) for bbox, lines in blocks),
-        chars=None if columns is None else Chars(columns),
+        chars=None if columns is None else Chars._from_columns(columns),  # noqa: SLF001 - internal column constructor.
     )
 
 
@@ -722,5 +735,8 @@ def _build_span(  # noqa: PLR0913, PLR0917 - unpacks one core span tuple.
         quad=_quad(quad),
     )
 
+
+for _public in (Block, Char, Chars, Layout, Line, Span, Word):
+    _public.__module__ = "pyropdf"
 
 __all__ = ["Block", "Char", "Chars", "Layout", "Line", "Span", "Unmapped", "Word"]

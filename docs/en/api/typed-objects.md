@@ -12,8 +12,8 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 Typed views of PDF objects, one per object type of the Arlington PDF Model.
 
-DESIGN.md section 8: the descriptors that pyropdf-schema generates from the
-model give each key of an object type its types, the object types it links
+The descriptors that `pyropdf-schema` generates from the Arlington PDF
+Model give each key of an object type its types, the object types it links
 to, whether it is required or inheritable, its default, and its possible
 values. A view reads and writes a `pyropdf.Dictionary`,
 `pyropdf.Stream`, or `pyropdf.Array` handle by those rules::

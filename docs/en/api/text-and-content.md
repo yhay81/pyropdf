@@ -45,10 +45,6 @@ ascender and descender, or its outline with `exact_bboxes=True`.
 
 ## `Chars`
 
-```python
-Chars(columns: CharColumns, start: int = 0, stop: int | None = None)
-```
-
 The chars of a page as columns, from `Page.chars` and `Layout.chars`.
 
 Each row is one `Char` of the layout with chars, in layout order,
@@ -80,12 +76,6 @@ fields are those of the columns, with one `text` field (`utf8`) for
 `text_offsets` and `text_data`, `is_synthetic` as Arrow
 booleans, and `stream` and `operation` null where they are `None`.
 
-### `Chars.__len__`
-
-```python
-Chars.__len__() -> int
-```
-
 ### `Chars.__getitem__`
 
 ```python
@@ -96,6 +86,12 @@ Chars.__getitem__(index: int | slice) -> Char | Chars
 
 ```python
 Chars.__iter__() -> Iterator[Char]
+```
+
+### `Chars.__len__`
+
+```python
+Chars.__len__() -> int
 ```
 
 ### `Chars.column`
@@ -251,11 +247,10 @@ A group's box grows by every path whose box overlaps it or comes
 within `x_tolerance` points horizontally and `y_tolerance` points
 vertically, until no path and no other group comes that near; the
 boxes are sorted from top to bottom and left to right. Paths whose box
-holds no area once a stroke's half width widens it are left out, as
-pymupdf leaves them out. This replaces pymupdf's `cluster_drawings`, which
-finds the vector graphics that make up a figure or a table; read the
-paths of `page.content(clip=page.rect)` to leave out those outside
-the page, as pymupdf does by default.
+holds no area once widened by half their stroke width are left out. Use
+this to group the vector strokes and fills of a figure or diagram; call
+`page.content(clip=page.rect).path_clusters()` to exclude paths
+outside the page box.
 
 ## `ContentItem`
 
@@ -298,6 +293,12 @@ Element.to_dict() -> dict[str, Any]
 ```
 
 Return the element as JSON-safe values: `kind`, `page`, `bbox`, `text`, and `level` or `rows`.
+
+## `ElementKind`
+
+`ElementKind = typing.Literal['heading', 'paragraph', 'list_item', 'table', 'image']`
+
+The kind of a structured page `Element`.
 
 ## `FillRule`
 
@@ -457,15 +458,15 @@ Layout.to_dict() -> dict[str, Any]
 
 Return the layout as dictionaries, lists, and tuples for JSON.
 
-The shape is that of pymupdf's `get_text("dict")`: blocks with
-`number`, `type` (0 for text), `bbox`, and `lines`; lines with
-`bbox`, `wmode`, `dir`, and `spans`; and spans with `bbox`,
-`origin`, `size`, `font`, `flags`, `char_flags`, `color`,
-`alpha`, `ascender`, `descender`, and `text`. When the layout
-holds characters, each span has `chars` in place of `text`, a list
-of `c`, `bbox`, `origin`, and `synthetic`, as in pymupdf's
-`"rawdict"`. `Char.stream` and `Char.operation` stay on the
-records, out of pymupdf's shape.
+The top-level dictionary holds `width`, `height`, and `blocks`:
+blocks with `number`, `type` (0 for text), `bbox`, and `lines`;
+lines with `bbox`, `wmode`, `dir`, and `spans`; and spans with
+`bbox`, `origin`, `size`, `font`, `flags`, `char_flags`,
+`color`, `alpha`, `ascender`, `descender`, and `text`. When
+the layout holds characters, each span has `chars` in place of
+`text`, a list of `c`, `bbox`, `origin`, and `synthetic`
+dictionaries; `Char.stream` and `Char.operation` remain on the
+`Char` records.
 
 ### `Layout.to_html`
 
@@ -473,7 +474,7 @@ records, out of pymupdf's shape.
 Layout.to_html() -> str
 ```
 
-Return the layout as a positioned HTML fragment, as pymupdf's `"html"` output.
+Return the layout as a positioned HTML fragment.
 
 The fragment is one `<div>` the size of the page, in points, with one
 absolutely positioned `<p>` per line at the top-left corner of its
@@ -487,7 +488,7 @@ place with `opacity:0`.
 Layout.to_xml() -> str
 ```
 
-Return the layout as XML, as pymupdf's `"xml"` output.
+Return the layout as an XML `<page>` element.
 
 A `<page>` holds `<block>`, `<line>`, and `<font>` elements
 with their boxes, writing mode, baseline direction, and font, size,
@@ -597,10 +598,6 @@ A path that is filled, stroked, or both.
 
 ## `Paths`
 
-```python
-Paths(columns: PathColumns, start: int = 0, stop: int | None = None)
-```
-
 The paths of a page as columns, from `Page.paths`.
 
 Each row is one `Path` of `Page.content`, in paint order,
@@ -667,12 +664,6 @@ a list of structs of the segment columns whose control points are null
 for verbs other than `c`, and `stroke_dashes`, a list of float64,
 null without a stroke.
 
-### `Paths.__len__`
-
-```python
-Paths.__len__() -> int
-```
-
 ### `Paths.__getitem__`
 
 ```python
@@ -684,6 +675,20 @@ Paths.__getitem__(index: int | slice) -> Path | Paths
 ```python
 Paths.__iter__() -> Iterator[Path]
 ```
+
+### `Paths.__len__`
+
+```python
+Paths.__len__() -> int
+```
+
+### `Paths.column`
+
+```python
+Paths.column(name: str) -> memoryview
+```
+
+Return the column `name` of `names` as a read-only `memoryview`, without a copy.
 
 ### `Paths.contexts`
 
@@ -700,14 +705,6 @@ Paths.patterns: tuple[ShadingPattern | TilingPattern, ...]
 ```
 
 The distinct pattern paints, which `fill_pattern` and `stroke_pattern` index.
-
-### `Paths.column`
-
-```python
-Paths.column(name: str) -> memoryview
-```
-
-Return the column `name` of `names` as a read-only `memoryview`, without a copy.
 
 ## `RadialGradient`
 
@@ -829,7 +826,6 @@ Table(
     rows: tuple[tuple[str | None, ...], ...],
     cells: tuple[tuple[Rect | None, ...], ...],
     diagnostics: TableDiagnostics,
-    _anchors: tuple[int, ...] | None = None,
 )
 ```
 

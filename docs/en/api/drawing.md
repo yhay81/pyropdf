@@ -35,8 +35,7 @@ in hayro and poppler, and one that repeats within 16, away from its sharp
 changes and from the edges of what it paints. The scopes `clip`, `transform`,
 `opacity`, `blend`, `layer`, and `tag` are
 context managers that apply to everything drawn inside them. `text` and `textbox` draw
-text in a `Font`; embedded fonts come with issue 153 (DESIGN.md
-section 7).
+text in a Standard 14 or embedded OpenType `Font`.
 
 A canvas holds at most 1,048,576 path points, of paths and clips
 together, nests at most 16 scopes, and writes at most 64 MiB of
@@ -51,7 +50,7 @@ when it is drawn.
 
 ```python
 Canvas.path(
-    path: PathLike,
+    path: PathInput,
     *,
     fill: Color | Gradient | ShadingPattern | None = None,
     stroke: Stroke | Color | Gradient | None = None,
@@ -294,20 +293,15 @@ paints cannot be drawn yet. An image is drawn from its object, with the
 image's own masks: a canvas on a page of the item's document draws
 that object again, and one of another document copies it, with the
 objects it reaches but pages, as it is when this call is made. Inline
-images and stencil image masks cannot be drawn yet, and text runs
-follow in a later release; an item that cannot be drawn raises
-`TypeError` or `ValueError` and draws nothing.
-
-The round-trip tests allow 16 levels of 255 per channel at 72 dpi,
-outside the boxes of the items that cannot be drawn and of those
-under a soft mask. They cover the bundled corpus and axial/radial
-gradients, including sampled and calculator functions.
+images, stencil image masks, and text runs cannot be drawn; an item
+that cannot be drawn raises `TypeError` or `ValueError` and draws
+nothing.
 
 ### `Canvas.clip`
 
 ```python
 Canvas.clip(
-    path: PathLike,
+    path: PathInput,
     *,
     fill_rule: FillRule = <FillRule.NONZERO: 'nonzero'>,
 ) -> AbstractContextManager[None]
@@ -547,6 +541,13 @@ PathBuilder.zigzag(
 ```
 
 Add a zigzag line from `start` to `end` whose teeth are `breadth` points wide.
+
+## `PathInput`
+
+`PathInput = pyropdf.PathBuilder | pyropdf.Path | collections.abc.Iterable[pyropdf.MoveTo | pyropdf.LineTo | pyropdf.CurveTo | pyropdf.ClosePath]`
+
+Geometry accepted by `Canvas.path` and `Canvas.clip`: a
+`PathBuilder`, a `Path`, or segments.
 
 ## `TableHeaderScope`
 

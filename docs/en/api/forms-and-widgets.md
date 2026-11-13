@@ -252,6 +252,8 @@ Members: `READ_ONLY`, `REQUIRED`, `NO_EXPORT`, `MULTILINE`, `PASSWORD`, `NO_TOGG
 
 `FieldSpecification = pyropdf.TextField | pyropdf.CheckBox | pyropdf.RadioButton | pyropdf.ComboBox | pyropdf.ListBox | pyropdf.PushButton | pyropdf.SignatureField`
 
+The specifications that `page.widgets.add` takes.
+
 ## `FieldType`
 
 The kind of a form field, from its `/FT` and the flags that refine it.

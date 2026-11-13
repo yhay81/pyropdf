@@ -23,6 +23,7 @@ import inspect
 import re
 import sys
 import textwrap
+from collections.abc import Mapping
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -54,7 +55,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("History and changes", ("_history", "_changes")),
     ("Encryption", ("_encryption",)),
     ("Signing", ("_signing",)),
-    ("Limits and errors", ("_limits", "_errors")),
+    ("Limits and errors", ("_limits", "_limit_codes", "_errors")),
     ("Content operations", ("_operations",)),
     ("Objects", ("_objects",)),
     ("Geometry", ("_geometry",)),
@@ -107,8 +108,8 @@ method and property of its classes with its full description.
 
 
 def _definitions() -> dict[str, str]:
-    """Map each top-level class, function, and alias to the module that defines it."""
-    pattern = re.compile(r"^(?:class|def) ([A-Za-z_]\w*)|^([A-Z]\w*)(?:: TypeAlias)? = ", re.MULTILINE)
+    """Map each top-level class, function, constant, and alias to the module that defines it."""
+    pattern = re.compile(r"^(?:class|def) ([A-Za-z_]\w*)|^([A-Z]\w*)(?:: [^\n=]+)? = ", re.MULTILINE)
     found: dict[str, str] = {}
     for path in [*sorted(PACKAGE.glob("*.py")), *sorted(PACKAGE.glob("_*/*.py"))]:
         module = path.stem if path.parent == PACKAGE else path.parent.name
@@ -117,11 +118,33 @@ def _definitions() -> dict[str, str]:
     return found | EXTENSION
 
 
-def _doc(obj: object) -> str:
-    """Return the cleaned docstring of an object, with reST roles as code."""
-    text = inspect.cleandoc(getattr(obj, "__doc__", None) or "")
+def _clean_doc(raw: str) -> str:
+    """Clean a docstring or `#:` comment, rendering reST roles as code."""
+    text = inspect.cleandoc(raw)
     text = re.sub(r":(?:class|meth|attr|func|data|exc|mod):`~?([^`]+)`", r"`\1`", text)
     return text.replace("``", "`")
+
+
+def _doc(obj: object) -> str:
+    """Return the cleaned docstring of an object, with reST roles as code."""
+    return _clean_doc(getattr(obj, "__doc__", None) or "")
+
+
+def _attribute_docs() -> dict[str, str]:
+    """Map each top-level constant or alias to its preceding `#:` comment."""
+    assign = re.compile(r"^([A-Z]\w*)(?:: [^\n=]+)? = ")
+    found: dict[str, str] = {}
+    for path in [*sorted(PACKAGE.glob("*.py")), *sorted(PACKAGE.glob("_*/*.py"))]:
+        comments: list[str] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#:"):
+                comments.append(line[2:].removeprefix(" "))
+                continue
+            match = assign.match(line)
+            if match and comments:
+                found.setdefault(match.group(1), _clean_doc("\n".join(comments)))
+            comments.clear()
+    return found
 
 
 def _signature(obj: object, name: str = "") -> str:
@@ -230,7 +253,7 @@ def _noun(text: str) -> str:
     return match.group(1).upper() + text[match.end() :]
 
 
-def _entry(name: str, obj: object) -> str:
+def _entry(name: str, obj: object, attr_doc: str = "") -> str:
     """Return the reference text of one exported name."""
     if isinstance(obj, type) and issubclass(obj, enum.Enum):
         values = ", ".join(f"`{member.name}`" for member in obj)
@@ -244,17 +267,24 @@ def _entry(name: str, obj: object) -> str:
         return f"## `pyropdf.{name}`\n\n{_doc(obj)}\n"
     if callable(obj) and inspect.isroutine(obj):
         return f"## `{name}`\n\n```python\n{_signature(obj, name)}\n```\n\n{_doc(obj)}\n"
-    return f"## `{name}`\n\n`{name} = {obj!r}`\n"
+    if isinstance(obj, Mapping):
+        items = "".join(f"    {key!r}: {value!r},\n" for key, value in obj.items())
+        value = f"```python\n{name} = {{\n{items}}}\n```"
+    else:
+        value = f"`{name} = {obj!r}`"
+    return "\n\n".join(part for part in (f"## `{name}`", value, attr_doc) if part) + "\n"
 
 
-def _described(obj: object) -> str:
+def _described(obj: object, attr_doc: str = "") -> str:
     """Return the summary of a name that has a docstring of its own, else an empty string.
 
     An alias such as a union would show its type's docstring, which differs
     between Python versions.
     """
     own = isinstance(obj, type) or inspect.ismodule(obj) or inspect.isroutine(obj)
-    return _summary(obj) if own else ""
+    if own:
+        return _summary(obj)
+    return " ".join(attr_doc.split("\n\n", 1)[0].split()) if attr_doc else ""
 
 
 def _slug(title: str) -> str:
@@ -284,6 +314,7 @@ def generate() -> dict[str, str]:
     import pyropdf  # noqa: PLC0415
 
     modules = _definitions()
+    attr_docs = _attribute_docs()
     exported = [name for name in pyropdf.__all__ if not name.startswith("__")]
     unplaced = {name for name in exported if modules.get(name) not in {m for _, ms in SECTIONS for m in ms}}
     if unplaced:
@@ -298,12 +329,15 @@ def generate() -> dict[str, str]:
         slug = _slug(title)
         description = f"The pyropdf API reference for {title.lower()}."
         header = f"---\ntitle: {title}\ndescription: {description}\n---\n\n{NOTICE}\n# {title}\n"
-        text = [header, *(_entry(name, getattr(pyropdf, name)) for name in names)]
+        text = [header, *(_entry(name, getattr(pyropdf, name), attr_docs.get(name, "")) for name in names)]
         page = textwrap.dedent("\n".join(text)).rstrip() + "\n"
         pages[f"{slug}.md"] = page
         anchors = _anchors(page)
         index.append(f"## [{title}]({slug}.md)\n")
-        links = (f"- [`{n}`]({slug}.md#{anchors[n]}): {_described(getattr(pyropdf, n))}".rstrip(": ") for n in names)
+        links = (
+            f"- [`{n}`]({slug}.md#{anchors[n]}): {_described(getattr(pyropdf, n), attr_docs.get(n, ''))}".rstrip(": ")
+            for n in names
+        )
         index.append("\n".join(links) + "\n")
     pages["index.md"] = "\n".join(index).rstrip() + "\n"
     return pages

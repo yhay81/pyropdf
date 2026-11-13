@@ -37,7 +37,7 @@ breaks PDF/A-4 but not PDF/A-4f, and untagged annotations break PDF/UA.
 History(document: Document)
 ```
 
-The line of steps that undo and redo walk (DESIGN.md section 4.1).
+The line of steps that undo and redo walk.
 
 Every committed edit is a step: a transaction is one step with its name,
 and an edit outside a transaction is one step named `""`. A new step

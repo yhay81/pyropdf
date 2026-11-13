@@ -22,6 +22,7 @@ method and property of its classes with its full description.
 ## [Metadata](metadata.md)
 
 - [`Metadata`](metadata.md#metadata_1): The document's Info dictionary as a live mapping, as `doc.metadata` returns it.
+- [`METADATA_KEYS`](metadata.md#metadata_keys): The Info dictionary entries that `Document.metadata` holds, by their names in pyropdf, and their PDF keys.
 - [`parse_pdf_date`](metadata.md#parse_pdf_date): Return the moment of a PDF date string, or `None` when it is not one.
 - [`pdf_date`](metadata.md#pdf_date): Return `moment` as a PDF date string, such as `"D:20240101120000Z"`; a naive moment is UTC.
 
@@ -39,6 +40,7 @@ method and property of its classes with its full description.
 ## [Recoloring](recoloring.md)
 
 - [`RecolorReport`](recoloring.md#recolorreport): What `Page.recolor` or `Document.recolor` converted, and what it could not.
+- [`RecolorTarget`](recoloring.md#recolortarget): A target color space of `Page.recolor` and `Document.recolor`.
 - [`Unconverted`](recoloring.md#unconverted): A color that `Page.recolor` left as it was.
 
 ## [Layers](layers.md)
@@ -60,7 +62,7 @@ method and property of its classes with its full description.
 - [`Font`](fonts.md#font): A font face that draws and measures text.
 - [`FontInfo`](fonts.md#fontinfo): One font dictionary that a page's resources name, from `Page.fonts`.
 - [`FontProgram`](fonts.md#fontprogram_1): An embedded font program, from `Document.font_program`.
-- [`StandardFontName`](fonts.md#standardfontname)
+- [`StandardFontName`](fonts.md#standardfontname): The PostScript names of the Standard 14 fonts (ISO 32000-2 section 9.6.2.2).
 - [`SubsetFont`](fonts.md#subsetfont): One font program that `Document.subset_fonts` subset.
 
 ## [Pages](pages.md)
@@ -73,6 +75,7 @@ method and property of its classes with its full description.
 - [`Canvas`](drawing.md#canvas): Drawing on one page in paint order, written as one content stream.
 - [`ListNumbering`](drawing.md#listnumbering): How a list numbers its items (ISO 32000-1 section 14.8.5.5), by its PDF name.
 - [`PathBuilder`](drawing.md#pathbuilder): Geometry for `Canvas.path` and `Canvas.clip`, built from segments.
+- [`PathInput`](drawing.md#pathinput): Geometry accepted by `Canvas.path` and `Canvas.clip`: a `PathBuilder`, a `Path`, or segments.
 - [`TableHeaderScope`](drawing.md#tableheaderscope): What a table header cell heads (ISO 32000-1 section 14.8.5.7), by its PDF name.
 - [`TagRole`](drawing.md#tagrole): A structure type (ISO 32000-1 section 14.8.4), by its PDF name.
 - [`TextFit`](drawing.md#textfit): How text fits a `Canvas.textbox`: the height left below its last line.
@@ -92,6 +95,7 @@ method and property of its classes with its full description.
 - [`ContentItem`](text-and-content.md#contentitem)
 - [`CurveTo`](text-and-content.md#curveto): Draw a cubic Bézier curve to `to` with two control points.
 - [`Element`](text-and-content.md#element): One piece of a page's structure, with where it is.
+- [`ElementKind`](text-and-content.md#elementkind): The kind of a structured page `Element`.
 - [`FillRule`](text-and-content.md#fillrule): The rule that decides which areas a path fills or clips.
 - [`FontRef`](text-and-content.md#fontref): The font that a text run uses, as hayro reads its font program.
 - [`Glyph`](text-and-content.md#glyph): One glyph of a text run.
@@ -143,10 +147,10 @@ method and property of its classes with its full description.
 
 - [`Annotation`](annotations.md#annotation): A handle on one annotation of a page, as `page.annotations` lists it.
 - [`AnnotationFile`](annotations.md#annotationfile_1): The file that a file attachment annotation embeds, as `Annotation.file` returns it.
-- [`AnnotationFlags`](annotations.md#annotationflags_1): Annotation `/F` flags (ISO 32000-2 Table 167); the values are pymupdf's `PDF_ANNOT_IS_*`.
+- [`AnnotationFlags`](annotations.md#annotationflags_1): Annotation `/F` bit flags (ISO 32000-2 Table 167).
 - [`Annotations`](annotations.md#annotations_1): The annotations of a page other than links and form widgets, as `page.annotations` returns them.
-- [`AnnotationSpecification`](annotations.md#annotationspecification)
-- [`AnnotationType`](annotations.md#annotationtype_1): Annotation types by `/Subtype`; the values are pymupdf's `PDF_ANNOT_*` codes.
+- [`AnnotationSpecification`](annotations.md#annotationspecification): The specifications that `page.annotations.add` takes.
+- [`AnnotationType`](annotations.md#annotationtype_1): Annotation types by `/Subtype` (ISO 32000-2 §12.5.6); `UNKNOWN` (-1) marks an unrecognized subtype.
 - [`AttachmentIcon`](annotations.md#attachmenticon): The icon of a file attachment, `/Name` (ISO 32000-2 §12.5.6.15).
 - [`Border`](annotations.md#border): The border of an annotation: its line width, style, and dash pattern.
 - [`BorderStyle`](annotations.md#borderstyle): The style of an annotation's border, `/BS /S` (ISO 32000-2 Table 168).
@@ -158,7 +162,7 @@ method and property of its classes with its full description.
 - [`Ink`](annotations.md#ink): Freehand strokes, each through one or more display points, as `page.annotations.add` takes it.
 - [`LineAnnotation`](annotations.md#lineannotation): A straight line between two display points, as `page.annotations.add` takes it.
 - [`LineEnding`](annotations.md#lineending): The shape at an end of a line or polyline, `/LE` (ISO 32000-2 Table 179).
-- [`MarkupRects`](annotations.md#markuprects)
+- [`MarkupRects`](annotations.md#markuprects): Rectangles or quads that text markup covers: one, or a sequence of them.
 - [`Note`](annotations.md#note): A note shown as an icon, as `page.annotations.add` takes it.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.
@@ -168,7 +172,7 @@ method and property of its classes with its full description.
 - [`Square`](annotations.md#square): A rectangle, as `page.annotations.add` takes it.
 - [`Squiggly`](annotations.md#squiggly): A wavy line under text, as `page.annotations.add` takes it.
 - [`Stamp`](annotations.md#stamp): A rubber stamp, as `page.annotations.add` takes it.
-- [`StampIcon`](annotations.md#stampicon): The stamps of ISO 32000-2 §12.5.6.12, `/Name`; pymupdf's `STAMP_*` codes in their order.
+- [`StampIcon`](annotations.md#stampicon): Standard rubber-stamp icon names, `/Name` (ISO 32000-2 §12.5.6.12).
 - [`StrikeOut`](annotations.md#strikeout): A line through text, as `page.annotations.add` takes it.
 - [`Underline`](annotations.md#underline): A line under text, as `page.annotations.add` takes it.
 
@@ -181,7 +185,7 @@ method and property of its classes with its full description.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
-- [`Target`](links-and-destinations.md#target)
+- [`Target`](links-and-destinations.md#target): Where a link leads: a place in this document or in another file, a file to open, a viewer action, or a URI as a string.
 
 ## [Forms and widgets](forms-and-widgets.md)
 
@@ -190,7 +194,7 @@ method and property of its classes with its full description.
 - [`Field`](forms-and-widgets.md#field): A handle on one terminal form field, as `doc.form[name]` returns it.
 - [`FieldChoice`](forms-and-widgets.md#fieldchoice): One option of a choice field's `/Opt`.
 - [`FieldFlags`](forms-and-widgets.md#fieldflags_1): The field flags of `/Ff` (ISO 32000-2 Tables 227, 229, 231, and 233).
-- [`FieldSpecification`](forms-and-widgets.md#fieldspecification)
+- [`FieldSpecification`](forms-and-widgets.md#fieldspecification): The specifications that `page.widgets.add` takes.
 - [`FieldType`](forms-and-widgets.md#fieldtype_1): The kind of a form field, from its `/FT` and the flags that refine it.
 - [`Form`](forms-and-widgets.md#form): The terminal fields of a document's interactive form, as `doc.form` returns them.
 - [`ListBox`](forms-and-widgets.md#listbox): A list of choices, as `page.widgets.add` takes it.
@@ -219,7 +223,7 @@ method and property of its classes with its full description.
 
 - [`ChangeReport`](history-and-changes.md#changereport): What the edits since opening invalidate, for a save that is incremental or not.
 - [`ClaimChange`](history-and-changes.md#claimchange): A PDF/A or PDF/UA claim of the metadata that the edits break.
-- [`History`](history-and-changes.md#history): The line of steps that undo and redo walk (DESIGN.md section 4.1).
+- [`History`](history-and-changes.md#history): The line of steps that undo and redo walk.
 - [`SignatureChange`](history-and-changes.md#signaturechange): A signature of the opened file that the edits or the save mode invalidate.
 - [`Transaction`](history-and-changes.md#transaction): A group of edits that commits as one version and one undo step.
 
@@ -234,6 +238,7 @@ method and property of its classes with its full description.
 - [`Signature`](signing.md#signature): A signature of the opened file: its field, its signature dictionary, and the revision that it signs.
 - [`SignatureVerification`](signing.md#signatureverification): What `Signature.verify` found.
 - [`Signer`](signing.md#signer): A signing key or callback, with its certificate chain, which `Document.sign` signs with.
+- [`Timestamper`](signing.md#timestamper): A time-stamp callback: it receives the digest of the signature value and the name of its hash algorithm (`"sha256"` or `"sha384"`) and returns the DER of an RFC 3161 time-stamp token over that digest.
 
 ## [Limits and errors](limits-and-errors.md)
 
@@ -242,6 +247,8 @@ method and property of its classes with its full description.
 - [`DocumentLimits`](limits-and-errors.md#documentlimits): Optional budgets for opening and reading PDFs.
 - [`EncryptedDocumentError`](limits-and-errors.md#encrypteddocumenterror): An operation on an encrypted document that needs a password.
 - [`InternalError`](limits-and-errors.md#internalerror): A Rust panic in pyropdf or an engine. The message retains the panic; please report this library defect.
+- [`LIMIT_CODES`](limits-and-errors.md#limit_codes): Each code and when an operation reaches it, in the order of the registry.
+- [`LimitCode`](limits-and-errors.md#limitcode): A stable code that `LimitError.code` carries.
 - [`LimitError`](limits-and-errors.md#limiterror): A refusal by a limit, whose `code` names the limit.
 - [`MalformedPdfError`](limits-and-errors.md#malformedpdferror): Input that cannot be read as a PDF document, including empty input.
 - [`OcrError`](limits-and-errors.md#ocrerror): OCR model loading or inference failed.
@@ -277,6 +284,7 @@ method and property of its classes with its full description.
 
 ## [Checks and profiles](checks-and-profiles.md)
 
+- [`DefectKind`](checks-and-profiles.md#defectkind): The category of a `StructuralDefect`.
 - [`OutputIntent`](checks-and-profiles.md#outputintent): One entry of the catalog's `/OutputIntents`.
 - [`Profiles`](checks-and-profiles.md#profiles): The profile claims of a document's XMP metadata, and its output intents.
 - [`StructuralDefect`](checks-and-profiles.md#structuraldefect): One departure of the document from the model.

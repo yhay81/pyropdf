@@ -8,6 +8,12 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Checks and profiles
 
+## `DefectKind`
+
+`DefectKind = typing.Literal['type', 'required', 'version', 'indirect', 'value', 'invariant', 'profile']`
+
+The category of a `StructuralDefect`.
+
 ## `OutputIntent`
 
 ```python

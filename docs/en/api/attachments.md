@@ -56,7 +56,7 @@ Settable.
 Attachment.size: int
 ```
 
-The uncompressed size that the file declares (`/Params /Size`), or -1, as pymupdf does.
+The uncompressed size that the file declares (`/Params /Size`), or -1 when absent.
 
 ### `Attachment.created`
 
@@ -89,7 +89,7 @@ Settable.
 Attachment.read(*, max_size: int | None = 67108864) -> bytes
 ```
 
-Return the attachment's contents, as pymupdf's `embfile_get` does.
+Return the decoded bytes of the attachment's embedded file stream.
 
 `max_size` bounds the decoded data and defaults to 64 MiB, and the
 document's limits bound the decoding. Pass a larger positive integer
@@ -103,7 +103,7 @@ accepting unbounded materialization. Oversized content raises
 Attachment.write(data: bytes, /, *, max_size: int | None = 67108864)
 ```
 
-Replace the attachment's contents, as pymupdf's `embfile_upd` does with `buffer_`.
+Replace the attachment's embedded file stream with `data`.
 
 The name, file name, description, and creation date stay; `size`
 becomes the new length, `modified` the current time, and a stale
@@ -118,10 +118,9 @@ Attachments(document: Document)
 
 The embedded files of a document, keyed by name, as `doc.attachments` returns them.
 
-This live view replaces pymupdf's `embfile_*` methods: iterate it for
-the sorted names, index it for an `Attachment`, `add` a file, and
-`del` one. The EmbeddedFiles name tree is read within its bounds on
-every access.
+Iterate this live view for the sorted names, index it for an
+`Attachment`, `add` a file, and `del` one. The
+`/EmbeddedFiles` name tree is read within its bounds on every access.
 
 ### `Attachments.__getitem__`
 
@@ -145,7 +144,7 @@ Iterate the attachment names in sorted order.
 Attachments.__len__() -> int
 ```
 
-Return the number of attachments, as pymupdf's `embfile_count` does.
+Return the number of attachments.
 
 ### `Attachments.add`
 
@@ -161,7 +160,7 @@ Attachments.add(
 ) -> Attachment
 ```
 
-Add an attachment and return its handle, as pymupdf's `embfile_add` does.
+Add an attachment to the document and return its `Attachment` handle.
 
 `name` is the unique key; adding an existing name raises
 `PdfError`. `filename` is the viewer-facing file name and

@@ -210,3 +210,6 @@ A place in another PDF file: a zero-based page or a named destination.
 ## `Target`
 
 `Target = pyropdf.Destination | pyropdf.RemoteDestination | pyropdf.Launch | pyropdf.NamedAction | str`
+
+Where a link leads: a place in this document or in another file, a file
+to open, a viewer action, or a URI as a string.
