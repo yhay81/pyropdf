@@ -1,0 +1,178 @@
+[
+  {
+    "structure": "OutlineCount",
+    "workload": "is_open x1 (pure)",
+    "detail": "N=512",
+    "median_us": 541.9,
+    "p90_us": 553.5,
+    "extra": "0 reads in loop"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "if item.children: is_open x1",
+    "detail": "N=512",
+    "median_us": 543.6,
+    "p90_us": 562.4,
+    "extra": "1 Open::view() settles"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "is_open x16 (pure)",
+    "detail": "N=512",
+    "median_us": 8640.8,
+    "p90_us": 8770.1,
+    "extra": "0 reads in loop"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "if item.children: is_open x16",
+    "detail": "N=512",
+    "median_us": 8716.5,
+    "p90_us": 8872.1,
+    "extra": "16 Open::view() settles"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "is_open x64 (pure)",
+    "detail": "N=512",
+    "median_us": 36241.3,
+    "p90_us": 41454.2,
+    "extra": "0 reads in loop"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "if item.children: is_open x64",
+    "detail": "N=512",
+    "median_us": 35340.0,
+    "p90_us": 35675.0,
+    "extra": "64 Open::view() settles"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "doc.outline = entries",
+    "detail": "N=512",
+    "median_us": 2800.0,
+    "p90_us": 3038.2,
+    "extra": "single-pass O(N)"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "is_open x1 (pure)",
+    "detail": "N=2048",
+    "median_us": 2130.0,
+    "p90_us": 2215.2,
+    "extra": "0 reads in loop"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "if item.children: is_open x1",
+    "detail": "N=2048",
+    "median_us": 2110.8,
+    "p90_us": 2262.8,
+    "extra": "1 Open::view() settles"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "is_open x16 (pure)",
+    "detail": "N=2048",
+    "median_us": 33907.8,
+    "p90_us": 34913.9,
+    "extra": "0 reads in loop"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "if item.children: is_open x16",
+    "detail": "N=2048",
+    "median_us": 35008.7,
+    "p90_us": 36980.3,
+    "extra": "16 Open::view() settles"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "is_open x64 (pure)",
+    "detail": "N=2048",
+    "median_us": 165290.2,
+    "p90_us": 255655.9,
+    "extra": "0 reads in loop"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "if item.children: is_open x64",
+    "detail": "N=2048",
+    "median_us": 142578.4,
+    "p90_us": 152049.3,
+    "extra": "64 Open::view() settles"
+  },
+  {
+    "structure": "OutlineCount",
+    "workload": "doc.outline = entries",
+    "detail": "N=2048",
+    "median_us": 12186.9,
+    "p90_us": 13079.2,
+    "extra": "single-pass O(N)"
+  },
+  {
+    "structure": "ParentTree",
+    "workload": "1 canvas, 10 tag('P') elements",
+    "detail": "1 page",
+    "median_us": 532.7,
+    "p90_us": 561.8,
+    "extra": "ParentTreeNextKey=1, defects=0"
+  },
+  {
+    "structure": "ParentTree",
+    "workload": "1 canvas, 50 tag('P') elements",
+    "detail": "1 page",
+    "median_us": 2380.9,
+    "p90_us": 2742.7,
+    "extra": "ParentTreeNextKey=1, defects=0"
+  },
+  {
+    "structure": "ParentTree",
+    "workload": "1 canvas, 200 tag('P') elements",
+    "detail": "1 page",
+    "median_us": 10949.5,
+    "p90_us": 13548.0,
+    "extra": "ParentTreeNextKey=1, defects=0"
+  },
+  {
+    "structure": "ParentTree",
+    "workload": "10 canvases x 4-op tag('P') in tx",
+    "detail": "10 pages",
+    "median_us": 1751.9,
+    "p90_us": 2114.6,
+    "extra": "ParentTreeNextKey=10, defects=0"
+  },
+  {
+    "structure": "ParentTree",
+    "workload": "50 canvases x 4-op tag('P') in tx",
+    "detail": "50 pages",
+    "median_us": 10148.7,
+    "p90_us": 10628.3,
+    "extra": "ParentTreeNextKey=50, defects=0"
+  },
+  {
+    "structure": "TreeLimits",
+    "workload": "doc.attachments.add x10 in tx",
+    "detail": "initial=0",
+    "median_us": 899.6,
+    "p90_us": 1067.2,
+    "extra": "10 _writable() Open::view() settles"
+  },
+  {
+    "structure": "TreeLimits",
+    "workload": "doc.attachments.add x50 in tx",
+    "detail": "initial=0",
+    "median_us": 10690.6,
+    "p90_us": 11054.6,
+    "extra": "50 _writable() Open::view() settles"
+  },
+  {
+    "structure": "TreeLimits",
+    "workload": "del doc.attachments['seed_05.txt'] on 4-leaf /Kids tree",
+    "detail": "initial=16 (4 leaves)",
+    "median_us": 0.0,
+    "p90_us": 0.0,
+    "extra": "has_kids=False, orphaned_kids=3/4, defects=0"
+  }
+]
