@@ -11,6 +11,11 @@
 //! from pylopdf's `rust/src/document/outline.rs` at
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
+mod count_cache;
+
+pub use count_cache::CountCache;
+use count_cache::Verified;
+
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -1078,10 +1083,20 @@ pub fn outline_set_style(
     })
 }
 
-/// Shows or hides the children of item `id`, updating `/Count` along its
-/// `/Parent` chain in `O(depth)` when `/Parent` and `/Count` are consistent
-/// and falling back to a full outline recount otherwise (ISO 32000-2 Table 151).
+/// Shows or hides the children of item `id`, recounting the outline (ISO
+/// 32000-2 Table 151). Use [`CountCache::set_open`] to reuse a verified recount
+/// for subsequent parent-chain updates.
 pub fn outline_set_open(
+    transaction: &mut Transaction,
+    budget: &Budget,
+    id: (u32, u16),
+    open: bool,
+) -> Result<()> {
+    CountCache::default().set_open(transaction, budget, id, open)
+}
+
+fn set_open(
+    cache: &CountCache,
     transaction: &mut Transaction,
     budget: &Budget,
     id: (u32, u16),
@@ -1116,11 +1131,32 @@ pub fn outline_set_open(
                 }
             }
         };
-        let counts = match delta_counts(&mut reads, &dict, &location, id, open)? {
-            Some(counts) => counts,
-            None => counts(&mut reads, &root, location, (id, open))?,
+        let verified = cache.get(&before, budget)?;
+        let delta = if verified
+            .as_ref()
+            .is_some_and(|verified| verified.members.binary_search(&id).is_ok())
+        {
+            delta_counts(&mut reads, &dict, &location, id, open)?
+        } else {
+            None
         };
-        for (location, count) in counts {
+        let (updates, verified) = match delta {
+            Some(updates) => (updates, verified),
+            None => {
+                let plan = counts(&mut reads, &root, location, (id, open))?;
+                let verified = if let Some(members) = plan.members {
+                    memory(budget, size_of::<Verified>() + 2 * size_of::<usize>())?;
+                    Some(Arc::new(Verified {
+                        reads: reads.finish()?,
+                        members,
+                    }))
+                } else {
+                    None
+                };
+                (plan.updates, verified)
+            }
+        };
+        for (location, count) in updates {
             // Read previous writes from this operation, so several direct nodes
             // in one holder cannot overwrite each other's updated counts.
             let Some(object) = transaction
@@ -1155,6 +1191,13 @@ pub fn outline_set_open(
                 transaction.write(location.id.0, &value, budget)?;
             }
         }
+        if let Some(verified) = verified {
+            // The recount or verified delta establishes the same invariant in
+            // the resulting version. Keep all of its original dependencies.
+            let after = transaction.snapshot();
+            cache.put(&after, verified);
+            transaction.retain_derived_version(after);
+        }
         Ok(())
     })
 }
@@ -1188,8 +1231,9 @@ fn indirect_dict(
 }
 
 /// Computes `O(depth)` `/Count` updates along `id`'s `/Parent` chain when `id`
-/// and every ancestor up to `root_location` carry consistent `/Parent` and
-/// `/Count` entries. Returns `Ok(None)` when any link or count is missing,
+/// and every ancestor up to `root_location` have already been verified by a
+/// full recount. The local guards alone cannot establish consistency.
+/// Returns `Ok(None)` when any link or count is missing,
 /// cyclic, deeper than [`MAX_DEPTH`], or inconsistent, falling back to [`counts`].
 fn delta_counts(
     reads: &mut Reads<'_>,
@@ -1367,6 +1411,12 @@ impl Location {
 type Count = (Location, i64);
 type PendingCount = (Value, Location, Option<usize>, usize);
 
+struct CountPlan {
+    updates: Vec<Count>,
+    /// Only canonical indirect trees may reuse the parent-chain shortcut.
+    members: Option<Vec<(u32, u16)>>,
+}
+
 /// Counts direct and indirect nodes alike, while only an indirect identity
 /// can select the changed item. Every count retains its exact write location.
 fn counts(
@@ -1374,11 +1424,13 @@ fn counts(
     root: &Dict,
     root_location: Location,
     change: ((u32, u16), bool),
-) -> Result<Vec<Count>> {
+) -> Result<CountPlan> {
     let budget = reads.budget();
     let mut order: BudgetVec<'_, (Location, Option<usize>, bool)> = BudgetVec::new(budget);
     let mut stack: BudgetVec<'_, PendingCount> = BudgetVec::new(budget);
     let mut visited = HashSet::new();
+    let mut cacheable = root_location.path.is_empty();
+    let mut members = BudgetVec::new(budget);
     if root_location.path.is_empty() {
         visit(&mut visited, root_location.id, budget)?;
     }
@@ -1389,17 +1441,28 @@ fn counts(
     let mut edges = stack.len();
     while let Some((value, mut location, parent, depth)) = stack.pop() {
         let Some((dict, reference)) = node(reads, &value)? else {
+            cacheable = false;
             continue;
         };
         if let Some(reference) = reference {
             let id = (reference.number(), reference.generation());
             if !visit(&mut visited, id, budget)? {
+                cacheable = false;
                 continue;
             }
             location = Location {
                 id,
                 path: Vec::new(),
             };
+            members.try_push(id)?;
+        } else {
+            cacheable = false;
+        }
+        let expected_parent = parent.map_or(root_location.id, |owner| order[owner].0.id);
+        if !matches!(dict.get("Parent"), Some(Value::Reference(reference))
+            if (reference.number(), reference.generation()) == expected_parent)
+        {
+            cacheable = false;
         }
         if order.len() >= MAX_ITEMS {
             return Err(count_error(format!(
@@ -1456,13 +1519,18 @@ fn counts(
         }
     }
     counts.try_push((root_location, root_visible))?;
-    Ok(counts.into_vec())
+    let mut members = members.into_vec();
+    members.sort_unstable();
+    Ok(CountPlan {
+        updates: counts.into_vec(),
+        members: cacheable.then_some(members),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use pyropdf_store::budget::DocumentLimits;
+    use pyropdf_store::budget::{CancellationToken, DocumentLimits};
     use pyropdf_store::index::Index;
     use pyropdf_store::save::FileBase;
     use pyropdf_store::value::Bytes;
@@ -1526,10 +1594,23 @@ mod tests {
         (root_count, item_counts)
     }
 
+    fn commit_with_counts(
+        transaction: Transaction,
+        cache: &CountCache,
+        budget: &Budget,
+    ) -> pyropdf_store::Result<Arc<Version>> {
+        let anchor = transaction.derived_anchor().cloned();
+        let committed = transaction.commit(budget)?;
+        cache.carry_to(&committed, budget);
+        drop(anchor);
+        Ok(committed)
+    }
+
     #[test]
     fn delta_counts_reads_and_writes_in_o_depth_and_stops_above_closed_ancestors() {
         let doc = minimal_doc();
         let budget = Budget::default();
+        let cache = CountCache::default();
         let pages_memo = Memo::new(1);
         let outline_memo = Memo::new(1);
         let dests_memo = Memo::new(1);
@@ -1553,7 +1634,7 @@ mod tests {
 
         let mut tx = doc.begin();
         outline_write(&mut tx, &pages_memo, &refs_cache, &budget, specs).unwrap();
-        let base_v = tx.commit(&budget).unwrap();
+        let base_v = commit_with_counts(tx, &cache, &budget).unwrap();
 
         let entries =
             outline_entries(&outline_memo, &pages_memo, &dests_memo, &base_v, &budget).unwrap();
@@ -1580,10 +1661,48 @@ mod tests {
         let read_set = fast_reads.finish().unwrap();
         assert_eq!(read_set.objects().len(), 3); // chap0, part0, root
 
+        // Unverified counts must not use the shortcut even when their numbers
+        // look plausible. A budget too small for the walk refuses atomically.
+        let cold_budget =
+            Budget::new(&DocumentLimits::default()).with_limit(LimitCode::MemorySize, Some(16_384));
+        let mut tx = doc.begin();
+        let err = cache
+            .set_open(&mut tx, &cold_budget, sec0, false)
+            .unwrap_err();
+        assert_eq!(err.limit_code(), Some(LimitCode::MemorySize));
+        assert!(
+            tx.snapshot()
+                .changes(&base_v, &budget)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(cache.get(&tx.snapshot(), &budget).unwrap().is_none());
+        drop(tx);
+
+        let token = CancellationToken::new();
+        token.cancel();
+        let cancelled = Budget::default().with_cancellation(token);
+        let mut tx = doc.begin();
+        let err = cache
+            .set_open(&mut tx, &cancelled, sec0, false)
+            .unwrap_err();
+        assert_eq!(err.limit_code(), Some(LimitCode::Cancelled));
+        assert!(
+            tx.snapshot()
+                .changes(&base_v, &budget)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(cache.get(&tx.snapshot(), &budget).unwrap().is_none());
+        drop(tx);
+
         // 1. No-op (`sec0` is already open) writes zero objects and reuses `base_v`.
         let mut tx = doc.begin();
-        outline_set_open(&mut tx, &budget, sec0, true).unwrap();
-        let v_noop = tx.commit(&budget).unwrap();
+        cache.set_open(&mut tx, &budget, sec0, true).unwrap();
+        let v_noop = commit_with_counts(tx, &cache, &budget).unwrap();
+        assert!(cache.get(&v_noop, &budget).unwrap().is_some());
         assert!(Arc::ptr_eq(&v_noop, &base_v));
         assert!(
             v_noop
@@ -1595,8 +1714,8 @@ mod tests {
 
         // 2. Collapse `part0` (level 1): writes only `part0` and `root_num`.
         let mut tx = doc.begin();
-        outline_set_open(&mut tx, &budget, part0, false).unwrap();
-        let v_part_closed = tx.commit(&budget).unwrap();
+        cache.set_open(&mut tx, &budget, part0, false).unwrap();
+        let v_part_closed = commit_with_counts(tx, &cache, &budget).unwrap();
         let mut expected = vec![part0.0, root_num];
         expected.sort_unstable();
         assert_eq!(v_part_closed.written().objects(), expected.as_slice());
@@ -1604,8 +1723,8 @@ mod tests {
         // 3. Collapse `sec0` (level 3) while `chap0` (level 2) is open and `part0` (level 1) is closed:
         //    updates `sec0`, `chap0`, and `part0` (negative magnitude), stopping BEFORE `root_num`.
         let mut tx = doc.begin();
-        outline_set_open(&mut tx, &budget, sec0, false).unwrap();
-        let v_under_closed_part = tx.commit(&budget).unwrap();
+        cache.set_open(&mut tx, &budget, sec0, false).unwrap();
+        let v_under_closed_part = commit_with_counts(tx, &cache, &budget).unwrap();
         let mut expected = vec![sec0.0, chap0.0, part0.0];
         expected.sort_unstable();
         assert_eq!(v_under_closed_part.written().objects(), expected.as_slice());
@@ -1614,12 +1733,12 @@ mod tests {
         // 4. Collapse `chap0` (level 2), then re-open `sec0` (level 3):
         //    now `chap0` is closed, so propagation stops at `chap0` without writing `part0` or `root_num`.
         let mut tx = doc.begin();
-        outline_set_open(&mut tx, &budget, chap0, false).unwrap();
-        tx.commit(&budget).unwrap();
+        cache.set_open(&mut tx, &budget, chap0, false).unwrap();
+        commit_with_counts(tx, &cache, &budget).unwrap();
 
         let mut tx = doc.begin();
-        outline_set_open(&mut tx, &budget, sec0, true).unwrap();
-        let v_under_closed_chap = tx.commit(&budget).unwrap();
+        cache.set_open(&mut tx, &budget, sec0, true).unwrap();
+        let v_under_closed_chap = commit_with_counts(tx, &cache, &budget).unwrap();
         let mut expected = vec![sec0.0, chap0.0];
         expected.sort_unstable();
         assert_eq!(v_under_closed_chap.written().objects(), expected.as_slice());
@@ -1631,14 +1750,56 @@ mod tests {
         let small_budget =
             Budget::new(&DocumentLimits::default()).with_limit(LimitCode::MemorySize, Some(16_384));
         let mut tx = doc.begin();
-        outline_set_open(&mut tx, &small_budget, sec0, false).unwrap();
-        tx.commit(&small_budget).unwrap();
+        cache.set_open(&mut tx, &small_budget, sec0, false).unwrap();
+        commit_with_counts(tx, &cache, &small_budget).unwrap();
 
         let tiny_budget =
             Budget::new(&DocumentLimits::default()).with_limit(LimitCode::MemorySize, Some(1));
         let mut tx = doc.begin();
-        let err = outline_set_open(&mut tx, &tiny_budget, sec0, true).unwrap_err();
+        let err = cache
+            .set_open(&mut tx, &tiny_budget, sec0, true)
+            .unwrap_err();
         assert_eq!(err.limit_code(), Some(LimitCode::MemorySize));
+        assert!(
+            tx.snapshot()
+                .changes(&doc.current(), &budget)
+                .unwrap()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn verified_counts_are_document_local_and_do_not_retain_versions() {
+        let budget = Budget::default();
+        let cache = CountCache::default();
+        let doc = minimal_doc();
+        let mut tx = doc.begin();
+        outline_write(
+            &mut tx,
+            &Memo::new(1),
+            &refs::Cache::new(),
+            &budget,
+            vec![
+                (1, "Parent".into(), none(), None, 0, true),
+                (2, "Child".into(), none(), None, 0, false),
+            ],
+        )
+        .unwrap();
+        let base = tx.commit(&budget).unwrap();
+        let mut reads = Reads::new(&base, &budget);
+        let outline = walk(&mut reads, None).unwrap();
+        let id = outline.items[0].id;
+        let mut tx = doc.begin();
+        cache.set_open(&mut tx, &budget, id, false).unwrap();
+        let verified = commit_with_counts(tx, &cache, &budget).unwrap();
+        assert!(cache.get(&verified, &budget).unwrap().is_some());
+        let other = minimal_doc();
+        assert!(cache.get(&other.current(), &budget).unwrap().is_none());
+        let weak = Arc::downgrade(&verified);
+        drop(verified);
+        drop(doc);
+        assert!(weak.upgrade().is_none());
     }
 
     type OutlinePlan = (Vec<(u32, bool)>, Vec<(usize, bool)>);
@@ -1673,6 +1834,7 @@ mod tests {
         ) {
             let doc = minimal_doc();
             let budget = Budget::default();
+            let cache = CountCache::default();
             let pages_memo = Memo::new(1);
             let outline_memo = Memo::new(1);
             let dests_memo = Memo::new(1);
@@ -1698,7 +1860,7 @@ mod tests {
 
             let mut tx = doc.begin();
             outline_write(&mut tx, &pages_memo, &refs_cache, &budget, initial_specs).unwrap();
-            let v0 = tx.commit(&budget).unwrap();
+            let v0 = commit_with_counts(tx, &cache, &budget).unwrap();
 
             let initial_entries =
                 outline_entries(&outline_memo, &pages_memo, &dests_memo, &v0, &budget).unwrap();
@@ -1707,14 +1869,14 @@ mod tests {
             let mut tx = doc.begin();
             for (idx, open) in toggles {
                 if has_child[idx] {
-                    outline_set_open(&mut tx, &budget, ids[idx], open).unwrap();
+                    cache.set_open(&mut tx, &budget, ids[idx], open).unwrap();
                     current_open[idx] = open;
                 } else {
-                    let err = outline_set_open(&mut tx, &budget, ids[idx], open).unwrap_err();
+                    let err = cache.set_open(&mut tx, &budget, ids[idx], open).unwrap_err();
                     prop_assert!(matches!(err, Error::Pdf(_)));
                 }
             }
-            let mutated = tx.commit(&budget).unwrap();
+            let mutated = commit_with_counts(tx, &cache, &budget).unwrap();
 
             let oracle_doc = minimal_doc();
             let final_specs: Vec<Spec> = nodes

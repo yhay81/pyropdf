@@ -21,9 +21,9 @@ pub use destinations::{
 };
 pub use links::{link_add, link_edit, link_list, link_read};
 pub use outline::{
-    MAX_DEPTH, MAX_EDGES, MAX_ITEMS, MAX_TEXT_BYTES, Outline, outline_children, outline_entries,
-    outline_item, outline_set_open, outline_set_style, outline_set_target, outline_set_title,
-    outline_walk_counts, outline_write,
+    CountCache, MAX_DEPTH, MAX_EDGES, MAX_ITEMS, MAX_TEXT_BYTES, Outline, outline_children,
+    outline_entries, outline_item, outline_set_open, outline_set_style, outline_set_target,
+    outline_set_title, outline_walk_counts, outline_write,
 };
 
 /// The result of a navigation or outline operation.

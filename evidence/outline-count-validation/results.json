@@ -1,0 +1,20 @@
+{
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "python": "3.11.18",
+  "samples": 25,
+  "history_max_size": 0,
+  "measurements": [
+    {
+      "items": 512,
+      "cold_toggle_median_us": 644.0,
+      "warm_toggle_median_us": 7.8,
+      "warm_batch_64_median_us": 510.5
+    },
+    {
+      "items": 2048,
+      "cold_toggle_median_us": 2627.5,
+      "warm_toggle_median_us": 7.8,
+      "warm_batch_64_median_us": 511.9
+    }
+  ]
+}

@@ -1091,3 +1091,156 @@ def test_open_state_falls_back_and_repairs_missing_or_inconsistent_counts_and_pa
     assert (doc.objects[target_xref]["Count"] > 0) is new_open
     for obj_num, expected in expected_counts.items():
         assert doc.objects[obj_num]["Count"] == expected
+
+
+@pytest.mark.parametrize("stored_count", [-10, -1, 1, 10])
+@pytest.mark.parametrize("children", [1, 3])
+@pytest.mark.parametrize("new_open", [False, True])
+def test_open_state_repairs_plausible_counts_including_noops_and_roundtrip(
+    stored_count: int, children: int, *, new_open: bool
+) -> None:
+    objects = {
+        4: f"<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count {1 + max(stored_count, 0)} >>",
+        5: f"<< /Title (Parent) /Parent 4 0 R /First 6 0 R /Last {5 + children} 0 R /Count {stored_count} >>",
+    }
+    for number in range(6, 6 + children):
+        previous = f"/Prev {number - 1} 0 R" if number > 6 else ""
+        following = f"/Next {number + 1} 0 R" if number < 5 + children else ""
+        objects[number] = f"<< /Title (Child) /Parent 5 0 R {previous} {following} >>"
+    doc = pyropdf.open(_build_outline_fixture(objects))
+    doc.outline[0].is_open = new_open
+    assert doc.outline[0].obj["Count"] == (children if new_open else -children)
+    assert doc.catalog["Outlines"]["Count"] == (1 + children if new_open else 1)
+
+    reopened = pyropdf.open(doc.to_bytes())
+    assert reopened.outline[0].obj["Count"] == (children if new_open else -children)
+    reopened.outline[0].is_open = not new_open
+    assert reopened.outline[0].obj["Count"] == (-children if new_open else children)
+    assert reopened.catalog["Outlines"]["Count"] == (1 if new_open else 1 + children)
+
+
+def test_open_state_revalidates_raw_edits_undo_redo_and_rollback(three_page_pdf: bytes) -> None:
+    doc = pyropdf.open(three_page_pdf)
+    doc.outline = [OutlineEntry(1, "Parent", is_open=True), OutlineEntry(2, "Child")]
+    parent = doc.outline[0]
+    parent.is_open = True  # Warm validation without writing a history step.
+
+    with doc.transaction("Corrupt counts"):
+        parent.obj["Count"] = 10
+        doc.catalog["Outlines"]["Count"] = 11
+    parent.is_open = False
+    assert parent.obj["Count"] == -1
+    assert doc.catalog["Outlines"]["Count"] == 1
+    doc.history.undo()
+    assert parent.obj["Count"] == 10
+    doc.history.redo()
+    assert parent.obj["Count"] == -1
+    doc.history.undo()
+    parent.is_open = True  # An already-open corrupted item still needs repair.
+    assert parent.obj["Count"] == 1
+    assert doc.catalog["Outlines"]["Count"] == 2
+
+    def rolled_back_toggle() -> None:
+        with doc.transaction("Rollback cached toggle"):
+            parent.is_open = False
+            message = "rollback"
+            raise RuntimeError(message)
+
+    with doc.transaction("Keep outer transaction"):
+        with pytest.raises(RuntimeError, match="rollback"):
+            rolled_back_toggle()
+        parent.obj["Count"] = 10
+        doc.catalog["Outlines"]["Count"] = 11
+        parent.is_open = False
+        assert parent.obj["Count"] == -1
+        assert doc.catalog["Outlines"]["Count"] == 1
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_open_state_uses_tree_membership_instead_of_plausible_wrong_parent(*, warm: bool) -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture(
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 9 0 R /Count 6 >>",
+                5: "<< /Title (A) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Next 9 0 R /Count 2 >>",
+                6: "<< /Title (Child) /Parent 5 0 R /First 7 0 R /Last 7 0 R /Count 1 >>",
+                7: "<< /Title (Leaf) /Parent 6 0 R >>",
+                9: "<< /Title (B) /Parent 4 0 R /Prev 5 0 R /First 10 0 R /Last 11 0 R /Count 2 >>",
+                10: "<< /Title (B1) /Parent 9 0 R /Next 11 0 R >>",
+                11: "<< /Title (B2) /Parent 9 0 R /Prev 10 0 R >>",
+            }
+        )
+    )
+    child = doc.outline[0].children[0]
+    if warm:
+        child.is_open = True
+    child.obj["Parent"] = doc.objects[9]
+    for flag in (False, True, False):
+        child.is_open = flag
+        assert doc.objects[5]["Count"] == (2 if flag else 1)
+        assert doc.objects[6]["Count"] == (1 if flag else -1)
+        assert doc.objects[9]["Count"] == 2
+        assert doc.catalog["Outlines"]["Count"] == (6 if flag else 5)
+
+
+def test_open_state_recounts_above_closed_ancestors_and_in_other_branches() -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture(
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 9 0 R /Count 50 >>",
+                5: "<< /Title (A) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Next 9 0 R /Count -20 >>",
+                6: "<< /Title (Child) /Parent 5 0 R /First 7 0 R /Last 7 0 R /Count 10 >>",
+                7: "<< /Title (Leaf) /Parent 6 0 R >>",
+                9: "<< /Title (B) /Parent 4 0 R /Prev 5 0 R /First 10 0 R /Last 10 0 R /Count 10 >>",
+                10: "<< /Title (B1) /Parent 9 0 R >>",
+            }
+        )
+    )
+    child = doc.outline[0].children[0]
+    for flag in (False, True):
+        child.is_open = flag
+        assert doc.objects[5]["Count"] == (-2 if flag else -1)
+        assert doc.objects[6]["Count"] == (1 if flag else -1)
+        assert doc.objects[9]["Count"] == 1
+        assert doc.catalog["Outlines"]["Count"] == 3
+
+
+def test_open_state_revalidates_a_changed_child_chain(three_page_pdf: bytes) -> None:
+    doc = pyropdf.open(three_page_pdf)
+    doc.outline = [
+        OutlineEntry(1, "Parent", is_open=True),
+        OutlineEntry(2, "A"),
+        OutlineEntry(2, "B"),
+        OutlineEntry(2, "C"),
+    ]
+    parent = doc.outline[0]
+    children = list(parent.children)
+    parent.is_open = True
+    with doc.transaction("Remove first child through raw objects"):
+        parent.obj["First"] = children[1].obj
+        del children[1].obj["Prev"]
+        parent.is_open = False
+        assert parent.obj["Count"] == -2
+    parent.is_open = True
+    assert parent.obj["Count"] == 2
+    assert doc.catalog["Outlines"]["Count"] == 3
+
+
+def test_open_state_does_not_use_verified_counts_for_detached_items() -> None:
+    doc = pyropdf.open(
+        _build_outline_fixture(
+            {
+                4: "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 2 >>",
+                5: "<< /Title (Attached) /Parent 4 0 R /First 6 0 R /Last 6 0 R /Count 1 >>",
+                6: "<< /Title (Leaf) /Parent 5 0 R >>",
+                8: "<< /Title (Detached) /Parent 4 0 R /First 9 0 R /Last 9 0 R /Count 1 >>",
+                9: "<< /Title (Detached leaf) /Parent 8 0 R >>",
+            }
+        )
+    )
+    doc.outline[0].is_open = True
+    flag = False
+    _core.outline_set_open(doc._core(), (8, 0), flag)  # noqa: SLF001
+    assert doc.catalog["Outlines"]["Count"] == 2
+    assert doc.objects[5]["Count"] == 1
+    assert doc.objects[8]["Count"] == 1

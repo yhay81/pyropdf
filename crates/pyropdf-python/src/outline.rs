@@ -136,8 +136,8 @@ pub fn outline_set_style(
     })?
 }
 
-/// Shows or hides the children of item `id`, and counts every `/Count` of
-/// the outline again (ISO 32000-2 Table 151).
+/// Shows or hides the children of item `id`, reusing verified outline counts
+/// for parent-chain updates (ISO 32000-2 Table 151).
 #[pyfunction]
 pub fn outline_set_open(
     py: Python<'_>,
@@ -147,7 +147,10 @@ pub fn outline_set_open(
 ) -> PyResult<()> {
     crate::errors::boundary(|| {
         document.edit(py, |transaction, budget| {
-            navigation::outline_set_open(transaction, budget, id, open).map_err(navigation_error)
+            document
+                .outline_counts
+                .set_open(transaction, budget, id, open)
+                .map_err(navigation_error)
         })
     })?
 }
