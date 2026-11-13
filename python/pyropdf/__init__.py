@@ -116,8 +116,8 @@ from pyropdf._geometry import IRect, Matrix, Point, Quad, Rect
 from pyropdf._history import History, Transaction
 from pyropdf._images import ImageRewriteReport, PageImage, StoredImage
 from pyropdf._layers import Layer, LayerConfig, LayerMembership, Layers, VisibilityPolicy
-from pyropdf._limit_codes import LIMIT_CODES, LimitCode
-from pyropdf._limits import CancellationToken, DocumentLimits
+from pyropdf._limit_codes import LimitCode
+from pyropdf._limits import LIMIT_CODES, CancellationToken, DocumentLimits
 from pyropdf._links import Destinations, Link, Links
 from pyropdf._metadata import METADATA_KEYS, Metadata, parse_pdf_date, pdf_date
 from pyropdf._objects import Array, Dictionary, Name, Objects, Real, Stream, String

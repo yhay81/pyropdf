@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import inspect
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -49,7 +50,12 @@ def test_public_domain_types_and_constants_are_exported() -> None:
         assert name in pyropdf.__all__, name
         assert getattr(pyropdf, name) is not None
 
+    assert isinstance(pyropdf.LIMIT_CODES, Mapping)
     assert tuple(pyropdf.LIMIT_CODES) == get_args(pyropdf.LimitCode)
+    assert pyropdf.LIMIT_CODES.__doc__
+    read_only_codes: Any = pyropdf.LIMIT_CODES
+    with pytest.raises(TypeError):
+        read_only_codes["file_size"] = "changed"
     assert set(pyropdf.METADATA_KEYS) == {
         "title",
         "author",

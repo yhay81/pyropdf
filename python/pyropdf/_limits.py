@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from typing import Final
 
 from pyropdf._core import CancellationToken, web_limits
+from pyropdf._limit_codes import LIMIT_CODES as _RAW_LIMIT_CODES
+from pyropdf._limit_codes import LimitCode
 
 _COUNTED_FIELDS = (
     "max_file_size",
@@ -117,6 +121,30 @@ class DocumentLimits:
         return cls(**web_limits(), check_at_open=True)
 
 
+class _LimitCodes(Mapping[LimitCode, str]):
+    """Each code and when an operation reaches it, in the order of the registry."""
+
+    __slots__ = ("_mapping",)
+
+    def __init__(self, mapping: Mapping[LimitCode, str]) -> None:
+        self._mapping = mapping
+
+    def __getitem__(self, key: LimitCode) -> str:
+        return self._mapping[key]
+
+    def __iter__(self) -> Iterator[LimitCode]:
+        return iter(self._mapping)
+
+    def __len__(self) -> int:
+        return len(self._mapping)
+
+    def __repr__(self) -> str:
+        return repr(dict(self._mapping))
+
+
+#: Each code and when an operation reaches it, in the order of the registry.
+LIMIT_CODES: Final[Mapping[LimitCode, str]] = _LimitCodes(_RAW_LIMIT_CODES)
+
 CancellationToken.__module__ = "pyropdf"
 
-__all__ = ["CancellationToken", "DocumentLimits"]
+__all__ = ["LIMIT_CODES", "CancellationToken", "DocumentLimits"]
