@@ -183,6 +183,36 @@ def test_a_feature_takes_the_default_status_only_where_no_test_proves_it() -> No
     assert by_name["lzw-filter"]["read"] == {"status": "planned", "milestone": "Phase 4: Specification"}
 
 
+OPEN_MILESTONES = frozenset(
+    {
+        "Phase 0: Foundation",
+        "Phase 1: Reading",
+        "Phase 2: Writing and interaction",
+        "Phase 4: Specification",
+    }
+)
+
+
+def test_planned_and_partial_statuses_name_open_milestones_and_valid_issues() -> None:
+    by_name = features()
+    assert by_name["Catalog"]["create"]["issue"] == 256
+    assert by_name["Catalog"]["create"]["milestone"] == "Phase 4: Specification"
+    assert by_name["Catalog"]["edit"]["issue"] == 256
+    assert by_name["Catalog"]["edit"]["milestone"] == "Phase 4: Specification"
+    for name, feature in by_name.items():
+        for dimension in DIMENSIONS:
+            entry = feature[dimension]
+            if "milestone" in entry:
+                assert entry["milestone"] in OPEN_MILESTONES, (name, dimension, entry["milestone"])
+            if "issue" in entry:
+                issue = entry["issue"]
+                assert type(issue) is int, (name, dimension, issue)
+                assert issue > 0, (name, dimension, issue)
+                missing = entry.get("missing")
+                assert isinstance(missing, str), (name, dimension)
+                assert missing, (name, dimension)
+
+
 def test_the_coverage_page_lists_every_clause_and_exclusion() -> None:
     spec_map = json.loads((ROOT / MAP).read_text(encoding="utf-8"))
     page = (ROOT / COVERAGE).read_text(encoding="utf-8")
