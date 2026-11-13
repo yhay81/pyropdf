@@ -92,7 +92,7 @@ impl Settler for PanicOnce {
 pub fn _test_arm_panic_settler(document: &_Document) -> PyResult<()> {
     crate::errors::boundary(|| {
         document.document()?.set_settlers(Settlers::default().with(
-            Structure::TreeLimits,
+            Structure::Appearance,
             Arc::new(PanicOnce(AtomicBool::new(true))),
         ));
         Ok(())
@@ -105,7 +105,7 @@ pub fn _test_mark_for_panic(py: Python<'_>, document: &_Document) -> PyResult<()
     crate::errors::boundary(|| {
         document.edit(py, |transaction, budget| {
             transaction
-                .mark(Structure::TreeLimits, 1, budget)
+                .mark(Structure::Appearance, 1, budget)
                 .map_err(|error| store_error(&error))
         })
     })?

@@ -109,28 +109,28 @@ fn three_writes_that_mark_one_structure_settle_it_once_at_the_commit() {
 #[test]
 fn a_read_inside_a_transaction_settles_what_it_depends_on_first() {
     let appearance = Arc::new(Counting::default());
-    let limits = Arc::new(Counting::default());
+    let dependent = Arc::new(Counting::default());
     let document = document(
         Settlers::default()
             .with(Structure::Appearance, appearance.clone())
-            .with(Structure::TreeLimits, limits.clone()),
+            .with(Structure::Dependent, dependent.clone()),
     );
     let budget = Budget::default();
 
     let mut transaction = document.begin();
     transaction.write(7, &Value::Integer(1), &budget).unwrap();
     transaction.mark(Structure::Appearance, 7, &budget).unwrap();
-    transaction.mark(Structure::TreeLimits, 8, &budget).unwrap();
+    transaction.mark(Structure::Dependent, 8, &budget).unwrap();
     transaction
         .settle(Scope::One(Structure::Appearance), &budget)
         .unwrap();
 
     assert_eq!(integer(transaction.version(), 1007), Some(1));
     assert!(!transaction.is_stale(Structure::Appearance, 7));
-    assert!(transaction.is_stale(Structure::TreeLimits, 8));
+    assert!(transaction.is_stale(Structure::Dependent, 8));
     transaction.commit(&budget).unwrap();
     // The commit settles only what is still stale.
-    assert_eq!((appearance.calls(), limits.calls()), (1, 1));
+    assert_eq!((appearance.calls(), dependent.calls()), (1, 1));
 }
 
 #[test]
@@ -167,24 +167,25 @@ fn font_subsets_settle_only_at_a_save() {
 
 #[test]
 fn a_settler_that_marks_another_structure_settles_it_in_the_same_commit() {
-    let appearance = Arc::new(Counting::then(Structure::TreeLimits));
-    let limits = Arc::new(Counting::then(Structure::FontSubset));
+    let appearance = Arc::new(Counting::then(Structure::Dependent));
+    let dependent = Arc::new(Counting::then(Structure::FontSubset));
     let document = document(
         Settlers::default()
             .with(Structure::Appearance, appearance.clone())
-            .with(Structure::TreeLimits, limits.clone()),
+            .with(Structure::Dependent, dependent.clone()),
     );
     let budget = Budget::default();
 
     let mut transaction = document.begin();
     transaction.write(7, &Value::Integer(1), &budget).unwrap();
-    transaction.mark(Structure::TreeLimits, 6, &budget).unwrap();
+    transaction.mark(Structure::Dependent, 6, &budget).unwrap();
     transaction.mark(Structure::Appearance, 7, &budget).unwrap();
     let settled = transaction.commit(&budget).unwrap();
 
-    // Appearances settle before the limits that they mark, so one call
-    // settles the limits that were stale and those the appearance marked.
-    assert_eq!(*limits.numbers.lock().unwrap(), [vec![6, 7]]);
+    // Appearances settle before the dependent structures that they mark, so
+    // one call settles the marks that were stale and those the appearance
+    // marked.
+    assert_eq!(*dependent.numbers.lock().unwrap(), [vec![6, 7]]);
     assert_eq!(appearance.calls(), 1);
     // Font subsets wait for a save, and no settler is registered for them.
     let fonts: Vec<_> = settled
@@ -199,12 +200,12 @@ fn a_settler_that_marks_another_structure_settles_it_in_the_same_commit() {
 
 #[test]
 fn settlers_that_keep_marking_each_other_refuse_the_commit() {
-    let appearance = Arc::new(Counting::then(Structure::TreeLimits));
-    let limits = Arc::new(Counting::then(Structure::Appearance));
+    let appearance = Arc::new(Counting::then(Structure::Dependent));
+    let dependent = Arc::new(Counting::then(Structure::Appearance));
     let document = document(
         Settlers::default()
             .with(Structure::Appearance, appearance.clone())
-            .with(Structure::TreeLimits, limits),
+            .with(Structure::Dependent, dependent),
     );
     let budget = Budget::default();
     let parent = document.current();

@@ -23,7 +23,8 @@
 //!   objects    u32 count, then for each: u32 number, then u8 0, u16
 //!              generation, u32 length, and the bytes of the value, or
 //!              u8 1 and the u16 generation of a free entry
-//!   marks      u32 count, then for each: u8 structure, u32 number
+//!   marks      u32 count, then for each: u8 structure (0 Appearance,
+//!              4 FontSubset; 1..=3 retired), u32 number
 //! checksum     32 bytes: SHA-256 of every byte before it
 //! ```
 
@@ -40,6 +41,31 @@ use crate::{Error, Result, write};
 const MAGIC: &[u8; 16] = b"PYROPDF-HISTORY\n";
 const FORMAT: u32 = 1;
 const HASH: usize = 32;
+
+const APPEARANCE_TAG: u8 = 0;
+const FONT_SUBSET_TAG: u8 = 4;
+
+fn structure_tag(structure: Structure) -> Result<u8> {
+    match structure {
+        Structure::Appearance => Ok(APPEARANCE_TAG),
+        Structure::FontSubset => Ok(FONT_SUBSET_TAG),
+        #[cfg(test)]
+        Structure::Dependent => Err(Error::malformed(
+            "the test-only Dependent structure has no saved-history wire tag",
+        )),
+    }
+}
+
+fn structure_from_tag(tag: u8) -> Result<Structure> {
+    match tag {
+        APPEARANCE_TAG => Ok(Structure::Appearance),
+        FONT_SUBSET_TAG => Ok(Structure::FontSubset),
+        // Tags 1..=3 belonged to the retired OutlineCount, ParentTree, and
+        // TreeLimits structures (#783), which settled before commit and never
+        // persisted on valid FORMAT = 1 versions.
+        _ => Err(corrupt("a stale mark names no structure")),
+    }
+}
 
 /// A version that restoring builds, with the bytes that it holds and the
 /// version before it does not share, and the converse.
@@ -167,7 +193,7 @@ pub(super) fn save(
         marks.try_extend(version.stale.marks())?;
         out.count(marks.len())?;
         for mark in marks.iter() {
-            out.bytes(&[u8::try_from(mark.structure.index()).unwrap_or(u8::MAX)])?;
+            out.bytes(&[structure_tag(mark.structure)?])?;
             out.u32(mark.number)?;
         }
     }
@@ -288,10 +314,8 @@ fn read_version(before: &Version, input: &mut In<'_>, budget: &Budget) -> Result
     }
     let mut stale = Stale::default();
     for _ in 0..input.count()? {
-        let [structure] = input.array()?;
-        let structure = *Structure::ALL
-            .get(usize::from(structure))
-            .ok_or_else(|| corrupt("a stale mark names no structure"))?;
+        let [tag] = input.array()?;
+        let structure = structure_from_tag(tag)?;
         let number = input.u32()?;
         stale.insert(Mark { structure, number }, budget)?;
     }
