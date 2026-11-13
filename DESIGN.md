@@ -43,60 +43,32 @@ fact.
 
 ## 2. Evidence from pylopdf
 
-pylopdf's costs, measured and counted on 2026-10-24, led to this design.
-[evidence/pylopdf-baseline](evidence/pylopdf-baseline/README.md) records
-them in full, with the scripts and the conditions of each run.
+[pylopdf](https://github.com/yhay81/pylopdf)'s costs, measured on 2026-10-24
+against pylopdf 0.15.0 and recorded in
+[evidence/pylopdf-baseline](evidence/pylopdf-baseline/README.md), motivated
+this design.
 
 ### 2.1 Measurements
 
-Four workloads, at the largest size measured. pylopdf's results are those
-of pylopdf 0.15.0, and pyropdf's those of the evidence that each row links,
-which records its conditions. The documents repeat pylopdf's
-`tests/assets/real_world/bill-hr815.pdf` (110 pages), and the form is its
-`f1040.pdf`.
-
-| Workload | pylopdf, and the cause | pyropdf |
+| Workload | pylopdf 0.15.0 | pyropdf |
 | --- | --- | --- |
-| Rotate every page, then read it | 1,760 pages: 28.68 to 30.41 s, 18 to 24 times as long as reading the text alone. Every edit drops hayro's snapshot and every derived cache, and the next read serializes the whole lopdf graph and parses it again. | Rotating and rendering 1,760 pages takes 11.5 s, 3.6 times rendering alone, where pylopdf takes 22.7 s, 7.2 times ([edit-render](evidence/edit-render/README.md)). What still grows with the document is hayro's re-read of each version, with the bytes that the bridge builds for it, and the page index walk (section 6). |
-| Fill one text field | 2.17 to 2.19 ms with 2,626 objects, 6.39 to 6.58 ms with 8,646. Field edits clone the whole lopdf document so that they can roll back on failure. | 0.04 ms with 2,663 objects as with 6,903 ([form-fill-cost](evidence/form-fill-cost/README.md)). |
-| Read the value of every field | 2.18 to 2.24 s for 1,600 fields, while one walk of the form takes 1.22 to 1.25 ms. A `Field` handle walks the whole form on every property access to find itself. | 7.77 ms to list and read 1,600 fields, against 4.72 ms for one walk, which the memo computes once ([form-read-cost](evidence/form-read-cost/README.md)). |
-| Stamp text in one OpenType face on 100 pages | 100 embedded font programs and 330 KiB. `dedupe=True` merges them only when every page has the same text (29.6 KiB); with different text it leaves 82.7 KiB. Each `page.draw()` commit generates its own krilla document, so each commit embeds its own subset. | One program: 37.1 KiB, or 19.7 KiB with `dedupe=True`, and 36.7 and 24.7 KiB with different text ([font-subsets](evidence/font-subsets/README.md)). |
+| Rotate every page, then read or render (1,760 pages) | 22.7 s to rotate and render (7.2× render alone); 28.7–30.4 s to rotate and read text (18–24× read alone) | 11.5 s to rotate and render, 3.6× render alone ([edit-render](evidence/edit-render/README.md)); remaining per-version cost is hayro's xref and page-tree read (section 6) |
+| Fill one text field | 2.17–2.19 ms at 2,626 objects; 6.39–6.58 ms at 8,646 | 0.04 ms at both 2,663 and 6,903 objects ([form-fill-cost](evidence/form-fill-cost/README.md)) |
+| Read the value of every field (1,600 fields) | 2.18–2.24 s (one walk: 1.22–1.25 ms) | 7.77 ms against 4.72 ms for one walk ([form-read-cost](evidence/form-read-cost/README.md)) |
+| Stamp text in one OpenType face on 100 pages | 100 font programs, 330 KiB (29.6 / 82.7 KiB with `dedupe=True`) | One program: 37.1 KiB, or 19.7 / 24.7 KiB with `dedupe=True` ([font-subsets](evidence/font-subsets/README.md)) |
 
-### 2.2 Structure
+### 2.2 Diagnosis
 
-pylopdf's code shows the same cause. About 5,500 lines of Rust exist
-because an engine lacks a bound, an API, or linear-time behavior, among
-them the reconciliation of how lopdf and hayro read malformed files. 67
-call sites choose by hand how much an edit invalidates, and page cleanup,
-structure-tree pruning, and form import are 3,654 lines of
-operation-specific code. Incremental save compares every object with the
-original bytes, and transactions copy the whole graph, because no editing
-method reports what it changed. lopdf stores real numbers as `f32`, so
-every save rewrites `35.6812345` as `35.681236`.
-
-On damaged input, hayro alone rendered 103 of 112 inputs (14 files under 8
-kinds of damage), while pylopdf with lopdf 0.46 read the first page of 78
-(pylopdf's roadmap, evidence log).
-
-### 2.3 Diagnosis
-
-pylopdf holds three object models: lopdf's editable graph, hayro's parse of
-file bytes, and the PDFs that krilla generates. It reconciles them after the
-fact, and its costs come from one decision. lopdf's graph is the editable
-source of truth, hayro reads an immutable snapshot of it, and every edit
-discards that snapshot. As a result:
-
-- each edit costs as much as the document;
-- each difference between the two readers becomes pylopdf code;
-- each optimization must prove which caches an edit may keep.
-
-Incremental save diffs the whole graph, transactions copy it, and
-invalidation drops everything derived from it. These are separate
-mechanisms, and each pays for the whole document. The items on pylopdf's
-roadmap that would fix this are central change tracking, exact real
-numbers, interpretation over a source that is not file bytes, and
-provenance. They are parts of one mechanism, and pyropdf builds that
-mechanism first.
+pylopdf held three separate object models: lopdf's mutable graph (with `f32`
+reals), hayro's parse of file bytes, and per-commit PDFs generated by krilla.
+Every edit dropped hayro's snapshot and re-serialized the graph on the next
+read; transactions cloned the whole graph; incremental save diffed every
+object; and invalidation, page cleanup, structure pruning, and form import
+relied on hand-written per-operation code and reconciliation between lopdf and
+hayro. On damaged input (14 files under 8 kinds of damage), hayro alone
+rendered 103 of 112 inputs while pylopdf with lopdf 0.46 read the first page of
+78. One versioned store with exact spans, read-set tracking, and provenance
+replaces all of these mechanisms at once.
 
 ## 3. Foundation principles
 
@@ -151,7 +123,7 @@ A document is a base and a chain of versions.
 
   Versions share structure, so a new version costs time and memory in
   proportion to what its transaction wrote. The map is pyropdf's own chunk
-  table (decided in #9; measured in `evidence/persistent-map`): copy-on-write
+  table (`evidence/persistent-map`): copy-on-write
   chunks of 16 slots, indexed by object number, under 32-way branches. A
   write copies one chunk and the branches above it, at most six levels for
   32-bit object numbers, so its cost grows with the height of the table and
@@ -184,8 +156,7 @@ A document is a base and a chain of versions.
   First discard the farthest redo steps while redo alone exceeds the limit.
   Then discard the oldest undo steps until the whole history fits. This
   preserves undo steps when a large undone addition cannot remain as redo.
-  Apply the same rule after commit, undo, redo, and a limit change. These
-  choices were accepted in #12.
+  Apply the same rule after commit, undo, redo, and a limit change (#12).
 - A **saved history** carries the history to the same document opened
   again (#428): `doc.history.save()` returns it as bytes in pyropdf's own
   format, and `restore()` reads them back. The bytes hold every version that
@@ -319,13 +290,8 @@ its objects alive. The result stays valid while every stamp holds. That is
 the identity that change sets compare, so writing an object again
 invalidates the result even when it writes the same bytes (#503).
 
-Read sets and stamps keep invalidation correct for a new editing method
-without any declaration (F4), where hand-chosen invalidation needs a rule
-for every method (section 2.2). Versions (section 4), read sets (this
-section), document resources (section 7), and identity handles (section 10)
-together make each workload of section 2.1 cost in proportion to what it
-changes or reads, not to the size of the document, once hayro reads
-versions directly (I1 in section 6).
+Read sets and stamps keep invalidation correct for any new editing method
+without per-method declarations (F4).
 
 ## 6. Interpretation contract
 
@@ -337,26 +303,26 @@ the hayro tracker (#7) follows each one.
 | --- | --- |
 | I1 Object source | hayro-syntax resolves objects through a source that the caller supplies (a store version), not only through file bytes: object bytes by identifier, with object-stream members resolved and decryption applied, and the trailer. Opening a source does not resolve the whole page tree: hayro resolves a page when it is read, or takes the page list from the source. It needs no public cross-reference reader, repair, or decryption. |
 | I2 Bounded construction | Colour spaces, functions, Type 4 programs, and nested content and objects are built and read without unbounded recursion, and refuse with an error beyond their bounds instead of truncating. |
-| I3 No panics | Malformed input yields errors, not panics (LaurenzV/hayro#1546 and the rest). |
+| I3 No panics | Malformed input yields errors, not panics. |
 | I4 Provenance | Begin and end of every content stream, Form XObject, annotation appearance, tiling pattern, and Type 3 glyph procedure; the operator index and byte span of every painted item; the resource names it used; a callback for `sh`; marked-content properties; colour spaces and components; font and image identity; image-mask streams. |
 | I5 Fuel and cancellation | A budget charged per operator, per function evaluation, and per rasterized area, with a cancellation check. |
-| I6 Linear time | Object stream member tables parsed once (LaurenzV/hayro#1545), a linear search for the end of inline image data, and an operand stack that holds the 33 operands of a DeviceN `scn`. |
+| I6 Linear time | Object stream member tables parsed once, a linear search for the end of inline image data, and an operand stack that holds the 33 operands of a DeviceN `scn`. |
 | I7 Spans | The byte span of every parsed object and dictionary entry, which F3 needs. pyropdf's content syntax already keeps each content operation's bytes over hayro's tokenizer (#93). |
 | I8 Object numbers | Object numbers read as `u32`. |
 
-hayro-syntax 0.8 keeps its cross-reference reader, its repair, and its
-decryption crate-private (`root_xref`, `fallback`, `repair`, and the `crypto`
-module), and `Pdf::new` resolves the whole page tree. Its `FromBytes` trait,
-which parses an object from a byte slice, is public. The store therefore
-reads cross-reference data and decrypts on its own, and parses every object
-through `FromBytes`.
+hayro-syntax keeps its cross-reference reader, its repair, and its decryption
+crate-private (`root_xref`, `fallback`, `repair`, and the `crypto` module),
+and `Pdf::new` resolves the whole page tree. Its `FromBytes` trait, which
+parses an object from a byte slice, is public. The store therefore reads
+cross-reference data and decrypts on its own, and parses every object through
+`FromBytes`.
 
-The write side stays in pyropdf (decided in #10): versions, the writer, the
-cross-reference reader and repair, and the security handler. hayro-syntax
-stays a reader, and I1 and I7 are the whole interface between them. The
-store's repair runs once on open and does not depend on the order of reads
-(section 4.3), where hayro-syntax repairs on the first read that fails; with
-I1, hayro reads the store's objects and its own repair is not used.
+The write side stays in pyropdf: versions, the writer, the cross-reference
+reader and repair, and the security handler. hayro-syntax stays a reader, and
+I1 and I7 are the whole interface between them. The store's repair runs once
+on open and does not depend on the order of reads (section 4.3), where
+hayro-syntax repairs on the first read that fails; with I1, hayro reads the
+store's objects and its own repair is not used.
 
 Until I1 lands, the store hands hayro its current version as an in-memory
 incremental update: the base bytes, followed by the written objects (already
@@ -402,22 +368,19 @@ upstream issue follows it.
 | Engine | Use | Requirement |
 | --- | --- | --- |
 | vello_cpu | Rasterizes what hayro interprets | CMYK output, agreed with hayro (#433). hayro converts every colour to sRGB, and vello_cpu rasterizes RGBA8 only, so `Page.pixmap` renders gray and RGB. |
-| harfrust | Shapes the text of embedded faces (section 7) | Limits and cancellation inside one shape call (#580). pyropdf counts the text against `shaped_glyph_count` before it shapes, and polls between runs. harfrust reads fonts through the release of read-fonts that hayro uses (section 15). |
+| harfrust | Shapes the text of embedded faces (section 7) | Limits and cancellation inside one shape call (#580). pyropdf counts the text against `shaped_glyph_count` before it shapes, and polls between runs. harfrust uses the release of read-fonts that hayro uses, so it adds no second copy. |
 | png (image-rs) | Decodes the PNG images that callers supply | Its inflate state and row buffers charged to the budget, and a poll within a wide row (#561). pyropdf charges the decoded size before decoding, and polls while it fills the output. |
 | zlib-rs | Compresses Flate streams | A compressor initialization that fails with an error instead of asserting (#561). |
 | unicode-segmentation | Finds grapheme clusters for text layout | Its pre-context protocol, which pyropdf answers a step at a time between polls (#552). |
 
 ## 7. Writing contract and settling
 
-pyropdf writes the canvas itself. Paths, shapes, graphics state, clipping,
-transforms, opacity, blending, images, placed pages, and text become content
-operators, image XObjects, Form XObjects, and fonts that pyropdf writes into
-the store, so one canvas commits one content stream and one transaction.
-Images and font faces are document resources: each is registered once per
-document, and drawing it again reuses its objects. krilla writes nothing:
-its public API returns a complete PDF per drawing, which pyropdf would have
-to parse and import (F1), and #466 chose to write text in pyropdf rather
-than wait for krilla to offer an object sink and document resources.
+pyropdf writes the canvas directly into the store. Paths, shapes, graphics
+state, clipping, transforms, opacity, blending, shadings, soft masks, images,
+placed pages, and text become content operators, XObjects, and fonts in one
+content stream and one transaction. Images and font faces are document
+resources: each is registered once per document, and drawing it again reuses
+its objects.
 
 A canvas is one operation (section 9). It takes its budget from the
 document's limits when its block begins, and everything inside the block
@@ -477,42 +440,41 @@ on its weight axis; a weight outside the axis refuses. Loading that instance
 writes a static TrueType program: every glyph keeps its ID, composites are
 flattened, and instructions go. From there it is a face like any other, with
 its own font dictionary, provisional program, and subset at save. The program
-is written at load and not at save because the provisional program needs all
-its glyphs from the first drawing, and a face of 17,936 glyphs takes about a
-third of a second. The program stays under the limit on font input, since
-flattening composites can amplify, and a coordinate that the variations push
-outside `i16` refuses. harfrust shapes the source at the instance, because
-kerning has variation deltas. CFF2 stays refused: it has no PDF font type.
-Drawing the instance's glyphs as paths in `/ActualText` is not an option, for
-the reason below (`evidence/font-instances-colour`, #598).
+is written at load because the provisional program needs all its glyphs from
+the first drawing. It stays under the limit on font input, since flattening
+composites can amplify, and a coordinate that variations push outside `i16`
+refuses. harfrust shapes the source at the instance, because kerning has
+variation deltas. CFF2 stays refused: it has no PDF font type
+(`evidence/font-instances-colour`, #598).
 
-A CIDFont draws a glyph's outline (ISO 32000-2 section 9.7), so a colour glyph
-that a drawing cannot paint draws its monochrome fallback outline and reads as
-text: any in a form field or an annotation, and on the canvas COLR, the `SVG `
-table, and a strike that is not PNG. One whose outline is empty refuses, rather
-than draw nothing under text that reads back, and a face with neither outlines
-nor colour bitmaps refuses at load.
+Colour glyphs are drawn on the canvas as Type 3 fonts whose glyph procedures
+paint the layers or the image, with a ToUnicode CMap, because `/ActualText`
+over paths or a Form XObject reads as nothing in pyropdf, xpdf, MuPDF, and
+PDFium, which honour it only over a shown glyph. Each Type 3 font holds up to
+256 one-byte codes, read from the document so that a drawing adds its glyphs
+in its own transaction, undoing it removes them, and a drawing with no outline
+glyphs writes no Type0 font.
 
-Colour itself is drawn as a Type 3 font whose glyph procedures paint the layers
-or the image, with a ToUnicode CMap, because that is the form that reads as
-text. `/ActualText` over paths or a Form XObject reads as nothing in pyropdf,
-xpdf, MuPDF, and PDFium, which honour it only over a shown glyph.
+Canvas text paints two colour formats this way:
 
-A Type 3 font holds 256 glyphs, one for each one-byte code, and a document holds
-as many fonts of a face as its drawn glyphs need. What they hold is read from the
-document, so a drawing adds its glyphs in its own transaction, undoing it removes
-them, and only what the document draws is ever written. A line selects these fonts
-and the face's Type0 font with `Tf` as its glyphs ask, and a drawing with no
-outline glyphs writes no Type0 font.
+- **COLR v0 and v1** (`evidence/colr-glyphs`, #633), in the face's default
+  palette at the loaded instance: solid colours, linear and radial gradients,
+  transforms, clips, shared layers, `PaintColrGlyph`, and the composite modes
+  that PDF's blend modes and soft masks express, in an isolated transparency
+  group per glyph with equal shadings shared across the document. A paint graph
+  with a cycle or past skrifa's bounds refuses.
+- **PNG strikes of `sbix` and CBDT** (`evidence/colour-bitmaps`, #631), through
+  shared image XObjects, choosing the smallest strike that reaches 300 pixels
+  per inch at the drawn size, else the largest. A face with colour bitmaps and
+  no outlines draws only on the canvas; a face with neither outlines nor colour
+  bitmaps refuses at load.
 
-The canvas paints the PNG strikes of `sbix` and CBDT this way, through the image
-objects that it has (`evidence/colour-bitmaps`, #631). A drawing takes the smallest
-strike that holds the glyph at 300 pixels per inch at its size, else the largest,
-so a glyph holds one procedure and one image per strike. A face with bitmaps and
-no outlines draws only on the canvas. COLR also needs a writer for shadings and
-soft masks, since 97.7% of Segoe UI Emoji's colour glyphs use alpha in their
-gradients. The `SVG ` table is not drawn: a renderer adds 23 crates and parses XML
-from the input with no hook for the budget.
+A CIDFont draws outlines only (ISO 32000-2 section 9.7), so any colour glyph in
+a form field or annotation, and on the canvas any `SVG ` glyph, non-PNG bitmap
+strike, or COLR glyph that needs a paint PDF lacks (such as a sweep gradient or
+an unsupported composite mode), draws its monochrome fallback outline instead,
+or refuses when that outline is empty. The `SVG ` table is not rendered because
+parsing XML from font input offers no hook for the operation's budget.
 
 Dependent structures are settled rather than rebuilt by every call. A
 transaction marks what its writes make stale: appearance streams, outline
@@ -756,11 +718,6 @@ The store gives the API these behaviors:
   they touched, and the PDF/A or PDF/UA claims they break (#157).
 - **Glyph-level results.** Characters and content items are columnar buffers
   that NumPy and Arrow read without copying; records are views over them.
-- **Typed objects.** The layer of section 8 sits between the raw object model
-  and the domain APIs.
-- **Threads.** Several threads may read one document.
-- **Limits.** `DocumentLimits` bounds time as well, and carries a
-  cancellation token (section 9).
 
 A sketch:
 
@@ -821,13 +778,12 @@ that a document does not embed, which the `jp`, `ko`, `zh-cn`, and
 `zh-tw` extras install; canvas text draws in a Standard 14 font or in a
 face that the program supplies (section 7).
 
-Signing (issue #397, `evidence/signing`) uses the RustCrypto line of `cms`
-0.3, `x509-cert` 0.3, `der` 0.8, `p256` and `p384` 0.14, `pkcs8` 0.11,
-`sha2` 0.11, and `hmac` 0.13, with `cms` built without its `builder` feature
-so that the `rsa` crate stays out of the tree. pyropdf signs with ECDSA keys
-itself; RSA, HSM, and PKCS#11 keys sign through a callback, and a time-stamp
-is a callback that returns an RFC 3161 token, so the library makes no
-network access.
+Signing (issue #397, `evidence/signing`) uses the RustCrypto CMS and X.509
+crates (`cms` without its `builder` feature so that the `rsa` crate stays out
+of the tree, `x509-cert`, `der`, `p256`, `p384`, `pkcs8`, `sha2`, and `hmac`).
+pyropdf signs with ECDSA keys itself; RSA, HSM, and PKCS#11 keys sign through
+a callback, and a time-stamp is a callback that returns an RFC 3161 token, so
+the library makes no network access.
 
 ## 12. Verification
 
@@ -857,68 +813,36 @@ network access.
   veraPDF validates the PDF/A and PDF/UA corpora and their saves, qpdf and
   pikepdf read saved documents, poppler renders embedded-font text for
   comparison with hayro, and pyHanko validates signatures.
-- Fuzz targets cover the index, repair, the hayro bridge, the writer, and
-  every new parser.
+- Fuzz targets cover the index, repair, values, saves, the hayro bridge,
+  content, embedded font writing and subsetting, colour bitmaps and COLR, and
+  page interpretation.
 - The four workloads of section 2.1 are measured under `evidence/`
   (`edit-render`, `form-fill-cost`, `form-read-cost`, and `font-subsets`),
   and tests guard what can be counted, such as one walk of a form and one
   font program per face.
-- pylopdf's real-document corpus comes over with its license records.
+- Every real-world corpus document carries its source and license record
+  (`tests/assets/real_world/README.md`).
 
 ## 13. Phases
 
-The work runs in five phases. Each is a GitHub milestone with a tracker
-under the roadmap (#1), and the tracker holds the phase's scope and checks
-its exit. Phases order the work but do not gate it: an issue waits only on
-the issues that block it.
+The work is ordered in five phases under the roadmap (#1); each is a GitHub
+milestone whose tracker holds its scope and checks its exit. Phases order work
+but do not gate it: an issue waits only on the issues that block it.
 
-### Phase 0: Foundation
+- **Phase 0: Foundation** (#2) — the store, budgets, bridge, and core binding
+  (sections 4 to 6 and 9).
+- **Phase 1: Reading** (#3) — content provenance and fuel, text and document
+  understanding, rendering, concurrency, and parity with the frozen oracle
+  (section 12).
+- **Phase 2: Writing and interaction** (#4) — the canvas and its fonts,
+  settling, appearances, annotations, links, forms, page operations, and the
+  change report.
+- **Phase 3: Typed objects** (#5) — the Arlington generator, structural check,
+  reverse-reference roles, and specification map (section 8).
+- **Phase 4: Specification** (#6) — the specification milestones (#245 to
+  #256), continuous tracks and watchlist (#258), and 1.0 release gates (#257).
 
-The store and what proves it (#2): sections 4 to 6 and 9, and the core of
-the binding. Exit:
-- without edits, saves reproduce every corpus document: incremental saves
-  byte for byte, full saves in every value;
-- an edit followed by a page read serializes and parses only the objects
-  the edit wrote, apart from hayro's re-read of the cross-reference data and
-  the page tree (section 6), and the benchmark publishes its cost at 110,
-  440, and 1,760 pages;
-- a failed transaction leaves the current version unchanged without copying
-  the document.
-
-### Phase 1: Reading
-
-The content model with provenance and fuel, text and document
-understanding, and rendering (#3). Exit:
-- differential parity with the frozen oracle of section 12 on the corpus,
-  with differences documented;
-- every content item names its stream and operators.
-
-### Phase 2: Writing and interaction
-
-The canvas and its fonts, settling, appearances, annotations, links, forms
-and widgets with identity handles, page operations with referential rules,
-and the change report (#4). Exit:
-- stamping one face on 100 pages embeds one font program;
-- reading every value of a 1,600-field form costs about one walk of the
-  form;
-- the frozen oracle's drawing, annotation, form, and page-operation tests
-  (section 12) pass after migration.
-
-### Phase 3: Typed objects
-
-The Arlington generator, the structural check, the roles of the
-reverse-reference index, and the specification map (section 8, #5). Exit:
-- every Arlington object maps to a descriptor;
-- the check finds every defect of a corpus broken on purpose.
-
-### Phase 4: Specification
-
-The rest of the specification on this foundation (#6), in one tracker per
-milestone: the content model, the canvas, reading, rendering, writing,
-rewriting, structure, persistence, understanding, verification,
-conformance, and specification completion (#245 to #256), with the
-continuous tracks and the watchlist (#258). Its exit is the 1.0 release,
-whose gates #257 tracks. 1.0 stabilizes the API, and needs:
+1.0 stabilizes the API and needs:
 - a specification map (section 8) without `planned` or `engine` entries:
   every feature is `done` in each dimension that applies to it, or
   `partial` or `non-goal` under a recorded release decision, every
@@ -940,58 +864,18 @@ release, and the harnesses and validators of section 12 passing on it.
 
 ## 14. Moving from pylopdf
 
-pylopdf's users move to pyropdf in these steps.
+pylopdf is archived at `0.16.1` and directs users here. Three links to it
+remain:
 
-1. **Freeze.** pylopdf takes no new features after its freeze commit,
-   `ebb01d3c` (#95), which is the reference for differential tests
-   (section 12). It takes security fixes until it is archived.
-2. **Porting.** A module comes over with its Python tests and names the
-   pylopdf commit it came from. What pylopdf has only because of its
-   foundation (section 2.2) is not ported:
-   - the guards, whose bounds go upstream as I2 (section 6);
-   - the reconciliation between lopdf and hayro;
-   - the replacements for lopdf's helpers;
-   - the rules of pylopdf's AGENTS.md. Its measured facts move into this
-     repository's evidence.
-3. **Data packages.** `pylopdf-fonts-*` and `pylopdf-ocr-models` hold data
-   only, so pyropdf can use them as they are: the `ocr` extra installs
-   `pylopdf-ocr-models`, and the `jp`, `ko`, `zh-cn`, and `zh-tw` extras
-   install `pylopdf-fonts-jp`, `-ko`, `-zh-cn`, and `-zh-tw`. Each is
-   republished under a `pyropdf-` name when a release changes it.
-4. **Migration.** pylopdf's codemod learns to rename imports, so code
-   written for any pylopdf release, and pymupdf code, migrates in one step.
-5. **Archive.** pylopdf is archived when two conditions hold:
-   - pyropdf opens, extracts, renders, reorganizes pages, and saves at least
-     as well as frozen pylopdf;
-   - the codemod migrates pylopdf's example programs.
-
-   Before that, pylopdf's README and roadmap point here, and the open
-   pylopdf issues worth keeping move here by issue transfer, because an
-   archived repository is read-only. pylopdf then publishes a final release
-   whose description points here, and its repository and PyPI project are
-   archived. PyPI's archived status keeps existing releases installable,
-   blocks new uploads, and can be reversed. The documentation site becomes a
-   migration notice.
-
-## 15. Risks
-
-- **Upstream dependence.** The items of section 6 need their maintainers'
-  agreement. The bridge removes the need to wait for I1, and pyropdf's own
-  bounds are the fallback for I2 (section 6). Until the other engines'
-  requirements land, the residuals that section 6 lists stay outside the
-  operation's budget. The canvas, text included, waits on no engine
-  (section 7).
-- **Text is pyropdf's code.** harfrust shapes text, but the font writer and
-  the subset at save read font programs that users supply, so fuzz targets
-  cover them (F9). harfrust reads fonts through read-fonts, as hayro does,
-  and pyropdf takes the harfrust release that uses hayro's version, so that
-  harfrust adds no copy of it.
-- **Later failures.** Lazy opening moves some refusals from `open` to first
-  use. `check_at_open` and the web profile keep rejection at open available.
-- **Overhead.** Persistent maps and read-set recording add constant costs,
-  which the benchmarks track.
-- **WebAssembly.** Under Pyodide a stack overflow is fatal to the runtime,
-  and there are no threads that could give interpretation a larger stack, so
-  I2 matters most there.
-- **Name.** Searches for "pyro" find Pyro (Python Remote Objects) and Pyro
-  (probabilistic programming).
+- **Frozen oracle.** Commit `ebb01d3c` (#95) is the frozen pylopdf reference
+  for differential parity tests (section 12).
+- **Porting exclusions.** Any module or test ported from pylopdf names its
+  source commit and omits what existed only for pylopdf's architecture
+  (section 2.2): the guards, whose bounds go upstream as I2 (section 6); the
+  reconciliation between lopdf and hayro; the replacements for lopdf's
+  helpers; and the rules of pylopdf's `AGENTS.md`.
+- **Data packages.** `pylopdf-ocr-models` and `pylopdf-fonts-*` hold data only,
+  so pyropdf uses them as they are until a release changes their contents
+  (republishing under a `pyropdf-` name): the `ocr` extra installs
+  `pylopdf-ocr-models`, and the `jp`, `ko`, `zh-cn`, and `zh-tw` extras
+  install `pylopdf-fonts-jp`, `-ko`, `-zh-cn`, and `-zh-tw`.
