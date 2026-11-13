@@ -196,44 +196,30 @@ fn remove_pages(
         let view = transaction.snapshot();
         return rewrite_with(transaction, &view, index, order, added, budget);
     }
-    let parent = Arc::clone(transaction.parent());
-    let references = references.get(&parent, budget)?;
-    let references = match parent.changes(&before, budget)? {
-        Some(changes) if !changes.is_empty() => {
-            Arc::new(references.update(&mut Reads::new(&before, budget), &changes)?)
-        }
-        _ => references,
-    };
+    let references_before = references.in_transaction(transaction, budget)?;
     let mut edits = Edits::new(budget);
     if !removed.is_empty() {
         refs::remove_pages(
             &mut Reads::new(&before, budget),
-            &references,
+            &references_before,
             removed,
             retained,
             &mut edits,
         )?;
     }
+    drop(references_before);
     edits.write(transaction, budget)?;
     if let Some(labels) = &labels {
         labels.write(transaction, budget)?;
     }
     let view = transaction.snapshot();
     rewrite_with(transaction, &view, index, order, added, budget)?;
-    let after = transaction.snapshot();
-    let references = match before.changes(&after, budget)? {
-        Some(changes) => references.update(&mut Reads::new(&after, budget), &changes)?,
-        None => return Ok(()),
-    };
     let mut candidates = BudgetVec::new(budget);
     candidates.try_extend_from_slice(edits.orphans())?;
     if let Some(labels) = &labels {
         candidates.try_extend_from_slice(labels.nodes())?;
     }
-    let freed = refs::unreferenced(&references, removed, &candidates, budget)?;
-    for &number in freed.iter() {
-        transaction.free(number, budget)?;
-    }
+    refs::free_unreferenced(references, transaction, removed, &candidates, budget)?;
     Ok(())
 }
 

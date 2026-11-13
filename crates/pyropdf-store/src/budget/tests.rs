@@ -949,3 +949,105 @@ fn shared_views_charge_concurrently_within_the_operation_limit() {
     assert_eq!(accepted, 900);
     assert_eq!(operation.used(LimitCode::MemorySize), 900);
 }
+
+#[test]
+fn set_and_map_reservations_charge_memory_and_refuse_beyond_the_limit() {
+    use std::collections::{HashMap, HashSet};
+
+    let set_entry = (64 + 2 * size_of::<u32>()) as u64;
+    let map_entry = (64 + 2 * size_of::<(u32, u64)>()) as u64;
+
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(2 * set_entry));
+    let mut set = HashSet::new();
+    assert_eq!(try_insert_set(&mut set, 10_u32, &budget), Ok(true));
+    assert_eq!(budget.used(LimitCode::MemorySize), set_entry);
+    // Re-inserting an existing element charges nothing.
+    assert_eq!(try_insert_set(&mut set, 10_u32, &budget), Ok(false));
+    assert_eq!(budget.used(LimitCode::MemorySize), set_entry);
+    assert_eq!(try_insert_set(&mut set, 20_u32, &budget), Ok(true));
+    assert_eq!(budget.used(LimitCode::MemorySize), 2 * set_entry);
+    assert_eq!(
+        try_insert_set(&mut set, 30_u32, &budget),
+        Err(LimitExceeded::over(
+            LimitCode::MemorySize,
+            2 * set_entry,
+            3 * set_entry
+        ))
+    );
+    assert_eq!(set.len(), 2);
+    assert!(!set.contains(&30));
+    assert_eq!(budget.used(LimitCode::MemorySize), 2 * set_entry);
+
+    let budget = Budget::default().with_limit(LimitCode::MemorySize, Some(map_entry));
+    let mut map = HashMap::new();
+    assert_eq!(try_insert_map(&mut map, 1_u32, 100_u64, &budget), Ok(None));
+    assert_eq!(budget.used(LimitCode::MemorySize), map_entry);
+    // Replacing the value of an existing key needs no extra slot.
+    assert_eq!(
+        try_insert_map(&mut map, 1_u32, 200_u64, &budget),
+        Ok(Some(100))
+    );
+    assert_eq!(map.get(&1), Some(&200));
+    assert_eq!(budget.used(LimitCode::MemorySize), map_entry);
+    assert_eq!(
+        try_insert_map(&mut map, 2_u32, 300_u64, &budget),
+        Err(LimitExceeded::over(
+            LimitCode::MemorySize,
+            map_entry,
+            2 * map_entry
+        ))
+    );
+    assert_eq!(
+        try_reserve_map(&mut map, 1, &budget),
+        Err(LimitExceeded::over(
+            LimitCode::MemorySize,
+            map_entry,
+            2 * map_entry
+        ))
+    );
+    assert_eq!(map.len(), 1);
+    assert_eq!(budget.used(LimitCode::MemorySize), map_entry);
+}
+
+#[test]
+fn set_and_map_refused_allocations_release_their_charges_and_obey_cancellation() {
+    use std::collections::{HashMap, HashSet};
+
+    let budget = Budget::default();
+    let mut set = HashSet::<u64>::new();
+    assert_eq!(try_insert_set(&mut set, 1, &budget), Ok(true));
+    let used = budget.used(LimitCode::MemorySize);
+    let huge_set = (isize::MAX.unsigned_abs() / (64 + 2 * size_of::<u64>())) - 1;
+    for impossible in [huge_set, usize::MAX] {
+        let refusal = try_reserve_set(&mut set, impossible, &budget).unwrap_err();
+        assert_eq!(refusal.code(), LimitCode::MemorySize);
+        assert_eq!(refusal.limit(), None);
+        assert_eq!(budget.used(LimitCode::MemorySize), used);
+    }
+
+    let mut map = HashMap::<u64, u64>::new();
+    assert_eq!(try_insert_map(&mut map, 1, 2, &budget), Ok(None));
+    let used = budget.used(LimitCode::MemorySize);
+    let huge_map = (isize::MAX.unsigned_abs() / (64 + 2 * size_of::<(u64, u64)>())) - 1;
+    for impossible in [huge_map, usize::MAX] {
+        let refusal = try_reserve_map(&mut map, impossible, &budget).unwrap_err();
+        assert_eq!(refusal.code(), LimitCode::MemorySize);
+        assert_eq!(refusal.limit(), None);
+        assert_eq!(budget.used(LimitCode::MemorySize), used);
+    }
+
+    let token = CancellationToken::new();
+    let budget = Budget::default().with_cancellation(token.clone());
+    assert_eq!(try_insert_set(&mut set, 1, &budget), Ok(false));
+    assert_eq!(try_insert_map(&mut map, 1, 3, &budget), Ok(Some(2)));
+    token.cancel();
+    assert_eq!(
+        try_insert_set(&mut set, 1, &budget),
+        Err(LimitExceeded::new(LimitCode::Cancelled))
+    );
+    assert_eq!(
+        try_insert_map(&mut map, 1, 4, &budget),
+        Err(LimitExceeded::new(LimitCode::Cancelled))
+    );
+    assert_eq!(map.get(&1), Some(&3));
+}

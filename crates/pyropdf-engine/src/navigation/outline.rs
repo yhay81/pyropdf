@@ -890,7 +890,7 @@ pub fn outline_write(
             catalog_dict.insert(Name::from("Outlines"), Value::Reference(root));
         }
         transaction.write(catalog_object, &Value::Dict(catalog_dict), budget)?;
-        free(references_cache, transaction, &old, budget)?;
+        refs::free_unreferenced(references_cache, transaction, &[], &old, budget)?;
         Ok(())
     })
 }
@@ -958,42 +958,6 @@ fn objects(reads: &mut Reads<'_>, catalog: &Dict) -> Result<Vec<u32>> {
         }
     }
     Ok(out.into_vec())
-}
-
-/// Returns the references between the objects that `transaction` sees.
-pub fn references(
-    cache: &refs::Cache,
-    transaction: &Transaction,
-    budget: &Budget,
-) -> std::result::Result<Arc<refs::References>, pyropdf_store::Error> {
-    let parent = Arc::clone(transaction.parent());
-    let references = cache.get(&parent, budget)?;
-    let after = transaction.snapshot();
-    Ok(match parent.changes(&after, budget)? {
-        Some(changes) if !changes.is_empty() => {
-            Arc::new(references.update(&mut Reads::new(&after, budget), &changes)?)
-        }
-        _ => references,
-    })
-}
-
-/// Frees the objects of `candidates`, and those that only they refer to,
-/// that nothing refers to after the edits of `transaction`.
-pub fn free(
-    cache: &refs::Cache,
-    transaction: &mut Transaction,
-    candidates: &[u32],
-    budget: &Budget,
-) -> std::result::Result<(), pyropdf_store::Error> {
-    if candidates.is_empty() {
-        return Ok(());
-    }
-    let references = references(cache, transaction, budget)?;
-    let freed = refs::unreferenced(&references, &[], candidates, budget)?;
-    for &number in freed.iter() {
-        transaction.free(number, budget)?;
-    }
-    Ok(())
 }
 
 fn edit_item(

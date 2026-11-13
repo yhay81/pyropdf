@@ -10,12 +10,12 @@
 
 use std::collections::HashSet;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_set};
 use pyropdf_store::pages::PageIndex;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::Version;
-use pyropdf_store::{Error, LimitExceeded, Result};
+use pyropdf_store::{Error, Result};
 
 use super::{PageUnits, Reader, appearance_for_render, draws, numbers_array};
 
@@ -50,23 +50,9 @@ pub fn synthesized(
             let &Value::Reference(reference) = item else {
                 continue;
             };
-            if visited.contains(&reference) {
+            if !try_insert_set(&mut visited, reference, budget)? {
                 continue;
             }
-            // Hash slots, load-factor slack, and temporary rehash storage.
-            budget.charge(LimitCode::MemorySize, 64)?;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the entry is charged to the budget above"
-            )]
-            visited
-                .try_reserve(1)
-                .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "the entry is charged to the budget above, and room is made for it"
-            )]
-            visited.insert(reference);
             let Some((dict, form)) = plan(&reader, reference)? else {
                 continue;
             };

@@ -21,6 +21,7 @@
 mod cancel;
 mod code;
 mod decode;
+mod hash;
 mod limits;
 mod shared;
 mod vec;
@@ -37,6 +38,7 @@ use std::time::{Duration, Instant};
 pub use cancel::CancellationToken;
 pub use code::LimitCode;
 pub use decode::{DecodeMeter, StreamKind};
+pub use hash::{try_insert_map, try_insert_set, try_reserve_map, try_reserve_set};
 pub use limits::DocumentLimits;
 pub use shared::SharedBudget;
 pub use vec::BudgetVec;

@@ -31,7 +31,7 @@ mod tests;
 use std::fmt;
 
 pub use bytes::Bytes;
-pub(crate) use copy::{copy_dict_for_edit, copy_for_edit};
+pub(crate) use copy::{copy_array_for_edit, copy_dict_for_edit, copy_for_edit};
 pub use read::MAX_NESTING;
 #[cfg(test)]
 pub(crate) use read::PARSES;

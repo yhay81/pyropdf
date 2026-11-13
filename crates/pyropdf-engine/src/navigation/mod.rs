@@ -12,7 +12,7 @@ use std::fmt;
 use std::hash::Hash;
 
 use pyropdf_store::LimitExceeded;
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, LimitCode, try_insert_set};
 use pyropdf_store::version::Transaction;
 
 pub use destinations::{
@@ -21,9 +21,9 @@ pub use destinations::{
 };
 pub use links::{link_add, link_edit, link_list, link_read};
 pub use outline::{
-    MAX_DEPTH, MAX_EDGES, MAX_ITEMS, MAX_TEXT_BYTES, Outline, free, outline_children,
-    outline_entries, outline_item, outline_set_open, outline_set_style, outline_set_target,
-    outline_set_title, outline_walk_counts, outline_write, references,
+    MAX_DEPTH, MAX_EDGES, MAX_ITEMS, MAX_TEXT_BYTES, Outline, outline_children, outline_entries,
+    outline_item, outline_set_open, outline_set_style, outline_set_target, outline_set_title,
+    outline_walk_counts, outline_write,
 };
 
 /// The result of a navigation or outline operation.
@@ -135,19 +135,8 @@ impl From<LimitExceeded> for Error {
     }
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "charges the set entry and table overhead to MemorySize before fallible reservation and insertion"
-)]
 pub(crate) fn visit<T: Eq + Hash>(seen: &mut HashSet<T>, key: T, budget: &Budget) -> Result<bool> {
-    budget.poll()?;
-    if seen.contains(&key) {
-        return Ok(false);
-    }
-    budget.charge(LimitCode::MemorySize, (64 + 2 * size_of::<T>()) as u64)?;
-    seen.try_reserve(1)
-        .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
-    Ok(seen.insert(key))
+    Ok(try_insert_set(seen, key, budget)?)
 }
 
 pub(crate) fn with_savepoint<T>(

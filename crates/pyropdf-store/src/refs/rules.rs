@@ -13,7 +13,7 @@ use crate::version::table::Table;
 use crate::version::{Transaction, Version};
 use crate::{Error, Result};
 
-use super::{Found, References, Referrer, Role, Step, copy_for_edit, find_where};
+use super::{Cache, Found, References, Referrer, Role, Step, copy_for_edit, find_where};
 
 /// What a rule does with a reference to an object that leaves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -757,6 +757,29 @@ pub fn unreferenced<'b>(
     out.sort_unstable();
     budget.poll()?;
     Ok(out)
+}
+
+/// Updates `cache`'s index across `transaction`'s uncommitted changes, finds
+/// the objects that `seeds` and `candidates` leave unreferenced
+/// ([`unreferenced`]), frees each in `transaction`, and returns the freed
+/// object numbers, ascending.
+pub fn free_unreferenced<'b>(
+    cache: &Cache,
+    transaction: &mut Transaction,
+    seeds: &[u32],
+    candidates: &[u32],
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, u32>> {
+    budget.poll()?;
+    if seeds.is_empty() && candidates.is_empty() {
+        return Ok(BudgetVec::new(budget));
+    }
+    let index = cache.in_transaction(transaction, budget)?;
+    let freed = unreferenced(&index, seeds, candidates, budget)?;
+    for &number in freed.iter() {
+        transaction.free(number, budget)?;
+    }
+    Ok(freed)
 }
 
 /// Returns the refusal of an edit that would treat a page, a page tree

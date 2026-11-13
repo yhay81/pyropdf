@@ -16,6 +16,13 @@ pub(crate) fn copy_for_edit(value: &Value, budget: &Budget) -> Result<Value> {
     copy_value(value, budget, 1)
 }
 
+/// Copies an array for editing with the same depth accounting as a root
+/// array value.
+pub(crate) fn copy_array_for_edit(array: &Array, budget: &Budget) -> Result<Array> {
+    check_depth(budget, 1)?;
+    copy_array(array, budget, 1, 8)
+}
+
 /// Copies a dictionary for editing with the same depth accounting as a root
 /// dictionary value.
 pub(crate) fn copy_dict_for_edit(dict: &Dict, budget: &Budget) -> Result<Dict> {
@@ -47,15 +54,7 @@ fn copy_value(value: &Value, budget: &Budget, depth: u64) -> Result<Value> {
         Value::Reference(reference) => Value::Reference(*reference),
         Value::Array(array) => {
             check_depth(budget, depth)?;
-            let mut items = BudgetVec::new(budget);
-            items.try_reserve_exact(array.items.len())?;
-            for child in &array.items {
-                items.try_push(copy_value(child, budget, depth + 1)?)?;
-            }
-            Value::Array(Array {
-                items: items.into_vec(),
-                lexeme: array.lexeme.clone(),
-            })
+            Value::Array(copy_array(array, budget, depth, 0)?)
         }
         Value::Dict(dict) => {
             check_depth(budget, depth)?;
@@ -69,6 +68,23 @@ fn copy_value(value: &Value, budget: &Budget, depth: u64) -> Result<Value> {
             };
             Value::Stream(try_box(stream, budget)?)
         }
+    })
+}
+
+fn copy_array(array: &Array, budget: &Budget, depth: u64, headroom: usize) -> Result<Array> {
+    let capacity = array
+        .items
+        .len()
+        .checked_add(headroom)
+        .ok_or_else(|| LimitExceeded::new(LimitCode::MemorySize))?;
+    let mut items = BudgetVec::new(budget);
+    items.try_reserve_exact(capacity)?;
+    for child in &array.items {
+        items.try_push(copy_value(child, budget, depth + 1)?)?;
+    }
+    Ok(Array {
+        items: items.into_vec(),
+        lexeme: array.lexeme.clone(),
     })
 }
 

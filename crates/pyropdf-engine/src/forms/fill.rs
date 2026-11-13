@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_set};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::settle::{Scope, Structure};
@@ -416,10 +416,6 @@ fn state_bytes_error() -> String {
 
 /// Returns the first state of `states` that is not `Off`, refusing more
 /// than 4,096 names.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the set entry and table overhead are charged before fallible reservation and insertion"
-)]
 fn on_state(states: &States, budget: &Budget) -> Result<Option<String>> {
     let mut seen = HashSet::new();
     let mut first = None;
@@ -433,10 +429,7 @@ fn on_state(states: &States, budget: &Budget) -> Result<Option<String>> {
                 "AcroForm button states exceed the {MAX_BUTTON_NAMES}-name safety limit"
             )));
         }
-        budget.charge(LimitCode::MemorySize, (64 + 2 * size_of::<&Name>()) as u64)?;
-        seen.try_reserve(1)
-            .map_err(|_| pyropdf_store::LimitExceeded::new(LimitCode::MemorySize))?;
-        seen.insert(name);
+        try_insert_set(&mut seen, name, budget)?;
         if first.is_none() && name.as_bytes() != widgets::OFF.as_bytes() {
             first = Some(String::from_utf8_lossy(name.as_bytes()).into_owned());
         }

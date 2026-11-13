@@ -4,16 +4,16 @@
 use std::borrow::Cow;
 
 use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::refs::copy_array_for_edit;
 use pyropdf_store::settle::{Scope, Structure};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Value};
 use pyropdf_store::version::Transaction;
 
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result, PageAnnots};
 use crate::forms as widgets;
-use crate::forms::copy::copy_array;
 use crate::forms::fill::{After, FillValue, base, change, is_button, shows_text};
 use crate::forms::fill_index::{FillCache, indexed_value};
-use crate::forms::tree_edit::{edit_array, join};
+use crate::forms::tree_edit::{append_references, join};
 use crate::forms::values::{Id, id};
 use crate::forms::widget_edit::pdf_font_size;
 
@@ -133,9 +133,7 @@ fn insert_widget(
                 reason = "this call inserts only the fixed /Parent key"
             )]
             widget.insert(Name::from("Parent"), Value::Reference(parent));
-            edit_array(transaction, parent, "Kids", budget, true, |kids| {
-                kids.push(Value::Reference(reference));
-            })?;
+            append_references(transaction, parent, "Kids", &[reference], budget)?;
             id(parent)
         }
         None if spec.kind == "radio" => {
@@ -152,18 +150,14 @@ fn insert_widget(
                 reason = "this call inserts only the fixed /Parent key"
             )]
             widget.insert(Name::from("Parent"), Value::Reference(parent));
-            edit_array(transaction, holder, "Fields", budget, true, |fields| {
-                fields.push(Value::Reference(parent));
-            })?;
+            append_references(transaction, holder, "Fields", &[parent], budget)?;
             id(parent)
         }
         None => {
             for (key, value) in field.iter_mut() {
                 widget.insert(key.clone(), std::mem::replace(value, Value::Null));
             }
-            edit_array(transaction, holder, "Fields", budget, true, |fields| {
-                fields.push(Value::Reference(reference));
-            })?;
+            append_references(transaction, holder, "Fields", &[reference], budget)?;
             id(reference)
         }
     };
@@ -177,7 +171,7 @@ fn insert_widget(
         widget.insert(Name::from("AS"), state);
     }
     transaction.write(reference.number(), &Value::Dict(widget), budget)?;
-    let mut items = copy_array(&annots.items, budget)?;
+    let mut items = copy_array_for_edit(&annots.items, budget)?;
     items.push(Value::Reference(reference));
     annots.write_items(transaction, items, budget)?;
     if buttons {

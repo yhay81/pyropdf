@@ -6,11 +6,14 @@
 //! ebb01d3c4c742046e8ce7fd72957cd15a2933321.
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
+use std::sync::Arc;
 
 use pyropdf_store::Result;
-use pyropdf_store::budget::{BudgetVec, LimitCode};
+use pyropdf_store::budget::{BudgetVec, LimitCode, try_insert_map, try_insert_set};
 use pyropdf_store::memo::Reads;
 use pyropdf_store::pages::MAX_CHAIN;
+use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Dict, Name, Reference, Value};
 
 /// The most objects that comparing two resources reads; a larger pair
@@ -47,19 +50,25 @@ pub fn slot(reads: &mut Reads<'_>, dict: &Dict, key: &[u8]) -> Result<Slot> {
     let mut current = match dict.get(key) {
         None | Some(Value::Null) => return Ok(Slot::Absent),
         Some(value @ (Value::Dict(_) | Value::Array(_))) => {
-            return Ok(Slot::Found(None, value.clone()));
+            return Ok(Slot::Found(None, copy_for_edit(value, reads.budget())?));
         }
         Some(&Value::Reference(reference)) => reference,
         Some(_) => return Ok(Slot::Unusable),
     };
     for _ in 0..MAX_CHAIN {
-        match object(reads, current)? {
-            None | Some(Value::Null) => return Ok(Slot::Absent),
-            Some(Value::Reference(next)) => current = next,
-            Some(value @ (Value::Dict(_) | Value::Array(_))) => {
-                return Ok(Slot::Found(Some(current.number()), value));
+        let Some(value) = object(reads, current)? else {
+            return Ok(Slot::Absent);
+        };
+        match &*value {
+            Value::Null => return Ok(Slot::Absent),
+            &Value::Reference(next) => current = next,
+            value @ (Value::Dict(_) | Value::Array(_)) => {
+                return Ok(Slot::Found(
+                    Some(current.number()),
+                    copy_for_edit(value, reads.budget())?,
+                ));
             }
-            Some(_) => return Ok(Slot::Unusable),
+            _ => return Ok(Slot::Unusable),
         }
     }
     Ok(Slot::Unusable)
@@ -100,7 +109,7 @@ pub fn merge(
     let mut whole = BudgetVec::new(budget);
     let mut renames = Renames::new();
     for (category, value) in source_resources.iter() {
-        let Some(source_category) = resolve(source, value.clone())? else {
+        let Some(source_category) = resolve(source, value)? else {
             continue;
         };
         let receiving_category = match slot(receiving, resources, category.as_bytes())? {
@@ -108,24 +117,24 @@ pub fn merge(
                 whole.try_push(Joined {
                     category: category.clone(),
                     name: None,
-                    value: value.clone(),
+                    value: copy_for_edit(value, budget)?,
                 })?;
                 continue;
             }
             Slot::Found(_, Value::Dict(dict)) => dict,
             Slot::Found(..) | Slot::Unusable => continue,
         };
-        let Value::Dict(source_category) = source_category else {
+        let Value::Dict(source_category) = &*source_category else {
             continue;
         };
         let mut assigned = HashSet::new();
         let mut category_renames = HashMap::new();
         for (name, entry) in source_category.iter() {
-            if resolve(source, entry.clone())?.is_none() {
+            if resolve(source, entry)?.is_none() {
                 continue;
             }
             let occupied = match receiving_category.get(name.as_bytes()) {
-                Some(existing) if resolve(receiving, existing.clone())?.is_some() => Some(existing),
+                Some(existing) if resolve(receiving, existing)?.is_some() => Some(existing),
                 _ => None,
             };
             if let Some(existing) = occupied
@@ -136,21 +145,12 @@ pub fn merge(
                 continue;
             }
             let key = if occupied.is_some() {
-                let renamed = unique(name, &receiving_category, &source_category, &assigned);
+                let renamed = unique(name, &receiving_category, source_category, &assigned);
                 // The new name is held twice: assigned, and renaming `name`.
-                let size =
-                    3 * size_of::<Name>() + name.as_bytes().len() + 2 * renamed.as_bytes().len();
+                let size = name.as_bytes().len() + 2 * renamed.as_bytes().len();
                 budget.charge(LimitCode::MemorySize, size as u64)?;
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "one name per rename, charged to the budget above"
-                )]
-                assigned.insert(renamed.clone());
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "one entry per rename, charged to the budget above"
-                )]
-                category_renames.insert(name.clone(), renamed.clone());
+                try_insert_set(&mut assigned, renamed.clone(), budget)?;
+                try_insert_map(&mut category_renames, name.clone(), renamed.clone(), budget)?;
                 renamed
             } else {
                 name.clone()
@@ -158,17 +158,12 @@ pub fn merge(
             joined.try_push(Joined {
                 category: category.clone(),
                 name: Some(key),
-                value: entry.clone(),
+                value: copy_for_edit(entry, budget)?,
             })?;
         }
         if !category_renames.is_empty() {
-            let size = size_of::<(Name, HashMap<Name, Name>)>() + category.as_bytes().len();
-            budget.charge(LimitCode::MemorySize, size as u64)?;
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "one entry per category, charged to the budget above"
-            )]
-            renames.insert(category.clone(), category_renames);
+            budget.charge(LimitCode::MemorySize, category.as_bytes().len() as u64)?;
+            try_insert_map(&mut renames, category.clone(), category_renames, budget)?;
         }
     }
     joined.try_reserve_exact(whole.len())?;
@@ -226,16 +221,12 @@ pub fn equivalent(
         if objects > MAX_COMPARED_OBJECTS {
             return Ok(false);
         }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "one pair per object compared, and MAX_COMPARED_OBJECTS objects at most, checked above"
-        )]
         if let (&Value::Reference(l), &Value::Reference(r)) = (&left, &right)
-            && !pairs.insert((l, r))
+            && !try_insert_set(&mut pairs, (l, r), receiving.budget())?
         {
             continue;
         }
-        let (left, right) = match (resolve(receiving, left)?, resolve(source, right)?) {
+        let (left, right) = match (resolve(receiving, &left)?, resolve(source, &right)?) {
             (Some(left), Some(right)) => (left, right),
             (None, None) => continue,
             _ => return Ok(false),
@@ -247,7 +238,7 @@ pub fn equivalent(
             bytes = bytes.saturating_add(amount);
             bytes <= MAX_COMPARED_BYTES
         };
-        let alike = match (&left, &right) {
+        let alike = match (&*left, &*right) {
             (Value::Boolean(l), Value::Boolean(r)) => l == r,
             (Value::Integer(l), Value::Integer(r)) => l == r,
             (Value::Real(l), Value::Real(r)) => l == r,
@@ -301,7 +292,7 @@ fn entries(
         };
         if !charge(key.as_bytes().len()) {
             return false;
-        }
+        };
         #[expect(
             clippy::disallowed_methods,
             reason = "the caller's `fits` keeps the queue with these entries within MAX_COMPARED_OBJECTS pairs"
@@ -311,28 +302,48 @@ fn entries(
     true
 }
 
+/// A value borrowed from a container or shared with the version's object store.
+enum Resolved<'a> {
+    Borrowed(&'a Value),
+    Shared(Arc<Value>),
+}
+
+impl Deref for Resolved<'_> {
+    type Target = Value;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Shared(value) => value,
+        }
+    }
+}
+
 /// Reads the object that `reference` names, of its generation.
-fn object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Value>> {
+fn object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Arc<Value>>> {
     Ok(reads
         .get(reference.number())?
         .filter(|object| object.generation() == reference.generation())
-        .map(|object| (**object.value()).clone()))
+        .map(|object| Arc::clone(object.value())))
 }
 
 /// Follows references from `value` through at most [`MAX_CHAIN`]; null,
 /// a reference to null or to a missing object, and a cyclic or longer
 /// chain are `None`.
-fn resolve(reads: &mut Reads<'_>, value: Value) -> Result<Option<Value>> {
+fn resolve<'a>(reads: &mut Reads<'_>, value: &'a Value) -> Result<Option<Resolved<'a>>> {
     let mut current = match value {
         Value::Null => return Ok(None),
-        Value::Reference(reference) => reference,
-        value => return Ok(Some(value)),
+        &Value::Reference(reference) => reference,
+        value => return Ok(Some(Resolved::Borrowed(value))),
     };
     for _ in 0..MAX_CHAIN {
-        match object(reads, current)? {
-            None | Some(Value::Null) => return Ok(None),
-            Some(Value::Reference(next)) => current = next,
-            Some(value) => return Ok(Some(value)),
+        let Some(value) = object(reads, current)? else {
+            return Ok(None);
+        };
+        match &*value {
+            Value::Null => return Ok(None),
+            &Value::Reference(next) => current = next,
+            _ => return Ok(Some(Resolved::Shared(value))),
         }
     }
     Ok(None)

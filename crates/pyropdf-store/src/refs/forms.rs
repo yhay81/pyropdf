@@ -13,9 +13,9 @@ use crate::value::{Array, Dict, Reference, Value};
 use crate::version::table::Table;
 use crate::{Error, Result};
 
-use super::copy::copy_dict_for_edit;
+use super::copy::{copy_array_for_edit, copy_dict_for_edit};
 use super::navigation::{catalog, dict_of, is_aliasing, is_in, readable};
-use super::{Edits, References, Rule, Step, copy_for_edit};
+use super::{Edits, References, Rule, Step};
 
 /// The most field tree nodes that the walk visits.
 const MAX_NODES: usize = 4_096;
@@ -196,10 +196,10 @@ impl Form {
     /// form, or as an array object that the form refers to.
     fn array(&self, reads: &mut Reads<'_>, key: &'static str) -> Result<Option<(Location, Array)>> {
         Ok(match self.dict.get(key) {
-            Some(value @ Value::Array(_)) => match copy_for_edit(value, reads.budget())? {
-                Value::Array(items) => Some((self.location.with(key), items)),
-                _ => unreachable!("a copied array remains an array"),
-            },
+            Some(Value::Array(items)) => Some((
+                self.location.with(key),
+                copy_array_for_edit(items, reads.budget())?,
+            )),
             Some(Value::Reference(reference)) => array_object(reads, *reference)?
                 .map(|items| (Location::object(reference.number()), items)),
             _ => None,
@@ -368,10 +368,7 @@ fn dict_object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Dic
 fn array_object(reads: &mut Reads<'_>, reference: Reference) -> Result<Option<Array>> {
     Ok(match readable(reads, reference.number())? {
         Some(object) if object.generation() == reference.generation() => match &**object.value() {
-            value @ Value::Array(_) => match copy_for_edit(value, reads.budget())? {
-                Value::Array(items) => Some(items),
-                _ => unreachable!("a copied array remains an array"),
-            },
+            Value::Array(items) => Some(copy_array_for_edit(items, reads.budget())?),
             _ => None,
         },
         _ => None,
@@ -391,10 +388,10 @@ fn array_entry(
     key: &'static str,
 ) -> Result<Option<(Location, Array)>> {
     Ok(match dict.get(key) {
-        Some(value @ Value::Array(_)) => match copy_for_edit(value, reads.budget())? {
-            Value::Array(items) => Some((Location::object(number).with(key), items)),
-            _ => unreachable!("a copied array remains an array"),
-        },
+        Some(Value::Array(items)) => Some((
+            Location::object(number).with(key),
+            copy_array_for_edit(items, reads.budget())?,
+        )),
         Some(&Value::Reference(reference)) => array_object(reads, reference)?
             .map(|items| (Location::object(reference.number()), items)),
         _ => None,

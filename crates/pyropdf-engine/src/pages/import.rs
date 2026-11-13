@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::hash::Hash;
 use std::mem::size_of;
 
-use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map};
 use pyropdf_store::refs::copy_for_edit;
 use pyropdf_store::value::{Dict, Name, Reference, Stream, Value};
 use pyropdf_store::version::{Transaction, Version};
@@ -219,21 +219,18 @@ impl<'b, K: Eq + Hash, V> Charged<'b, K, V> {
     fn len(&self) -> usize {
         self.map.len()
     }
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "each new entry is charged to the budget before the map grows"
-    )]
     fn insert(&mut self, key: K, value: V, extra: u64) -> Result<Option<V>> {
         self.budget.poll()?;
         if !self.map.contains_key(&key) {
-            let amount = (64 + 2 * size_of::<(K, V)>()) as u64 + extra;
-            self.budget.charge(LimitCode::MemorySize, amount)?;
-            self.charged += amount;
-            self.map
-                .try_reserve(1)
-                .map_err(|_| LimitExceeded::new(LimitCode::MemorySize))?;
+            self.budget.charge(LimitCode::MemorySize, extra)?;
+            if let Err(err) = try_insert_map(&mut self.map, key, value, self.budget) {
+                self.budget.release(LimitCode::MemorySize, extra);
+                return Err(err.into());
+            }
+            self.charged += (64 + 2 * size_of::<(K, V)>()) as u64 + extra;
+            return Ok(None);
         }
-        Ok(self.map.insert(key, value))
+        Ok(try_insert_map(&mut self.map, key, value, self.budget)?)
     }
 }
 impl<K, V> Drop for Charged<'_, K, V> {

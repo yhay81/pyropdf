@@ -3,17 +3,17 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map, try_insert_set};
 use pyropdf_store::memo::Reads;
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::{copy_dict_for_edit, copy_for_edit};
 use pyropdf_store::value::{Array, Dict, Name, PdfString, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
 use super::defaults::{self, Joined, Renames, Slot};
 use super::field_edit::dict_at;
 use super::traversal::inherited;
-use super::tree_edit::edit_array;
-use super::values::{MAX_NAME_BYTES, id, object, omitted, push, read, reserve_map, text};
+use super::tree_edit::append_references;
+use super::values::{MAX_NAME_BYTES, id, object, omitted, read, text};
 use crate::annotations::{AnnotationError as Error, AnnotationResult as Result};
 use crate::display::encode_text;
 
@@ -68,24 +68,15 @@ fn located_form(
         return Err(Error::Pdf("the document has no catalog".into()));
     };
     let catalog = match object(reads, id(root))?.as_deref() {
-        Some(catalog @ Value::Dict(_)) => copy_for_edit(catalog, budget)?,
+        Some(Value::Dict(catalog)) => copy_dict_for_edit(catalog, budget)?,
         _ => return Err(Error::Pdf("the document has no catalog".into())),
-    };
-    let Value::Dict(catalog) = catalog else {
-        unreachable!("a copied dictionary remains a dictionary");
     };
     let form = match catalog.get("AcroForm") {
         Some(&Value::Reference(reference)) => match object(reads, id(reference))?.as_deref() {
-            Some(form @ Value::Dict(_)) => match copy_for_edit(form, budget)? {
-                Value::Dict(form) => Some((Some(reference), form)),
-                _ => unreachable!("a copied dictionary remains a dictionary"),
-            },
+            Some(Value::Dict(form)) => Some((Some(reference), copy_dict_for_edit(form, budget)?)),
             _ => None,
         },
-        Some(form @ Value::Dict(_)) => match copy_for_edit(form, budget)? {
-            Value::Dict(form) => Some((None, form)),
-            _ => unreachable!("a copied dictionary remains a dictionary"),
-        },
+        Some(Value::Dict(form)) => Some((None, copy_dict_for_edit(form, budget)?)),
         _ => None,
     };
     Ok((root, catalog, form))
@@ -143,7 +134,7 @@ pub fn plan_imported_defaults(
             if let Some(value) = source_form.get(key)
                 && !omitted(&mut sources, value)?
             {
-                plan.values.push(value.clone());
+                plan.values.push(copy_for_edit(value, budget)?);
                 plan.places.push(Place::Form(Name::from(key)));
             }
         }
@@ -169,7 +160,7 @@ pub fn plan_imported_defaults(
                 plan.renames = renames;
             }
         } else {
-            plan.values.push(value.clone());
+            plan.values.push(copy_for_edit(value, budget)?);
             plan.places.push(Place::Form(Name::from("DR")));
         }
     }
@@ -213,11 +204,12 @@ pub fn register_imported(
     let mut reads = Reads::new(&version, budget);
     let (root, mut catalog, form) = located_form(&mut reads, budget)?;
     let references = |items: &[Reference]| -> Result<Array> {
-        let mut out = Vec::new();
+        let mut out = BudgetVec::new(budget);
+        out.try_reserve_exact(items.len())?;
         for &item in items {
-            push(&mut out, Value::Reference(item), budget)?;
+            out.try_push(Value::Reference(item))?;
         }
-        Ok(Array::from(out))
+        Ok(Array::from(out.into_vec()))
     };
     let placed = || defaults.places.iter().zip(values);
     let Some((holder, form)) = form else {
@@ -229,7 +221,7 @@ pub fn register_imported(
         form.insert(Name::from("Fields"), Value::Array(references(fields)?));
         for (place, value) in placed() {
             if let Place::Form(key) = place {
-                form.insert(key.clone(), value.clone());
+                form.insert(key.clone(), copy_for_edit(value, budget)?);
             }
         }
         if defaults.need_appearances {
@@ -293,9 +285,15 @@ pub fn register_imported(
                 (vec![&dr, category], entries)
             }
         };
+        let mut copied = BudgetVec::new(budget);
+        copied.try_reserve_exact(entries.len())?;
+        for (key, value) in entries {
+            copied.try_push((key.clone(), copy_for_edit(value, budget)?))?;
+        }
+        let copied = copied.into_vec();
         edit_dict(transaction, holder, &path, budget, |dict| {
-            for (key, value) in entries {
-                dict.insert(key.clone(), value.clone());
+            for (key, value) in copied {
+                dict.insert(key, value);
             }
         })?;
     }
@@ -337,17 +335,9 @@ pub fn register_imported(
             })?;
         }
     }
-    edit_array(transaction, holder, "Fields", budget, true, |items| {
-        for &field in fields {
-            items.push(Value::Reference(field));
-        }
-    })?;
+    append_references(transaction, holder, "Fields", fields, budget)?;
     if !order.is_empty() {
-        edit_array(transaction, holder, "CO", budget, true, |items| {
-            for &field in order {
-                items.push(Value::Reference(field));
-            }
-        })?;
+        append_references(transaction, holder, "CO", order, budget)?;
     }
     Ok(())
 }
@@ -409,10 +399,6 @@ fn edit_dict(
 /// Renames the resources that the default appearance strings of `copies`
 /// name, directly or through a string object, after `renames`; a page,
 /// page-tree node, or catalog keeps its own.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "one visited string reference per field from the budgeted form walk"
-)]
 fn rename_appearances(
     transaction: &mut Transaction,
     copies: &[Reference],
@@ -445,7 +431,7 @@ fn rename_appearances(
                 let Some(renamed) = defaults::rewrite(appearance.as_bytes(), renames) else {
                     continue;
                 };
-                let mut value = (*value).clone();
+                let mut value = copy_for_edit(&value, budget)?;
                 let dict = match &mut value {
                     Value::Dict(dict) => dict,
                     Value::Stream(stream) => stream.dict_mut(),
@@ -458,7 +444,9 @@ fn rename_appearances(
                 dict.insert(Name::from("DA"), Value::String(PdfString::literal(renamed)));
                 transaction.write(copy.number(), &value, budget)?;
             }
-            Some(&Value::Reference(string)) if strings.insert(string.number()) => {
+            Some(&Value::Reference(string))
+                if try_insert_set(&mut strings, string.number(), budget)? =>
+            {
                 let object = read(transaction, string.number())?;
                 let Some(Value::String(appearance)) = object.as_deref() else {
                     continue;
@@ -480,10 +468,6 @@ fn rename_appearances(
 /// Gives each of the imported top-level `fields` whose partial name a
 /// top-level field of `form` has the smallest `+N` suffix that no
 /// top-level field of either has; see [`register_imported`].
-#[expect(
-    clippy::disallowed_methods,
-    reason = "reserve_map and the following name-byte charge precede insertion"
-)]
 fn rename_imported(
     transaction: &mut Transaction,
     reads: &mut Reads<'_>,
@@ -500,11 +484,11 @@ fn rename_imported(
             }
         }
     }
-    let mut imported = Vec::new();
+    let mut imported = BudgetVec::new(budget);
     let mut totals = (0, 0);
     for &field in fields {
         if let Some(name) = partial_name(reads, &Value::Reference(field), &mut totals)? {
-            push(&mut imported, (field, name), budget)?;
+            imported.try_push((field, name))?;
         }
     }
     if !imported.iter().any(|(_, name)| receiving.contains(name)) {
@@ -518,7 +502,7 @@ fn rename_imported(
         insert_name(&mut reserved, name.clone(), budget)?;
     }
     let mut renamed: HashMap<String, String> = HashMap::new();
-    for (field, name) in &imported {
+    for (field, name) in imported.iter() {
         budget.poll()?;
         if !receiving.contains(name) {
             continue;
@@ -538,12 +522,14 @@ fn rename_imported(
                     suffix += 1;
                 };
                 insert_name(&mut reserved, candidate.clone(), budget)?;
-                reserve_map(&mut renamed, budget)?;
-                budget.charge(
-                    LimitCode::MemorySize,
-                    name.len().saturating_add(candidate.len()) as u64,
-                )?;
-                renamed.insert(name.clone(), candidate.clone());
+                let extra = name.len().saturating_add(candidate.len()) as u64;
+                budget.charge(LimitCode::MemorySize, extra)?;
+                if let Err(err) =
+                    try_insert_map(&mut renamed, name.clone(), candidate.clone(), budget)
+                {
+                    budget.release(LimitCode::MemorySize, extra);
+                    return Err(err.into());
+                }
                 candidate
             }
         };
@@ -566,19 +552,15 @@ fn rename_imported(
 }
 
 /// Adds `name` to `names`, charging the entry and its bytes to `budget`.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the name and set overhead are charged before fallible reservation and insertion"
-)]
 fn insert_name(names: &mut HashSet<String>, name: String, budget: &Budget) -> Result<()> {
-    budget.charge(
-        LimitCode::MemorySize,
-        (64 + 2 * size_of::<String>()).saturating_add(name.len()) as u64,
-    )?;
-    names
-        .try_reserve(1)
-        .map_err(|_| pyropdf_store::LimitExceeded::new(LimitCode::MemorySize))?;
-    names.insert(name);
+    if !names.contains(&name) {
+        let len = name.len() as u64;
+        budget.charge(LimitCode::MemorySize, len)?;
+        if let Err(err) = try_insert_set(names, name, budget) {
+            budget.release(LimitCode::MemorySize, len);
+            return Err(err.into());
+        }
+    }
     Ok(())
 }
 
