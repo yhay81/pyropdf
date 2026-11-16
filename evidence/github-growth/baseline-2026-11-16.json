@@ -1,0 +1,248 @@
+{
+  "repository_name": "yhay81/pyropdf",
+  "started_at": "2026-11-16T02:58:44.491067+00:00",
+  "repository": {
+    "created_at": "2026-10-24T01:23:18Z",
+    "description": "Complete control of PDF from Python, rebuilt on one versioned object store; the planned successor of pylopdf",
+    "forks_count": 0,
+    "homepage": "https://pyropdf.haya.works",
+    "license": "MIT",
+    "pushed_at": "2026-11-13T15:12:22Z",
+    "stargazers_count": 1,
+    "subscribers_count": 0,
+    "topics": [],
+    "updated_at": "2026-11-12T16:07:29Z"
+  },
+  "views": {
+    "count": 438,
+    "uniques": 21,
+    "views": [
+      {
+        "count": 45,
+        "timestamp": "2026-11-01T00:00:00Z",
+        "uniques": 5
+      },
+      {
+        "count": 43,
+        "timestamp": "2026-11-02T00:00:00Z",
+        "uniques": 3
+      },
+      {
+        "count": 75,
+        "timestamp": "2026-11-03T00:00:00Z",
+        "uniques": 5
+      },
+      {
+        "count": 77,
+        "timestamp": "2026-11-04T00:00:00Z",
+        "uniques": 5
+      },
+      {
+        "count": 27,
+        "timestamp": "2026-11-05T00:00:00Z",
+        "uniques": 3
+      },
+      {
+        "count": 64,
+        "timestamp": "2026-11-06T00:00:00Z",
+        "uniques": 2
+      },
+      {
+        "count": 8,
+        "timestamp": "2026-11-07T00:00:00Z",
+        "uniques": 3
+      },
+      {
+        "count": 16,
+        "timestamp": "2026-11-08T00:00:00Z",
+        "uniques": 5
+      },
+      {
+        "count": 12,
+        "timestamp": "2026-11-09T00:00:00Z",
+        "uniques": 4
+      },
+      {
+        "count": 3,
+        "timestamp": "2026-11-10T00:00:00Z",
+        "uniques": 3
+      },
+      {
+        "count": 6,
+        "timestamp": "2026-11-11T00:00:00Z",
+        "uniques": 2
+      },
+      {
+        "count": 29,
+        "timestamp": "2026-11-12T00:00:00Z",
+        "uniques": 6
+      },
+      {
+        "count": 32,
+        "timestamp": "2026-11-13T00:00:00Z",
+        "uniques": 5
+      },
+      {
+        "count": 1,
+        "timestamp": "2026-11-14T00:00:00Z",
+        "uniques": 1
+      }
+    ]
+  },
+  "clones": {
+    "clones": [
+      {
+        "count": 1189,
+        "timestamp": "2026-11-01T00:00:00Z",
+        "uniques": 155
+      },
+      {
+        "count": 883,
+        "timestamp": "2026-11-02T00:00:00Z",
+        "uniques": 160
+      },
+      {
+        "count": 797,
+        "timestamp": "2026-11-03T00:00:00Z",
+        "uniques": 169
+      },
+      {
+        "count": 1381,
+        "timestamp": "2026-11-04T00:00:00Z",
+        "uniques": 136
+      },
+      {
+        "count": 697,
+        "timestamp": "2026-11-05T00:00:00Z",
+        "uniques": 92
+      },
+      {
+        "count": 694,
+        "timestamp": "2026-11-06T00:00:00Z",
+        "uniques": 147
+      },
+      {
+        "count": 177,
+        "timestamp": "2026-11-07T00:00:00Z",
+        "uniques": 48
+      },
+      {
+        "count": 42,
+        "timestamp": "2026-11-08T00:00:00Z",
+        "uniques": 13
+      },
+      {
+        "count": 12,
+        "timestamp": "2026-11-09T00:00:00Z",
+        "uniques": 3
+      },
+      {
+        "count": 4,
+        "timestamp": "2026-11-10T00:00:00Z",
+        "uniques": 4
+      },
+      {
+        "count": 15,
+        "timestamp": "2026-11-11T00:00:00Z",
+        "uniques": 7
+      },
+      {
+        "count": 382,
+        "timestamp": "2026-11-12T00:00:00Z",
+        "uniques": 36
+      },
+      {
+        "count": 521,
+        "timestamp": "2026-11-13T00:00:00Z",
+        "uniques": 58
+      },
+      {
+        "count": 60,
+        "timestamp": "2026-11-14T00:00:00Z",
+        "uniques": 28
+      }
+    ],
+    "count": 6854,
+    "uniques": 653
+  },
+  "referrers": [
+    {
+      "count": 12,
+      "referrer": "github.com",
+      "uniques": 5
+    },
+    {
+      "count": 6,
+      "referrer": "pyropdf.haya.works",
+      "uniques": 1
+    },
+    {
+      "count": 1,
+      "referrer": "Google",
+      "uniques": 1
+    }
+  ],
+  "paths": [
+    {
+      "count": 98,
+      "path": "/yhay81/pyropdf/issues",
+      "title": "/issues",
+      "uniques": 1
+    },
+    {
+      "count": 60,
+      "path": "/yhay81/pyropdf/pulls",
+      "title": "/pulls",
+      "uniques": 1
+    },
+    {
+      "count": 52,
+      "path": "/yhay81/pyropdf",
+      "title": "Overview",
+      "uniques": 13
+    },
+    {
+      "count": 9,
+      "path": "/yhay81/pyropdf/blob/main/DESIGN.md",
+      "title": "/blob/main/DESIGN.md",
+      "uniques": 1
+    },
+    {
+      "count": 6,
+      "path": "/yhay81/pyropdf/pull/623",
+      "title": "/pull/623",
+      "uniques": 1
+    },
+    {
+      "count": 5,
+      "path": "/yhay81/pyropdf/issues/636",
+      "title": "/issues/636",
+      "uniques": 1
+    },
+    {
+      "count": 5,
+      "path": "/yhay81/pyropdf/issues/678",
+      "title": "/issues/678",
+      "uniques": 1
+    },
+    {
+      "count": 4,
+      "path": "/yhay81/pyropdf/pull/737",
+      "title": "/pull/737",
+      "uniques": 3
+    },
+    {
+      "count": 4,
+      "path": "/yhay81/pyropdf/issues/1",
+      "title": "/issues/1",
+      "uniques": 1
+    },
+    {
+      "count": 4,
+      "path": "/yhay81/pyropdf/issues/598",
+      "title": "/issues/598",
+      "uniques": 1
+    }
+  ],
+  "completed_at": "2026-11-16T02:58:47.439741+00:00"
+}
