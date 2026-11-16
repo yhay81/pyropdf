@@ -1,0 +1,15 @@
+{
+  "description": "Read, render, and edit PDFs in Python with a Rust core. Undo/redo, atomic transactions, and incremental saves. MIT licensed.",
+  "homepage": "https://pyropdf.haya.works",
+  "topics": [
+    "document-processing",
+    "ocr",
+    "pdf",
+    "pdf-generation",
+    "pdf-library",
+    "pdf-parser",
+    "python",
+    "rust",
+    "text-extraction"
+  ]
+}

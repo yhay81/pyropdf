@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote_plus
 
-from test_text import build_text_pdf
+import pyropdf
 
 if TYPE_CHECKING:
     import pytest
@@ -51,13 +51,24 @@ def test_the_readme_links_to_available_good_first_issues() -> None:
     assert expected in [unquote_plus(link) for link in links]
 
 
-def test_the_readme_example_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_readme_example_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     (example,) = re.findall(r"```python\n(.*?)```", readme, flags=re.DOTALL)
-    (tmp_path / "input.pdf").write_bytes(build_text_pdf("BT /F1 20 Tf 72 700 Td (Hello) Tj ET"))
     monkeypatch.chdir(tmp_path)
+    namespace: dict[str, object] = {"__name__": "__main__"}
 
-    exec(compile(example, "README.md", "exec"), {})  # noqa: S102 - the README's own example.
+    exec(compile(example, "README.md", "exec"), namespace)  # noqa: S102 - the README's own example.
 
-    assert (tmp_path / "page-1.png").read_bytes().startswith(b"\x89PNG")
-    assert (tmp_path / "output.pdf").read_bytes().startswith(b"%PDF")
+    assert capsys.readouterr().out == "Invoice total: $42\nAfter undo: 0\n"
+    assert (tmp_path / "reviewed.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    source = namespace["source"]
+    assert isinstance(source, bytes)
+    assert (tmp_path / "reviewed.pdf").read_bytes().startswith(source)
+    with pyropdf.open(tmp_path / "reviewed.pdf") as doc:
+        assert len(doc.pages) == 1
+        page = doc.pages[0]
+        assert page.text().strip() == "Invoice total: $42"
+        assert len(page.annotations) == 1
+        assert page.annotations[0].type is pyropdf.AnnotationType.HIGHLIGHT
