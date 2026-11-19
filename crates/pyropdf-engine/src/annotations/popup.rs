@@ -10,6 +10,7 @@ use pyropdf_store::version::Transaction;
 use super::edit::with_page_edit;
 use super::geometry::Rect;
 use super::read::PageAnnots;
+use super::version::{PdfVersion, require_version, subtype_version};
 use super::{AnnotationError, AnnotationResult as Result};
 
 impl PageAnnots<'_> {
@@ -42,6 +43,14 @@ impl PageAnnots<'_> {
         if area.is_some() && existing.is_none() {
             self.budget
                 .check(LimitCode::AnnotationCount, (self.items.len() + 1) as u64)?;
+        }
+        if area.is_some() {
+            let subtype = self.name(&dict, "Subtype")?.unwrap_or_default();
+            require_version(
+                transaction,
+                subtype_version(&subtype).max(PdfVersion(1, 3)),
+                self.budget,
+            )?;
         }
         let area = area.map(|area| self.to_pdf(area));
         let page = self.page().object();
@@ -183,6 +192,17 @@ impl PageAnnots<'_> {
                         "an annotation replies to another annotation of its page".to_owned(),
                     ));
                 }
+                let subtype = self.name(&dict, "Subtype")?.unwrap_or_default();
+                let target_subtype = match self.resolved(Some(&Value::Reference(target)))? {
+                    Some(Value::Dict(target_dict)) => {
+                        self.name(&target_dict, "Subtype")?.unwrap_or_default()
+                    }
+                    _ => Vec::new(),
+                };
+                let minimum = subtype_version(&subtype)
+                    .max(subtype_version(&target_subtype))
+                    .max(PdfVersion(1, 5));
+                require_version(transaction, minimum, self.budget)?;
                 Some(target)
             }
             None => None,

@@ -10,6 +10,7 @@ use pyropdf_store::version::Version;
 use crate::display::{number, to_display, to_pdf};
 
 use super::read::PageAnnots;
+use super::version::{PdfVersion, supports_bs};
 use super::{
     AnnotationError, AnnotationResult as Result, LINE_ENDINGS, MAX_BORDER_DASHES, PointLists,
     has_points, valid_dashes,
@@ -236,13 +237,11 @@ pub fn rgb(components: (f64, f64, f64), label: &str) -> Result<Value> {
     ])))
 }
 
-/// Validates and builds the `/BS` dictionary of a border, converting display
-/// points into the page's user space (`unit`).
-pub fn border_style(
+fn validate_border<'b>(
     (width, style, dashes): &(f64, String, Vec<f64>),
     unit: f64,
-    budget: &Budget,
-) -> Result<Value> {
+    budget: &'b Budget,
+) -> Result<(f64, Option<BudgetVec<'b, Value>>)> {
     budget.check(LimitCode::AnnotationDashCount, dashes.len() as u64)?;
     if !(width.is_finite() && *width >= 0.0) {
         return Err(AnnotationError::Pdf(
@@ -268,18 +267,9 @@ pub fn border_style(
             "an annotation border width is not representable in user space".to_owned(),
         ));
     }
-    let mut border = Dict::new();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /W key"
-    )]
-    border.insert(Name::from("W"), number(pdf_width));
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /S key"
-    )]
-    border.insert(Name::from("S"), Value::Name(Name::from(style.as_str())));
-    if !dashes.is_empty() {
+    let dash_values = if dashes.is_empty() {
+        None
+    } else {
         let mut pdf_dashes = BudgetVec::new(budget);
         pdf_dashes.try_reserve_exact(dashes.len())?;
         for &dash in dashes {
@@ -290,11 +280,32 @@ pub fn border_style(
                 "annotation border dashes are not representable in user space".to_owned(),
             ));
         }
-        let mut dash_values = BudgetVec::new(budget);
-        dash_values.try_reserve_exact(pdf_dashes.len())?;
+        let mut values = BudgetVec::new(budget);
+        values.try_reserve_exact(pdf_dashes.len())?;
         for &dash in &pdf_dashes {
-            dash_values.try_push(number(dash))?;
+            values.try_push(number(dash))?;
         }
+        Some(values)
+    };
+    Ok((pdf_width, dash_values))
+}
+
+/// Validates and builds the `/BS` dictionary of a border, converting display
+/// points into the page's user space (`unit`).
+pub fn border_style(spec: &(f64, String, Vec<f64>), unit: f64, budget: &Budget) -> Result<Value> {
+    let (pdf_width, dash_values) = validate_border(spec, unit, budget)?;
+    let mut border = Dict::new();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /W key"
+    )]
+    border.insert(Name::from("W"), number(pdf_width));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /S key"
+    )]
+    border.insert(Name::from("S"), Value::Name(Name::from(spec.1.as_str())));
+    if let Some(dash_values) = dash_values {
         #[expect(
             clippy::disallowed_methods,
             reason = "this call inserts only the fixed /D key"
@@ -305,6 +316,46 @@ pub fn border_style(
         );
     }
     Ok(Value::Dict(border))
+}
+
+/// Writes `spec` onto `dict` as `/BS` when `subtype` admits `/BS` at
+/// `effective` (or when `spec`'s style requires `/BS`), and as `/Border`
+/// `[0 0 width]` / `[0 0 width [dashes]]` otherwise.
+pub(super) fn write_border(
+    dict: &mut Dict,
+    subtype: &str,
+    spec: &(f64, String, Vec<f64>),
+    unit: f64,
+    effective: PdfVersion,
+    budget: &Budget,
+) -> Result<()> {
+    if supports_bs(subtype.as_bytes(), effective) || matches!(spec.1.as_str(), "B" | "I" | "U") {
+        let value = border_style(spec, unit, budget)?;
+        dict.remove("Border");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "this call inserts only the fixed /BS key"
+        )]
+        dict.insert(Name::from("BS"), value);
+        return Ok(());
+    }
+    let (pdf_width, dash_values) = validate_border(spec, unit, budget)?;
+    let items = match dash_values {
+        Some(dashes) => vec![
+            Value::Integer(0),
+            Value::Integer(0),
+            number(pdf_width),
+            Value::Array(Array::from(dashes.into_vec())),
+        ],
+        None => vec![Value::Integer(0), Value::Integer(0), number(pdf_width)],
+    };
+    dict.remove("BS");
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Border key"
+    )]
+    dict.insert(Name::from("Border"), Value::Array(Array::from(items)));
+    Ok(())
 }
 
 /// Validates and builds the `/BE` dictionary of a cloudy border of `intensity`

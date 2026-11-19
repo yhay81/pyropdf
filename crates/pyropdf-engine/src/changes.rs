@@ -20,6 +20,10 @@ use pyropdf_store::index::{Index, Location};
 use pyropdf_store::value::{Dict, Value};
 use pyropdf_store::version::{ChangeSet, Version};
 
+use crate::annotations::version::{
+    PdfVersion, dict_required_version, is_annotation_dict, is_pdfa_1_forbidden_subtype,
+    parse_version,
+};
 use crate::forms::text_string;
 
 /// The most field dictionaries that the walk for signatures visits.
@@ -197,7 +201,7 @@ pub fn report(version: &Version, incremental: bool, budget: &Budget) -> Result<C
         }
     }
 
-    let claims = claims(version, written, budget)?;
+    let claims = claims(&opened, version, written, budget)?;
     Ok(ChangeReport {
         signatures: signatures.into_vec(),
         claims: claims.into_vec(),
@@ -450,9 +454,54 @@ impl Claim {
     }
 }
 
+/// Returns the `pdfaid:part` claimed by `version`'s XMP metadata, if any.
+pub(crate) fn pdfa_part(
+    version: &Version,
+    budget: &Budget,
+) -> std::result::Result<Option<u32>, pyropdf_store::Error> {
+    let to_store = |error: Error| match error {
+        Error::Store(err) => err,
+        Error::Pdf(message) => pyropdf_store::Error::malformed(message),
+    };
+    let catalog_val = catalog(version, budget).map_err(to_store)?;
+    let metadata_val = match catalog_val
+        .as_deref()
+        .and_then(value_dict)
+        .and_then(|catalog| catalog.get("Metadata"))
+    {
+        Some(metadata) => resolved(version, metadata, budget).map_err(to_store)?,
+        None => None,
+    };
+    let Some(Value::Stream(metadata)) = metadata_val.as_deref() else {
+        return Ok(None);
+    };
+    let xmp = match metadata.decoded(budget) {
+        Ok(data) => data,
+        Err(error) if error.limit().is_some() => return Err(error),
+        Err(_) => return Ok(None),
+    };
+    Ok(property(&xmp, b"pdfaid:part").and_then(number))
+}
+
+fn catalog_declared_version(version: &Version, budget: &Budget) -> Result<Option<PdfVersion>> {
+    let catalog_val = catalog(version, budget)?;
+    let Some(dict) = catalog_val.as_deref().and_then(value_dict) else {
+        return Ok(None);
+    };
+    let Some(declared) = dict.get("Version") else {
+        return Ok(None);
+    };
+    let resolved_val = resolved(version, declared, budget)?;
+    Ok(match resolved_val.as_deref() {
+        Some(Value::Name(name)) => parse_version(name.as_bytes()),
+        _ => None,
+    })
+}
+
 /// Returns the claims of the metadata that reads see that the written
 /// objects break.
 fn claims<'b>(
+    opened: &Version,
     version: &Version,
     written: &[u32],
     budget: &'b Budget,
@@ -461,6 +510,10 @@ fn claims<'b>(
     if written.is_empty() {
         return Ok(out);
     }
+    let root_number = match version.trailer().get("Root") {
+        Some(Value::Reference(reference)) => Some(reference.number()),
+        _ => None,
+    };
     let catalog_val = catalog(version, budget)?;
     let metadata_val = match catalog_val
         .as_deref()
@@ -474,6 +527,7 @@ fn claims<'b>(
         return Ok(out);
     };
     let xmp = metadata.decoded(budget)?;
+    let opened_catalog_ver = catalog_declared_version(opened, budget)?;
     for claim in read_claims(&xmp).into_iter().flatten() {
         // The written objects that break the claim, by reason, in the
         // order the reasons are first met.
@@ -483,7 +537,11 @@ fn claims<'b>(
             let Some(value) = object(version, number, budget)? else {
                 continue;
             };
-            for reason in breaks(claim, &value, budget)?.into_iter().flatten() {
+            let is_catalog = root_number == Some(number);
+            for reason in breaks(claim, is_catalog, opened_catalog_ver, &value, budget)?
+                .into_iter()
+                .flatten()
+            {
                 match found
                     .as_mut_slice()
                     .iter_mut()
@@ -515,8 +573,8 @@ fn claims<'b>(
     Ok(out)
 }
 
-/// Returns the PDF/A-1, PDF/A-2, PDF/A-4, and PDF/UA claims of XMP
-/// metadata. A PDF/A-3 claim breaks on nothing that the report checks.
+/// Returns the PDF/A-1, PDF/A-2, PDF/A-3, PDF/A-4, and PDF/UA claims of XMP
+/// metadata.
 fn read_claims(xmp: &[u8]) -> [Option<Claim>; 2] {
     let pdfa = property(xmp, b"pdfaid:part")
         .and_then(number)
@@ -524,7 +582,7 @@ fn read_claims(xmp: &[u8]) -> [Option<Claim>; 2] {
             let level = property(xmp, b"pdfaid:conformance")
                 .and_then(|level| level.first().copied())
                 .map_or(0, |level| level.to_ascii_uppercase());
-            matches!(part, 1 | 2 | 4).then_some(Claim::A(part, level))
+            matches!(part, 1..=4).then_some(Claim::A(part, level))
         });
     let pdfua = property(xmp, b"pdfuaid:part")
         .and_then(number)
@@ -595,23 +653,44 @@ fn number(bytes: &[u8]) -> Option<u32> {
 
 /// Returns the reasons for which a written object breaks `claim`.
 ///
-/// PDF/A-1 forbids transparency and embedded files (ISO 19005-1 sections
-/// 6.4 and 6.1.11). PDF/A-2 allows an embedded file that is PDF/A-1 or
-/// PDF/A-2, and PDF/A-4, other than PDF/A-4f, one that is PDF/A-1, PDF/A-2,
-/// or PDF/A-4 (ISO 19005-2 section 6.8, ISO 19005-4 section 6.9). PDF/UA
-/// requires every annotation in the structure tree.
-fn breaks(claim: Claim, value: &Value, budget: &Budget) -> Result<[Option<&'static str>; 2]> {
+/// PDF/A-1 forbids transparency, embedded files, annotation subtypes outside
+/// ISO 19005-1 §6.5.2, and PDF features newer than 1.4 (ISO 19005-1 sections
+/// 6.1.2, 6.1.11, 6.4, and 6.5.2). PDF/A-2 and PDF/A-3 forbid PDF features
+/// newer than 1.7, and PDF/A-2 and PDF/A-4 (other than PDF/A-4f) restrict
+/// embedded files to allowed PDF/A parts (ISO 19005-2 section 6.8, ISO 19005-4
+/// section 6.9). PDF/UA requires every annotation in the structure tree.
+fn breaks(
+    claim: Claim,
+    is_catalog: bool,
+    opened_catalog_ver: Option<PdfVersion>,
+    value: &Value,
+    budget: &Budget,
+) -> Result<[Option<&'static str>; 4]> {
     let reasons = match claim {
         Claim::A(1, _) => [
             has_transparency(value, budget)?
                 .then_some("the edits add transparency, which PDF/A-1 forbids"),
             has_embedded_file(value, budget)?
                 .then_some("the edits add an embedded file, which PDF/A-1 forbids"),
+            is_pdfa_1_forbidden_annotation(value)
+                .then_some("the edits add an annotation type that PDF/A-1 forbids"),
+            exceeds_pdf_version(is_catalog, opened_catalog_ver, value, PdfVersion(1, 4), true)
+                .then_some("the edits use features newer than PDF 1.4, which PDF/A-1 forbids"),
         ],
         Claim::A(2, _) => [
             is_embedded_file_outside(value, &[1, 2], budget)?.then_some(
                 "the edits add an embedded file that is not PDF/A-1 or PDF/A-2, which PDF/A-2 forbids",
             ),
+            exceeds_pdf_version(is_catalog, opened_catalog_ver, value, PdfVersion(1, 7), false)
+                .then_some("the edits use features newer than PDF 1.7, which PDF/A-2 forbids"),
+            None,
+            None,
+        ],
+        Claim::A(3, _) => [
+            exceeds_pdf_version(is_catalog, opened_catalog_ver, value, PdfVersion(1, 7), false)
+                .then_some("the edits use features newer than PDF 1.7, which PDF/A-3 forbids"),
+            None,
+            None,
             None,
         ],
         Claim::A(4, level) if level != b'F' => [
@@ -619,16 +698,62 @@ fn breaks(claim: Claim, value: &Value, budget: &Budget) -> Result<[Option<&'stat
                 "the edits add an embedded file that is not PDF/A-1, PDF/A-2, or PDF/A-4, which PDF/A-4 forbids",
             ),
             None,
+            None,
+            None,
         ],
-        Claim::A(..) => [None, None],
+        Claim::A(..) => [None, None, None, None],
         Claim::Ua(_) => [
             value_dict(value)
                 .is_some_and(is_untagged_annotation)
                 .then_some("the edits add an annotation that is not in the structure tree"),
             None,
+            None,
+            None,
         ],
     };
     Ok(reasons)
+}
+
+fn is_pdfa_1_forbidden_annotation(value: &Value) -> bool {
+    let Value::Dict(dict) = value else {
+        return false;
+    };
+    if !is_annotation_dict(dict) {
+        return false;
+    }
+    matches!(
+        dict.get("Subtype"),
+        Some(Value::Name(subtype)) if is_pdfa_1_forbidden_subtype(subtype.as_bytes())
+    )
+}
+
+fn exceeds_pdf_version(
+    is_catalog: bool,
+    opened_catalog_ver: Option<PdfVersion>,
+    value: &Value,
+    limit: PdfVersion,
+    skip_pdfa_1_forbidden: bool,
+) -> bool {
+    let Value::Dict(dict) = value else {
+        return false;
+    };
+    if is_catalog
+        && let Some(Value::Name(declared)) = dict.get("Version")
+        && let Some(ver) = parse_version(declared.as_bytes())
+        && ver > limit
+        && opened_catalog_ver < Some(ver)
+    {
+        return true;
+    }
+    if skip_pdfa_1_forbidden
+        && matches!(
+            dict.get("Subtype"),
+            Some(Value::Name(subtype)) if is_pdfa_1_forbidden_subtype(subtype.as_bytes())
+        )
+    {
+        return false;
+    }
+    dict_required_version(dict).is_some_and(|needed| needed > limit)
 }
 
 /// Returns whether `value` holds, in itself or in its direct containers, a

@@ -28,6 +28,7 @@ pub mod popup;
 pub mod read;
 mod shapes;
 mod text;
+pub mod version;
 
 use std::fmt;
 use std::fmt::Write as _;
@@ -476,7 +477,7 @@ impl<'b> Reader<'b> {
 
     /// Follows at most MAX_CHAIN references to an indirect object, returning
     /// its final reference and value.
-    fn resolve_object(&self, value: &Value) -> Result<Option<(Reference, Arc<Value>)>> {
+    pub(crate) fn resolve_object(&self, value: &Value) -> Result<Option<(Reference, Arc<Value>)>> {
         let &Value::Reference(mut reference) = value else {
             return Ok(None);
         };
