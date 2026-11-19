@@ -34,7 +34,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # cargo-fuzz needs a nightly toolchain; pinning one keeps runs comparable.
-  NIGHTLY: nightly-2026-11-03
+  NIGHTLY: nightly-2026-11-19
   CARGO_FUZZ: 0.13.2
 
 jobs:

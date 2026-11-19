@@ -64,7 +64,7 @@ def temporary_outputs(directory: Path) -> list[Path]:
     ids=["bytes", "bytearray", "memoryview", "memoryview-bytearray", "readonly-view-bytearray"],
 )
 def test_buffers_open(make: object) -> None:
-    source = make(SIMPLE)  # ty: ignore[call-non-callable]
+    source = make(SIMPLE)  # ty: ignore[not-callable]
     with pyropdf.open(source) as doc:
         assert doc.to_bytes(incremental=True) == SIMPLE
 

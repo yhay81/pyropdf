@@ -484,7 +484,9 @@ def test_pyarrow_imports_the_paths_without_a_copy() -> None:
     assert table.field("stroke_dashes").to_pylist() == [[], [3.0, 2.0], None, None]
     segments = table.field("segments").to_pylist()
     assert [len(row) for row in segments] == [len(path.segments) for path in records]
-    assert segments[2][1]["c1_x"] == records[2].segments[1].c1.x  # ty: ignore[unresolved-attribute]
+    curve = records[2].segments[1]
+    assert isinstance(curve, CurveTo)
+    assert segments[2][1]["c1_x"] == curve.c1.x
     assert segments[0][1]["c1_x"] is None
     assert pa.array(paths[1:3]).field("x0").to_pylist() == [path.bbox.x0 for path in records[1:3]]
     masks = pa.array(_masked_page().paths())

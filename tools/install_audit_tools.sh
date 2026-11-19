@@ -14,35 +14,35 @@ if [[ "$#" -gt 1 ]]; then
     exit 1
 fi
 # Official releases, pinned together with the digests of their archives:
-# https://github.com/rustsec/rustsec/releases/tag/cargo-audit%2Fv0.22.2
+# https://github.com/rustsec/rustsec/releases/tag/cargo-audit%2Fv0.23.0
 # https://github.com/rhysd/actionlint/releases/tag/v1.7.12
 # actionlint publishes its digests in actionlint_1.7.12_checksums.txt.
 # cargo-audit publishes none, so its digests are the ones that GitHub records
 # for the release assets, which `gh release view` prints with `--json assets`.
-cargo_audit_version="0.22.2"
+cargo_audit_version="0.23.0"
 actionlint_version="1.7.12"
 case "$(uname -s)/$(uname -m)" in
     Linux/x86_64|Linux/amd64)
         cargo_audit_target=x86_64-unknown-linux-musl
-        cargo_audit_sha256="7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428"
+        cargo_audit_sha256="4f01c74ed84b2dffd0b1d37012a62cdf2a92c96e25bdf8eec7fcc0d4d3eb7811"
         actionlint_platform=linux_amd64
         actionlint_sha256="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
         ;;
     Linux/aarch64|Linux/arm64)
         cargo_audit_target=aarch64-unknown-linux-gnu
-        cargo_audit_sha256="c6603814ddaa45e51263dafd31c0ac98808f688d26f7395804f9670b0fd599dd"
+        cargo_audit_sha256="00eff3158429b9629abe8748e971f29f99ee53d4cff54a25072cbb15167bdda8"
         actionlint_platform=linux_arm64
         actionlint_sha256="325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6"
         ;;
     Darwin/x86_64)
         cargo_audit_target=x86_64-apple-darwin
-        cargo_audit_sha256="847831323de932155b226ab60ee4a180e13e5d007a019f0d4b7b4d89a6de2ab2"
+        cargo_audit_sha256="845ec02452dd233c292be887700ac99a38a697299423081ee0d8ea1a0c961464"
         actionlint_platform=darwin_amd64
         actionlint_sha256="5b44c3bc2255115c9b69e30efc0fecdf498fdb63c5d58e17084fd5f16324c644"
         ;;
     Darwin/arm64)
         cargo_audit_target=aarch64-apple-darwin
-        cargo_audit_sha256="ec7ca4263769593df4d909be85b94a6b79efa2897be5d2bb8ebd516e823175af"
+        cargo_audit_sha256="84101204e5b8013c9a8d7251766aebdef3e7fa1a3ef040cde44d65b48b8c4056"
         actionlint_platform=darwin_arm64
         actionlint_sha256="aba9ced2dee8d27fecca3dc7feb1a7f9a52caefa1eb46f3271ea66b6e0e6953f"
         ;;

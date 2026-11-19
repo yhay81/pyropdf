@@ -462,7 +462,7 @@ def test_psd_opens_in_pillow(mode: str) -> None:
         assert image.tobytes() == _image(mode).tobytes()
     # ResolutionInfo: 150 pixels per inch in 16.16 fixed point, across and down.
     resolution = struct.pack(">IHHIHH", 150 << 16, 1, 1, 150 << 16, 1, 1)
-    assert image.resources == [(1005, b"", resolution)]  # ty: ignore[unresolved-attribute]
+    assert image.resources == [(1005, b"", resolution)]  # ty: ignore[missing-attribute]
 
 
 def _ps_samples(data: bytes) -> bytes:

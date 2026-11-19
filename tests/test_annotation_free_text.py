@@ -48,7 +48,7 @@ def test_callout_stops_after_four_points_even_when_sequence_misreports_length() 
         def __len__(self) -> int:
             return 2
 
-        def __getitem__(self, index: int) -> tuple[int, int]:  # ty: ignore[invalid-method-override]
+        def __getitem__(self, index: int) -> tuple[int, int]:  # ty: ignore[incompatible-method-override]
             self.read += 1
             return (10, 10)
 

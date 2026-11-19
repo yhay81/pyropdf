@@ -117,7 +117,7 @@ def test_absent_and_removed_labels() -> None:
 )
 def test_ranges_validate_on_construction(make: object, error: type[Exception], match: str) -> None:
     with pytest.raises(error, match=match):
-        make()  # ty: ignore[call-non-callable]
+        make()  # ty: ignore[not-callable]
 
 
 def test_assigning_validates_the_ranges_together() -> None:
@@ -145,7 +145,7 @@ def test_page_operations_keep_each_pages_label(edit: object, expected: list[str]
     doc = _six_page_doc()
     doc.page_labels = [PageLabelRange(0, PageLabelStyle.LOWER_ROMAN), PageLabelRange(3, prefix="A-")]
     before = {page.obj.xref: page.label for page in doc.pages}
-    edit(doc.pages)  # ty: ignore[call-non-callable]
+    edit(doc.pages)  # ty: ignore[not-callable]
     kept = [(before[page.obj.xref], page.label) for page in doc.pages if page.obj.xref in before]
     assert kept
     assert all(old == new for old, new in kept)

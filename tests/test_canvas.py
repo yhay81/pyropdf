@@ -61,7 +61,7 @@ def _pixel(page: pyropdf.Page, x: float, y: float) -> tuple[int, int, int]:
     pixmap = page.pixmap(dpi=72)
     samples = memoryview(pixmap).cast("B")
     offset = int(y) * pixmap.stride + int(x) * pixmap.channels
-    return tuple(samples[offset : offset + 3])  # ty: ignore[invalid-return-type]
+    return tuple(samples[offset : offset + 3])  # ty: ignore[invalid-explicit-return]
 
 
 def _assert_rect(actual: Rect, expected: tuple[float, float, float, float]) -> None:
