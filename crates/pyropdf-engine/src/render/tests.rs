@@ -432,3 +432,109 @@ fn fallback_faces_draw_the_cjk_fonts_that_a_document_does_not_embed() {
     assert_eq!(empty_outlines(&none), 3);
     assert_eq!(empty_outlines(&japanese), 0);
 }
+
+fn pdf_of(objects: &[&str]) -> Vec<u8> {
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (at, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", at + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        out.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+#[test]
+fn scaled_fit_renders_mixed_pages_as_per_page_matrices_and_refuses_zero_bounds() {
+    let stream = "0.1 0.4 0.8 rg 20 20 120 60 re f";
+    let content = format!(
+        "<< /Length {} >>\nstream\n{stream}\nendstream",
+        stream.len()
+    );
+    let bytes = pdf_of(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.276 841.89] /Contents 6 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 1191] /Rotate 90 /Contents 6 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2384 1684] /UserUnit 4 /Contents 6 0 R >>",
+        &content,
+    ]);
+    let budget = Budget::default();
+    let index = Index::open(Bytes::new(bytes), &budget).unwrap();
+    let base = FileBase::new(index, &budget).unwrap();
+    let document = Document::new(Arc::new(base), None);
+    let version = document.current();
+    let pages = PageIndex::build(&mut Reads::new(&version, &budget)).unwrap();
+    let bridged = Arc::new(Bridged::new(&version, &pages, &budget).unwrap());
+    let none = Fallback::default();
+    let options = Options::new((1.0, 0.0, 0.0, 1.0), false);
+    let fit = Scale::Fit(800, 600);
+
+    let expected: Vec<Raster> = (0..3)
+        .map(|at| {
+            let (width, height) = Display::from_page(&pages.pages()[at]).size();
+            let factor = (800.0 / width).min(600.0 / height);
+            let per_page = Options::new((factor, 0.0, 0.0, factor), false);
+            let fitted = raster_scaled(&bridged, Some(&pages), &none, at, &options, fit).unwrap();
+            let direct = raster(&bridged, &none, at, &per_page).unwrap();
+            assert_eq!(fitted, direct, "page {at}");
+            fitted
+        })
+        .collect();
+
+    assert_eq!((expected[0].width, expected[0].height), (424, 600));
+    assert_eq!((expected[1].width, expected[1].height), (800, 565));
+    assert_eq!((expected[2].width, expected[2].height), (800, 565));
+
+    let indexes = [2, 0, 1, 2];
+    let batched = batch_scaled(
+        &bridged,
+        Some(&pages),
+        &none,
+        &indexes,
+        &options,
+        fit,
+        3,
+        Ok::<_, RasterError>,
+    )
+    .unwrap();
+    let ordered: Vec<Raster> = indexes.iter().map(|&at| expected[at].clone()).collect();
+    assert_eq!(batched, ordered);
+
+    for invalid in [Scale::Fit(0, 10), Scale::Fit(10, 0)] {
+        assert_eq!(
+            raster_scaled(&bridged, Some(&pages), &none, 0, &options, invalid),
+            Err(RasterError::Geometry(
+                "fit dimensions must be positive".to_owned()
+            ))
+        );
+        assert_eq!(
+            batch_scaled(
+                &bridged,
+                Some(&pages),
+                &none,
+                &[],
+                &options,
+                invalid,
+                1,
+                Ok::<_, RasterError>,
+            ),
+            Err(RasterError::Geometry(
+                "fit dimensions must be positive".to_owned()
+            ))
+        );
+    }
+}

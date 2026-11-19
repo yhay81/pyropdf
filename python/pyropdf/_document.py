@@ -38,10 +38,10 @@ from pyropdf._links import Destinations
 from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp, write_entries, write_xmp
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
-from pyropdf._page import _clip_box, _ExportPage
+from pyropdf._page import _clip_box, _ExportPage, _render_scale
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
 from pyropdf._pages import Pages, _page_entries, _resolve
-from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_encoding
+from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _validate_encoding
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
 from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
@@ -816,6 +816,7 @@ class Document:
         *,
         dpi: float | None = None,
         matrix: Sequence[float] | None = None,
+        fit: int | tuple[int, int] | None = None,
         alpha: bool = False,
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
         annotations: bool = True,
@@ -829,11 +830,12 @@ class Document:
     ) -> list[bytes]:
         """Render pages of the current version to encoded images, in the order of ``pages``.
 
-        ``dpi``, ``matrix``, ``alpha``, ``background``, ``annotations``,
-        ``colorspace``, ``hinting``, and ``glyph_cache`` mean what they mean
-        to :meth:`Page.pixmap`, so the default is opaque RGB at 72 dpi, and
-        each image is what ``page.pixmap(...).to_bytes(format, quality=quality)``
-        returns.
+        ``dpi``, ``matrix``, ``fit``, ``alpha``, ``background``,
+        ``annotations``, ``colorspace``, ``hinting``, and ``glyph_cache`` mean
+        what they mean to :meth:`Page.pixmap`, so the default is opaque RGB at
+        72 dpi, ``fit`` scales each page individually from its own display
+        size, and each image is what
+        ``page.pixmap(...).to_bytes(format, quality=quality)`` returns.
         ``format`` is ``"png"`` or ``"jpeg"`` at ``quality``, 1 through 100;
         JPEG has no alpha. ``pages`` holds page indexes, negative ones from
         the end, and may repeat them; it defaults to every page, and may
@@ -851,7 +853,7 @@ class Document:
         images together, 512 MiB by default, with :class:`LimitError` code
         ``render_output_size``; ``None`` leaves it unbounded.
         """
-        linear = _render_matrix(matrix, dpi)
+        linear, fit_box = _render_scale(matrix, dpi, fit)
         rgba = _render_background(background, alpha=alpha)
         _validate_bool("annotations", annotations)
         _validate_bool("hinting", hinting)
@@ -873,6 +875,7 @@ class Document:
             doc,
             entries,
             linear,
+            fit_box,
             alpha,
             gray,
             rgba,

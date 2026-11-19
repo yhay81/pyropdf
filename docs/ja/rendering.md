@@ -32,6 +32,7 @@ pixmap は buffer protocol に対応するので、NumPy や Pillow は画素を
 | --- | --- |
 | `dpi` | ページを一様に拡大します。既定の 72 は 1 ポイント 1 画素です。 |
 | `matrix` | 4 分の 1 回転の `Matrix(90)` のような `Matrix`、または拡大・回転・せん断する 4 つか 6 つの数。ラスタは変換後のページを覆うので平行移動は捨てます。 |
+| `fit` | 正の整数または `(width, height)` の画素数。ページ（`clip` 指定時はその矩形）がその範囲に収まるよう一様に拡大・縮小します。`dpi`・`matrix` とは同時に指定できません。 |
 | `clip` | 表示座標の矩形 `(x0, y0, x1, y1)`。その画素だけをラスタ化します。 |
 | `alpha` | ページを白の上に置かず、透明度を残します。 |
 | `background` | ページの下に塗る 0〜255 の RGB または RGBA。`alpha` なしでは不透明でなければなりません。 |
@@ -45,11 +46,12 @@ import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
+    fitted = page.pixmap(fit=1024)
     top = page.pixmap(dpi=200, clip=(0, 0, page.rect.width, 120))
     gray = page.pixmap(dpi=96, colorspace="gray", annotations=False)
     tinted = page.pixmap(background=(255, 250, 235))
     rotated = page.pixmap(matrix=pyropdf.Matrix(90))
-    print(top.height, gray.channels, tinted.channels, rotated.width)
+    print(fitted.height, top.height, gray.channels, tinted.channels, rotated.width)
 ```
 
 `clip` は表示座標、つまり `page.rect` や `words()`・`search()` が返す箱と同じ空間で指定します。
@@ -91,14 +93,16 @@ with pyropdf.open("input.pdf") as doc:
 ## まとめて描画する
 
 `doc.render` は複数ページを、GIL を手放した最大 `workers` 個のスレッドで並列に描画し、
-`pages` の順にエンコード済みの画像を返します。`page.pixmap` のオプションを受け取り、別のスレッドが
-編集していても、どのページも呼び出しを始めたときの版から描画します。
+`pages` の順にエンコード済みの画像を返します。`clip` を除く `page.pixmap` のオプションを受け取り、
+`fit` はページごとの表示サイズから倍率を決めるため、サイズの異なるページや `/UserUnit` の図面が
+混在する文書も 1 回のバッチで同じ画素上限に収められます。別のスレッドが編集していても、
+どのページも呼び出しを始めたときの版から描画します。
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    images = doc.render(dpi=96, format="png", workers=4)
+    images = doc.render(fit=2048, format="png", workers=4)
     print(len(images), "pages rendered")
     first_only = doc.render([0], dpi=150, format="jpeg", quality=85)
 ```

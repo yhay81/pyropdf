@@ -246,6 +246,7 @@ Page.pixmap(
     *,
     dpi: float | None = None,
     matrix: Sequence[float] | None = None,
+    fit: int | tuple[int, int] | None = None,
     clip: Sequence[float] | None = None,
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
@@ -261,7 +262,10 @@ Render the current version of the page to a `Pixmap`.
 `dpi` scales the page uniformly, 72 by default; `matrix` is a
 `Matrix` or six entries, whose translation is dropped, since
 the raster covers the transformed page, or a linear map
-`(a, b, c, d)`. Without `alpha` the page lies on white.
+`(a, b, c, d)`; `fit` scales the page (or `clip` when given)
+uniformly to fit within `(width, height)` pixels, with an integer
+`n` meaning `(n, n)`. At most one of `dpi`, `matrix`, and
+`fit` may be given. Without `alpha` the page lies on white.
 `background` is an RGB or RGBA tuple with components from 0 to 255
 painted beneath the page, which must be opaque without `alpha`.
 `annotations=False` leaves out the appearances of annotations and

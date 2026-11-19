@@ -67,6 +67,46 @@ _DEFAULT_MAX_SEARCH_HITS = 4096
 _MAX_SEARCH_INPUT_BYTES = 4096
 #: The largest magnitude of a PDF real that hayro reads as a 32-bit float.
 _FLOAT32_MAX = 3.4028234663852886e38
+#: The widest side passed to Rust's ``u32`` fit bound; Rust's raster limits refuse anything above 65,532.
+_MAX_FIT_SIDE = 0xFFFF_FFFF
+_FIT_PAIR_LENGTH = 2
+
+
+def _fit_side(value: object) -> int:
+    """Validate one side of ``fit`` and clamp huge integers to ``u32`` for Rust's raster-limit check."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"fit must be a positive int or a (width, height) pair of positive ints: {value!r}"
+        raise TypeError(msg)
+    if value <= 0:
+        msg = f"fit dimensions must be positive: {value!r}"
+        raise ValueError(msg)
+    return min(value, _MAX_FIT_SIDE)
+
+
+def _render_scale(
+    matrix: Sequence[float] | None,
+    dpi: float | None,
+    fit: int | tuple[int, int] | None,
+) -> tuple[tuple[float, float, float, float], tuple[int, int] | None]:
+    """Resolve ``dpi``, ``matrix``, or ``fit`` into ``(linear_matrix, fit_box)``."""
+    if fit is None:
+        return _render_matrix(matrix, dpi), None
+    if dpi is not None or matrix is not None:
+        msg = "pass at most one of dpi, matrix, and fit"
+        raise ValueError(msg)
+    if isinstance(fit, bool):
+        msg = f"fit must be a positive int or a (width, height) pair of positive ints: {fit!r}"
+        raise TypeError(msg)
+    if isinstance(fit, int):
+        side = _fit_side(fit)
+        return (1.0, 0.0, 0.0, 1.0), (side, side)
+    if isinstance(fit, (tuple, list)):
+        if len(fit) != _FIT_PAIR_LENGTH:
+            msg = f"fit must be a positive int or a (width, height) pair of positive ints: {fit!r}"
+            raise ValueError(msg)
+        return (1.0, 0.0, 0.0, 1.0), (_fit_side(fit[0]), _fit_side(fit[1]))
+    msg = f"fit must be a positive int or a (width, height) pair of positive ints: {fit!r}"
+    raise TypeError(msg)
 
 
 def _clip_box(clip: object, *, name: str = "clip") -> tuple[float, float, float, float]:
@@ -348,6 +388,7 @@ class Page:
         *,
         dpi: float | None = None,
         matrix: Sequence[float] | None = None,
+        fit: int | tuple[int, int] | None = None,
         clip: Sequence[float] | None = None,
         alpha: bool = False,
         background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
@@ -361,7 +402,10 @@ class Page:
         ``dpi`` scales the page uniformly, 72 by default; ``matrix`` is a
         :class:`Matrix` or six entries, whose translation is dropped, since
         the raster covers the transformed page, or a linear map
-        ``(a, b, c, d)``. Without ``alpha`` the page lies on white.
+        ``(a, b, c, d)``; ``fit`` scales the page (or ``clip`` when given)
+        uniformly to fit within ``(width, height)`` pixels, with an integer
+        ``n`` meaning ``(n, n)``. At most one of ``dpi``, ``matrix``, and
+        ``fit`` may be given. Without ``alpha`` the page lies on white.
         ``background`` is an RGB or RGBA tuple with components from 0 to 255
         painted beneath the page, which must be opaque without ``alpha``.
         ``annotations=False`` leaves out the appearances of annotations and
@@ -403,7 +447,7 @@ class Page:
         rasterization inside hayro can exceed the document's memory and
         time limits. See [Reading and rendering](../limits.md#reading-and-rendering).
         """
-        linear = _render_matrix(matrix, dpi)
+        linear, fit_box = _render_scale(matrix, dpi, fit)
         rgba = _render_background(background, alpha=alpha)
         _validate_bool("annotations", annotations)
         _validate_bool("hinting", hinting)
@@ -416,6 +460,7 @@ class Page:
                 self._number,
                 self._generation,
                 linear,
+                fit_box,
                 alpha,
                 gray,
                 rgba,
