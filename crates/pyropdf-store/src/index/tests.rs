@@ -1205,3 +1205,217 @@ fn damaged_inputs_resolve_their_first_page_whatever_order_objects_are_read_in() 
     println!("first pages: {resolved} of 112, hayro-syntax {by_hayro}; lost: {lost:?}");
     assert!(resolved >= 103, "{resolved} of 112 resolve; lost: {lost:?}");
 }
+
+#[test]
+fn revision_changes_tracks_added_updated_freed_and_ignores_cumulative_repeats() {
+    let mut pdf = Pdf::new();
+    let cat = pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let _pages = pdf.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    let _page = pdf.object(3, "<< /Type /Page /Parent 2 0 R >>");
+    let xref0 = pdf.table(&[(0, 65535), (9, 0)], "<< /Size 10 /Root 1 0 R >>");
+
+    let page_v2 = pdf.object(3, "<< /Type /Page /Parent 2 0 R /Rotate 90 >>");
+    let extra = pdf.object(4, "(added)");
+    pdf.objects.clear();
+    let xref1 = pdf.bytes.len();
+    pdf.bytes.extend_from_slice(
+        format!(
+            "xref\n\
+             0 1\n0000000002 65535 f \n\
+             1 4\n\
+             {cat:010} 00000 n \n\
+             0000000000 00001 f \n\
+             {page_v2:010} 00000 n \n\
+             {extra:010} 00000 n \n\
+             10 1\n0000000000 00000 f \n\
+             trailer\n<< /Size 11 /Root 1 0 R /Prev {xref0} >>\nstartxref\n{xref1}\n%%EOF\n"
+        )
+        .as_bytes(),
+    );
+
+    let reused_pos = pdf.bytes.len();
+    pdf.bytes
+        .extend_from_slice(b"2 1 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    let xref2 = pdf.bytes.len();
+    pdf.bytes.extend_from_slice(
+        format!(
+            "xref\n\
+             2 1\n{reused_pos:010} 00001 n \n\
+             trailer\n<< /Size 11 /Root 1 0 R /Prev {xref1} >>\nstartxref\n{xref2}\n%%EOF\n"
+        )
+        .as_bytes(),
+    );
+
+    let index = open(pdf.bytes);
+    let changes = index.revision_changes(&Budget::default()).unwrap();
+    assert_eq!(changes.len(), 3);
+    assert_eq!(
+        (changes[0].added(), changes[0].updated(), changes[0].freed()),
+        (&[1, 2, 3][..], &[][..], &[][..])
+    );
+    assert_eq!(
+        (changes[1].added(), changes[1].updated(), changes[1].freed()),
+        (&[4][..], &[3][..], &[2][..])
+    );
+    assert_eq!(
+        (changes[2].added(), changes[2].updated(), changes[2].freed()),
+        (&[2][..], &[][..], &[][..])
+    );
+}
+
+#[test]
+fn revision_changes_marks_members_of_a_moved_object_stream_updated() {
+    let mut pdf = Pdf::new();
+    let catalog = pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let stream0 = pdf.object_stream(
+        4,
+        &[
+            (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            (3, "<< /Type /Page /Parent 2 0 R >>"),
+        ],
+    );
+    let xref0 = pdf.bytes.len();
+    pdf.xref_stream(
+        5,
+        &[
+            (0, [0, 0, 65535]),
+            (1, [1, catalog, 0]),
+            (2, [2, 4, 0]),
+            (3, [2, 4, 1]),
+            (4, [1, stream0, 0]),
+            (5, [1, xref0, 0]),
+        ],
+        "/Size 6 /Root 1 0 R",
+    );
+
+    let stream1 = pdf.object_stream(
+        4,
+        &[
+            (2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+            (3, "<< /Type /Page /Parent 2 0 R /Rotate 90 >>"),
+        ],
+    );
+    let xref1 = pdf.bytes.len();
+    pdf.xref_stream(
+        6,
+        &[
+            (1, [1, catalog, 0]),
+            (3, [2, 4, 1]),
+            (4, [1, stream1, 0]),
+            (6, [1, xref1, 0]),
+        ],
+        &format!("/Size 7 /Root 1 0 R /Prev {xref0}"),
+    );
+
+    let xref2 = pdf.bytes.len();
+    pdf.xref_stream(
+        7,
+        &[(3, [2, 4, 1]), (4, [1, stream1, 0]), (7, [1, xref2, 0])],
+        &format!("/Size 8 /Root 1 0 R /Prev {xref1}"),
+    );
+
+    let index = open(pdf.bytes);
+    let budget = Budget::default();
+    let changes = index.revision_changes(&budget).unwrap();
+    assert_eq!(changes.len(), 3);
+    assert_eq!(changes[0].added(), &[1, 2, 3, 4, 5]);
+    assert_eq!(changes[1].added(), &[6]);
+    assert_eq!(changes[1].updated(), &[3, 4]);
+    assert!(changes[1].freed().is_empty());
+    assert_eq!(changes[2].added(), &[7]);
+    assert!(changes[2].updated().is_empty());
+    assert!(changes[2].freed().is_empty());
+
+    let rev0 = index.revision(0, &budget).unwrap().unwrap();
+    let rev1 = index.revision(1, &budget).unwrap().unwrap();
+    let Some(Value::Dict(page0)) = value(&rev0, 3) else {
+        panic!("missing page in rev0");
+    };
+    let Some(Value::Dict(page1)) = value(&rev1, 3) else {
+        panic!("missing page in rev1");
+    };
+    assert_eq!(page0.get("Rotate"), None);
+    assert_eq!(page1.get("Rotate"), Some(&Value::Integer(90)));
+}
+
+#[test]
+fn opening_earlier_revision_without_eof_marker_slices_before_later_objects() {
+    let mut pdf = Pdf::new();
+    pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    pdf.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    pdf.object(3, "<< /Type /Page /Parent 2 0 R >>");
+    let xref0 = pdf.bytes.len();
+    let mut table0 = String::from("xref\n0 1\n0000000000 65535 f \n");
+    for (number, offset) in pdf.objects.drain(..) {
+        writeln!(table0, "{number} 1\n{offset:010} 00000 n ").unwrap();
+    }
+    write!(
+        table0,
+        "trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref0}\n"
+    )
+    .unwrap();
+    pdf.bytes.extend_from_slice(table0.as_bytes());
+    let rev0_slice_end = pdf.bytes.len() - 1;
+
+    pdf.object(3, "<< /Type /Page /Parent 2 0 R /Rotate 180 >>");
+    pdf.object(4, "(revision 1 only)");
+    pdf.table(&[], &format!("<< /Size 5 /Root 1 0 R /Prev {xref0} >>"));
+
+    let index = open(pdf.bytes);
+    assert_eq!(index.revisions().len(), 2);
+    assert_eq!(index.revisions()[0].end(), None);
+    assert!(index.revisions()[1].end().is_some());
+
+    let budget = Budget::default();
+    let rev0 = index.revision(0, &budget).unwrap().unwrap();
+    assert!(!rev0.is_repaired());
+    assert_eq!(rev0.bytes().len(), rev0_slice_end);
+    assert!(rev0.get(4).is_none());
+    let Some(Value::Dict(page0)) = value(&rev0, 3) else {
+        panic!("missing page in rev0");
+    };
+    assert_eq!(page0.get("Rotate"), None);
+}
+
+#[test]
+fn opening_earlier_revision_with_overwritten_damage_repairs_that_revision() {
+    let mut pdf = Pdf::new();
+    let cat = pdf.object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+    let pages = pdf.object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    let page0 = pdf.object(3, "<< /Type /Page /Parent 2 0 R >>");
+    pdf.objects.clear();
+    let xref0 = pdf.bytes.len();
+    pdf.bytes.extend_from_slice(
+        format!(
+            "xref\n\
+             0 4\n\
+             0000000000 65535 f \n\
+             {cat:010} 00000 n \n\
+             {pages:010} 00000 n \n\
+             {:010} 00000 n \n\
+             trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref0}\n%%EOF\n",
+            page0 + 1
+        )
+        .as_bytes(),
+    );
+
+    pdf.object(3, "<< /Type /Page /Parent 2 0 R /Rotate 90 >>");
+    pdf.table(&[], &format!("<< /Size 4 /Root 1 0 R /Prev {xref0} >>"));
+
+    let index = open(pdf.bytes);
+    assert!(!index.is_repaired());
+    assert_eq!(index.revisions().len(), 2);
+
+    let budget = Budget::default();
+    let rev0 = index.revision(0, &budget).unwrap().unwrap();
+    assert!(rev0.is_repaired());
+    assert_eq!(
+        rev0.repair().map(Repair::damage),
+        Some(&Damage::Entries { first: 3, count: 1 })
+    );
+    let Some(Value::Dict(recovered)) = value(&rev0, 3) else {
+        panic!("missing recovered page in rev0");
+    };
+    assert_eq!(recovered.get("Rotate"), None);
+    assert!(rev0.revision(0, &budget).unwrap().is_none());
+}

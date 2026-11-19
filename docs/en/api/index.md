@@ -225,6 +225,7 @@ method and property of its classes with its full description.
 - [`ChangeReport`](history-and-changes.md#changereport): What the edits since opening invalidate, for a save that is incremental or not.
 - [`ClaimChange`](history-and-changes.md#claimchange): A PDF/A or PDF/UA claim of the metadata that the edits break.
 - [`History`](history-and-changes.md#history): The line of steps that undo and redo walk.
+- [`Revision`](history-and-changes.md#revision): One incremental file revision of an opened PDF document.
 - [`SignatureChange`](history-and-changes.md#signaturechange): A signature of the opened file that the edits or the save mode invalidate.
 - [`Transaction`](history-and-changes.md#transaction): A group of edits that commits as one version and one undo step.
 

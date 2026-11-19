@@ -45,6 +45,7 @@ from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _valid
 from pyropdf._profiles import pdfa_claim as _pdfa_claim
 from pyropdf._profiles import profiles as _profiles
 from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
+from pyropdf._revisions import revisions as _revisions
 from pyropdf._sanitize import SanitizeReport, sanitize
 from pyropdf._signing import DEFAULT_RESERVE
 from pyropdf._signing import sign as _sign
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
     from pyropdf._fallback_fonts import FallbackFont, _FontPackage
     from pyropdf._fonts import Font
     from pyropdf._profiles import Profiles
+    from pyropdf._revisions import Revision
     from pyropdf._signing import Signature, Signer, Timestamper
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
@@ -499,6 +501,21 @@ class Document:
         """Return the steps that undo and redo walk."""
         self._ensure_open()
         return History(self)
+
+    @property
+    def revisions(self) -> tuple[Revision, ...]:
+        """Return the incremental file revisions of the opened document, oldest first.
+
+        Each :class:`Revision` gives its zero-based ``index`` (matching
+        :attr:`Signature.revision`), its ``end`` offset, and the indirect
+        object numbers that it ``added``, ``updated``, or ``freed``, and
+        :meth:`Revision.open` opens that revision as an independent
+        :class:`Document` sharing the file's bytes. An empty in-memory
+        document or one whose cross-reference index was repaired returns
+        ``()``, and unsaved edits in memory do not change the revisions.
+        """
+        self._ensure_open()
+        return _revisions(self)
 
     def _core(self) -> _Document:
         """Return the core document, refusing a closed one."""

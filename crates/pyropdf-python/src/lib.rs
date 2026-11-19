@@ -31,6 +31,7 @@ mod outline;
 mod pages;
 mod pixmap;
 mod render;
+mod revisions;
 mod schema;
 mod security;
 mod shadings;
@@ -128,6 +129,8 @@ mod _core {
     use super::pixmap::{Pixmap, pixmap_png, recolor_samples, render_page, render_pages};
     #[pymodule_export]
     use super::render::render_page_svg;
+    #[pymodule_export]
+    use super::revisions::{document_revisions, open_revision};
     #[pymodule_export]
     use super::schema::{schema_names, schema_object};
     #[pymodule_export]

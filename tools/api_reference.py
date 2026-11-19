@@ -57,7 +57,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Forms and widgets", ("_form", "_widgets")),
     ("Outline", ("_outline",)),
     ("Attachments", ("_attachments",)),
-    ("History and changes", ("_history", "_changes")),
+    ("History and changes", ("_history", "_changes", "_revisions")),
     ("Encryption", ("_encryption",)),
     ("Signing", ("_signing",)),
     ("Limits and errors", ("_limits", "_limit_codes", "_errors")),

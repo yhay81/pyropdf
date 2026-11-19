@@ -134,3 +134,25 @@ with pyropdf.open("input.pdf") as doc:
         check = sig.verify()
         print(sig.field, check.intact, check.valid, check.modifications)
 ```
+
+## Revisions
+
+`doc.revisions` lists the incremental file revisions of an opened PDF, oldest
+first (`0 .. n - 1`), matching `sig.revision`. Each `Revision` reports `end`
+along with the indirect object numbers in `added`, `updated`, `freed`, and
+`objects`, and `rev.open()` opens that revision as an independent `Document`
+sharing the file's bytes—for example, `doc.revisions[sig.revision].open()`
+opens the exact state that `sig` signed.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    doc.pages[0].rotation = 90
+    updated = doc.to_bytes(incremental=True)
+
+with pyropdf.open(updated) as doc:
+    for rev in doc.revisions:
+        with rev.open() as earlier:
+            print(rev.index, rev.updated, earlier.pages[0].rotation)
+```

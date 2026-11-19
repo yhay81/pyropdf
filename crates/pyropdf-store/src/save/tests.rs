@@ -1444,3 +1444,76 @@ fn deflate_gives_up_past_its_output_limit() {
     let out = recode::deflate(&data, 6, data.len() - 1, &Budget::default()).unwrap();
     assert!(out.is_none());
 }
+
+#[test]
+fn file_base_open_revision_shares_bytes_zero_copy_and_saves_incrementally() {
+    let budget = Budget::default();
+    let rev0_bytes = saved(&memory().current(), false);
+
+    let doc1 = open(rev0_bytes.clone());
+    let mut tx1 = doc1.begin();
+    tx1.write(3, &Value::Integer(10), &budget).unwrap();
+    let rev1_bytes = saved(&tx1.commit(&budget).unwrap(), true);
+
+    let doc2 = open(rev1_bytes.clone());
+    let mut tx2 = doc2.begin();
+    tx2.write(3, &Value::Integer(20), &budget).unwrap();
+    tx2.write(9, &Value::Integer(99), &budget).unwrap();
+    let rev2_bytes = saved(&tx2.commit(&budget).unwrap(), true);
+
+    let base = FileBase::open(rev2_bytes.clone().into(), &budget).unwrap();
+    assert!(base.revision(3, &budget).unwrap().is_none());
+
+    let rev0 = Arc::new(base.revision(0, &budget).unwrap().unwrap());
+    let rev1 = Arc::new(base.revision(1, &budget).unwrap().unwrap());
+    let rev2 = Arc::new(base.revision(2, &budget).unwrap().unwrap());
+
+    assert!(std::ptr::eq(
+        base.index().bytes().as_ptr(),
+        rev0.index().bytes().as_ptr()
+    ));
+    assert!(std::ptr::eq(
+        base.index().bytes().as_ptr(),
+        rev1.index().bytes().as_ptr()
+    ));
+    assert!(std::ptr::eq(
+        base.index().bytes().as_ptr(),
+        rev2.index().bytes().as_ptr()
+    ));
+
+    let doc_rev0 = Document::new(rev0, None);
+    let doc_rev1 = Document::new(rev1, None);
+    let doc_rev2 = Document::new(rev2, None);
+
+    assert_eq!(saved(&doc_rev0.current(), true), rev0_bytes);
+    assert_eq!(saved(&doc_rev1.current(), true), rev1_bytes);
+    assert_eq!(saved(&doc_rev2.current(), true), rev2_bytes);
+
+    assert_eq!(
+        doc_rev1
+            .current()
+            .get(3, &budget)
+            .unwrap()
+            .unwrap()
+            .value()
+            .as_ref(),
+        &Value::Integer(10)
+    );
+    assert!(doc_rev1.current().get(9, &budget).unwrap().is_none());
+
+    let mut branch = doc_rev0.begin();
+    branch.write(3, &Value::Integer(77), &budget).unwrap();
+    let branched_bytes = saved(&branch.commit(&budget).unwrap(), true);
+    assert!(branched_bytes.starts_with(&rev0_bytes));
+    let reopened = open(branched_bytes);
+    assert_eq!(
+        reopened
+            .current()
+            .get(3, &budget)
+            .unwrap()
+            .unwrap()
+            .value()
+            .as_ref(),
+        &Value::Integer(77)
+    );
+}

@@ -75,6 +75,37 @@ impl FileBase {
         })
     }
 
+    /// Opens revision `revision` (oldest = `0`) of `index` as an independent
+    /// [`FileBase`] sharing `index`'s bytes, or `None` when `revision` is out
+    /// of range.
+    ///
+    /// When `index` is unlocked, the revision unlocks with the same password,
+    /// falling back to the empty user password or a locked state when that
+    /// revision's encryption differs.
+    pub fn open_revision(index: &Index, revision: usize, budget: &Budget) -> Result<Option<Self>> {
+        let Some(mut rev_index) = index.revision(revision, budget)? else {
+            return Ok(None);
+        };
+        let password = index.security().map(Handler::password);
+        if let Err(error) = unlock(&mut rev_index, password, budget) {
+            if password.is_some()
+                && error.kind() == &crate::ErrorKind::Password(Password::Incorrect)
+            {
+                unlock(&mut rev_index, None, budget)?;
+            } else {
+                return Err(error);
+            }
+        }
+        Self::new(rev_index, budget).map(Some)
+    }
+
+    /// Opens revision `revision` (oldest = `0`) of this file as an
+    /// independent [`FileBase`] sharing its bytes, or `None` when `revision`
+    /// is out of range.
+    pub fn revision(&self, revision: usize, budget: &Budget) -> Result<Option<Self>> {
+        Self::open_revision(&self.index, revision, budget)
+    }
+
     /// Returns the security handler of an unlocked encrypted document.
     #[must_use]
     pub const fn security(&self) -> Option<&Handler> {

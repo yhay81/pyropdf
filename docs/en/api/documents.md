@@ -402,6 +402,22 @@ Document.history: History
 
 The steps that undo and redo walk.
 
+### `Document.revisions`
+
+```python
+Document.revisions: tuple[Revision, ...]
+```
+
+The incremental file revisions of the opened document, oldest first.
+
+Each `Revision` gives its zero-based `index` (matching
+`Signature.revision`), its `end` offset, and the indirect
+object numbers that it `added`, `updated`, or `freed`, and
+`Revision.open` opens that revision as an independent
+`Document` sharing the file's bytes. An empty in-memory
+document or one whose cross-reference index was repaired returns
+`()`, and unsaved edits in memory do not change the revisions.
+
 ### `Document.is_closed`
 
 ```python

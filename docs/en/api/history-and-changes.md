@@ -157,6 +157,52 @@ History.clear()
 
 Forget every step, keeping the document as it is.
 
+## `Revision`
+
+```python
+Revision(
+    index: int,
+    end: int | None,
+    added: tuple[int, ...],
+    updated: tuple[int, ...],
+    freed: tuple[int, ...],
+)
+```
+
+One incremental file revision of an opened PDF document.
+
+`index` counts revisions from `0`, oldest first, matching
+`Signature.revision`. `end` is the byte offset after the
+revision's `%%EOF` marker (and any line ending that immediately follows
+it), or `None` when the revision's `startxref` has no `%%EOF`.
+`added`, `updated`, and `freed` list the indirect object numbers
+that this revision added, updated, or freed, each sorted ascending.
+
+### `Revision.objects`
+
+```python
+Revision.objects: tuple[int, ...]
+```
+
+The indirect object numbers that this revision added, updated, or freed, ascending.
+
+### `Revision.open`
+
+```python
+Revision.open(*, limits: DocumentLimits | None = None) -> Document
+```
+
+Open this revision as an independent `Document` sharing the file's bytes.
+
+`limits` bounds the opened revision, defaulting to the parent
+document's `Document.limits`; `DocumentLimits.web` checks
+every object of the revision at open. An unlocked encrypted parent
+opens an unlocked revision with the same access, while a locked parent
+opens a locked revision that `Document.unlock` can unlock.
+Closing the parent document afterward leaves an already-opened
+revision usable, while calling `open` after the parent is closed
+raises `DocumentClosedError`.
+
 ## `SignatureChange`
 
 ```python
