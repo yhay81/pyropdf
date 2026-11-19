@@ -22,10 +22,18 @@ method and property of its classes with its full description.
 
 ## [Metadata](metadata.md)
 
+- [`Duplex`](metadata.md#duplex): How a print dialog prints both sides by default (`/Duplex`).
+- [`MarkInfo`](metadata.md#markinfo): The catalog's `/MarkInfo` flags of a tagged document (ISO 32000-2 Table 356).
 - [`Metadata`](metadata.md#metadata_1): The document's Info dictionary as a live mapping, as `doc.metadata` returns it.
 - [`METADATA_KEYS`](metadata.md#metadata_keys): The Info dictionary entries that `Document.metadata` holds, by their names in pyropdf, and their PDF keys.
+- [`PageBoundary`](metadata.md#pageboundary): A page box that viewers and printers show or clip to (`/ViewArea` and its kin).
+- [`PageLayout`](metadata.md#pagelayout): How a viewer lays pages out (`/PageLayout`, ISO 32000-2 Table 29).
+- [`PageMode`](metadata.md#pagemode): How a viewer opens the document (`/PageMode`, ISO 32000-2 Table 29).
 - [`parse_pdf_date`](metadata.md#parse_pdf_date): Return the moment of a PDF date string, or `None` when it is not one.
 - [`pdf_date`](metadata.md#pdf_date): Return `moment` as a PDF date string, such as `"D:20240101120000Z"`; a naive moment is UTC.
+- [`PrintScaling`](metadata.md#printscaling): Whether a print dialog scales pages by default (`/PrintScaling`).
+- [`ReadingDirection`](metadata.md#readingdirection): The reading order of the text, which lays out side-by-side pages (`/Direction`).
+- [`ViewerPreferences`](metadata.md#viewerpreferences): The catalog's `/ViewerPreferences` (ISO 32000-2 Table 147).
 
 ## [Page labels](page-labels.md)
 

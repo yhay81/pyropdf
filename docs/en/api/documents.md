@@ -394,6 +394,81 @@ Document.pdfa_claim: tuple[int, str] | None
 
 The PDF/A part and conformance level of the XMP metadata, such as `(2, "B")`, or `None`.
 
+### `Document.page_mode`
+
+```python
+Document.page_mode: PageMode
+```
+
+How a viewer opens the document; unset or unknown reads as `PageMode.USE_NONE`.
+
+Assign a `PageMode` or its PDF name string (ISO 32000-2 Table
+29) in one transaction, or `del doc.page_mode` to remove
+`/PageMode`.
+
+Settable.
+
+### `Document.page_layout`
+
+```python
+Document.page_layout: PageLayout
+```
+
+How a viewer lays pages out; unset or unknown reads as `PageLayout.SINGLE_PAGE`.
+
+Assign a `PageLayout` or its PDF name string (ISO 32000-2 Table
+29) in one transaction, or `del doc.page_layout` to remove
+`/PageLayout`.
+
+Settable.
+
+### `Document.language`
+
+```python
+Document.language: str | None
+```
+
+The catalog's `/Lang` language tag as stored, or `None`.
+
+The complete BCP 47 tag is kept, such as `"zh-TW"` or
+`"sr-Latn-RS"`. Assigning writes a well-formed tag (ISO 32000-2
+section 14.9.2.2) of at most 256 ASCII bytes, hyphen-separated subtags
+of one to eight ASCII letters or digits, the first of letters only; a
+non-string raises `TypeError` and a malformed tag raises
+`PdfError`. `del doc.language` removes `/Lang`.
+
+Settable.
+
+### `Document.mark_info`
+
+```python
+Document.mark_info: MarkInfo | None
+```
+
+The catalog's `/MarkInfo` flags, or `None` without a `/MarkInfo` dictionary.
+
+Each flag is `True` only when the dictionary holds `true`.
+Assigning a `MarkInfo` writes all three flags in one
+transaction, and `del doc.mark_info` removes `/MarkInfo`.
+
+Settable.
+
+### `Document.viewer_preferences`
+
+```python
+Document.viewer_preferences: ViewerPreferences | None
+```
+
+The catalog's `/ViewerPreferences`, or `None` without the dictionary.
+
+Entries of the wrong type or of unknown values read as `None`.
+Assigning a `ViewerPreferences` replaces the dictionary with
+the fields that are not `None` in one transaction, keeping an
+indirect dictionary's object number when it already has one, and
+`del doc.viewer_preferences` removes `/ViewerPreferences`.
+
+Settable.
+
 ### `Document.history`
 
 ```python
