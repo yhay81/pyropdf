@@ -120,7 +120,8 @@ def stencil_page(*, inline: bool, nested: bool = False) -> pyropdf.Page:
     )
 
 
-@pytest.mark.spec("paths", "interpret")
+@pytest.mark.spec("graphics-state", "read", "interpret")
+@pytest.mark.spec("paths", "read", "interpret")
 def test_paths_carry_their_fill_stroke_and_line_style() -> None:
     page = page_with(
         "/GS1 gs 1 0 0 rg 0 0 1 RG 2 w 1 J 2 j [3 2] 1 d 10 10 40 20 re B\n0 1 0 rg 60 10 m 80 40 100 0 120 30 c f*",
@@ -167,7 +168,7 @@ def test_a_fill_and_a_stroke_in_other_contexts_stay_two_paths() -> None:
     assert stroke.context.marked_content == (MarkedContent(tag="Artifact", mcid=None),)
 
 
-@pytest.mark.spec("text-objects", "interpret")
+@pytest.mark.spec("text-objects", "read", "interpret")
 def test_text_runs_report_glyphs_with_outline_boxes() -> None:
     content = page_with("BT /F1 24 Tf 20 40 Td (H i) Tj ET").content()
     (run,) = content.text_runs
@@ -236,7 +237,8 @@ def test_a_stroke_of_other_glyphs_is_its_own_run() -> None:
     assert [run.render_mode for run in page.content().text_runs] == [TextRenderMode.FILL, TextRenderMode.STROKE]
 
 
-@pytest.mark.spec("blend-modes", "interpret")
+@pytest.mark.spec("blend-modes", "read", "interpret")
+@pytest.mark.spec("marked-content", "read", "interpret")
 def test_items_carry_clips_blend_modes_and_marked_content() -> None:
     page = page_with(
         "q 10 10 80 80 re W n /GS1 gs /Span << /MCID 7 >> BDC 1 0 0 rg 20 20 30 30 re f EMC Q "
@@ -261,7 +263,8 @@ def test_items_carry_clips_blend_modes_and_marked_content() -> None:
     assert plain.context.clip_bbox is None
 
 
-@pytest.mark.spec("transparency-groups", "interpret")
+@pytest.mark.spec("soft-masks", "read", "interpret")
+@pytest.mark.spec("transparency-groups", "read", "interpret")
 @pytest.mark.parametrize("subtype", [SoftMaskType.ALPHA, SoftMaskType.LUMINOSITY])
 def test_transparency_groups_carry_opacity_and_soft_masks(subtype: SoftMaskType) -> None:
     group = "/Type /XObject /Subtype /Form /BBox [0 0 200 100] /Group << /S /Transparency >>"
@@ -314,7 +317,9 @@ def test_items_share_the_context_they_were_painted_in() -> None:
     assert third.context is not first.context
 
 
-@pytest.mark.spec("shading-patterns", "interpret")
+@pytest.mark.spec("pattern-color-space", "read", "interpret")
+@pytest.mark.spec("shading-patterns", "read", "interpret")
+@pytest.mark.spec("tiling-patterns", "read", "interpret")
 def test_shadings_and_tiling_patterns_are_paints() -> None:
     tiling = "/PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 12 /Resources << >>"
     page = page_with(
@@ -369,6 +374,7 @@ def test_tiling_patterns_are_constructible_without_opacity() -> None:
 
 
 @pytest.mark.spec("images", "interpret")
+@pytest.mark.spec("xobjects", "read", "interpret")
 def test_images_report_their_object_mask_and_placement() -> None:
     image = "/Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8"
     page = page_with(
@@ -403,6 +409,7 @@ def test_stencil_masks_are_images_without_an_object() -> None:
 
 @pytest.mark.parametrize("inline", [False, True])
 @pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.spec("form-xobjects", "read", "interpret")
 def test_stencil_masks_keep_their_stream_identity_and_placement(*, inline: bool, nested: bool) -> None:
     page = stencil_page(inline=inline, nested=nested)
     images = page.content().images

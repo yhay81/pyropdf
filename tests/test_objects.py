@@ -161,6 +161,7 @@ def test_dictionary_writes_take_effect_immediately() -> None:
     assert reopened.pages[0].rotation == 90
 
 
+@pytest.mark.spec("document-catalog", "edit")
 def test_every_write_is_one_step_and_a_transaction_groups_them() -> None:
     doc = _two_pages()
 
@@ -515,6 +516,7 @@ def test_real_world_object_graph_reads() -> None:
     assert len(form["Fields"]) == len({field.xref for field in form["Fields"]})
 
 
+@pytest.mark.spec("basic-objects", "preserve")
 def test_reals_keep_their_digits_through_assignment_and_copies() -> None:
     source = b"35.68123456789012345"
     doc = pyropdf.Document()

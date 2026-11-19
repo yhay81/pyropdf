@@ -119,6 +119,7 @@ def test_an_absent_appearance_is_synthesized_or_empty() -> None:
     assert free_text.text() == ""
 
 
+@pytest.mark.spec("annotations", "interpret")
 def test_a_hidden_annotation_renders_as_the_background() -> None:
     stamp = _document().pages[0].annotations[1]
     stamp.flags = AnnotationFlags.HIDDEN

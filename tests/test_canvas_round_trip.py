@@ -155,6 +155,8 @@ def _gradient() -> LinearGradient:
     return LinearGradient(start=Point(0, 0), end=Point(200, 0), stops=stops)
 
 
+@pytest.mark.spec("exponential-functions", "create", "preserve")
+@pytest.mark.spec("stitching-functions", "read", "interpret", "create", "preserve")
 def test_draw_repaints_a_gradient_read_back_in_fill_and_stroke() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((200, 200))
@@ -229,6 +231,10 @@ def _shaded(  # noqa: PLR0913 - independent dimensions of a shading round trip.
 @pytest.mark.parametrize("function", [0, 4])
 @pytest.mark.parametrize("extend", [(False, False), (True, False), (False, True), (True, True)])
 @pytest.mark.parametrize("stroke", [False, True])
+@pytest.mark.spec("axial-shading", "read", "interpret")
+@pytest.mark.spec("calculator-functions", "read", "interpret")
+@pytest.mark.spec("radial-shading", "read", "interpret")
+@pytest.mark.spec("sampled-functions", "read", "interpret")
 def test_repaint_shading_domains_functions_and_each_extension(
     shading_type: int,
     function: int,
@@ -327,6 +333,10 @@ def test_unretained_and_unsupported_shadings_refuse_without_writing() -> None:
         ("[/DeviceN [/Ink1 /Ink2] /DeviceRGB 8 0 R]", "0.1 0.8", "0.9 0.2"),
     ],
 )
+@pytest.mark.spec("calgray-color-space", "read", "interpret")
+@pytest.mark.spec("device-color-conversion", "read", "interpret")
+@pytest.mark.spec("devicen-color-space", "read", "interpret")
+@pytest.mark.spec("lab-color-space", "read", "interpret")
 def test_repaint_converts_shading_color_spaces_through_hayro(
     shading_type: int,
     space: str,

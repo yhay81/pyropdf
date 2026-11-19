@@ -44,6 +44,8 @@ def _form() -> pyropdf.Document:
     return doc
 
 
+@pytest.mark.spec("ecmascript-actions", "read", "create", "edit")
+@pytest.mark.spec("trigger-events", "read", "create", "edit")
 def test_field_scripts_are_set_listed_and_removed() -> None:
     doc = _form()
     total = doc.form["total"]
@@ -162,6 +164,7 @@ def test_an_indirect_calculation_order_keeps_its_fields() -> None:
     assert list(doc.catalog["AcroForm"]["CO"]) == [doc.form["a"].obj, doc.form["b"].obj]
 
 
+@pytest.mark.spec("ecmascript-actions", "preserve")
 def test_replacing_a_calculation_preserves_its_position() -> None:
     doc = _form()
     doc.pages[0].widgets.add(TextField("other", (20, 60, 200, 80)))

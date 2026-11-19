@@ -96,6 +96,10 @@ def test_attachment_add_get_roundtrip() -> None:
     ("header", "catalog", "unicode", "version"),
     [("1.3", None, False, "1.4"), ("1.6", None, False, None), ("1.7", None, True, None), ("1.3", "1.7", True, "1.7")],
 )
+@pytest.mark.spec("document-catalog", "interpret")
+@pytest.mark.spec("file-header", "interpret")
+@pytest.mark.spec("file-specifications", "interpret")
+@pytest.mark.spec("name-dictionary", "create")
 def test_attachment_add_writes_only_what_the_documents_version_allows(
     header: str, catalog: str | None, *, unicode: bool, version: str | None
 ) -> None:
@@ -131,6 +135,8 @@ def _claiming_pdfa(part: str) -> pyropdf.Document:
 
 
 @pytest.mark.parametrize("part", ["3", "4"])
+@pytest.mark.spec("associated-files", "read", "create", "edit")
+@pytest.mark.spec("name-dictionary", "edit")
 def test_attachments_of_a_pdfa_3_or_4_document_are_associated_files(part: str) -> None:
     doc = _claiming_pdfa(part)
     doc.attachments.add("a.txt", b"data")
@@ -206,6 +212,7 @@ def test_attachment_add_rejects_non_positive_size_limits(max_size: int) -> None:
 
 
 @pytest.mark.spec("embedded-files", "preserve")
+@pytest.mark.spec("file-specifications", "preserve")
 def test_attachment_survives_compressed_and_garbage_save() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     payload = b"repetitive " * 1000

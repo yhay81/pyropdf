@@ -8,10 +8,12 @@ it, and the map names that test.
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,6 +24,7 @@ COVERAGE = Path("docs/spec-coverage.md")
 FEATURES = Path("tools/spec_map/features.toml")
 COMMAND = "python3 tools/spec_map/generate.py"
 DIMENSIONS = ("read", "interpret", "create", "edit", "preserve")
+FREE_THREADED_SKIPPED = ("tests/test_signing.py", "tests/test_verify.py")
 
 
 def generate(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -66,6 +69,15 @@ def test_every_named_test_exists() -> None:
     command = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "tests"]
     collected = subprocess.run(command, capture_output=True, check=True, cwd=ROOT, text=True).stdout.splitlines()  # noqa: S603 - fixed arguments
     tests = {test.partition("[")[0] for test in collected} | set(collected)
+    if sysconfig.get_config_var("Py_GIL_DISABLED") == 1:
+        # pyHanko enables the GIL on import, so these modules skip at module level on free-threaded builds.
+        for relative in FREE_THREADED_SKIPPED:
+            tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"), filename=relative)
+            tests |= {
+                f"{relative}::{node.name}"
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
+            }
 
     named = {
         test

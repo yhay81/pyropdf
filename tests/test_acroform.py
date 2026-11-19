@@ -187,6 +187,8 @@ NULL_EQUIVALENTS = {"null": "null", "indirect-null": "6 0 R", "missing": "7 0 R"
 null_equivalents = pytest.mark.parametrize("value", list(NULL_EQUIVALENTS.values()), ids=list(NULL_EQUIVALENTS))
 
 
+@pytest.mark.spec("button-fields", "read")
+@pytest.mark.spec("interactive-form", "read")
 def test_form_lists_all_fields() -> None:
     doc = pyropdf.open(_build_form_pdf())
     fields = {f["name"]: f for f in form_entries(doc)}
@@ -222,6 +224,7 @@ def test_form_is_a_mapping_of_field_handles() -> None:
         form[1]  # ty: ignore[invalid-argument-type]
 
 
+@pytest.mark.spec("text-fields", "read")
 def test_field_flags_are_inherited_and_drop_undefined_bits() -> None:
     doc = pyropdf.open(_build_form_pdf())
     form = doc.form
@@ -238,6 +241,7 @@ def test_field_flags_are_inherited_and_drop_undefined_bits() -> None:
     assert field.flags == sum(flag.value for flag in pyropdf.FieldFlags)
 
 
+@pytest.mark.spec("choice-fields", "read")
 def test_field_choices_read_options_and_pairs() -> None:
     pdf = build_raw_pdf(
         {
@@ -312,6 +316,7 @@ def test_fill_text_field_roundtrip_without_unicode_font() -> None:
     assert _opaque_pixels(reopened, (45, 147, 255, 177)) > 0
 
 
+@pytest.mark.spec("choice-fields", "interpret", "edit")
 def test_fill_choice_field_generates_appearance() -> None:
     doc = pyropdf.open(_build_form_pdf())
     doc.form["level"].value = "pro"
@@ -338,6 +343,7 @@ def test_fill_multiline_text_field_bounds_layout_lines_atomically() -> None:
     assert doc.to_bytes() == before
 
 
+@pytest.mark.spec("text-fields", "interpret", "edit")
 def test_fill_comb_field_centers_characters_and_enforces_maxlen() -> None:
     doc = pyropdf.open(_build_form_pdf())
     doc.form["code"].value = "A12"
@@ -803,6 +809,7 @@ def test_malformed_comb_field_is_rejected_atomically(original: bytes, replacemen
     assert doc.to_bytes() == before
 
 
+@pytest.mark.spec("button-fields", "interpret", "edit")
 def test_fill_checkbox_with_bool() -> None:
     doc = pyropdf.open(_build_form_pdf())
     doc.form["agree"].value = True
@@ -843,6 +850,7 @@ def test_fill_radio_selects_only_matching_widget() -> None:
     assert basic > pro > 0
 
 
+@pytest.mark.spec("button-fields", "preserve")
 def test_nonempty_custom_button_appearance_is_preserved() -> None:
     green_square = "0 1 0 rg 0 0 20 20 re f"
     doc = pyropdf.open(_build_form_pdf(checkbox_on_content=green_square))
@@ -861,6 +869,7 @@ def test_filling_draws_the_button_states_that_other_fields_lack() -> None:
     assert _values(doc)["agree"] == "Off"
 
 
+@pytest.mark.spec("widget-annotations", "interpret")
 def test_widget_rotation_background_and_alignment_render() -> None:
     extra = "/Q 2 /MK << /R 90 /BG [1 1 0] /BC [1 0 0] >> /BS << /W 2 >>"
     doc = pyropdf.open(_build_form_pdf(text_widget_extra=extra))
@@ -990,6 +999,7 @@ def test_text_appearance_inherits_past_null_child_entries(value: str, target: st
     ],
     ids=["direct", "indirect"],
 )
+@pytest.mark.spec("interactive-form", "interpret")
 def test_present_child_field_entries_override_parent_values(entries: str, extra: dict[int, str]) -> None:
     """Only null-equivalent entries inherit; a present child value still wins."""
     doc = pyropdf.open(_build_inherited_comb_pdf(entries, extra))
@@ -1109,6 +1119,7 @@ def test_null_or_unusable_acroform_quadding_aligns_left(value: str, target: str)
     ids=["field", "indirect", "parent", "out-of-range"],
 )
 @pytest.mark.parametrize("target", ["code.inner", "other"])
+@pytest.mark.spec("variable-text", "read", "interpret")
 def test_field_quadding_overrides_acroform_default(parent: str, child: str, extra: dict[int, str], target: str) -> None:
     """A `/Q` on the `/Parent` chain, including `/Q 0`, wins over the AcroForm's `/Q`.
 
@@ -2045,6 +2056,7 @@ def test_read_only_transaction_reuses_the_existing_form_walk() -> None:
         assert _core.form_walk_counts(core)[1] == computations
 
 
+@pytest.mark.spec("choice-fields", "preserve")
 def test_choice_options_inherit_through_a_parent_alias() -> None:
     doc = pyropdf.open(
         build_raw_pdf(

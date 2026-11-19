@@ -52,6 +52,7 @@ def _page(rotation: int = 0) -> pyropdf.Page:
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.spec("square-circle-annotations", "interpret", "create")
 def test_squares_and_circles_render_on_their_display_rectangles(rotation: int) -> None:
     page = _page(rotation)
 
@@ -72,6 +73,7 @@ def test_squares_and_circles_render_on_their_display_rectangles(rotation: int) -
     assert _pixel(pixmap, 122, 12) == WHITE
 
 
+@pytest.mark.spec("square-circle-annotations", "read", "preserve")
 def test_shapes_survive_save_and_reopen() -> None:
     page = _page(90)
     page.annotations.add(

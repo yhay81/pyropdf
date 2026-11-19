@@ -21,6 +21,7 @@ def test_each_fixture_is_what_the_generator_writes(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(FLAVOURS))
+@pytest.mark.spec("pdfua", "preserve")
 def test_each_fixture_claims_its_part_and_passes_the_structural_check(name: str) -> None:
     doc = pyropdf.open(PDFUA / name)
     assert doc.profiles.pdfua == f"PDF/UA-{FLAVOURS[name][2].removeprefix('ua')}"

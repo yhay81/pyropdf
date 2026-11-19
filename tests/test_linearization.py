@@ -57,6 +57,7 @@ def page_texts(doc: pyropdf.Document) -> list[str]:
         "wdl6812-manuscript.pdf",
     ],
 )
+@pytest.mark.spec("linearization", "create", "edit")
 def test_a_linearized_corpus_file_passes_qpdf_and_reads_the_same(name: str) -> None:
     with pyropdf.open(CORPUS / name) as doc:
         data = doc.to_bytes(linearize=True)
@@ -88,6 +89,8 @@ def test_a_linearized_save_to_a_path_is_linearized(tmp_path: Path) -> None:
     assert pyropdf.open(out).is_linearized
 
 
+@pytest.mark.spec("incremental-update", "interpret")
+@pytest.mark.spec("linearization", "read", "interpret")
 def test_detection_reads_the_linearization_dictionary_and_the_file_length(tmp_path: Path) -> None:
     source = CORPUS / "patent-us223898.pdf"
     assert not pyropdf.open(source).is_linearized

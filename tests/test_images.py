@@ -60,6 +60,11 @@ def _png(*, alpha: bool) -> bytes:
 
 
 @pytest.mark.parametrize("path", CORPUS, ids=lambda path: path.name)
+@pytest.mark.spec("ccitt-fax-filter", "read")
+@pytest.mark.spec("dct-filter", "read")
+@pytest.mark.spec("images", "read")
+@pytest.mark.spec("jbig2-filter", "read")
+@pytest.mark.spec("jpx-filter", "read")
 def test_every_corpus_image_extracts(path: Path) -> None:
     with pyropdf.open(path) as doc:
         for page in doc.pages:
@@ -131,6 +136,7 @@ def test_a_soft_mask_is_the_alpha() -> None:
     assert bytes(pixmap)[3::4] == bytes(range(0, 240, 5))
 
 
+@pytest.mark.spec("inline-images", "interpret")
 def test_an_inline_image_decodes() -> None:
     doc = pyropdf.Document()
     doc.pages.new((2, 1))
@@ -146,6 +152,7 @@ def test_an_inline_image_decodes() -> None:
 
 @pytest.mark.parametrize("inline", [False, True])
 @pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.spec("image-masks", "read")
 def test_stencil_images_retain_metadata_and_decode_as_alpha(*, inline: bool, nested: bool) -> None:
     page = stencil_page(inline=inline, nested=nested)
     images = page.images()
@@ -179,6 +186,8 @@ def test_replacing_a_shared_image_updates_every_page_in_one_transaction() -> Non
     assert [bytes(page.pixmap(dpi=72)) for page in doc.pages] == before
 
 
+@pytest.mark.spec("dct-filter", "edit")
+@pytest.mark.spec("images", "edit")
 def test_replacing_with_jpeg_stores_it_as_it_is() -> None:
     doc = image_document()
     xref = doc.pages[0].images()[0].item.xref
@@ -194,6 +203,7 @@ def test_replacing_with_jpeg_stores_it_as_it_is() -> None:
         assert all(abs(a - b) <= 24 for a, b in zip(bytes(image.pixmap()), SAMPLES, strict=True))
 
 
+@pytest.mark.spec("soft-masks", "edit")
 def test_replacing_with_png_writes_its_alpha_as_a_soft_mask() -> None:
     doc = image_document()
     xref = doc.pages[0].images()[0].item.xref

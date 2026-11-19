@@ -37,6 +37,8 @@ def _kids(element: pyropdf.Dictionary) -> list[pyropdf.Dictionary]:
     return list(kids) if isinstance(kids, pyropdf.Array) else [kids]
 
 
+@pytest.mark.spec("annotations", "preserve")
+@pytest.mark.spec("popup-annotations", "preserve")
 def test_annotations_become_objects_of_the_copy() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((300, 300))
@@ -88,6 +90,7 @@ def _widgets(page: pyropdf.Page) -> list[pyropdf.Dictionary]:
     return [annotation for annotation in page.obj["Annots"] if annotation["Subtype"] == "Widget"]
 
 
+@pytest.mark.spec("widget-annotations", "preserve")
 def test_widgets_join_their_fields() -> None:
     doc = pyropdf.open(_form())
 
@@ -156,6 +159,8 @@ def _parent_tree(root: pyropdf.Dictionary) -> dict[int, list[pyropdf.Dictionary]
     return entries
 
 
+@pytest.mark.spec("accessibility", "preserve")
+@pytest.mark.spec("logical-structure", "interpret", "edit")
 def test_tagged_copies_get_elements_and_keys_of_their_own() -> None:
     doc = pyropdf.open(_tagged())
 
@@ -279,6 +284,7 @@ def test_copy_refuses_excessive_structure_ancestry_without_partial_writes() -> N
     assert doc.to_bytes() == before
 
 
+@pytest.mark.spec("trigger-events", "preserve")
 def test_copied_widgets_keep_only_widget_triggers_from_indirect_actions() -> None:
     doc = pyropdf.open(_form())
     actions = doc.objects.add(

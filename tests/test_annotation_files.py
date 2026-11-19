@@ -45,6 +45,7 @@ def _pixel(pixmap: pyropdf.Pixmap, x: float, y: float) -> tuple[int, int, int]:
 
 
 @pytest.mark.parametrize("icon", list(AttachmentIcon))
+@pytest.mark.spec("file-attachment-annotations", "interpret", "create")
 def test_file_attachments_embed_their_file(icon: AttachmentIcon) -> None:
     page = pyropdf.Document().pages.new((200, 200))
 
@@ -66,6 +67,7 @@ def test_file_attachments_embed_their_file(icon: AttachmentIcon) -> None:
     assert len(page.document.attachments) == 0
 
 
+@pytest.mark.spec("file-attachment-annotations", "read", "edit", "preserve")
 def test_attached_files_survive_save_and_are_replaced() -> None:
     page = pyropdf.Document().pages.new((200, 200))
     page.rotation = 270

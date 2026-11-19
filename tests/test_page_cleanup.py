@@ -141,6 +141,7 @@ def _remove(
 
 @pytest.mark.parametrize("operation", ["delete", "select"])
 @pytest.mark.parametrize("indirect_annots", [False, True])
+@pytest.mark.spec("uri-actions", "preserve")
 def test_excluded_page_navigation_is_removed(operation: Literal["delete", "select"], *, indirect_annots: bool) -> None:
     """Remove excluded targets while preserving retained and external links."""
     doc = pyropdf.open(_linked_pdf(indirect_annots=indirect_annots))
@@ -271,6 +272,7 @@ def test_cleanup_refuses_outline_root_aliasing_a_page(operation: Literal["delete
 
 
 @pytest.mark.parametrize("operation", ["delete", "select"])
+@pytest.mark.spec("name-trees", "preserve")
 def test_cleanup_preserves_indirect_name_tree_keys(operation: Literal["delete", "select"]) -> None:
     doc = pyropdf.open(
         build_raw_pdf(

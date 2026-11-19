@@ -65,6 +65,7 @@ def _points_up(page: pyropdf.Page, rect: tuple[float, float, float, float], chan
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.spec("caret-annotations", "interpret", "create")
 def test_a_caret_points_up_on_the_display(rotation: int) -> None:
     page = _page(rotation)
 
@@ -113,6 +114,7 @@ def test_edits_in_one_transaction_settle_once_and_undo_restores() -> None:
     assert bytes(page.pixmap()) == before
 
 
+@pytest.mark.spec("caret-annotations", "edit")
 def test_turning_a_caret_turns_its_point() -> None:
     page = _page()
     caret = page.annotations.add(Caret((40, 20, 80, 60)))

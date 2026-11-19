@@ -64,6 +64,8 @@ def test_reset_restores_the_default_or_clears_the_value() -> None:
     assert [widget.obj["AS"] for widget in plan.widgets] == ["Off", "Basic"]
 
 
+@pytest.mark.spec("choice-fields", "edit")
+@pytest.mark.spec("text-fields", "edit")
 def test_flags_and_choices_are_assignable() -> None:
     doc = _form()
     customer = doc.form["customer"]
@@ -92,6 +94,7 @@ def test_flags_and_choices_are_assignable() -> None:
         customer.label = "x" * (1024 * 1024 + 1)
 
 
+@pytest.mark.spec("interactive-form", "edit")
 def test_need_appearances_is_read_and_set() -> None:
     doc = _form()
 

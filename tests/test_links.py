@@ -166,6 +166,8 @@ def test_a_destination_without_coordinates_has_no_point(destination: str, expect
     assert doc.pages[0].links[0].target == expected
 
 
+@pytest.mark.spec("link-annotations", "read", "create")
+@pytest.mark.spec("uri-actions", "read", "create")
 def test_uri_link_roundtrip() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((300, 400))
@@ -323,6 +325,13 @@ def test_every_target_kind_round_trips(target: pyropdf.Target) -> None:
     assert list(link.obj["Border"]) == [0, 0, 0]
 
 
+@pytest.mark.spec("destinations", "edit")
+@pytest.mark.spec("goto-actions", "edit")
+@pytest.mark.spec("launch-actions", "edit")
+@pytest.mark.spec("link-annotations", "edit")
+@pytest.mark.spec("named-actions", "edit")
+@pytest.mark.spec("remote-goto-actions", "edit")
+@pytest.mark.spec("uri-actions", "edit")
 def test_links_are_edited_in_place() -> None:
     doc = _three_page_document()
     page = doc.pages[0]
@@ -343,6 +352,7 @@ def test_links_are_edited_in_place() -> None:
     assert link.target == NamedAction("FirstPage")
 
 
+@pytest.mark.spec("link-annotations", "interpret")
 def test_links_on_a_rotated_page_use_display_coordinates() -> None:
     doc = _three_page_document()
     page = doc.pages[0]
@@ -968,6 +978,8 @@ def test_insert_pdf_imports_an_annotation_aliasing_a_page(target_shape: str) -> 
     assert source.to_bytes() == source_before
 
 
+@pytest.mark.spec("destinations", "preserve")
+@pytest.mark.spec("link-annotations", "preserve")
 def test_usrguide_named_destinations_survive_merge() -> None:
     source = pyropdf.open(ASSETS / "usrguide.pdf")
     original = [[(link.rect, link.target) for link in page.links] for page in source.pages]

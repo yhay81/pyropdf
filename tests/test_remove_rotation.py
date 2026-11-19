@@ -88,6 +88,7 @@ def _note(page: pyropdf.Page) -> pyropdf.Annotation:
 
 @pytest.mark.parametrize("inherit", [False, True])
 @pytest.mark.parametrize("rotation", [90, 180, 270])
+@pytest.mark.spec("graphics-state", "edit")
 def test_removal_keeps_the_display(rotation: int, *, inherit: bool) -> None:
     doc = pyropdf.open(build(rotation, inherit=inherit))
     page = doc.pages[0]

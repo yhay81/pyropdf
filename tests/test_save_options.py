@@ -26,6 +26,7 @@ def _numbers(data: bytes) -> set[int]:
     return set(pyropdf.open(data).objects)
 
 
+@pytest.mark.spec("xref-table", "edit")
 def test_a_pruned_save_leaves_out_what_an_edit_unlinked() -> None:
     doc = pyropdf.open(build_pdf(["Hello"]))
     data = doc.objects.add_stream(b"data")
@@ -56,6 +57,8 @@ def test_a_pruned_save_keeps_what_the_trailer_reaches_through_any_object() -> No
     assert orphan not in numbers
 
 
+@pytest.mark.spec("crypt-filters", "edit")
+@pytest.mark.spec("encryption-dictionary", "edit")
 def test_a_pruned_save_writes_a_new_encryption_without_the_old_dictionary(tmp_path: Path) -> None:
     doc = pyropdf.open(ENCRYPTED / "user-aes-256.pdf", password="userpw")
     old = doc.trailer["Encrypt"].xref
@@ -124,6 +127,7 @@ def _filters(stream: Stream) -> list[str]:
     return [str(value)] if isinstance(value, Name) else [str(name) for name in value]
 
 
+@pytest.mark.spec("xmp-metadata", "preserve")
 def test_a_compressed_save_flates_unfiltered_streams_where_that_shrinks_them() -> None:
     content = b"BT /F1 12 Tf 72 720 Td (Hello) Tj ET\n" * 40
     doc = pyropdf.open(build_pdf(["Hello"]))
@@ -159,6 +163,11 @@ def test_a_compressed_corpus_save_keeps_every_stream_and_is_not_larger(name: str
 
 
 @pytest.mark.parametrize("name", NAMES)
+@pytest.mark.spec("asciihex-filter", "read", "edit")
+@pytest.mark.spec("ccitt-fax-filter", "preserve")
+@pytest.mark.spec("dct-filter", "preserve")
+@pytest.mark.spec("jbig2-filter", "preserve")
+@pytest.mark.spec("jpx-filter", "preserve")
 def test_a_decompressed_corpus_save_keeps_only_image_filters(name: str) -> None:
     source = pyropdf.open(ASSETS / name)
     decompressed = pyropdf.open(source.to_bytes(decompress=True, max_size=None))
@@ -229,6 +238,7 @@ def _id(data: bytes) -> list[bytes]:
 
 
 @pytest.mark.parametrize("incremental", [False, True])
+@pytest.mark.spec("file-identifiers", "edit", "preserve")
 def test_a_save_of_edits_renews_the_second_identifier(incremental: bool) -> None:  # noqa: FBT001
     read = [b"\xaa" * 16, b"\xbb" * 16]
     trailer = f"/Root 1 0 R /ID [<{read[0].hex()}><{read[1].hex()}>] >>".encode()
@@ -246,6 +256,7 @@ def test_a_save_of_edits_renews_the_second_identifier(incremental: bool) -> None
     assert _id(doc.to_bytes(incremental=incremental, keep_id=True)) == read
 
 
+@pytest.mark.spec("file-identifiers", "create")
 def test_a_document_without_an_identifier_gets_one() -> None:
     data = build_pdf(["Hello"])
     doc = pyropdf.open(data)
@@ -263,6 +274,7 @@ def test_a_document_without_an_identifier_gets_one() -> None:
 
 
 @pytest.mark.parametrize("name", NAMES)
+@pytest.mark.spec("file-identifiers", "read", "preserve")
 def test_a_save_without_edits_writes_the_identifier_as_read(name: str) -> None:
     data = (ASSETS / name).read_bytes()
     doc = pyropdf.open(data)
@@ -271,6 +283,7 @@ def test_a_save_without_edits_writes_the_identifier_as_read(name: str) -> None:
         assert _id(doc.to_bytes()) == [bytes(element) for element in doc.trailer["ID"]]
 
 
+@pytest.mark.spec("file-identifiers", "interpret")
 def test_an_encrypted_save_keeps_the_identifier_that_its_keys_derive_from() -> None:
     doc = pyropdf.open(ENCRYPTED / "user-r4-rc4-128.pdf", password="userpw")
     first = bytes(doc.trailer["ID"][0])
@@ -323,6 +336,8 @@ def _new_qpdf_warnings(saved: Path, source: Path, password: str) -> set[str]:
 
 @pytest.mark.parametrize("form", ["stream", "object_streams"])
 @pytest.mark.parametrize("name", NAMES)
+@pytest.mark.spec("object-streams", "read", "create")
+@pytest.mark.spec("xref-streams", "read", "create")
 def test_a_corpus_save_with_a_cross_reference_stream_keeps_every_object(name: str, form: str, tmp_path: Path) -> None:
     source = pyropdf.open(ASSETS / name)
     values = {number: body for number, _, body in source._core()._objects()}  # noqa: SLF001
@@ -340,6 +355,10 @@ def test_a_corpus_save_with_a_cross_reference_stream_keeps_every_object(name: st
     assert qpdf_findings(path) - qpdf_findings(ASSETS / name) == set()
 
 
+@pytest.mark.spec("file-header", "edit", "preserve")
+@pytest.mark.spec("incremental-update", "read")
+@pytest.mark.spec("xref-streams", "read", "edit")
+@pytest.mark.spec("xref-table", "create")
 def test_a_save_keeps_the_cross_reference_form_of_the_opened_file() -> None:
     table = build_pdf(["Hello"]).replace(b"%PDF-1.7", b"%PDF-1.4", 1)
     doc = pyropdf.open(table)
@@ -375,6 +394,9 @@ def test_an_encrypted_save_encrypts_object_streams_and_not_their_members(tmp_pat
 
 
 @pytest.mark.parametrize("name", ["user-r4-rc4-128.pdf", "user-aes-256-object-streams.pdf"])
+@pytest.mark.spec("crypt-filters", "preserve")
+@pytest.mark.spec("encryption-dictionary", "preserve")
+@pytest.mark.spec("object-streams", "read", "preserve")
 def test_a_save_that_keeps_the_encryption_packs_objects_into_object_streams(name: str, tmp_path: Path) -> None:
     doc = pyropdf.open(ENCRYPTED / name, password="userpw")
     values = {number: body for number, _, body in doc._core()._objects()}  # noqa: SLF001
@@ -428,6 +450,9 @@ def test_a_renumbered_corpus_save_numbers_objects_one_through_n(name: str, tmp_p
     assert qpdf_findings(path) - qpdf_findings(ASSETS / name) == set()
 
 
+@pytest.mark.spec("object-streams", "edit")
+@pytest.mark.spec("xref-streams", "edit")
+@pytest.mark.spec("xref-table", "edit")
 def test_a_renumbered_save_follows_each_reference_with_the_other_options() -> None:
     doc = pyropdf.open(build_pdf(["Hello", "World"]))
     doc.attachments.add("a.txt", b"data")

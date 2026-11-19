@@ -111,6 +111,7 @@ def _subtypes(page: pyropdf.Page) -> list[str | None]:
     return [entry.get("Subtype") for entry in page.obj["Annots"]]
 
 
+@pytest.mark.spec("annotations", "read")
 def test_annotations_are_typed_handles() -> None:
     page = _annotated().pages[0]
 
@@ -284,6 +285,7 @@ def test_text_properties_are_set_and_removed() -> None:
         note.icon = StampIcon.SOLD
 
 
+@pytest.mark.spec("annotations", "edit")
 def test_style_properties_are_set_and_removed() -> None:
     (square,) = _notes(subtype="Square").annotations
 
@@ -353,6 +355,8 @@ def test_the_core_refuses_bad_edits() -> None:
     assert page.annotations[0].color == Color(1, 0, 0)
 
 
+@pytest.mark.spec("annotations", "create")
+@pytest.mark.spec("appearance-streams", "create", "edit")
 def test_every_edit_draws_the_appearance_again() -> None:
     note = "<< /Type /Annot /Subtype /Text /Rect [{0} 10 {1} 30] /C [1 0 0] >>"
     page = _page_of(
@@ -478,6 +482,7 @@ def test_add_takes_specifications_only() -> None:
     assert not hasattr(page, "add_highlight_annot")
 
 
+@pytest.mark.spec("popup-annotations", "read", "create", "edit")
 def test_popups_are_added_moved_opened_and_removed() -> None:
     page = _page_of(
         "[4 0 R 5 0 R]",

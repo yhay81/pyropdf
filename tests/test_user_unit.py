@@ -65,6 +65,7 @@ def svg_root(svg: str) -> str:
 
 
 @UNITS
+@pytest.mark.spec("page-objects", "interpret")
 def test_the_page_and_its_boxes_are_in_points(unit: int) -> None:
     page = open_page(unit)
 

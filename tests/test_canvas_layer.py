@@ -50,6 +50,7 @@ def _drawn(*, visible: bool) -> tuple[pyropdf.Document, pyropdf.Layer]:
     return doc, layer
 
 
+@pytest.mark.spec("optional-content", "create")
 def test_layers_add_creates_groups_in_the_default_configuration() -> None:
     doc = pyropdf.Document()
     shown = doc.layers.add("Shown")

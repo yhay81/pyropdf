@@ -176,6 +176,9 @@ def _document() -> pyropdf.Document:
     return pyropdf.open(DOCUMENT.read_bytes())
 
 
+@pytest.mark.spec("digital-signatures", "create")
+@pytest.mark.spec("ecc-signatures", "create")
+@pytest.mark.spec("signature-fields", "create")
 def test_a_p256_signature_validates_over_the_entire_file(pki: Pki) -> None:
     doc = _document()
     original = DOCUMENT.read_bytes()
@@ -247,6 +250,9 @@ def test_a_callback_signs_with_an_rsa_key(pki: Pki) -> None:
     _assert_whole_file(status)
 
 
+@pytest.mark.spec("digital-signatures", "preserve")
+@pytest.mark.spec("ecc-signatures", "preserve")
+@pytest.mark.spec("signature-fields", "preserve")
 def test_earlier_signatures_stay_valid_after_a_second(pki: Pki) -> None:
     doc = _document()
     first = doc.sign("Author", _pem_signer(pki))
@@ -263,6 +269,9 @@ def test_earlier_signatures_stay_valid_after_a_second(pki: Pki) -> None:
     assert sorted(doc.form) == ["Author", "Reviewer"]
 
 
+@pytest.mark.spec("digital-signatures", "edit")
+@pytest.mark.spec("ecc-signatures", "edit")
+@pytest.mark.spec("signature-fields", "edit")
 def test_an_existing_signature_field_is_filled(pki: Pki) -> None:
     doc = _document()
     doc.pages[0].widgets.add(SignatureField("Approval", (72, 72, 272, 122)))

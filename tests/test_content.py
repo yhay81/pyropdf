@@ -153,6 +153,7 @@ def test_inline_images_keep_their_dictionary_and_data() -> None:
     assert operations.to_bytes() == content
 
 
+@pytest.mark.spec("ascii85-filter", "read")
 @pytest.mark.spec("inline-images", "read")
 def test_filtered_inline_images_are_read() -> None:
     # lopdf's strict parse refuses filtered inline images; hayro reads them.
@@ -165,6 +166,7 @@ def test_filtered_inline_images_are_read() -> None:
     assert operations[1].operator == "Q"
 
 
+@pytest.mark.spec("inline-images", "create")
 def test_new_operations_are_written_from_their_values() -> None:
     operations = Operations([
         Operation("q"),

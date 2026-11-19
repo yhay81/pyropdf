@@ -44,6 +44,7 @@ def _pixel(pixmap: pyropdf.Pixmap, x: float, y: float) -> tuple[int, int, int]:
 
 
 @pytest.mark.parametrize("icon", list(StampIcon))
+@pytest.mark.spec("stamp-annotations", "interpret", "create")
 def test_every_stamp_draws_its_label(icon: StampIcon) -> None:
     page = pyropdf.Document().pages.new((300, 100))
 
@@ -79,6 +80,8 @@ def test_stamps_read_upright_and_turn_as_displayed(rotation: int) -> None:
     assert _pixel(pixmap, 27, 253) == WHITE
 
 
+@pytest.mark.spec("caret-annotations", "read", "preserve")
+@pytest.mark.spec("stamp-annotations", "read", "preserve")
 def test_stamps_and_carets_survive_save_and_reopen() -> None:
     page = pyropdf.Document().pages.new((300, 200))
     page.annotations.add(Stamp((10, 10, 200, 60), icon=StampIcon.TOP_SECRET, color=Color(0, 0, 0), opacity=0.5))

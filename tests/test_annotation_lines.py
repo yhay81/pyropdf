@@ -59,6 +59,9 @@ def _page(rotation: int = 0) -> pyropdf.Page:
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.spec("ink-annotations", "interpret", "create")
+@pytest.mark.spec("line-annotations", "interpret", "create")
+@pytest.mark.spec("polygon-annotations", "interpret", "create")
 def test_lines_polygons_and_ink_render_where_their_points_are(rotation: int) -> None:
     page = _page(rotation)
 
@@ -114,6 +117,9 @@ def test_every_line_ending_draws_at_the_end(ending: LineEnding) -> None:
     assert marked is (ending is not LineEnding.NONE)
 
 
+@pytest.mark.spec("ink-annotations", "read", "preserve")
+@pytest.mark.spec("line-annotations", "read", "preserve")
+@pytest.mark.spec("polygon-annotations", "read", "preserve")
 def test_line_annotations_survive_save_and_reopen() -> None:
     page = _page(90)
     page.annotations.add(
@@ -281,6 +287,9 @@ def test_reading_too_many_points_raises() -> None:
     assert rendered.value.code == "annotation_point_count"
 
 
+@pytest.mark.spec("ink-annotations", "edit")
+@pytest.mark.spec("line-annotations", "edit")
+@pytest.mark.spec("polygon-annotations", "edit")
 def test_points_and_endings_are_set_through_handles() -> None:
     # Not in pylopdf's file: the setters of the handles' geometry.
     page = _page()
