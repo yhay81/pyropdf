@@ -75,6 +75,7 @@ impl WidgetAppearance {
         if let Some(matrix) = self.matrix {
             dict.insert(Name::from("Matrix"), numbers_array(&matrix));
         }
+        let mut resources = Dict::new();
         if let Some((resource, entry)) = &self.font {
             let reference = match entry {
                 FontEntry::Standard(base_font) => standard_font(transaction, base_font, budget)?,
@@ -82,10 +83,9 @@ impl WidgetAppearance {
             };
             let mut fonts = Dict::new();
             fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
-            let mut resources = Dict::new();
             resources.insert(Name::from("Font"), Value::Dict(fonts));
-            dict.insert(Name::from("Resources"), Value::Dict(resources));
         }
+        dict.insert(Name::from("Resources"), Value::Dict(resources));
         budget.charge(LimitCode::MemorySize, self.content.len() as u64)?;
         let form = Stream::new(dict, Bytes::new(self.content));
         let reference = transaction.allocate()?;
@@ -95,29 +95,15 @@ impl WidgetAppearance {
 }
 
 /// Writes the font dictionary of Standard 14 font `base_font` as a new
-/// object and returns its reference.
-#[expect(
-    clippy::disallowed_methods,
-    reason = "each key is a constant, so the font holds four entries at most"
-)]
+/// object (including PDF 2.0 width and descriptor entries when required by the
+/// effective PDF version) and returns its reference.
 fn standard_font(
     transaction: &mut Transaction,
     base_font: &str,
     budget: &Budget,
 ) -> Result<Reference> {
-    let mut font = Dict::new();
-    font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
-    font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
-    font.insert(Name::from("BaseFont"), Value::Name(Name::from(base_font)));
-    if !matches!(base_font, "Symbol" | "ZapfDingbats") {
-        font.insert(
-            Name::from("Encoding"),
-            Value::Name(Name::from("WinAnsiEncoding")),
-        );
-    }
-    let reference = transaction.allocate()?;
-    transaction.write(reference.number(), &Value::Dict(font), budget)?;
-    Ok(reference)
+    let pdf_2_0 = super::form_font::is_pdf_2_0(transaction.version(), budget)?;
+    super::form_font::write_standard_type1(transaction, base_font, pdf_2_0, budget)
 }
 
 /// Draws the appearance of widget `number`, `widget`, for the appearance

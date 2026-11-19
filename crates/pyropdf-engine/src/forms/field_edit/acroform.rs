@@ -27,6 +27,7 @@ pub(in crate::forms) fn register_standard_font(
     let mut form = dict_at(transaction, holder, budget)?
         .ok_or_else(|| Error::Pdf("the interactive form is not a dictionary".into()))?;
     let snapshot = transaction.snapshot();
+    let pdf_2_0 = crate::forms::form_font::is_pdf_2_0(&snapshot, budget)?;
     let mut reads = Reads::new(&snapshot, budget);
     let mut resources = match read(&mut reads, form.get("DR"))? {
         Some(Value::Dict(dict)) => dict,
@@ -42,7 +43,7 @@ pub(in crate::forms) fn register_standard_font(
             ));
         }
     };
-    if standard_font_matches(read(&mut reads, fonts.get(preferred))?.as_ref(), base) {
+    if standard_font_matches(&mut reads, fonts.get(preferred), base, pdf_2_0)? {
         return Ok(preferred.to_owned());
     }
     let resource = if fonts.get(preferred).is_none() {
@@ -74,7 +75,7 @@ pub(in crate::forms) fn register_standard_font(
             if number == 0 || number.to_string() != suffix {
                 continue;
             }
-            if standard_font_matches(read(&mut reads, Some(value))?.as_ref(), base) {
+            if standard_font_matches(&mut reads, Some(value), base, pdf_2_0)? {
                 return Ok(format!("{prefix}{suffix}"));
             }
             if number <= fonts.len() {
@@ -89,34 +90,8 @@ pub(in crate::forms) fn register_standard_font(
             .map_or(fonts.len().saturating_add(1), |(index, _)| index);
         format!("{preferred}_{suffix}")
     };
-    let mut font = Dict::new();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /Type key"
-    )]
-    font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /Subtype key"
-    )]
-    font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "this call inserts only the fixed /BaseFont key"
-    )]
-    font.insert(Name::from("BaseFont"), Value::Name(Name::from(base)));
-    if !matches!(base, "Symbol" | "ZapfDingbats") {
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "this call inserts only the fixed /Encoding key"
-        )]
-        font.insert(
-            Name::from("Encoding"),
-            Value::Name(Name::from("WinAnsiEncoding")),
-        );
-    }
-    let reference = transaction.allocate()?;
-    transaction.write(reference.number(), &Value::Dict(font), budget)?;
+    let reference =
+        crate::forms::form_font::write_standard_type1(transaction, base, pdf_2_0, budget)?;
     fonts.insert(Name::from(resource.as_str()), Value::Reference(reference));
     #[expect(
         clippy::disallowed_methods,
@@ -132,20 +107,43 @@ pub(in crate::forms) fn register_standard_font(
     Ok(resource)
 }
 
-fn standard_font_matches(value: Option<&Value>, base: &str) -> bool {
-    let Some(Value::Dict(font)) = value else {
-        return false;
+fn standard_font_matches(
+    reads: &mut Reads<'_>,
+    value: Option<&Value>,
+    base: &str,
+    pdf_2_0: bool,
+) -> Result<bool> {
+    let Some(Value::Dict(font)) = read(reads, value)? else {
+        return Ok(false);
     };
     let symbolic = matches!(base, "Symbol" | "ZapfDingbats");
-    font.len() == if symbolic { 3 } else { 4 }
-        && font.get("Type") == Some(&Value::Name(Name::from("Font")))
+    let core_matches = font.get("Type") == Some(&Value::Name(Name::from("Font")))
         && font.get("Subtype") == Some(&Value::Name(Name::from("Type1")))
         && font.get("BaseFont") == Some(&Value::Name(Name::from(base)))
         && if symbolic {
             font.get("Encoding").is_none()
         } else {
             font.get("Encoding") == Some(&Value::Name(Name::from("WinAnsiEncoding")))
-        }
+        };
+    if !core_matches {
+        return Ok(false);
+    }
+    if !pdf_2_0 {
+        return Ok(font.len() == if symbolic { 3 } else { 4 });
+    }
+    if font.len() != if symbolic { 7 } else { 8 }
+        || font.get("FirstChar").is_none()
+        || font.get("LastChar").is_none()
+        || font.get("Widths").is_none()
+    {
+        return Ok(false);
+    }
+    Ok(match read(reads, font.get("FontDescriptor"))? {
+        Some(Value::Dict(descriptor)) => ["FontFile", "FontFile2", "FontFile3"]
+            .into_iter()
+            .all(|key| descriptor.get(key).is_none()),
+        _ => false,
+    })
 }
 
 /// Returns the form dictionary's object, after moving one that the catalog
@@ -160,6 +158,7 @@ pub(in crate::forms) fn form_object(
     budget: &Budget,
 ) -> Result<Reference> {
     let version = transaction.snapshot();
+    let pdf_2_0 = crate::forms::form_font::is_pdf_2_0(&version, budget)?;
     let mut reads = Reads::new(&version, budget);
     let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
         return Err(Error::Pdf("the document has no catalog".into()));
@@ -183,17 +182,12 @@ pub(in crate::forms) fn form_object(
     let form = match form {
         Some(form) => form,
         None => {
-            let font = transaction.allocate()?;
-            let helvetica: Dict = [
-                ("Type", "Font"),
-                ("Subtype", "Type1"),
-                ("BaseFont", "Helvetica"),
-                ("Encoding", "WinAnsiEncoding"),
-            ]
-            .into_iter()
-            .map(|(key, value)| (Name::from(key), Value::Name(Name::from(value))))
-            .collect();
-            transaction.write(font.number(), &Value::Dict(helvetica), budget)?;
+            let font = crate::forms::form_font::write_standard_type1(
+                transaction,
+                "Helvetica",
+                pdf_2_0,
+                budget,
+            )?;
             let fonts: Dict = [(Name::from("Helv"), Value::Reference(font))]
                 .into_iter()
                 .collect();

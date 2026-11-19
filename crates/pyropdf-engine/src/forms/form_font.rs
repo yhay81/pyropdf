@@ -3,12 +3,14 @@
 
 use std::sync::Arc;
 
-use pyropdf_store::budget::{Budget, LimitCode};
+use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::refs::copy_for_edit;
-use pyropdf_store::value::{Dict, Reference, Value};
+use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
+use pyropdf_store::version::{Transaction, Version};
 use pyropdf_store::{Error, LimitExceeded, Result};
 
-use crate::annotations::{Reader, Resolved};
+use crate::annotations::{Reader, Resolved, numbers_array};
+use crate::display::number;
 use crate::standard::{self, DefaultAppearance, MAX_DEFAULT_APPEARANCE};
 
 use super::WidgetError;
@@ -262,4 +264,158 @@ fn parse_default_appearance(
         .into());
     }
     Ok(DefaultAppearance::parse(bytes)?)
+}
+
+fn parse_pdf_version(bytes: &[u8]) -> Option<(u8, u8)> {
+    let end = bytes
+        .iter()
+        .position(|&byte| !(byte.is_ascii_digit() || byte == b'.'))
+        .unwrap_or(bytes.len());
+    let text = std::str::from_utf8(&bytes[..end]).ok()?;
+    let (major, minor) = text.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// Returns whether the effective PDF version of `version` (the later of its
+/// `%PDF-x.y` header and its catalog `/Version`) is PDF 2.0 or later.
+pub(in crate::forms) fn is_pdf_2_0(version: &Version, budget: &Budget) -> Result<bool> {
+    let mut effective = version
+        .base()
+        .file()
+        .and_then(|index| {
+            index
+                .bytes()
+                .get(index.origin()..)?
+                .strip_prefix(b"%PDF-")
+                .and_then(parse_pdf_version)
+        })
+        .unwrap_or((1, 7));
+    let reader = Reader::new(version, budget);
+    if let Some(root) = version.trailer().get("Root")
+        && let Value::Dict(catalog) = &*reader.resolve(root)?
+        && let Some(Value::Name(declared)) = reader.entry(catalog, "Version")?.as_deref()
+        && let Some(parsed) = parse_pdf_version(declared.as_bytes())
+    {
+        effective = effective.max(parsed);
+    }
+    Ok(effective >= (2, 0))
+}
+
+/// Writes an unembedded Standard 14 `Type1` font dictionary for `base`,
+/// supplying `/FirstChar`, `/LastChar`, `/Widths`, and an indirect
+/// `/FontDescriptor` when `pdf_2_0` is true (ISO 32000-2 §9.6.2.2).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "each font and descriptor dictionary holds fixed keys only"
+)]
+pub(in crate::forms) fn write_standard_type1(
+    transaction: &mut Transaction,
+    base: &str,
+    pdf_2_0: bool,
+    budget: &Budget,
+) -> Result<Reference> {
+    let mut font = Dict::new();
+    font.insert(Name::from("Type"), Value::Name(Name::from("Font")));
+    font.insert(Name::from("Subtype"), Value::Name(Name::from("Type1")));
+    font.insert(Name::from("BaseFont"), Value::Name(Name::from(base)));
+    let symbolic = matches!(base, "Symbol" | "ZapfDingbats");
+    if !symbolic {
+        font.insert(
+            Name::from("Encoding"),
+            Value::Name(Name::from("WinAnsiEncoding")),
+        );
+    }
+    if pdf_2_0 && let Some(b14) = standard::font(base) {
+        let first_char = 32_u8;
+        let last_char = 255_u8;
+        let count = usize::from(last_char - first_char) + 1;
+        let mut widths = BudgetVec::new(budget);
+        widths.try_reserve_exact(count)?;
+        let metrics = b14.metrics();
+        for code in first_char..=last_char {
+            let width = if symbolic {
+                metrics
+                    .character_metrics
+                    .iter()
+                    .find(|item| item.code == i32::from(code))
+                    .map_or(0.0, |item| item.width_x)
+            } else {
+                b14.winansi_width(code).unwrap_or(0.0)
+            };
+            widths.try_push(number(f64::from(width)))?;
+        }
+        let mut flags = if symbolic { 4_i64 } else { 32_i64 };
+        if !symbolic {
+            if metrics.is_fixed_pitch {
+                flags |= 1;
+            }
+            if base.starts_with("Times-") {
+                flags |= 2;
+            }
+            if metrics.italic_angle != 0.0 {
+                flags |= 64;
+            }
+        }
+        let ascent = if metrics.ascender != 0.0 {
+            metrics.ascender
+        } else {
+            metrics.font_bbox.ury
+        };
+        let descent = if metrics.descender != 0.0 {
+            metrics.descender.min(0.0)
+        } else {
+            metrics.font_bbox.lly.min(0.0)
+        };
+        let cap_height = if metrics.cap_height != 0.0 {
+            metrics.cap_height
+        } else {
+            ascent
+        };
+        let mut descriptor = Dict::new();
+        descriptor.insert(
+            Name::from("Type"),
+            Value::Name(Name::from("FontDescriptor")),
+        );
+        descriptor.insert(Name::from("FontName"), Value::Name(Name::from(base)));
+        descriptor.insert(Name::from("Flags"), Value::Integer(flags));
+        descriptor.insert(
+            Name::from("FontBBox"),
+            numbers_array(&[
+                f64::from(metrics.font_bbox.llx),
+                f64::from(metrics.font_bbox.lly),
+                f64::from(metrics.font_bbox.urx),
+                f64::from(metrics.font_bbox.ury),
+            ]),
+        );
+        descriptor.insert(
+            Name::from("ItalicAngle"),
+            number(f64::from(metrics.italic_angle)),
+        );
+        descriptor.insert(Name::from("Ascent"), number(f64::from(ascent)));
+        descriptor.insert(Name::from("Descent"), number(f64::from(descent)));
+        descriptor.insert(Name::from("CapHeight"), number(f64::from(cap_height)));
+        descriptor.insert(
+            Name::from("StemV"),
+            Value::Integer(if base.contains("Bold") { 120 } else { 80 }),
+        );
+        let descriptor_ref = transaction.allocate()?;
+        transaction.write(descriptor_ref.number(), &Value::Dict(descriptor), budget)?;
+
+        font.insert(
+            Name::from("FirstChar"),
+            Value::Integer(i64::from(first_char)),
+        );
+        font.insert(Name::from("LastChar"), Value::Integer(i64::from(last_char)));
+        font.insert(
+            Name::from("Widths"),
+            Value::Array(Array::from(widths.into_vec())),
+        );
+        font.insert(
+            Name::from("FontDescriptor"),
+            Value::Reference(descriptor_ref),
+        );
+    }
+    let reference = transaction.allocate()?;
+    transaction.write(reference.number(), &Value::Dict(font), budget)?;
+    Ok(reference)
 }

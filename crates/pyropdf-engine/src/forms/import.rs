@@ -224,7 +224,9 @@ pub fn register_imported(
                 form.insert(key.clone(), copy_for_edit(value, budget)?);
             }
         }
-        if defaults.need_appearances {
+        if defaults.need_appearances
+            && !super::form_font::is_pdf_2_0(transaction.version(), budget)?
+        {
             #[expect(
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /NeedAppearances key"
@@ -325,7 +327,10 @@ pub fn register_imported(
             }
             transaction.write(field.number(), &Value::Dict(dict), budget)?;
         }
-        if defaults.need_appearances && !need {
+        if defaults.need_appearances
+            && !need
+            && !super::form_font::is_pdf_2_0(transaction.version(), budget)?
+        {
             edit_dict(transaction, holder, &[], budget, |form| {
                 #[expect(
                     clippy::disallowed_methods,
