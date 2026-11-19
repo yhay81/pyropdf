@@ -25,14 +25,63 @@ impl Settler for FontSubsetSettler {
         numbers: &[u32],
         budget: &Budget,
     ) -> Result<()> {
+        if numbers.is_empty() {
+            return Ok(());
+        }
+        let target = Target::of(transaction.version(), budget)?;
         for &number in numbers {
             // A font that is no longer the shape that pyropdf wrote keeps
             // its program whole.
             if let Some(font) = Font::read(transaction.version(), number, budget)? {
-                font.subset(transaction, budget)?;
+                font.subset(transaction, target, budget)?;
             }
         }
         Ok(())
+    }
+}
+
+/// Version and conformance facts of the saved document that decide subset
+/// metadata.
+#[derive(Clone, Copy)]
+struct Target {
+    /// Whether a CIDFont subset descriptor needs `/CIDSet` (ISO 19005-1
+    /// 6.3.5); PDF 2.0 deprecates `/CIDSet`, so PDF 2.0+ never writes it.
+    cid_set: bool,
+    /// Whether `FontFile3` allows `/Subtype /OpenType` (PDF 1.6+).
+    open_type: bool,
+}
+
+impl Target {
+    fn of(version: &Version, budget: &Budget) -> Result<Self> {
+        let mut pdf = version
+            .base()
+            .file()
+            .and_then(|index| {
+                index
+                    .bytes()
+                    .get(index.origin()..)?
+                    .strip_prefix(b"%PDF-")
+                    .and_then(parse_version)
+            })
+            .unwrap_or((1, 7));
+        let catalog = match reference(version.trailer().get("Root")) {
+            Some(root) => dict_of(version, root, budget)?,
+            None => None,
+        };
+        if let Some(Value::Name(override_version)) =
+            catalog.as_ref().and_then(|dict| dict.get("Version"))
+            && let Some(parsed) = parse_version(override_version.as_bytes())
+        {
+            pdf = pdf.max(parsed);
+        }
+        let cid_set = match catalog.as_ref().filter(|_| pdf < (2, 0)) {
+            Some(catalog) => claims_pdfa1(version, catalog, budget)?,
+            None => false,
+        };
+        Ok(Self {
+            cid_set,
+            open_type: pdf >= (1, 6),
+        })
     }
 }
 
@@ -135,7 +184,7 @@ impl Font {
         }))
     }
 
-    fn subset(self, transaction: &mut Transaction, budget: &Budget) -> Result<()> {
+    fn subset(self, transaction: &mut Transaction, target: Target, budget: &Budget) -> Result<()> {
         let base = match self.font.get("BaseFont") {
             #[expect(
                 clippy::disallowed_methods,
@@ -152,7 +201,13 @@ impl Font {
         let Some(compact) = compact(&self.program.1, &self.glyphs, &name) else {
             return Ok(());
         };
-        if compact.data.len() >= self.program.1.len() {
+        // Before PDF 1.6, a CFF face's provisional `/OpenType` stream has no
+        // valid subtype, so it still converts to `CIDFontType0C`; PDF/A-1 also
+        // needs `/CIDSet` on the subset descriptor.
+        if (!compact.cff || target.open_type)
+            && !target.cid_set
+            && compact.data.len() >= self.program.1.len()
+        {
             return Ok(());
         }
         let mut tagged = tag(&compact).into_bytes();
@@ -193,6 +248,17 @@ impl Font {
             reason = "the dictionary grows by one entry at most"
         )]
         descriptor_dict.insert(Name::from("FontName"), tagged.clone());
+        if target.cid_set {
+            let set = cid_set(&compact.glyphs);
+            let number = transaction.number_for_save()?;
+            let stream = Stream::new(Dict::new(), Bytes::from(set));
+            let reference = transaction.write(number, &Value::from(stream), budget)?;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dictionary grows by one entry at most"
+            )]
+            descriptor_dict.insert(Name::from("CIDSet"), Value::Reference(reference));
+        }
         transaction.write(descriptor.number(), &Value::Dict(descriptor_dict), budget)?;
 
         let (descendant, mut cid_font) = self.descendant;
@@ -297,6 +363,106 @@ fn widths_glyphs(value: &Value) -> Option<Vec<u32>> {
         }
     }
     Some(glyphs)
+}
+
+/// Returns the `CIDSet` bitmap of a subset whose CIDs are `glyphs`
+/// (PDF 1.4 Reference, table 5.20): high-order bit first, CID 0 at the
+/// most significant bit of byte 0.
+fn cid_set(glyphs: &[u16]) -> Vec<u8> {
+    let bytes = glyphs
+        .iter()
+        .max()
+        .map_or(0, |&last| usize::from(last) / 8 + 1);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "one bit per 16-bit CID, 8,192 bytes at most"
+    )]
+    let mut set = vec![0_u8; bytes];
+    for &cid in glyphs {
+        let cid = usize::from(cid);
+        set[cid / 8] |= 0x80 >> (cid % 8);
+    }
+    set
+}
+
+fn parse_version(bytes: &[u8]) -> Option<(u8, u8)> {
+    let end = bytes
+        .iter()
+        .position(|&byte| !(byte.is_ascii_digit() || byte == b'.'))
+        .unwrap_or(bytes.len());
+    let text = std::str::from_utf8(&bytes[..end]).ok()?;
+    let (major, minor) = text.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+fn claims_pdfa1(version: &Version, catalog: &Dict, budget: &Budget) -> Result<bool> {
+    let metadata = match catalog.get("Metadata") {
+        Some(&Value::Reference(reference)) => {
+            let Some(object) = version
+                .get(reference.number(), budget)?
+                .filter(|object| object.generation() == reference.generation())
+            else {
+                return Ok(false);
+            };
+            match &**object.value() {
+                Value::Stream(stream) => Some(stream.decoded(budget)?),
+                _ => None,
+            }
+        }
+        Some(Value::Stream(stream)) => Some(stream.decoded(budget)?),
+        _ => None,
+    };
+    Ok(metadata
+        .as_deref()
+        .and_then(|xmp| xmp_property(xmp, b"pdfaid:part"))
+        == Some(b"1"))
+}
+
+/// Returns the value of an XMP property written as `name="value"` or
+/// `<name>value</name>`, trimmed.
+fn xmp_property<'a>(xmp: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
+    let trim_start = |bytes: &'a [u8]| {
+        let start = bytes
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())
+            .unwrap_or(bytes.len());
+        &bytes[start..]
+    };
+    let trim = |bytes: &'a [u8]| {
+        let trimmed = trim_start(bytes);
+        let end = trimmed
+            .iter()
+            .rposition(|byte| !byte.is_ascii_whitespace())
+            .map_or(0, |at| at + 1);
+        &trimmed[..end]
+    };
+    let mut at = 0;
+    while let Some(found) = xmp[at..].windows(name.len()).position(|w| w == name) {
+        let start = at + found;
+        at = start + name.len();
+        if start > 0 && (xmp[start - 1].is_ascii_alphanumeric() || xmp[start - 1] == b':') {
+            continue;
+        }
+        let rest = trim_start(&xmp[at..]);
+        if let Some(rest) = rest.strip_prefix(b"=") {
+            let rest = trim_start(rest);
+            let Some((&quote, rest)) = rest.split_first() else {
+                continue;
+            };
+            if (quote == b'"' || quote == b'\'')
+                && let Some(end) = rest.iter().position(|&byte| byte == quote)
+            {
+                return Some(trim(&rest[..end]));
+            }
+        } else if start > 0
+            && xmp[start - 1] == b'<'
+            && let Some(rest) = rest.strip_prefix(b">")
+            && let Some(end) = rest.iter().position(|&byte| byte == b'<')
+        {
+            return Some(trim(&rest[..end]));
+        }
+    }
+    None
 }
 
 /// Returns the CIDToGIDMap of a compacted TrueType program: for each CID,
