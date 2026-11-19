@@ -1,14 +1,18 @@
-"""Document metadata: the Info dictionary and the XMP packet, kept in step."""
+"""Document metadata and catalog properties: Info, XMP, page mode/layout, language, MarkInfo, and viewer preferences."""
 
 from __future__ import annotations
 
+import enum
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, cast
 
-from pyropdf._objects import Dictionary, Name, Stream, String
+from pyropdf import _core
+from pyropdf._errors import PdfError
+from pyropdf._objects import Array, Dictionary, Name, Stream, String
 
 if TYPE_CHECKING:
     from pyropdf._document import Document
@@ -332,4 +336,517 @@ class Metadata(MutableMapping[str, str]):
         return f"Metadata({self._entries()!r})"
 
 
-Metadata.__module__ = "pyropdf"
+class PageMode(enum.StrEnum):
+    """How a viewer opens the document (``/PageMode``, ISO 32000-2 Table 29)."""
+
+    USE_NONE = "UseNone"
+    USE_OUTLINES = "UseOutlines"
+    USE_THUMBS = "UseThumbs"
+    FULL_SCREEN = "FullScreen"
+    USE_OC = "UseOC"
+    USE_ATTACHMENTS = "UseAttachments"
+
+
+class PageLayout(enum.StrEnum):
+    """How a viewer lays pages out (``/PageLayout``, ISO 32000-2 Table 29)."""
+
+    SINGLE_PAGE = "SinglePage"
+    ONE_COLUMN = "OneColumn"
+    TWO_COLUMN_LEFT = "TwoColumnLeft"
+    TWO_COLUMN_RIGHT = "TwoColumnRight"
+    TWO_PAGE_LEFT = "TwoPageLeft"
+    TWO_PAGE_RIGHT = "TwoPageRight"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MarkInfo:
+    """The catalog's ``/MarkInfo`` flags of a tagged document (ISO 32000-2 Table 356).
+
+    ``marked`` says whether the document conforms to the Tagged PDF
+    conventions, ``user_properties`` whether structure elements carry user
+    properties, and ``suspects`` whether the tags may be unreliable.
+    """
+
+    marked: bool = False
+    """Whether the document conforms to the tagged PDF conventions."""
+    user_properties: bool = False
+    """Whether structure elements carry user properties."""
+    suspects: bool = False
+    """Whether the tags may be unreliable."""
+
+    def __post_init__(self) -> None:
+        """Refuse a flag that is not a bool."""
+        for name in ("marked", "user_properties", "suspects"):
+            if not isinstance(getattr(self, name), bool):
+                msg = f"{name} must be a bool: {getattr(self, name)!r}"
+                raise TypeError(msg)
+
+
+class ReadingDirection(enum.StrEnum):
+    """The reading order of the text, which lays out side-by-side pages (``/Direction``)."""
+
+    L2R = "L2R"
+    """Left to right."""
+    R2L = "R2L"
+    """Right to left, and vertical writing."""
+
+
+class PageBoundary(enum.StrEnum):
+    """A page box that viewers and printers show or clip to (``/ViewArea`` and its kin)."""
+
+    MEDIA = "MediaBox"
+    CROP = "CropBox"
+    BLEED = "BleedBox"
+    TRIM = "TrimBox"
+    ART = "ArtBox"
+
+
+class PrintScaling(enum.StrEnum):
+    """Whether a print dialog scales pages by default (``/PrintScaling``)."""
+
+    NONE = "None"
+    """No scaling."""
+    APP_DEFAULT = "AppDefault"
+    """The viewer's own default."""
+
+
+class Duplex(enum.StrEnum):
+    """How a print dialog prints both sides by default (``/Duplex``)."""
+
+    SIMPLEX = "Simplex"
+    FLIP_SHORT_EDGE = "DuplexFlipShortEdge"
+    FLIP_LONG_EDGE = "DuplexFlipLongEdge"
+
+
+#: The most page ranges and enforced names that a ``ViewerPreferences`` holds.
+_MAX_PRINT_PAGE_RANGES = 4_096
+_MAX_ENFORCED = 64
+_MAX_NAME_SIZE = 127
+_MAX_LANGUAGE_TAG_BYTES = 256
+_LANGUAGE_TAG = re.compile(r"[A-Za-z]{1,8}(?:-[A-Za-z0-9]{1,8})*", re.ASCII)
+_DEFAULT_VERSION = (1, 7)
+_CATALOG_VERSION_MIN = (1, 4)
+
+#: The page modes that ``/NonFullScreenPageMode`` takes (ISO 32000-2 Table 147).
+_NON_FULL_SCREEN_MODES = frozenset({PageMode.USE_NONE, PageMode.USE_OUTLINES, PageMode.USE_THUMBS, PageMode.USE_OC})
+
+_BOOLEAN_PREFERENCES: tuple[tuple[str, str, tuple[int, int]], ...] = (
+    ("hide_toolbar", "HideToolbar", (1, 2)),
+    ("hide_menubar", "HideMenubar", (1, 2)),
+    ("hide_window_ui", "HideWindowUI", (1, 2)),
+    ("fit_window", "FitWindow", (1, 2)),
+    ("center_window", "CenterWindow", (1, 2)),
+    ("display_title", "DisplayDocTitle", (1, 4)),
+    ("pick_tray_by_pdf_size", "PickTrayByPDFSize", (1, 7)),
+)
+_NAME_PREFERENCES: tuple[tuple[str, str, type[enum.StrEnum], tuple[int, int]], ...] = (
+    ("non_full_screen_page_mode", "NonFullScreenPageMode", PageMode, (1, 2)),
+    ("direction", "Direction", ReadingDirection, (1, 3)),
+    ("view_area", "ViewArea", PageBoundary, (1, 4)),
+    ("view_clip", "ViewClip", PageBoundary, (1, 4)),
+    ("print_area", "PrintArea", PageBoundary, (1, 4)),
+    ("print_clip", "PrintClip", PageBoundary, (1, 4)),
+    ("print_scaling", "PrintScaling", PrintScaling, (1, 6)),
+    ("duplex", "Duplex", Duplex, (1, 7)),
+)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ViewerPreferences:
+    """The catalog's ``/ViewerPreferences`` (ISO 32000-2 Table 147).
+
+    Each field is ``None`` when the dictionary leaves the entry out, so the
+    viewer uses its default; reading and assigning a record round-trips what
+    pyropdf understands. Page ranges are zero-based and inclusive.
+    """
+
+    hide_toolbar: bool | None = None
+    """Whether to hide the viewer's toolbars."""
+    hide_menubar: bool | None = None
+    """Whether to hide the viewer's menu bar."""
+    hide_window_ui: bool | None = None
+    """Whether to hide scroll bars and navigation controls."""
+    fit_window: bool | None = None
+    """Whether to resize the window to the first page."""
+    center_window: bool | None = None
+    """Whether to center the window on the screen."""
+    display_title: bool | None = None
+    """Whether the title bar shows the document's title rather than its file name."""
+    non_full_screen_page_mode: PageMode | None = None
+    """The page mode on leaving full-screen mode: ``USE_NONE``, ``USE_OUTLINES``, ``USE_THUMBS``, or ``USE_OC``."""
+    direction: ReadingDirection | None = None
+    """The reading order of the text."""
+    view_area: PageBoundary | None = None
+    """The box that a viewer shows (deprecated in PDF 2.0)."""
+    view_clip: PageBoundary | None = None
+    """The box that a viewer clips to (deprecated in PDF 2.0)."""
+    print_area: PageBoundary | None = None
+    """The box that printing shows (deprecated in PDF 2.0)."""
+    print_clip: PageBoundary | None = None
+    """The box that printing clips to (deprecated in PDF 2.0)."""
+    print_scaling: PrintScaling | None = None
+    """The print dialog's default scaling."""
+    duplex: Duplex | None = None
+    """The print dialog's default duplex mode."""
+    pick_tray_by_pdf_size: bool | None = None
+    """Whether the paper tray follows the page size."""
+    print_page_ranges: tuple[tuple[int, int], ...] | None = None
+    """The page ranges that the print dialog selects, as zero-based ``(first, last)`` pairs."""
+    copies: int | None = None
+    """The number of copies that the print dialog selects."""
+    enforce: tuple[str, ...] | None = None
+    """The preferences that a viewer must not let the user change, such as ``("PrintScaling",)``."""
+
+    def __post_init__(self) -> None:
+        """Validate every field and normalize enums and tuples."""
+        for field_name, _, _ in _BOOLEAN_PREFERENCES:
+            value = getattr(self, field_name)
+            if value is not None and not isinstance(value, bool):
+                msg = f"{field_name} must be a bool or None: {value!r}"
+                raise TypeError(msg)
+        for field_name, _, kind, _ in _NAME_PREFERENCES:
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(self, field_name, kind(value))
+        if self.non_full_screen_page_mode is not None and self.non_full_screen_page_mode not in _NON_FULL_SCREEN_MODES:
+            msg = f"non_full_screen_page_mode cannot be {self.non_full_screen_page_mode!r}"
+            raise ValueError(msg)
+        if self.print_page_ranges is not None:
+            object.__setattr__(self, "print_page_ranges", _page_ranges(self.print_page_ranges))
+        copies = self.copies
+        if copies is not None and (isinstance(copies, bool) or not isinstance(copies, int) or copies < 1):
+            msg = f"copies must be a positive int or None: {copies!r}"
+            raise ValueError(msg)
+        if self.enforce is not None:
+            object.__setattr__(self, "enforce", _enforced_names(self.enforce))
+
+
+def _page_ranges(ranges: Iterable[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
+    """Validate print page ranges: zero-based ``(first, last)`` pairs."""
+    if isinstance(ranges, (str, bytes)):
+        msg = "print_page_ranges takes an iterable of (first, last) pairs"
+        raise TypeError(msg)
+    pairs: list[tuple[int, int]] = []
+    for item in ranges:
+        if len(pairs) >= _MAX_PRINT_PAGE_RANGES:
+            msg = f"print_page_ranges holds at most {_MAX_PRINT_PAGE_RANGES} ranges"
+            raise ValueError(msg)
+        if isinstance(item, (str, bytes)):
+            msg = f"a print page range is a pair of zero-based pages (first, last), first <= last: {item!r}"
+            raise TypeError(msg)
+        pair = tuple(item)
+        if (
+            len(pair) != 2  # noqa: PLR2004 - a range is a pair.
+            or not all(isinstance(page, int) and not isinstance(page, bool) for page in pair)
+            or not 0 <= pair[0] <= pair[1]
+        ):
+            msg = f"a print page range is a pair of zero-based pages (first, last), first <= last: {pair!r}"
+            raise ValueError(msg)
+        pairs.append((pair[0], pair[1]))
+    return tuple(pairs)
+
+
+def _is_preference_name(name: object) -> bool:
+    return isinstance(name, str) and 0 < len(name) <= _MAX_NAME_SIZE and name.isascii() and name.isidentifier()
+
+
+def _enforced_names(names: Iterable[str]) -> tuple[str, ...]:
+    """Validate the names of enforced preferences."""
+    if isinstance(names, (str, bytes)):
+        msg = "enforce takes a tuple of names, such as ('PrintScaling',)"
+        raise TypeError(msg)
+    enforced: list[str] = []
+    for name in names:
+        if len(enforced) >= _MAX_ENFORCED or not _is_preference_name(name):
+            msg = f"enforce takes up to {_MAX_ENFORCED} preference names, such as 'PrintScaling': {name!r}"
+            raise ValueError(msg)
+        enforced.append(name)
+    return tuple(enforced)
+
+
+def _read_enforced(enforce: object) -> tuple[str, ...] | None:
+    """Read ``/Enforce`` as names, or ``None`` when it is malformed."""
+    if not isinstance(enforce, Array) or len(enforce) > _MAX_ENFORCED:
+        return None
+    if not all(isinstance(name, Name) for name in enforce):
+        return None
+    names = tuple(str(name) for name in enforce)
+    return names if all(_is_preference_name(name) for name in names) else None
+
+
+def _read_page_ranges(ranges: object) -> tuple[tuple[int, int], ...] | None:
+    """Read ``/PrintPageRange`` as zero-based pairs, or ``None`` when it is malformed."""
+    if not isinstance(ranges, Array) or len(ranges) > 2 * _MAX_PRINT_PAGE_RANGES or len(ranges) % 2:
+        return None
+    pages = list(ranges)
+    if not all(isinstance(page, int) and not isinstance(page, bool) for page in pages):
+        return None
+    pairs = tuple((first - 1, last - 1) for first, last in zip(pages[::2], pages[1::2], strict=True))
+    return pairs if all(0 <= first <= last for first, last in pairs) else None
+
+
+def _viewer_preferences(entries: Mapping[str, object]) -> ViewerPreferences:
+    """Read a ``/ViewerPreferences`` dictionary, leaving out entries of the wrong type or value."""
+    fields: dict[str, object] = {}
+    for field_name, key, _ in _BOOLEAN_PREFERENCES:
+        value = entries.get(key)
+        if isinstance(value, bool):
+            fields[field_name] = value
+    for field_name, key, kind, _ in _NAME_PREFERENCES:
+        value = entries.get(key)
+        if isinstance(value, Name):
+            try:
+                fields[field_name] = kind(str(value))
+            except ValueError:
+                continue
+    if fields.get("non_full_screen_page_mode") not in {None, *_NON_FULL_SCREEN_MODES}:
+        del fields["non_full_screen_page_mode"]
+    ranges = _read_page_ranges(entries.get("PrintPageRange"))
+    if ranges is not None:
+        fields["print_page_ranges"] = ranges
+    copies = entries.get("NumCopies")
+    if isinstance(copies, int) and not isinstance(copies, bool) and copies >= 1:
+        fields["copies"] = copies
+    enforce = _read_enforced(entries.get("Enforce"))
+    if enforce is not None:
+        fields["enforce"] = enforce
+    return ViewerPreferences(**fields)  # ty: ignore[invalid-argument-type]
+
+
+def _viewer_preference_dict(preferences: ViewerPreferences) -> tuple[dict[str, object], tuple[int, int]]:
+    """Return the PDF dictionary entries and minimum PDF version of ``preferences``."""
+    entries: dict[str, object] = {}
+    minimum = (1, 2)
+    for field_name, key, since in _BOOLEAN_PREFERENCES:
+        value = getattr(preferences, field_name)
+        if value is not None:
+            entries[key] = value
+            minimum = max(minimum, since)
+    for field_name, key, _, since in _NAME_PREFERENCES:
+        value = getattr(preferences, field_name)
+        if value is not None:
+            entries[key] = Name(value.value)
+            minimum = max(minimum, since)
+    if preferences.print_page_ranges is not None:
+        entries["PrintPageRange"] = [
+            page for first, last in preferences.print_page_ranges for page in (first + 1, last + 1)
+        ]
+        minimum = max(minimum, (1, 7))
+    if preferences.copies is not None:
+        entries["NumCopies"] = preferences.copies
+        minimum = max(minimum, (1, 7))
+    if preferences.enforce is not None:
+        entries["Enforce"] = [Name(name) for name in preferences.enforce]
+        minimum = max(minimum, (1, 7))
+    return entries, minimum
+
+
+def _parse_version(text: str) -> tuple[int, int] | None:
+    major, _, minor = text.partition(".")
+    return (int(major), int(minor)) if major.isdigit() and minor.isdigit() else None
+
+
+def _require_version(document: Document, catalog: Dictionary, minimum: tuple[int, int]) -> None:
+    """Raise ``catalog['Version']`` when ``document`` declares an older PDF version than ``minimum``."""
+    header = _core.header_version(document._core())  # noqa: SLF001
+    version = (_parse_version(header) if header is not None else None) or _DEFAULT_VERSION
+    declared = catalog.get("Version")
+    if isinstance(declared, Name):
+        version = max(version, _parse_version(str(declared)) or version)
+    if version < minimum:
+        target = max(minimum, _CATALOG_VERSION_MIN)
+        catalog["Version"] = Name(f"{target[0]}.{target[1]}")
+
+
+def _catalog_enum(kind: type[PageMode | PageLayout], value: object, name: str) -> str:
+    """Return the catalog name of a page mode or layout, given as a member or its exact value."""
+    if isinstance(value, str):
+        try:
+            return str(kind(value))
+        except ValueError:
+            pass
+    msg = f"{name} must be one of {[member.value for member in kind]}: {value!r}"
+    raise ValueError(msg)
+
+
+def _validate_language_tag(tag: object) -> str:
+    """Validate a BCP 47 language tag of at most 256 ASCII bytes."""
+    if not isinstance(tag, str):
+        msg = f"language must be a str: {type(tag).__name__}"
+        raise TypeError(msg)
+    if not tag.isascii() or len(tag) > _MAX_LANGUAGE_TAG_BYTES or _LANGUAGE_TAG.fullmatch(tag) is None:
+        msg = f"not a well-formed BCP 47 language tag: {tag!r}"
+        raise PdfError(msg)
+    return tag
+
+
+def read_page_mode(document: Document) -> PageMode:
+    """Return the catalog's ``/PageMode``, defaulting to :attr:`PageMode.USE_NONE`."""
+    value = document.catalog.get("PageMode")
+    try:
+        return PageMode(str(value)) if isinstance(value, Name) else PageMode.USE_NONE
+    except ValueError:
+        return PageMode.USE_NONE
+
+
+def write_page_mode(document: Document, mode: PageMode | str) -> None:
+    """Write ``mode`` to the catalog's ``/PageMode`` in one transaction."""
+    name = _catalog_enum(PageMode, mode, "page_mode")
+    catalog = document.catalog
+    with document.transaction("page mode"):
+        catalog["PageMode"] = Name(name)
+
+
+def delete_page_mode(document: Document) -> None:
+    """Remove ``/PageMode`` from the catalog when present."""
+    catalog = document.catalog
+    if "PageMode" in catalog:
+        with document.transaction("page mode"):
+            del catalog["PageMode"]
+
+
+def read_page_layout(document: Document) -> PageLayout:
+    """Return the catalog's ``/PageLayout``, defaulting to :attr:`PageLayout.SINGLE_PAGE`."""
+    value = document.catalog.get("PageLayout")
+    try:
+        return PageLayout(str(value)) if isinstance(value, Name) else PageLayout.SINGLE_PAGE
+    except ValueError:
+        return PageLayout.SINGLE_PAGE
+
+
+def write_page_layout(document: Document, layout: PageLayout | str) -> None:
+    """Write ``layout`` to the catalog's ``/PageLayout`` in one transaction."""
+    name = _catalog_enum(PageLayout, layout, "page_layout")
+    catalog = document.catalog
+    with document.transaction("page layout"):
+        catalog["PageLayout"] = Name(name)
+
+
+def delete_page_layout(document: Document) -> None:
+    """Remove ``/PageLayout`` from the catalog when present."""
+    catalog = document.catalog
+    if "PageLayout" in catalog:
+        with document.transaction("page layout"):
+            del catalog["PageLayout"]
+
+
+def read_language(document: Document) -> str | None:
+    """Return the catalog's ``/Lang`` text string as stored, or ``None``."""
+    value = document.catalog.get("Lang")
+    return value.text if isinstance(value, String) else None
+
+
+def write_language(document: Document, tag: str) -> None:
+    """Write validated BCP 47 ``tag`` to the catalog's ``/Lang`` in one transaction."""
+    checked = _validate_language_tag(tag)
+    catalog = document.catalog
+    with document.transaction("language"):
+        _require_version(document, catalog, (1, 4))
+        catalog["Lang"] = checked
+
+
+def delete_language(document: Document) -> None:
+    """Remove ``/Lang`` from the catalog when present."""
+    catalog = document.catalog
+    if "Lang" in catalog:
+        with document.transaction("language"):
+            del catalog["Lang"]
+
+
+def read_mark_info(document: Document) -> MarkInfo | None:
+    """Return the catalog's ``/MarkInfo`` flags, or ``None`` without a ``/MarkInfo`` dictionary."""
+    mark_info = document.catalog.get("MarkInfo")
+    if not isinstance(mark_info, Dictionary):
+        return None
+    return MarkInfo(
+        marked=mark_info.get("Marked") is True,
+        user_properties=mark_info.get("UserProperties") is True,
+        suspects=mark_info.get("Suspects") is True,
+    )
+
+
+def write_mark_info(document: Document, flags: MarkInfo) -> None:
+    """Write ``flags`` to the catalog's ``/MarkInfo`` in one transaction."""
+    if not isinstance(flags, MarkInfo):
+        msg = f"mark_info must be a MarkInfo: {type(flags).__name__}"
+        raise TypeError(msg)
+    catalog = document.catalog
+    entries = {
+        "Marked": flags.marked,
+        "UserProperties": flags.user_properties,
+        "Suspects": flags.suspects,
+    }
+    existing = catalog.get("MarkInfo")
+    with document.transaction("mark info"):
+        _require_version(document, catalog, (1, 6))
+        if isinstance(existing, Dictionary) and existing.is_indirect and existing.xref is not None:
+            document.objects[existing.xref] = entries
+        else:
+            catalog["MarkInfo"] = entries
+
+
+def delete_mark_info(document: Document) -> None:
+    """Remove ``/MarkInfo`` from the catalog when present."""
+    catalog = document.catalog
+    if "MarkInfo" in catalog:
+        with document.transaction("mark info"):
+            del catalog["MarkInfo"]
+
+
+def read_viewer_preferences(document: Document) -> ViewerPreferences | None:
+    """Return the catalog's ``/ViewerPreferences``, or ``None`` without the dictionary."""
+    preferences = document.catalog.get("ViewerPreferences")
+    return _viewer_preferences(preferences) if isinstance(preferences, Dictionary) else None
+
+
+def write_viewer_preferences(document: Document, preferences: ViewerPreferences) -> None:
+    """Write ``preferences`` to the catalog's ``/ViewerPreferences`` in one transaction."""
+    if not isinstance(preferences, ViewerPreferences):
+        msg = f"viewer_preferences must be a ViewerPreferences: {type(preferences).__name__}"
+        raise TypeError(msg)
+    catalog = document.catalog
+    entries, minimum = _viewer_preference_dict(preferences)
+    existing = catalog.get("ViewerPreferences")
+    with document.transaction("viewer preferences"):
+        _require_version(document, catalog, minimum)
+        if isinstance(existing, Dictionary) and existing.is_indirect and existing.xref is not None:
+            document.objects[existing.xref] = entries
+        else:
+            catalog["ViewerPreferences"] = entries
+
+
+def delete_viewer_preferences(document: Document) -> None:
+    """Remove ``/ViewerPreferences`` from the catalog when present."""
+    catalog = document.catalog
+    if "ViewerPreferences" in catalog:
+        with document.transaction("viewer preferences"):
+            del catalog["ViewerPreferences"]
+
+
+for _public in (
+    Metadata,
+    PageMode,
+    PageLayout,
+    MarkInfo,
+    ReadingDirection,
+    PageBoundary,
+    PrintScaling,
+    Duplex,
+    ViewerPreferences,
+):
+    _public.__module__ = "pyropdf"
+
+__all__ = [
+    "METADATA_KEYS",
+    "Duplex",
+    "MarkInfo",
+    "Metadata",
+    "PageBoundary",
+    "PageLayout",
+    "PageMode",
+    "PrintScaling",
+    "ReadingDirection",
+    "ViewerPreferences",
+    "parse_pdf_date",
+    "pdf_date",
+]

@@ -8,6 +8,24 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Metadata
 
+## `Duplex`
+
+How a print dialog prints both sides by default (`/Duplex`).
+
+Members: `SIMPLEX`, `FLIP_SHORT_EDGE`, `FLIP_LONG_EDGE`.
+
+## `MarkInfo`
+
+```python
+MarkInfo(*, marked: bool = False, user_properties: bool = False, suspects: bool = False)
+```
+
+The catalog's `/MarkInfo` flags of a tagged document (ISO 32000-2 Table 356).
+
+`marked` says whether the document conforms to the Tagged PDF
+conventions, `user_properties` whether structure elements carry user
+properties, and `suspects` whether the tags may be unreliable.
+
 ## `Metadata`
 
 ```python
@@ -105,6 +123,24 @@ METADATA_KEYS = {
 The Info dictionary entries that `Document.metadata` holds, by their
 names in pyropdf, and their PDF keys.
 
+## `PageBoundary`
+
+A page box that viewers and printers show or clip to (`/ViewArea` and its kin).
+
+Members: `MEDIA`, `CROP`, `BLEED`, `TRIM`, `ART`.
+
+## `PageLayout`
+
+How a viewer lays pages out (`/PageLayout`, ISO 32000-2 Table 29).
+
+Members: `SINGLE_PAGE`, `ONE_COLUMN`, `TWO_COLUMN_LEFT`, `TWO_COLUMN_RIGHT`, `TWO_PAGE_LEFT`, `TWO_PAGE_RIGHT`.
+
+## `PageMode`
+
+How a viewer opens the document (`/PageMode`, ISO 32000-2 Table 29).
+
+Members: `USE_NONE`, `USE_OUTLINES`, `USE_THUMBS`, `FULL_SCREEN`, `USE_OC`, `USE_ATTACHMENTS`.
+
 ## `parse_pdf_date`
 
 ```python
@@ -123,3 +159,47 @@ pdf_date(moment: datetime) -> str
 ```
 
 Return `moment` as a PDF date string, such as `"D:20240101120000Z"`; a naive moment is UTC.
+
+## `PrintScaling`
+
+Whether a print dialog scales pages by default (`/PrintScaling`).
+
+Members: `NONE`, `APP_DEFAULT`.
+
+## `ReadingDirection`
+
+The reading order of the text, which lays out side-by-side pages (`/Direction`).
+
+Members: `L2R`, `R2L`.
+
+## `ViewerPreferences`
+
+```python
+ViewerPreferences(
+    *,
+    hide_toolbar: bool | None = None,
+    hide_menubar: bool | None = None,
+    hide_window_ui: bool | None = None,
+    fit_window: bool | None = None,
+    center_window: bool | None = None,
+    display_title: bool | None = None,
+    non_full_screen_page_mode: PageMode | None = None,
+    direction: ReadingDirection | None = None,
+    view_area: PageBoundary | None = None,
+    view_clip: PageBoundary | None = None,
+    print_area: PageBoundary | None = None,
+    print_clip: PageBoundary | None = None,
+    print_scaling: PrintScaling | None = None,
+    duplex: Duplex | None = None,
+    pick_tray_by_pdf_size: bool | None = None,
+    print_page_ranges: tuple[tuple[int, int], ...] | None = None,
+    copies: int | None = None,
+    enforce: tuple[str, ...] | None = None,
+)
+```
+
+The catalog's `/ViewerPreferences` (ISO 32000-2 Table 147).
+
+Each field is `None` when the dictionary leaves the entry out, so the
+viewer uses its default; reading and assigning a record round-trips what
+pyropdf understands. Page ranges are zero-based and inclusive.

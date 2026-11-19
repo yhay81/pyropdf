@@ -35,7 +35,33 @@ from pyropdf._images import ImageRewriteReport, remove_image, replace_image, rew
 from pyropdf._layers import Layers
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
-from pyropdf._metadata import METADATA_KEYS, Metadata, _metadata_value, read_xmp, write_entries, write_xmp
+from pyropdf._metadata import (
+    METADATA_KEYS,
+    MarkInfo,
+    Metadata,
+    PageLayout,
+    PageMode,
+    ViewerPreferences,
+    _metadata_value,
+    delete_language,
+    delete_mark_info,
+    delete_page_layout,
+    delete_page_mode,
+    delete_viewer_preferences,
+    read_language,
+    read_mark_info,
+    read_page_layout,
+    read_page_mode,
+    read_viewer_preferences,
+    read_xmp,
+    write_entries,
+    write_language,
+    write_mark_info,
+    write_page_layout,
+    write_page_mode,
+    write_viewer_preferences,
+    write_xmp,
+)
 from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
@@ -495,6 +521,116 @@ class Document:
         """Return the PDF/A part and conformance level of the XMP metadata, such as ``(2, "B")``, or ``None``."""
         self._ensure_open()
         return _pdfa_claim(self)
+
+    @property
+    def page_mode(self) -> PageMode:
+        """Return how a viewer opens the document; unset or unknown reads as :attr:`PageMode.USE_NONE`.
+
+        Assign a :class:`PageMode` or its PDF name string (ISO 32000-2 Table
+        29) in one transaction, or ``del doc.page_mode`` to remove
+        ``/PageMode``.
+        """
+        self._ensure_open()
+        return read_page_mode(self)
+
+    @page_mode.setter
+    def page_mode(self, mode: PageMode | str) -> None:
+        self._ensure_open()
+        write_page_mode(self, mode)
+
+    @page_mode.deleter
+    def page_mode(self) -> None:
+        self._ensure_open()
+        delete_page_mode(self)
+
+    @property
+    def page_layout(self) -> PageLayout:
+        """Return how a viewer lays pages out; unset or unknown reads as :attr:`PageLayout.SINGLE_PAGE`.
+
+        Assign a :class:`PageLayout` or its PDF name string (ISO 32000-2 Table
+        29) in one transaction, or ``del doc.page_layout`` to remove
+        ``/PageLayout``.
+        """
+        self._ensure_open()
+        return read_page_layout(self)
+
+    @page_layout.setter
+    def page_layout(self, layout: PageLayout | str) -> None:
+        self._ensure_open()
+        write_page_layout(self, layout)
+
+    @page_layout.deleter
+    def page_layout(self) -> None:
+        self._ensure_open()
+        delete_page_layout(self)
+
+    @property
+    def language(self) -> str | None:
+        """Return the catalog's ``/Lang`` language tag as stored, or ``None``.
+
+        The complete BCP 47 tag is kept, such as ``"zh-TW"`` or
+        ``"sr-Latn-RS"``. Assigning writes a well-formed tag (ISO 32000-2
+        section 14.9.2.2) of at most 256 ASCII bytes, hyphen-separated subtags
+        of one to eight ASCII letters or digits, the first of letters only; a
+        non-string raises :class:`TypeError` and a malformed tag raises
+        :class:`PdfError`. ``del doc.language`` removes ``/Lang``.
+        """
+        self._ensure_open()
+        return read_language(self)
+
+    @language.setter
+    def language(self, tag: str) -> None:
+        self._ensure_open()
+        write_language(self, tag)
+
+    @language.deleter
+    def language(self) -> None:
+        self._ensure_open()
+        delete_language(self)
+
+    @property
+    def mark_info(self) -> MarkInfo | None:
+        """Return the catalog's ``/MarkInfo`` flags, or ``None`` without a ``/MarkInfo`` dictionary.
+
+        Each flag is ``True`` only when the dictionary holds ``true``.
+        Assigning a :class:`MarkInfo` writes all three flags in one
+        transaction, and ``del doc.mark_info`` removes ``/MarkInfo``.
+        """
+        self._ensure_open()
+        return read_mark_info(self)
+
+    @mark_info.setter
+    def mark_info(self, flags: MarkInfo) -> None:
+        self._ensure_open()
+        write_mark_info(self, flags)
+
+    @mark_info.deleter
+    def mark_info(self) -> None:
+        self._ensure_open()
+        delete_mark_info(self)
+
+    @property
+    def viewer_preferences(self) -> ViewerPreferences | None:
+        """Return the catalog's ``/ViewerPreferences``, or ``None`` without the dictionary.
+
+        Entries of the wrong type or of unknown values read as ``None``.
+        Assigning a :class:`ViewerPreferences` replaces the dictionary with
+        the fields that are not ``None`` in one transaction, keeping an
+        indirect dictionary's object number when it already has one, and
+        ``del doc.viewer_preferences`` removes ``/ViewerPreferences``.
+        """
+        self._ensure_open()
+        return read_viewer_preferences(self)
+
+    @viewer_preferences.setter
+    def viewer_preferences(self, preferences: ViewerPreferences) -> None:
+        self._ensure_open()
+        write_viewer_preferences(self, preferences)
+
+    @viewer_preferences.deleter
+    def viewer_preferences(self) -> None:
+        self._ensure_open()
+        delete_viewer_preferences(self)
 
     @property
     def history(self) -> History:

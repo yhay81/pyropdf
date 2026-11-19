@@ -318,6 +318,29 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.xmp is None)                             # True: XMP パケットなし
 ```
 
+カタログの表示設定やアクセシビリティのプロパティ（`doc.page_mode`、`doc.page_layout`、
+BCP 47 言語タグの `doc.language`、`doc.mark_info`、`doc.viewer_preferences`）も
+代入と `del` で読み書きできます。
+
+```python
+import pyropdf
+from pyropdf import Duplex, MarkInfo, PageLayout, PageMode, ReadingDirection, ViewerPreferences
+
+with pyropdf.open("input.pdf") as doc:
+    doc.page_mode = PageMode.USE_OUTLINES
+    doc.page_layout = PageLayout.TWO_PAGE_LEFT
+    doc.language = "ja-JP"
+    doc.mark_info = MarkInfo(marked=True)
+    doc.viewer_preferences = ViewerPreferences(
+        display_title=True,
+        direction=ReadingDirection.R2L,
+        duplex=Duplex.FLIP_LONG_EDGE,
+        print_page_ranges=((0, 1),),
+    )
+    print(doc.page_mode, doc.language, doc.viewer_preferences.display_title)
+    del doc.viewer_preferences
+```
+
 ## サニタイズ {#sanitizing}
 
 `doc.sanitize(path)` は JavaScript・アクション・添付ファイル・メタデータ・コメント・不可視テキスト・

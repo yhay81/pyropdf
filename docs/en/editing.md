@@ -333,6 +333,29 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.xmp is None)                             # True: no XMP packet
 ```
 
+The catalog's viewer and accessibility properties live on `doc` as assignable
+and deletable attributes: `doc.page_mode`, `doc.page_layout`, `doc.language`
+(a BCP 47 tag), `doc.mark_info`, and `doc.viewer_preferences`.
+
+```python
+import pyropdf
+from pyropdf import Duplex, MarkInfo, PageLayout, PageMode, ReadingDirection, ViewerPreferences
+
+with pyropdf.open("input.pdf") as doc:
+    doc.page_mode = PageMode.USE_OUTLINES
+    doc.page_layout = PageLayout.TWO_PAGE_LEFT
+    doc.language = "en-US"
+    doc.mark_info = MarkInfo(marked=True)
+    doc.viewer_preferences = ViewerPreferences(
+        display_title=True,
+        direction=ReadingDirection.L2R,
+        duplex=Duplex.FLIP_LONG_EDGE,
+        print_page_ranges=((0, 1),),
+    )
+    print(doc.page_mode, doc.language, doc.viewer_preferences.display_title)
+    del doc.viewer_preferences
+```
+
 ## Sanitizing
 
 `doc.sanitize(path)` removes JavaScript, actions, attachments, metadata,

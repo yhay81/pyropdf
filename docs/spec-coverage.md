@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 22 | 68 | 711 |
-| interpret | 1 | 13 | 0 | 14 | 692 | 81 |
-| create | 0 | 0 | 0 | 643 | 94 | 64 |
-| edit | 0 | 0 | 0 | 652 | 92 | 57 |
-| preserve | 0 | 0 | 0 | 6 | 688 | 107 |
+| read | 0 | 0 | 0 | 22 | 67 | 712 |
+| interpret | 1 | 13 | 0 | 14 | 691 | 82 |
+| create | 0 | 0 | 0 | 643 | 93 | 65 |
+| edit | 0 | 0 | 0 | 652 | 91 | 58 |
+| preserve | 0 | 0 | 0 | 6 | 687 | 108 |
 
 ## Clauses
 
@@ -104,7 +104,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 11.5 | Soft masks | `soft-masks` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
 | 11.6.6 | Transparency group XObjects | `transparency-groups` | 1 done | 1 done | 1 partial | 1 planned | 1 done |
 | 11.7 | Colour and transparency | `transparency-color` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.2 | Viewer preferences | `viewer-preferences` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.2 | Viewer preferences | `viewer-preferences` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.2 | Destinations | `destinations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.3.3 | Document outline | `outline` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.5 | Collections | `collections` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
