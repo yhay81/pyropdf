@@ -45,6 +45,8 @@ def _close(pixmap: Pixmap, image: Image.Image, tolerance: int) -> bool:
     return all(abs(a - b) <= tolerance for a, b in zip(rendered, image.tobytes(), strict=True))
 
 
+@pytest.mark.spec("dct-filter", "create")
+@pytest.mark.spec("images", "create")
 def test_a_jpeg_is_embedded_as_it_is() -> None:
     jpeg = _encoded(_image(), "JPEG", quality=95, dpi=(144, 144))
     doc = pyropdf.Document()

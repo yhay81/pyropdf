@@ -81,6 +81,8 @@ def test_ocr_layer_is_extractable_and_searchable() -> None:
     assert 70 < hits[0].y1 < 110
 
 
+@pytest.mark.spec("text-objects", "create")
+@pytest.mark.spec("text-state", "create")
 def test_ocr_layer_is_invisible() -> None:
     page = _blank_page_doc().pages[0]
 

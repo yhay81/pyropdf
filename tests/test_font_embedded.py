@@ -327,6 +327,11 @@ def _register(document: pyropdf.Document, font: pyropdf.Font, cache: dict[bytes,
 @pytest.mark.parametrize(
     ("path", "subtype", "program"), [(HEBREW, "CIDFontType2", "FontFile2"), (JAPANESE, "CIDFontType0", "FontFile3")]
 )
+@pytest.mark.spec("cid-fonts", "create")
+@pytest.mark.spec("cmaps", "create")
+@pytest.mark.spec("embedded-fonts", "create")
+@pytest.mark.spec("font-descriptors", "create")
+@pytest.mark.spec("type0-fonts", "create")
 def test_a_face_is_written_once_as_a_type0_font(path: Path, subtype: str, program: str) -> None:
     document = pyropdf.Document()
     cache: dict[bytes, int] = {}
@@ -353,6 +358,7 @@ def test_a_face_is_written_once_as_a_type0_font(path: Path, subtype: str, progra
     assert len(document.objects) == objects
 
 
+@pytest.mark.spec("text-extraction", "create")
 def test_glyphs_add_widths_and_texts_and_undo_removes_them() -> None:
     document = pyropdf.Document()
     cache: dict[bytes, int] = {}
@@ -384,6 +390,7 @@ def test_glyphs_add_widths_and_texts_and_undo_removes_them() -> None:
     assert _fonts._mapped(to_unicode, font.glyph_count) == {}  # noqa: SLF001
 
 
+@pytest.mark.spec("text-extraction", "edit")
 def test_real_text_replaces_the_text_of_a_glyph_drawn_without_its_own() -> None:
     document = pyropdf.Document()
     font = pyropdf.Font.from_file(JAPANESE)

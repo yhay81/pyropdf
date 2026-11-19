@@ -64,6 +64,7 @@ def _pages(doc: pyropdf.Document) -> list[Dictionary]:
     return [value for value in _dictionaries(doc) if value.get("Type") == "Page"]
 
 
+@pytest.mark.spec("text-fields", "preserve")
 def test_insert_pdf_registers_f1040_fields_with_values() -> None:
     src = pyropdf.open(F1040.read_bytes())
     src.form[F1040_TEXT].value = "Jane Doe"
@@ -152,6 +153,7 @@ def test_insert_pdf_range_registers_only_imported_page_fields(page: int, prefix:
     reopened.form[expected[0]["name"]].value = "x" if expected[0]["type"] == "text" else "Off"
 
 
+@pytest.mark.spec("interactive-form", "preserve")
 def test_complete_import_keeps_every_field_and_form_default() -> None:
     src = pyropdf.open(_two_page_form())
     dst = pyropdf.Document()
@@ -324,6 +326,7 @@ def _default_appearance_form(fonts: tuple[str, str], field: str, extra: dict[int
     ],
     ids=["leading", "trailing", "escaped", "escaped-rename", "graphics-state", "utf-16", "indirect"],
 )
+@pytest.mark.spec("variable-text", "preserve")
 def test_imported_default_appearances_follow_renamed_fonts(appearance: str, expected: bytes) -> None:
     dst = pyropdf.open(_default_appearance_form(("Helvetica", "Courier"), "/T (own) /DA (/Helv 9 Tf 0 g)"))
     src = _default_appearance_form(

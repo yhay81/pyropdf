@@ -37,6 +37,8 @@ def _tree(tree: str, **objects: str) -> pyropdf.Document:
 
 
 @pytest.mark.parametrize("name", sorted(json.loads(ORACLE.read_text(encoding="utf-8"))["labels"]))
+@pytest.mark.spec("number-trees", "interpret")
+@pytest.mark.spec("page-labels", "read", "interpret")
 def test_labels_of_the_corpus_match_pymupdf(name: str) -> None:
     expected = json.loads(ORACLE.read_text(encoding="utf-8"))["labels"][name]
     with pyropdf.open(ROOT / "tests" / "assets" / "real_world" / name) as doc:
@@ -58,6 +60,7 @@ def test_assigning_is_one_undoable_step() -> None:
     assert doc.page_labels == []
 
 
+@pytest.mark.spec("page-labels", "create")
 def test_labels_roundtrip_through_save() -> None:
     doc = _six_page_doc()
     ranges = [
@@ -91,6 +94,7 @@ def test_letters_style_wraps_past_z() -> None:
     assert _labels(doc)[:3] == ["Z", "AA", "BB"]
 
 
+@pytest.mark.spec("page-labels", "edit")
 def test_absent_and_removed_labels() -> None:
     doc = _six_page_doc()
     assert doc.page_labels == []
@@ -141,6 +145,8 @@ def test_assigning_validates_the_ranges_together() -> None:
         (lambda pages: pages.insert(0, pages[5]), None),
     ],
 )
+@pytest.mark.spec("number-trees", "preserve")
+@pytest.mark.spec("page-labels", "preserve")
 def test_page_operations_keep_each_pages_label(edit: object, expected: list[str] | None) -> None:
     doc = _six_page_doc()
     doc.page_labels = [PageLabelRange(0, PageLabelStyle.LOWER_ROMAN), PageLabelRange(3, prefix="A-")]
@@ -153,6 +159,7 @@ def test_page_operations_keep_each_pages_label(edit: object, expected: list[str]
         assert _labels(doc) == expected
 
 
+@pytest.mark.spec("number-trees", "read")
 def test_page_label_tree_with_kids_is_read_in_order() -> None:
     doc = _tree(
         "<< /Kids [5 0 R 6 0 R] >>",
@@ -229,6 +236,7 @@ def test_assigning_refuses_over_limit_ranges_atomically() -> None:
     assert doc.to_bytes() == before
 
 
+@pytest.mark.spec("number-trees", "create", "edit")
 def test_replacing_page_labels_frees_retired_kids_and_bounds_leaves() -> None:
     doc = pyropdf.open(numbered(70))
     doc.catalog["Pages"]["Resources"] = {}

@@ -72,6 +72,8 @@ def _page() -> pyropdf.Page:
     return pyropdf.Document().pages.new((300, 300))
 
 
+@pytest.mark.spec("text-annotations", "edit")
+@pytest.mark.spec("text-markup-annotations", "edit")
 def test_style_edits_draw_the_appearance_again() -> None:
     page = _page()
     square = page.annotations.add(Square((10, 10, 100, 60)))
@@ -187,6 +189,7 @@ def test_points_and_endings_are_edited_and_the_rectangle_follows() -> None:
         page.annotations.add(Square((0, 0, 9, 9))).vertices = [(0, 0), (1, 1)]
 
 
+@pytest.mark.spec("stamp-annotations", "edit")
 def test_free_text_and_stamps_turn_and_their_text_changes() -> None:
     page = _page()
     free_text = page.annotations.add(FreeText((20, 20, 200, 60), "Before", border=Border(1)))
@@ -232,6 +235,7 @@ def test_non_latin_free_text_keeps_its_installed_face() -> None:
     assert page.text().strip() == "テキスト"
 
 
+@pytest.mark.spec("sound-annotations", "edit")
 def test_edits_of_annotations_that_other_producers_wrote() -> None:
     doc = pyropdf.open(
         build_raw_pdf(

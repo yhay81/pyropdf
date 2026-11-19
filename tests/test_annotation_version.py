@@ -198,6 +198,7 @@ def test_corpus_old_version_square_add_and_edit_add_no_structural_defects(name: 
 
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.spec("pdfa", "edit", "preserve")
 def test_pdfa1_square_preserves_conformance_and_version(*, incremental: bool) -> None:
     source = (PDFA / "pdfa-1b.pdf").read_bytes()
     with pyropdf.open(source) as doc:

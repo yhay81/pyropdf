@@ -176,6 +176,8 @@ def test_every_kind_leaves_a_built_document(tmp_path: Path) -> None:
     }
 
 
+@pytest.mark.spec("ecmascript-actions", "edit")
+@pytest.mark.spec("named-actions", "preserve")
 def test_javascript_keeps_other_actions(tmp_path: Path) -> None:
     doc = _built()
     report = doc.sanitize(tmp_path / "out.pdf", **_only("javascript"))
@@ -200,6 +202,7 @@ def test_actions_keep_link_destinations(tmp_path: Path) -> None:
     assert "OpenAction" not in sanitized.catalog
 
 
+@pytest.mark.spec("text-state", "read", "edit")
 def test_comments_keep_links_and_hidden_text_keeps_shown_text(tmp_path: Path) -> None:
     doc = _built()
     doc.sanitize(tmp_path / "out.pdf", **_only("comments") | {"hidden_text": True})
@@ -211,6 +214,8 @@ def test_comments_keep_links_and_hidden_text_keeps_shown_text(tmp_path: Path) ->
     assert "Tw" in operators
 
 
+@pytest.mark.spec("associated-files", "edit")
+@pytest.mark.spec("page-piece", "edit")
 def test_attachments_and_metadata_leave(tmp_path: Path) -> None:
     doc = _built()
     doc.sanitize(tmp_path / "out.pdf", **_only("attachments") | {"metadata": True})
@@ -233,6 +238,7 @@ def test_unused_objects_leave_only_when_asked(tmp_path: Path) -> None:
     assert len(pruned.objects) < len(kept.objects)
 
 
+@pytest.mark.spec("incremental-update", "read", "edit")
 def test_an_incremental_file_saves_as_one_revision(tmp_path: Path) -> None:
     doc = _built()
     doc.save(tmp_path / "base.pdf")

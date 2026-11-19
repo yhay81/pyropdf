@@ -70,6 +70,7 @@ def _blue(doc: pyropdf.Document) -> bool:
     return data[at : at + 3] == b"\x00\x00\xff"
 
 
+@pytest.mark.spec("optional-content", "read")
 def test_layers_list_names_and_states() -> None:
     doc, (first, second, third) = layer_document()
     assert list(doc.layers) == [
@@ -119,6 +120,7 @@ def test_everything_shows_by_default() -> None:
     assert _blue(doc)
 
 
+@pytest.mark.spec("optional-content", "interpret", "edit")
 def test_switching_a_group_off_removes_its_marked_content_from_rendering_and_text() -> None:
     doc, (first, _, _) = layer_document()
     before = bytes(doc.pages[0].pixmap(dpi=72))

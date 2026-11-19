@@ -29,6 +29,7 @@ def _column(pixmap: pyropdf.Pixmap, x: int, y0: int, y1: int) -> list[int]:
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.spec("text-markup-annotations", "interpret", "create")
 def test_text_markup_lines_land_on_their_rectangles(rotation: int) -> None:
     page = pyropdf.Document().pages.new((300, 300))
     page.rotation = rotation
@@ -56,6 +57,7 @@ def test_text_markup_lines_land_on_their_rectangles(rotation: int) -> None:
     assert _column(pixmap, 130, 0, 200) == []
 
 
+@pytest.mark.spec("text-markup-annotations", "read", "preserve")
 def test_text_markup_survives_save_and_reopen() -> None:
     page = pyropdf.Document().pages.new((200, 200))
     page.annotations.add(Underline([(10, 10, 60, 25), (10, 30, 90, 45)], color=Color(0, 0, 0.5), contents="check"))

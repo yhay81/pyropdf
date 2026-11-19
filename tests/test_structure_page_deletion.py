@@ -218,6 +218,7 @@ def test_deleting_every_page_but_one_keeps_the_root() -> None:
     assert {3, 4, 20, 21, 25, 28}.isdisjoint(objects)
 
 
+@pytest.mark.spec("logical-structure", "preserve")
 def test_a_document_without_dropped_structure_saves_unchanged() -> None:
     data = _tagged_pdf()
     reordered = pyropdf.open(data)

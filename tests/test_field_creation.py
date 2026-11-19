@@ -41,6 +41,11 @@ def _page(rotation: int = 0) -> pyropdf.Page:
     return page
 
 
+@pytest.mark.spec("button-fields", "create")
+@pytest.mark.spec("choice-fields", "create")
+@pytest.mark.spec("interactive-form", "create")
+@pytest.mark.spec("text-fields", "create")
+@pytest.mark.spec("widget-annotations", "create")
 def test_every_kind_of_field_is_created_with_its_widget() -> None:
     page = _page()
     doc = page.document
@@ -305,6 +310,7 @@ def test_field_specifications_validate() -> None:
     assert "Annots" not in page.obj
 
 
+@pytest.mark.spec("variable-text", "create")
 def test_styled_fields_draw_their_style() -> None:
     page = _page()
 

@@ -30,6 +30,7 @@ def _page() -> pyropdf.Page:
 
 
 @pytest.mark.parametrize("icon", list(NoteIcon))
+@pytest.mark.spec("text-annotations", "interpret", "create")
 def test_every_note_icon_draws_in_its_square(icon: NoteIcon) -> None:
     page = _page()
 
@@ -49,6 +50,7 @@ def test_every_note_icon_draws_in_its_square(icon: NoteIcon) -> None:
     assert outside == {WHITE}
 
 
+@pytest.mark.spec("text-annotations", "read", "preserve")
 def test_notes_survive_save_and_reopen() -> None:
     page = _page()
     page.annotations.add(Note(Point(100, 20), icon=NoteIcon.KEY, is_open=True, opacity=0.5))

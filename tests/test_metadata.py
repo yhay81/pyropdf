@@ -54,6 +54,7 @@ def _xmp_pdf(data: bytes, *, compressed: bool = False) -> bytes:
 # --- the Info dictionary ----------------------------------------------------
 
 
+@pytest.mark.spec("document-info", "read")
 def test_metadata_lists_only_the_entries_present() -> None:
     doc = pyropdf.open(_pdf("", "<< /Title (A title) /Trapped /False /Author () >>", trailer="/Info 3 0 R"))
     assert dict(doc.metadata) == {"title": "A title", "trapped": "False"}
@@ -61,6 +62,7 @@ def test_metadata_lists_only_the_entries_present() -> None:
     assert dict(pyropdf.Document().metadata) == {}
 
 
+@pytest.mark.spec("document-info", "create")
 def test_assigning_an_entry_adds_an_indirect_info_dictionary() -> None:
     doc = pyropdf.Document()
     doc.metadata["title"] = "日本語のタイトル"
@@ -72,6 +74,8 @@ def test_assigning_an_entry_adds_an_indirect_info_dictionary() -> None:
     assert pyropdf.probe(doc.to_bytes()).metadata["title"] == "日本語のタイトル"
 
 
+@pytest.mark.spec("document-info", "edit")
+@pytest.mark.spec("text-strings", "edit")
 def test_update_is_one_undo_step_and_deleting_removes_the_entry() -> None:
     doc = pyropdf.Document()
     doc.metadata.update(title="T", author="A", trapped="True")
@@ -118,6 +122,8 @@ def test_invalid_values_change_nothing(key: str, value: object, error: type[Exce
         (b"\xfe\xff\x00A\x00B\x34", "AB"),
     ],
 )
+@pytest.mark.spec("document-info", "interpret")
+@pytest.mark.spec("text-strings", "interpret")
 def test_info_text_string_decoding(stored: bytes, text: str) -> None:
     doc = pyropdf.Document()
     doc.trailer["Info"] = doc.objects[doc.objects.add({"Title": pyropdf.String(stored)})]
@@ -140,10 +146,12 @@ def test_info_text_string_decoding(stored: bytes, text: str) -> None:
         ("2024", None),
     ],
 )
+@pytest.mark.spec("dates", "read", "interpret")
 def test_parse_pdf_date(text: str, moment: datetime | None) -> None:
     assert pyropdf.parse_pdf_date(text) == moment
 
 
+@pytest.mark.spec("dates", "create")
 def test_pdf_date_formats_time_zones_and_round_trips() -> None:
     tokyo = datetime(2024, 1, 2, 3, 4, 5, tzinfo=timezone(timedelta(hours=9)))
     assert pyropdf.pdf_date(tokyo) == "D:20240102030405+09'00'"
@@ -168,6 +176,7 @@ def test_xmp_is_none_without_a_metadata_stream() -> None:
     assert pyropdf.open(_pdf("/Metadata 3 0 R", "<< /Type /Metadata >>")).xmp is None
 
 
+@pytest.mark.spec("xmp-metadata", "read")
 def test_xmp_decodes_filters_invalid_utf8_and_nul_as_pymupdf() -> None:
     xmp = '<x:xmpmeta xmlns:x="adobe:ns:meta/">日本語</x:xmpmeta>'
     assert pyropdf.open(_xmp_pdf(xmp.encode(), compressed=True)).xmp == xmp
@@ -194,6 +203,7 @@ def test_xmp_read_is_bounded() -> None:
     assert len(doc.catalog["Metadata"].read(max_size=None)) == 2_000_004
 
 
+@pytest.mark.spec("xmp-metadata", "create")
 def test_assigning_xmp_adds_an_unfiltered_metadata_stream(tmp_path: Path) -> None:
     doc = pyropdf.Document()
     doc.xmp = "<x:xmpmeta>héllo</x:xmpmeta>"
@@ -231,6 +241,8 @@ def test_deleting_xmp_removes_the_catalog_entry() -> None:
 # --- Info and XMP in step -----------------------------------------------------
 
 
+@pytest.mark.spec("dates", "edit")
+@pytest.mark.spec("xmp-metadata", "interpret", "edit")
 def test_info_edits_write_the_matching_xmp_properties() -> None:
     doc = pyropdf.open(_xmp_pdf(XMP.encode()))
     doc.metadata.update(
@@ -261,6 +273,9 @@ def test_info_edits_leave_a_packet_that_is_not_xmp_unchanged() -> None:
 
 
 @pytest.mark.parametrize("name", sorted(path.name for path in PDFA.glob("*.pdf")))
+@pytest.mark.spec("output-intents", "preserve")
+@pytest.mark.spec("pdfa", "edit", "preserve")
+@pytest.mark.spec("xmp-metadata", "preserve")
 def test_pdfa_documents_keep_their_claim_and_equivalent_metadata(name: str) -> None:
     doc = pyropdf.open(PDFA / name)
     claim = doc.pdfa_claim

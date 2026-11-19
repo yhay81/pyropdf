@@ -300,6 +300,7 @@ def test_a_pdfa_claim_that_holds_has_no_profile_defect() -> None:
     assert profile_defects(claiming(PDFA, INTENT)) == set()
 
 
+@pytest.mark.spec("output-intents", "interpret")
 @pytest.mark.spec("pdfa", "read")
 def test_a_pdfa_claim_without_an_output_intent_is_found() -> None:
     assert profile_defects(claiming(PDFA)) == {(1, "OutputIntents", "PDF/A-2B/OutputIntents")}
@@ -323,7 +324,10 @@ def test_a_pdfua_claim_that_holds_has_no_profile_defect() -> None:
     assert profile_defects(claiming(PDFUA, UA_KEEPS)) == set()
 
 
+@pytest.mark.spec("accessibility", "read", "interpret")
+@pytest.mark.spec("document-catalog", "interpret")
 @pytest.mark.spec("pdfua", "read")
+@pytest.mark.spec("tagged-pdf", "read", "interpret")
 def test_a_pdfua_claim_breaking_each_rule_is_found() -> None:
     assert profile_defects(claiming(PDFUA)) == {
         (1, "MarkInfo/Marked", "PDF/UA-1/MarkInfo"),

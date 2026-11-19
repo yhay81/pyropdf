@@ -114,6 +114,8 @@ def _check(doc: pyropdf.Document) -> None:
     assert root["ParentTreeNextKey"] > max(tree)
 
 
+@pytest.mark.spec("logical-structure", "read", "interpret", "edit")
+@pytest.mark.spec("tagged-pdf", "edit")
 def test_imported_pages_bring_their_elements_into_the_document_element() -> None:
     source = pyropdf.open(_tagged(["Skipped", "Imported"]))
     target = pyropdf.open(_tagged(["Own"], role_map="<< /Para /H1 >>", class_map="<< /Bold << /O /Layout /W 1 >> >>"))

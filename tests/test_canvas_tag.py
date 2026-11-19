@@ -72,6 +72,9 @@ def _with_document_element(doc: pyropdf.Document, kids: object) -> int:
     return document
 
 
+@pytest.mark.spec("logical-structure", "create")
+@pytest.mark.spec("marked-content", "create")
+@pytest.mark.spec("tagged-pdf", "create")
 def test_tags_on_an_untagged_document_create_its_structure_tree() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((300, 300))
@@ -119,6 +122,7 @@ def test_new_structure_tree_updates_existing_mark_info() -> None:
 
 
 @pytest.mark.parametrize("marked", [False, None])
+@pytest.mark.spec("tagged-pdf", "preserve")
 def test_existing_structure_tree_keeps_its_marked_state(marked: bool | None) -> None:  # noqa: FBT001
     doc = pyropdf.Document()
     page = doc.pages.new((200, 200))

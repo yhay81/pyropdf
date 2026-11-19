@@ -37,6 +37,9 @@ ELEMENTS = """<rdf:Description>
 </rdf:Description>"""
 
 
+@pytest.mark.spec("pdfvt", "read")
+@pytest.mark.spec("pdfx", "read")
+@pytest.mark.spec("xmp-metadata", "interpret")
 def test_claims_written_as_attributes() -> None:
     doc = with_xmp(ATTRIBUTES)
     assert doc.profiles == Profiles("PDF/A-2B", "PDF/UA-1", "PDF/X-4", "PDF/VT-1", ())

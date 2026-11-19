@@ -112,6 +112,8 @@ def test_a_real_form_reads_and_restyles() -> None:
     assert pyropdf.open(doc.to_bytes()).form[field.name].value == "Jane"
 
 
+@pytest.mark.spec("variable-text", "edit")
+@pytest.mark.spec("widget-annotations", "read", "edit")
 def test_text_styling_is_read_and_set_and_the_value_is_drawn_again() -> None:
     doc = _form()
     customer = doc.pages[0].widgets[0]
@@ -495,6 +497,7 @@ def test_an_aliased_standard_font_without_encoding_renders_as_its_face() -> None
     assert omitted != _rendered(_HELVETICA_WINANSI)
 
 
+@pytest.mark.spec("simple-font-encodings", "preserve")
 def test_an_aliased_winansi_and_symbolic_font_keep_their_encodings() -> None:
     doc = _aliased_font_form(_COURIER_WINANSI, indirect_font=True, indirect_resources=False)
     field = doc.pages[0].widgets[0].field

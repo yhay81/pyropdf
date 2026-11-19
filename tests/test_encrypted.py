@@ -65,6 +65,8 @@ def test_open_without_password_raises_on_use(name: str) -> None:
         doc.to_bytes()
 
 
+@pytest.mark.spec("crypt-filters", "read")
+@pytest.mark.spec("encryption-dictionary", "read")
 @pytest.mark.spec("standard-security-handler", "read")
 @USER
 def test_every_standard_handler_reads_with_both_passwords(name: str, reference: list[bytes]) -> None:
@@ -130,6 +132,8 @@ def test_probe_reports_whether_a_password_is_needed() -> None:
         pyropdf.probe(ASSETS / "user-aes-256.pdf", password="wrong")
 
 
+@pytest.mark.spec("crypt-filters", "edit")
+@pytest.mark.spec("encryption-dictionary", "edit")
 @pytest.mark.spec("standard-security-handler", "edit")
 def test_a_decrypted_save_produces_a_plain_pdf(reference: list[bytes]) -> None:
     doc = pyropdf.open(ASSETS / "user-aes-256.pdf", password="userpw")
@@ -142,6 +146,8 @@ def test_a_decrypted_save_produces_a_plain_pdf(reference: list[bytes]) -> None:
         assert bytes(memoryview(reopened.pages[0].pixmap(dpi=36))) == reference[0]
 
 
+@pytest.mark.spec("crypt-filters", "interpret")
+@pytest.mark.spec("encryption-dictionary", "interpret")
 @pytest.mark.spec("standard-security-handler", "interpret")
 @pytest.mark.parametrize("name", [*HANDLERS, "owneronly-aes-256.pdf"])
 def test_an_encrypted_document_renders_unedited_and_edited(name: str) -> None:
@@ -191,6 +197,8 @@ def test_an_unencrypted_document_grants_owner_access() -> None:
     assert doc.unlock("whatever") is Access.OWNER
 
 
+@pytest.mark.spec("crypt-filters", "create")
+@pytest.mark.spec("encryption-dictionary", "create")
 @pytest.mark.spec("standard-security-handler", "create")
 @pytest.mark.parametrize("method", ["aes-256", "aes-128"])
 def test_save_encrypted_roundtrip(method: str) -> None:

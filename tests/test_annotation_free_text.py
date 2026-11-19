@@ -206,6 +206,7 @@ def test_callouts_point_at_what_the_text_explains() -> None:
     assert _pixel(pixmap, 100, 220) != WHITE
 
 
+@pytest.mark.spec("free-text-annotations", "read", "interpret", "create", "preserve")
 def test_free_text_survives_save_and_reopen() -> None:
     page = pyropdf.Document().pages.new((300, 300))
     page.annotations.add(
@@ -366,6 +367,7 @@ def test_free_text_in_an_embedded_face_survives_save_and_reopen() -> None:
     assert reopened.text().strip() == "日本語"
 
 
+@pytest.mark.spec("free-text-annotations", "edit")
 def test_free_text_in_an_embedded_face_adds_and_edits_in_one_undo_step_each() -> None:
     doc = pyropdf.Document()
     page = doc.pages.new((300, 300))
@@ -566,6 +568,7 @@ def test_a_free_text_in_an_arabic_face_has_no_unmapped_glyph() -> None:
     assert mapped[dot] == _fonts._NO_TEXT  # noqa: SLF001
 
 
+@pytest.mark.spec("accessibility", "create")
 def test_a_free_texts_cluster_is_one_actual_text_and_its_glyphs_stay_where_the_shaper_put_them() -> None:
     size = 14.0
     face = Font.from_file(ARABIC)

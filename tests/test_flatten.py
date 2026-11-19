@@ -53,6 +53,7 @@ def _annotated() -> pyropdf.Document:
     return doc
 
 
+@pytest.mark.spec("non-interactive-forms", "read", "interpret", "create", "edit")
 def test_flattening_keeps_what_rendering_shows() -> None:
     doc = _annotated()
     page = doc.pages[0]
@@ -235,6 +236,7 @@ def test_flatten_takes_booleans() -> None:
         doc.flatten()
 
 
+@pytest.mark.spec("non-interactive-forms", "preserve")
 def test_a_page_flattens_alone_and_its_widgets_leave_their_fields() -> None:
     doc = _annotated()
     second = doc.pages.new((400, 400))

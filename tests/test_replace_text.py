@@ -217,6 +217,7 @@ def test_replace_text_keeps_positions_of_quote_operators() -> None:
 # Encodings, counts, and Forms.
 
 
+@pytest.mark.spec("simple-font-encodings", "read", "interpret")
 def test_replace_text_encodes_through_the_differences() -> None:
     font = (
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica "

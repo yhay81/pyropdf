@@ -310,6 +310,9 @@ def _flatten_widgets_reopened(source: Path, *, incremental: bool) -> bytes:
     ],
 )
 @pytest.mark.parametrize("fixture", ALL_CONFORMANCE_FIXTURES, ids=lambda p: p.stem)
+@pytest.mark.spec("font-descriptors", "edit")
+@pytest.mark.spec("pdfa", "edit", "preserve")
+@pytest.mark.spec("pdfua", "edit", "preserve")
 def test_saved_cff_subsets_preserve_widths_cidset_and_text_across_conformance_fixtures(
     fixture: Path,
     case_name: str,
@@ -413,6 +416,10 @@ def test_empty_freetext_with_cff_face_settles_to_cidfonttype0c_on_pdf14() -> Non
 
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.spec("cid-fonts", "preserve")
+@pytest.mark.spec("embedded-fonts", "preserve")
+@pytest.mark.spec("font-descriptors", "preserve")
+@pytest.mark.spec("type0-fonts", "preserve")
 def test_untouched_embedded_fonts_and_rendering_stay_intact(*, incremental: bool) -> None:
     with pyropdf.open(REAL_WORLD / "mhlw-doc.pdf") as baseline_doc:
         existing_xrefs = sorted(

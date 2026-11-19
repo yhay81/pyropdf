@@ -117,6 +117,7 @@ def _marked_source(rotation: int = 0) -> pyropdf.Document:
 # Paths.
 
 
+@pytest.mark.spec("paths", "create")
 def test_shapes_draw_paths_in_display_space() -> None:
     _doc, page = _new_page()
     with page.draw() as canvas:
@@ -152,6 +153,7 @@ def test_a_path_without_fill_or_stroke_is_stroked_black() -> None:
     assert path.stroke.width == pytest.approx(1)
 
 
+@pytest.mark.spec("graphics-state", "create")
 def test_stroke_style_and_alpha_round_trip() -> None:
     _doc, page = _new_page()
     stroke = Stroke(
@@ -275,6 +277,7 @@ def test_clip_scope_lists_the_clip_in_the_context() -> None:
     assert _pixel(page, 110, 110) == (255, 255, 255)
 
 
+@pytest.mark.spec("transparency-groups", "create")
 def test_opacity_scopes_are_transparency_groups() -> None:
     _doc, page = _new_page()
     with page.draw() as canvas:
@@ -304,6 +307,7 @@ def test_opacity_inside_a_transform_keeps_the_group_on_the_page() -> None:
     assert _pixel(page, 250, 150)[0] < 200
 
 
+@pytest.mark.spec("blend-modes", "create")
 def test_blend_scope_and_alpha_inside_it() -> None:
     _doc, page = _new_page()
     with page.draw() as canvas:
@@ -360,6 +364,7 @@ def test_path_point_limit() -> None:
 # Images.
 
 
+@pytest.mark.spec("xobjects", "create")
 def test_images_are_stored_once() -> None:
     doc, page = _new_page()
     png = _png()
@@ -435,6 +440,7 @@ def test_an_image_survives_a_save() -> None:
 # Placed pages.
 
 
+@pytest.mark.spec("form-xobjects", "create")
 def test_pages_of_other_documents_are_stored_once() -> None:
     source = _text_page()
     doc, page = _new_page(400, 300)
@@ -737,6 +743,7 @@ def test_a_jpeg_is_stored_as_it_is() -> None:
     assert stored.data == jpeg
 
 
+@pytest.mark.spec("soft-masks", "create")
 def test_png_alpha_is_kept() -> None:
     _source_doc, source = _new_page(20, 10)
     with source.draw() as canvas:
@@ -998,12 +1005,16 @@ INSIDE_THE_PAGE = (2, 2, 198, 198)
 
 
 @RENDERERS
+@pytest.mark.spec("axial-shading", "create")
+@pytest.mark.spec("pattern-color-space", "create")
+@pytest.mark.spec("shading-patterns", "create")
 def test_a_linear_gradient_fills_within_the_tolerance(render: Callable[[bytes], _Pixels]) -> None:
     data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_linear(*RED_BLUE))).to_bytes()
     assert _largest_error(render, data, INSIDE_THE_PAGE, _along_the_line) <= GRADIENT_TOLERANCE
 
 
 @RENDERERS
+@pytest.mark.spec("radial-shading", "create", "preserve")
 def test_a_radial_gradient_fills_within_the_tolerance(render: Callable[[bytes], _Pixels]) -> None:
     data = _drawn(lambda canvas: canvas.rect(WHOLE_PAGE, fill=_rings(*RED_BLUE))).to_bytes()
     assert _largest_error(render, data, INSIDE_THE_PAGE, _around_the_centre) <= GRADIENT_TOLERANCE

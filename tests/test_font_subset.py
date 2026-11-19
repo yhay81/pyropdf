@@ -34,6 +34,9 @@ def _assert_same(before: list[tuple[bytes, str]], after: list[tuple[bytes, str]]
 
 
 @pytest.mark.parametrize("name", NAMES)
+@pytest.mark.spec("cid-fonts", "edit")
+@pytest.mark.spec("embedded-fonts", "interpret", "edit")
+@pytest.mark.spec("type0-fonts", "edit")
 def test_every_corpus_page_draws_and_reads_the_same_after_subsetting(name: str) -> None:
     doc = _open(name)
     before = _pages(doc)

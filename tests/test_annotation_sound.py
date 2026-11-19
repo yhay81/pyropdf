@@ -63,6 +63,8 @@ def test_the_fixture_reads_alike_in_pikepdf() -> None:
         assert pdf.pages[0].Annots[2].Sound.read_bytes() == b"\x80\x90\xa0"
 
 
+@pytest.mark.spec("sound-annotations", "read")
+@pytest.mark.spec("sounds", "read")
 def test_a_sound_annotation_returns_its_samples_and_format() -> None:
     page = pyropdf.open(_pdf([_STEREO, _DEFAULTS])).pages[0]
     stereo, defaults = page.annotations[1], page.annotations[2]
@@ -79,6 +81,8 @@ def test_a_sound_annotation_returns_its_samples_and_format() -> None:
     )
 
 
+@pytest.mark.spec("sound-annotations", "preserve")
+@pytest.mark.spec("sounds", "preserve")
 def test_compressed_and_encoded_sounds_keep_their_payload() -> None:
     sound = _stream("/R 8000 /E /muLaw /CO /SomeCodec", b"\x01\x02\x03")
     read = pyropdf.open(_pdf([sound])).pages[0].annotations[1].sound()

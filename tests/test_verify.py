@@ -93,6 +93,9 @@ def _pyhanko_signed(pki: Pki, name: str, data: bytes) -> bytes:
 
 
 @pytest.mark.parametrize("name", ["p256", "p384", "rsa", "timestamped"])
+@pytest.mark.spec("digital-signatures", "read", "interpret")
+@pytest.mark.spec("ecc-signatures", "read", "interpret")
+@pytest.mark.spec("signature-fields", "read", "interpret")
 def test_pyropdf_signatures_verify(pki: Pki, name: str) -> None:
     doc = _document()
     if name == "rsa":

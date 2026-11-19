@@ -69,6 +69,8 @@ def _named(names: str, legacy: str = "", kids: dict[int, str] | None = None) -> 
     )
 
 
+@pytest.mark.spec("destinations", "read", "interpret")
+@pytest.mark.spec("name-dictionary", "interpret")
 def test_named_destinations_resolve_to_display_space() -> None:
     doc = _named(
         "<< /Kids [6 0 R] >>",
@@ -195,6 +197,7 @@ def _links(doc: pyropdf.Document) -> list[list[tuple[pyropdf.Rect, pyropdf.Targe
     return [[(link.rect, link.target) for link in page.links] for page in doc.pages]
 
 
+@pytest.mark.spec("name-trees", "interpret")
 def test_reading_every_page_of_a_large_manual_indexes_it_once() -> None:
     """Link reads reuse one name-tree index and one page index until an edit.
 

@@ -428,6 +428,8 @@ def test_text_and_textbox_space_lines_alike() -> None:
     "name",
     ["Helvetica", "Times-Roman", "Times-Bold", "Courier-Bold", "Courier-BoldOblique"],
 )
+@pytest.mark.spec("simple-font-encodings", "create")
+@pytest.mark.spec("type1-fonts", "interpret", "create")
 def test_standard_14_fonts_draw_under_their_postscript_names(name: StandardFontName) -> None:
     doc = pyropdf.Document()
     page = doc.pages.new()

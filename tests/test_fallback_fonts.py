@@ -225,6 +225,10 @@ def test_the_fixture_holds_the_pages() -> None:
 
 
 @pytest.mark.parametrize("spec", PAGES[:3], ids=lambda spec: f"{spec[2]}-{spec[1]}")
+@pytest.mark.spec("cid-fonts", "interpret")
+@pytest.mark.spec("cmaps", "read", "interpret")
+@pytest.mark.spec("font-descriptors", "interpret")
+@pytest.mark.spec("type0-fonts", "interpret")
 def test_the_installed_japanese_faces_draw_the_page(spec: tuple[str, str, str, str, str]) -> None:
     pytest.importorskip("pylopdf_fonts_jp")
     data = nonembedded_cjk_pdf(spec)

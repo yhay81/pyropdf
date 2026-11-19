@@ -102,6 +102,7 @@ BOOK = [
 # --- writing and reading whole outlines --------------------------------------
 
 
+@pytest.mark.spec("outline", "create", "preserve")
 def test_outline_round_trips_through_saving(three_page_pdf: bytes) -> None:
     doc = pyropdf.open(three_page_pdf)
     assert list(doc.outline) == []
@@ -128,6 +129,7 @@ def test_outline_deep_nesting(three_page_pdf: bytes) -> None:
     assert [item.title for item in reloaded.outline[0].children[0].children] == ["C"]
 
 
+@pytest.mark.spec("outline", "edit")
 def test_assigning_replaces_and_deleting_removes(three_page_pdf: bytes) -> None:
     doc = pyropdf.open(three_page_pdf)
     doc.outline = [OutlineEntry(1, "old", Destination(0)), OutlineEntry(1, "old2", Destination(1))]
@@ -208,6 +210,7 @@ def test_outline_survives_page_ops(three_page_pdf: bytes) -> None:
 
 
 @pytest.mark.parametrize("name", ["usrguide.pdf", "bill-hr815.pdf", "f1040.pdf"])
+@pytest.mark.spec("outline", "read")
 def test_real_world_outline_readable(name: str) -> None:
     doc = pyropdf.open(REAL_WORLD / name)
     entries = doc.outline.entries()
@@ -226,6 +229,12 @@ def test_real_world_outline_readable(name: str) -> None:
 # --- targets ---------------------------------------------------------------------
 
 
+@pytest.mark.spec("destinations", "create")
+@pytest.mark.spec("goto-actions", "create", "preserve")
+@pytest.mark.spec("launch-actions", "read", "create", "preserve")
+@pytest.mark.spec("named-actions", "read", "create", "preserve")
+@pytest.mark.spec("remote-goto-actions", "read", "create", "preserve")
+@pytest.mark.spec("uri-actions", "read", "create")
 def test_every_target_kind_round_trips(three_page_pdf: bytes) -> None:
     doc = pyropdf.open(three_page_pdf)
     targets = [
@@ -247,6 +256,7 @@ def test_every_target_kind_round_trips(three_page_pdf: bytes) -> None:
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.spec("outline", "interpret")
 def test_destination_points_use_display_coordinates(rotation: int) -> None:
     doc = pyropdf.open(build_pdf(["a"]))
     doc.pages[0].rotation = rotation
@@ -255,6 +265,7 @@ def test_destination_points_use_display_coordinates(rotation: int) -> None:
     assert entry.destination == Destination(0, (12.5, 30))
 
 
+@pytest.mark.spec("goto-actions", "read", "interpret")
 def test_destinations_read_from_explicit_arrays_and_names() -> None:
     doc = pyropdf.open(
         _build_outline_fixture(

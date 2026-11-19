@@ -119,6 +119,19 @@ def _ghostscript(data: bytes, tmp_path: Path, name: str) -> bytes:
     return out.read_bytes()
 
 
+@pytest.mark.spec("accessibility", "edit")
+@pytest.mark.spec("axial-shading", "preserve")
+@pytest.mark.spec("calgray-color-space", "edit", "preserve")
+@pytest.mark.spec("content-streams", "interpret")
+@pytest.mark.spec("graphics-state", "edit")
+@pytest.mark.spec("indexed-color-space", "preserve")
+@pytest.mark.spec("lexical-conventions", "edit")
+@pytest.mark.spec("marked-content", "edit")
+@pytest.mark.spec("paths", "edit")
+@pytest.mark.spec("pattern-color-space", "preserve")
+@pytest.mark.spec("shading-patterns", "preserve")
+@pytest.mark.spec("text-objects", "edit")
+@pytest.mark.spec("xobjects", "edit")
 def test_cleaning_normalizes_content_and_prunes_resources() -> None:
     doc = pyropdf.open(build())
     page = doc.pages[0]
@@ -193,6 +206,7 @@ def test_inherited_resources_that_another_page_uses_stay() -> None:
     assert (_render(first), _render(other), other.text()) == before
 
 
+@pytest.mark.spec("form-xobjects", "preserve")
 def test_a_form_without_resources_keeps_the_page_resources() -> None:
     form = _stream("BT /F2 10 Tf 0 0 Td (Form) Tj ET", "/Type /XObject /Subtype /Form /BBox [0 0 100 20] ")
     data = build_raw_pdf(
@@ -232,6 +246,7 @@ TWO_APPEARANCES = (
 )
 
 
+@pytest.mark.spec("appearance-streams", "read", "edit")
 def test_appearance_streams_are_cleaned_with_their_resources() -> None:
     doc = pyropdf.open(build(annots=TWO_APPEARANCES, extra={5: BALANCED, 13: APPEARANCE}))
     page = doc.pages[0]

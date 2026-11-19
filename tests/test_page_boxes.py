@@ -35,6 +35,7 @@ def test_boxes_default_to_the_media_box_and_then_the_crop_box() -> None:
     assert page.bleed_box == page.trim_box == page.art_box == page.crop_box
 
 
+@pytest.mark.spec("page-boundaries", "read")
 def test_boxes_are_inherited_and_clipped_to_the_media_box() -> None:
     page = pyropdf.open(
         boxes_pdf(
@@ -68,6 +69,7 @@ def test_boxes_are_in_rotated_display_space(rotation: int, expected: Rect) -> No
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 @pytest.mark.parametrize("attribute", ["crop_box", "bleed_box", "trim_box", "art_box", "media_box"])
+@pytest.mark.spec("page-boundaries", "edit")
 def test_a_set_box_reads_back(rotation: int, attribute: str) -> None:
     document = pyropdf.open(boxes_pdf(f"/Rotate {rotation}"))
     page = document.pages[0]

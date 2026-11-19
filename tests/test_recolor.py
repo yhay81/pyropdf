@@ -78,6 +78,8 @@ def approx(values: tuple[float, ...]) -> tuple[object, ...]:
 # The color operators of each family.
 
 
+@pytest.mark.spec("device-color-conversion", "edit")
+@pytest.mark.spec("device-color-spaces", "read", "interpret", "edit")
 def test_device_operators_convert_to_gray() -> None:
     doc = pyropdf.open(pages_pdf("1 0 0 rg 0 0 1 RG 0 0 0 1 k 0.5 g 0 0 10 10 re B"))
     report = doc.pages[0].recolor("gray")
@@ -93,6 +95,7 @@ def test_device_operators_convert_to_gray() -> None:
     assert_gray(doc.pages[0])
 
 
+@pytest.mark.spec("device-color-spaces", "create")
 def test_rgb_converts_to_cmyk_with_full_black_generation() -> None:
     doc = pyropdf.open(pages_pdf("0.2 0.4 0.6 rg 0.5 g 0 0 10 10 re f"))
     doc.recolor("cmyk")
@@ -105,6 +108,7 @@ def test_cmyk_converts_to_rgb() -> None:
     assert colors(doc.pages[0].operations) == [("RG", approx((0.5, 0.4, 0.3)))]
 
 
+@pytest.mark.spec("device-color-spaces", "preserve")
 def test_colors_already_in_the_target_stay() -> None:
     data = pages_pdf("0.5 g 0 0 10 10 re f")
     doc = pyropdf.open(data)
@@ -113,6 +117,7 @@ def test_colors_already_in_the_target_stay() -> None:
     assert doc.to_bytes() == pyropdf.open(data).to_bytes()
 
 
+@pytest.mark.spec("calrgb-color-space", "read", "interpret", "edit")
 def test_spaces_by_name_convert_with_their_initial_color() -> None:
     icc = "<< /N 3 /Length 0 >>\nstream\n\nendstream"
     content = "/CS0 cs 1 0 0 sc 0 0 10 10 re f /CS0 CS /CS1 cs 0.5 0.5 0.5 scn /DeviceRGB cs"
@@ -134,6 +139,9 @@ def test_spaces_by_name_convert_with_their_initial_color() -> None:
     ]
 
 
+@pytest.mark.spec("exponential-functions", "read", "interpret")
+@pytest.mark.spec("indexed-color-space", "read", "interpret")
+@pytest.mark.spec("separation-color-space", "read", "interpret", "edit")
 def test_indexed_and_separation_convert_through_their_base() -> None:
     resources = (
         "/ColorSpace << /I0 [/Indexed /DeviceRGB 1 <000000FF0000>] "
@@ -179,6 +187,7 @@ def form(content: str) -> str:
     return FORM.format(length=len(content), content=content)
 
 
+@pytest.mark.spec("form-xobjects", "edit")
 def test_a_form_that_another_page_draws_is_copied() -> None:
     data = pages_pdf("/Fm0 Do", "/Fm0 Do", resources="/XObject << /Fm0 20 0 R >>", extra={20: form("1 0 0 rg")})
     doc = pyropdf.open(data)

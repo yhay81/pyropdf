@@ -21,6 +21,8 @@ def test_each_fixture_is_what_the_generator_writes(name: str) -> None:
 
 
 @pytest.mark.parametrize("name", sorted(FLAVOURS))
+@pytest.mark.spec("icc-based-color-space", "preserve")
+@pytest.mark.spec("output-intents", "interpret")
 def test_each_fixture_claims_its_flavour_and_passes_the_structural_check(name: str) -> None:
     doc = pyropdf.open(PDFA / name)
     flavour = FLAVOURS[name][2].upper()

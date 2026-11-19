@@ -86,6 +86,8 @@ def test_cloudy_circles_and_polygons_draw_bumps() -> None:
     assert {_pixel(pixmap, x, 70) for x in range(70, 90)} == {WHITE}
 
 
+@pytest.mark.spec("annotations", "preserve")
+@pytest.mark.spec("square-circle-annotations", "edit")
 def test_clouds_survive_save_and_edits() -> None:
     page = pyropdf.Document().pages.new((300, 200))
     square = page.annotations.add(Square((20, 20, 140, 100), clouds=1))

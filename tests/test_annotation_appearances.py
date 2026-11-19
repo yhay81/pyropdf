@@ -113,6 +113,7 @@ def test_search_and_highlight() -> None:
     assert any(r < 128 for r, _, _ in _region_pixels(page, hit))
 
 
+@pytest.mark.spec("appearance-streams", "preserve")
 def test_highlight_survives_save_roundtrip() -> None:
     doc = pyropdf.open(build_pdf(["Hello PDF"]))
     hits = doc.pages[0].search("PDF")

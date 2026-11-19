@@ -40,6 +40,9 @@ def _as_pymupdf(font: FontInfo) -> list[list[object]]:
 
 
 @pytest.mark.parametrize("name", sorted(json.loads(ORACLE.read_text(encoding="utf-8"))["fonts"]))
+@pytest.mark.spec("cid-fonts", "read")
+@pytest.mark.spec("font-descriptors", "read")
+@pytest.mark.spec("type0-fonts", "read")
 def test_fonts_of_the_corpus_match_pymupdf(name: str) -> None:
     expected = json.loads(ORACLE.read_text(encoding="utf-8"))["fonts"][name]
     with pyropdf.open(CORPUS / name) as doc:
@@ -62,6 +65,8 @@ def _sfnt_tables(data: bytes) -> dict[bytes, tuple[int, int]]:
 @pytest.mark.parametrize(
     ("name", "page", "subtype"), [("nics-background-checks-2015-11.pdf", 0, "TrueType"), ("mhlw-doc.pdf", 0, "Type0")]
 )
+@pytest.mark.spec("embedded-fonts", "read")
+@pytest.mark.spec("truetype-fonts", "read", "interpret")
 def test_extracted_truetype_programs_parse(name: str, page: int, subtype: str) -> None:
     with pyropdf.open(CORPUS / name) as doc:
         fonts = [font for font in doc.pages[page].fonts() if font.program == "ttf" and font.subtype == subtype]
@@ -75,6 +80,7 @@ def test_extracted_truetype_programs_parse(name: str, page: int, subtype: str) -
             assert doc.font_program(font.xref) == program
 
 
+@pytest.mark.spec("type1-fonts", "read")
 def test_extracted_cff_and_type1_programs() -> None:
     with pyropdf.open(CORPUS / "bill-hr815.pdf") as doc:
         font = doc.pages[0].fonts()[0]
@@ -93,6 +99,7 @@ def test_extracted_cff_and_type1_programs() -> None:
         assert program.data.startswith(b"%!")
 
 
+@pytest.mark.spec("type3-fonts", "read")
 def test_unembedded_type3_and_direct_fonts_have_no_program() -> None:
     with pyropdf.open(CORPUS / "pdfium-type3.pdf") as doc:
         (font,) = doc.pages[0].fonts()

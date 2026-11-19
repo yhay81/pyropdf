@@ -262,6 +262,7 @@ def test_repeating_the_same_settings_changes_nothing() -> None:
 
 
 @pytest.mark.parametrize("entry", [{"Mask": [0, 0, 0, 0, 0, 0]}, {"Decode": [1, 0, 1, 0, 1, 0]}])
+@pytest.mark.spec("image-masks", "edit")
 def test_color_key_masks_become_soft_masks_and_decode_arrays_are_applied(entry: dict[str, object]) -> None:
     doc = jpeg_document([(72, 72)], extra=entry)
     before = doc.pages[0].pixmap(dpi=100)
@@ -532,6 +533,7 @@ def test_a_soft_mask_of_another_size_stays_a_soft_mask_of_its_own_size() -> None
     assert gs_difference(gs_before, ghostscript(doc)) < 4
 
 
+@pytest.mark.spec("image-masks", "preserve")
 def test_a_mask_of_another_size_that_keeps_its_pixels_stays_as_stored() -> None:
     doc = image_document(zlib.compress(gradient(3)), rgb_entries(Filter=Name("FlateDecode")), [(36, 36)])
     mask = soft_mask(doc, side=16)
@@ -689,6 +691,7 @@ def pam(side: int, depth: int, data: bytes) -> bytes:
     return header.encode() + data
 
 
+@pytest.mark.spec("icc-based-color-space", "read", "interpret", "edit")
 def test_an_icc_based_image_keeps_its_profile_and_its_samples() -> None:
     doc = image_document(gradient(3), rgb_entries(), [(36, 36)])
     profile = doc.objects[doc.objects.add_stream(b"not read", {"N": 3, "Alternate": Name("DeviceRGB")})]
@@ -762,6 +765,7 @@ def test_jpeg_2000_without_a_color_space_is_rewritten_in_the_colors_it_paints() 
     assert (stream(doc)["ColorSpace"], stream(doc)["Filter"]) == ("DeviceRGB", "DCTDecode")
 
 
+@pytest.mark.spec("jpx-filter", "interpret", "edit")
 def test_jpeg_2000_with_its_own_alpha_gains_a_soft_mask() -> None:
     alpha = bytes(x * 2 for _ in range(SIDE) for x in range(SIDE))
     color = gradient(3)
@@ -796,6 +800,7 @@ def packed(values: bytes, bits: int) -> bytes:
 
 
 @pytest.mark.parametrize("bits", [2, 4, 8])
+@pytest.mark.spec("indexed-color-space", "edit")
 def test_an_indexed_image_keeps_its_palette_and_its_bits(bits: int) -> None:
     colors = 1 << bits
     palette = bytes(
@@ -842,6 +847,10 @@ SPACES = {
 
 @pytest.mark.parametrize("bits", [2, 4, 16])
 @pytest.mark.parametrize("name", list(SPACES))
+@pytest.mark.spec("calrgb-color-space", "preserve")
+@pytest.mark.spec("devicen-color-space", "preserve")
+@pytest.mark.spec("lab-color-space", "preserve")
+@pytest.mark.spec("separation-color-space", "preserve")
 def test_samples_of_other_depths_and_spaces_keep_their_space(name: str, bits: int) -> None:
     components, space = SPACES[name]
     # A gradient with noise, which Flate does not shrink as it does a gradient.
@@ -907,6 +916,7 @@ def tiff_g4(data: bytes, width: int, height: int) -> Image.Image:
 
 
 @pytest.mark.parametrize("bitonal_format", ["fax", "flate"])
+@pytest.mark.spec("ccitt-fax-filter", "edit")
 def test_bitonal_images_are_written_as_group_4_or_one_bit_flate(bitonal_format: Literal["fax", "flate"]) -> None:
     rows = scan()
     entries: dict[str, object] = {"Width": 256, "Height": 256, "BitsPerComponent": 1, "ColorSpace": Name("DeviceGray")}
@@ -954,6 +964,7 @@ def inline_images(doc: pyropdf.Document) -> list[pyropdf.InlineImage]:
     return [op for op in doc.pages[0].operations if isinstance(op, pyropdf.InlineImage)]
 
 
+@pytest.mark.spec("inline-images", "edit")
 def test_an_inline_image_is_resampled_by_its_placement() -> None:
     samples = gradient(3, 64)
     doc = inline_document("/W 64 /H 64 /CS /RGB /BPC 8 /F /Fl", zlib.compress(samples), "32 0 0 32 10 10")
