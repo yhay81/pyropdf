@@ -33,6 +33,7 @@ without a copy: `numpy.asarray(pixmap)` has the shape
 | --- | --- |
 | `dpi` | Scales the page uniformly; 72, the default, is one pixel per point. |
 | `matrix` | A `Matrix`, such as `Matrix(90)` for a quarter turn, or four or six numbers that scale, rotate, or skew the page; the raster covers the transformed page, so any translation is dropped. |
+| `fit` | A positive `int` or `(width, height)` pair in pixels; scales the page (or `clip` when given) uniformly to fit within that bound, mutually exclusive with `dpi` and `matrix`. |
 | `clip` | A display rectangle `(x0, y0, x1, y1)`; only its pixels are rasterized. |
 | `alpha` | Keeps transparency instead of painting the page on white. |
 | `background` | An RGB or RGBA tuple, 0 to 255, painted beneath the page; it must be opaque without `alpha`. |
@@ -46,11 +47,12 @@ import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     page = doc.pages[0]
+    fitted = page.pixmap(fit=1024)
     top = page.pixmap(dpi=200, clip=(0, 0, page.rect.width, 120))
     gray = page.pixmap(dpi=96, colorspace="gray", annotations=False)
     tinted = page.pixmap(background=(255, 250, 235))
     rotated = page.pixmap(matrix=pyropdf.Matrix(90))
-    print(top.height, gray.channels, tinted.channels, rotated.width)
+    print(fitted.height, top.height, gray.channels, tinted.channels, rotated.width)
 ```
 
 `clip` takes display coordinates, the space of `page.rect` and of the
@@ -101,15 +103,16 @@ with pyropdf.open("input.pdf") as doc:
 
 `doc.render` renders several pages in parallel, on up to `workers` threads
 with the GIL released, and returns encoded images in the order of `pages`.
-It takes the options of `page.pixmap`, and every page renders from the
-version that was current when the call started, even while another thread
-edits:
+It takes the options of `page.pixmap` (other than `clip`): `fit` scales each
+page from its own display size, so mixed page sizes and `/UserUnit` sheets
+fit one pixel bound in a single batch. Every page renders from the version
+that was current when the call started, even while another thread edits:
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
-    images = doc.render(dpi=96, format="png", workers=4)
+    images = doc.render(fit=2048, format="png", workers=4)
     print(len(images), "pages rendered")
     first_only = doc.render([0], dpi=150, format="jpeg", quality=85)
 ```

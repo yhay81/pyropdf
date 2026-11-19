@@ -6,8 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
 use hayro::RenderCache;
+use pyropdf_store::pages::PageIndex;
 
-use super::{Fallback, Options, Raster, RasterError, draw, extent};
+use super::{
+    Fallback, Options, Raster, RasterError, Scale, draw, extent, page_size, scaled_options,
+};
 use crate::bridge::Bridged;
 
 /// The most workers that a batch renders on.
@@ -51,10 +54,49 @@ where
     T: Send,
     E: Send + From<RasterError>,
 {
+    batch_scaled(
+        bridged,
+        None,
+        fallback,
+        indexes,
+        options,
+        Scale::Matrix(options.matrix),
+        workers,
+        finish,
+    )
+}
+
+/// Renders pages `indexes` of `bridged` as [`batch`] does, with `scale`
+/// choosing each page's linear map from its display size in `pages` (or
+/// `bridged` when `pages` is `None`).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "batch options with per-page scale"
+)]
+pub fn batch_scaled<T, E>(
+    bridged: &Bridged,
+    pages: Option<&PageIndex>,
+    fallback: &Fallback,
+    indexes: &[usize],
+    options: &Options,
+    scale: Scale,
+    workers: usize,
+    finish: impl Fn(Raster) -> Result<T, E> + Sync,
+) -> Result<Vec<T>, E>
+where
+    T: Send,
+    E: Send + From<RasterError>,
+{
+    if matches!(scale, Scale::Fit(0, _) | Scale::Fit(_, 0)) {
+        return Err(E::from(RasterError::Geometry(
+            "fit dimensions must be positive".to_owned(),
+        )));
+    }
     let mut most = 0;
     for &index in indexes {
         let (_, display) = bridged.page(index).ok_or(RasterError::NoPage(index))?;
-        let (_, _, width, height) = extent(display, options)?;
+        let resolved = scaled_options(options, scale, page_size(pages, index, display))?;
+        let (_, _, width, height) = extent(display, &resolved)?;
         most = u64::max(most, u64::from(width) * u64::from(height));
     }
     let by_memory = usize::try_from(MAX_LIVE_BYTES / (most * BYTES_PER_PIXEL).max(1))
@@ -80,7 +122,7 @@ where
                 cached = 0;
             }
             cached += 1;
-            match draw(bridged, &cache, fallback, index, options)
+            match draw(bridged, pages, &cache, fallback, index, options, scale)
                 .map_err(E::from)
                 .and_then(&finish)
             {

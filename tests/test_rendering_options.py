@@ -470,3 +470,128 @@ def test_colorspace_is_a_string_enum() -> None:
     assert Colorspace.__module__ == "pyropdf"
     for name in ("csRGB", "csGRAY", "csCMYK", "CS_RGB", "CS_GRAY", "CS_CMYK"):
         assert not hasattr(pyropdf, name)
+
+
+def _user_unit_page(size: tuple[float, float], unit: float, content: str, *, rotate: int = 0) -> pyropdf.Page:
+    width, height = size
+    extra = f"/UserUnit {unit}" + (f" /Rotate {rotate}" if rotate else "")
+    return pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                3: f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] {extra} /Contents 4 0 R >>",
+                4: stream_object(content),
+            }
+        )
+    ).pages[0]
+
+
+@pytest.mark.parametrize("fit", [600, (800, 500), [800, 500]])
+def test_fit_scales_pages_uniformly_as_matrix_does(fit: int | tuple[int, int] | list[int]) -> None:
+    pages = [
+        _sized((595, 842), "0.2 0.5 0.8 rg 30 40 200 300 re f"),
+        _sized((842, 595), "0.8 0.3 0.1 rg 30 40 300 200 re f"),
+        _user_unit_page((842, 1191), 1, "0.1 0.7 0.3 rg 40 40 400 400 re f", rotate=90),
+        _user_unit_page(A1, 4, "0.6 0.1 0.6 rg 100 100 1200 900 re f"),
+        pyropdf.open((REAL_WORLD / "usrguide.pdf").read_bytes()).pages[0],
+    ]
+    max_w, max_h = (fit, fit) if isinstance(fit, int) else (fit[0], fit[1])
+
+    for page in pages:
+        scale = min(max_w / page.rect.width, max_h / page.rect.height)
+        expected = page.pixmap(matrix=Matrix(scale, scale))
+        fitted = page.pixmap(fit=fit)  # ty: ignore[invalid-argument-type]
+
+        assert (fitted.width, fitted.height) == (expected.width, expected.height)
+        assert fitted.width <= max_w
+        assert fitted.height <= max_h
+        assert max_w in (fitted.width, fitted.width + 1) or max_h in (fitted.height, fitted.height + 1)
+        assert fitted.resolution == expected.resolution
+        assert bytes(fitted) == bytes(expected)
+
+
+@pytest.mark.parametrize(
+    ("clip", "fit"),
+    [
+        ((20, 15, 140, 95), 240),
+        ((20, 15, 140, 95), (300, 160)),
+        ((20.3, 15.7, 140.2, 90.9), 250),
+        ((20.3, 15.7, 140.2, 90.9), (300, 200)),
+    ],
+)
+def test_fit_with_clip_scales_the_clip_box_as_matrix_does(
+    clip: tuple[float, float, float, float],
+    fit: int | tuple[int, int],
+) -> None:
+    page = pyropdf.open((REAL_WORLD / "pdfium-type3.pdf").read_bytes()).pages[0]
+    max_w, max_h = (fit, fit) if isinstance(fit, int) else fit
+    scale = min(max_w / (clip[2] - clip[0]), max_h / (clip[3] - clip[1]))
+
+    expected = page.pixmap(matrix=Matrix(scale, scale), clip=clip, alpha=True)
+    fitted = page.pixmap(fit=fit, clip=clip, alpha=True)
+
+    assert (fitted.width, fitted.height) == (expected.width, expected.height)
+    assert fitted.resolution == expected.resolution
+    assert bytes(fitted) == bytes(expected)
+
+
+def test_fit_with_clip_renders_a_large_page_beyond_whole_page_limits() -> None:
+    page = _sized(A1, "2 w 10 1674 m 90 1594 l S")
+    expected = page.pixmap(matrix=Matrix(20, 20), clip=(0, 0, 100, 100))
+    fitted = page.pixmap(fit=2000, clip=(0, 0, 100, 100))
+
+    assert (fitted.width, fitted.height) == (2000, 2000)
+    assert bytes(fitted) == bytes(expected)
+
+
+def test_fit_excludes_dpi_and_matrix_and_validates_bounds() -> None:
+    page = _page()
+
+    with pytest.raises(ValueError, match="pass at most one of dpi, matrix, and fit"):
+        page.pixmap(fit=200, dpi=72)
+    with pytest.raises(ValueError, match="pass at most one of dpi, matrix, and fit"):
+        page.pixmap(fit=200, matrix=Matrix(2, 2))
+    with pytest.raises(ValueError, match="pass at most one of dpi, matrix, and fit"):
+        page.pixmap(fit=(200, 200), dpi=72, matrix=Matrix(2, 2))
+
+    for bad_value in (0, -10, (0, 50), (50, -1), (), (100,), (100, 100, 100)):
+        with pytest.raises(ValueError, match="fit"):
+            page.pixmap(fit=bad_value)  # ty: ignore[invalid-argument-type]
+
+    for bad_type in (True, 1.5, "200", (True, 50), (50, False), (50.0, 50), ("50", 50)):
+        with pytest.raises(TypeError, match="fit"):
+            page.pixmap(fit=bad_type)  # ty: ignore[invalid-argument-type]
+
+
+def test_fit_enforces_clip_page_side_and_raster_dimension_bounds() -> None:
+    # 4096 * (1024 / 8) == 524,288 == PAGE_BOUND; fit=1025 pushes the page past PAGE_BOUND.
+    at_bound = _sized((4096, 1024), "2 w 1 1023 m 7 1017 l S").pixmap(fit=1024, clip=(0, 0, 8, 8))
+    assert (at_bound.width, at_bound.height) == (1024, 1024)
+
+    with pytest.raises(pyropdf.LimitError, match=rf"exceeds the limit of {PAGE_BOUND} pixels") as exc_info:
+        _sized((4096, 1024), "").pixmap(fit=1025, clip=(0, 0, 8, 8))
+    assert exc_info.value.code == "clip_page_side"
+
+    with pytest.raises(pyropdf.LimitError, match=rf"exceeds the limit of {PAGE_BOUND} pixels") as exact_exc:
+        _sized((PAGE_BOUND + 1, 100), "").pixmap(fit=100, clip=(0, 0, 100, 100))
+    assert exact_exc.value.code == "clip_page_side"
+    assert str(PAGE_BOUND + 1) in str(exact_exc.value)
+
+    for tiny in (1e-35, 1e-305, 1e-310):
+        with pytest.raises(pyropdf.LimitError, match=rf"exceeds the limit of {PAGE_BOUND} pixels") as tiny_exc:
+            _page().pixmap(fit=1000, clip=(0, 0, tiny, tiny))
+        assert tiny_exc.value.code == "clip_page_side"
+
+    with pytest.raises(ValueError, match="limit of 65408 pixels wide and 65532 pixels high"):
+        _strip(65409, 1).pixmap(fit=65409)
+    with pytest.raises(ValueError, match="limit of 65408 pixels wide and 65532 pixels high"):
+        _strip(1, 65533).pixmap(fit=65533)
+    with pytest.raises(ValueError, match="exceeds the 64000000-pixel limit"):
+        _sized((100, 100), "").pixmap(fit=8001)
+    with pytest.raises(ValueError, match="limit of 65408 pixels wide and 65532 pixels high"):
+        _page().pixmap(fit=10**20)
+
+    # A huge bound on one axis succeeds when the other axis keeps the raster within limits.
+    bounded = _page().pixmap(fit=(100_000, 500))
+    assert (bounded.width, bounded.height) == (1000, 500)

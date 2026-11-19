@@ -681,6 +681,7 @@ Document.render(
     *,
     dpi: float | None = None,
     matrix: Sequence[float] | None = None,
+    fit: int | tuple[int, int] | None = None,
     alpha: bool = False,
     background: tuple[int, int, int] | tuple[int, int, int, int] | None = None,
     annotations: bool = True,
@@ -696,11 +697,12 @@ Document.render(
 
 Render pages of the current version to encoded images, in the order of `pages`.
 
-`dpi`, `matrix`, `alpha`, `background`, `annotations`,
-`colorspace`, `hinting`, and `glyph_cache` mean what they mean
-to `Page.pixmap`, so the default is opaque RGB at 72 dpi, and
-each image is what `page.pixmap(...).to_bytes(format, quality=quality)`
-returns.
+`dpi`, `matrix`, `fit`, `alpha`, `background`,
+`annotations`, `colorspace`, `hinting`, and `glyph_cache` mean
+what they mean to `Page.pixmap`, so the default is opaque RGB at
+72 dpi, `fit` scales each page individually from its own display
+size, and each image is what
+`page.pixmap(...).to_bytes(format, quality=quality)` returns.
 `format` is `"png"` or `"jpeg"` at `quality`, 1 through 100;
 JPEG has no alpha. `pages` holds page indexes, negative ones from
 the end, and may repeat them; it defaults to every page, and may

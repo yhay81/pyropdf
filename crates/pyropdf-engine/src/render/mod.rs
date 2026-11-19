@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::display::Display;
 use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::LimitCode;
+use pyropdf_store::pages::PageIndex;
 
 use crate::bridge::{Bridged, Error, Result};
 
@@ -22,7 +23,7 @@ mod svg;
 #[cfg(test)]
 mod tests;
 
-pub use batch::{MAX_WORKERS, batch};
+pub use batch::{MAX_WORKERS, batch, batch_scaled};
 pub use fallback::{Fallback, FontFile, Language, Source};
 pub use svg::svg;
 
@@ -104,6 +105,15 @@ pub fn page(bridged: &Bridged, index: usize, scale: f32) -> Result<Rgba> {
 /// convention of PDF: display point `(x, y)` maps to pixel
 /// `(a x + c y, b x + d y)`, so the identity renders at 72 dpi.
 pub type Matrix = (f64, f64, f64, f64);
+
+/// How a render maps display points to pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Scale {
+    /// A fixed linear map `(a, b, c, d)` from display points to pixels.
+    Matrix(Matrix),
+    /// A uniform scale that fits the target box within `(width, height)` pixels.
+    Fit(u32, u32),
+}
 
 /// The most pixels of one raster, as pylopdf bounds it.
 pub const MAX_PIXELS: u64 = 64_000_000;
@@ -299,9 +309,96 @@ pub fn raster(
     index: usize,
     options: &Options,
 ) -> std::result::Result<Raster, RasterError> {
+    raster_scaled(
+        bridged,
+        None,
+        fallback,
+        index,
+        options,
+        Scale::Matrix(options.matrix),
+    )
+}
+
+/// Renders page `index` as [`raster`] does, with `scale` choosing the page's
+/// or clip's linear map from its display size in `pages` (or `bridged` when
+/// `pages` is `None`).
+pub fn raster_scaled(
+    bridged: &Arc<Bridged>,
+    pages: Option<&PageIndex>,
+    fallback: &Fallback,
+    index: usize,
+    options: &Options,
+    scale: Scale,
+) -> std::result::Result<Raster, RasterError> {
+    if matches!(scale, Scale::Fit(0, _) | Scale::Fit(_, 0)) {
+        return Err(RasterError::Geometry(
+            "fit dimensions must be positive".to_owned(),
+        ));
+    }
     with_cache(bridged, fallback, |bridged, cache| {
-        draw(bridged, cache, fallback, index, options)
+        draw(bridged, pages, cache, fallback, index, options, scale)
     })
+}
+
+/// The display width and height of page `index`, in points: the unrounded
+/// size from `pages` when given, as `Page.rect` reports it, or `display`'s.
+fn page_size(pages: Option<&PageIndex>, index: usize, display: Display) -> (f64, f64) {
+    pages
+        .and_then(|p| p.pages().get(index))
+        .map_or_else(|| display.size(), |page| Display::from_page(page).size())
+}
+
+/// Resolves `scale` into the linear matrix of `options` for a page whose
+/// unclipped display size is `page_size`.
+fn scaled_options(
+    options: &Options,
+    scale: Scale,
+    page_size: (f64, f64),
+) -> std::result::Result<Options, RasterError> {
+    match scale {
+        Scale::Matrix(matrix) => Ok(Options { matrix, ..*options }),
+        Scale::Fit(max_width, max_height) => {
+            if max_width == 0 || max_height == 0 {
+                return Err(RasterError::Geometry(
+                    "fit dimensions must be positive".to_owned(),
+                ));
+            }
+            let (width, height) = match options.clip {
+                Some((cx0, cy0, cx1, cy1)) => {
+                    if ![cx0, cy0, cx1, cy1].into_iter().all(f64::is_finite)
+                        || cx0 >= cx1
+                        || cy0 >= cy1
+                    {
+                        return Err(RasterError::Geometry(
+                            "clip must be a finite rectangle with x0 < x1 and y0 < y1".to_owned(),
+                        ));
+                    }
+                    (cx1 - cx0, cy1 - cy0)
+                }
+                None => page_size,
+            };
+            if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+                return Err(RasterError::Geometry(
+                    "scale is too small, or the PDF page size is invalid".to_owned(),
+                ));
+            }
+            let factor = (f64::from(max_width) / width).min(f64::from(max_height) / height);
+            if factor.is_infinite() {
+                if options.clip.is_some() {
+                    return Err(RasterError::ClipPageSide(format!(
+                        "transformed page exceeds the limit of {MAX_PAGE_SIDE} pixels a side for a clip"
+                    )));
+                }
+                return Err(RasterError::Geometry(format!(
+                    "render size exceeds the limit of {MAX_WIDTH} pixels wide and {MAX_HEIGHT} pixels high"
+                )));
+            }
+            Ok(Options {
+                matrix: (factor, 0.0, 0.0, factor),
+                ..*options
+            })
+        }
+    }
 }
 
 /// The smallest rectangle `(x0, y0, x1, y1)` holding `corners`.
@@ -369,6 +466,11 @@ fn page_extent(
         ));
     }
     let (width, height) = display.size();
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return Err(RasterError::Geometry(
+            "scale is too small, or the PDF page size is invalid".to_owned(),
+        ));
+    }
     let linear = Affine::new([a, b, c, d, 0.0, 0.0]);
     let corners = [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)]
         .map(|(x, y)| linear * Point::new(x, y));
@@ -376,11 +478,7 @@ fn page_extent(
     let (x0, y0) = ((x0 - EDGE_TOLERANCE).ceil(), (y0 - EDGE_TOLERANCE).ceil());
     let pixel_width = (x1 + EDGE_TOLERANCE).floor() - x0;
     let pixel_height = (y1 + EDGE_TOLERANCE).floor() - y0;
-    if !pixel_width.is_finite()
-        || !pixel_height.is_finite()
-        || pixel_width < 1.0
-        || pixel_height < 1.0
-    {
+    if pixel_width.is_nan() || pixel_height.is_nan() || pixel_width < 1.0 || pixel_height < 1.0 {
         return Err(RasterError::Geometry(
             "scale is too small, or the PDF page size is invalid".to_owned(),
         ));
@@ -433,28 +531,31 @@ fn extent(
 
 fn draw<'a>(
     bridged: &'a Bridged,
+    pages: Option<&PageIndex>,
     cache: &RenderCache<'a>,
     fallback: &Fallback,
     index: usize,
     options: &Options,
+    scale: Scale,
 ) -> std::result::Result<Raster, RasterError> {
     let (page, display) = bridged.page(index).ok_or(RasterError::NoPage(index))?;
+    let resolved = scaled_options(options, scale, page_size(pages, index, display))?;
     let settings = InterpreterSettings {
-        render_content: if options.annotations {
+        render_content: if resolved.annotations {
             RenderContent::all()
         } else {
             RenderContent::PAGE
         },
         ..fallback.settings()
     };
-    let pixmap = paint(page, display, cache, &settings, options)?;
+    let pixmap = paint(page, display, cache, &settings, &resolved)?;
     Ok(Raster {
         width: pixmap.width(),
         height: pixmap.height(),
-        alpha: options.alpha,
-        gray: options.gray,
-        data: take_samples(pixmap, options.gray, options.alpha),
-        resolution: resolution(options.matrix),
+        alpha: resolved.alpha,
+        gray: resolved.gray,
+        data: take_samples(pixmap, resolved.gray, resolved.alpha),
+        resolution: resolution(resolved.matrix),
     })
 }
 

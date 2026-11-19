@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from test_content import build_raw_pdf
 from test_content_model import page_with, stream_object
 from test_pixmap import png_header
 
@@ -248,3 +249,87 @@ def test_render_refuses_png_encoding_past_the_memory_budget() -> None:
     with pytest.raises(pyropdf.LimitError) as raised:
         doc.render(pages=[0], format="png")
     assert raised.value.code == "memory_size"
+
+
+def _mixed_document() -> pyropdf.Document:
+    """Open a document mixing A4 portrait, rotated A3 drawings, and an A1 /UserUnit 4 sheet."""
+    return pyropdf.open(
+        build_raw_pdf(
+            {
+                1: "<< /Type /Catalog /Pages 2 0 R >>",
+                2: "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R] /Count 4 >>",
+                3: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 7 0 R >>",
+                4: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 1191] /Rotate 90 /Contents 8 0 R >>",
+                5: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 1191 842] /Rotate 90 /Contents 8 0 R >>",
+                6: "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 2384 1684] /UserUnit 4 /Contents 9 0 R >>",
+                7: stream_object("0.1 0.3 0.8 rg 40 60 200 300 re f"),
+                8: stream_object("0.8 0.2 0.1 rg 50 50 400 300 re f"),
+                9: stream_object("0.1 0.6 0.3 rg 100 100 1000 800 re f"),
+            }
+        )
+    )
+
+
+def test_render_fit_scales_mixed_page_sizes_rotation_and_user_unit() -> None:
+    doc = _mixed_document()
+    with pytest.raises(ValueError, match="exceeds the 64000000-pixel limit"):
+        doc.render(dpi=150)
+
+    square = doc.render(fit=1200, workers=4)
+    assert len(square) == 4
+    sizes = [png_header(image)[:2] for image in square]
+    assert sizes == [(847, 1200), (1200, 848), (848, 1200), (1200, 847)]
+    assert square == [page.pixmap(fit=1200).to_bytes() for page in doc.pages]
+    assert square == [
+        page.pixmap(
+            matrix=Matrix(1200 / max(page.rect.width, page.rect.height), 1200 / max(page.rect.width, page.rect.height))
+        ).to_bytes()
+        for page in doc.pages
+    ]
+
+    boxed = doc.render(fit=(800, 600), workers=2)
+    boxed_sizes = [png_header(image)[:2] for image in boxed]
+    assert boxed_sizes == [(423, 600), (800, 565), (424, 600), (800, 565)]
+    for width, height in boxed_sizes:
+        assert width <= 800
+        assert height <= 600
+        assert width == 800 or height == 600
+    assert boxed == [page.pixmap(fit=(800, 600)).to_bytes() for page in doc.pages]
+    assert boxed == [
+        page.pixmap(
+            matrix=Matrix(
+                min(800 / page.rect.width, 600 / page.rect.height), min(800 / page.rect.width, 600 / page.rect.height)
+            )
+        ).to_bytes()
+        for page in doc.pages
+    ]
+
+
+def test_render_fit_matches_page_pixmap_on_fractional_media_box() -> None:
+    doc = _open()
+
+    assert doc.render(fit=700, workers=2) == [page.pixmap(fit=700).to_bytes() for page in doc.pages]
+    order = [2, 0, 1]
+    assert doc.render(order, fit=(500, 700), workers=2) == [
+        doc.pages[index].pixmap(fit=(500, 700)).to_bytes() for index in order
+    ]
+
+
+def test_render_fit_excludes_dpi_and_matrix_and_validates_bounds() -> None:
+    doc = _open()
+
+    for pages in (None, []):
+        with pytest.raises(ValueError, match="pass at most one of dpi, matrix, and fit"):
+            doc.render(pages, fit=500, dpi=72)
+        with pytest.raises(ValueError, match="pass at most one of dpi, matrix, and fit"):
+            doc.render(pages, fit=500, matrix=Matrix(2, 2))
+        with pytest.raises(ValueError, match="pass at most one of dpi, matrix, and fit"):
+            doc.render(pages, fit=500, dpi=72, matrix=Matrix(2, 2))
+
+        for bad_value in (0, -1, (0, 100), (100, -1), (100,)):
+            with pytest.raises(ValueError, match="fit"):
+                doc.render(pages, fit=bad_value)  # ty: ignore[invalid-argument-type]
+
+        for bad_type in (True, 1.5, "100", (True, 100), (100, 1.5)):
+            with pytest.raises(TypeError, match="fit"):
+                doc.render(pages, fit=bad_type)  # ty: ignore[invalid-argument-type]

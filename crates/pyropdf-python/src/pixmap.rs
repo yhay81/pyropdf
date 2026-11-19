@@ -1209,8 +1209,8 @@ pub fn recolor_samples<'py>(
 }
 
 /// Renders the page whose object is `number` and `generation` through the
-/// linear `matrix`, with the GIL released. The Python layer has checked the
-/// options and resolved `background` to straight RGBA.
+/// linear `matrix` or `fit` pixel bound, with the GIL released. The Python
+/// layer has checked the options and resolved `background` to straight RGBA.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the options of Page.pixmap")]
 pub fn render_page(
@@ -1219,6 +1219,7 @@ pub fn render_page(
     number: u32,
     generation: u16,
     matrix: (f64, f64, f64, f64),
+    fit: Option<(u32, u32)>,
     alpha: bool,
     gray: bool,
     background: (u8, u8, u8, u8),
@@ -1240,6 +1241,9 @@ pub fn render_page(
             hinting,
             glyph_cache,
         };
+        let scale = fit.map_or(render::Scale::Matrix(matrix), |(w, h)| {
+            render::Scale::Fit(w, h)
+        });
         let fallback = document.fallback();
         let raster = py.detach(|| -> PyResult<Raster> {
             budget.poll().map_err(|e| limit_error(&e))?;
@@ -1254,7 +1258,9 @@ pub fn render_page(
                 .bridge
                 .get_for_render(&version, &index, &budget, annotations)
                 .map_err(|e| bridge_error(&e))?;
-            let raster = render::raster(&bridged, &fallback, at, &options).map_err(raster_error)?;
+            let raster =
+                render::raster_scaled(&bridged, Some(&index), &fallback, at, &options, scale)
+                    .map_err(raster_error)?;
             budget.poll().map_err(|e| limit_error(&e))?;
             Ok(raster)
         })?;
@@ -1286,10 +1292,10 @@ impl From<RasterError> for Failed {
 
 /// Renders the pages at `pages`, counted from 0 and from the end when
 /// negative, or every page, all of one version, through the linear
-/// `matrix`, and encodes each as `format` at `quality`, on up to `workers`
-/// threads with the GIL released. `max_size` bounds the encoded bytes of
-/// all the pages together. The Python layer has checked the options and
-/// resolved `background` to straight RGBA.
+/// `matrix` or per-page `fit` pixel bound, and encodes each as `format` at
+/// `quality`, on up to `workers` threads with the GIL released. `max_size`
+/// bounds the encoded bytes of all the pages together. The Python layer has
+/// checked the options and resolved `background` to straight RGBA.
 #[pyfunction]
 #[expect(clippy::too_many_arguments, reason = "the options of Document.render")]
 #[expect(
@@ -1301,6 +1307,7 @@ pub fn render_pages(
     document: &_Document,
     pages: Option<Vec<i64>>,
     matrix: (f64, f64, f64, f64),
+    fit: Option<(u32, u32)>,
     alpha: bool,
     gray: bool,
     background: (u8, u8, u8, u8),
@@ -1328,14 +1335,26 @@ pub fn render_pages(
             hinting,
             glyph_cache,
         };
+        let scale = fit.map_or(render::Scale::Matrix(matrix), |(w, h)| {
+            render::Scale::Fit(w, h)
+        });
         let written = AtomicUsize::new(0);
         let fallback = document.fallback();
-        let encoded = py.detach(|| -> PyResult<Vec<Vec<u8>>> {
-            let bridged = document
-                .bridge
-                .get_for_render(&version, &index, &budget, annotations)
-                .map_err(|e| bridge_error(&e))?;
-            render::batch(&bridged, &fallback, &indexes, &options, workers, |raster| {
+        let encoded =
+            py.detach(|| -> PyResult<Vec<Vec<u8>>> {
+                let bridged = document
+                    .bridge
+                    .get_for_render(&version, &index, &budget, annotations)
+                    .map_err(|e| bridge_error(&e))?;
+                render::batch_scaled(
+                &bridged,
+                Some(&index),
+                &fallback,
+                &indexes,
+                &options,
+                scale,
+                workers,
+                |raster| {
                 let mut out = Bounded::new(&written, max_size);
                 let layout = Layout {
                     width: u32::from(raster.width),
@@ -1363,7 +1382,7 @@ pub fn render_pages(
                 Ok(out.into_bytes())
             })
             .map_err(|Failed(error)| error)
-        })?;
+            })?;
         Ok(encoded
             .into_iter()
             .map(|bytes| PyBytes::new(py, &bytes).unbind())
