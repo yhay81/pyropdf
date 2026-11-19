@@ -86,6 +86,22 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("highlighted.pdf", incremental=True)
 ```
 
+## List review comments by page and author
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for number, page in enumerate(doc.pages, start=1):
+        for annotation in page.annotations:
+            if comment := (annotation.contents or "").strip():
+                author = (annotation.author or "").strip() or "Unknown"
+                print(f"Page {number} ({author}): {comment}")
+```
+
+`page.annotations` includes notes, highlights, and other markup, leaving out
+links, form widgets, and popups.
+
 ## Fill a form from a dictionary
 
 ```python
