@@ -55,15 +55,15 @@ module-name = "pyropdf._core"
 dev = [
     # pikepdf reads saved documents through its own parser in the consistency
     # harness.
-    "pikepdf>=10.17.0",
+    "pikepdf>=10.18.2",
     # pyHanko validates the signatures of doc.sign, with keys and
     # certificates from its dependency cryptography (tests/test_signing.py).
     "pyhanko>=0.38.1",
     "pytest>=9.2.0",
-    "ruff>=0.17.3",
+    "ruff>=0.17.5",
     # ty is pre-1.0 and its diagnostics change between releases; uv.lock pins
     # the version that CI runs.
-    "ty>=0.0.96",
+    "ty>=0.0.107",
     # The OCR tests run the models of the `ocr` extra.
     "pylopdf-ocr-models>=0.1.0,<0.2",
     # The fallback font tests render with the faces of the CJK extras.
@@ -75,13 +75,13 @@ dev = [
 # The documentation site (mkdocs.yml, mkdocs.ja.yml), built in
 # .github/workflows/docs.yml.
 docs = [
-    "zensical>=0.1.0,<0.2",
+    "zensical>=0.1.2,<0.2",
 ]
 # Independent readers that tools/oracles.py compares saves with, outside CI.
 # pymupdf 2 depends on onnxruntime, which has no wheel for every Python here.
 oracles = [
     "pymupdf>=1.28,<2",
-    "pypdfium2>=5.14.0",
+    "pypdfium2>=5.15.2",
 ]
 
 [tool.uv]
@@ -142,4 +142,4 @@ ignore = [
 [[tool.ty.overrides]]
 # The readers of the oracles group, which CI does not install.
 include = ["tools/oracles.py"]
-rules = { unresolved-import = "ignore" }
+rules = { import-not-found = "ignore" }

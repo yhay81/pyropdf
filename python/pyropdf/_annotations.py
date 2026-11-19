@@ -1854,7 +1854,7 @@ class FreeText:
         size: float = 11.0,
         text_color: Color = Color(0.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         color: Color | None = None,
-        border: Border = Border(0),  # noqa: B008 - Border is immutable.
+        border: Border = Border(0),
         align: Literal["left", "center", "right"] = "left",
         rotate: int = 0,
         callout: Sequence[Point | Sequence[float]] | None = None,
@@ -2057,7 +2057,7 @@ class Square(_Shape):
         *,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         interior_color: Color | None = None,
-        border: Border = Border(),  # noqa: B008 - Border is immutable.
+        border: Border = Border(),
         clouds: float = 0,
         opacity: float = 1.0,
         blend_mode: BlendMode | None = None,
@@ -2095,7 +2095,7 @@ class Circle(_Shape):
         *,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         interior_color: Color | None = None,
-        border: Border = Border(),  # noqa: B008 - Border is immutable.
+        border: Border = Border(),
         clouds: float = 0,
         opacity: float = 1.0,
         blend_mode: BlendMode | None = None,
@@ -2137,7 +2137,7 @@ class LineAnnotation(_Shape):
         *,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         interior_color: Color | None = None,
-        border: Border = Border(),  # noqa: B008 - Border is immutable.
+        border: Border = Border(),
         line_endings: tuple[LineEnding, LineEnding] = (LineEnding.NONE, LineEnding.NONE),
         opacity: float = 1.0,
         blend_mode: BlendMode | None = None,
@@ -2177,7 +2177,7 @@ class Polygon(_Shape):
         *,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         interior_color: Color | None = None,
-        border: Border = Border(),  # noqa: B008 - Border is immutable.
+        border: Border = Border(),
         clouds: float = 0,
         opacity: float = 1.0,
         blend_mode: BlendMode | None = None,
@@ -2215,7 +2215,7 @@ class PolyLine(_Shape):
         *,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
         interior_color: Color | None = None,
-        border: Border = Border(),  # noqa: B008 - Border is immutable.
+        border: Border = Border(),
         line_endings: tuple[LineEnding, LineEnding] = (LineEnding.NONE, LineEnding.NONE),
         opacity: float = 1.0,
         blend_mode: BlendMode | None = None,
@@ -2250,7 +2250,7 @@ class Ink(_Shape):
         strokes: Iterable[Iterable[Point | Sequence[float]]],
         *,
         color: Color | None = Color(1.0, 0.0, 0.0),  # noqa: B008 - Color is immutable.
-        border: Border = Border(),  # noqa: B008 - Border is immutable.
+        border: Border = Border(),
         opacity: float = 1.0,
         blend_mode: BlendMode | None = None,
         contents: str | None = None,

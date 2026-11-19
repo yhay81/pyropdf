@@ -131,7 +131,7 @@ def test_a_low_memory_limit_refuses_without_a_write_or_undo_step(draw: object) -
         # Leave the operation 16 bytes, as earlier work of the canvas would.
         operation = canvas._active
         operation.charge("memory_size", limit - operation.used("memory_size") - 16)
-        draw(canvas)  # ty: ignore[call-non-callable]
+        draw(canvas)  # ty: ignore[not-callable]
     assert error.value.code == "memory_size"
     assert _state(document) == before
     assert len(document.objects) == count

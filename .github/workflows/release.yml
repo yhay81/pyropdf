@@ -22,7 +22,7 @@ permissions: {}
 env:
   # rust-toolchain.toml pins the same toolchain; tests/test_release.py checks
   # that the pins agree.
-  RUSTUP_TOOLCHAIN: 1.99.1
+  RUSTUP_TOOLCHAIN: 1.100.0
   CARGO_BUILD_JOBS: 2
 
 jobs:
@@ -68,7 +68,7 @@ jobs:
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: "1.99.1"
+          rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
           args: --release --locked --out dist
           manylinux: auto
@@ -126,7 +126,7 @@ jobs:
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
-          rust-toolchain: "1.99.1"
+          rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
           args: --release --locked --out dist -i python${{ matrix.python.version }}
           manylinux: auto
@@ -158,7 +158,7 @@ jobs:
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           command: sdist
-          rust-toolchain: "1.99.1"
+          rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
           args: --out dist
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

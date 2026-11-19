@@ -198,7 +198,7 @@ def test_assigning_refuses_invalid_outlines(
 )
 def test_records_validate_on_construction(make: object, error: type[Exception]) -> None:
     with pytest.raises(error):
-        make()  # ty: ignore[call-non-callable]
+        make()  # ty: ignore[not-callable]
 
 
 def test_outline_survives_page_ops(three_page_pdf: bytes) -> None:
