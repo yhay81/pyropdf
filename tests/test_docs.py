@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from test_text import build_text_pdf
 
+import pyropdf
+
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 LANGUAGES = ("en", "ja")
@@ -54,6 +56,52 @@ def test_the_example_runs(where: str, code: str, tmp_path: Path, monkeypatch: py
     monkeypatch.chdir(tmp_path)
 
     exec(compile(code, where, "exec"), {"__name__": "__main__"})  # noqa: S102 - the site's own examples.
+
+
+def _review_comments_recipes() -> dict[str, str]:
+    recipes: dict[str, str] = {}
+    for language in LANGUAGES:
+        matches = [
+            code
+            for code in EXAMPLE.findall((DOCS / language / "recipes.md").read_text(encoding="utf-8"))
+            if "annotation.author" in code and "annotation.contents" in code
+        ]
+        assert len(matches) == 1, language
+        recipes[language] = matches[0]
+    return recipes
+
+
+def test_review_comments_recipe_lists_page_author_and_comment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    recipes = _review_comments_recipes()
+    assert recipes["en"] == recipes["ja"]
+    code = recipes["en"]
+    assert "page.annotations" in code
+
+    monkeypatch.chdir(tmp_path)
+    with pyropdf.Document() as doc:
+        doc.pages.new((300, 200))
+        second = doc.pages.new((300, 200))
+        note = second.annotations.add(pyropdf.Note((40, 40), contents="Check the total"))
+        note.author = "Ada"
+        doc.save(tmp_path / "input.pdf")
+
+        exec(compile(code, "docs/en/recipes.md", "exec"), {"__name__": "__main__"})  # noqa: S102 - the site's own examples.
+        assert capsys.readouterr().out.splitlines() == ["Page 2 (Ada): Check the total"]
+
+        second.annotations.add(pyropdf.Note((80, 40)))
+        second.annotations.add(pyropdf.Note((120, 40), contents="   "))
+        second.annotations.add(pyropdf.Note((160, 40), contents="Missing date"))
+        doc.save(tmp_path / "input.pdf")
+
+    exec(compile(code, "docs/ja/recipes.md", "exec"), {"__name__": "__main__"})  # noqa: S102 - the site's own examples.
+    assert capsys.readouterr().out.splitlines() == [
+        "Page 2 (Ada): Check the total",
+        "Page 2 (Unknown): Missing date",
+    ]
 
 
 def test_api_reference_examples_are_collected() -> None:

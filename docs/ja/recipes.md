@@ -83,6 +83,22 @@ with pyropdf.open("input.pdf") as doc:
     doc.save("highlighted.pdf", incremental=True)
 ```
 
+## レビューコメントをページと作成者つきで一覧する
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    for number, page in enumerate(doc.pages, start=1):
+        for annotation in page.annotations:
+            if comment := (annotation.contents or "").strip():
+                author = (annotation.author or "").strip() or "Unknown"
+                print(f"Page {number} ({author}): {comment}")
+```
+
+`page.annotations` はメモやハイライトなどの注釈を返し、リンク・フォームウィジェット・
+ポップアップは除きます。
+
 ## 辞書からフォームを入力する
 
 ```python
