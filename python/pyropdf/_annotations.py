@@ -24,10 +24,12 @@ from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
+from pyropdf._profiles import pdfa_claim
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
     from pyropdf._core import Pixmap, _Annotation, _Document
+    from pyropdf._document import Document
     from pyropdf._page import Page
 
 #: The UTF-8 bytes of the texts that one edit writes (``annotation_input_size``).
@@ -334,6 +336,45 @@ def _sound_number(value: object, name: str, *, integer: bool) -> float:
 _DEFAULT_MAX_FILE_SIZE = 64 * 1024 * 1024
 #: The longest date string that a file's ``created`` and ``modified`` take.
 _MAX_DATE_SIZE = 64
+#: PDF versions for file-attachment entries and catalog /Version elevation.
+_DEFAULT_VERSION = (1, 7)
+_EMBEDDED_FILE_VERSION = (1, 3)
+_CATALOG_VERSION_MIN = (1, 4)
+_DESCRIPTION_VERSION = (1, 6)
+_UF_VERSION = (1, 7)
+
+
+def _parse_version(text: str) -> tuple[int, int] | None:
+    major, _, minor = text.partition(".")
+    return (int(major), int(minor)) if major.isdigit() and minor.isdigit() else None
+
+
+def _version(document: Document) -> tuple[int, int]:
+    """Return the document's version: the later of its header and the catalog's ``/Version``."""
+    header = _core.header_version(document._core())  # noqa: SLF001
+    version = (_parse_version(header) if header is not None else None) or _DEFAULT_VERSION
+    declared = document.catalog.get("Version")
+    if isinstance(declared, Name):
+        version = max(version, _parse_version(str(declared)) or version)
+    return version
+
+
+def _auto_version(document: Document, version: tuple[int, int], minimum: tuple[int, int]) -> tuple[int, int]:
+    """Return the version ceiling for optional automatic entries."""
+    claim = pdfa_claim(document)
+    if claim is not None and claim[0] == 1 and minimum <= _CATALOG_VERSION_MIN:
+        return min(version, _CATALOG_VERSION_MIN)
+    return version
+
+
+def _require(document: Document, minimum: tuple[int, int]) -> tuple[int, int]:
+    """Raise the catalog's ``/Version`` to ``minimum`` when the document is older, and return its version."""
+    version = _version(document)
+    if version < minimum:
+        target = max(minimum, _CATALOG_VERSION_MIN)
+        document.catalog["Version"] = Name(f"{target[0]}.{target[1]}")
+        return target
+    return version
 
 
 def _attached_data(data: object, max_size: int | None) -> bytes:
@@ -450,11 +491,15 @@ class AnnotationFile:
             raise
 
     def _edit_params(self, key: str, value: str | None) -> None:
+        document = self._annotation._page._document  # noqa: SLF001
+
         def edit(filespec: Dictionary) -> None:
             stream = _embedded_stream(filespec)
             if stream is None:
                 msg = "the attached file has no embedded file stream"
                 raise PdfError(msg)
+            if value is not None:
+                _require(document, _EMBEDDED_FILE_VERSION)
             if not isinstance(stream.get("Params"), Dictionary):
                 stream["Params"] = {}
             params = stream["Params"]
@@ -477,10 +522,15 @@ class AnnotationFile:
         if not filename:
             msg = "a file name cannot be empty"
             raise ValueError(msg)
+        document = self._annotation._page._document  # noqa: SLF001
 
         def edit(filespec: Dictionary) -> None:
+            version = _auto_version(document, _version(document), _EMBEDDED_FILE_VERSION)
             filespec["F"] = filename
-            filespec["UF"] = filename
+            if version >= _UF_VERSION:
+                filespec["UF"] = filename
+            elif "UF" in filespec:
+                del filespec["UF"]
 
         self._edit("annotation file edit", edit)
 
@@ -492,8 +542,10 @@ class AnnotationFile:
     @description.setter
     def description(self, description: str) -> None:
         description = _file_text(description, "description")
+        document = self._annotation._page._document  # noqa: SLF001
 
         def edit(filespec: Dictionary) -> None:
+            _require(document, _DESCRIPTION_VERSION)
             filespec["Desc"] = description
 
         self._edit("annotation file edit", edit)
@@ -580,11 +632,12 @@ class AnnotationFile:
         document = self._annotation._page._document  # noqa: SLF001
 
         def edit(filespec: Dictionary) -> None:
+            version = _auto_version(document, _require(document, _EMBEDDED_FILE_VERSION), _EMBEDDED_FILE_VERSION)
             stream = _embedded_stream(filespec)
             if stream is None:
                 objects = document.objects
                 stream = objects[objects.add_stream(payload, {"Type": Name("EmbeddedFile")})]
-                filespec["EF"] = {"F": stream, "UF": stream}
+                filespec["EF"] = {"F": stream, "UF": stream} if version >= _UF_VERSION else {"F": stream}
             else:
                 stream.write(payload)
             if not isinstance(stream.get("Params"), Dictionary):

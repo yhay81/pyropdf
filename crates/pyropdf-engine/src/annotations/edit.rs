@@ -19,12 +19,16 @@ use crate::standard::DA_FONTS;
 
 use super::geometry::{
     ADDED_SUBTYPES, CalloutPoints, FILE_ICONS, NOTE_ICONS, RECT_SUBTYPES, Rect, STAMP_ICONS,
-    border_style, cloud_effect, line_endings_value, point_entry, rgb,
+    cloud_effect, line_endings_value, point_entry, rgb, write_border,
 };
 use super::read::PageAnnots;
+use super::version::{
+    DEFAULT_VERSION, PdfVersion, automatic_version, ca_version, effective_version, flags_version,
+    m_version, require_version, subtype_version,
+};
 use super::{
     AnnotationError, AnnotationResult as Result, BLEND_MODES, LINE_ENDINGS, MAX_QUADS, PointLists,
-    TextFit, appearance, ending_size, face_appearance, fmt, has_points, is_text_markup,
+    TextFit, appearance, draws, ending_size, face_appearance, fmt, has_points, is_text_markup,
     zigzag_points,
 };
 
@@ -118,12 +122,70 @@ pub struct AnnotationPatch {
 }
 
 impl AnnotationPatch {
+    /// Returns the minimum PDF version required by the caller-requested entries
+    /// in this patch on an annotation of `subtype`.
+    #[must_use]
+    pub fn minimum_version(&self, subtype: &str) -> PdfVersion {
+        let sub = subtype.as_bytes();
+        let base = subtype_version(sub);
+        let mut minimum = PdfVersion(1, 0);
+        if self.contents.is_some()
+            || self.icon.is_some()
+            || self.points.is_some()
+            || self.rotate.is_some()
+            || self.rect.is_some()
+        {
+            minimum = minimum.max(base);
+        }
+        if self.author.is_some() || self.color.is_some() {
+            minimum = minimum.max(base.max(PdfVersion(1, 1)));
+        }
+        if self.name.is_some() || self.interior_color.is_some() || self.line_endings.is_some() {
+            minimum = minimum.max(base.max(PdfVersion(1, 4)));
+        }
+        if self.subject.is_some() || self.clouds.is_some() {
+            minimum = minimum.max(base.max(PdfVersion(1, 5)));
+        }
+        if self.language.is_some() || self.blend_mode.is_some() {
+            minimum = minimum.max(PdfVersion(2, 0));
+        }
+        if self.opacity.is_some_and(|opacity| opacity < 1.0) {
+            minimum = minimum.max(ca_version(sub));
+        }
+        if let Some(flags) = self.flags {
+            minimum = minimum.max(base.max(flags_version(flags)));
+        }
+        if let Some((_, style, dashes)) = &self.border {
+            let needed = if subtype == "FreeText" && matches!(style.as_str(), "B" | "I" | "U") {
+                PdfVersion(1, 7)
+            } else if !dashes.is_empty() {
+                base.max(PdfVersion(1, 1))
+            } else {
+                base
+            };
+            minimum = minimum.max(needed);
+        }
+        minimum
+    }
+
     /// Applies this patch to `dict`, an annotation of `subtype` on `annots`.
+    pub fn apply(&self, annots: &PageAnnots<'_>, dict: &mut Dict, subtype: &str) -> Result<()> {
+        self.apply_for_version(annots, dict, subtype, DEFAULT_VERSION, DEFAULT_VERSION)
+    }
+
+    /// Applies this patch to `dict` under `effective` and `auto_version`.
     #[expect(
         clippy::disallowed_methods,
         reason = "only fixed text keys and one geometry key are inserted; their text and point data are charged first"
     )]
-    pub fn apply(&self, annots: &PageAnnots<'_>, dict: &mut Dict, subtype: &str) -> Result<()> {
+    pub fn apply_for_version(
+        &self,
+        annots: &PageAnnots<'_>,
+        dict: &mut Dict,
+        subtype: &str,
+        effective: PdfVersion,
+        auto_version: PdfVersion,
+    ) -> Result<()> {
         let texts = [
             (&self.contents, "Contents"),
             (&self.author, "T"),
@@ -212,11 +274,7 @@ impl AnnotationPatch {
             dict.insert(Name::from("F"), Value::Integer(flags));
         }
         if let Some(border) = &self.border {
-            dict.remove("Border");
-            dict.insert(
-                Name::from("BS"),
-                border_style(border, annots.unit, annots.budget)?,
-            );
+            write_border(dict, subtype, border, annots.unit, effective, annots.budget)?;
         }
         if let Some(intensity) = self.clouds {
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
@@ -276,10 +334,12 @@ impl AnnotationPatch {
                     "an annotation date is a PDF date string".to_owned(),
                 ));
             }
-            dict.insert(
-                Name::from("M"),
-                Value::String(PdfString::literal(modified.as_bytes())),
-            );
+            if auto_version >= m_version(subtype.as_bytes()) {
+                dict.insert(
+                    Name::from("M"),
+                    Value::String(PdfString::literal(modified.as_bytes())),
+                );
+            }
         }
         Ok(())
     }
@@ -345,13 +405,72 @@ pub struct AnnotationSpec<'a> {
 }
 
 impl AnnotationSpec<'_> {
+    /// Returns the minimum PDF version required by this specification's
+    /// subtype and caller-requested options.
+    #[must_use]
+    pub fn minimum_version(&self) -> PdfVersion {
+        let subtype = self.subtype.as_str();
+        let sub = subtype.as_bytes();
+        let mut minimum = match subtype {
+            "Text" => PdfVersion(1, 3),
+            "Highlight" => PdfVersion(1, 4),
+            _ => subtype_version(sub),
+        };
+        if self.interior_color.is_some() {
+            minimum = minimum.max(PdfVersion(1, 4));
+        }
+        if self.opacity.is_some_and(|opacity| opacity < 1.0) {
+            minimum = minimum.max(ca_version(sub));
+        }
+        if self.blend_mode.is_some() {
+            minimum = minimum.max(PdfVersion(2, 0));
+        }
+        if self.clouds.is_some() {
+            minimum = minimum.max(PdfVersion(1, 5));
+        }
+        if self
+            .line_endings
+            .as_ref()
+            .is_some_and(|(start, end)| start != "None" || end != "None")
+        {
+            minimum = minimum.max(PdfVersion(1, 4));
+        }
+        if self.border.as_ref().is_some_and(|(_, style, _)| {
+            subtype == "FreeText" && matches!(style.as_str(), "B" | "I" | "U")
+        }) {
+            minimum = minimum.max(PdfVersion(1, 7));
+        }
+        if subtype == "FreeText" {
+            if self.align.unwrap_or(0) != 0 {
+                minimum = minimum.max(PdfVersion(1, 4));
+            }
+            if self.callout.is_some() {
+                minimum = minimum.max(PdfVersion(1, 7));
+            }
+        }
+        if subtype == "FileAttachment" && self.description.is_some() {
+            minimum = minimum.max(PdfVersion(1, 6));
+        }
+        minimum
+    }
+
     /// Builds and validates the annotation dictionary (excluding `/P` and
     /// embedded file streams).
+    pub fn dictionary(&self, annots: &PageAnnots<'_>) -> Result<Dict> {
+        self.dictionary_for_version(annots, DEFAULT_VERSION)
+    }
+
+    /// Builds and validates the annotation dictionary under `auto_version` for
+    /// optional version-gated entries.
     #[expect(
         clippy::disallowed_methods,
         reason = "inserts only fixed PDF keys after charging all input-derived text and geometry"
     )]
-    pub fn dictionary(&self, annots: &PageAnnots<'_>) -> Result<Dict> {
+    pub fn dictionary_for_version(
+        &self,
+        annots: &PageAnnots<'_>,
+        auto_version: PdfVersion,
+    ) -> Result<Dict> {
         let subtype = self.subtype.as_str();
         let created = self.created.as_deref().unwrap_or_default();
         let size = [
@@ -479,7 +598,10 @@ impl AnnotationSpec<'_> {
                         "a {subtype} annotation has no line endings"
                     )));
                 }
-                dict.insert(Name::from("LE"), line_endings_value(endings)?);
+                let value = line_endings_value(endings)?;
+                if endings.0 != "None" || endings.1 != "None" || auto_version >= PdfVersion(1, 4) {
+                    dict.insert(Name::from("LE"), value);
+                }
             }
         } else {
             let Some(area) = self.rect.filter(|_| self.points.is_none()) else {
@@ -503,10 +625,14 @@ impl AnnotationSpec<'_> {
             dict.insert(Name::from("IC"), rgb(color, "interior color")?);
         }
         if let Some(border) = &self.border {
-            dict.insert(
-                Name::from("BS"),
-                border_style(border, annots.unit, annots.budget)?,
-            );
+            write_border(
+                &mut dict,
+                subtype,
+                border,
+                annots.unit,
+                auto_version,
+                annots.budget,
+            )?;
         }
         if let Some(intensity) = self.clouds {
             dict.insert(Name::from("BE"), cloud_effect(subtype, intensity)?);
@@ -592,7 +718,7 @@ impl AnnotationSpec<'_> {
             dict.insert(Name::from("Rotate"), Value::Integer(user_turn));
         }
         if subtype == "FreeText" {
-            self.free_text_entries(annots, &mut dict)?;
+            self.free_text_entries(annots, &mut dict, auto_version)?;
         }
         if let Some(created) = &self.created {
             if !created.starts_with("D:") || !created.is_ascii() || created.len() > 64 {
@@ -601,8 +727,12 @@ impl AnnotationSpec<'_> {
                 ));
             }
             let date = Value::String(PdfString::literal(created.as_bytes()));
-            dict.insert(Name::from("CreationDate"), date.clone());
-            dict.insert(Name::from("M"), date);
+            if auto_version >= PdfVersion(1, 5) {
+                dict.insert(Name::from("CreationDate"), date.clone());
+            }
+            if auto_version >= m_version(subtype.as_bytes()) {
+                dict.insert(Name::from("M"), date);
+            }
         }
         Ok(dict)
     }
@@ -611,7 +741,12 @@ impl AnnotationSpec<'_> {
         clippy::disallowed_methods,
         reason = "inserts only fixed free-text and callout keys; callout coordinates go through BudgetVec"
     )]
-    fn free_text_entries(&self, annots: &PageAnnots<'_>, dict: &mut Dict) -> Result<()> {
+    fn free_text_entries(
+        &self,
+        annots: &PageAnnots<'_>,
+        dict: &mut Dict,
+        auto_version: PdfVersion,
+    ) -> Result<()> {
         let color = self.text_color.unwrap_or((0.0, 0.0, 0.0));
         rgb(color, "text color")?;
         let size = self.font_size.unwrap_or(11.0);
@@ -649,7 +784,9 @@ impl AnnotationSpec<'_> {
                 "free text aligns left (0), centre (1), or right (2)".to_owned(),
             ));
         }
-        dict.insert(Name::from("Q"), Value::Integer(align));
+        if align != 0 || auto_version >= PdfVersion(1, 4) {
+            dict.insert(Name::from("Q"), Value::Integer(align));
+        }
         let Some(points) = &self.callout else {
             if self.callout_ending.is_some() {
                 return Err(AnnotationError::Pdf(
@@ -774,14 +911,26 @@ impl AnnotationSpec<'_> {
 
     /// Writes the compressed embedded file stream and `/Filespec` dictionary
     /// for a `FileAttachment` annotation.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "inserts only fixed embedded-file and filespec dictionary keys"
-    )]
     pub fn embed(
         &self,
         transaction: &mut Transaction,
         dict: &mut Dict,
+        budget: &Budget,
+    ) -> Result<()> {
+        self.embed_for_version(transaction, dict, DEFAULT_VERSION, budget)
+    }
+
+    /// Writes the compressed embedded file stream and `/Filespec` dictionary
+    /// for a `FileAttachment` annotation under `auto_version`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "inserts only fixed embedded-file and filespec dictionary keys"
+    )]
+    pub fn embed_for_version(
+        &self,
+        transaction: &mut Transaction,
+        dict: &mut Dict,
+        auto_version: PdfVersion,
         budget: &Budget,
     ) -> Result<()> {
         let (Some(data), Some(filename)) = (self.data, &self.filename) else {
@@ -808,11 +957,15 @@ impl AnnotationSpec<'_> {
         transaction.write(file.number(), &Value::Stream(Box::new(stream)), budget)?;
         let mut files = Dict::new();
         files.insert(Name::from("F"), Value::Reference(file));
-        files.insert(Name::from("UF"), Value::Reference(file));
+        if auto_version >= PdfVersion(1, 7) {
+            files.insert(Name::from("UF"), Value::Reference(file));
+        }
         let mut filespec = Dict::new();
         filespec.insert(Name::from("Type"), Value::Name(Name::from("Filespec")));
         filespec.insert(Name::from("F"), encode_text(filename));
-        filespec.insert(Name::from("UF"), encode_text(filename));
+        if auto_version >= PdfVersion(1, 7) {
+            filespec.insert(Name::from("UF"), encode_text(filename));
+        }
         if let Some(description) = &self.description {
             filespec.insert(Name::from("Desc"), encode_text(description));
         }
@@ -843,18 +996,24 @@ impl PageAnnots<'_> {
                 "the page's /Annots is not an array".to_owned(),
             ));
         }
-        let mut dict = spec.dictionary(self)?;
+        let minimum = spec.minimum_version();
+        let current = effective_version(transaction.version(), budget)?;
+        let auto_version = automatic_version(transaction.version(), current, minimum, budget)?;
+        let mut dict = spec.dictionary_for_version(self, auto_version)?;
         if !face {
             check_text(self, &dict)?;
         }
-        if let Some(page) = self.page().object() {
+        let effective = require_version(transaction, minimum, budget)?;
+        if effective >= PdfVersion(1, 3)
+            && let Some(page) = self.page().object()
+        {
             #[expect(
                 clippy::disallowed_methods,
                 reason = "this call inserts only the fixed /P key"
             )]
             dict.insert(Name::from("P"), Value::Reference(page));
         }
-        spec.embed(transaction, &mut dict, budget)?;
+        spec.embed_for_version(transaction, &mut dict, auto_version, budget)?;
         let reference = transaction.allocate()?;
         transaction.write(reference.number(), &Value::Dict(dict), budget)?;
         let mut items = BudgetVec::new(budget);
@@ -880,11 +1039,25 @@ impl PageAnnots<'_> {
         face: bool,
     ) -> Result<(u32, u16)> {
         let (position, mut dict) = self.find(index, id)?;
-        let subtype = self.name(&dict, "Subtype")?.unwrap_or_default();
-        patch.apply(self, &mut dict, &String::from_utf8_lossy(&subtype))?;
+        let subtype_bytes = self.name(&dict, "Subtype")?.unwrap_or_default();
+        let subtype = String::from_utf8_lossy(&subtype_bytes);
+        let mut minimum = patch.minimum_version(&subtype);
+        let current = effective_version(transaction.version(), self.budget)?;
+        let auto_version = automatic_version(transaction.version(), current, minimum, self.budget)?;
+        patch.apply_for_version(self, &mut dict, &subtype, auto_version, auto_version)?;
         if !face {
             check_text(self, &dict)?;
+            if draws(&subtype_bytes) {
+                minimum = minimum.max(PdfVersion(1, 2));
+                if &*subtype_bytes == b"Highlight"
+                    || dict.get("CA").is_some()
+                    || dict.get("BM").is_some()
+                {
+                    minimum = minimum.max(PdfVersion(1, 4));
+                }
+            }
         }
+        require_version(transaction, minimum, self.budget)?;
         self.write(transaction, position, !face, dict, |_, _, _, _, _| {
             Ok(false)
         })
