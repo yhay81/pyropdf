@@ -1045,7 +1045,7 @@ def _type0(document: Document, face: Font) -> int:
         cid_font["CIDToGIDMap"] = Name("Identity")
     descendant = objects.add(cid_font)
     to_unicode = objects.add_stream(_CMAP_HEAD + _CMAP_TAIL)
-    return objects.add(
+    xref = objects.add(
         {
             "Type": Name("Font"),
             "Subtype": Name("Type0"),
@@ -1055,6 +1055,8 @@ def _type0(document: Document, face: Font) -> int:
             "ToUnicode": objects[to_unicode],
         }
     )
+    _core.mark_font_subset(document._core(), xref)  # noqa: SLF001 - the package's own core.
+    return xref
 
 
 def _type0_parts(document: Document, xref: int) -> tuple[Dictionary, Stream] | None:

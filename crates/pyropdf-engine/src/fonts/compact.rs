@@ -9,12 +9,13 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
+use skrifa::instance::{LocationRef, Size};
 use skrifa::raw::TableProvider;
 use skrifa::raw::ps::Transform;
 use skrifa::raw::ps::cff::{CffFontRef, Subfont};
 use skrifa::raw::ps::charstring::{CommandSink, TransformSink};
 use skrifa::raw::types::{Fixed, Tag};
-use skrifa::{FontRef, GlyphId};
+use skrifa::{FontRef, GlyphId, MetadataProvider};
 
 use super::{cff, sfnt};
 
@@ -60,6 +61,7 @@ pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
     let count = u32::from(font.maxp().ok()?.num_glyphs());
     let units_per_em = font.head().ok()?.units_per_em();
     let scale = 1000.0 / f64::from(units_per_em.max(1));
+    let metrics = font.glyph_metrics(Size::unscaled(), LocationRef::default());
     let source = CffFontRef::new_cff(table, 0, Some(i32::from(units_per_em))).ok()?;
     #[expect(
         clippy::disallowed_methods,
@@ -128,12 +130,15 @@ pub fn compact(program: &[u8], keep: &[u32], name: &str) -> Option<Compact> {
             reason = "within the capacity reserved above"
         )]
         fds.push(fd);
-        // A glyph that does not draw is empty.
+        let width = glyph_width(metrics.advance_width(glyph), scale)?;
+        // A glyph that does not draw is empty, keeping its advance width.
         let charstring = match subfont {
             Some((subfont, transform)) => {
-                charstring(&source, &subfont, glyph, transform, scale, room)?
+                charstring(&source, &subfont, glyph, width, transform, scale, room)?
             }
-            None => vec![ENDCHAR],
+            None => Charstring::new(1.0, false, room)
+                .with_width(width)
+                .finish_glyph()?,
         };
         room = room.checked_sub(charstring.len())?;
         #[expect(
@@ -165,20 +170,37 @@ fn hint_scale(transform: &Transform, scale: f64) -> Option<f64> {
     (scale.is_finite() && scale > 0.0).then_some(scale)
 }
 
-/// Returns the charstring of `glyph` for the result; `None` when a value is
-/// out of the range of a charstring's numbers, or when the charstring would
-/// pass `room` bytes.
+/// Returns `advance` scaled by `scale` to 16.16 fixed-point units; `None`
+/// when it falls outside the range of a Type 2 charstring number.
+fn glyph_width(advance: Option<f32>, scale: f64) -> Option<i64> {
+    let scaled = (f64::from(advance.unwrap_or(0.0)) * scale * 65536.0).round();
+    if scaled.is_finite() && scaled.abs() < 2_147_483_648.0 {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the value is finite and inside i32's range"
+        )]
+        let fixed = scaled as i64;
+        Some(fixed)
+    } else {
+        None
+    }
+}
+
+/// Returns the charstring of `glyph` for the result, with advance `width` in
+/// 1/65536 units; `None` when a value is out of the range of a charstring's
+/// numbers, or when the charstring would pass `room` bytes.
 fn charstring(
     source: &CffFontRef<'_>,
     subfont: &Subfont,
     glyph: GlyphId,
+    width: i64,
     transform: Transform,
     scale: f64,
     room: usize,
 ) -> Option<Vec<u8>> {
     let hinted = hint_scale(&transform, scale);
     let scale = hinted.unwrap_or(scale);
-    let mut pen = Charstring::new(scale, hinted.is_some(), room);
+    let mut pen = Charstring::new(scale, hinted.is_some(), room).with_width(width);
     // Stems describe the charstring's own units, so the outline stays in
     // them too, unless a font matrix has to draw it.
     let mut drawn = if hinted.is_some() {
@@ -190,7 +212,7 @@ fn charstring(
     // A viewer hints each component of a `seac` by its own stems, and a
     // charstring without the `seac` holds one set, so its outline goes alone.
     if pen.seac {
-        pen = Charstring::new(scale, false, room);
+        pen = Charstring::new(scale, false, room).with_width(width);
         drawn = source.evaluate_charstring(subfont, glyph, &[], &mut pen);
     }
     if pen.overflow {
@@ -199,7 +221,9 @@ fn charstring(
     if drawn.is_ok() {
         pen.finish_glyph()
     } else {
-        Some(vec![ENDCHAR])
+        Charstring::new(scale, false, room)
+            .with_width(width)
+            .finish_glyph()
     }
 }
 
@@ -228,6 +252,11 @@ struct Charstring {
     /// The most bytes that `data` takes.
     limit: usize,
     scale: f64,
+    /// Non-zero advance width in 1/65536 units waiting for the first operator;
+    /// zero is omitted because `defaultWidthX` is zero.
+    width: Option<i64>,
+    /// Whether the pending stem operator carries the width operand on stack.
+    width_on_stack: bool,
     /// The current point, in 1/65536 units.
     at: (i64, i64),
     /// Whether a value left the range of a charstring's numbers, or the
@@ -254,6 +283,8 @@ impl Charstring {
             data: Vec::new(),
             limit,
             scale,
+            width: None,
+            width_on_stack: false,
             at: (0, 0),
             overflow: false,
             hints,
@@ -263,6 +294,20 @@ impl Charstring {
             stem_at: 0,
             stem_operators: Vec::new(),
             masked: false,
+        }
+    }
+
+    fn with_width(mut self, width: i64) -> Self {
+        self.width = (width != 0).then_some(width);
+        self
+    }
+
+    fn emit_width(&mut self) -> bool {
+        if let Some(width) = self.width.take() {
+            self.number(width);
+            true
+        } else {
+            false
         }
     }
 
@@ -331,6 +376,11 @@ impl Charstring {
 
     fn points(&mut self, points: &[(Fixed, Fixed)], op: u8) {
         self.end_stems();
+        if self.emit_width() && op != RMOVETO {
+            self.number(0);
+            self.number(0);
+            self.put(&[RMOVETO]);
+        }
         for &(x, y) in points {
             let (x, y) = (self.fixed(x), self.fixed(y));
             let (dx, dy) = (x.saturating_sub(self.at.0), y.saturating_sub(self.at.1));
@@ -345,8 +395,12 @@ impl Charstring {
         if !self.hints {
             return;
         }
-        if vertical != self.vertical || self.stems == MAX_STEMS {
+        let max_stems = MAX_STEMS - usize::from(self.width_on_stack);
+        if vertical != self.vertical || self.stems == max_stems {
             self.end_stems();
+        }
+        if self.stems == 0 {
+            self.width_on_stack = self.emit_width();
         }
         self.vertical = vertical;
         // The width of a ghost is a mark, which no scale changes; the edge
@@ -383,6 +437,7 @@ impl Charstring {
             }
             self.stems = 0;
             self.stem_at = 0;
+            self.width_on_stack = false;
         }
     }
 
@@ -391,11 +446,13 @@ impl Charstring {
             return;
         }
         // Vertical stems right before a mask need no operator of their own.
-        if self.vertical {
+        if self.vertical && self.stems > 0 {
             self.stems = 0;
             self.stem_at = 0;
+            self.width_on_stack = false;
         } else {
             self.end_stems();
+            self.emit_width();
         }
         self.masked = true;
         self.put(&[op]);
@@ -405,6 +462,7 @@ impl Charstring {
     /// Returns the charstring, ended; `None` when it overflowed.
     fn finish_glyph(mut self) -> Option<Vec<u8>> {
         self.end_stems();
+        self.emit_width();
         self.put(&[ENDCHAR]);
         if self.overflow {
             return None;

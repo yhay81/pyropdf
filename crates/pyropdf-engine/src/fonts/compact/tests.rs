@@ -58,8 +58,8 @@ fn metrics(font: &FontRef<'_>, glyph: u32) -> (Option<f32>, Vec<(f32, f32)>) {
     (metrics.advance_width(glyph), points.0)
 }
 
-/// An OpenType wrapper of the bare CFF `cff` with `glyphs` glyphs, so that
-/// skrifa draws it; the advances are zero, since the PDF's `W` gives them.
+/// An OpenType wrapper of the bare CFF `cff` with `glyphs` glyphs and zero
+/// `hmtx` advances, so that `skrifa` draws its outlines without adding widths.
 fn wrap(cff: &[u8], glyphs: usize, like: &FontRef<'_>) -> Vec<u8> {
     let table = |tag: &[u8; 4]| like.table_data(Tag::new(tag)).unwrap().as_bytes().to_vec();
     let count = u16::try_from(glyphs).unwrap().to_be_bytes();
@@ -657,6 +657,172 @@ fn charstrings_that_outgrow_the_program_leave_it_whole() {
     assert_eq!(compact(&program, &seacs, "Subset"), None);
     let one = compact(&program, &[127], "Subset").unwrap();
     assert!(one.data.len() < program.len());
+}
+
+/// Parses the leading width operand of a subroutine-free Type 2 charstring
+/// (Adobe TN 5177, section 4.2), returning `None` when the charstring leaves
+/// `defaultWidthX` in effect.
+fn charstring_width(data: &[u8]) -> Option<f64> {
+    let mut stack = Vec::new();
+    let mut at = 0;
+    while let Some(&b0) = data.get(at) {
+        match b0 {
+            // hstem, vstem, hstemhm, hintmask, cntrmask, vstemhm: an odd
+            // operand count means the first stack entry is the width.
+            1 | 3 | 18 | 19 | 20 | 23 => {
+                assert!(
+                    stack.len() <= 48,
+                    "Type 2 operand stack exceeded 48 items: {}",
+                    stack.len()
+                );
+                return (stack.len() % 2 == 1).then(|| stack[0]);
+            }
+            // vmoveto, hmoveto: 2 operands when width is present.
+            4 | 22 => return (stack.len() > 1).then(|| stack[0]),
+            // rmoveto: 3 operands when width is present.
+            21 => return (stack.len() > 2).then(|| stack[0]),
+            // endchar: 1 operand when width is present (4 was seac).
+            14 => return (!stack.is_empty() && stack.len() != 4).then(|| stack[0]),
+            28 => {
+                let value = i16::from_be_bytes([data[at + 1], data[at + 2]]);
+                stack.push(f64::from(value));
+                at += 3;
+            }
+            32..=246 => {
+                stack.push(f64::from(i32::from(b0) - 139));
+                at += 1;
+            }
+            247..=250 => {
+                let value = (i32::from(b0) - 247) * 256 + i32::from(data[at + 1]) + 108;
+                stack.push(f64::from(value));
+                at += 2;
+            }
+            251..=254 => {
+                let value = -(i32::from(b0) - 251) * 256 - i32::from(data[at + 1]) - 108;
+                stack.push(f64::from(value));
+                at += 2;
+            }
+            255 => {
+                let fixed =
+                    i32::from_be_bytes([data[at + 1], data[at + 2], data[at + 3], data[at + 4]]);
+                stack.push(f64::from(fixed) / 65536.0);
+                at += 5;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Returns the Top DICT bytes and the CharStrings INDEX of a bare CFF.
+fn cff_top_and_charstrings(data: &[u8]) -> (&[u8], Index<'_>) {
+    let header_len = usize::from(data[2]);
+    let names = Index::new(&data[header_len..], false).unwrap();
+    let tops_at = header_len + names.size_in_bytes().unwrap();
+    let tops = Index::new(&data[tops_at..], false).unwrap();
+    let top = tops.get(0).unwrap();
+    // Our `cid_keyed` Top DICT ends with `CHARSTRINGS` (op 17) then `FD_ARRAY` (12 36).
+    let cs_at = top
+        .windows(6)
+        .find_map(|window| {
+            (window[0] == 29 && window[5] == 17).then(|| {
+                usize::try_from(i32::from_be_bytes([
+                    window[1], window[2], window[3], window[4],
+                ]))
+                .unwrap()
+            })
+        })
+        .unwrap();
+    (top, Index::new(&data[cs_at..], false).unwrap())
+}
+
+#[test]
+fn a_compacted_cff_encodes_canonical_ros_and_exact_glyph_widths() {
+    let face = Face::read(JAPANESE, 0).unwrap();
+    let before = FontRef::new(&face.program).unwrap();
+    let count = u32::from(before.maxp().unwrap().num_glyphs());
+    let keep: Vec<u32> = (0..count).collect();
+    let cid = compact(&face.program, &keep, "NotoSansJP-Regular").unwrap();
+    let (top, charstrings) = cff_top_and_charstrings(&cid.data);
+
+    // Top DICT starts with compact SIDs 391, 392 and supplement 0 before ROS (12 30).
+    assert_eq!(&top[..7], &[248, 27, 248, 28, 139, 12, 30]);
+    for (new, &old) in cid.glyphs.iter().enumerate() {
+        let cs_bytes = charstrings.get(new).unwrap();
+        let program_width = charstring_width(cs_bytes).unwrap_or(0.0);
+        let hmtx_width = f64::from(metrics(&before, u32::from(old)).0.unwrap_or(0.0));
+        assert!(
+            (program_width - hmtx_width).abs() <= 1.0 / 65536.0,
+            "glyph {old}: CFF width {program_width} != hmtx {hmtx_width}"
+        );
+    }
+
+    // At 2048 units per em, non-integer scaled widths round-trip in 16.16 fixed-point.
+    let mut scaled_program = face.program.to_vec();
+    let head = before
+        .table_directory
+        .table_records()
+        .iter()
+        .find(|record| record.tag() == Tag::new(b"head"))
+        .unwrap()
+        .offset() as usize;
+    scaled_program[head + 18..head + 20].copy_from_slice(&2048_u16.to_be_bytes());
+    let scaled_cid = compact(&scaled_program, &[1, 6, 8, 9, 11, 15, 49], "Scaled").unwrap();
+    let (_, scaled_cs) = cff_top_and_charstrings(&scaled_cid.data);
+    for (new, &old) in scaled_cid.glyphs.iter().enumerate() {
+        let program_width = charstring_width(scaled_cs.get(new).unwrap()).unwrap_or(0.0);
+        let expected =
+            f64::from(metrics(&before, u32::from(old)).0.unwrap_or(0.0)) * 1000.0 / 2048.0;
+        assert!(
+            (program_width - expected).abs() <= 1.0 / 65536.0,
+            "scaled glyph {old}: CFF width {program_width} != expected {expected}"
+        );
+    }
+}
+
+#[test]
+fn charstring_widths_precede_every_first_operator_within_the_stack_limit() {
+    // Empty outline (space): `w endchar`.
+    let empty = Charstring::new(1.0, false, usize::MAX)
+        .with_width(224 << 16)
+        .finish_glyph()
+        .unwrap();
+    assert_eq!(charstring_width(&empty), Some(224.0));
+    assert_eq!(evaluated(&empty), []);
+
+    // Unhinted outline: `w dx dy rmoveto ...`.
+    let mut unhinted = Charstring::new(1.0, false, usize::MAX).with_width(575 << 16);
+    unhinted.move_to(units(10), units(20));
+    unhinted.line_to(units(30), units(40));
+    let unhinted = unhinted.finish_glyph().unwrap();
+    assert_eq!(charstring_width(&unhinted), Some(575.0));
+
+    // Implicit vstem right before hintmask: `w x dx hintmask ...`.
+    let mut vmasked = Charstring::new(1.0, true, usize::MAX).with_width(608 << 16);
+    vmasked.vstem(units(10), units(30));
+    vmasked.hint_mask(&[0b1000_0000]);
+    vmasked.move_to(units(10), units(20));
+    let vmasked = vmasked.finish_glyph().unwrap();
+    assert_eq!(charstring_width(&vmasked), Some(608.0));
+
+    // Hintmask with no preceding stems: `w hintmask ...`.
+    let mut bare_mask = Charstring::new(1.0, true, usize::MAX).with_width(510 << 16);
+    bare_mask.hint_mask(&[0]);
+    bare_mask.move_to(units(1), units(2));
+    let bare_mask = bare_mask.finish_glyph().unwrap();
+    assert_eq!(charstring_width(&bare_mask), Some(510.0));
+
+    // 30 stems + width: the first operator carries 1 + 2*23 = 47 <= 48 operands,
+    // and the second carries the remaining 7 stems (14 operands, even).
+    let mut many = Charstring::new(1.0, true, usize::MAX).with_width(918 << 16);
+    let mut expected_stems = Vec::new();
+    for stem in 0..30 {
+        many.hstem(units(stem * 10), units(stem * 10 + 5));
+        expected_stems.push(hstem(stem * 10, stem * 10 + 5));
+    }
+    let many = many.finish_glyph().unwrap();
+    assert_eq!(charstring_width(&many), Some(918.0));
+    assert_eq!(evaluated(&many), expected_stems);
 }
 
 proptest! {

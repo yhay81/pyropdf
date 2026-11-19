@@ -784,6 +784,40 @@ const BLUE_SCALE: u16 = 1209;
 const BLUE_SHIFT: u16 = 1210;
 const BLUE_FUZZ: u16 = 1211;
 
+/// Appends a non-offset integer operand in its compact CFF encoding
+/// (5176, table 4).
+#[expect(
+    clippy::disallowed_methods,
+    reason = "five bytes at most per integer operand"
+)]
+fn push_int(out: &mut Vec<u8>, value: i32) {
+    match value {
+        -107..=107 => out.push(u8::try_from(value + 139).unwrap_or(139)),
+        108..=1131 => {
+            let rest = value - 108;
+            out.extend_from_slice(&[
+                u8::try_from(rest / 256 + 247).unwrap_or(247),
+                u8::try_from(rest % 256).unwrap_or(0),
+            ]);
+        }
+        -1131..=-108 => {
+            let rest = -value - 108;
+            out.extend_from_slice(&[
+                u8::try_from(rest / 256 + 251).unwrap_or(251),
+                u8::try_from(rest % 256).unwrap_or(0),
+            ]);
+        }
+        _ if i16::try_from(value).is_ok() => {
+            let [b1, b2] = i16::try_from(value).unwrap_or(0).to_be_bytes();
+            out.extend_from_slice(&[28, b1, b2]);
+        }
+        _ => {
+            out.push(29);
+            out.extend_from_slice(&value.to_be_bytes());
+        }
+    }
+}
+
 /// Appends a DICT entry of `op` with `operands`, each in the five-byte
 /// integer form, so that an offset's length does not depend on its value.
 #[expect(
@@ -894,8 +928,9 @@ pub(super) fn hint_values(data: &[u8], fd: usize, scale: f64) -> Option<Vec<u8>>
 /// Writes a CID-keyed CFF named `name` whose glyphs are `charstrings`, in
 /// the order of `cids`, their CIDs (5176): no subroutines, and one Font DICT
 /// per item of `privates`, the entries of its Private DICT, which `fds`
-/// selects for each glyph. Each Private DICT adds a default width of zero,
-/// since the PDF's `W` array gives the widths.
+/// selects for each glyph. Each Private DICT sets `defaultWidthX` to zero,
+/// so each charstring's leading width operand gives its advance directly and
+/// an omitted width operand means zero.
 #[expect(
     clippy::disallowed_methods,
     reason = "linear in the arguments, which the caller holds: their bytes, and a few per CID and per DICT"
@@ -926,7 +961,12 @@ pub(super) fn cid_keyed(
         .collect();
     let top = |charset: i32, fd_select: i32, charstrings: i32, fd_array: i32| {
         let mut out = Vec::new();
-        push_entry(&mut out, ROS, &[FIRST_STRING, FIRST_STRING + 1, 0]);
+        // Compact SIDs (391 and 392) and supplement 0, as CFF readers expect
+        // at the start of a CIDFont Top DICT (5176, section 18).
+        for operand in [FIRST_STRING, FIRST_STRING + 1, 0] {
+            push_int(&mut out, operand);
+        }
+        push_operator(&mut out, ROS);
         push_entry(&mut out, CID_COUNT, &[cid_count]);
         push_entry(&mut out, CHARSET, &[charset]);
         push_entry(&mut out, FD_SELECT, &[fd_select]);
