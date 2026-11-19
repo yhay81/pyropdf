@@ -513,14 +513,26 @@ fn select<'s>(
 }
 
 /// Sets the form's `/NeedAppearances` to `value` where the form dictionary
-/// is written: as an object of its own, or in the catalog's. Returns
-/// whether the document has a form dictionary.
+/// is written: as an object of its own, or in the catalog's. In PDF 2.0,
+/// where `/NeedAppearances` is deprecated, automatic maintenance never
+/// inserts the entry (removing it when `value` is `false`). Returns whether
+/// the document has a form dictionary.
 pub(super) fn update_need_appearances(
     transaction: &mut Transaction,
     value: bool,
     budget: &Budget,
 ) -> Result<bool> {
+    write_need_appearances(transaction, value, false, budget)
+}
+
+fn write_need_appearances(
+    transaction: &mut Transaction,
+    value: bool,
+    explicit: bool,
+    budget: &Budget,
+) -> Result<bool> {
     let version = transaction.snapshot();
+    let pdf_2_0 = super::form_font::is_pdf_2_0(&version, budget)?;
     let mut reads = Reads::new(&version, budget);
     let Some(Value::Reference(root)) = reads.trailer().get("Root").cloned() else {
         return Ok(false);
@@ -531,26 +543,46 @@ pub(super) fn update_need_appearances(
     let Value::Dict(catalog) = &*catalog_value else {
         return Ok(false);
     };
+    let apply = |dict: &mut Dict| {
+        if pdf_2_0 && !value {
+            dict.remove("NeedAppearances");
+        } else {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "this call inserts only the fixed /NeedAppearances key"
+            )]
+            dict.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+        }
+    };
+    let already_matches = |dict: &Dict| {
+        if pdf_2_0 {
+            if !value {
+                dict.get("NeedAppearances").is_none()
+            } else if !explicit {
+                true
+            } else {
+                dict.get("NeedAppearances") == Some(&Value::Boolean(true))
+            }
+        } else {
+            dict.get("NeedAppearances") == Some(&Value::Boolean(value))
+        }
+    };
     let (number, value) = match catalog.get("AcroForm") {
         Some(Value::Reference(reference)) => match object(&mut reads, id(*reference))?.as_deref() {
             Some(form @ Value::Dict(dict)) => {
-                if dict.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+                if already_matches(dict) {
                     return Ok(true);
                 }
                 let Value::Dict(mut form) = copy_for_edit(form, budget)? else {
                     unreachable!("a copied dictionary remains a dictionary");
                 };
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "this call inserts only the fixed /NeedAppearances key"
-                )]
-                form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+                apply(&mut form);
                 (reference.number(), Value::Dict(form))
             }
             _ => return Ok(false),
         },
         Some(Value::Dict(form)) => {
-            if form.get("NeedAppearances") == Some(&Value::Boolean(value)) {
+            if already_matches(form) {
                 return Ok(true);
             }
             let Value::Dict(mut catalog) = copy_for_edit(&catalog_value, budget)? else {
@@ -559,11 +591,7 @@ pub(super) fn update_need_appearances(
             let Some(Value::Dict(form)) = catalog.get_mut("AcroForm") else {
                 unreachable!("the copied catalog retains its form dictionary");
             };
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "this call inserts only the fixed /NeedAppearances key"
-            )]
-            form.insert(Name::from("NeedAppearances"), Value::Boolean(value));
+            apply(form);
             (root.number(), Value::Dict(catalog))
         }
         _ => return Ok(false),
@@ -578,7 +606,7 @@ pub fn set_need_appearances(
     value: bool,
     budget: &Budget,
 ) -> Result<()> {
-    if update_need_appearances(transaction, value, budget)? {
+    if write_need_appearances(transaction, value, true, budget)? {
         Ok(())
     } else {
         Err(Error::Pdf("the document has no interactive form".into()))

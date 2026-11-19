@@ -621,3 +621,95 @@ fn value_decoding_enforces_item_and_memory_budgets() {
         values::field_value(&mut tight_reads, &array, &mut (0, 0), &mut 0).unwrap_err();
     assert_eq!(over_memory.limit_code(), Some(LimitCode::MemorySize));
 }
+
+#[test]
+fn pdf_2_0_standard_fonts_and_empty_appearances_emit_required_entries() {
+    use crate::standard::DA_FONTS;
+
+    let document = open(&[
+        "<< /Type /Catalog /Version /2.0 /AcroForm 2 0 R >>",
+        "<< /Fields [3 0 R] >>",
+        "<< /Subtype /Widget /FT /Tx /T (empty) /Rect [0 0 80 20] >>",
+    ]);
+    let budget = Budget::default();
+    assert!(form_font::is_pdf_2_0(&document.current(), &budget).unwrap());
+
+    let mut tx = document.begin();
+    let holder = Reference::new(2, 0);
+    for (abbrev, base) in DA_FONTS {
+        let name =
+            field_edit::register_standard_font(&mut tx, holder, abbrev, base, &budget).unwrap();
+        assert_eq!(name, abbrev);
+        let reused =
+            field_edit::register_standard_font(&mut tx, holder, abbrev, base, &budget).unwrap();
+        assert_eq!(reused, abbrev);
+    }
+    settle::write(
+        &mut tx,
+        3,
+        &Dict::new(),
+        settle::Drawing::Drawn(settle::WidgetAppearance {
+            content: Vec::new(),
+            size: (80.0, 20.0),
+            matrix: None,
+            font: None,
+        }),
+        &budget,
+    )
+    .unwrap();
+    let committed = tx.commit(&budget).unwrap();
+
+    let form_obj = committed.get(2, &budget).unwrap().unwrap();
+    let Value::Dict(form) = &**form_obj.value() else {
+        panic!("expected form dict");
+    };
+    let Value::Dict(dr) = form.get("DR").unwrap() else {
+        panic!("expected DR dict");
+    };
+    let Value::Dict(fonts) = dr.get("Font").unwrap() else {
+        panic!("expected Font dict");
+    };
+    for (abbrev, base) in DA_FONTS {
+        let Some(&Value::Reference(font_ref)) = fonts.get(abbrev) else {
+            panic!("missing {abbrev}");
+        };
+        let font_obj = committed.get(font_ref.number(), &budget).unwrap().unwrap();
+        let Value::Dict(font_dict) = &**font_obj.value() else {
+            panic!("expected font dict");
+        };
+        assert_eq!(font_dict.get("FirstChar"), Some(&Value::Integer(32)));
+        assert_eq!(font_dict.get("LastChar"), Some(&Value::Integer(255)));
+        let Some(Value::Array(widths)) = font_dict.get("Widths") else {
+            panic!("missing Widths on {base}");
+        };
+        assert_eq!(widths.len(), 224);
+        let Some(&Value::Reference(desc_ref)) = font_dict.get("FontDescriptor") else {
+            panic!("missing FontDescriptor on {base}");
+        };
+        let desc_obj = committed.get(desc_ref.number(), &budget).unwrap().unwrap();
+        let Value::Dict(desc) = &**desc_obj.value() else {
+            panic!("expected FontDescriptor dict");
+        };
+        assert_eq!(desc.get("FontName"), Some(&Value::Name(Name::from(base))));
+        assert!(desc.get("StemV").is_some());
+    }
+
+    let widget_obj = committed.get(3, &budget).unwrap().unwrap();
+    let Value::Dict(widget) = &**widget_obj.value() else {
+        panic!("expected widget dict");
+    };
+    let Some(Value::Dict(ap)) = widget.get("AP") else {
+        panic!("expected AP dict");
+    };
+    let Some(&Value::Reference(ap_ref)) = ap.get("N") else {
+        panic!("expected AP/N ref");
+    };
+    let ap_obj = committed.get(ap_ref.number(), &budget).unwrap().unwrap();
+    let Value::Stream(stream) = &**ap_obj.value() else {
+        panic!("expected appearance stream");
+    };
+    assert_eq!(
+        stream.dict().get("Resources"),
+        Some(&Value::Dict(Dict::new()))
+    );
+}
