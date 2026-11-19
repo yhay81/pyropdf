@@ -72,9 +72,10 @@ pub(super) fn read(bytes: &Bytes, origin: usize, budget: &Budget) -> Result<Chai
         )));
     }
     // The `startxref` lines that name sections: the position of the section
-    // that each names, and where its `%%EOF` marker ends.
+    // that each names, where its offset token ends, and where its `%%EOF`
+    // marker ends.
     let mut lines = BudgetVec::new(budget);
-    lines.try_push((locate(origin, last.offset)?, last.eof_end))?;
+    lines.try_push((locate(origin, last.offset)?, bytes.len(), last.eof_end))?;
     let mut sections = BudgetVec::new(budget);
     let mut visited = BudgetVec::new(budget);
     let mut next = Some(lines[0].0);
@@ -105,7 +106,7 @@ pub(super) fn read(bytes: &Bytes, origin: usize, budget: &Budget) -> Result<Chai
         if let Some(line) = lex::startxref(bytes, lex::skip_space(bytes, read.end))
             && let Ok(pos) = locate(origin, line.offset)
         {
-            lines.try_push((pos, line.eof_end))?;
+            lines.try_push((pos, line.value_end, line.eof_end))?;
         }
         sections.try_push(Section {
             offset: at,
@@ -114,8 +115,8 @@ pub(super) fn read(bytes: &Bytes, origin: usize, budget: &Budget) -> Result<Chai
             trailer: read.trailer,
         })?;
     }
-    let entries = merge(&sections, budget)?;
-    let revisions = revisions(sections, &lines, budget)?;
+    let entries = merge(sections.as_slice(), budget)?;
+    let revisions = revisions(sections, &lines, bytes.len(), budget)?;
     Ok(Chain { entries, revisions })
 }
 
@@ -520,10 +521,19 @@ fn combine(
 /// Returns the in-use entries that `sections`, newest first, give together,
 /// ascending by object number: for each number, what the newest section
 /// that lists it lists.
-fn merge(sections: &[Section], budget: &Budget) -> Result<Vec<(u32, Entry)>> {
+pub(super) fn merge<'a>(
+    sections: impl IntoIterator<Item = &'a Section> + Clone,
+    budget: &Budget,
+) -> Result<Vec<(u32, Entry)>> {
     let mut all = BudgetVec::new(budget);
-    all.try_reserve_exact(sections.iter().map(|section| section.listings.len()).sum())?;
-    for (age, section) in sections.iter().enumerate() {
+    all.try_reserve_exact(
+        sections
+            .clone()
+            .into_iter()
+            .map(|section| section.listings.len())
+            .sum(),
+    )?;
+    for (age, section) in sections.into_iter().enumerate() {
         for &(number, listing) in &section.listings {
             all.try_push((number, age, listing))?;
         }
@@ -553,34 +563,45 @@ fn merge(sections: &[Section], budget: &Budget) -> Result<Vec<(u32, Entry)>> {
 /// whose trailer's `startxref` gives 0 (ISO 32000-2 Annex F).
 fn revisions(
     sections: BudgetVec<'_, Section>,
-    lines: &[(usize, Option<usize>)],
+    lines: &[(usize, usize, Option<usize>)],
+    bytes_len: usize,
     budget: &Budget,
 ) -> Result<Vec<Revision>> {
     let mut revisions = BudgetVec::new(budget);
-    let mut current: Option<(BudgetVec<'_, Section>, Option<usize>)> = None;
+    let mut current: Option<(BudgetVec<'_, Section>, Option<usize>, usize)> = None;
     for (age, section) in sections.into_vec().into_iter().enumerate() {
         let mut named = lines
             .iter()
-            .filter(|&&(pos, _)| pos == section.offset)
+            .filter(|&&(pos, _, _)| pos == section.offset)
             .peekable();
         if age == 0 || named.peek().is_some() {
-            if let Some((sections, end)) = current.take() {
+            if let Some((sections, end, slice_end)) = current.take() {
                 revisions.try_push(Revision {
                     sections: sections.into_vec(),
                     end,
+                    slice_end,
                 })?;
             }
-            let end = named.filter_map(|&(_, end)| end).max();
-            current = Some((BudgetVec::new(budget), end));
+            let end = named.clone().filter_map(|&(_, _, eof_end)| eof_end).max();
+            let slice_end = match end {
+                Some(eof_end) => eof_end,
+                None if age == 0 => bytes_len,
+                None => named
+                    .map(|&(_, value_end, _)| value_end)
+                    .max()
+                    .unwrap_or(bytes_len),
+            };
+            current = Some((BudgetVec::new(budget), end, slice_end));
         }
-        if let Some((sections, _)) = &mut current {
+        if let Some((sections, _, _)) = &mut current {
             sections.try_push(section)?;
         }
     }
-    if let Some((sections, end)) = current {
+    if let Some((sections, end, slice_end)) = current {
         revisions.try_push(Revision {
             sections: sections.into_vec(),
             end,
+            slice_end,
         })?;
     }
     let mut revisions = revisions.into_vec();

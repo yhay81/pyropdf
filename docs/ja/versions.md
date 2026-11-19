@@ -129,3 +129,23 @@ with pyropdf.open("input.pdf") as doc:
         check = sig.verify()
         print(sig.field, check.intact, check.valid, check.modifications)
 ```
+
+## リビジョン {#revisions}
+
+`doc.revisions` は開いた PDF の増分リビジョンを古い順（`0 .. n - 1`、`sig.revision` と同じ番号）に並べます。
+各 `Revision` は `end` と `added`・`updated`・`freed`・`objects` の間接オブジェクト番号を持ち、
+`rev.open()` はファイルのバイト列を共有した独立の `Document` としてそのリビジョンを開きます。たとえば
+`doc.revisions[sig.revision].open()` で署名 `sig` が対象とした時点の文書をそのまま確認できます。
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as doc:
+    doc.pages[0].rotation = 90
+    updated = doc.to_bytes(incremental=True)
+
+with pyropdf.open(updated) as doc:
+    for rev in doc.revisions:
+        with rev.open() as earlier:
+            print(rev.index, rev.updated, earlier.pages[0].rotation)
+```

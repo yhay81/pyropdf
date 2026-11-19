@@ -131,6 +131,7 @@ from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._recolor import RecolorReport, RecolorTarget, Unconverted
+from pyropdf._revisions import Revision
 from pyropdf._sanitize import SanitizeReport
 from pyropdf._signing import Signature, SignatureVerification, Signer, Timestamper
 from pyropdf._tables import Table, TableDiagnostics
@@ -157,6 +158,7 @@ _PUBLIC_MODULE_EXPORTS = (
     OutputIntent,
     Profiles,
     Real,
+    Revision,
     Sound,
     SoundEncoding,
     Span,
@@ -337,6 +339,7 @@ __all__ = [
     "RecolorTarget",
     "Rect",
     "RemoteDestination",
+    "Revision",
     "SanitizeReport",
     "ScriptTrigger",
     "Scripts",

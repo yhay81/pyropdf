@@ -97,7 +97,7 @@ fn with_settlers(document: Document) -> Document {
 }
 
 impl _Document {
-    fn new(document: Document, limits: DocumentLimits) -> Self {
+    pub(crate) fn new(document: Document, limits: DocumentLimits) -> Self {
         let document = with_settlers(document);
         Self {
             document: RwLock::new(Some(Arc::new(document))),
@@ -537,7 +537,7 @@ pub(crate) fn open_base(
 
 /// Parses every object that the index lists, which surfaces damage and the
 /// limits of objects up front: what `DocumentLimits.web()` asks at open.
-fn check_every_object(version: &Version, budget: &Budget) -> Result<(), Error> {
+pub(crate) fn check_every_object(version: &Version, budget: &Budget) -> Result<(), Error> {
     let Some(index) = version.base().file() else {
         return Ok(());
     };
@@ -605,7 +605,7 @@ const fn save_options(
 }
 
 /// Reads the fields of a Python `DocumentLimits`.
-fn document_limits(limits: &Bound<'_, PyAny>) -> PyResult<DocumentLimits> {
+pub(crate) fn document_limits(limits: &Bound<'_, PyAny>) -> PyResult<DocumentLimits> {
     let field = |name: &str| limits.getattr(name)?.extract::<Option<u64>>();
     let duration = limits.getattr("max_duration")?.extract::<Option<f64>>()?;
     Ok(DocumentLimits {
@@ -629,7 +629,7 @@ fn document_limits(limits: &Bound<'_, PyAny>) -> PyResult<DocumentLimits> {
     })
 }
 
-fn complete_checks(limits: &Bound<'_, PyAny>) -> PyResult<bool> {
+pub(crate) fn complete_checks(limits: &Bound<'_, PyAny>) -> PyResult<bool> {
     limits.getattr("check_at_open")?.extract()
 }
 

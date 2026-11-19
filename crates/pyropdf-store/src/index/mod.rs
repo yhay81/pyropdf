@@ -41,6 +41,7 @@ mod scan;
 pub(crate) mod tests;
 
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::fmt;
 use std::panic::{self, AssertUnwindSafe};
 
@@ -139,6 +140,16 @@ pub enum Listing {
 pub struct Revision {
     sections: Vec<Section>,
     end: Option<usize>,
+    slice_end: usize,
+}
+
+/// The indirect object numbers that one [`Revision`] added, updated, or
+/// freed, each ascending.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RevisionChanges {
+    added: Vec<u32>,
+    updated: Vec<u32>,
+    freed: Vec<u32>,
 }
 
 /// A cross-reference section: what it lists, and its trailer.
@@ -347,6 +358,138 @@ impl Index {
         &self.revisions
     }
 
+    /// Returns what each [`Revision`] added, updated, and freed, oldest
+    /// first.
+    ///
+    /// Unchanged entries repeated in a cumulative cross-reference section,
+    /// object `0`, and free entries for object numbers that were not in use
+    /// before the revision are omitted. A compressed member whose object
+    /// stream moved in the same revision counts as updated even when its
+    /// member index did not change.
+    pub fn revision_changes(&self, budget: &Budget) -> Result<Vec<RevisionChanges>> {
+        let mut live: BudgetVec<'_, (u32, Entry)> = BudgetVec::new(budget);
+        let mut out = BudgetVec::new(budget);
+        let mut ticker = Ticker::default();
+        for revision in &self.revisions {
+            let delta = revision_delta(revision, &mut ticker, budget)?;
+            let mut next_live = BudgetVec::new(budget);
+            let mut added = BudgetVec::new(budget);
+            let mut updated = BudgetVec::new(budget);
+            let mut freed = BudgetVec::new(budget);
+            let (mut i, mut j) = (0, 0);
+            while i < live.len() && j < delta.len() {
+                ticker.tick(budget)?;
+                let (ln, old_entry) = live[i];
+                let (dn, listing) = delta[j];
+                match ln.cmp(&dn) {
+                    Ordering::Less => {
+                        next_live.try_push((ln, old_entry))?;
+                        i += 1;
+                    }
+                    Ordering::Greater => {
+                        if let Listing::InUse(entry) = listing {
+                            added.try_push(dn)?;
+                            next_live.try_push((dn, entry))?;
+                        }
+                        j += 1;
+                    }
+                    Ordering::Equal => {
+                        match listing {
+                            Listing::Free { .. } => {
+                                freed.try_push(ln)?;
+                            }
+                            Listing::InUse(entry) => {
+                                let moved_stream = matches!(
+                                    entry.location,
+                                    Location::Member { stream, .. }
+                                        if stream_changed(stream, &live, &delta)
+                                );
+                                if entry != old_entry || moved_stream {
+                                    updated.try_push(ln)?;
+                                }
+                                next_live.try_push((ln, entry))?;
+                            }
+                        }
+                        i += 1;
+                        j += 1;
+                    }
+                }
+            }
+            for &(ln, old_entry) in &live[i..] {
+                ticker.tick(budget)?;
+                next_live.try_push((ln, old_entry))?;
+            }
+            for &(dn, listing) in &delta[j..] {
+                ticker.tick(budget)?;
+                if let Listing::InUse(entry) = listing {
+                    added.try_push(dn)?;
+                    next_live.try_push((dn, entry))?;
+                }
+            }
+            live = next_live;
+            out.try_push(RevisionChanges {
+                added: added.into_vec(),
+                updated: updated.into_vec(),
+                freed: freed.into_vec(),
+            })?;
+        }
+        Ok(out.into_vec())
+    }
+
+    /// Opens revision `index` (oldest = `0`) as an [`Index`] sharing this
+    /// file's byte prefix up to that revision's end, or `None` when `index`
+    /// is out of range (including repaired indexes).
+    ///
+    /// When an earlier revision's own entries were damaged before a later
+    /// revision replaced them, opening rebuilds that revision's index over
+    /// its byte slice just as [`Index::open`] does.
+    pub fn revision(&self, index: usize, budget: &Budget) -> Result<Option<Self>> {
+        if index >= self.revisions.len() {
+            return Ok(None);
+        }
+        let prefix = &self.revisions[..=index];
+        let slice_end = prefix.last().map_or(self.bytes.len(), |r| r.slice_end);
+        let bytes = self
+            .bytes
+            .slice(0..slice_end)
+            .ok_or_else(|| Error::malformed("revision slice exceeds file bytes"))?;
+        budget.check(LimitCode::FileSize, count(bytes.len()))?;
+        let origin = self.origin.min(bytes.len());
+        let mut revisions = BudgetVec::new(budget);
+        for revision in prefix {
+            budget.poll()?;
+            let mut sections = BudgetVec::new(budget);
+            for section in &revision.sections {
+                budget.poll()?;
+                let mut listings = BudgetVec::new(budget);
+                listings.try_extend_from_slice(&section.listings)?;
+                sections.try_push(Section {
+                    offset: section.offset,
+                    kind: section.kind,
+                    trailer: section.trailer.clone(),
+                    listings: listings.into_vec(),
+                })?;
+            }
+            revisions.try_push(Revision {
+                sections: sections.into_vec(),
+                end: revision.end,
+                slice_end: revision.slice_end,
+            })?;
+        }
+        let entries = read::merge(prefix.iter().rev().flat_map(Revision::sections), budget)?;
+        let chain = read::Chain {
+            entries,
+            revisions: revisions.into_vec(),
+        };
+        match chain.check(&bytes, budget)? {
+            None => Self::from_chain(bytes, origin, chain, budget).map(Some),
+            Some(damage) => {
+                let rebuilt = scan::rebuild(&bytes, None, budget)?;
+                Self::from_rebuilt(bytes, origin, rebuilt, damage, budget).map(Some)
+            }
+        }
+    }
+
     /// Returns why opening rebuilt the index, if it did.
     #[must_use]
     pub const fn repair(&self) -> Option<&Repair> {
@@ -497,6 +640,84 @@ impl Revision {
     pub const fn end(&self) -> Option<usize> {
         self.end
     }
+}
+
+impl RevisionChanges {
+    /// Returns the object numbers that were not in use before this revision
+    /// and are in use after it, ascending.
+    #[must_use]
+    pub fn added(&self) -> &[u32] {
+        &self.added
+    }
+
+    /// Returns the object numbers that were in use before this revision and
+    /// remain in use at a different entry or in a rewritten object stream,
+    /// ascending.
+    #[must_use]
+    pub fn updated(&self) -> &[u32] {
+        &self.updated
+    }
+
+    /// Returns the object numbers that were in use before this revision and
+    /// that this revision marks free, ascending.
+    #[must_use]
+    pub fn freed(&self) -> &[u32] {
+        &self.freed
+    }
+
+    /// Consumes the record into `(added, updated, freed)`.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        (self.added, self.updated, self.freed)
+    }
+}
+
+/// Merges the listings of `revision`'s sections, newest first, into one
+/// ascending delta without object `0`.
+fn revision_delta<'b>(
+    revision: &Revision,
+    ticker: &mut Ticker,
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, (u32, Listing)>> {
+    if let [section] = revision.sections.as_slice() {
+        let mut delta = BudgetVec::new(budget);
+        for &(number, listing) in &section.listings {
+            ticker.tick(budget)?;
+            if number != 0 {
+                delta.try_push((number, listing))?;
+            }
+        }
+        return Ok(delta);
+    }
+    let mut all = BudgetVec::new(budget);
+    for (age, section) in revision.sections.iter().enumerate() {
+        for &(number, listing) in &section.listings {
+            ticker.tick(budget)?;
+            if number != 0 {
+                all.try_push((number, age, listing))?;
+            }
+        }
+    }
+    all.sort_unstable_by_key(|&(number, age, _)| (number, age));
+    let mut delta = BudgetVec::new(budget);
+    let mut last = None;
+    for &(number, _, listing) in all.iter() {
+        ticker.tick(budget)?;
+        if last != Some(number) {
+            last = Some(number);
+            delta.try_push((number, listing))?;
+        }
+    }
+    Ok(delta)
+}
+
+/// Returns whether object stream `stream` is listed in `delta` with a
+/// different listing than in `live`.
+fn stream_changed(stream: u32, live: &[(u32, Entry)], delta: &[(u32, Listing)]) -> bool {
+    let Ok(at) = delta.binary_search_by_key(&stream, |&(number, _)| number) else {
+        return false;
+    };
+    find(live, stream).map(Listing::InUse) != Some(delta[at].1)
 }
 
 impl Section {
