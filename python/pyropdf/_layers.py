@@ -16,7 +16,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from itertools import islice
 from typing import TYPE_CHECKING, Literal, overload
 
-from pyropdf import typed
+from pyropdf import _core, typed
 from pyropdf._errors import LimitError
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, String
@@ -31,6 +31,8 @@ _MAX_EXPRESSION_DEPTH = 32
 _MAX_EXPRESSION_OPERANDS = 4096
 #: Groups and configurations that one listing reads.
 _MAX_LAYERS = 4096
+#: Space retained for one typed application, its object path and the result slots.
+_USAGE_VIEW_BYTES = 512
 _COUNT: LimitCode = "optional_content_count"
 _EXPRESSION: LimitCode = "optional_content_expression"
 
@@ -196,15 +198,15 @@ class Layers(Sequence[Layer]):
         properties = self._document.catalog.get("OCProperties")
         return properties if isinstance(properties, Dictionary) else None
 
-    def _groups(self) -> list[Dictionary]:
+    def _groups(self) -> Iterator[Dictionary]:
         properties = self._properties()
         groups = properties.get("OCGs") if properties is not None else None
         if not isinstance(groups, Array):
-            return []
+            return
         if len(groups) > _MAX_LAYERS:
             msg = f"the document has more than {_MAX_LAYERS} optional content groups"
             raise LimitError(_COUNT, msg)
-        return [group for group in groups if isinstance(group, Dictionary) and group.xref is not None]
+        yield from (group for group in groups if isinstance(group, Dictionary) and group.xref is not None)
 
     def _default(self) -> Dictionary | None:
         properties = self._properties()
@@ -242,7 +244,7 @@ class Layers(Sequence[Layer]):
 
     def __len__(self) -> int:
         """Return the number of optional content groups."""
-        return len(self._groups())
+        return sum(1 for _ in self._groups())
 
     @overload
     def __getitem__(self, index: int) -> Layer: ...
@@ -302,20 +304,25 @@ class Layers(Sequence[Layer]):
         if event not in ("View", "Print", "Export"):
             msg = f"event must be View, Print or Export: {event!r}"
             raise ValueError(msg)
-        xref = self._group(layer)
-        applications = typed.OptContentConfig(self._configuration(config)).AS
-        if applications is None:
-            return ()
-        count = _usage_entries(applications.obj)
-        matches = []
-        for index in range(count):
-            application = applications[index]
-            if application.Event != event or (groups := application.OCGs) is None:
-                continue
-            count = _usage_entries(groups.obj, count)
-            if any(isinstance(group, Dictionary) and group.xref == xref for group in groups.obj):
-                matches.append(application)
-        return tuple(matches)
+
+        def read(operation: _core._OperationBudget) -> tuple[typed.OptContentUsageApplication, ...]:
+            xref = self._group(layer)
+            applications = typed.OptContentConfig(self._configuration(config)).AS
+            if applications is None:
+                return ()
+            count = _usage_entries(applications.obj)
+            matches = []
+            for index in range(count):
+                application = applications[index]
+                if application.Event != event or (groups := application.OCGs) is None:
+                    continue
+                count = _usage_entries(groups.obj, count)
+                if any(isinstance(group, Dictionary) and group.xref == xref for group in groups.obj):
+                    operation.charge("memory_size", _USAGE_VIEW_BYTES)
+                    matches.append(application)
+            return tuple(matches)
+
+        return _core.read_operation(self._document._core(), read)  # noqa: SLF001
 
     def _require(self) -> tuple[Dictionary, Dictionary]:
         properties = self._properties()

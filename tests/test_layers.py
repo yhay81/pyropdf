@@ -508,3 +508,20 @@ def test_usage_lookup_limits_group_entries_across_applications(monkeypatch: pyte
         doc.layers.usage_applications(first, event="Print")
     assert raised.value.code == "optional_content_count"
     assert len(doc.layers.usage_applications(doc.layers[1], event="View")) == 1
+
+
+def test_matching_usage_views_share_the_document_read_budget() -> None:
+    source = pyropdf.open(_usage_document())
+    config = source.catalog["OCProperties"]["D"]
+    config["AS"] = [config["AS"][1]] * 80
+    data = source.to_bytes()
+    limited = pyropdf.open(data, limits=pyropdf.DocumentLimits(max_memory_size=32_768))
+    group = limited.layers[0]
+    assert limited.layers.usage_applications(group, event="View") == ()
+    with pytest.raises(pyropdf.LimitError) as error:
+        limited.layers.usage_applications(group, event="Print")
+    assert error.value.code == "memory_size"
+    assert not limited.history.can_undo
+    assert limited.layers.usage_applications(group, event="View") == ()
+    regular = pyropdf.open(data)
+    assert len(regular.layers.usage_applications(regular.layers[0], event="Print")) == 80
