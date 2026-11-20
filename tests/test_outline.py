@@ -22,6 +22,7 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from test_preservation import snapshot as _snapshot
 
 import pyropdf
 from pyropdf import (
@@ -385,6 +386,134 @@ def test_editing_an_item_in_place(three_page_pdf: bytes) -> None:
     assert reloaded.outline.entries()[1] == OutlineEntry(2, "Renamed ✓", bold=True)
     # In-place edits keep page views valid.
     assert page.text().strip() == "Page one"
+
+
+def test_italic_outline_on_pdf13_corpus_survives_both_saves() -> None:
+    doc = pyropdf.open(REAL_WORLD / "nics-background-checks-2015-11.pdf")
+    doc.outline = [OutlineEntry(1, "Index", Destination(0)), OutlineEntry(1, "Other", Destination(0))]
+    doc.outline[0].obj["PrivateMark"] = 17
+    doc.catalog["PrivateMark"] = 23
+    doc = pyropdf.open(doc.to_bytes(incremental=True))
+    assert not doc.check().defects
+    assert "Version" not in doc.catalog
+    before = _snapshot(doc)
+    item = doc.outline[0]
+    item.italic = True
+    assert doc.history.position == 1
+    doc.history.undo()
+    assert not item.italic
+    assert "Version" not in doc.catalog
+    doc.history.redo()
+    assert item.italic
+    assert doc.catalog["Version"] == "1.4"
+    for incremental in (False, True):
+        reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
+        assert not reopened.check().defects
+        assert reopened.outline[0].xref == item.xref
+        assert reopened.outline[0].to_entry() == OutlineEntry(1, "Index", Destination(0), italic=True)
+        assert reopened.outline[0].obj["PrivateMark"] == 17
+        assert reopened.catalog["PrivateMark"] == 23
+        after = _snapshot(reopened)
+        assert before.keys() == after.keys()
+        assert {n for n in before if before[n] != after[n]} == {item.xref, doc.catalog.xref}
+
+
+@pytest.mark.parametrize(
+    "styled",
+    [
+        OutlineEntry(2, "Style", bold=True),
+        OutlineEntry(2, "Style", italic=True),
+        OutlineEntry(2, "Style", color=Color(1, 0, 0)),
+    ],
+)
+def test_bulk_outline_styles_raise_the_version_in_one_step(three_page_pdf: bytes, styled: OutlineEntry) -> None:
+    doc = pyropdf.open(three_page_pdf.replace(b"%PDF-1.7", b"%PDF-1.3", 1))
+    entries = [OutlineEntry(1, "Parent"), styled]
+    doc.outline = entries
+    assert doc.catalog["Version"] == "1.4"
+    doc.history.undo()
+    assert "Version" not in doc.catalog
+    assert not doc.outline
+    doc.history.redo()
+    for incremental in (False, True):
+        reopened = pyropdf.open(doc.to_bytes(incremental=incremental))
+        assert reopened.outline.entries() == entries
+        assert not [d for d in reopened.check().defects if d.clause in ("OutlineItem/C", "OutlineItem/F")]
+
+
+@pytest.mark.parametrize(("header", "declared"), [("1.3", None), ("1.4", None), ("1.3", "1.7"), ("1.7", "1.4")])
+@pytest.mark.parametrize("style", ["bold", "color"])
+def test_item_style_writes_only_the_necessary_catalog_version(header: str, declared: str | None, style: str) -> None:
+    source = _build_outline_fixture({4: "<< /First 5 0 R >>", 5: "<< /Title (item) /Parent 4 0 R >>"})
+    doc = pyropdf.open(source.replace(b"%PDF-1.7", f"%PDF-{header}".encode(), 1))
+    if declared is not None:
+        doc.catalog["Version"] = pyropdf.Name(declared)
+    baseline = doc.to_bytes()
+    doc = pyropdf.open(baseline)
+    item = doc.outline[0]
+    if style == "bold":
+        item.bold = True
+    else:
+        item.color = Color(1, 0, 0)
+    needs_version = header == "1.3" and declared is None
+    assert doc.catalog.get("Version") == ("1.4" if needs_version else declared)
+    appended = doc.to_bytes(incremental=True)[len(baseline) :]
+    assert (b"1 0 obj" in appended) is needs_version
+
+
+@pytest.mark.parametrize(("style", "entry"), [("italic", "/F 1"), ("bold", "/F 2"), ("color", "/C [1 0 0]")])
+def test_clearing_the_last_outline_style_keeps_an_old_catalog(style: str, entry: str) -> None:
+    source = _build_outline_fixture({4: "<< /First 5 0 R >>", 5: f"<< /Title (item) /Parent 4 0 R {entry} >>"})
+    source = source.replace(b"%PDF-1.7", b"%PDF-1.3", 1)
+    doc = pyropdf.open(source)
+    item = doc.outline[0]
+    if style == "color":
+        item.color = None
+    elif style == "bold":
+        item.bold = False
+    else:
+        item.italic = False
+    assert "C" not in item.obj
+    assert "F" not in item.obj
+    assert "Version" not in doc.catalog
+    assert b"1 0 obj" not in doc.to_bytes(incremental=True)[len(source) :]
+
+
+def test_refused_style_edit_rolls_back_the_catalog_in_an_open_transaction() -> None:
+    # The item fits a read. Rewriting its private string exceeds the operation's
+    # budget after the catalog has been raised.
+    source = _build_outline_fixture(
+        {
+            4: "<< /First 5 0 R >>",
+            5: f"<< /Title (item) /Parent 4 0 R /Private ({'x' * 10_000}) >>",
+        }
+    ).replace(b"%PDF-1.7", b"%PDF-1.3", 1)
+    doc = pyropdf.open(source, limits=pyropdf.DocumentLimits(max_memory_size=32 * 1024))
+    item = doc.outline[0]
+    with doc.transaction():
+        with pytest.raises(LimitError) as caught:
+            item.italic = True
+        assert caught.value.code == "memory_size"
+        assert "Version" not in doc.catalog
+        assert "F" not in doc.objects[item.xref]
+    assert not doc.history.can_undo
+    assert doc.to_bytes(incremental=True) == source
+
+
+def test_refused_bulk_cleanup_rolls_back_the_styled_outline_and_catalog() -> None:
+    # Replacing the outline searches for other referrers to its old items.
+    source = _build_outline_fixture(
+        {4: "<< /First 5 0 R >>", 5: "<< /Title (item) /Parent 4 0 R >>", 6: "[" * 16 + "0" + "]" * 16}
+    ).replace(b"%PDF-1.7", b"%PDF-1.3", 1)
+    doc = pyropdf.open(source, limits=pyropdf.DocumentLimits(max_object_depth=8))
+    with doc.transaction():
+        with pytest.raises(LimitError) as caught:
+            doc.outline = [OutlineEntry(1, "new", Destination(0), bold=True)]
+        assert caught.value.code == "object_depth"
+        assert "Version" not in doc.catalog
+        assert doc.outline[0].xref == 5
+    assert not doc.history.can_undo
+    assert doc.to_bytes(incremental=True) == source
 
 
 def test_item_edits_validate_before_any_change(three_page_pdf: bytes) -> None:
