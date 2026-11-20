@@ -559,10 +559,10 @@ signatures on incremental saves, `doc.timestamp(timestamper)` appends an RFC
 `Catalog["Legal"]` (`LegalAttestation`). For proprietary cryptographic
 handlers, `wrap_encrypted_payload` builds a PDF 2.0 unencrypted wrapper
 document (ISO 32000-2 §7.6.7) that `doc.encrypted_payload` reads back as an
-`EncryptedPayload`. The file specification stores the display filename. To edit the
-attachment, use `doc.collection.initial_document` as the key in
-`doc.attachments`. This opaque identifier also selects the payload when the
-wrapper contains other files.
+`EncryptedPayload`. In a wrapper created by this function, the file
+specification holds the display filename and `doc.collection.initial_document`
+holds the opaque key for `doc.attachments`. Use that key to edit the selected
+payload when the wrapper contains other files.
 
 ```python
 import pyropdf
