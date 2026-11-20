@@ -1,0 +1,27 @@
+[
+    {
+        "filename": "pyropdf-0.3.1-cp311-abi3-macosx_10_12_x86_64.whl",
+        "sha256": "sha256:680df74f99eab9f4e6a6187aab8bbbacba73525d5c7e5f4629857ff842b6a3e6",
+        "size_bytes": 10192011
+    },
+    {
+        "filename": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+        "sha256": "sha256:1944b462a91c9fbc7fdb972eef66491d0d7383814970f4aa625a404940deb9c1",
+        "size_bytes": 9191097
+    },
+    {
+        "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl",
+        "sha256": "sha256:5c1f1a1ac07564a3f0dce7b93bbd2f6ea9ddd799c5621276ad672a414ffd3669",
+        "size_bytes": 10061555
+    },
+    {
+        "filename": "pyropdf-0.3.1-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+        "sha256": "sha256:746153a81a3d7e8590a9e989ff6561c5de78a41e537e453d0ed59e09d6fd41f5",
+        "size_bytes": 10668116
+    },
+    {
+        "filename": "pyropdf-0.3.1-cp311-abi3-win_amd64.whl",
+        "sha256": "sha256:40592b75408906f68ef00aad4dc4bc5381c10f3c793d550bbd995afd96fce61b",
+        "size_bytes": 10189695
+    }
+]

@@ -8,10 +8,10 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 45 | 47 | 739 |
-| interpret | 1 | 13 | 0 | 41 | 667 | 109 |
-| create | 0 | 0 | 9 | 646 | 82 | 94 |
-| edit | 0 | 0 | 0 | 672 | 70 | 89 |
+| read | 0 | 0 | 0 | 44 | 47 | 740 |
+| interpret | 1 | 13 | 0 | 40 | 667 | 110 |
+| create | 0 | 0 | 9 | 645 | 82 | 95 |
+| edit | 0 | 0 | 0 | 671 | 70 | 90 |
 | preserve | 0 | 0 | 0 | 28 | 667 | 136 |
 
 ## Clauses
@@ -38,7 +38,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
 | 7.7.4 | Name dictionary | `name-dictionary` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,966 unfinished cells in 831 features: 1 engine, 1,432 partial, 1,533 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,962 unfinished cells in 831 features: 1 engine, 1,428 partial, 1,533 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -388,8 +388,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 
 - [#930](https://github.com/yhay81/pyropdf/issues/930) Verify geographic and projected registration control points on their PDF owners. Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports.
     - read, interpret, create, edit, preserve — `geospatial`.
-- [#931](https://github.com/yhay81/pyropdf/issues/931) Give encrypted wrappers independent outer identifiers and verify their associated file. Use an independent tree identifier and check the selected file against the hidden collection and catalog AF relationship when reading, creating or changing a wrapper.
-    - read, interpret, create, edit — `unencrypted-wrapper`.
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.

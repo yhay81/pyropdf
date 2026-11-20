@@ -877,7 +877,12 @@ Settable.
 Document.encrypted_payload: EncryptedPayload | None
 ```
 
-The `EncryptedPayload` of a PDF 2.0 unencrypted wrapper document (§7.6.7), or `None`.
+The encrypted file selected by a PDF 2.0 unencrypted wrapper (§7.6.7).
+
+Return `None` when the hidden collection, embedded-file tree and catalog
+association do not identify the same encrypted payload. Malformed filter
+metadata or a missing stream on an identified payload raises
+`MalformedPdfError`.
 
 ### `Document.prepare_signature`
 
