@@ -367,17 +367,6 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour."
 
-[families.profile-edit-effects]
-tracker = 255
-issue = 932
-title = "Verify profile edit effects on nested resources and alternate structure encodings"
-features = [
-    "pdfa", "pdfua", "pdfa-1a", "pdfa-1b", "pdfa-2a", "pdfa-2b", "pdfa-2u", "pdfa-3a", "pdfa-3b", "pdfa-3u",
-    "pdfa-4", "pdfa-4e", "pdfa-4f", "pdfua-1", "pdfua-2",
-]
-dimensions = ["interpret", "edit", "preserve"]
-behavior = "Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls."
-
 [families.interchange]
 tracker = 256
 issue = 839
