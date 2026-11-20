@@ -86,6 +86,7 @@ from pyropdf._fonts import (
 from pyropdf._geometry import Matrix, Point, Rect
 from pyropdf._images import PageImage, _image_stream, add_image
 from pyropdf._layers import Layer, LayerMembership
+from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, Name
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, _real
 
@@ -579,9 +580,13 @@ class Canvas:
         masked = None if mask is None else self._masks.setdefault(mask, f"PyroM{len(self._masks) + 1}")
         return _Painting((space, b"/" + name + operator), None if alpha >= 1 else alpha, masked)
 
-    def _commit(self) -> None:
-        page = self._page
-        document = page.document
+    def _prepare_optional_content(self) -> None:
+        document = self._page.document
+        catalog = document.catalog
+        _require_version(document, catalog, (1, 5))
+        if catalog.get("OCProperties") is None:
+            # Even a membership without groups emits optional content.
+            catalog["OCProperties"] = {"OCGs": [], "D": {}}
         objects = document.objects
         for oc in self._oc:
             for xref in (oc,) if isinstance(oc, int) else oc[0]:
@@ -589,6 +594,13 @@ class Canvas:
                 if not isinstance(group, Dictionary) or group.get("Type") != "OCG":
                     msg = f"object {xref}, a layer that the canvas draws, is no longer an optional content group"
                     raise StaleObjectError(msg)
+
+    def _commit(self) -> None:
+        page = self._page
+        document = page.document
+        objects = document.objects
+        if self._oc:
+            self._prepare_optional_content()
         rotation, box, unit = _page_space(page)
         matrix = _user_from_display(rotation, box, unit)
         self._write_page_patterns(Matrix(*matrix))
