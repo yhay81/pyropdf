@@ -6,7 +6,7 @@ import math
 import sys
 from collections.abc import Callable, Sequence
 from fractions import Fraction
-from typing import TYPE_CHECKING, Any, NamedTuple, Self, TypeGuard, overload
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Self, TypeGuard, overload
 
 from pyropdf._errors import PdfError
 
@@ -246,10 +246,6 @@ class Matrix(_MatrixTuple):
         """Return whether any coordinate is nonzero."""
         return any(self)
 
-    def norm(self) -> float:
-        """Return the Euclidean norm of all six coordinates."""
-        return abs(self)
-
     @property
     def is_rectilinear(self) -> bool:
         """Return whether axis-aligned rectangles remain axis-aligned."""
@@ -368,10 +364,6 @@ class Point(_PointTuple):
         """Return whether this point differs from the origin."""
         return self.x != 0 or self.y != 0
 
-    def norm(self) -> float:
-        """Return the distance from the origin."""
-        return abs(self)
-
     @property
     def unit(self) -> Point:
         """Return the direction vector of length one, or the origin for zero."""
@@ -387,7 +379,7 @@ class Point(_PointTuple):
         direction = self.unit
         return Point(abs(direction.x), abs(direction.y))
 
-    def distance_to(self, x: Sequence[float], unit: str = "px") -> float:
+    def distance_to(self, x: Sequence[float], *, unit: Literal["px", "in", "cm", "mm"] = "px") -> float:
         """Measure distance to a point or normalized rectangle.
 
         Units are ``px`` (PDF points), ``in``, ``cm``, and ``mm``.
@@ -534,11 +526,6 @@ class _Rectangle:
     def bottom_right(self) -> Point:
         """Return ``(x1, y1)``."""
         return Point(self.x1, self.y1)
-
-    tl = top_left
-    tr = top_right
-    bl = bottom_left
-    br = bottom_right
 
     @property
     def quad(self) -> Quad:
@@ -689,10 +676,6 @@ class _Rectangle:
             and inner.y1 <= self.y1
         )
 
-    def contains(self, x: object) -> bool:
-        """Return ``x in self``."""
-        return x in self
-
     def intersects(self, r: Sequence[float]) -> bool:
         """Return whether both rectangles are finite and share some area."""
         other = Rect(_rect_components(r))
@@ -700,7 +683,7 @@ class _Rectangle:
             return False
         return not (Rect(self.x0, self.y0, self.x1, self.y1) & other).is_empty
 
-    def get_area(self, unit: str = "px") -> float:
+    def area(self, *, unit: Literal["px", "in", "cm", "mm"] = "px") -> float:
         """Return ``width * height`` in ``px`` (PDF points), ``in``, ``cm``, or ``mm`` squared."""
         scale = _unit_scale(unit, "area")
         return float(self.width * self.height) * scale * scale
@@ -820,11 +803,6 @@ class Rect(_Rectangle, _RectTuple):
         x0, y0 = (min(max(value + _ROUND_TOLERANCE, -_ROUND_LIMIT), _ROUND_LIMIT) for value in (self.x0, self.y0))
         x1, y1 = (min(max(value - _ROUND_TOLERANCE, -_ROUND_LIMIT), _ROUND_LIMIT) for value in (self.x1, self.y1))
         return IRect(math.floor(x0), math.floor(y0), math.ceil(x1), math.ceil(y1))
-
-    @property
-    def irect(self) -> IRect:
-        """Return :meth:`round`."""
-        return self.round()
 
 
 def _integer(value: object, rounding: Callable[[float], int]) -> int:

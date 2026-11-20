@@ -17,7 +17,7 @@ DefectKind: TypeAlias = Literal["type", "required", "version", "indirect", "valu
 DefectKind.__doc__ = "The category of a :class:`StructuralDefect`."
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StructuralDefect:
     """One departure of the document from the model.
 
@@ -36,7 +36,7 @@ class StructuralDefect:
     message: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StructuralReport:
     """What the structural check found.
 
@@ -71,7 +71,14 @@ def _javascript(catalog: Dictionary) -> str | None:
 
 def _defect(claim: str, xref: int | None, path: str, spec: str, message: str) -> StructuralDefect:
     """Return a ``profile`` defect of ``claim`` at ``path``, whose first key names the clause."""
-    return StructuralDefect(xref, path, f"{claim}/{path.split('/', maxsplit=1)[0]}", spec, "profile", message)
+    return StructuralDefect(
+        xref=xref,
+        path=path,
+        clause=f"{claim}/{path.split('/', maxsplit=1)[0]}",
+        spec=spec,
+        kind="profile",
+        message=message,
+    )
 
 
 def _pdfa_defects(document: Document, claim: str, catalog: Dictionary) -> list[StructuralDefect]:
@@ -132,10 +139,15 @@ def _profile_defects(document: Document) -> list[StructuralDefect]:
 def structural_check(document: Document) -> StructuralReport:
     """Return the structural check of ``document``; see :meth:`Document.check`."""
     defects, truncated, objects, unchecked, version = _core.structural_check(document._core())  # noqa: SLF001
+    findings = [
+        StructuralDefect(xref=xref, path=path, clause=clause, spec=spec, kind=kind, message=message)
+        for xref, path, clause, spec, kind, message in defects
+    ]
+    findings.extend(_profile_defects(document))
     return StructuralReport(
-        (*(StructuralDefect(*row) for row in defects), *_profile_defects(document)),
-        version,
-        objects,
-        unchecked,
-        truncated,
+        defects=tuple(findings),
+        version=version,
+        objects=objects,
+        unchecked=unchecked,
+        truncated=truncated,
     )
