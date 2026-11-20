@@ -11,7 +11,7 @@ trap 'rm -rf -- "$build_dir"' EXIT
 # interpreter comes from the selected Pyodide cross-build environment.
 python -m venv "$build_dir/host"
 source "$build_dir/host/bin/activate"
-python -m pip install 'pyodide-build==0.39.4' 'maturin==1.16.0'
+python -m pip install --only-binary=:all: -r tools/pyodide-build-requirements.txt
 export PYODIDE_XBUILDENV_PATH="$build_dir/xbuildenv"
 pyodide xbuildenv install "$runtime"
 pyodide xbuildenv install-emscripten --version 5.0.3
@@ -24,7 +24,11 @@ pyodide build . --outdir "$build_dir/wheels" --no-isolation -C maturin.build-arg
 
 shopt -s nullglob
 wheels=("$build_dir"/wheels/pyropdf-*-"$platform".whl)
-[[ ${#wheels[@]} == 1 ]]
+if [[ ${#wheels[@]} != 1 ]]; then
+    echo "Expected one $platform wheel, found ${#wheels[@]} in the build output" >&2
+    ls -l "$build_dir/wheels" >&2
+    exit 1
+fi
 pyodide venv "$build_dir/runtime"
 "$build_dir/runtime/bin/pip" install --no-deps "${wheels[0]}"
 "$build_dir/runtime/bin/python" -I -c '
@@ -32,6 +36,7 @@ import platform, sys, sysconfig, pyodide
 assert sys.platform == "emscripten"
 assert pyodide.__version__ == sys.argv[1]
 assert platform.machine() == "wasm32"
+assert sys._emscripten_info.emscripten_version == (5, 0, 3)
 print(f"Pyodide {pyodide.__version__}, Python {sys.version}, {sysconfig.get_platform()}")
 ' "$runtime"
 "$build_dir/runtime/bin/python" -I tools/smoke_artifact.py . --run

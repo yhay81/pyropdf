@@ -36,6 +36,7 @@ def test_release_requires_the_installed_pyodide_wheel() -> None:
     assert job.index("bash tools/build_pyodide.sh") < job.index("actions/upload-artifact")
     (dependencies,) = re.findall(r"needs:.*", publish)
     assert "build-pyodide-wheel" in dependencies
+    assert "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')" in publish
 
 
 def test_installed_artifact_smoke_exercises_the_public_contract() -> None:
