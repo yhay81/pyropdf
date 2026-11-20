@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 43 | 49 | 739 |
-| interpret | 1 | 13 | 0 | 40 | 669 | 108 |
-| create | 0 | 0 | 9 | 644 | 84 | 94 |
-| edit | 0 | 0 | 0 | 670 | 72 | 89 |
-| preserve | 0 | 0 | 0 | 28 | 669 | 134 |
+| read | 0 | 0 | 0 | 45 | 47 | 739 |
+| interpret | 1 | 13 | 0 | 41 | 667 | 109 |
+| create | 0 | 0 | 9 | 646 | 82 | 94 |
+| edit | 0 | 0 | 0 | 672 | 70 | 89 |
+| preserve | 0 | 0 | 0 | 28 | 667 | 136 |
 
 ## Clauses
 
@@ -38,8 +38,8 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.6.4 | Standard security handler | `standard-security-handler` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.6.5 | Public-key security handlers | `public-key-security-handler` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.6.6 | Crypt filters | `crypt-filters` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 partial | 1 done | 1 done | 1 done |
+| 7.6.7 | Encryption wrappers | `unencrypted-wrapper` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
+| 7.7.2 | Document catalog | `document-catalog` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.7.3 | Page tree | `page-tree`, `page-objects` | 2 done | 2 done | 2 done | 2 done | 2 done |
 | 7.7.4 | Name dictionary | `name-dictionary` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
 | 7.8 | Content streams and resources | `content-streams` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -168,7 +168,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.7.5.5 | Signature fields | `signature-fields` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.6 | Form actions | `form-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.8 | Forms data format | `fdf` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 partial |
+| 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
 | 12.8.2 | Transform methods | `signature-transforms` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.4.3 | Document security store | `document-security-store` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -176,7 +176,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.8.6 | Permissions | `permissions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.8.7 | Legal content attestations | `legal-attestations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.9 | Measurement properties | `measurement` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.10 | Geospatial coordinates | `geospatial` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.10 | Geospatial coordinates | `geospatial` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.2 | Multimedia | `renditions` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,969 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,543 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,966 unfinished cells in 831 features: 1 engine, 1,432 partial, 1,533 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -363,10 +363,6 @@ Milestone [#254](https://github.com/yhay81/pyropdf/issues/254).
 
 - [#890](https://github.com/yhay81/pyropdf/issues/890) Prove full and incremental preservation by Arlington object type. Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage.
     - preserve — all 613 standalone Arlington object rows.
-- [#894](https://github.com/yhay81/pyropdf/issues/894) Connect existing catalog, geometry, wrapper and flattening tests to their clause cells. Verify the current public APIs against the exact clause behavior, including tagged flattening, then mark only the matching parameterized tests. Add missing negative and save/reopen cases or record the precise residual.
-    - read, create, edit — `geospatial`, `unencrypted-wrapper`.
-    - interpret — `document-catalog`, `geospatial`, `unencrypted-wrapper`.
-    - preserve — `geospatial`, `unencrypted-wrapper`, `non-interactive-forms`.
 
 ### 255 Conformance
 
@@ -383,13 +379,17 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
-- [#848](https://github.com/yhay81/pyropdf/issues/848) Check pre-save conformance reports against the profile rules each edit actually breaks. Compare edit effects and preservation against the applicable rules with independently checked positive and negative cases.
+- [#932](https://github.com/yhay81/pyropdf/issues/932) Verify profile edit effects on nested resources and alternate structure encodings. Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls.
     - interpret, edit, preserve — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `pdfua-1`, `pdfua-2`.
 
 ### 256 Specification completion
 
 Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 
+- [#930](https://github.com/yhay81/pyropdf/issues/930) Verify geographic and projected registration control points on their PDF owners. Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports.
+    - read, interpret, create, edit, preserve — `geospatial`.
+- [#931](https://github.com/yhay81/pyropdf/issues/931) Give encrypted wrappers independent outer identifiers and verify their associated file. Use an independent tree identifier and check the selected file against the hidden collection and catalog AF relationship when reading, creating or changing a wrapper.
+    - read, interpret, create, edit — `unencrypted-wrapper`.
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.

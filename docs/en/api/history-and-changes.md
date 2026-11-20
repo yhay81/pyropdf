@@ -37,11 +37,12 @@ ClaimChange(claim: str, reason: str, objects: tuple[int, ...])
 A PDF/A or PDF/UA claim of the metadata that the edits break.
 
 `claim` names it, such as `"PDF/A-1B"` or `"PDF/UA-1"`, and
-`objects` lists the edited objects that break it. The report checks
-what the edits wrote, not the whole document against the claim: added
-transparency and embedded files break PDF/A-1, an embedded file that is
-not PDF/A-1 or PDF/A-2 breaks PDF/A-2, one that is not PDF/A-1, -2, or -4
-breaks PDF/A-4 but not PDF/A-4f, and untagged annotations break PDF/UA.
+`objects` lists the edited objects responsible. A full save that alone
+breaks an archival signature byte-range requirement has no edited object.
+Reports compare the opened and current versions, including XMP profile
+identification, structure associations, output profiles, embedded fonts,
+attachments and annotations. Human assessments such as the quality of a
+figure's alternate text require a separate accessibility review.
 
 ## `History`
 

@@ -94,7 +94,7 @@ def test_saved_inventory_keeps_annotation_preparation_in_the_change_report(
         "pdfua-2",
     ],
 )
-def test_profile_structure_and_page_rotation(profile: str) -> None:
+def test_profile_structure_and_edit_reports(profile: str) -> None:
     family, level = profile.split("-")
     path = ROOT / "tests" / "assets" / family / f"{profile}.pdf"
     original = pyropdf.open(path)
@@ -112,6 +112,14 @@ def test_profile_structure_and_page_rotation(profile: str) -> None:
         assert saved.pages[0].rotation == 90
         assert list(saved.pages[0].operations) == content
         assert saved.check().defects == ()
+
+    for edit in ("action_triggers", "ocr_layer", "page_records"):
+        with pyropdf.open(path) as edited:
+            case = EDITS[edit]
+            case.prepare(edited)
+            case.apply(edited)
+            for incremental in (False, True):
+                VERAPDF.check_matrix_claims(edited, path, VERAPDF.FIXTURES[path], edit, incremental=incremental)
 
     # A missing required entry must be reported even with the original XMP claim.
     key = "OutputIntents" if family == "pdfa" else "StructTreeRoot"
@@ -132,7 +140,7 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
             assert all(
                 test.endswith(f"[{fixture.stem}]")
                 for test in row[dimension]["tests"]
-                if "::test_profile_structure_and_page_rotation" in test
+                if "::test_profile_structure_and_edit_reports" in test
             )
 
 
@@ -189,3 +197,24 @@ def test_supplemental_pades_validation_keeps_native_and_archival_checks_distinct
         dss: "arlington2.0+ISO_19005_3,ETSI_PAdES",
         signature: "arlington2.0+ETSI_PAdES",
     }
+
+
+def test_dual_profile_loss_and_controls_report_the_responsible_objects(tmp_path: Path) -> None:
+    files = VERAPDF.profile_saves(tmp_path)
+    for edit, profiles in VERAPDF.FOCUSED.items():
+        for mode in ("full", "incremental"):
+            name = f"{VERAPDF.DUAL}-{edit}-{mode}.pdf"
+            assert files[tmp_path / name] == "ua2"
+            for profile in ("ua2", "4"):
+                expected = VERAPDF.EXPECTED.get(f"{profile} {name}")
+                assert (expected[1] if expected else set()) == profiles.get(profile, set())
+
+
+@pytest.mark.parametrize(("edit", "apply"), [("add_attachment", False), ("none", True)])
+def test_pre_save_comparison_rejects_both_missed_and_spurious_claims(edit: str, *, apply: bool) -> None:
+    source = SOURCE.with_name(f"{VERAPDF.DUAL}.pdf")
+    with pyropdf.open(source) as doc:
+        if apply:
+            EDITS["add_attachment"].apply(doc)
+        with pytest.raises(ValueError, match="expected"):
+            VERAPDF.check_matrix_claims(doc, source, "ua2", edit, incremental=True)

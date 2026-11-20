@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
+import pikepdf
 import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -800,6 +801,7 @@ def test_legal_attestation_round_trip_edit_delete_and_signing(pki: LocalPki) -> 
             _ = editable.legal_attestation
 
 
+@pytest.mark.spec("unencrypted-wrapper", "read", "interpret", "create")
 def test_encrypted_payload_wrapper_round_trip_and_conformance() -> None:
     with pyropdf.Document() as inner:
         page = inner.pages.new((300, 200))
@@ -811,10 +813,10 @@ def test_encrypted_payload_wrapper_round_trip_and_conformance() -> None:
 
     payload = EncryptedPayload(
         encrypted_bytes,
-        subtype="adbe.pkcs7.s5",
-        filename="contract-encrypted.pdf",
+        subtype="Standard",
+        filename="item.pdf",
         version="2.0",
-        description="PKCS#7 encrypted contract",
+        description="Password-encrypted document",
     )
     with wrap_encrypted_payload(payload, cover_text="Open this wrapper in a crypto-capable viewer.") as wrapper:
         assert wrapper.pages[0].text().strip() == "Open this wrapper in a crypto-capable viewer."
@@ -841,6 +843,71 @@ def test_encrypted_payload_wrapper_round_trip_and_conformance() -> None:
         pytest.raises(LimitError),
     ):
         _ = bounded.encrypted_payload
+
+
+@pytest.mark.spec("unencrypted-wrapper", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_wrapper_edit_resolves_the_selected_payload_among_other_files(*, incremental: bool) -> None:
+    assets = DOCUMENT.parents[1] / "encrypted"
+    original = (assets / "user-aes-128.pdf").read_bytes()
+    replacement = (assets / "user-aes-256.pdf").read_bytes()
+    with wrap_encrypted_payload(EncryptedPayload(original, subtype="Standard", filename="item.pdf")) as wrapper:
+        wrapper.attachments.add("00-notice.txt", b"retained notice")
+        base = wrapper.to_bytes()
+    with pyropdf.open(base) as doc:
+        collection = doc.collection
+        assert collection is not None
+        key = collection.initial_document
+        assert key is not None
+        initial = doc.encrypted_payload
+        assert initial is not None
+        assert initial.data == original
+        doc.attachments[key].write(replacement)
+        doc.attachments[key].description = "Revised payload"
+        saved = doc.to_bytes(incremental=incremental)
+    with pyropdf.open(saved) as reopened:
+        revised = reopened.encrypted_payload
+        assert revised is not None
+        assert revised.description == "Revised payload"
+        assert revised.data == replacement
+    with pikepdf.open(io.BytesIO(saved)) as outer:
+        assert not outer.is_encrypted
+        assert str(outer.Root.Collection.View) == "/H"
+        assert str(outer.Root.Collection.D) == key
+        entries = outer.Root.Names.EmbeddedFiles.Names
+        files = {str(entries[i]): entries[i + 1] for i in range(0, len(entries), 2)}
+        payload = files[key]
+        assert payload.objgen == outer.Root.AF[0].objgen
+        assert str(payload.AFRelationship) == "/EncryptedPayload"
+        assert str(payload.EP.Subtype) == "/Standard"
+        assert payload.EF.F.objgen == payload.EF.UF.objgen
+        assert payload.EF.F.read_bytes() == replacement
+        assert files["00-notice.txt"].EF.F.read_bytes() == b"retained notice"
+        with pikepdf.open(io.BytesIO(payload.EF.F.read_bytes()), password="userpw") as inner:
+            assert inner.is_encrypted
+            assert len(inner.pages) > 0
+
+
+@pytest.mark.spec("unencrypted-wrapper", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_unrelated_cover_edit_preserves_the_encrypted_file_and_its_registration(*, incremental: bool) -> None:
+    encrypted = (DOCUMENT.parents[1] / "encrypted" / "user-aes-256.pdf").read_bytes()
+    with wrap_encrypted_payload(EncryptedPayload(encrypted, subtype="Standard")) as wrapper:
+        base = wrapper.to_bytes()
+    with pyropdf.open(base) as doc:
+        doc.pages[0].rotation = 90
+        saved = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(base)) as before, pikepdf.open(io.BytesIO(saved)) as after:
+        assert after.pages[0].obj.Rotate == 90
+        assert bytes(after.Root.Collection.D) == bytes(before.Root.Collection.D)
+        previous = before.Root.AF[0]
+        current = after.Root.AF[0]
+        assert current.objgen == previous.objgen
+        assert after.Root.Names.EmbeddedFiles.Names[1].objgen == current.objgen
+        assert current.EP == previous.EP
+        assert current.EF.F.objgen == previous.EF.F.objgen
+        assert current.EF.F.read_raw_bytes() == previous.EF.F.read_raw_bytes()
+        assert current.EF.F.read_bytes() == encrypted
 
 
 def test_additional_permissions_dss_malformed_and_encrypted_edges(pki: LocalPki) -> None:

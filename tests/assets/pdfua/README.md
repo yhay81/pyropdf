@@ -21,8 +21,20 @@ failed rule. Untagged annotations, attachment edits and page deletion have
 separate expectations for the scopes in which they break conformance.
 In UA-2 an attachment without a description fails 8.14.1-1. Deleting the
 sole tagged page also prunes the root Document child and fails 8.2.5.2-1.
-Issue [#848](https://github.com/yhay81/pyropdf/issues/848) tracks the
-pre-save reporting of these effects.
+For every matrix edit, the driver checks the pre-save report against the
+profiles for which independent validation finds a new failure. A signature
+or timestamp adopts its signed revision as a new baseline. Its incremental
+save reproduces those bytes, while a full rewrite can introduce a signature
+byte-range failure under PDF/A-2 and PDF/A-3.
+
+Additional edits to the dual-claim fixture remove XMP, one profile revision year, language, Figure
+alternate text, the parent tree, the RGB output intent or its indirect
+profile, and an embedded font program. Each check names the affected claim
+and edited object before writing. The validator checks both flavours on the
+prepared inputs and both save modes, including undo, transaction rollback,
+refusal, an unused font resource and an edit to an input with an existing
+alternate-text defect. [#932](https://github.com/yhay81/pyropdf/issues/932)
+tracks additional resource and structure representations.
 
 ## Human-verifiable checks
 
