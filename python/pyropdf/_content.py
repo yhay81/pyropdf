@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Self
 
-    from pyropdf._core import PathColumns, _OperationBudget, _PathPaint, _PathRow, _PathStroke
+    from pyropdf._core import PathColumns, _OperationBudget, _PageSnapshot, _PathPaint, _PathRow, _PathStroke
     from pyropdf._document import Document
 
 
@@ -426,8 +426,8 @@ class GraphicsContext:
 class FontRef:
     """The font that a text run uses, as hayro reads its font program.
 
-    The font dictionary's object number, subtype, and embedding are not
-    exposed yet. All Type 3 fonts share one reference.
+    This describes the program. A text run separately retains the source
+    PDF font dictionary and character codes that selected its glyphs.
     """
 
     name: str
@@ -484,6 +484,7 @@ class TextRun:
     context: GraphicsContext
     blend_mode: BlendMode
     soft_mask: SoftMask | None
+    _replay: _RunReplay | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def text(self) -> str:
@@ -515,13 +516,24 @@ class Path:
 class _Source:
     """The document that read an item, which a pickle leaves out."""
 
-    __slots__ = ("document",)
+    __slots__ = ("document", "snapshot")
 
-    def __init__(self, document: Document) -> None:
+    def __init__(self, document: Document | None, snapshot: _PageSnapshot | None = None) -> None:
         self.document = document
+        self.snapshot = snapshot
 
     def __reduce__(self) -> tuple[type[_Source], tuple[None]]:
         return _Source, (None,)
+
+
+@dataclass(frozen=True, slots=True)
+class _RunReplay:
+    source: _Source | None
+    reference: tuple[int, int] | None
+    width: int
+    codes: list[tuple[int, tuple[float, ...]]]
+    refusal: str | None
+    pen: tuple[float, ...] | None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -999,7 +1011,8 @@ class _Converter:
     def __init__(
         self, fonts: list[Any], states: _Contexts, columns: PathColumns, source: _Source | None = None
     ) -> None:
-        self.source = source
+        self.font_source = source
+        self.source = _Source(source.document) if source is not None else None
         self.fonts = [
             FontRef(
                 name=name,
@@ -1040,9 +1053,9 @@ class _Converter:
         )
 
     def text_run(self, raw: Any) -> TextRun:  # noqa: ANN401 - a nested core tuple.
-        glyphs, font, render_mode, fill, stroke, bbox, (state, blend, soft_mask) = raw
+        glyphs, font, render_mode, fill, stroke, bbox, (state, blend, soft_mask), replay = raw
         ids, texts, matrices, advances, boxes = glyphs
-        return TextRun(
+        item = TextRun(
             glyphs=tuple(
                 _glyph(
                     glyph_id,
@@ -1062,6 +1075,9 @@ class _Converter:
             blend_mode=_BLEND_MODES[blend],
             soft_mask=_soft_mask(soft_mask),
         )
+
+        object.__setattr__(item, "_replay", _RunReplay(self.font_source, *replay))
+        return item
 
     def path(self, raw: Any) -> Path:  # noqa: ANN401 - a nested core tuple.
         kinds, coords, bbox, fill, even_odd, stroke, (state, blend, soft_mask) = raw
@@ -1237,10 +1253,14 @@ class _PathValues:
         )
 
 
-def _content_from_core(raw: Any, document: Document | None = None) -> Content:  # noqa: ANN401 - the core's nested tuples.
+def _content_from_core(
+    raw: Any,  # noqa: ANN401 - the core returns nested tuples.
+    document: Document | None = None,
+    snapshot: _PageSnapshot | None = None,
+) -> Content:
     """Build a :class:`Content` from ``_core.page_content``; its images name ``document``."""
     items, fonts, clips, groups, marks, states, columns = raw
-    source = None if document is None else _Source(document)
+    source = None if document is None else _Source(document, snapshot)
     converter = _Converter(fonts, _Contexts(clips, groups, marks, states), columns, source)
     converted: list[ContentItem] = []
     for kind, item in items:

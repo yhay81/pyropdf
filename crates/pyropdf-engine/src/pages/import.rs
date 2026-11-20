@@ -187,6 +187,27 @@ pub fn copy_resource_graph(
     value: &Value,
     budget: &Budget,
 ) -> Result<Value> {
+    copy_graph(transaction, source, value, std::iter::empty(), budget)
+}
+
+/// Copy several resources of one version into the caller's reserved objects.
+/// A single walk preserves shared descendants and references between roots.
+pub fn copy_resources_into(
+    transaction: &mut Transaction,
+    source: &Version,
+    roots: impl Iterator<Item = (Reference, Reference)>,
+    budget: &Budget,
+) -> Result<()> {
+    copy_graph(transaction, source, &Value::Null, roots, budget).map(|_| ())
+}
+
+fn copy_graph(
+    transaction: &mut Transaction,
+    source: &Version,
+    value: &Value,
+    roots: impl Iterator<Item = (Reference, Reference)>,
+    budget: &Budget,
+) -> Result<Value> {
     let savepoint = transaction.savepoint();
     let result = (|| {
         let mut walk = Walk {
@@ -200,6 +221,11 @@ pub fn copy_resource_graph(
             pending: BudgetVec::new(budget),
             budget,
         };
+        for (reference, new) in roots {
+            budget.poll()?;
+            walk.numbers.insert(reference, new, 0)?;
+            walk.pending.try_push((reference, new))?;
+        }
         let mut result = copy_for_edit(value, budget)?;
         walk.value(transaction, &mut result, 1)?;
         while let Some((reference, new)) = walk.pending.pop() {

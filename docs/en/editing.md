@@ -200,6 +200,38 @@ Text is limited by default to 1 MiB of UTF-8 and 4,096 lines per call, refused w
 `LimitError` before anything is drawn; pass `max_text_size=None` for
 trusted input. See [Limits and errors](limits.md).
 
+To copy text already painted in a PDF, pass the extracted runs to a canvas.
+The source document must be open during the calls to `draw`.
+
+```python
+import pyropdf
+
+with pyropdf.open("input.pdf") as source, pyropdf.Document() as target:
+    page = source.pages[0]
+    copy = target.pages.new((page.rect.width, page.rect.height))
+    with copy.draw() as canvas:
+        for run in page.content(paths=False, images=False).text_runs:
+            canvas.draw(run)
+    target.save("copied-text.pdf")
+```
+
+Each glyph keeps its original PDF character code, text matrix, and font
+dictionary. The canvas copies the selected fonts from the version that
+produced the runs, so later changes to the source encoding or program do
+not change a drawing. Fonts from the same content result share their
+copied resources. Embedded simple fonts, Standard 14 fonts, embedded
+Identity-H and Identity-V fonts, and Type 3 fonts with their own resources
+can be copied. A run with an unavailable face, a direct font dictionary,
+a composite encoding of unknown code width, a singular glyph transform,
+enclosing replacement text, a pattern paint, or a soft mask raises
+`ValueError`. A closed source raises `DocumentClosedError`. A canvas that exceeds its document or source limits
+rolls back the drawing.
+
+The 15-document round-trip corpus redraws 17,246 text runs. Eight runs in
+`mhlw-doc.pdf` use an unembedded, nonstandard font. The corpus test checks
+the remaining page pixels within 16 levels per RGB channel at 72 dpi, and
+checks that the number and reason for these exclusions stay the same.
+
 ## Annotations
 
 `page.annotations.add` takes a specification and returns an `Annotation`
