@@ -104,7 +104,8 @@ Holds DER-encoded X.509 `certificates` (`/Certs`), OCSP responses
 `ocsps` (`/OCSPs`), CRLs `crls` (`/CRLs`), and per-signature
 `ValidationInfo` entries keyed by `vri_key` in `vri` (`/VRI`).
 Writing deduplicates identical DER byte strings into shared indirect Flate
-streams and promotes the catalog's `/Version` to `2.0`.
+streams. An older document is promoted to PDF 2.0 in the same transaction.
+If that introduces a structural defect, assignment raises `PdfError`.
 
 ## `Signature`
 
