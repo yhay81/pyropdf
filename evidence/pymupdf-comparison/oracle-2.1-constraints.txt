@@ -1,0 +1,12 @@
+# PyMuPDF's runtime dependencies on Python 3.13, from the v0.3.1 demonstration.
+flatbuffers==25.12.19
+networkx==3.7
+numpy==2.5.5
+onnxruntime==1.32.0
+packaging==26.3
+protobuf==7.36.2
+psutil==7.2.2
+pymupdf_layout==2.1
+pymupdf4llm==2.1
+PyYAML==6.0.3
+tabulate==0.10.0
