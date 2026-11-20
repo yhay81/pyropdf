@@ -471,7 +471,10 @@ def test_pdf20_security_store_preserves_shared_ocsp_in_both_saves() -> None:
                 dss = reopened.catalog["DSS"]
                 xref = dss["OCSPs"][0].xref
                 assert xref is not None
-                assert dss["VRI"][key]["OCSP"][0].xref == xref
+                (shared,) = dss["VRI"][key]["OCSP"]
+                assert shared.xref == xref
+                assert shared.read() == response
+                assert "Extensions" not in reopened.catalog
                 assert not reopened.check()
 
 
