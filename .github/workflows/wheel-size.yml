@@ -45,13 +45,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: base
-          persist-credentials: false
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
           ref: ${{ github.event.pull_request.head.sha }}
           path: head
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Find the base of the PR diff
+        id: base
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: echo "revision=$(git -C head merge-base HEAD "$BASE_SHA")" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.base.outputs.revision }}
+          path: base
           persist-credentials: false
       - name: Build base release wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -60,7 +67,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --out dist
+          args: --release --locked --compression-level 9 --out dist
           manylinux: auto
       - name: Build head release wheel
         uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -69,7 +76,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --out dist
+          args: --release --locked --compression-level 9 --out dist
           manylinux: auto
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:

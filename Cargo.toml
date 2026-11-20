@@ -36,12 +36,20 @@ hayro-syntax = { git = "https://github.com/yhay81/hayro", rev = "394e4a0d37baf8a
 
 # Keep the compiled extension within the native wheel budget (#858).
 [profile.release]
-opt-level = "z"
-lto = "thin"
+opt-level = 2
+lto = "fat"
 codegen-units = 1
 strip = "symbols"
 # PyO3 converts Rust panics into Python exceptions only when they unwind.
 panic = "unwind"
+
+# Favor compact code in the binding and RTen operator registry. Keep the PDF
+# engines and the numerical kernels at the main release optimization level.
+[profile.release.package.pyropdf-python]
+opt-level = "z"
+
+[profile.release.package.rten]
+opt-level = "s"
 
 # hayro renders the corpus in the tests of pyropdf-engine; unoptimized, one
 # page takes seconds. Optimizing the dependencies alone keeps the workspace's

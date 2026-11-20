@@ -92,7 +92,8 @@ def test_the_readme_example_runs(
 
 def _size_fixture(directory: Path, size: int, abi: str = "abi3", *, notice: str = "NOTICE") -> None:
     directory.mkdir(exist_ok=True)
-    path = directory / f"pyropdf-1.0-cp311-{abi}-win_amd64.whl"
+    python = "cp311" if abi == "abi3" else abi.removesuffix("t")
+    path = directory / f"pyropdf-1.0-{python}-{abi}-win_amd64.whl"
     info = "pyropdf-1.0.dist-info"
     licenses = ["LICENSE", "NOTICE", "tools/arlington/model/LICENSE"]
 

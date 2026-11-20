@@ -76,7 +76,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --out dist
+          args: --release --locked --compression-level 9 --out dist
           manylinux: auto
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -137,7 +137,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --out dist -i python${{ matrix.python.version }}
+          args: --release --locked --compression-level 9 --out dist -i python${{ matrix.python.version }}
           manylinux: auto
       - name: Report free-threaded wheel size and check licenses
         run: python tools/wheel_size.py dist --abi ${{ matrix.python.tag }}
