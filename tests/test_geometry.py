@@ -149,6 +149,7 @@ def test_matrix_arithmetic() -> None:
     assert Matrix(0, 0, 0, 0, 0, 1)
 
 
+@pytest.mark.spec("coordinate-systems", "interpret")
 def test_composition_applies_the_left_matrix_first() -> None:
     scale = Matrix(2, 3)
     translate = Matrix(1, 0, 0, 1, 10, -20)
