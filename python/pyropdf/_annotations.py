@@ -24,6 +24,7 @@ from pyropdf._actions import (
     _read_screen_action,
     _write_screen_action,
 )
+from pyropdf._attachments import RelatedFile, _read_related, _write_related
 from pyropdf._canvas import _cache
 from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
@@ -518,6 +519,20 @@ class AnnotationFile:
                 del params[key]
 
         self._edit("annotation file edit", edit)
+
+    @property
+    def related_files(self) -> Mapping[str, tuple[RelatedFile, ...]]:
+        """Read, assign or delete the related-file pairs of the annotation's file specification."""
+        return _read_related(self._filespec())
+
+    @related_files.setter
+    def related_files(self, value: Mapping[str, Sequence[RelatedFile]]) -> None:
+        document = self._annotation._page._document  # noqa: SLF001
+        self._edit("annotation related files", lambda spec: _write_related(document, spec, value))
+
+    @related_files.deleter
+    def related_files(self) -> None:
+        self.related_files = {}
 
     @property
     def filename(self) -> str:

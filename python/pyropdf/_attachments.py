@@ -14,8 +14,10 @@ catalog's ``/AF``.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from pyropdf import _core
@@ -38,6 +40,8 @@ _DEFAULT_MAX_EMBEDDED_FILE_SIZE = 64 * 1024 * 1024
 _MAX_INPUT_TEXT_SIZE = 1024 * 1024
 _MAX_TREE_DEPTH = 32
 _MAX_TREE_ENTRIES = 4096
+_RELATED_KEYS = ("F", "UF")
+_RELATED_LIMIT = "embedded_file_input_size"
 _MAX_INLINE_OBJECTS = 4096
 #: The longest date string that a file's ``created`` and ``modified`` take.
 _MAX_DATE_SIZE = 64
@@ -277,6 +281,169 @@ def _file(filespec: object) -> Stream | None:
     return None
 
 
+@dataclass(frozen=True, slots=True, init=False)
+class RelatedFile:
+    """A related filename and its indirect embedded-file stream (ISO 32000-2, 7.11.4.2).
+
+    A text filename is encoded as a PDF text string. A byte filename retains
+    its original bytes. The stream handle refers to its existing object.
+    """
+
+    filename: String
+    stream: Stream
+
+    def __init__(self, *, filename: str | bytes, stream: Stream) -> None:
+        """Identify an existing embedded file by its name in the related-files array."""
+        if isinstance(filename, str):
+            _validate_text_size([filename], "related filename")
+            filename = _encode_text_string(filename)
+        if not isinstance(filename, bytes):
+            msg = "a related filename must be text or bytes"
+            raise TypeError(msg)
+        if len(filename) > _MAX_INPUT_TEXT_SIZE:
+            msg = "related filename exceeds the attachment input size limit"
+            raise LimitError(_RELATED_LIMIT, msg)
+        if not isinstance(stream, Stream) or not stream.is_indirect:
+            msg = "a related file requires an indirect embedded-file stream"
+            raise TypeError(msg)
+        object.__setattr__(self, "filename", String(filename))
+        object.__setattr__(self, "stream", stream)
+
+
+def _related_array(rf: Dictionary, key: str) -> Array | None:
+    items = rf.get(key)
+    if items is None:
+        return None
+    if not isinstance(items, Array) or len(items) % 2:
+        msg = f"/RF/{key} must contain filename/stream pairs"
+        raise PdfError(msg)
+    if len(items) // 2 > _MAX_TREE_ENTRIES:
+        msg = f"/RF/{key} exceeds the related-file count limit"
+        raise LimitError(_RELATED_LIMIT, msg)
+    return items
+
+
+def _read_related(filespec: object) -> Mapping[str, tuple[RelatedFile, ...]]:
+    rf = filespec.get("RF") if isinstance(filespec, Dictionary) else None
+    if rf is not None and (not isinstance(rf, Dictionary) or isinstance(rf, Stream)):
+        msg = "file specification /RF must be a dictionary"
+        raise PdfError(msg)
+    result: dict[str, tuple[RelatedFile, ...]] = {}
+    total_bytes = 0
+    if isinstance(rf, Dictionary):
+        for key in _RELATED_KEYS:
+            if (items := _related_array(rf, key)) is None:
+                continue
+            entries = []
+            for i in range(0, len(items), 2):
+                filename, stream = items[i], items[i + 1]
+                if not isinstance(filename, String) or not isinstance(stream, Stream) or not stream.is_indirect:
+                    msg = f"/RF/{key} contains an invalid filename/stream pair"
+                    raise PdfError(msg)
+                total_bytes += len(filename)
+                if total_bytes > _MAX_INPUT_TEXT_SIZE:
+                    msg = "related filenames exceed the attachment input size limit"
+                    raise LimitError(_RELATED_LIMIT, msg)
+                entries.append(RelatedFile(filename=filename, stream=stream))
+            result[key] = tuple(entries)
+    return MappingProxyType(result)
+
+
+def _related_xrefs(rf: object) -> list[int]:
+    """Collect reachable standard entries for retirement, including partially malformed older arrays."""
+    if not isinstance(rf, Dictionary) or isinstance(rf, Stream):
+        return []
+    numbers = [] if rf.xref is None else [rf.xref]
+    for key in _RELATED_KEYS:
+        items = rf.get(key)
+        if not isinstance(items, Array):
+            continue
+        if len(items) > 2 * _MAX_TREE_ENTRIES:
+            msg = f"/RF/{key} exceeds the related-file count limit"
+            raise LimitError(_RELATED_LIMIT, msg)
+        if items.xref is not None:
+            numbers.append(items.xref)
+        for i in range(1, len(items), 2):
+            stream = items[i]
+            if isinstance(stream, Stream) and stream.xref is not None:
+                numbers.append(stream.xref)
+    return numbers
+
+
+def _related_pairs(entries: Sequence[RelatedFile], remaining_bytes: int) -> tuple[list[object], int]:
+    if not isinstance(entries, Sequence) or isinstance(entries, (str, bytes, bytearray)):
+        msg = "related file entries must be a sequence of RelatedFile values"
+        raise TypeError(msg)
+    pairs: list[object] = []
+    for index, entry in enumerate(entries):
+        if index >= _MAX_TREE_ENTRIES:
+            msg = "too many related filename/stream pairs"
+            raise LimitError(_RELATED_LIMIT, msg)
+        if not isinstance(entry, RelatedFile):
+            msg = "each related file must be a RelatedFile"
+            raise TypeError(msg)
+        remaining_bytes -= len(entry.filename)
+        if remaining_bytes < 0:
+            msg = "related filenames exceed the attachment input size limit"
+            raise LimitError(_RELATED_LIMIT, msg)
+        if entry.stream.get("Type") not in (None, "EmbeddedFile"):
+            msg = "the related stream is not an embedded file"
+            raise ValueError(msg)
+        pairs.extend((entry.filename, entry.stream))
+    return pairs, remaining_bytes
+
+
+def _related_replacements(filespec: Dictionary, value: Mapping[str, Sequence[RelatedFile]]) -> dict[str, list[object]]:
+    if not isinstance(value, Mapping):
+        msg = "related_files must be a mapping keyed by F or UF"
+        raise TypeError(msg)
+    embedded = filespec.get("EF")
+    replacements = {}
+    remaining = _MAX_INPUT_TEXT_SIZE
+    for count, (key, entries) in enumerate(value.items()):
+        if count >= len(_RELATED_KEYS) or key not in _RELATED_KEYS:
+            msg = "related_files accepts only F and UF"
+            raise ValueError(msg)
+        if not isinstance(embedded, Dictionary) or not isinstance(embedded.get(key), Stream):
+            msg = f"related files under {key} require an embedded stream under /EF/{key}"
+            raise PdfError(msg)
+        replacements[key], remaining = _related_pairs(entries, remaining)
+    return replacements
+
+
+def _write_related(document: Document, filespec: object, value: Mapping[str, Sequence[RelatedFile]]) -> None:
+    """Replace F/UF on a private copy, retaining unknown entries and other owners of the original graph."""
+    if not isinstance(filespec, Dictionary) or not filespec.is_indirect:
+        msg = "related files require an indirect file specification"
+        raise PdfError(msg)
+    replacements = _related_replacements(filespec, value)
+    rf = filespec.get("RF")
+    if rf is not None and (not isinstance(rf, Dictionary) or isinstance(rf, Stream)):
+        msg = "file specification /RF must be a dictionary"
+        raise PdfError(msg)
+    if not replacements and rf is None:
+        return
+    retired = _related_xrefs(rf)
+    # Copy even an indirect /RF: another file specification may share it.
+    staged_number = document.objects.add(rf if rf is not None else {})
+    staged = document.objects[staged_number]
+    for key in _RELATED_KEYS:
+        if key in replacements:
+            staged[key] = document.objects[document.objects.add(replacements[key])]
+        elif key in staged:
+            del staged[key]
+    if replacements:
+        _require(document, _UF_VERSION if "UF" in replacements else (1, 3))
+        filespec["Type"] = Name("Filespec")
+    if len(staged):
+        filespec["RF"] = staged
+    else:
+        del filespec["RF"]
+        retired.append(staged_number)
+    if retired:
+        _core.object_free_unreferenced(document._core(), retired)  # noqa: SLF001
+
+
 def _objects(filespec: object) -> list[int]:
     """Return the objects of a file specification and of the embedded files and collection item it holds."""
     if not isinstance(filespec, Dictionary):
@@ -286,6 +453,7 @@ def _objects(filespec: object) -> list[int]:
     if isinstance(files, Dictionary):
         numbers.extend(stream.xref for key in files if isinstance(stream := files[key], Stream) and stream.xref)
     numbers.extend(_collection_item_xrefs(filespec.get("CI")))
+    numbers.extend(_related_xrefs(filespec.get("RF")))
     return numbers
 
 
@@ -443,6 +611,25 @@ class Attachment:
     @modified.deleter
     def modified(self) -> None:
         self._edit_file({"modified": None})
+
+    @property
+    def related_files(self) -> Mapping[str, tuple[RelatedFile, ...]]:
+        """Read the ordered related-file pairs for each embedded filename key (F or UF).
+
+        Assign a mapping to replace these pairs. Delete the property to
+        remove the standard relationships. Shared streams remain accessible
+        to their other owners.
+        """
+        return _read_related(self._filespec())
+
+    @related_files.setter
+    def related_files(self, value: Mapping[str, Sequence[RelatedFile]]) -> None:
+        with self._document.transaction("attachment related files"):
+            _write_related(self._document, self._filespec(), value)
+
+    @related_files.deleter
+    def related_files(self) -> None:
+        self.related_files = {}
 
     @property
     def collection_item(self) -> Mapping[str, str | int | float | CollectionSubitem] | None:

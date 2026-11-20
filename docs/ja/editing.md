@@ -383,6 +383,8 @@ with pyropdf.open("input.pdf") as doc:
 読み書きします。`doc.collection` はポータブルコレクションのスキーマ・並び順・配色・画面分割・
 カスタム `Navigator`・`CollectionFolder` 階層を設定します。
 
+埋め込みファイルには関連ファイルを設定できます。`att.related_files` に、`/EF` 辞書にあるファイル名のキー（`F` または `UF`）と関連ファイルの列を渡します。列の順序は保存され、複数の名前から同じストリームを参照できます。ファイル添付注釈でも `annotation.file.related_files` を使えます。
+
 ```python
 import pyropdf
 from pyropdf import (
@@ -398,6 +400,8 @@ from pyropdf import (
 
 with pyropdf.open("input.pdf") as doc:
     att = doc.attachments.add("data.csv", b"a,b\n1,2\n", description="元データ")
+    legend = doc.objects.add_stream(b"units: metres", {"Type": pyropdf.Name("EmbeddedFile")})
+    att.related_files = {"F": [pyropdf.RelatedFile(filename="legend.txt", stream=doc.objects[legend])]}
     att.collection_item = {
         "Department": "Finance",
         "Total": CollectionSubitem(42, "$"),
