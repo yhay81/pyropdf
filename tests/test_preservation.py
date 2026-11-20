@@ -10,18 +10,13 @@ its text and its rendering. A later editing operation adds its row to
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import pytest
 from corpus import ASSETS, NAMES
 from test_pages import build_raw_pdf
-from test_preservation_operations import NEW_EDITS, Edit, face
+from test_preservation_operations import FAMILY_EDITS, NEW_EDITS, Edit, face, first_page, flattened, page_labels
 
 import pyropdf
 from pyropdf import Array, Dictionary, Name, Operation, Real, Stream, typed
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 #: Plain values are compared through this, which nests no deeper.
 _MAX_DEPTH = 64
@@ -58,6 +53,10 @@ def snapshot(doc: pyropdf.Document) -> dict[int, object]:
     return {number: plain(doc.objects[number]) for number in doc.objects}
 
 
+def prepare_rotation(doc: pyropdf.Document) -> None:
+    doc.pages[0].rotation = 0
+
+
 def rotate(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[0]
     page.rotation = (page.rotation + 90) % 360
@@ -70,22 +69,13 @@ def add_object(doc: pyropdf.Document) -> set[int]:
 
 
 def catalog_entry(doc: pyropdf.Document) -> set[int]:
-    doc.catalog["PageMode"] = Name("UseNone")
+    doc.catalog["PageMode"] = Name("UseThumbs")
     return {number(doc.catalog)}
-
-
-def flattened(doc: pyropdf.Document) -> set[int]:
-    """Return the page-tree objects that writing the page list rewrites."""
-    # Writing the page list flattens the page tree: it writes the root and
-    # every page that is not already the root's kid (#272 narrows what those
-    # pages keep).
-    root = doc.catalog["Pages"]
-    return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
 
 
 def new_page(doc: pyropdf.Document) -> set[int]:
     touched = flattened(doc)
-    doc.pages.new((200, 300))
+    doc.pages.new((211, 307))
     return touched
 
 
@@ -142,9 +132,13 @@ def _labels(doc: pyropdf.Document) -> set[int]:
     return numbers
 
 
-def delete_page(doc: pyropdf.Document) -> set[int]:
+def prepare_page_order(doc: pyropdf.Document) -> None:
     if len(doc.pages) == 1:
         doc.pages.new((200, 300))
+    doc.pages[0].duration = 213.25
+
+
+def delete_page(doc: pyropdf.Document) -> set[int]:
     page = number(doc.pages[0].obj)
     touched = flattened(doc) | {page} | _labels(doc)
     before = snapshot(doc)
@@ -163,7 +157,7 @@ def delete_page(doc: pyropdf.Document) -> set[int]:
 
 def replace_object(doc: pyropdf.Document) -> set[int]:
     number = doc.objects.add([1, 2])
-    doc.objects[number] = [Real("3.14159265358979323846264338327950288")]
+    doc.objects[number] = [Real("3.125")]
     return set()
 
 
@@ -173,31 +167,7 @@ def rewrite_stream(doc: pyropdf.Document) -> set[int]:
     return set()
 
 
-def page_labels(doc: pyropdf.Document) -> set[int]:
-    """Return the objects of the page label tree, which moving a page rewrites."""
-    # A structural edit writes the tree as one leaf whose ranges keep each
-    # page's label (#180), or the catalog when the tree is a direct value.
-    tree = doc.catalog.get("PageLabels")
-    if not isinstance(tree, Dictionary):
-        return set()
-    found = {number(doc.catalog)} if tree.xref is None else set()
-    pending = [tree]
-    while pending:
-        node = pending.pop()
-        if node.xref is not None:
-            found.add(node.xref)
-        kids = node.get("Kids")
-        if isinstance(kids, Array):
-            pending.extend(kid for kid in kids if isinstance(kid, Dictionary))
-        nums = node.get("Nums")
-        if isinstance(nums, Array):
-            found.update(label.xref for label in nums if isinstance(label, Dictionary) and label.xref is not None)
-    return found
-
-
 def move_page(doc: pyropdf.Document) -> set[int]:
-    if len(doc.pages) == 1:
-        doc.pages.new((200, 300))
     touched = flattened(doc) | page_labels(doc)
     doc.pages.move(0, -1)
     return touched
@@ -205,11 +175,11 @@ def move_page(doc: pyropdf.Document) -> set[int]:
 
 def assign_operations(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[0]
-    page.operations = [*page.operations, Operation("q"), Operation("Q")]
+    page.operations = [*page.operations, Operation("q"), Operation("w", (17,)), Operation("Q")]
     return {number(page.obj)}
 
 
-def add_attachment(doc: pyropdf.Document) -> set[int]:
+def attachment_tree(doc: pyropdf.Document) -> set[int]:
     # Adding a name writes the catalog, for its /Version where the file is
     # older than PDF 1.4, its name dictionary, and its EmbeddedFiles root.
     touched = {number(doc.catalog)}
@@ -220,25 +190,42 @@ def add_attachment(doc: pyropdf.Document) -> set[int]:
         files = names.get("EmbeddedFiles")
         if files is not None and files.xref is not None:
             touched.add(files.xref)
+    return touched
+
+
+def add_attachment(doc: pyropdf.Document) -> set[int]:
+    touched = attachment_tree(doc)
     doc.attachments.add("pyropdf-preserved", b"data", filename="preserved.txt")
     return touched
 
 
+def prepare_attachment(doc: pyropdf.Document) -> None:
+    add_attachment(doc)
+
+
+def attachment_spec(doc: pyropdf.Document) -> Dictionary:
+    entries = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+    return next(entries[i + 1] for i in range(0, len(entries), 2) if entries[i] == b"pyropdf-preserved")
+
+
 def write_attachment(doc: pyropdf.Document) -> set[int]:
-    touched = add_attachment(doc)
+    touched = {number(attachment_spec(doc)["EF"]["F"])}
     doc.attachments["pyropdf-preserved"].write(b"other data")
     return touched
 
 
 def delete_attachment(doc: pyropdf.Document) -> set[int]:
-    touched = add_attachment(doc)
+    spec = attachment_spec(doc)
+    touched = attachment_tree(doc) | {number(spec), number(spec["EF"]["F"])}
+    af = doc.catalog.get("AF")
+    if isinstance(af, Array) and af.xref is not None:
+        touched.add(af.xref)
     del doc.attachments["pyropdf-preserved"]
     return touched
 
 
 def delete_entry(doc: pyropdf.Document) -> set[int]:
-    doc.catalog["Preserved"] = Name("Gone")
-    del doc.catalog["Preserved"]
+    del doc.catalog["PageMode"]
     return {number(doc.catalog)}
 
 
@@ -255,15 +242,15 @@ def typed_set(doc: pyropdf.Document) -> set[int]:
 
 
 def typed_delete(doc: pyropdf.Document) -> set[int]:
-    typed_set(doc)
     del typed.Catalog(doc.catalog)["PageLayout"]
     return {number(doc.catalog)}
 
 
 def undo(doc: pyropdf.Document) -> set[int]:
-    catalog_entry(doc)
+    touched = catalog_entry(doc)
+    doc.catalog["PageMode"] = Name("FullScreen")
     doc.history.undo()
-    return set()
+    return touched
 
 
 def redo(doc: pyropdf.Document) -> set[int]:
@@ -273,30 +260,128 @@ def redo(doc: pyropdf.Document) -> set[int]:
     return touched
 
 
-#: Each edit, which returns the object numbers it touched among those that existed before it.
-_EDITS: dict[str, Callable[[pyropdf.Document], set[int]]] = {
-    "none": lambda _: set(),
-    "rotate": rotate,
-    "add_object": add_object,
-    "catalog_entry": catalog_entry,
-    "new_page": new_page,
-    "delete_page": delete_page,
-    "replace_object": replace_object,
-    "rewrite_stream": rewrite_stream,
-    "move_page": move_page,
-    "assign_operations": assign_operations,
-    "add_attachment": add_attachment,
-    "write_attachment": write_attachment,
-    "delete_attachment": delete_attachment,
-    "delete_entry": delete_entry,
-    "array_insert_delete": array_insert_delete,
-    "typed_set": typed_set,
-    "typed_delete": typed_delete,
-    "undo": undo,
-    "redo": redo,
-}
+def prepare_catalog(doc: pyropdf.Document) -> None:
+    doc.catalog["PageMode"] = Name("UseNone")
 
-EDITS = {name: Edit(apply=apply) for name, apply in _EDITS.items()} | NEW_EDITS
+
+def prepare_layout(doc: pyropdf.Document) -> None:
+    doc.catalog["PageLayout"] = Name("SinglePage")
+
+
+def check_rotation(doc: pyropdf.Document) -> None:
+    assert doc.pages[0].rotation == 90
+
+
+def newest_data_object(doc: pyropdf.Document) -> object:
+    # A stream-based save can append its xref stream after the test allocation.
+    for xref in sorted(doc.objects, reverse=True):
+        obj = doc.objects[xref]
+        if not isinstance(obj, Stream) or obj.get("Type") != Name("XRef"):
+            return obj
+    pytest.fail("fixture has no data objects")
+
+
+def check_object(doc: pyropdf.Document) -> None:
+    obj = newest_data_object(doc)
+    assert isinstance(obj, Dictionary)
+    assert obj.get("Preserved") == Real("0.000001")
+
+
+def check_catalog(doc: pyropdf.Document) -> None:
+    assert doc.catalog.get("PageMode") == Name("UseThumbs")
+
+
+def check_new_page(doc: pyropdf.Document) -> None:
+    assert tuple(doc.pages[-1].rect) == (0, 0, 211, 307)
+
+
+def check_page_deleted(doc: pyropdf.Document) -> None:
+    assert all(page.duration != 213.25 for page in doc.pages)
+
+
+def check_page_moved(doc: pyropdf.Document) -> None:
+    assert doc.pages[-1].duration == 213.25
+
+
+def check_replacement(doc: pyropdf.Document) -> None:
+    obj = newest_data_object(doc)
+    assert isinstance(obj, Array)
+    assert plain(obj) == [plain(Real("3.125"))]
+
+
+def check_stream(doc: pyropdf.Document) -> None:
+    obj = newest_data_object(doc)
+    assert isinstance(obj, Stream)
+    assert obj.read() == b"q 1 0 0 1 0 0 cm Q"
+
+
+def check_operations(doc: pyropdf.Document) -> None:
+    assert list(doc.pages[0].operations)[-3:] == [Operation("q"), Operation("w", (17,)), Operation("Q")]
+
+
+def check_attachment(doc: pyropdf.Document) -> None:
+    assert doc.attachments["pyropdf-preserved"].read() == b"data"
+
+
+def check_rewritten_attachment(doc: pyropdf.Document) -> None:
+    file = doc.attachments["pyropdf-preserved"]
+    assert (file.filename, file.read(), file.size) == ("preserved.txt", b"other data", 10)
+
+
+def check_attachment_deleted(doc: pyropdf.Document) -> None:
+    assert "pyropdf-preserved" not in doc.attachments
+
+
+def check_entry_deleted(doc: pyropdf.Document) -> None:
+    assert "PageMode" not in doc.catalog
+
+
+def check_array(doc: pyropdf.Document) -> None:
+    obj = newest_data_object(doc)
+    assert isinstance(obj, Array)
+    assert list(obj) == [Real("0.1"), 1, 3]
+
+
+def check_layout(doc: pyropdf.Document) -> None:
+    assert doc.catalog.get("PageLayout") == Name("OneColumn")
+
+
+def check_layout_deleted(doc: pyropdf.Document) -> None:
+    assert "PageLayout" not in doc.catalog
+
+
+EDITS = (
+    {
+        "none": Edit(apply=lambda _: set()),
+        "rotate": Edit(prepare=prepare_rotation, apply=rotate, check=check_rotation, affected_pages=first_page),
+        "add_object": Edit(apply=add_object, check=check_object),
+        "catalog_entry": Edit(prepare=prepare_catalog, apply=catalog_entry, check=check_catalog),
+        "new_page": Edit(apply=new_page, check=check_new_page),
+        "delete_page": Edit(
+            prepare=prepare_page_order, apply=delete_page, check=check_page_deleted, affected_pages=first_page
+        ),
+        "replace_object": Edit(apply=replace_object, check=check_replacement),
+        "rewrite_stream": Edit(apply=rewrite_stream, check=check_stream),
+        "move_page": Edit(prepare=prepare_page_order, apply=move_page, check=check_page_moved),
+        "assign_operations": Edit(apply=assign_operations, check=check_operations),
+        "add_attachment": Edit(apply=add_attachment, check=check_attachment),
+        "write_attachment": Edit(prepare=prepare_attachment, apply=write_attachment, check=check_rewritten_attachment),
+        "delete_attachment": Edit(prepare=prepare_attachment, apply=delete_attachment, check=check_attachment_deleted),
+        "delete_entry": Edit(prepare=prepare_catalog, apply=delete_entry, check=check_entry_deleted),
+        "array_insert_delete": Edit(apply=array_insert_delete, check=check_array),
+        "typed_set": Edit(prepare=prepare_layout, apply=typed_set, check=check_layout),
+        "typed_delete": Edit(prepare=prepare_layout, apply=typed_delete, check=check_layout_deleted),
+        "undo": Edit(prepare=prepare_catalog, apply=undo, check=check_catalog),
+        "redo": Edit(prepare=prepare_catalog, apply=redo, check=check_catalog),
+    }
+    | NEW_EDITS
+    | FAMILY_EDITS
+)
+
+
+def raw_objects(doc: pyropdf.Document) -> dict[int, tuple[int, bytes]]:
+    """Keep the source bytes and generation of each object, including strings and real lexemes."""
+    return {xref: (generation, body) for xref, generation, body in doc._core()._objects()}  # noqa: SLF001
 
 
 def page_state(doc: pyropdf.Document, index: int) -> tuple[str, bytes]:
@@ -312,10 +397,11 @@ def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *,
     case = EDITS[edit]
     doc = case.open(ASSETS / name)
     before = snapshot(doc)
+    raw_before = raw_objects(doc)
     # A page outside the declared effect, found by object number after edits
     # move pages. Creating a field may also draw existing missing appearances.
     affected = case.affected_pages(doc)
-    candidates = [index for index in range(1, len(doc.pages)) if number(doc.pages[index].obj) not in affected]
+    candidates = [index for index in range(len(doc.pages)) if number(doc.pages[index].obj) not in affected]
     last = candidates[-1] if candidates else None
     untouched = number(doc.pages[last].obj) if last is not None else None
     state = page_state(doc, last) if last is not None else None
@@ -326,6 +412,8 @@ def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *,
     after = snapshot(reopened)
     changed = [xref for xref, value in before.items() if xref not in touched and after.get(xref) != value]
     assert changed == []
+    raw_after = raw_objects(reopened)
+    assert [xref for xref, body in raw_before.items() if xref not in touched and raw_after.get(xref) != body] == []
     if state is not None:
         index = next(at for at, page in enumerate(reopened.pages) if number(page.obj) == untouched)
         assert page_state(reopened, index) == state
@@ -340,17 +428,18 @@ def test_attachment_edits_record_an_indirect_tree_root(edit: str, *, indirect_na
     root = doc.objects[doc.objects.add({"Names": entries})]
     names = {"EmbeddedFiles": root}
     doc.catalog["Names"] = doc.objects[doc.objects.add(names)] if indirect_names else names
+    EDITS[edit].prepare(doc)
     before = snapshot(doc)
 
     touched = EDITS[edit].apply(doc)
 
-    assert number(root) in touched
+    assert (number(root) in touched) is (edit != "write_attachment")
     after = snapshot(pyropdf.open(doc.to_bytes()))
     assert all(after.get(xref) == value for xref, value in before.items() if xref not in touched)
 
 
-@pytest.mark.parametrize("edit", sorted(NEW_EDITS))
-def test_each_added_case_rejects_a_no_op(edit: str) -> None:
+@pytest.mark.parametrize("edit", sorted(EDITS.keys() - {"none"}))
+def test_each_edit_rejects_a_no_op(edit: str) -> None:
     doc = pyropdf.Document()
     doc.pages.new((200, 200))
     case = EDITS[edit]
@@ -365,7 +454,7 @@ def test_each_added_case_rejects_a_no_op(edit: str) -> None:
 
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
-@pytest.mark.parametrize("edit", sorted(NEW_EDITS))
+@pytest.mark.parametrize("edit", sorted(NEW_EDITS | FAMILY_EDITS))
 def test_added_cases_preserve_siblings_with_indirect_annotation_and_field_lists(
     edit: str, *, incremental: bool
 ) -> None:
