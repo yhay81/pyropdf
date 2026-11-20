@@ -1,0 +1,8 @@
+{
+  "name": "pyropdf-wheel-smoke",
+  "main": "src/worker.py",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": false,
+  "preview_urls": false
+}

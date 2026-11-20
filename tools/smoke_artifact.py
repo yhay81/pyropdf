@@ -25,9 +25,9 @@ def _require(*, condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
-def _text_pdf() -> bytes:
+def text_pdf(text: str = _TEXT) -> bytes:
     """Return a one-page document that draws the smoke text with Helvetica."""
-    stream = f"q 1 0 0 rg 0 0 20 20 re f Q BT /F1 18 Tf 36 100 Td ({_TEXT}) Tj ET"
+    stream = f"q 1 0 0 rg 0 0 20 20 re f Q BT /F1 18 Tf 36 100 Td ({text}) Tj ET"
     objects = [
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -62,7 +62,7 @@ def _run_smoke() -> None:
             message="importing pyropdf enabled the GIL",
         )
 
-    source = _text_pdf()
+    source = text_pdf()
     try:
         pyropdf.open(source, limits=pyropdf.DocumentLimits(max_file_size=1))
     except pyropdf.LimitError as error:

@@ -65,7 +65,40 @@ Linux に Python 3.14.2、Node.js 24、このリポジトリ指定の Rust を�
 `bash tools/build_pyodide.sh` でビルドと実行確認を再現できます。テストでは
 PDF のバイト列を読み込み、単一スレッドでテキスト抽出・描画・編集を確認します。
 OCR モデルと CJK フォントは必要に応じて別途インストールします。
-Cloudflare Workers 上の動作確認は [#857](https://github.com/yhay81/pyropdf/issues/857) で追跡しています。
+
+## Cloudflare Python Workers
+
+上記のコア wheel を使い、互換フラグに `python_workers`、互換日付に
+`2026-11-01` を指定します。ネイティブ拡張の読み込みには乱数が必要です。
+Workers ではリクエスト処理中に乱数を取得できるので、`fetch` メソッドの中で
+`import pyropdf` を実行してください。
+
+Node.js 24、Python 3.14、uv 0.13.9 を用意し、リポジトリから次のコマンドを
+実行すると、ダウンロードした wheel を公式のローカルランタイムで確認できます。
+
+```bash
+bash tools/cloudflare/smoke.sh local dist/*-pyemscripten_2026_0_wasm32.whl
+```
+
+pywrangler で wheel をインストールし、ループバックで待ち受ける Worker に
+PDF のバイト列を送ります。編集して保存した PDF を開き直し、追加したページと
+元のテキストを確認します。さらに `file_size` エラーと、その後のリクエストで
+別の文書を独立して開けることを検証します。リリースワークフローには wheel 名、
+SHA-256、互換日付、ランタイムの各バージョンが記録されます。
+
+**1.0 リリース前の Cloudflare 上での検証**には、同じリリース候補の wheel と
+検証専用の Cloudflare アカウントを使います。
+`CLOUDFLARE_ACCOUNT_ID` と、Workers Scripts の編集権限を持つ
+`CLOUDFLARE_API_TOKEN` を設定して実行してください。
+
+```bash
+bash tools/cloudflare/smoke.sh hosted dist/*-pyemscripten_2026_0_wasm32.whl
+```
+
+このコマンドは一意の名前で非公開の Python Worker をデプロイし、リモートの
+サービスバインディング経由で同じリクエストを送り、終了時に Worker を削除します。
+デプロイ時のバージョン ID と `hosted` の結果をリリース記録に残してください。
+プルリクエストの CI は `local` を使うため、Cloudflare の認証情報は不要です。
 
 ## 開いて閉じる
 

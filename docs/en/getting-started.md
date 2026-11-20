@@ -66,9 +66,40 @@ On Linux with Python 3.14.2, Node.js 24 and the repository's Rust
 toolchain, `bash tools/build_pyodide.sh` reproduces the build and runs
 the installed extension in Pyodide. The test uses PDF bytes and a single
 thread for extraction, rendering and editing. OCR models and CJK fonts
-remain optional downloads. The separate
-[Cloudflare Workers check](https://github.com/yhay81/pyropdf/issues/857)
-tracks deployment in that runtime.
+remain optional downloads.
+
+## Cloudflare Python Workers
+
+Use the core wheel above with the `python_workers` flag and compatibility
+date `2026-11-01`. Import `pyropdf` inside the Worker's `fetch` method.
+The native extension needs randomness during import, which this runtime
+provides in the request context.
+
+From the checkout with Node.js 24, Python 3.14 and uv 0.13.9, run the
+official local runtime against the downloaded wheel:
+
+```bash
+bash tools/cloudflare/smoke.sh local dist/*-pyemscripten_2026_0_wasm32.whl
+```
+
+The runner installs the wheel with pywrangler and sends PDF bytes to a
+loopback Worker. It checks the saved bytes, reopens them to verify the
+added page and original text, checks the `file_size` limit error, and
+opens a different document in the next request. The release workflow
+records the wheel name, SHA-256, compatibility date, and runtime versions.
+
+For the **hosted 1.0 release check**, use the same release-candidate wheel
+in a dedicated Cloudflare Workers account. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` for
+that account with Workers Scripts edit access, then run:
+
+```bash
+bash tools/cloudflare/smoke.sh hosted dist/*-pyemscripten_2026_0_wasm32.whl
+```
+
+This deploys a uniquely named private Python Worker, sends the same requests
+through a remote service binding, and deletes the Worker on exit. Record the
+deployed version ID and the `hosted` result with the release. Pull-request
+CI runs the `local` check with a loopback listener and no Cloudflare credentials.
 
 ## Open and close
 
