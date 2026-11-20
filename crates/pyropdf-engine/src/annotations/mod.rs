@@ -47,6 +47,13 @@ use crate::forms;
 use crate::forms::face::FaceText;
 use shapes::{cloud_radius_in_unit, ending_size_in_unit};
 
+/// Whether this dictionary can be a multimedia annotation target.
+pub(crate) fn is_media_annotation(dict: &Dict) -> bool {
+    dict.get("Rect").is_some()
+        && matches!(dict.get("Subtype"), Some(Value::Name(kind)) if
+        matches!(kind.as_bytes(), b"3D" | b"RichMedia" | b"Screen" | b"Projection" | b"Movie" | b"Sound"))
+}
+
 /// The result of an annotation reading or editing operation.
 pub type AnnotationResult<T, E = AnnotationError> = std::result::Result<T, E>;
 

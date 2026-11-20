@@ -4,6 +4,50 @@ The baseline for #355, which tracks the work for pyropdf to do everything
 PyMuPDF does with PDF and more (DESIGN.md section 1: pymupdf's capabilities
 are the floor). Measured for #354.
 
+## Release comparisons
+
+[pyropdf v0.3.1 vs PyMuPDF 2.1 on macOS/arm64](releases/v0.3.1-darwin-arm64/comparison.md)
+runs the two published wheels on 15 documents and seven human-verified pages.
+[Observations](releases/v0.3.1-darwin-arm64/observations.json) retain five samples per timing cell,
+label and document hashes, dependencies, API changes and raw scores. The compressed extractions
+beside them preserve the original text, boxes and table cells.
+
+Subsequent GitHub releases attach `comparison-vX.Y.Z.zip` with the Linux/x86-64 wheel results.
+The benchmark uses the actual wheel from the release build. PyMuPDF runs as an external oracle
+in a separate temporary environment. Download a compatible pair on Python 3.13.18 and reproduce
+the macOS report from the repository root:
+
+```sh
+mkdir -p target/comparison-wheels
+gh release download v0.3.1 --pattern '*abi3-macosx_11_0_arm64.whl' --dir target/comparison-wheels
+python3.13 -m pip download --only-binary=:all: --no-deps --dest target/comparison-wheels pymupdf==2.1
+python3.13 evidence/pymupdf-comparison/release.py v0.3.1 \
+    target/comparison-wheels/pyropdf-0.3.1-*_arm64.whl \
+    target/comparison-wheels/pymupdf-2.1-*_arm64.whl target/comparison
+python3 -m unittest discover -s evidence/pymupdf-comparison -p test_release_comparison.py
+```
+
+For subsequent releases pass `--previous-report /path/to/previous/observations.json`.
+The workflow finds the preceding release tag in Git ancestry and reads its published ZIP;
+v0.3.1 predates the attachment and has its original observations here. The first demonstration
+compares against the historical [2.0 surface and probe output](pymupdf-2.0-api.json).
+The report links the measured artifact's own specification map and public test sources.
+These describe contract coverage separately from the operations executed in the benchmark.
+Platform, allocation behavior and short timings can vary from run to run.
+
+When PyMuPDF publishes a new version, review its upstream release notes and PDF API changes
+before the next pyropdf tag. The release workflow downloads the current compatible PyMuPDF
+wheel, and the runner checks its version against the reviewed baseline. Compare
+`release_worker.py info pymupdf` in the old and new oracle environments and run
+`release_delta.py pymupdf` in each. Update the constraints, behavior probes, report explanation
+and [task map](capabilities.tsv). Link a release test or an open issue and the concrete gap
+for each affected PDF task. The 2.0-to-2.1 review covers escaped and Unicode page-label
+prefixes, glyph height under non-uniform scale, the placement documentation correction,
+and the import-time change. The latter has no timing workload. The official
+[2.1 notes](https://github.com/pymupdf/PyMuPDF/releases/tag/2.1) identify these changes.
+
+## Earlier baselines
+
 | File | Role |
 | --- | --- |
 | `features.md` | The capabilities of PyMuPDF 2.0 against an identified pyropdf main commit, with gaps linked to their issues |

@@ -51,10 +51,11 @@ def normalize(text: str) -> str:
     return "".join(unicodedata.normalize("NFKC", text).split())
 
 
-def collect(engine: str, out: str) -> None:
+def collect(engine: str, out: str, *labels: str) -> None:
     """Write the text, words, and tables of every labeled page as ``engine`` reads them."""
     result: dict[str, Any] = {"engine": engine, "python": platform.python_version(), "pages": {}}
-    for path in LABELS:
+    paths = [Path(name) for name in labels] if labels else LABELS
+    for path in paths:
         label = json.loads(path.read_text())
         source = str(CORPUS / label["document"])
         index = label["page"] - 1
