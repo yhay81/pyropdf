@@ -1,0 +1,1 @@
+--release --locked --compression-level 9 --out dist

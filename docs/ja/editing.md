@@ -540,6 +540,9 @@ FieldMDP フィールドロック（`FieldLock` と `FieldMdpAction`、`field.lo
 `doc.legal_attestation` は `Catalog["Legal"]`（`LegalAttestation`）を編集します。また
 独自の暗号化ハンドラ向けに、`wrap_encrypted_payload` は PDF 2.0 の非暗号化ラッパー文書
 （ISO 32000-2 §7.6.7）を作成し、`doc.encrypted_payload` が `EncryptedPayload` として読み戻します。
+この関数で作成した文書では、表示用のファイル名はファイル仕様辞書に保存されます。添付ファイルを編集するには、
+`doc.collection.initial_document` を `doc.attachments` のキーに使います。
+この識別子で、ほかの添付ファイルがある場合も対象を特定できます。
 
 ```python
 import pyropdf

@@ -92,16 +92,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Read native release arguments
+        id: native
+        shell: bash
+        run: |
+          args=$(cat tools/native-wheel-args.txt)
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --out dist
+          args: ${{ steps.native.outputs.args }}
           manylinux: auto
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
+      - name: Check compressed abi3 wheel size and licenses
+        run: python tools/wheel_size.py dist --abi abi3
       - name: Smoke-test installed wheel
         run: python tools/smoke_artifact.py dist --pattern "*.whl"
       # Exercise the same abi3 wheel on the newest supported CPython as well.
@@ -151,13 +159,21 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python.version }}
+      - name: Read native release arguments
+        id: native
+        shell: bash
+        run: |
+          args=$(cat tools/native-wheel-args.txt)
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           target: ${{ matrix.platform.target }}
           rust-toolchain: "1.100.0"
           maturin-version: "1.16.0"
-          args: --release --locked --out dist -i python${{ matrix.python.version }}
+          args: ${{ steps.native.outputs.args }} -i python${{ matrix.python.version }}
           manylinux: auto
+      - name: Report free-threaded wheel size and check licenses
+        run: python tools/wheel_size.py dist --abi ${{ matrix.python.tag }}
       - name: Smoke-test installed free-threaded wheel
         run: python tools/smoke_artifact.py dist --pattern "*${{ matrix.python.tag }}*.whl"
       - name: Attest free-threaded wheel build provenance

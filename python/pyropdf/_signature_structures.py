@@ -18,9 +18,10 @@ from dataclasses import KW_ONLY, dataclass
 from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
 
 from pyropdf import _core
-from pyropdf._attachments import _DEFAULT_MAX_EMBEDDED_FILE_SIZE, _entries, _file, _text, _version
+from pyropdf._attachments import _DEFAULT_MAX_EMBEDDED_FILE_SIZE, _MAX_TREE_ENTRIES, _entries, _file, _text, _version
 from pyropdf._collections import (
     _INT64_MAX,
     _check_text_budget,
@@ -44,7 +45,6 @@ from pyropdf._objects import (
     String,
     _catalog,
     _encode,
-    _encode_text_string,
 )
 
 if TYPE_CHECKING:
@@ -516,7 +516,9 @@ def wrap_encrypted_payload(
     Draws ``cover_text`` on a single A4 cover page, embeds ``payload.data`` with
     ``/Subtype /application#2Fpdf``, ``/AFRelationship /EncryptedPayload``, and
     ``/EP``, lists the file specification in ``Catalog['AF']``, and configures
-    ``Catalog['Collection']`` with ``/View /H`` and ``/D`` naming the payload.
+    ``Catalog['Collection']`` with ``/View /H`` and an opaque name-tree key for
+    ``/D``. The file specification holds the display filename. The tree key is
+    also available as :attr:`Collection.initial_document`.
     """
     from pyropdf._document import Document  # noqa: PLC0415 - _document imports _signature_structures.
 
@@ -567,7 +569,8 @@ def wrap_encrypted_payload(
         if payload.description is not None:
             filespec_dict["Desc"] = payload.description
         filespec = doc.objects[doc.objects.add(filespec_dict)]
-        raw_key = _encode_text_string(payload.filename)
+        # The outer tree key is an identifier independent of the embedded filename (Table 33).
+        raw_key = uuid4().hex.encode("ascii")
         encoded_spec = _encode(doc, filespec, 1)
         _core.embedded_files_insert(doc._core(), raw_key, encoded_spec, [(raw_key, encoded_spec)])  # noqa: SLF001
         catalog["AF"] = [filespec]
@@ -575,35 +578,51 @@ def wrap_encrypted_payload(
             {
                 "Type": Name("Collection"),
                 "View": Name("H"),
-                "D": payload.filename,
+                "D": String(raw_key),
             }
         )
         catalog["Collection"] = doc.objects[col_xref]
     return doc
 
 
+def _contains_associated_file(catalog: Dictionary, xref: int) -> bool:
+    """Check catalog membership using the exact indirect file specification."""
+    associated = catalog.get("AF")
+    if not isinstance(associated, Array):
+        return False
+    if len(associated) > _MAX_TREE_ENTRIES:
+        code = "embedded_file_input_size"
+        msg = f"wrapper /AF exceeds the {_MAX_TREE_ENTRIES}-entry limit"
+        raise LimitError(code, msg)
+    return any(_indirect_xref(item) == xref for item in associated)
+
+
 def _wrapper_target_filespec(document: Document) -> tuple[str, Dictionary, Dictionary] | None:
-    raw_col = _catalog(document).get("Collection")
-    if not _is_dict(raw_col):
+    catalog = _catalog(document)
+    raw_col = catalog.get("Collection")
+    if not _is_dict(raw_col) or document.encryption_method is not None or _version(document) < (2, 0):
         return None
     col = cast("Dictionary", raw_col)
-    raw_d = col.get("D")
-    if col.get("View") != "H" or not isinstance(raw_d, String) or not raw_d.text:
+    key = col.get("D")
+    if col.get("View") != "H" or not isinstance(key, String) or not key:
         return None
-    target_name = raw_d.text
-    entry = next(
-        (item for item in _entries(document) if item.name == target_name or item.key == bytes(raw_d)),
-        None,
-    )
-    if entry is None or not isinstance(entry.filespec, Dictionary):
+    # Name-tree keys are byte strings. Different encodings can decode to the same text.
+    filespec = next((entry.filespec for entry in _entries(document) if entry.key == key), None)
+    if (
+        not isinstance(filespec, Dictionary)
+        or isinstance(filespec, Stream)
+        or filespec.xref is None
+        or filespec.get("AFRelationship") != "EncryptedPayload"
+        or not _contains_associated_file(catalog, filespec.xref)
+    ):
         return None
-    raw_ep = entry.filespec.get("EP")
+    raw_ep = filespec.get("EP")
     if not _is_dict(raw_ep):
         return None
     ep = cast("Dictionary", raw_ep)
     if ep.get("Type") not in (None, "EncryptedPayload"):
         return None
-    return target_name, entry.filespec, ep
+    return key.text, filespec, ep
 
 
 def read_encrypted_payload(document: Document) -> EncryptedPayload | None:
@@ -617,7 +636,10 @@ def read_encrypted_payload(document: Document) -> EncryptedPayload | None:
         msg = "EncryptedPayload dictionary is missing a valid /Subtype name"
         raise MalformedPdfError(msg)
     raw_version = ep.get("Version")
-    version = str(raw_version) if isinstance(raw_version, Name) and str(raw_version) else None
+    if raw_version is not None and (not isinstance(raw_version, Name) or not raw_version):
+        msg = "EncryptedPayload /Version must be a nonempty name"
+        raise MalformedPdfError(msg)
+    version = str(raw_version) if raw_version is not None else None
     stream = _file(filespec)
     if stream is None:
         msg = "encrypted payload file specification has no embedded file stream"

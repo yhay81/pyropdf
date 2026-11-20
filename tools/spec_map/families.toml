@@ -296,14 +296,6 @@ features = ["geospatial"]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports."
 
-[families.wrapper-associations]
-tracker = 256
-issue = 931
-title = "Give encrypted wrappers independent outer identifiers and verify their associated file"
-features = ["unencrypted-wrapper"]
-dimensions = ["read", "interpret", "create", "edit"]
-behavior = "Use an independent tree identifier and check the selected file against the hidden collection and catalog AF relationship when reading, creating or changing a wrapper."
-
 [families.display-space]
 tracker = 254
 issue = 851
