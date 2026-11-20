@@ -223,22 +223,56 @@ def test_assigning_xmp_adds_an_unfiltered_metadata_stream(tmp_path: Path) -> Non
     assert pyropdf.open(path).xmp == "<x:xmpmeta>héllo</x:xmpmeta>"
 
 
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_adding_xmp_to_a_pdf_13_file_promotes_the_catalog(*, incremental: bool) -> None:
+    doc = pyropdf.open(REAL_WORLD / "patent-us223898.pdf")
+    before = _snapshot(doc)
+    doc.xmp = XMP
+
+    saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+    assert saved.catalog["Version"] == pyropdf.Name("1.4")
+    assert saved.xmp == XMP
+    assert not saved.check()
+    after = _snapshot(saved)
+    assert all(after.get(xref) == value for xref, value in before.items() if xref != doc.catalog.xref)
+
+    doc.history.undo()
+    assert _snapshot(doc) == before
+    assert not doc.history.can_undo
+
+
+@pytest.mark.parametrize(("header", "catalog"), [("1.4", ""), ("1.7", ""), ("1.3", "1.4"), ("1.3", "1.6")])
+def test_adding_xmp_preserves_sufficient_header_and_catalog_versions(header: str, catalog: str) -> None:
+    data = _pdf(f"/Version /{catalog}" if catalog else "").replace(b"%PDF-1.7", f"%PDF-{header}".encode(), 1)
+    doc = pyropdf.open(data)
+    doc.xmp = XMP
+    assert doc.catalog.get("Version") == (pyropdf.Name(catalog) if catalog else None)
+
+
 def test_assigning_xmp_rewrites_an_existing_stream_in_place() -> None:
-    doc = pyropdf.open(_xmp_pdf(b"<old/>", compressed=True))
+    data = _xmp_pdf(b"<old/>", compressed=True).replace(b"%PDF-1.7", b"%PDF-1.3", 1)
+    doc = pyropdf.open(data)
     xref = doc.catalog["Metadata"].xref
     doc.xmp = "<new/>"
     stream = doc.catalog["Metadata"]
     assert stream.xref == xref
     assert "Filter" not in stream
     assert stream.read(decode=False) == b"<new/>"
+    assert doc.catalog["Version"] == pyropdf.Name("1.4")
+    doc.history.undo()
+    assert "Version" not in doc.catalog
+    assert doc.xmp == "<old/>"
+    assert not doc.history.can_undo
     with pytest.raises(TypeError, match="str"):
         doc.xmp = b"<x/>"  # ty: ignore[invalid-assignment]
 
 
 def test_deleting_xmp_removes_the_catalog_entry() -> None:
-    doc = pyropdf.open(_xmp_pdf(b"<old/>"))
+    data = _xmp_pdf(b"<old/>").replace(b"%PDF-1.7", b"%PDF-1.3", 1)
+    doc = pyropdf.open(data)
     del doc.xmp
     assert doc.xmp is None
+    assert "Version" not in doc.catalog
     del doc.xmp  # Removing absent metadata changes nothing.
     assert pyropdf.open(doc.to_bytes()).xmp is None
 
