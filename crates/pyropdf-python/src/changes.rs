@@ -21,7 +21,7 @@ pub fn changes<'py>(
     py: Python<'py>,
     document: &_Document,
     incremental: bool,
-) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>)> {
+) -> PyResult<(Bound<'py, PyList>, Bound<'py, PyList>, Bound<'py, PyList>)> {
     crate::errors::boundary(|| {
         let version = document.reading()?;
         let budget = document.budget();
@@ -42,6 +42,21 @@ pub fn changes<'py>(
                 .into_iter()
                 .map(|claim| (claim.claim, 0_u32, claim.reason, claim.objects)),
         )?;
-        Ok((signatures, claims))
+        let permissions = PyList::new(
+            py,
+            found.permissions.into_iter().map(|effect| {
+                (
+                    effect.signature,
+                    effect.xref,
+                    effect.transform,
+                    effect.edit,
+                    effect.object,
+                    effect.field,
+                    effect.permitted,
+                    effect.reason,
+                )
+            }),
+        )?;
+        Ok((signatures, claims, permissions))
     })?
 }
