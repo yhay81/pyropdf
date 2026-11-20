@@ -310,7 +310,8 @@ method and property of its classes with its full description.
 - [`ClaimChange`](history-and-changes.md#claimchange): A PDF/A or PDF/UA claim of the metadata that the edits break.
 - [`History`](history-and-changes.md#history): The line of steps that undo and redo walk.
 - [`Revision`](history-and-changes.md#revision): One incremental file revision of an opened PDF document.
-- [`SignatureChange`](history-and-changes.md#signaturechange): A signature of the opened file that the edits or the save mode invalidate.
+- [`SignatureChange`](history-and-changes.md#signaturechange): An opened signature affected by the save mode or edits to covered objects.
+- [`SignaturePermission`](history-and-changes.md#signaturepermission): A signed DocMDP or FieldMDP transform's verdict for one proposed edit.
 - [`Transaction`](history-and-changes.md#transaction): A group of edits that commits as one version and one undo step.
 
 ## [Encryption](encryption.md)
