@@ -87,7 +87,11 @@ The ordered sequence of `Bead` handles in a `Thread`, as `thread.beads` returns 
 Walks the circular `/F` -> `/N` bead ring iteratively up to 4,096 beads
 with cycle detection. `add`, `move`, and `del thread.beads[i]`
 each update the ring, `BeadFirst["T"]`, and pages' `/B` arrays in one
-transaction. Deleting every bead of a thread raises `ValueError`;
+transaction. On a shared page, this thread fills its existing array slots in
+reading order. Adding a bead to the page appends one slot. The entries of
+other threads keep their relative order.
+
+Deleting every bead of a thread raises `ValueError`;
 remove the thread from `doc.threads` instead.
 
 ### `Beads.__getitem__`
