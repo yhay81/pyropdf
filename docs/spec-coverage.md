@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 19 | 65 | 717 |
-| interpret | 1 | 13 | 0 | 14 | 689 | 84 |
-| create | 0 | 0 | 0 | 642 | 91 | 68 |
-| edit | 0 | 0 | 0 | 649 | 89 | 63 |
-| preserve | 0 | 0 | 0 | 6 | 685 | 110 |
+| read | 0 | 0 | 0 | 19 | 63 | 719 |
+| interpret | 1 | 13 | 0 | 14 | 687 | 86 |
+| create | 0 | 0 | 0 | 642 | 89 | 70 |
+| edit | 0 | 0 | 0 | 649 | 87 | 65 |
+| preserve | 0 | 0 | 0 | 6 | 683 | 112 |
 
 ## Clauses
 
@@ -110,7 +110,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.3.5 | Collections | `collections` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.3.6 | Navigators | `navigators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.4.2 | Page labels | `page-labels` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.4.3 | Articles | `articles` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.4.3 | Articles | `articles` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.4 | Presentations | `presentations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.2 | Annotation dictionaries | `annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.5 | Appearance streams | `appearance-streams` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
@@ -142,7 +142,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.6.4.4 | Embedded Go-To actions | `embedded-goto-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.5 | Go-To-DPart actions | `goto-dpart-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.6 | Launch actions | `launch-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
-| 12.6.4.7 | Thread actions | `thread-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.8 | URI actions | `uri-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | 12.6.4.9 | Sound actions | `sound-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.10 | Movie actions | `movie-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |

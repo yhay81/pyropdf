@@ -78,6 +78,7 @@ from pyropdf._signing import sign as _sign
 from pyropdf._signing import signatures as _signatures
 from pyropdf._structure import StructureTree, _delete_structure_tree
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
+from pyropdf._threads import Threads, _delete_all_threads
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -217,6 +218,23 @@ class Document:
     def structure(self) -> None:
         self._ensure_open()
         _delete_structure_tree(self)
+
+    @property
+    def threads(self) -> Threads:
+        """Return the article threads as a live :class:`Threads` sequence.
+
+        Each :class:`Thread` exposes its :attr:`~Thread.beads` ring and its
+        information dictionary entries. ``del doc.threads`` removes
+        ``/Threads`` from the catalog, clears pages' ``/B`` bead arrays, and
+        frees unreferenced thread and bead objects in one transaction.
+        """
+        self._ensure_open()
+        return Threads(self)
+
+    @threads.deleter
+    def threads(self) -> None:
+        self._ensure_open()
+        _delete_all_threads(self)
 
     @property
     def fallback_fonts(self) -> FallbackFonts:

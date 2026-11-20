@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, TypeAlias
 
 from pyropdf._geometry import Point
 from pyropdf._presentations import TransitionAction
+from pyropdf._threads import ThreadAction
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -109,8 +110,8 @@ class NamedAction:
 
 
 #: Where a link leads: a place in this document or in another file, a file
-#: to open, a viewer or transition action, or a URI as a string.
-Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | TransitionAction | str
+#: to open, a viewer, transition, or thread action, or a URI as a string.
+Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | TransitionAction | ThreadAction | str
 
 
 def _destination(page: int, point: tuple[float, float] | None, zoom: float | None) -> Destination:
@@ -135,11 +136,13 @@ def _target_from_core(target: _Target) -> Target | None:
             return None
 
 
-def _target_to_core(target: object, page_count: int) -> _Target:
+def _target_to_core(target: object, page_count: int) -> _Target:  # noqa: PLR0911
     """Return the core's tuple for a target, validating its page."""
     match target:
         case None | TransitionAction():
             return ("none", None, None, None, None, None)
+        case ThreadAction(thread=thread, file=file):
+            return ("none", None, None, None, file, thread if isinstance(thread, str) else None)
         case Destination(page=page, point=point, zoom=zoom):
             if page >= page_count:
                 msg = f"destination page {page} is out of range (0..{page_count - 1})"
@@ -156,7 +159,7 @@ def _target_to_core(target: object, page_count: int) -> _Target:
         case _:
             msg = (
                 "a target is a Destination, RemoteDestination, Launch, NamedAction, "
-                f"TransitionAction, URI string, or None: {type(target).__name__}"
+                f"TransitionAction, ThreadAction, URI string, or None: {type(target).__name__}"
             )
             raise TypeError(msg)
 

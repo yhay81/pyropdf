@@ -233,7 +233,7 @@ def _validate_step_action(action: object, name: str, page_count: int) -> int:
     except TypeError as error:
         msg = (
             f"{name} must be a Destination, RemoteDestination, Launch, NamedAction, "
-            f"TransitionAction, URI string, or None: {type(action).__name__}"
+            f"TransitionAction, ThreadAction, URI string, or None: {type(action).__name__}"
         )
         raise TypeError(msg) from error
     utf8_bytes = sum(len(text.encode("utf-8")) for text in spec[4:] if text is not None)
@@ -460,7 +460,7 @@ def _goto_action_dict(document: Document, page_idx: int, point: Point | None, zo
     return {"Type": Name("Action"), "S": Name("GoTo"), "D": [target_page.obj, Name("XYZ"), left, top, checked_zoom]}
 
 
-def _action_dict_for_target(document: Document, target: Target) -> dict[str, object]:
+def _action_dict_for_target(document: Document, target: Target) -> dict[str, object]:  # noqa: PLR0911
     """Build an action dictionary for ``/NA`` or ``/PA`` on a ``NavNode``."""
     from pyropdf._targets import (  # noqa: PLC0415 - _targets imports TransitionAction from this module.
         Destination,
@@ -468,10 +468,17 @@ def _action_dict_for_target(document: Document, target: Target) -> dict[str, obj
         NamedAction,
         RemoteDestination,
     )
+    from pyropdf._threads import (  # noqa: PLC0415 - _threads imports helpers from this module.
+        ThreadAction,
+        _thread_action_dict,
+    )
 
     match target:
         case TransitionAction():
             action_dict, _ = _transition_action_dict(target)
+            return action_dict
+        case ThreadAction():
+            action_dict, _ = _thread_action_dict(document, target)
             return action_dict
         case Destination(page=page_idx, point=point, zoom=zoom):
             return _goto_action_dict(document, page_idx, point, zoom)
@@ -555,13 +562,22 @@ def _read_remote_destination(action: Dictionary) -> RemoteDestination | None:
 class _ActionReadContext:
     """Per-walk lookup state for resolving ``/NA`` and ``/PA`` action dictionaries."""
 
-    __slots__ = ("_document", "_named", "_page_by_id", "_pages")
+    __slots__ = ("_document", "_named", "_page_by_id", "_pages", "_threads")
 
     def __init__(self, document: Document) -> None:
         self._document = document
         self._pages = _core.page_objects(document._core())  # noqa: SLF001
         self._page_by_id = {pair: idx for idx, pair in enumerate(self._pages)}
         self._named: dict[str, Destination | None] | None = None
+        self._threads: dict[tuple[int, int], int] | None = None
+
+    def _thread_map(self) -> dict[tuple[int, int], int]:
+        if self._threads is None:
+            from pyropdf._threads import _catalog_thread_ids  # noqa: PLC0415
+
+            ids = _catalog_thread_ids(self._document)
+            self._threads = {pair: idx for idx, pair in enumerate(ids)}
+        return self._threads
 
     def named_destination(self, name: str) -> Destination | None:
         if self._named is None:
@@ -610,6 +626,7 @@ class _ActionReadContext:
 
     def read_action(self, action_obj: object) -> Target | None:  # noqa: PLR0911
         from pyropdf._targets import Launch, NamedAction  # noqa: PLC0415 - _targets imports TransitionAction.
+        from pyropdf._threads import _read_thread_action_dict  # noqa: PLC0415
 
         if not _is_dict(action_obj):
             return None
@@ -621,6 +638,8 @@ class _ActionReadContext:
             case "Trans":
                 trans = _read_transition(action.get("Trans"))
                 return None if trans is None else TransitionAction(trans)
+            case "Thread":
+                return _read_thread_action_dict(self._document, action, thread_index_map=self._thread_map())
             case "URI":
                 uri = action.get("URI")
                 return bytes(uri).decode("utf-8", "replace") if isinstance(uri, String) and len(uri) > 0 else None

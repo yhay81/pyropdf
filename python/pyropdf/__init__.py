@@ -166,6 +166,7 @@ from pyropdf._structure import (
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
+from pyropdf._threads import Bead, Beads, BeadSpecification, Thread, ThreadAction, Threads
 from pyropdf._widgets import Widget, Widgets
 
 _PUBLIC_MODULE_EXPORTS = (
@@ -246,6 +247,9 @@ __all__ = [
     "Attachment",
     "AttachmentIcon",
     "Attachments",
+    "Bead",
+    "BeadSpecification",
+    "Beads",
     "BlendMode",
     "Block",
     "Border",
@@ -433,6 +437,9 @@ __all__ = [
     "TextFit",
     "TextRenderMode",
     "TextRun",
+    "Thread",
+    "ThreadAction",
+    "Threads",
     "TilingPattern",
     "Timestamper",
     "Transaction",

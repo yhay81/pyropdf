@@ -200,7 +200,7 @@ method and property of its classes with its full description.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
-- [`Target`](links-and-destinations.md#target): Where a link leads: a place in this document or in another file, a file to open, a viewer or transition action, or a URI as a string.
+- [`Target`](links-and-destinations.md#target): Where a link leads: a place in this document or in another file, a file to open, a viewer, transition, or thread action, or a URI as a string.
 
 ## [Forms and widgets](forms-and-widgets.md)
 
@@ -228,6 +228,15 @@ method and property of its classes with its full description.
 - [`Outline`](outline.md#outline_1): The document's outline as its top-level items, as `doc.outline` returns it.
 - [`OutlineEntry`](outline.md#outlineentry): One item of an outline to write, as `doc.outline = [...]` takes it.
 - [`OutlineItem`](outline.md#outlineitem): A handle on one item of the outline, as `doc.outline` yields it.
+
+## [Threads](threads.md)
+
+- [`Bead`](threads.md#bead): A handle on one bead dictionary of an article thread (ISO 32000-2 Table 163).
+- [`Beads`](threads.md#beads): The ordered sequence of `Bead` handles in a `Thread`, as `thread.beads` returns it.
+- [`BeadSpecification`](threads.md#beadspecification): One bead to create inside an article thread: a page and a display-space rectangle.
+- [`Thread`](threads.md#thread): A handle on an indirect article `Thread` dictionary in `Document.threads` (ISO 32000-2 Table 162).
+- [`ThreadAction`](threads.md#threadaction): An action that begins reading an article thread (`/S /Thread`, ISO 32000-2 Table 209).
+- [`Threads`](threads.md#threads_1): The document's article threads in `Catalog["Threads"]` order, as `doc.threads` returns it.
 
 ## [Structure](structure.md)
 

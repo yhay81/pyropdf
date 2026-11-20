@@ -13,6 +13,7 @@ from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, _catalog
 from pyropdf._presentations import TransitionAction, _read_transition_action, _transition_action_dict
 from pyropdf._targets import Destination, Target, _destination, _target_from_core, _target_to_core
+from pyropdf._threads import ThreadAction, _read_thread_action, _thread_action_dict
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _Link, _Target
@@ -28,7 +29,7 @@ def _link_target(target: object, page: Page) -> _Target:
     if target is None:
         msg = (
             "a link needs a target: a Destination, RemoteDestination, Launch, NamedAction, "
-            "TransitionAction, or URI string"
+            "TransitionAction, ThreadAction, or URI string"
         )
         raise TypeError(msg)
     spec = _target_to_core(target, len(page._document.pages))  # noqa: SLF001
@@ -120,7 +121,7 @@ class Link:
             if self._id[0]
             else self._page.obj["Annots"][self._index]
         )
-        return _read_transition_action(holder)
+        return _read_transition_action(holder) or _read_thread_action(self._page._document, holder)  # noqa: SLF001
 
     @property
     def target(self) -> Target | None:
@@ -129,9 +130,13 @@ class Link:
 
     @target.setter
     def target(self, target: Target) -> None:
-        if isinstance(target, TransitionAction):
-            action_dict, minimum = _transition_action_dict(target)
+        if isinstance(target, (TransitionAction, ThreadAction)):
             document = self._page._document  # noqa: SLF001
+            if isinstance(target, ThreadAction):
+                _link_target(target, self._page)
+                action_dict, minimum = _thread_action_dict(document, target)
+            else:
+                action_dict, minimum = _transition_action_dict(target)
             with document.transaction("link target"):
                 self._edit(None, ("none", None, None, None, None, None))
                 _require_version(document, _catalog(document), minimum)
@@ -222,15 +227,19 @@ class Links(Sequence[Link]):
 
         ``target`` is a URI string, a :class:`Destination` in this document, a
         :class:`RemoteDestination`, a :class:`Launch`, a :class:`NamedAction`,
-        or a :class:`TransitionAction`. The link draws no border. Its texts
-        share a 1 MiB budget, checked before any change with
-        ``LimitError.code == "annotation_input_size"``.
+        a :class:`TransitionAction`, or a :class:`ThreadAction`. The link draws
+        no border. Its texts share a 1 MiB budget, checked before any change
+        with ``LimitError.code == "annotation_input_size"``.
         """
         page = self._page
         area = _rect(rect)
-        if isinstance(target, TransitionAction):
-            action_dict, minimum = _transition_action_dict(target)
+        if isinstance(target, (TransitionAction, ThreadAction)):
             document = page._document  # noqa: SLF001
+            if isinstance(target, ThreadAction):
+                _link_target(target, page)
+                action_dict, minimum = _thread_action_dict(document, target)
+            else:
+                action_dict, minimum = _transition_action_dict(target)
             with document.transaction("link"):
                 result = _core.link_add(
                     document._core(),  # noqa: SLF001
