@@ -197,31 +197,31 @@
   },
   "coverage": {
     "read": {
-      "done": 734,
+      "done": 736,
       "partial": 17,
-      "planned": 50
+      "planned": 48
     },
     "interpret": {
-      "done": 101,
+      "done": 103,
       "engine": 1,
       "n/a": 13,
       "partial": 14,
-      "planned": 672
+      "planned": 670
     },
     "create": {
-      "done": 85,
+      "done": 87,
       "partial": 640,
-      "planned": 76
-    },
-    "edit": {
-      "done": 80,
-      "partial": 647,
       "planned": 74
     },
+    "edit": {
+      "done": 82,
+      "partial": 647,
+      "planned": 72
+    },
     "preserve": {
-      "done": 127,
+      "done": 129,
       "partial": 4,
-      "planned": 670
+      "planned": 668
     }
   },
   "features": [
@@ -991,8 +991,8 @@
     {"feature": "document-timestamps", "clause": "12.8.5", "description": "Document timestamp signatures.", "objects": ["DocTimeStamp", "TimeStampDict"], "read": {"status": "done", "tests": ["tests/test_signature_structures.py::test_document_timestamps_sign_verify_and_preserve_earlier_signatures"]}, "interpret": {"status": "done", "tests": ["tests/test_signature_structures.py::test_document_timestamps_sign_verify_and_preserve_earlier_signatures"]}, "create": {"status": "done", "tests": ["tests/test_signature_structures.py::test_document_timestamps_sign_verify_and_preserve_earlier_signatures"]}, "edit": {"status": "done", "tests": ["tests/test_signature_structures.py::test_document_timestamps_sign_verify_and_preserve_earlier_signatures"]}, "preserve": {"status": "done", "tests": ["tests/test_signature_structures.py::test_document_timestamps_sign_verify_and_preserve_earlier_signatures"]}},
     {"feature": "permissions", "clause": "12.8.6", "description": "The permissions dictionary of usage rights and certification.", "objects": ["Permissions"], "read": {"status": "done", "tests": ["tests/test_signature_structures.py::test_doc_mdp_field_mdp_field_lock_and_prepare_signature"]}, "interpret": {"status": "done", "tests": ["tests/test_signature_structures.py::test_doc_mdp_field_mdp_field_lock_and_prepare_signature"]}, "create": {"status": "done", "tests": ["tests/test_signature_structures.py::test_doc_mdp_field_mdp_field_lock_and_prepare_signature"]}, "edit": {"status": "done", "tests": ["tests/test_signature_structures.py::test_doc_mdp_field_mdp_field_lock_and_prepare_signature"]}, "preserve": {"status": "done", "tests": ["tests/test_signature_structures.py::test_doc_mdp_field_mdp_field_lock_and_prepare_signature"]}},
     {"feature": "legal-attestations", "clause": "12.8.7", "description": "Legal content attestations.", "objects": ["LegalAttestation"], "read": {"status": "done", "tests": ["tests/test_signature_structures.py::test_legal_attestation_round_trip_edit_delete_and_signing"]}, "interpret": {"status": "done", "tests": ["tests/test_signature_structures.py::test_legal_attestation_round_trip_edit_delete_and_signing"]}, "create": {"status": "done", "tests": ["tests/test_signature_structures.py::test_legal_attestation_round_trip_edit_delete_and_signing"]}, "edit": {"status": "done", "tests": ["tests/test_signature_structures.py::test_legal_attestation_round_trip_edit_delete_and_signing"]}, "preserve": {"status": "done", "tests": ["tests/test_signature_structures.py::test_legal_attestation_round_trip_edit_delete_and_signing"]}},
-    {"feature": "measurement", "clause": "12.9", "description": "Viewports and measure dictionaries: rectilinear and geospatial.", "objects": ["Viewport", "MeasureRL", "MeasureGEO", "NumberFormat", "GeographicCoordinateSystem", "ProjectedCoordinateSystem", "PointData"], "read": {"status": "planned", "milestone": "Phase 4: Specification"}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification"}},
-    {"feature": "document-requirements", "clause": "12.10", "description": "Requirements that a viewer must meet to process the document.", "objects": ["RequirementsHandler"], "read": {"status": "planned", "milestone": "Phase 4: Specification"}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification"}},
+    {"feature": "measurement", "clause": "12.9", "description": "Viewports and measure dictionaries: rectilinear and geospatial.", "objects": ["Viewport", "MeasureRL", "MeasureGEO", "NumberFormat", "GeographicCoordinateSystem", "ProjectedCoordinateSystem", "PointData"], "read": {"status": "done", "tests": ["tests/test_measurement.py::test_viewport_display_space_conversion_across_rotation_crop_and_user_unit", "tests/test_measurement.py::test_reading_legacy_and_malformed_viewport_dictionaries", "tests/test_measurement.py::test_geospatial_measure_full_decimal_precision_and_point_data_preservation"]}, "interpret": {"status": "done", "tests": ["tests/test_measurement.py::test_viewport_display_space_conversion_across_rotation_crop_and_user_unit", "tests/test_measurement.py::test_reading_legacy_and_malformed_viewport_dictionaries", "tests/test_measurement.py::test_geospatial_measure_full_decimal_precision_and_point_data_preservation"]}, "create": {"status": "done", "tests": ["tests/test_measurement.py::test_viewport_display_space_conversion_across_rotation_crop_and_user_unit", "tests/test_measurement.py::test_rectilinear_measure_chains_indirect_cleanup_and_undo", "tests/test_measurement.py::test_geospatial_measure_full_decimal_precision_and_point_data_preservation"]}, "edit": {"status": "done", "tests": ["tests/test_measurement.py::test_rectilinear_measure_chains_indirect_cleanup_and_undo", "tests/test_measurement.py::test_geospatial_measure_full_decimal_precision_and_point_data_preservation"]}, "preserve": {"status": "done", "tests": ["tests/test_measurement.py::test_geospatial_measure_full_decimal_precision_and_point_data_preservation"]}},
+    {"feature": "document-requirements", "clause": "12.10", "description": "Requirements that a viewer must meet to process the document.", "objects": ["RequirementsHandler"], "read": {"status": "done", "tests": ["tests/test_measurement.py::test_document_requirements_lifecycle_versions_and_preservation"]}, "interpret": {"status": "done", "tests": ["tests/test_measurement.py::test_document_requirements_lifecycle_versions_and_preservation"]}, "create": {"status": "done", "tests": ["tests/test_measurement.py::test_document_requirements_lifecycle_versions_and_preservation"]}, "edit": {"status": "done", "tests": ["tests/test_measurement.py::test_document_requirements_lifecycle_versions_and_preservation"]}, "preserve": {"status": "done", "tests": ["tests/test_measurement.py::test_document_requirements_lifecycle_versions_and_preservation"]}},
     {"feature": "renditions", "clause": "13.2", "description": "Renditions, media clips, play and screen parameters, and media players.", "objects": ["RenditionMedia", "RenditionSelector", "MediaClipData", "MediaClipSection", "MediaPlayParameters", "MediaScreenParameters", "MediaPlayers", "MediaPlayerInfo", "MediaCriteria"], "read": {"status": "planned", "milestone": "Phase 4: Specification"}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification"}},
     {"feature": "sounds", "clause": "13.3", "description": "Sound objects.", "objects": ["SoundObject"], "read": {"status": "done", "tests": ["tests/test_annotation_sound.py::test_a_sound_annotation_returns_its_samples_and_format"]}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "done", "tests": ["tests/test_annotation_sound.py::test_compressed_and_encoded_sounds_keep_their_payload"]}},
     {"feature": "movies", "clause": "13.4", "description": "Movie dictionaries.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification"}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification"}},

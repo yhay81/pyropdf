@@ -599,6 +599,85 @@ with wrap_encrypted_payload(EncryptedPayload(locked_bytes, filename="invoice.pdf
     print(wrapper.encrypted_payload.filename, wrapper.encrypted_payload.subtype)
 ```
 
+## Viewports, geospatial measurements, and document requirements {#viewports-and-requirements}
+
+`page.viewports` reads and sets a page's measurement viewports (`/VP`) in
+display coordinates across `/CropBox`, `/Rotate`, and `/UserUnit`, with
+`RectilinearMeasure` (`NumberFormat`, `NumberFormatFraction`) for CAD scale
+chains and `GeospatialMeasure` (`CoordinateSystem`, `PointData`) for EPSG or
+WKT coordinate systems. Numeric coordinates and conversion factors use
+`decimal.Decimal` so high-precision latitude/longitude values write their exact
+digits into the PDF object store without `float` rounding. `doc.requirements`
+manages `Catalog["Requirements"]` (`DocumentRequirement`, `RequirementType`,
+`RequirementHandler`), and `del page.viewports` or `del doc.requirements`
+removes the entry and frees unreferenced objects in one transaction.
+
+```python
+from decimal import Decimal
+import pyropdf
+from pyropdf import (
+    CoordinateSystem,
+    DocumentRequirement,
+    GeospatialMeasure,
+    NumberFormat,
+    NumberFormatFraction,
+    PointData,
+    RectilinearMeasure,
+    RequirementHandler,
+    RequirementType,
+    Viewport,
+)
+
+lat = Decimal("35.6812361234567890123456789")
+lon = Decimal("139.7671249876543210987654321")
+
+with pyropdf.Document() as doc:
+    page = doc.pages.new()
+    page.viewports = (
+        Viewport(
+            (36, 36, 260, 220),
+            name="Floor plan",
+            measure=RectilinearMeasure(
+                "1 in = 10 ft",
+                x=(
+                    NumberFormat(
+                        "ft",
+                        Decimal("0.1388888888888889"),
+                        fraction=NumberFormatFraction.FRACTION,
+                        denominator=16,
+                    ),
+                ),
+                distance=(NumberFormat("ft", Decimal("0.1388888888888889")),),
+                area=(NumberFormat("sq ft", Decimal("0.0192901234567901")),),
+            ),
+        ),
+        Viewport(
+            (36, 240, 260, 460),
+            name="Site map",
+            measure=GeospatialMeasure(
+                CoordinateSystem(epsg=4326),
+                (lat, lon, lat, lon),
+                pdu=("M", "SQM", "DEG"),
+            ),
+            point_data=PointData(("LAT", "LON", "ALT"), ((lat, lon, Decimal("42.5")),)),
+        ),
+    )
+    doc.requirements = (
+        DocumentRequirement(
+            RequirementType.GEOSPATIAL_2D,
+            handlers=(RequirementHandler("JS", script="app.alert('Geospatial viewer required');"),),
+            penalty=50,
+        ),
+    )
+    saved = doc.to_bytes()
+    assert b"35.6812361234567890123456789" in saved
+
+with pyropdf.open(saved) as reopened:
+    assert not reopened.check()
+    assert len(reopened.pages[0].viewports) == 2
+    assert reopened.requirements[0].type is RequirementType.GEOSPATIAL_2D
+```
+
 ## Sanitizing
 
 `doc.sanitize(path)` removes JavaScript, actions, attachments, metadata,

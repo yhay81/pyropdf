@@ -204,6 +204,27 @@ when unreferenced.
 
 Settable.
 
+### `Page.viewports`
+
+```python
+Page.viewports: tuple[Viewport, ...]
+```
+
+The page's measurement viewports (`/VP`) as `Viewport` records in display coordinates.
+
+Each `Viewport.bbox` is converted between PDF user space and the
+page's display space across `/CropBox`, `/Rotate`, and `/UserUnit`,
+and numeric measurement values (`NumberFormat`,
+`RectilinearMeasure`, `GeospatialMeasure`, and
+`PointData`) are preserved as `decimal.Decimal` values.
+Assigning an iterable of `Viewport` records replaces `Page['VP']`
+in one transaction (promoting the catalog version to `1.6` or `2.0`
+as required, or removing `/VP` when empty) and frees unreferenced
+retired objects; `del page.viewports` removes `/VP` and frees
+unreferenced objects.
+
+Settable.
+
 ### `Page.rotation`
 
 ```python
