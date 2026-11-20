@@ -198,7 +198,7 @@ def test_callouts_point_at_what_the_text_explains() -> None:
 
     assert annotation.intent == "FreeTextCallout"
     # The rectangle holds the box, the line, and its ending.
-    assert annotation.rect.contains(Rect(35, 150, 280, 255))
+    assert Rect(35, 150, 280, 255) in annotation.rect
     assert len(annotation.obj["CL"]) == 6
     assert annotation.obj["LE"] == "ClosedArrow"
     pixmap = page.pixmap(dpi=72)

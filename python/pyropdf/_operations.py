@@ -45,7 +45,7 @@ class Operation:
     ``operator`` is the operator's text, such as ``"Tj"`` or ``"cm"``.
     ``operands`` holds the values that precede it, as the object model reads
     them: ``None``, ``bool``, ``int``, :class:`Real`, :class:`Name`,
-    :class:`String`, tuples for arrays, and dictionaries keyed by name text.
+    :class:`String`, tuples for arrays, and read-only mappings keyed by name text.
     A plain ``str`` operand is written as a text string, as in the object
     model; write :class:`String` or ``bytes`` for the bytes that a font
     shows.
@@ -70,17 +70,14 @@ class Operation:
         if isinstance(self.operands, (str, bytes)) or not isinstance(self.operands, Iterable):
             msg = f"operands must be a sequence of values: {self.operands!r}"
             raise TypeError(msg)
-        operands = tuple(self.operands)
-        for operand in operands:
-            _check_value(operand, 0)
-        object.__setattr__(self, "operands", operands)
+        object.__setattr__(self, "operands", tuple(_freeze_value(operand, 0) for operand in self.operands))
 
 
 @dataclass(frozen=True, slots=True)
 class InlineImage:
     """An inline image: its dictionary, keyed by name text as written, and its data.
 
-    The dictionary keeps the abbreviations of ISO 32000-2 §8.9.7 as the
+    The read-only dictionary keeps the abbreviations of ISO 32000-2 §8.9.7 as the
     stream wrote them (``W``, ``H``, ``BPC``, ``CS``, ``F``), and ``data``
     holds the bytes between ``ID`` and ``EI``, still encoded with the
     dictionary's filters, without the white-space byte before ``EI``, which
@@ -99,9 +96,7 @@ class InlineImage:
         if not isinstance(self.data, (bytes, bytearray, memoryview)):
             msg = f"data must be bytes: {type(self.data).__name__}"
             raise TypeError(msg)
-        dictionary = dict(self.dictionary)
-        _check_value(dictionary, 0)
-        object.__setattr__(self, "dictionary", dictionary)
+        object.__setattr__(self, "dictionary", _freeze_value(self.dictionary, 0))
         object.__setattr__(self, "data", bytes(self.data))
 
     @property
@@ -263,7 +258,7 @@ def _value(value: Any) -> Any:  # noqa: ANN401 - operands are any object-model v
         return String(value[1])
     if tag == "a":
         return tuple(_value(item) for item in value[1])
-    return _entries(value[1])
+    return _OperandDictionary(_entries(value[1]))
 
 
 def _entries(entries: list[tuple[bytes, Any]]) -> dict[str, Any]:
@@ -271,30 +266,52 @@ def _entries(entries: list[tuple[bytes, Any]]) -> dict[str, Any]:
     return {_name_text(key): _value(item) for key, item in entries}
 
 
-def _check_value(value: Any, depth: int) -> None:  # noqa: ANN401 - any operand.
-    """Refuse a value that cannot be written as a content operand."""
+class _OperandDictionary(Mapping[str, Any]):
+    """A read-only, picklable dictionary with owned, recursively frozen values."""
+
+    __slots__ = ("_entries",)
+
+    def __init__(self, entries: dict[str, Any]) -> None:
+        self._entries = entries
+
+    def __getitem__(self, key: str) -> Any:  # noqa: ANN401 - any PDF operand.
+        return self._entries[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._entries)
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __repr__(self) -> str:
+        return repr(self._entries)
+
+
+def _freeze_value(value: Any, depth: int) -> Any:  # noqa: ANN401 - any operand.
+    """Validate one operand and detach nested containers and mutable byte buffers."""
     if isinstance(value, (float, Decimal)):
         if not (value.is_finite() if isinstance(value, Decimal) else math.isfinite(value)):
             msg = f"a PDF number is finite: {value!r}"
             raise ValueError(msg)
-        return
-    if value is None or isinstance(value, (bool, int, str, bytes, bytearray, memoryview)):
-        return
+        return value
+    if isinstance(value, (bytearray, memoryview)):
+        return bytes(value)
+    if value is None or isinstance(value, (bool, int, str, bytes)):
+        return value
     if depth >= _MAX_OPERAND_DEPTH:
         msg = f"an operand nests arrays and dictionaries deeper than {_MAX_OPERAND_DEPTH} levels"
         code = "object_value_depth"
         raise LimitError(code, msg)
     if isinstance(value, Mapping):
+        entries: dict[str, Any] = {}
         for key, item in value.items():
             if not isinstance(key, str) or not key:
                 msg = f"a dictionary key is non-empty name text: {key!r}"
                 raise TypeError(msg)
-            _check_value(item, depth + 1)
-        return
+            entries[key] = _freeze_value(item, depth + 1)
+        return _OperandDictionary(entries)
     if isinstance(value, (list, tuple)):
-        for item in value:
-            _check_value(item, depth + 1)
-        return
+        return tuple(_freeze_value(item, depth + 1) for item in value)
     msg = f"cannot write a {type(value).__name__} as a content operand: {value!r}"
     raise TypeError(msg)
 

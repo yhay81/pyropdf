@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 43 | 47 | 741 |
-| interpret | 1 | 13 | 0 | 40 | 667 | 110 |
-| create | 0 | 0 | 9 | 644 | 82 | 96 |
-| edit | 0 | 0 | 0 | 670 | 70 | 91 |
-| preserve | 0 | 0 | 0 | 28 | 667 | 136 |
+| read | 0 | 0 | 0 | 43 | 44 | 744 |
+| interpret | 1 | 13 | 0 | 40 | 664 | 113 |
+| create | 0 | 0 | 9 | 644 | 80 | 98 |
+| edit | 0 | 0 | 0 | 670 | 67 | 94 |
+| preserve | 0 | 0 | 0 | 28 | 664 | 139 |
 
 ## Clauses
 
@@ -184,7 +184,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 13.5 | Alternate presentations | `alternate-presentations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 13.7 | Rich media | `rich-media` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
-| 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
+| 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 14.3.3 | Document information dictionary | `document-info` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.4 | File identifiers | `file-identifiers` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -203,9 +203,9 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| Annex E | Extension naming rules | `private-names` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex E | Extension naming rules | `private-names` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
-| Annex I | Compatibility across PDF versions | `version-compatibility` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| Annex I | Compatibility across PDF versions | `version-compatibility` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | Annex K | XFA packets | `xfa` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | Annex L | Allowed structure children | `structure-children` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | Annex O | PDF URI fragments | `fragment-identifiers` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,959 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,533 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,945 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,519 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -403,9 +403,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
 - [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
     - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
-- [#909](https://github.com/yhay81/pyropdf/issues/909) Verify private names, compatibility sections and legacy procedure-set resources. Exercise registered/private names and prefix collisions, BX/EX compatibility sections and effective PDF version, and reading/editing/preserving legacy ProcSet arrays under their creation exclusion.
-    - read, interpret, edit, preserve — `private-names`, `version-compatibility`, `procedure-sets`.
-    - create — `private-names`, `version-compatibility`.
 - [#860](https://github.com/yhay81/pyropdf/issues/860) Read, edit and preserve Web Capture content sets and their indexes. Read, edit and round-trip captured content sets and their indexes.
     - read, interpret, create, edit, preserve — `web-capture`.
 

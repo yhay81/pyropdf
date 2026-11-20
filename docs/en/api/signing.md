@@ -111,6 +111,7 @@ If that introduces a structural defect, assignment raises `PdfError`.
 
 ```python
 Signature(
+    *,
     field: str,
     xref: int | None,
     byte_range: tuple[int, ...],
@@ -162,6 +163,7 @@ permissions are not checked.
 
 ```python
 SignatureVerification(
+    *,
     intact: bool,
     covers_revision: bool,
     valid: bool | None,

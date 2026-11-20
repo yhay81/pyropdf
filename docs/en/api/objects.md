@@ -181,6 +181,20 @@ plain `str` value is written as a PDF text string, so write
 `Name("Page")` for a name. Bytes that are not UTF-8 are kept as
 surrogate escapes, so a name read from a file is written back unchanged.
 
+### `Name.developer_prefix`
+
+```python
+Name.developer_prefix: str | None
+```
+
+The case-sensitive Annex E name prefix, or `None` for ordinary spelling.
+
+`XX` is reserved for private, third-class names. A second-class
+spelling uses four bytes containing or followed by an underscore or
+colon. The prefix identifies the spelling; registration belongs to
+the ISO PDF name registry. The containing dictionary can give a name
+a more specific meaning.
+
 ## `Objects`
 
 ```python

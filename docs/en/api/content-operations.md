@@ -16,7 +16,7 @@ InlineImage(dictionary: Mapping[str, Any], data: bytes)
 
 An inline image: its dictionary, keyed by name text as written, and its data.
 
-The dictionary keeps the abbreviations of ISO 32000-2 §8.9.7 as the
+The read-only dictionary keeps the abbreviations of ISO 32000-2 §8.9.7 as the
 stream wrote them (`W`, `H`, `BPC`, `CS`, `F`), and `data`
 holds the bytes between `ID` and `EI`, still encoded with the
 dictionary's filters, without the white-space byte before `EI`, which
@@ -49,7 +49,7 @@ One content-stream operation: an operator and its operands.
 `operator` is the operator's text, such as `"Tj"` or `"cm"`.
 `operands` holds the values that precede it, as the object model reads
 them: `None`, `bool`, `int`, `Real`, `Name`,
-`String`, tuples for arrays, and dictionaries keyed by name text.
+`String`, tuples for arrays, and read-only mappings keyed by name text.
 A plain `str` operand is written as a text string, as in the object
 model; write `String` or `bytes` for the bytes that a font
 shows.

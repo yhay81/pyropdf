@@ -37,7 +37,7 @@ _COUNT: LimitCode = "optional_content_count"
 _EXPRESSION: LimitCode = "optional_content_expression"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Layer:
     """An optional content group (``/Type /OCG``) and its state in the default configuration."""
 
@@ -72,7 +72,7 @@ def _document_layer(document: Document, layer: Layer) -> Layer:
     return layer
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class LayerConfig:
     """An optional content configuration: the default ``/D`` at index 0, then each of ``/Configs``."""
 
@@ -176,13 +176,13 @@ def _intents(value: object) -> tuple[str, ...]:
 def _config(index: int, config: Dictionary) -> LayerConfig:
     base = config.get("BaseState")
     return LayerConfig(
-        index,
-        _text(config.get("Name")),
-        _text(config.get("Creator")),
-        str(base) if isinstance(base, Name) and base in ("ON", "OFF", "Unchanged") else "ON",
-        _xrefs(config.get("ON")),
-        _xrefs(config.get("OFF")),
-        _xrefs(config.get("Locked")),
+        index=index,
+        name=_text(config.get("Name")),
+        creator=_text(config.get("Creator")),
+        base_state=str(base) if isinstance(base, Name) and base in ("ON", "OFF", "Unchanged") else "ON",
+        on=_xrefs(config.get("ON")),
+        off=_xrefs(config.get("OFF")),
+        locked=_xrefs(config.get("Locked")),
     )
 
 
@@ -236,7 +236,11 @@ class Layers(Sequence[Layer]):
                 _document_layer(
                     self._document,
                     Layer(
-                        xref, _text(group.get("Name")), _intents(group.get("Intent")), xref not in off, xref in locked
+                        xref=xref,
+                        name=_text(group.get("Name")),
+                        intent=_intents(group.get("Intent")),
+                        on=xref not in off,
+                        locked=xref in locked,
                     ),
                 )
             )
@@ -370,7 +374,7 @@ class Layers(Sequence[Layer]):
                 if not isinstance(config.get(key), Array):
                     config[key] = []
                 _append_group(config[key], group)
-        return _document_layer(document, Layer(xref, name, ("View",), visible, locked=False))
+        return _document_layer(document, Layer(xref=xref, name=name, intent=("View",), on=visible, locked=False))
 
     def _group(self, layer: Layer) -> int:
         """Return the object number of ``layer``, refusing a group that this document does not have."""

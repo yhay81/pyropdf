@@ -42,19 +42,23 @@ ELEMENTS = """<rdf:Description>
 @pytest.mark.spec("xmp-metadata", "interpret")
 def test_claims_written_as_attributes() -> None:
     doc = with_xmp(ATTRIBUTES)
-    assert doc.profiles == Profiles("PDF/A-2B", "PDF/UA-1", "PDF/X-4", "PDF/VT-1", ())
+    assert doc.profiles == Profiles(
+        pdfa="PDF/A-2B", pdfua="PDF/UA-1", pdfx="PDF/X-4", pdfvt="PDF/VT-1", output_intents=()
+    )
     assert doc.pdfa_claim == (2, "b")
 
 
 def test_claims_written_as_elements() -> None:
     doc = with_xmp(ELEMENTS)
-    assert doc.profiles == Profiles("PDF/A-3U", "PDF/UA-2", "PDF/X-1:2001", None, ())
+    assert doc.profiles == Profiles(
+        pdfa="PDF/A-3U", pdfua="PDF/UA-2", pdfx="PDF/X-1:2001", pdfvt=None, output_intents=()
+    )
     assert doc.pdfa_claim == (3, "U")
 
 
 def test_a_name_that_continues_a_longer_name_is_not_a_claim() -> None:
     doc = with_xmp('<rdf:Description notpdfaid:part="1" my:pdfuaid:part="1"/>')
-    assert doc.profiles == Profiles(None, None, None, None, ())
+    assert doc.profiles == Profiles(pdfa=None, pdfua=None, pdfx=None, pdfvt=None, output_intents=())
     assert not doc.profiles
     assert doc.pdfa_claim is None
 
@@ -75,17 +79,24 @@ def test_output_intents() -> None:
     )
     profiles = with_xmp(ATTRIBUTES, intents).profiles
     assert profiles.output_intents == (
-        OutputIntent("GTS_PDFA1", "sRGB IEC61966-2.1", None, "http://www.color.org", "ICC v4", 4),
-        OutputIntent("GTS_PDFX", None, "Coated", None, None, None),
+        OutputIntent(
+            subtype="GTS_PDFA1",
+            identifier="sRGB IEC61966-2.1",
+            condition=None,
+            registry="http://www.color.org",
+            info="ICC v4",
+            profile=4,
+        ),
+        OutputIntent(subtype="GTS_PDFX", identifier=None, condition="Coated", registry=None, info=None, profile=None),
     )
-    assert bool(Profiles(None, None, None, None, profiles.output_intents[1:]))
+    assert bool(Profiles(pdfa=None, pdfua=None, pdfx=None, pdfvt=None, output_intents=profiles.output_intents[1:]))
 
 
 def test_no_metadata_yields_empty_profiles() -> None:
     doc = pyropdf.open(build_raw_pdf({1: "<< /Type /Catalog /Pages 2 0 R /Metadata 2 0 R >>", 2: PAGES}))
-    assert doc.profiles == Profiles(None, None, None, None, ())
+    assert doc.profiles == Profiles(pdfa=None, pdfua=None, pdfx=None, pdfvt=None, output_intents=())
     assert doc.pdfa_claim is None
-    assert pyropdf.Document().profiles == Profiles(None, None, None, None, ())
+    assert pyropdf.Document().profiles == Profiles(pdfa=None, pdfua=None, pdfx=None, pdfvt=None, output_intents=())
 
 
 def test_metadata_beyond_the_bound_raises_limit_error() -> None:
@@ -102,3 +113,18 @@ def test_a_closed_document_refuses() -> None:
     doc.close()
     with pytest.raises(pyropdf.DocumentClosedError):
         _ = doc.profiles
+
+
+def test_part_only_claim_and_original_conformance_share_one_packet(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = with_xmp('<rdf:Description pdfaid:part="4"/>')
+    assert doc.pdfa_claim == (4, "")
+    reads = []
+    read = pyropdf.Stream.read
+
+    def counted(stream: pyropdf.Stream, *, max_size: int | None) -> bytes:
+        reads.append(stream.xref)
+        return read(stream, max_size=max_size)
+
+    monkeypatch.setattr(pyropdf.Stream, "read", counted)
+    assert doc.profiles.pdfa == "PDF/A-4"
+    assert reads == [3]

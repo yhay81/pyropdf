@@ -5,6 +5,8 @@ ported. Their expected values were observed with pymupdf 1.28.2. MuPDF
 transforms in single precision, so the examples use exactly representable
 results. Intended differences from pylopdf:
 
+- Geometry uses full corner names, membership and magnitude operators, and
+  keyword-only measurement units.
 - An unknown attribute raises a plain ``AttributeError``: the migration
   hints, which name a pymupdf name's replacement, come with the migration
   tooling.
@@ -19,7 +21,7 @@ import copy
 import math
 import operator
 import pickle
-from typing import TYPE_CHECKING, get_type_hints
+from typing import TYPE_CHECKING, Literal, get_type_hints
 
 import pytest
 from test_pixmap import boxed
@@ -123,7 +125,7 @@ def test_point_arithmetic(point: Point) -> None:
     assert -point == Point(-x, -y)
     assert +point == point
     assert bool(point) == (x != 0 or y != 0)
-    assert point.norm() == abs(point) == math.hypot(x, y)
+    assert abs(point) == math.hypot(x, y)
 
 
 def test_point_directions() -> None:
@@ -144,7 +146,7 @@ def test_matrix_arithmetic() -> None:
     assert matrix / 2 == (0.5, 1, 1.5, 2, 2.5, 3)
     assert -matrix == (-1, -2, -3, -4, -5, -6)
     assert +matrix == matrix
-    assert matrix.norm() == abs(matrix) == math.sqrt(91)
+    assert abs(matrix) == math.sqrt(91)
     assert not Matrix()
     assert Matrix(0, 0, 0, 0, 0, 1)
 
@@ -255,10 +257,10 @@ def test_distance_to_point_or_rectangle(target: tuple[float, ...], expected: flo
 
 
 @pytest.mark.parametrize(("unit", "expected"), [("px", 72), ("in", 1), ("cm", 2.54), ("mm", 25.4)])
-def test_distance_units(unit: str, expected: float) -> None:
-    assert Point().distance_to((72, 0), unit) == pytest.approx(expected)
+def test_distance_units(unit: Literal["px", "in", "cm", "mm"], expected: float) -> None:
+    assert Point().distance_to((72, 0), unit=unit) == pytest.approx(expected)
     with pytest.raises(pyropdf.PdfError, match="unit"):
-        Point().distance_to((72, 0), "invalid")
+        Point().distance_to((72, 0), unit="invalid")  # ty: ignore[invalid-argument-type]
 
 
 @pytest.mark.parametrize("coordinate", [math.nan, math.inf, -math.inf, 10**400])
@@ -432,9 +434,8 @@ def test_constants() -> None:
 
 def test_rect_corners_keep_the_stored_order() -> None:
     rect = Rect(1, 2, 3, 4)
-    assert (rect.tl, rect.tr, rect.bl, rect.br) == ((1, 2), (3, 2), (1, 4), (3, 4))
-    assert (rect.top_left, rect.top_right, rect.bottom_left, rect.bottom_right) == (rect.tl, rect.tr, rect.bl, rect.br)
-    assert isinstance(rect.tl, Point)
+    assert (rect.top_left, rect.top_right, rect.bottom_left, rect.bottom_right) == ((1, 2), (3, 2), (1, 4), (3, 4))
+    assert isinstance(rect.top_left, Point)
     assert Rect(3, 4, 1, 2).top_left == (3, 4)
     assert rect.quad == UNIT_QUAD
     assert Rect(3, 4, 1, 2).quad == ((3, 4), (1, 4), (3, 2), (1, 2))
@@ -598,7 +599,6 @@ def test_intersection() -> None:
 )
 def test_rect_containment(item: object, *, expected: bool) -> None:
     assert (item in Rect(1, 2, 3, 4)) is expected
-    assert Rect(1, 2, 3, 4).contains(item) is expected
     assert (item in IRect(1, 2, 3, 4)) is expected
 
 
@@ -631,18 +631,18 @@ def test_area_norm_and_truth() -> None:
     assert abs(Rect(1, 2, 3, 4)) == 4
     assert abs(Rect(3, 4, 1, 2)) == 0
     assert abs(Rect.INFINITE) == 0
-    assert Rect(1, 2, 3, 4).get_area() == 4
-    assert IRect(1, 2, 3, 4).get_area() == 4
-    assert type(IRect(1, 2, 3, 4).get_area()) is float
-    assert Rect(1, 2, 1, 4).get_area() == 0
-    assert Rect.INFINITE.get_area() == (LIMIT_HIGH - LIMIT_LOW) ** 2
+    assert Rect(1, 2, 3, 4).area() == 4
+    assert IRect(1, 2, 3, 4).area() == 4
+    assert type(IRect(1, 2, 3, 4).area()) is float
+    assert Rect(1, 2, 1, 4).area() == 0
+    assert Rect.INFINITE.area() == (LIMIT_HIGH - LIMIT_LOW) ** 2
     square_inch = Rect(0, 0, 72, 72)
-    assert square_inch.get_area("px") == 5184
-    assert square_inch.get_area("in") == pytest.approx(1)
-    assert square_inch.get_area("cm") == pytest.approx(2.54**2)
-    assert square_inch.get_area("mm") == pytest.approx(25.4**2)
+    assert square_inch.area(unit="px") == 5184
+    assert square_inch.area(unit="in") == pytest.approx(1)
+    assert square_inch.area(unit="cm") == pytest.approx(2.54**2)
+    assert square_inch.area(unit="mm") == pytest.approx(25.4**2)
     with pytest.raises(pyropdf.PdfError, match="unit"):
-        square_inch.get_area("IN")
+        square_inch.area(unit="IN")  # ty: ignore[invalid-argument-type]
     assert Rect(1, 2, 3, 4).norm() == Rect(-1, -2, -3, -4).norm() == math.sqrt(30)
     assert not Rect()
     assert Rect(0, 0, 0, 1)
@@ -666,7 +666,6 @@ def test_area_norm_and_truth() -> None:
 )
 def test_round_tolerates_float_noise_and_clamps(rect: Rect, expected: tuple[int, ...]) -> None:
     assert rect.round() == expected
-    assert rect.irect == expected
     assert type(rect.round()) is IRect
 
 
@@ -919,7 +918,7 @@ def test_page_rect_is_a_rect_that_follows_the_rotation() -> None:
     assert box in page.rect
     assert (box | page.rect) == page.rect
     assert (box & page.rect) == box
-    assert page.rect.irect == IRect(0, 0, 100, 200)
+    assert page.rect.round() == IRect(0, 0, 100, 200)
 
 
 def test_pixmap_takes_a_matrix() -> None:

@@ -175,9 +175,9 @@ def test_points_and_endings_are_edited_and_the_rectangle_follows() -> None:
 
     assert line.vertices == (Point(20, 200), Point(280, 200))
     assert line.line_endings == (LineEnding.CLOSED_ARROW, LineEnding.NONE)
-    assert line.rect.contains(Rect(13, 193, 281, 207))
+    assert Rect(13, 193, 281, 207) in line.rect
     assert len(ink.strokes or ()) == 2
-    assert ink.rect.contains(Rect(100, 90, 200, 150))
+    assert Rect(100, 90, 200, 150) in ink.rect
     assert _pixel(page.pixmap(dpi=72), 150, 200) == (255, 0, 0)
     with pytest.raises(ValueError, match="two vertices"):
         line.vertices = [(0, 0), (1, 1), (2, 2)]

@@ -11,7 +11,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 ## `Layer`
 
 ```python
-Layer(xref: int, name: str, intent: tuple[str, ...], on: bool, locked: bool)
+Layer(*, xref: int, name: str, intent: tuple[str, ...], on: bool, locked: bool)
 ```
 
 An optional content group (`/Type /OCG`) and its state in the default configuration.
@@ -20,6 +20,7 @@ An optional content group (`/Type /OCG`) and its state in the default configurat
 
 ```python
 LayerConfig(
+    *,
     index: int,
     name: str,
     creator: str,
