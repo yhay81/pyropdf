@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 43 | 51 | 737 |
-| interpret | 1 | 13 | 0 | 40 | 671 | 106 |
-| create | 0 | 0 | 9 | 644 | 86 | 92 |
-| edit | 0 | 0 | 0 | 670 | 74 | 87 |
-| preserve | 0 | 0 | 0 | 28 | 671 | 132 |
+| read | 0 | 0 | 0 | 43 | 50 | 738 |
+| interpret | 1 | 13 | 0 | 40 | 670 | 107 |
+| create | 0 | 0 | 9 | 644 | 85 | 93 |
+| edit | 0 | 0 | 0 | 670 | 73 | 88 |
+| preserve | 0 | 0 | 0 | 28 | 670 | 133 |
 
 ## Clauses
 
@@ -56,7 +56,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.11.4.2 | Related files arrays | `related-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.3 | Coordinate transformations | `coordinate-systems` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.3 | Coordinate transformations | `coordinate-systems` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,979 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,553 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,974 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,548 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -367,8 +367,6 @@ Milestone [#254](https://github.com/yhay81/pyropdf/issues/254).
     - read, create, edit — `geospatial`, `unencrypted-wrapper`.
     - interpret — `document-catalog`, `geospatial`, `unencrypted-wrapper`.
     - preserve — `geospatial`, `unencrypted-wrapper`, `non-interactive-forms`.
-- [#851](https://github.com/yhay81/pyropdf/issues/851) Verify display-space coordinates across reading, editing and rendering on the same page. Verify display-space transformations at the reading, rendering and editing boundaries, including rotated, offset and scaled pages.
-    - read, interpret, create, edit, preserve — `coordinate-systems`.
 
 ### 255 Conformance
 
