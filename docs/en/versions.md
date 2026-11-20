@@ -88,8 +88,8 @@ are separate operations.
 ```python
 import pyropdf
 
-with pyropdf.open("contract.pdf") as doc:
-    doc.form["Name"].value = "Ada"
+with pyropdf.open("input.pdf") as doc:
+    doc.pages[0].rotation = 90
     report = doc.changes(incremental=True)
     for effect in report.permissions:
         print(effect.signature, effect.transform, effect.field, effect.permitted, effect.reason)
