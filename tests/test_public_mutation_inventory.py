@@ -10,11 +10,13 @@ writing protocols for every schema key.
 from __future__ import annotations
 
 import inspect
+import operator
 from collections.abc import MutableMapping, MutableSequence
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
 from test_preservation import EDITS
 from test_preservation_operations import nothing
 
@@ -547,6 +549,7 @@ MUTATIONS = (
 # effects are listed independently of edits to the versioned PDF.
 READ_ONLY = {
     "Annotation": "pixmap text sound",
+    "CancellationToken": "cancelled",
     "AnnotationFile": "read",
     "Attachment": "read",
     "Chars": "column",
@@ -571,7 +574,8 @@ READ_ONLY = {
     "Paths": "column",
     "Pixmap": (
         "invert gamma tint to_gray to_rgb with_alpha without_alpha crop scale rotate flip warp "
-        "pixel with_pixel fill color_count colors top_color from_bytes open to_pil to_bytes"
+        "pixel with_pixel fill color_count colors top_color from_bytes open to_pil to_bytes "
+        "height channels stride resolution width alpha colorspace"
     ),
     "Point": "norm distance_to",
     "Quad": "morph",
@@ -599,8 +603,12 @@ EXTERNAL = {
 
 def public_members(cls: type) -> Iterator[str]:
     """Yield public call sites and writable property accessors defined on a public type."""
-    protocols = {"__setitem__", "__delitem__", "__enter__", "__exit__", "__iadd__", "__imul__", "__ior__"}
-    if cls is pyropdf.typed.View:
+    # operator publishes every binary in-place protocol, including set and
+    # numeric operations that a future mutable PDF collection might implement.
+    protocols = {name for name in vars(operator) if name.startswith("__i") and "__" + name[3:] in vars(operator)}
+    protocols.update(("__setitem__", "__delitem__", "__enter__", "__exit__", "__aenter__", "__aexit__"))
+    immutable = getattr(getattr(cls, "__dataclass_params__", None), "frozen", False)
+    if not immutable:
         protocols.update(("__setattr__", "__delattr__"))
     for name, member in vars(cls).items():
         if name.startswith("_") and name not in protocols:
@@ -610,6 +618,10 @@ def public_members(cls: type) -> Iterator[str]:
                 yield f"{name}="
             if member.fdel is not None:
                 yield f"del:{name}"
+        elif not immutable and (inspect.isgetsetdescriptor(member) or inspect.ismemberdescriptor(member)):
+            # Native descriptors do not expose whether a setter exists.
+            # Classify their spelling explicitly, including read-only fields.
+            yield name
         elif isinstance(member, (staticmethod, classmethod)) or inspect.isroutine(member):
             yield name
 
@@ -628,6 +640,17 @@ def public_operations() -> set[tuple[str, str]]:
         for op in public_members(base)
     }
     return methods | {("pyropdf", name) for name, entry in types.items() if inspect.isroutine(entry)}
+
+
+def test_native_read_only_descriptors_reject_assignment() -> None:
+    with pyropdf.Document() as doc:
+        pixmap = doc.pages.new((10, 10)).pixmap(dpi=72)
+        for value in (pixmap, pyropdf.CancellationToken()):
+            owner = type(value)
+            for name in READ_ONLY[owner.__name__].split():
+                if inspect.isgetsetdescriptor(vars(owner).get(name)):
+                    with pytest.raises(AttributeError):
+                        setattr(value, name, getattr(value, name))
 
 
 def test_every_public_operation_has_a_classification() -> None:

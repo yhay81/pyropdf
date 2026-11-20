@@ -1,4 +1,4 @@
-"""Canvas, annotation, and form cases shared by the save-and-reopen harnesses.
+"""Public editing operations shared by the save-and-reopen harnesses.
 
 Preparation runs before the preservation baseline, so edits and removals
 exercise existing objects. Allowed writes are named before each operation,
@@ -10,6 +10,7 @@ from __future__ import annotations
 import struct
 import tempfile
 import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -21,7 +22,7 @@ import pyropdf
 from pyropdf import Color, Dictionary, Font, Square, TextField
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Callable, Generator, Iterable
 
     from test_signature_structures import LocalPki
 
@@ -1122,6 +1123,17 @@ def promotion_conflicts(doc: pyropdf.Document) -> set[str]:
     return {clause for _, _, _, clause in after - before}
 
 
+@contextmanager
+def refused_promotion(doc: pyropdf.Document, clauses: set[str]) -> Generator[None, None, None]:
+    before = doc.to_bytes(incremental=True)
+    history = doc.history.save()
+    with pytest.raises(pyropdf.PdfError, match="cannot promote") as caught:
+        yield
+    assert any(clause in str(caught.value) for clause in clauses)
+    assert doc.history.save() == history
+    assert doc.to_bytes(incremental=True) == before
+
+
 def edit_security_store(doc: pyropdf.Document) -> set[int]:
     # A DER OCSPResponse containing the protocol's unauthorized response status.
     ocsp = bytes.fromhex("30030a0106")
@@ -1130,13 +1142,8 @@ def edit_security_store(doc: pyropdf.Document) -> set[int]:
     store = pyropdf.SecurityStore(ocsps=(ocsp,), vri={key: info})
     conflicts = promotion_conflicts(doc)
     if conflicts:
-        before = doc.to_bytes(incremental=True)
-        position = doc.history.position
-        with pytest.raises(pyropdf.PdfError, match="cannot promote") as caught:
+        with refused_promotion(doc, conflicts):
             doc.security_store = store
-        assert any(clause in str(caught.value) for clause in conflicts)
-        assert doc.history.position == position
-        assert doc.to_bytes(incremental=True) == before
         return set()
     doc.security_store = store
     return {number(doc.catalog)}
@@ -1790,13 +1797,12 @@ def timestamp_revision(doc: pyropdf.Document) -> set[int]:
     touched = {field.xref, number(doc.catalog)} | indirect_numbers(doc.catalog["AcroForm"])
     conflicts = promotion_conflicts(doc)
     if conflicts:
-        before = doc.to_bytes(incremental=True)
-        position = doc.history.position
-        with pytest.raises(pyropdf.PdfError, match="cannot promote") as caught:
-            doc.timestamp(local_pki().timestamper, field=FIELD, reserve=4096)
-        assert any(clause in str(caught.value) for clause in conflicts)
-        assert doc.history.position == position
-        assert doc.to_bytes(incremental=True) == before
+
+        def unexpected_request(_digest: bytes, _algorithm: str) -> bytes:
+            pytest.fail("an incompatible document must be refused before contacting the timestamp authority")
+
+        with refused_promotion(doc, conflicts):
+            doc.timestamp(unexpected_request, field=FIELD, reserve=4096)
         return set()
     stamped = doc.timestamp(local_pki().timestamper, field=FIELD, reserve=4096)
     check_adopted_revision(doc, stamped)
