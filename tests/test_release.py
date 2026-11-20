@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
 import runpy
+import sys
 import tomllib
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import unquote_plus
+from zipfile import ZIP_DEFLATED, ZipFile
+
+import pytest
 
 import pyropdf
-
-if TYPE_CHECKING:
-    import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
@@ -87,3 +88,80 @@ def test_the_readme_example_runs(
         assert page.text().strip() == "Invoice total: $42"
         assert len(page.annotations) == 1
         assert page.annotations[0].type is pyropdf.AnnotationType.HIGHLIGHT
+
+
+def _size_fixture(directory: Path, size: int, abi: str = "abi3", *, notice: str = "NOTICE") -> None:
+    directory.mkdir(exist_ok=True)
+    path = directory / f"pyropdf-1.0-cp311-{abi}-win_amd64.whl"
+    info = "pyropdf-1.0.dist-info"
+    licenses = ["LICENSE", "NOTICE", "tools/arlington/model/LICENSE"]
+
+    def write(padding: int) -> None:
+        with ZipFile(path, "w") as archive:
+            # The extension alone expands beyond the 9 MiB budget.
+            archive.writestr("pyropdf/_core.pyd", bytes(10 * 1024**2), ZIP_DEFLATED)
+            archive.writestr(
+                f"{info}/METADATA", "License-Expression: MIT\n" + "".join(f"License-File: {n}\n" for n in licenses)
+            )
+            for name in licenses:
+                archive.write(ROOT / (notice if name == "NOTICE" else name), f"{info}/licenses/{name}")
+            archive.writestr("padding", bytes(padding))
+
+    write(0)
+    write(size - path.stat().st_size)
+    assert path.stat().st_size == size
+
+
+def test_compressed_wheel_limits_and_pr_justification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    tool = runpy.run_path(str(ROOT / "tools" / "wheel_size.py"))["main"]
+    mib = 1024**2
+    base, head = tmp_path / "base", tmp_path / "head"
+    monkeypatch.setattr(sys, "argv", ["wheel_size", str(head), "--abi", "abi3", "--base", str(base)])
+    monkeypatch.delenv("PR_BODY", raising=False)
+    _size_fixture(head, 9 * mib)
+    _size_fixture(base, 9 * mib - mib // 4)
+    tool()
+    report = json.loads(capsys.readouterr().out)
+    assert report["head"]["size_bytes"] == 9_437_184
+    assert report["head"]["size_mib"] == 9.0
+    assert report["head"]["extension_bytes"] < mib
+    assert report["growth_bytes"] == 262_144
+
+    _size_fixture(base, 9 * mib - mib // 4 - 1)
+    with pytest.raises(ValueError, match="Wheel growth justification"):
+        tool()
+    capsys.readouterr()
+    reason = "Retain the required third-party notice for the new embedded font."
+    monkeypatch.setenv("PR_BODY", f"Closes #123\r\n\r\nWheel growth justification: {reason}\r\n")
+    tool()
+    report = json.loads(capsys.readouterr().out)
+    assert (report["growth_bytes"], report["justification"]) == (262_145, reason)
+    _size_fixture(head, 9 * mib + 1)
+    with pytest.raises(ValueError, match="9 MiB"):
+        tool()
+
+
+def test_larger_free_threaded_wheel_reports_size_and_checks_notices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tool = runpy.run_path(str(ROOT / "tools" / "wheel_size.py"))["main"]
+    monkeypatch.setattr(sys, "argv", ["wheel_size", str(tmp_path), "--abi", "cp314t"])
+    _size_fixture(tmp_path, 10 * 1024**2, "cp314t")
+    tool()
+    _size_fixture(tmp_path, 10 * 1024**2, "cp314t", notice="LICENSE")
+    with pytest.raises(ValueError, match="incorrect contents of NOTICE"):
+        tool()
+
+
+def test_pr_wheels_match_the_native_release_builds() -> None:
+    comparison = (ROOT / ".github/workflows/wheel-size.yml").read_text(encoding="utf-8")
+    (native,) = re.findall(r"\n  build-wheels:\n(.*?)(?=\n  \S)", WORKFLOW, flags=re.DOTALL)
+    targets = r"runner: ([\w.-]+), target: ([\w-]+)"
+    assert len(re.findall(targets, native)) == 5
+    assert re.findall(targets, native) == re.findall(targets, comparison)
+    for setting in re.findall(r"^ *(?:- )?([\w-]+: .*)$", native, flags=re.MULTILINE):
+        if setting.startswith(("uses: PyO3/", "rust-toolchain:", "maturin-version:", "args:", "manylinux:")):
+            assert comparison.count(setting) == 2
+    assert native.index("tools/wheel_size.py") < native.index("actions/upload-artifact")

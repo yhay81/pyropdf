@@ -1,0 +1,30 @@
+# Native wheel sizes (#858)
+
+The core abi3 limit in [#258](https://github.com/yhay81/pyropdf/issues/258) is
+9,437,184 bytes. Measure the `.whl` itself, including its ZIP headers and
+central directory. The workflow artifact that transports the wheel is another
+ZIP with a different size. One MiB is 1,048,576 bytes.
+
+The `Wheel size` PR workflow builds the exact base and head on each of the five
+release targets with the same runner, Rust, maturin, compatibility setting and
+release-mode command. It compares matching Python, ABI and platform tags and
+uploads a `size.json` for each target. Growth over 262,144 bytes needs an
+explanation in the PR body on a line beginning `Wheel growth justification:`.
+Editing the body reruns the comparison. The absolute limit still applies.
+`tests/test_release.py` exercises 262,145 bytes of growth, rejects a missing
+reason and records the explanation for its synthetic font-notice fixture.
+
+Before upload and publication, the release workflow checks the archive and
+license metadata of each native wheel and runs the installed-artifact smoke
+on its target. It reports cp314t and cp315t independently. The size limit and
+PR growth allowance apply only to abi3.
+
+To repeat one comparison locally, put the base and head wheels for one platform
+in separate directories, then run from the head checkout:
+
+```sh
+python3 tools/wheel_size.py head/dist --abi abi3 --base base/dist
+```
+
+The JSON gives the full wheel name, compatibility tag, SHA-256, archive bytes,
+binary MiB, and compressed bytes occupied by the extension inside the wheel.
