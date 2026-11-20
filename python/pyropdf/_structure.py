@@ -24,6 +24,9 @@ _CODE_OBJECT_COUNT = "object_count"
 #: Default element cap for ``StructureTree.walk``.
 _DEFAULT_MAX_ELEMENTS = 65_536
 
+# Conservative allowance for a handle, set slot, list slots and child iterator.
+_WALK_ELEMENT_BYTES = 512
+
 #: Maximum structure-tree depth including ``/StructTreeRoot`` (``structure_tree_count``).
 _MAX_STRUCTURE_DEPTH = 256
 
@@ -1399,33 +1402,49 @@ class StructureTree(Sequence[StructureElement]):
         """
         _validate_optional_positive_int("max_elements", max_elements)
         self._document._ensure_open()  # noqa: SLF001
-        root = _root_dict(self._document)
-        if root is None:
-            return iter(())
-        seen: set[int] = set()
-        if root.is_indirect and root.xref is not None:
-            seen.add(root.xref)
-        top = _child_elements(self._document, root)
-        stack: list[tuple[StructureElement, int]] = [(elem, 2) for elem in reversed(top)]
-        result: list[StructureElement] = []
-        while stack:
-            elem, level = stack.pop()
-            if elem.xref in seen:
-                continue
-            if level > _MAX_STRUCTURE_DEPTH:
-                raise _depth_limit_error()
-            if max_elements is not None and len(result) >= max_elements:
-                msg = f"structure tree exceeds max_elements={max_elements}"
-                raise LimitError(_CODE_OBJECT_COUNT, msg)
-            seen.add(elem.xref)
-            result.append(elem)
-            children = _child_elements(self._document, elem._dict())  # noqa: SLF001
-            for child in reversed(children):
-                if child.xref not in seen:
-                    if level + 1 > _MAX_STRUCTURE_DEPTH:
-                        raise _depth_limit_error()
-                    stack.append((child, level + 1))
-        return iter(result)
+
+        def read(operation: _core._OperationBudget) -> list[StructureElement]:
+            root = _root_dict(self._document)
+            if root is None:
+                return []
+            seen = {root.xref} if root.xref is not None else set()
+            result: list[StructureElement] = []
+
+            # Keep only the path to the next child on the stack. A wide /K array
+            # is read one item at a time, including when max_elements is small.
+            def kids(holder: Dictionary) -> Iterator[object]:
+                value = holder.get("K")
+                return iter(value) if isinstance(value, Array) else iter((value,))
+
+            end = object()
+            stack = [kids(root)]
+            while stack:
+                item = next(stack[-1], end)
+                if item is end:
+                    stack.pop()
+                    continue
+                if not _is_struct_elem_dict(item):
+                    continue
+                child = cast("Dictionary", item)
+                xref = child.xref
+                assert xref is not None  # noqa: S101
+                assert child.generation is not None  # noqa: S101
+                if xref in seen:
+                    continue
+                if len(stack) + 1 > _MAX_STRUCTURE_DEPTH:
+                    raise _depth_limit_error()
+                if max_elements is not None and len(result) >= max_elements:
+                    msg = f"structure tree exceeds max_elements={max_elements}"
+                    raise LimitError(_CODE_OBJECT_COUNT, msg)
+                # Account for the returned handle, visited set and traversal
+                # frame before retaining another element.
+                operation.charge("memory_size", _WALK_ELEMENT_BYTES)
+                seen.add(xref)
+                result.append(StructureElement(self._document, xref, child.generation))
+                stack.append(kids(child))
+            return result
+
+        return iter(_core.read_operation(self._document._core(), read))  # noqa: SLF001
 
     def __repr__(self) -> str:
         """Return ``StructureTree([...])`` with the top-level elements."""
