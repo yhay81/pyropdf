@@ -140,8 +140,17 @@ def check_claims(doc: pyropdf.Document, flavour: str, edit: str, *, incremental:
 
 
 def arlington(path: Path, flavour: str) -> str:
-    """Return the Arlington flavour of the PDF version in the header of ``path``, with ``flavour``'s extensions."""
-    version = "arlington" + path.read_bytes()[5:8].decode("ascii")
+    """Select the file's effective PDF version, including later catalog promotions."""
+    with path.open("rb") as source:
+        header = source.read(8)[5:8].decode("ascii")
+    with pyropdf.open(path) as doc:
+        declared = doc.catalog.get("Version")
+    effective = (
+        max(header, str(declared))
+        if isinstance(declared, pyropdf.Name) and re.fullmatch(r"1\.[0-7]|2\.0", str(declared))
+        else header
+    )
+    version = "arlington" + effective
     return f"{version}+{EXTENSIONS[flavour]}" if flavour in EXTENSIONS else version
 
 

@@ -142,3 +142,14 @@ def test_dual_claim_screen_has_distinct_accessibility_and_archival_rules(*, incr
     name = f"pdfua-2-pdfa-4-add_screen-{mode}.pdf"
     assert VERAPDF.EXPECTED[f"ua2 {name}"] == ("#848", {"8.9.2.4.12-1", "8.9.3.3-1"})
     assert VERAPDF.EXPECTED[f"4 {name}"] == ("#848", {"6.3.1-1", "6.3.2-1", "6.6.1-1", "6.9-2", "6.9-3", "6.9-4"})
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_arlington_uses_the_promoted_screen_edition(tmp_path: Path, *, incremental: bool) -> None:
+    original = ROOT / "tests/assets/pdfa/pdfa-1b.pdf"
+    assert VERAPDF.arlington(original, "1b") == "arlington1.4"
+    with pyropdf.open(original) as doc:
+        EDITS["add_screen"].apply(doc)
+        output = tmp_path / "screen.pdf"
+        doc.save(output, incremental=incremental)
+    assert VERAPDF.arlington(output, "1b") == "arlington1.5"
