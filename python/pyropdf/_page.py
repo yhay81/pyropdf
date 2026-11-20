@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core, _markdown
+from pyropdf._actions import PageTrigger, PageTriggers, _delete_page_triggers, _replace_page_triggers
 from pyropdf._annotations import Annotations
 from pyropdf._canvas import Canvas
 from pyropdf._clean import clean_page
@@ -65,12 +66,13 @@ from pyropdf._text_edit import replace_text
 from pyropdf._widgets import Widgets
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from pyropdf._core import CharColumns
     from pyropdf._document import Document
     from pyropdf._operations import InlineImage, Operation
     from pyropdf._pixmap import Pixmap
+    from pyropdf._targets import Target
     from pyropdf._text import _CoreBlock, _TextOptions
 
 #: Elements that one ``Page.content()`` or ``Page.paths()`` reads by default (``content_element_count``).
@@ -314,6 +316,24 @@ class Page:
     @navigation_steps.deleter
     def navigation_steps(self) -> None:
         _delete_navigation_steps(self)
+
+    @property
+    def triggers(self) -> PageTriggers:
+        """Return the page's ``/AA`` additional actions as a live :class:`PageTriggers` mutable mapping.
+
+        Assigning a mapping replaces ``Page['AA']`` in one transaction, and
+        ``del page.triggers`` removes it.
+        """
+        _ = self.index
+        return PageTriggers(self)
+
+    @triggers.setter
+    def triggers(self, triggers: Mapping[PageTrigger, Target] | Iterable[tuple[PageTrigger, Target]]) -> None:
+        _replace_page_triggers(self, triggers)
+
+    @triggers.deleter
+    def triggers(self) -> None:
+        _delete_page_triggers(self)
 
     @property
     def thumbnail(self) -> Pixmap | None:

@@ -468,7 +468,7 @@ def test_editing_a_direct_link_leaves_pages_that_share_the_array_alone() -> None
 
 
 def test_an_action_pyropdf_does_not_read_has_no_target() -> None:
-    doc = pyropdf.open(_build_integer_dest_fixture("/A << /S /JavaScript /JS (app.alert(1)) >>"))
+    doc = pyropdf.open(_build_integer_dest_fixture("/A << /S /UnknownAction >>"))
     (link,) = doc.pages[0].links
 
     assert link.target is None

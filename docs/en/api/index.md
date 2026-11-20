@@ -200,7 +200,28 @@ method and property of its classes with its full description.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
-- [`Target`](links-and-destinations.md#target): Where a link leads: a place in this document or in another file, a file to open, a viewer, transition, or thread action, or a URI as a string.
+- [`Target`](links-and-destinations.md#target): Where a link or trigger leads: a destination, a file to open, a viewer, transition, thread, script, hide, layer-state, or form action, or a URI string.
+
+## [Actions and triggers](actions-and-triggers.md)
+
+- [`ActionTriggers`](actions-and-triggers.md#actiontriggers): Additional actions of a widget or screen annotation by `AnnotationTrigger` (Table 197).
+- [`AnnotationTrigger`](actions-and-triggers.md#annotationtrigger): Widget and screen-annotation trigger events (ISO 32000-2 Table 197).
+- [`DocumentScripts`](actions-and-triggers.md#documentscripts): The document's `/Names /JavaScript` name tree as a live mutable mapping (ISO 32000-2 §12.6.4.17).
+- [`DocumentTrigger`](actions-and-triggers.md#documenttrigger): Catalog additional-action events (`Catalog["AA"]`, ISO 32000-2 Table 200).
+- [`DocumentTriggers`](actions-and-triggers.md#documenttriggers): Catalog additional-action scripts by `DocumentTrigger` (`Catalog["AA"]`, Table 200).
+- [`EmbeddedDestination`](actions-and-triggers.md#embeddeddestination): An embedded go-to action into an embedded or parent PDF file (`/S /GoToE`, ISO 32000-2 Table 204).
+- [`EmbeddedTarget`](actions-and-triggers.md#embeddedtarget): One hop in an embedded go-to target path (`/T`, ISO 32000-2 Table 205).
+- [`HideAction`](actions-and-triggers.md#hideaction): An action that hides or shows annotations and form fields (`/S /Hide`, ISO 32000-2 Table 214).
+- [`ImportDataAction`](actions-and-triggers.md#importdataaction): An action that imports FDF field values from a file (`/S /ImportData`, ISO 32000-2 Table 243).
+- [`JavaScriptAction`](actions-and-triggers.md#javascriptaction): An action that runs an ECMAScript script (`/S /JavaScript`, ISO 32000-2 Table 221).
+- [`LayerStateChange`](actions-and-triggers.md#layerstatechange): One transition group inside a `SetLayerStateAction` `/State` array (ISO 32000-2 Table 217).
+- [`LayerStateTransition`](actions-and-triggers.md#layerstatetransition): How a `LayerStateChange` updates optional content groups (ISO 32000-2 Table 217).
+- [`PageTrigger`](actions-and-triggers.md#pagetrigger): Page additional-action events (`Page["AA"]`, ISO 32000-2 Table 198).
+- [`PageTriggers`](actions-and-triggers.md#pagetriggers): Page additional actions by `PageTrigger` (`Page["AA"]`, ISO 32000-2 Table 198).
+- [`ResetFormAction`](actions-and-triggers.md#resetformaction): An action that resets form fields to their default values (`/S /ResetForm`, ISO 32000-2 Table 241).
+- [`SetLayerStateAction`](actions-and-triggers.md#setlayerstateaction): An action that changes optional-content group states (`/S /SetOCGState`, ISO 32000-2 Table 217).
+- [`SubmitFormAction`](actions-and-triggers.md#submitformaction): An action that submits form field values to a URL (`/S /SubmitForm`, ISO 32000-2 Table 239).
+- [`SubmitFormFlags`](actions-and-triggers.md#submitformflags): Bit flags of a `SubmitFormAction` (`/Flags`, ISO 32000-2 Table 240).
 
 ## [Forms and widgets](forms-and-widgets.md)
 

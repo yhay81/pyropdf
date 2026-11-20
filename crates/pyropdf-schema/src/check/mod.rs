@@ -1388,6 +1388,11 @@ fn equals(view: &View<'_>, literal: &str) -> bool {
             literal
                 .strip_prefix('(')
                 .and_then(|rest| rest.strip_suffix(')'))
+                .or_else(|| {
+                    literal
+                        .strip_prefix('\'')
+                        .and_then(|rest| rest.strip_suffix('\''))
+                })
                 .unwrap_or(literal)
                 .as_bytes()
                 == *bytes

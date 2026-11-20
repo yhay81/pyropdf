@@ -357,9 +357,9 @@ objects = []
 clause = "7.7.4"
 description = "The name dictionary: the name trees of destinations, attachments, scripts, and other named objects."
 objects = ["Name"]
-interpret = { status = "partial", missing = "Destination, embedded-file, and page name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments and named pages create `/Names` entries for embedded files and pages, without high-level creation for other `/Names` trees.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachments, named pages, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and scripts, without high-level APIs for other trees.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Destination, embedded-file, page, and JavaScript name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Attachments, named pages, and document scripts create `/Names` entries for embedded files, pages, and JavaScript, without high-level creation for other `/Names` trees.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Attachments, named pages, document scripts, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and JavaScript, without high-level APIs for other trees.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.content-streams]
 clause = "7.8"
@@ -878,10 +878,6 @@ objects = ["Annot3D", "AnnotRichMedia"]
 clause = "12.6.3"
 description = "Additional actions triggered by document, page, field, and annotation events."
 objects = ["AddActionCatalog", "AddActionPageObject", "AddActionFormField", "AddActionScreenAnnotation", "AddActionWidgetAnnotation"]
-read = { status = "partial", missing = "Form field and widget `/AA` triggers are read, without high-level readers for catalog, page, or screen trigger dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Form field and widget `/AA` triggers are written, without high-level APIs for catalog, page, or screen trigger dictionaries.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Form field and widget `/AA` triggers are edited and sanitize removes `/AA` entries, without high-level APIs for catalog, page, or screen triggers.", issue = 256, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Page copies and form edits preserve form field and widget `/AA` triggers, without dedicated coverage for screen triggers.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.goto-actions]
 clause = "12.6.4.2"
@@ -968,10 +964,6 @@ objects = ["ActionGoTo3DView"]
 clause = "12.6.4.17"
 description = "ECMAScript actions and document-level scripts."
 objects = ["ActionECMAScript"]
-read = { status = "partial", missing = "Form field and widget JavaScript actions are read, without a high-level reader for `/Names /JavaScript` document-level scripts.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Form field and widget JavaScript actions are written, without a high-level API for `/Names /JavaScript` document-level scripts.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Form field and widget JavaScript actions are edited and sanitize removes JavaScript actions and `/Names /JavaScript`, without editing document-level scripts.", issue = 256, milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Form edits preserve field and widget JavaScript actions and `/CO` order, without dedicated APIs for document-level scripts.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.rich-media-execute-actions]
 clause = "12.6.4.18"

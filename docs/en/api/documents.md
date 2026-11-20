@@ -84,6 +84,46 @@ transaction.
 
 Settable.
 
+### `Document.open_action`
+
+```python
+Document.open_action: Target | None
+```
+
+The catalog's `/OpenAction` destination or action, or `None` when absent.
+
+Assigning writes a destination array or action dictionary in one
+transaction, and `del doc.open_action` removes `/OpenAction`.
+
+Settable.
+
+### `Document.scripts`
+
+```python
+Document.scripts: DocumentScripts
+```
+
+The `/Names /JavaScript` name tree as a live `DocumentScripts` mutable mapping.
+
+Assigning a mapping replaces the tree in one transaction, and
+`del doc.scripts` removes `/Names /JavaScript` and frees retired
+nodes. pyropdf never runs the scripts.
+
+Settable.
+
+### `Document.triggers`
+
+```python
+Document.triggers: DocumentTriggers
+```
+
+The catalog's `/AA` scripts as a live `DocumentTriggers` mutable mapping.
+
+Assigning a mapping replaces `Catalog['AA']` in one transaction, and
+`del doc.triggers` removes it.
+
+Settable.
+
 ### `Document.objects`
 
 ```python

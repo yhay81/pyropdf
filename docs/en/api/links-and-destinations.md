@@ -83,12 +83,12 @@ A handle on one link annotation of a page, as `page.links` lists it.
 `rect` is the area that follows the link, in the page's display
 coordinates, and `target` where it leads; assigning either edits the
 annotation. `target` is `None` for an action that pyropdf does not
-read, such as JavaScript. A handle reads the document on every access and
-names the link's object, so it finds the link again after an edit moved
-it; one stored as a direct dictionary in `/Annots` is found by its
-position. A handle raises `StaleObjectError` while the link is not
-on its page, and `StalePageError` while the page is gone; it works
-again if undo restores them.
+read, such as a movie or 3D action. A handle reads the document on every
+access and names the link's object, so it finds the link again after an
+edit moved it; one stored as a direct dictionary in `/Annots` is found by
+its position. A handle raises `StaleObjectError` while the link is
+not on its page, and `StalePageError` while the page is gone; it
+works again if undo restores them.
 
 ### `Link.page`
 
@@ -192,11 +192,9 @@ Links.add(rect: Sequence[float], target: Target) -> Link
 
 Add a link over `rect`, in display coordinates, that leads to `target`, and return it.
 
-`target` is a URI string, a `Destination` in this document, a
-`RemoteDestination`, a `Launch`, a `NamedAction`,
-a `TransitionAction`, or a `ThreadAction`. The link draws
-no border. Its texts share a 1 MiB budget, checked before any change
-with `LimitError.code == "annotation_input_size"`.
+`target` is any `Target` destination, URI string, or action. The
+link draws no border. Its non-script texts share a 1 MiB budget, checked
+before any change with `LimitError.code == "annotation_input_size"`.
 
 ## `NamedAction`
 
@@ -223,13 +221,20 @@ A place in another PDF file: a zero-based page or a named destination.
 Target: TypeAlias = (
     Destination
     | RemoteDestination
+    | EmbeddedDestination
     | Launch
     | NamedAction
     | TransitionAction
     | ThreadAction
+    | JavaScriptAction
+    | HideAction
+    | SetLayerStateAction
+    | SubmitFormAction
+    | ResetFormAction
+    | ImportDataAction
     | str
 )
 ```
 
-Where a link leads: a place in this document or in another file, a file
-to open, a viewer, transition, or thread action, or a URI as a string.
+Where a link or trigger leads: a destination, a file to open, a viewer,
+transition, thread, script, hide, layer-state, or form action, or a URI string.
