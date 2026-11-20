@@ -73,18 +73,35 @@ byte for byte, a full save in every value.
 
 ## Change reports
 
-Before saving, `doc.changes` says what the edits would invalidate: the
-signatures whose signed bytes change, and the PDF/A, PDF/UA, and similar
-claims that the edits may break.
+An incremental save preserves the bytes that existing signatures cover.
+`report.signatures` identifies edits to objects in those byte ranges. A
+full save rewrites the signed bytes and lists every opened signature.
+
+For an incremental save, `report.permissions` describes each proposed edit
+under each applicable signature's DocMDP certification or FieldMDP lock.
+Each entry names the signature, transform, kind of edit, object number and
+affected form field. `permitted` is true or false for a classified edit.
+A value of `None` calls for further review. The report describes edits since
+opening. Verifying the original signature and evaluating previous revisions
+are separate operations.
 
 ```python
 import pyropdf
 
 with pyropdf.open("input.pdf") as doc:
     doc.pages[0].rotation = 90
-    report = doc.changes(incremental=False)
-    print(bool(report), report.signatures, report.claims)
+    report = doc.changes(incremental=True)
+    for effect in report.permissions:
+        print(effect.signature, effect.transform, effect.field, effect.permitted, effect.reason)
 ```
+
+P=1 forbids a form fill, P=2 allows filling and signing, and P=3 also
+allows markup annotation changes. A FieldMDP lock can still forbid a fill
+that DocMDP permits. The report is advisory. Validators can apply a stricter
+policy. For example, pyHanko's default diff policy flags markup changes at
+P=3. [pyHanko difference analysis](https://docs.pyhanko.eu/en/latest/api-docs/pyhanko.sign.diff_analysis.html)
+
+`report.claims` lists PDF/A and PDF/UA claims that the edits may break.
 
 ## Encryption
 

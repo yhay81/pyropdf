@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class SignatureChange:
-    """A signature of the opened file that the edits or the save mode invalidate.
+    """An opened signature affected by the save mode or edits to covered objects.
 
     ``field`` is the signature field's full name and ``xref`` its object.
     ``objects`` lists the edited objects that the signature signs, empty when
@@ -24,6 +24,30 @@ class SignatureChange:
     xref: int
     reason: str
     objects: tuple[int, ...]
+
+    @property
+    def signed_bytes_preserved(self) -> bool:
+        """Return whether the save preserves the bytes of the signed revision."""
+        return bool(self.objects)
+
+
+@dataclass(frozen=True, slots=True)
+class SignaturePermission:
+    """A signed DocMDP or FieldMDP transform's verdict for one proposed edit.
+
+    ``signature`` and ``xref`` identify the signature field. ``object`` identifies
+    the proposed edit (zero for the trailer). ``field`` is the affected form
+    field when known. A verdict of ``None`` calls for further review.
+    """
+
+    signature: str
+    xref: int
+    transform: str
+    edit: str
+    object: int
+    field: str | None
+    permitted: bool | None
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,10 +73,11 @@ class ChangeReport:
 
     signatures: tuple[SignatureChange, ...]
     claims: tuple[ClaimChange, ...]
+    permissions: tuple[SignaturePermission, ...] = ()
 
     def __bool__(self) -> bool:
         """Return whether the report names anything."""
-        return bool(self.signatures or self.claims)
+        return bool(self.signatures or self.claims or self.permissions)
 
 
 def changes(document: Document, *, incremental: bool) -> ChangeReport:
@@ -60,8 +85,9 @@ def changes(document: Document, *, incremental: bool) -> ChangeReport:
     if not isinstance(incremental, bool):
         msg = f"incremental must be a bool: {incremental!r}"
         raise TypeError(msg)
-    signatures, claims = _core.changes(document._core(), incremental)  # noqa: SLF001
+    signatures, claims, permissions = _core.changes(document._core(), incremental)  # noqa: SLF001
     return ChangeReport(
         tuple(SignatureChange(name, xref, reason, tuple(objects)) for name, xref, reason, objects in signatures),
         tuple(ClaimChange(name, reason, tuple(objects)) for name, _, reason, objects in claims),
+        tuple(SignaturePermission(*row) for row in permissions),
     )

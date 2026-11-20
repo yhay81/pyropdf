@@ -10,6 +10,10 @@
 //! forbids; this is not a validation of the claim (Phase 3's structural
 //! check is).
 
+mod permissions;
+
+pub use permissions::SignaturePermission;
+
 use std::collections::HashSet;
 use std::fmt;
 use std::ops::Deref;
@@ -121,6 +125,8 @@ pub struct ChangeReport {
     pub signatures: Vec<SignatureChange>,
     /// PDF/A or PDF/UA metadata claims broken by the edits.
     pub claims: Vec<ClaimChange>,
+    /// Modification-policy effects of the proposed incremental edits.
+    pub permissions: Vec<SignaturePermission>,
 }
 
 impl ChangeReport {
@@ -128,7 +134,7 @@ impl ChangeReport {
     /// claims.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.signatures.is_empty() && self.claims.is_empty()
+        self.signatures.is_empty() && self.claims.is_empty() && self.permissions.is_empty()
     }
 }
 
@@ -166,7 +172,14 @@ pub fn report(version: &Version, incremental: bool, budget: &Budget) -> Result<C
     let written = change_set.as_ref().map_or(&[][..], ChangeSet::objects);
 
     let mut signatures = BudgetVec::new(budget);
-    for signature in signatures_of(&opened, budget)?.into_vec() {
+    let existing = signatures_of(&opened, budget)?;
+    let permissions =
+        if incremental && let Some(set) = change_set.as_ref().filter(|set| !set.is_empty()) {
+            permissions::analyze(&opened, version, existing.as_slice(), set, budget)?
+        } else {
+            Vec::new()
+        };
+    for signature in existing.into_vec() {
         budget.poll()?;
         if !incremental {
             let reason = "a save that is not incremental rewrites the signed bytes";
@@ -206,6 +219,7 @@ pub fn report(version: &Version, incremental: bool, budget: &Budget) -> Result<C
     Ok(ChangeReport {
         signatures: signatures.into_vec(),
         claims: claims.into_vec(),
+        permissions,
     })
 }
 
@@ -276,7 +290,27 @@ fn signatures_of<'b>(opened: &Version, budget: &'b Budget) -> Result<BudgetVec<'
     let Some(catalog) = catalog_val.as_deref().and_then(value_dict) else {
         return Ok(BudgetVec::new(budget));
     };
-    let mut out = signature_fields(opened, catalog, budget)?;
+    let mut out = BudgetVec::new(budget);
+    walk_fields(opened, catalog, budget, |number, name, is_sig, node| {
+        if is_sig
+            && let Some(value) = node.get("V")
+            && let Some(sig_val) = resolved(opened, value, budget)?
+            && let Some(signature) = value_dict(&sig_val)
+            && let Some(ranges) = byte_ranges(signature)
+        {
+            budget.charge(LimitCode::MemorySize, name.len() as u64)?;
+            out.try_push(Signature {
+                name: name.to_owned(),
+                field: number,
+                value: match value {
+                    Value::Reference(reference) => Some(reference.number()),
+                    _ => None,
+                },
+                ranges,
+            })?;
+        }
+        Ok(())
+    })?;
     let perms_val = match catalog.get("Perms") {
         Some(perms) => resolved(opened, perms, budget)?,
         None => None,
@@ -315,28 +349,27 @@ fn signatures_of<'b>(opened: &Version, budget: &'b Budget) -> Result<BudgetVec<'
     Ok(out)
 }
 
-/// Returns the signed signature fields of `opened`: those whose own or
-/// inherited `/FT` is `/Sig` and whose `/V` has a `/ByteRange` of two
-/// ranges. Refuses a field tree past [`MAX_NODES`] or [`MAX_DEPTH`].
-fn signature_fields<'b>(
+/// Walks the AcroForm field tree with each field's fully qualified name
+/// and inherited signature type, under the operation's budget.
+fn walk_fields(
     opened: &Version,
     catalog: &Dict,
-    budget: &'b Budget,
-) -> Result<BudgetVec<'b, Signature>> {
-    let mut out = BudgetVec::new(budget);
+    budget: &Budget,
+    mut visit: impl FnMut(u32, &str, bool, &Dict) -> Result<()>,
+) -> Result<()> {
     let form_val = match catalog.get("AcroForm") {
         Some(form) => resolved(opened, form, budget)?,
         None => None,
     };
     let Some(form) = form_val.as_deref().and_then(value_dict) else {
-        return Ok(out);
+        return Ok(());
     };
     let fields_val = match form.get("Fields") {
         Some(fields) => resolved(opened, fields, budget)?,
         None => None,
     };
     let Some(Value::Array(fields)) = fields_val.as_deref() else {
-        return Ok(out);
+        return Ok(());
     };
     // A node: its object, the full name of its parent, its inherited
     // `/FT`, and its depth.
@@ -381,23 +414,7 @@ fn signature_fields<'b>(
             Some(Value::Name(kind)) => kind.as_bytes() == b"Sig",
             _ => inherited,
         };
-        if is_sig
-            && let Some(value) = node.get("V")
-            && let Some(sig_val) = resolved(opened, value, budget)?
-            && let Some(signature) = value_dict(&sig_val)
-            && let Some(ranges) = byte_ranges(signature)
-        {
-            budget.charge(LimitCode::MemorySize, name.len() as u64)?;
-            out.try_push(Signature {
-                name: name.clone(),
-                field: number,
-                value: match value {
-                    Value::Reference(reference) => Some(reference.number()),
-                    _ => None,
-                },
-                ranges,
-            })?;
-        }
+        visit(number, &name, is_sig, node)?;
         if let Some(kids) = node.get("Kids")
             && let Some(kids_val) = resolved(opened, kids, budget)?
             && let Value::Array(kids) = &*kids_val
@@ -415,7 +432,7 @@ fn signature_fields<'b>(
             }
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Returns the two byte ranges of a signature's `/ByteRange`.

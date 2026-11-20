@@ -54,9 +54,9 @@ from pyropdf._annotations import (
     StrikeOut,
     Underline,
 )
-from pyropdf._attachments import Attachment, Attachments
+from pyropdf._attachments import Attachment, Attachments, RelatedFile
 from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, PathInput, TableHeaderScope, TagRole, TextFit
-from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
+from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange, SignaturePermission
 from pyropdf._check import DefectKind, StructuralDefect, StructuralReport
 from pyropdf._chunks import Chunk, Element, ElementKind
 from pyropdf._collections import (
@@ -277,6 +277,7 @@ _PUBLIC_MODULE_EXPORTS = (
     Profiles,
     ReadingDirection,
     Real,
+    RelatedFile,
     Revision,
     Sound,
     SoundEncoding,
@@ -302,6 +303,7 @@ _PUBLIC_MODULE_EXPORTS = (
     ChangeReport,
     ClaimChange,
     SignatureChange,
+    SignaturePermission,
     StructuralDefect,
     StructuralReport,
     History,
@@ -525,6 +527,7 @@ __all__ = [
     "RecolorTarget",
     "Rect",
     "RectilinearMeasure",
+    "RelatedFile",
     "RemoteDestination",
     "RenditionAction",
     "RenditionOperation",
@@ -548,6 +551,7 @@ __all__ = [
     "SignatureChange",
     "SignatureField",
     "SignatureFlags",
+    "SignaturePermission",
     "SignatureVerification",
     "Signer",
     "SoftMask",

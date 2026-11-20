@@ -11,7 +11,11 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 ## `ChangeReport`
 
 ```python
-ChangeReport(signatures: tuple[SignatureChange, ...], claims: tuple[ClaimChange, ...])
+ChangeReport(
+    signatures: tuple[SignatureChange, ...],
+    claims: tuple[ClaimChange, ...],
+    permissions: tuple[SignaturePermission, ...] = (),
+)
 ```
 
 What the edits since opening invalidate, for a save that is incremental or not.
@@ -209,11 +213,40 @@ raises `DocumentClosedError`.
 SignatureChange(field: str, xref: int, reason: str, objects: tuple[int, ...])
 ```
 
-A signature of the opened file that the edits or the save mode invalidate.
+An opened signature affected by the save mode or edits to covered objects.
 
 `field` is the signature field's full name and `xref` its object.
 `objects` lists the edited objects that the signature signs, empty when
 the save mode alone invalidates it.
+
+### `SignatureChange.signed_bytes_preserved`
+
+```python
+SignatureChange.signed_bytes_preserved: bool
+```
+
+Whether the save preserves the bytes of the signed revision.
+
+## `SignaturePermission`
+
+```python
+SignaturePermission(
+    signature: str,
+    xref: int,
+    transform: str,
+    edit: str,
+    object: int,
+    field: str | None,
+    permitted: bool | None,
+    reason: str,
+)
+```
+
+A signed DocMDP or FieldMDP transform's verdict for one proposed edit.
+
+`signature` and `xref` identify the signature field. `object` identifies
+the proposed edit (zero for the trailer). `field` is the affected form
+field when known. A verdict of `None` calls for further review.
 
 ## `Transaction`
 

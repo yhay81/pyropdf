@@ -447,10 +447,9 @@ class Document:
     def changes(self, *, incremental: bool) -> ChangeReport:
         """Return what the edits since opening invalidate if the document is saved now.
 
-        The report lists the signatures of the opened file that the edits
-        change, or that a save that is not ``incremental`` rewrites, and the
-        PDF/A or PDF/UA claims of the metadata that the edits break. Its cost
-        follows the edits, not the document.
+        The report identifies affected signature byte ranges and PDF/A or PDF/UA
+        claims. For an incremental save, ``permissions`` reports the signed
+        DocMDP and FieldMDP transforms' verdicts for the proposed edits.
         """
         self._ensure_open()
         return _changes(self, incremental=incremental)

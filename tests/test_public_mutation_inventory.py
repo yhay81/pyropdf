@@ -277,6 +277,18 @@ MUTATIONS = (
         "write",
     ),
     (
+        "related_files",
+        "Replace or remove ordered filename/stream pairs in the file specification shared with attachments.",
+        "AnnotationFile",
+        "related_files= del:related_files",
+    ),
+    (
+        "related_files",
+        "Replace or remove ordered filename/stream pairs while retaining streams referenced by other files.",
+        "Attachment",
+        "related_files= del:related_files",
+    ),
+    (
         "collection_item",
         "Set and retire the file specification's CI entries while preserving its embedded bytes.",
         "Attachment",
