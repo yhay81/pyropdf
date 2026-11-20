@@ -1115,3 +1115,135 @@ def test_pyhanko_interop_certification_prepared_fields_dss_and_timestamps() -> N
             signers.PdfSignatureMetadata(field_name="Forbidden"),
             signer=ph_signer,
         )
+
+
+@pytest.mark.spec("unencrypted-wrapper", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_wrapper_outer_key_is_independent_of_the_selected_files_display_name(*, incremental: bool) -> None:
+    ciphertext = (DOCUMENT.parents[1] / "encrypted" / "user-aes-256.pdf").read_bytes()
+    sensitive = "Confidential survey 計画.pdf"
+    with wrap_encrypted_payload(EncryptedPayload(ciphertext, subtype="Standard", filename=sensitive)) as wrapper:
+        collection = wrapper.collection
+        assert collection is not None
+        key = collection.initial_document
+        assert key is not None
+        assert "Confidential" not in key
+        assert sensitive not in key
+        assert wrapper.attachments[key].filename == sensitive
+        wrapper.attachments.add("!notice", b"notice")
+        base = wrapper.to_bytes()
+    with pyropdf.open(base) as doc:
+        assert doc.encrypted_payload is not None
+        doc.attachments[key].filename = "renamed.pdf"
+        saved = doc.to_bytes(incremental=incremental)
+    with pikepdf.open(io.BytesIO(saved)) as pdf:
+        assert not pdf.is_encrypted
+        assert str(pdf.Root.Collection.View) == "/H"
+        assert str(pdf.Root.Collection.D) == key
+        entries = pdf.Root.Names.EmbeddedFiles.Names
+        files = {str(entries[i]): entries[i + 1] for i in range(0, len(entries), 2)}
+        assert files[key].objgen == pdf.Root.AF[0].objgen
+        assert str(files[key].UF) == "renamed.pdf"
+        assert str(files[key].AFRelationship) == "/EncryptedPayload"
+        assert str(files[key].EP.Subtype) == "/Standard"
+        assert files[key].EF.F.read_bytes() == ciphertext
+        assert files["!notice"].EF.F.read_bytes() == b"notice"
+    with pyropdf.open(saved) as doc:
+        payload = doc.encrypted_payload
+        assert payload is not None
+        assert payload.filename == "renamed.pdf"
+        assert payload.data == ciphertext
+
+
+@pytest.mark.spec("unencrypted-wrapper", "read", "interpret", "preserve")
+def test_older_wrapper_uses_the_exact_selected_tree_key_and_associated_object() -> None:
+    # Both keys read as "A", but a name tree distinguishes their bytes.
+    selected_key = bytes.fromhex("feff0041")
+    assets = DOCUMENT.parents[1] / "encrypted"
+    first = (assets / "user-aes-128.pdf").read_bytes()
+    second = (assets / "user-aes-256.pdf").read_bytes()
+    with pyropdf.open(_pdf_with_version("2.0")) as doc:
+        doc.attachments.add("A", first)
+        doc.attachments.add("B", second)
+        entries = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+        entries[2] = selected_key
+        entries[1]["AFRelationship"] = Name("Data")
+        entries[3]["AFRelationship"] = Name("EncryptedPayload")
+        entries[3]["EP"] = {"Subtype": Name("Standard")}
+        doc.catalog["AF"] = [entries[1], entries[3]]
+        doc.catalog["Collection"] = {"Type": Name("Collection"), "View": Name("H"), "D": selected_key}
+        base = doc.to_bytes()
+    with pyropdf.open(base) as doc:
+        selected = doc.encrypted_payload
+        assert selected is not None
+        assert selected.filename == "B"
+        assert selected.data == second
+        assert doc.to_bytes(incremental=True) == base
+        doc.catalog["Collection"]["D"] = b"A"
+        assert doc.encrypted_payload is None
+        # Old wrappers could use the same tree key as their actual display filename.
+        entries = doc.catalog["Names"]["EmbeddedFiles"]["Names"]
+        entries[3]["AFRelationship"] = Name("Data")
+        del entries[3]["EP"]
+        entries[1]["AFRelationship"] = Name("EncryptedPayload")
+        entries[1]["EP"] = {"Subtype": Name("Standard")}
+        first_payload = doc.encrypted_payload
+        assert first_payload is not None
+        assert first_payload.filename == "A"
+        assert first_payload.data == first
+
+
+@pytest.mark.spec("unencrypted-wrapper", "read", "interpret")
+@pytest.mark.parametrize(
+    "fault", ["no_af", "other_object", "relationship", "view", "initial", "ep_type", "old_version"]
+)
+def test_inconsistent_wrapper_relationship_does_not_select_a_payload(fault: str) -> None:
+    data = (DOCUMENT.parents[1] / "encrypted" / "user-aes-256.pdf").read_bytes()
+    with wrap_encrypted_payload(EncryptedPayload(data, subtype="Standard")) as doc:
+        file = doc.catalog["AF"][0]
+        match fault:
+            case "no_af":
+                del doc.catalog["AF"]
+            case "other_object":
+                doc.catalog["AF"] = [doc.objects[doc.objects.add(file)]]
+            case "relationship":
+                file["AFRelationship"] = Name("Data")
+            case "view":
+                doc.catalog["Collection"]["View"] = Name("D")
+            case "initial":
+                doc.catalog["Collection"]["D"] = b"missing"
+            case "ep_type":
+                file["EP"]["Type"] = Name("Filespec")
+            case "old_version":
+                doc.catalog["Version"] = Name("1.7")
+        assert doc.encrypted_payload is None
+
+
+def test_identified_wrapper_rejects_malformed_metadata_and_bounds_catalog_associations() -> None:
+    data = (DOCUMENT.parents[1] / "encrypted" / "user-aes-256.pdf").read_bytes()
+    with wrap_encrypted_payload(EncryptedPayload(data, subtype="Standard")) as doc:
+        file = doc.catalog["AF"][0]
+        file["EP"]["Version"] = 2
+        with pytest.raises(MalformedPdfError, match="/Version"):
+            _ = doc.encrypted_payload
+        del file["EP"]["Version"]
+        del file["EP"]["Subtype"]
+        with pytest.raises(MalformedPdfError, match="/Subtype"):
+            _ = doc.encrypted_payload
+        file["EP"]["Subtype"] = Name("Standard")
+        doc.catalog["AF"] = [file] * 4097
+        steps = doc.history.steps
+        with pytest.raises(LimitError) as refusal:
+            _ = doc.encrypted_payload
+        assert refusal.value.code == "embedded_file_input_size"
+        assert doc.history.steps == steps
+        doc.catalog["AF"] = [file]
+        assert doc.encrypted_payload is not None
+
+
+def test_password_protected_outer_document_is_not_an_unencrypted_wrapper() -> None:
+    data = (DOCUMENT.parents[1] / "encrypted" / "user-aes-256.pdf").read_bytes()
+    with wrap_encrypted_payload(EncryptedPayload(data, subtype="Standard")) as wrapper:
+        protected = wrapper.to_bytes(encryption=Encryption(user_password="outer", owner_password="owner"))
+    with pyropdf.open(protected, password="outer") as opened:
+        assert opened.encrypted_payload is None

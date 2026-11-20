@@ -1174,7 +1174,13 @@ class Document:
 
     @property
     def encrypted_payload(self) -> EncryptedPayload | None:
-        """Return the :class:`EncryptedPayload` of a PDF 2.0 unencrypted wrapper document (§7.6.7), or ``None``."""
+        """Return the encrypted file selected by a PDF 2.0 unencrypted wrapper (§7.6.7).
+
+        Return ``None`` when the hidden collection, embedded-file tree and catalog
+        association do not identify the same encrypted payload. Malformed filter
+        metadata or a missing stream on an identified payload raises
+        :class:`MalformedPdfError`.
+        """
         self._ensure_open()
         return read_encrypted_payload(self)
 

@@ -1399,10 +1399,6 @@ read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims,
 clause = "7.6.7"
 description = "An unencrypted outer PDF identifies and carries one encrypted document."
 objects = ["EncryptedPayload"]
-read = { status = "partial", missing = "The hidden collection selects the payload among multiple embedded files. Recognition still accepts a missing catalog AF membership or wrong AFRelationship.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Reads the selected payload, cryptographic filter and encrypted bytes. Validate the selected specification against the catalog association.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Creates an unencrypted cover, hidden collection, EP and associated file. The name-tree identifier is derived from the supplied filename.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Replaces the selected encrypted bytes and description without disturbing unrelated attachments. Independent identifiers and cross-reference consistency still need verified edits.", milestone = "Phase 4: Specification" }
 
 [features.coordinate-systems]
 clause = "8.3"
