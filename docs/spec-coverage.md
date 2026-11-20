@@ -383,7 +383,7 @@ Milestone [#255](https://github.com/yhay81/pyropdf/issues/255).
 - [#910](https://github.com/yhay81/pyropdf/issues/910) Validate PDF/X and PDF/VT profile rules through a print exchange round trip. Read and write production profile metadata and output intents, edit a conforming job and verify the claim with an independent validator and negative control. Cover PDF/VT document parts and the declared PDF/X flavour.
     - read, interpret, preserve — `pdfx`, `pdfvt`.
     - create, edit — `pdfx`, `pdfvt`, `output-intents`.
-- [#848](https://github.com/yhay81/pyropdf/issues/848) Check pre-save conformance reports against the profile rules each edit actually breaks. Compare edit effects and preservation against the applicable rules with independently checked positive and negative cases.
+- [#932](https://github.com/yhay81/pyropdf/issues/932) Verify profile edit effects on nested resources and alternate structure encodings. Extend the checked edit matrix to nested resources, alternate structure relationships, and font representations with positive and negative controls.
     - interpret, edit, preserve — `pdfa`, `pdfua`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f`, `pdfua-1`, `pdfua-2`.
 
 ### 256 Specification completion

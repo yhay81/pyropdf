@@ -77,8 +77,7 @@ def expect(
             EXPECTED[f"{flavour} {source}-{edit}-{mode}.pdf"] = (issue, rules)
 
 
-# Latent profile consequences tracked in #848 are constrained to the exact
-# operation, profile, mode and rule. In particular, a full save invalidates
+# The rule sets checked in #848 identify the exact operation, profile and mode. In particular, a full save invalidates
 # an existing signature, while an incremental save must keep its byte range.
 SIGNATURE_FIELDS = ("signature_field", "sign_revision", "timestamp_revision")
 ATTACHMENT_EDITS = ("add_attachment", "write_attachment", "collection_item")
@@ -209,7 +208,11 @@ def saves(directory: Path) -> dict[Path, str]:
             for incremental in (False, True):
                 doc = pyropdf.open(source)
                 case.prepare(doc)
+                if edit in {"sign_revision", "timestamp_revision"}:
+                    # Signing publishes a revision and adopts it as the new base.
+                    check_matrix_claims(doc, source, flavour, "signature_field", incremental=True)
                 case.apply(doc)
+                check_matrix_claims(doc, source, flavour, edit, incremental=incremental)
                 check_claims(doc, flavour, edit, incremental=incremental)
                 mode = "incremental" if incremental else "full"
                 path = directory / f"{source.stem}-{edit}-{mode}.pdf"
@@ -231,6 +234,174 @@ def check_claims(doc: pyropdf.Document, flavour: str, edit: str, *, incremental:
     if len(claims) != 1 or claims[0].claim != "PDF/UA-1" or set(claims[0].objects) != expected or not expected:
         msg = f"{edit} must report only the untagged annotations {expected}, got {claims}"
         raise ValueError(msg)
+
+
+def remove_signature_saves(source: Path, directory: Path) -> dict[Path, str]:
+    """Check that removing the signed field clears the archival byte-range warning."""
+    files = {}
+    with pyropdf.open(source) as doc:
+        del doc.form[doc.signatures[0].field]
+        for incremental in (False, True):
+            if doc.changes(incremental=incremental).claims:
+                msg = "removing the signed field must clear the archival byte-range warning"
+                raise ValueError(msg)
+            mode = "incremental" if incremental else "full"
+            path = directory / f"pdfa-2b-removed-signature-{mode}.pdf"
+            doc.save(path, incremental=incremental)
+            files[path] = "2b"
+    return files
+
+
+def claim_name(flavour: str) -> str:
+    """Return the public claim identity for a forced veraPDF flavour."""
+    return f"PDF/UA-{flavour[2:]}" if flavour.startswith("ua") else f"PDF/A-{flavour.upper()}"
+
+
+def check_matrix_claims(doc: pyropdf.Document, source: Path, flavour: str, edit: str, *, incremental: bool) -> None:
+    """Require exactly the claims for which this save introduces an independently checked rule failure."""
+    mode = "incremental" if incremental else "full"
+    expected = set()
+    adopted = edit in {"sign_revision", "timestamp_revision"} and bool(doc.signatures)
+    for profile in (flavour, "4") if source.stem == DUAL else (flavour,):
+        prefix = f"{profile} {source.stem}-{edit}-"
+        rules = EXPECTED.get(prefix + mode + ".pdf", ("", set()))[1]
+        # The no-edit incremental bytes are exactly the newly adopted signed revision,
+        # as checked by the shared edit. Its defects predate the next save.
+        baseline = EXPECTED.get(prefix + "incremental.pdf", ("", set()))[1] if adopted else set()
+        if rules - baseline:
+            expected.add(claim_name(profile))
+    claims = doc.changes(incremental=incremental).claims
+    if {change.claim for change in claims} != expected or any(
+        not change.reason or (not change.objects and not (adopted and not incremental)) for change in claims
+    ):
+        msg = f"{source.stem} {edit} {mode} expected {expected}, got {claims}"
+        raise ValueError(msg)
+
+
+# Targeted edits to the dual-claim fixture. Both forced profiles are verified
+# on each prepared input and each saved output.
+FOCUSED = {
+    "archival-revision-loss": {"4": {"6.7.3-5"}},
+    "accessible-revision-loss": {"ua2": {"5-5"}},
+    "metadata-loss": {"ua2": {"8.11.1-2"}, "4": {"6.7.2.1-1"}},
+    "language-loss": {"ua2": {"8.4.4-1"}},
+    "alt-loss": {"ua2": {"8.2.5.28.2-1"}},
+    "parent-tree-loss": {"ua2": {"8.2.2-1"}},
+    "output-intent-loss": {"4": {"6.2.4.3-2"}},
+    "indirect-intent-loss": {"4": {"6.2.4.3-2"}},
+    "unused-font-loss": {},
+    "font-loss": {"ua2": {"8.4.5.5.1-1"}, "4": {"6.2.10.4.1-1"}},
+    "undo-loss": {},
+    "rollback-loss": {},
+    "refused-rotation": {},
+    "existing-alt-loss": {"ua2": {"8.2.5.28.2-1"}},
+}
+for operation, profiles in FOCUSED.items():
+    for profile, ids in profiles.items():
+        expect(DUAL, profile, {operation: ids}, "#848")
+EXPECTED[f"ua2 {DUAL}-existing-alt-input.pdf"] = ("#848", {"8.2.5.28.2-1"})
+
+
+def prepare_profile_case(doc: pyropdf.Document, edit: str) -> None:
+    """Prepare the independently validated baseline for an indirect dependency or existing defect."""
+    if edit in {"font-loss", "unused-font-loss"}:
+        original = doc.pages[0].obj["Contents"].xref
+        EDITS["canvas_text"].apply(doc)
+        if edit == "unused-font-loss":
+            doc.pages[0].obj["Contents"] = doc.objects[original]
+    elif edit == "indirect-intent-loss":
+        intents = doc.catalog["OutputIntents"]
+        intents[0] = doc.objects[doc.objects.add(dict(intents[0]))]
+    elif edit == "existing-alt-loss":
+        del doc.catalog["StructTreeRoot"]["K"][0]["K"][0]["Alt"]
+
+
+def apply_profile_case(doc: pyropdf.Document, edit: str) -> int | None:
+    """Apply one edit and return the responsible indirect object when conformance changes."""
+    cat = doc.catalog
+    if edit in {"archival-revision-loss", "accessible-revision-loss"}:
+        field = (
+            b"<pdfaid:rev>2020</pdfaid:rev>" if edit == "archival-revision-loss" else b"<pdfuaid:rev>2024</pdfuaid:rev>"
+        )
+        metadata = cat["Metadata"]
+        metadata.write(metadata.read().replace(field, b""))
+        return metadata.xref
+    if edit in {"metadata-loss", "language-loss", "output-intent-loss"}:
+        key = {"metadata-loss": "Metadata", "language-loss": "Lang", "output-intent-loss": "OutputIntents"}[edit]
+        del cat[key]
+    elif edit == "alt-loss":
+        figure = cat["StructTreeRoot"]["K"][0]["K"][0]
+        del figure["Alt"]
+        return figure.xref
+    elif edit == "parent-tree-loss":
+        root = cat["StructTreeRoot"]
+        del root["ParentTree"]
+        return root.xref
+    elif edit == "indirect-intent-loss":
+        intent = cat["OutputIntents"][0]
+        del intent["DestOutputProfile"]
+        return intent.xref
+    elif edit in {"font-loss", "unused-font-loss"}:
+        for number in doc.objects:
+            value = doc.objects[number]
+            if isinstance(value, pyropdf.Dictionary) and value.get("Type") == pyropdf.Name("FontDescriptor"):
+                key = next(key for key in ("FontFile", "FontFile2", "FontFile3") if key in value)
+                del value[key]
+                return number
+        msg = "the embedded-text control needs a font descriptor"
+        raise ValueError(msg)
+    else:
+        apply_profile_control(doc, edit)
+    return cat.xref
+
+
+def apply_profile_control(doc: pyropdf.Document, edit: str) -> None:
+    """Keep the saved report clear after undo, rollback, refusal, or an unrelated edit."""
+    if edit == "undo-loss":
+        del doc.catalog["Metadata"]
+        doc.history.undo()
+    elif edit in {"rollback-loss", "refused-rotation"}:
+        try:
+            with doc.transaction():
+                if edit == "rollback-loss":
+                    del doc.catalog["Metadata"]
+                doc.pages[0].rotation = 45
+        except ValueError:
+            pass
+        else:
+            msg = "the invalid page rotation should be refused"
+            raise AssertionError(msg)
+    elif edit == "existing-alt-loss":
+        doc.pages[0].rotation = 90
+    else:
+        raise KeyError(edit)
+
+
+def profile_saves(directory: Path) -> dict[Path, str]:
+    """Match both pre-save claim identities and the responsible object to the per-profile validator cases."""
+    source = ROOT / f"tests/assets/pdfua/{DUAL}.pdf"
+    files = {}
+    for edit, rules in FOCUSED.items():
+        baseline = source
+        if edit in {"font-loss", "unused-font-loss", "indirect-intent-loss", "existing-alt-loss"}:
+            baseline = directory / f"{DUAL}-{edit.removesuffix('-loss')}-input.pdf"
+            with pyropdf.open(source) as prepared:
+                prepare_profile_case(prepared, edit)
+                prepared.save(baseline)
+            files[baseline] = "ua2"
+        with pyropdf.open(baseline) as doc:
+            owner = apply_profile_case(doc, edit)
+            expected = {} if edit == "existing-alt-loss" else {claim_name(f): (owner,) for f in rules}
+            for incremental in (False, True):
+                report = doc.changes(incremental=incremental).claims
+                if {change.claim: change.objects for change in report} != expected or any(not c.reason for c in report):
+                    msg = f"{edit} expected {expected}, got {report}"
+                    raise ValueError(msg)
+                mode = "incremental" if incremental else "full"
+                path = directory / f"{DUAL}-{edit}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "ua2"
+    return files
 
 
 def arlington(path: Path, flavour: str) -> str:
@@ -409,7 +580,11 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as directory:
         files = saves(Path(directory))
         files.update(language_saves(Path(directory)))
-        failures = run(args.jar.resolve(), files)
+        files.update(remove_signature_saves(Path(directory) / "pdfa-2b-sign_revision-incremental.pdf", Path(directory)))
+        targeted = profile_saves(Path(directory))
+        failures = run(args.jar.resolve(), targeted)
+        failures += run(args.jar.resolve(), dual_archival(targeted))
+        failures += run(args.jar.resolve(), files)
         failures += run(args.jar.resolve(), dual_archival(files))
         failures += controls(args.jar.resolve(), Path(directory))
         if args.arlington:
