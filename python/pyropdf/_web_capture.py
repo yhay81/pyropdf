@@ -516,7 +516,7 @@ def _page_images(page: Dictionary, images: set[Dictionary], work: _Work) -> set[
     pending: list[object] = [page.get("Annots"), page.get("Thumb")]
     parent = page
     ancestors: set[Dictionary] = set()
-    while "Resources" not in parent and isinstance(parent.get("Parent"), Dictionary):
+    while parent.get("Resources") is None and isinstance(parent.get("Parent"), Dictionary):
         work.charge()
         if parent in ancestors:
             msg = "a page with captured images has cyclic resource inheritance"

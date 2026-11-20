@@ -298,3 +298,14 @@ def test_bad_image_reference_counts_and_page_only_source_keys_refuse_registratio
     with pytest.raises(pyropdf.PdfError, match="only a page set"):
         doc.web_capture.add(image)
     assert not doc.web_capture.by_id(IDENTIFIER)
+
+
+def test_inherited_resources_count_a_captured_image_once_per_page() -> None:
+    doc = pyropdf.open(_pdf(captured=False))
+    page = doc.pages[0].obj
+    page["Parent"]["Resources"] = {"XObject": {"First": doc.objects[5], "Second": doc.objects[5]}}
+    page["Resources"] = None
+    image = _register(doc, image=True)
+    assert doc.web_capture.by_id(IDENTIFIER) == (image,)
+    with pytest.raises(pyropdf.PdfError, match="image set"):
+        doc.pages.extend(doc.pages[0])
