@@ -26,6 +26,7 @@ use pyropdf_store::refs;
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Object, Transaction, Version};
 
+use crate::annotations::version::{DEFAULT_VERSION, PdfVersion, header_version, parse_version};
 use crate::display::{encode_text, number};
 use crate::forms::text_string;
 
@@ -314,6 +315,35 @@ fn catalog(reads: &mut Reads<'_>) -> Result<Option<(Dict, Option<u32>)>> {
         Some(Value::Dict(catalog)) => Some((catalog, object)),
         _ => None,
     })
+}
+
+const STYLE_VERSION: PdfVersion = PdfVersion(1, 4);
+
+fn header_needs_style_version(version: &Version) -> bool {
+    header_version(version).unwrap_or(DEFAULT_VERSION) < STYLE_VERSION
+}
+
+/// An outline item's /C and /F require PDF 1.4. For a file with an older
+/// header, raise the catalog declaration only if it is still too low.
+fn raise_style_version(reads: &mut Reads<'_>, catalog: &mut Dict) -> Result<bool> {
+    if let Some(Value::Name(declared)) = read(reads, catalog.get("Version"))?
+        && parse_version(declared.as_bytes()).is_some_and(|version| version >= STYLE_VERSION)
+    {
+        return Ok(false);
+    }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "this call inserts only the fixed /Version key"
+    )]
+    catalog.insert(Name::from("Version"), Value::Name(Name::from("1.4")));
+    Ok(true)
+}
+
+fn writable_catalog(reads: &mut Reads<'_>) -> Result<(Dict, u32)> {
+    match catalog(reads)? {
+        Some((dict, Some(object))) => Ok((dict, object)),
+        _ => Err(Error::Pdf("the catalog is not an object".to_owned())),
+    }
 }
 
 /// Returns the outline's root dictionary and the object that holds it, or
@@ -718,7 +748,9 @@ pub fn outline_write(
         let mut input = Input::default();
         let mut prepared = BudgetVec::new(budget);
         let mut previous = 0;
+        let mut styled = false;
         for (level, title, target, color, flags, open) in &specs {
+            styled |= color.is_some() || *flags != 0;
             let level = *level as usize;
             if level == 0 || level > previous + 1 {
                 return Err(Error::Pdf(format!(
@@ -788,9 +820,10 @@ pub fn outline_write(
         }
 
         let mut reads = Reads::new(&before, budget);
-        let Some((mut catalog_dict, Some(catalog_object))) = catalog(&mut reads)? else {
-            return Err(Error::Pdf("the catalog is not an object".to_owned()));
-        };
+        let (mut catalog_dict, catalog_object) = writable_catalog(&mut reads)?;
+        if styled && header_needs_style_version(&before) {
+            raise_style_version(&mut reads, &mut catalog_dict)?;
+        }
         let old = objects(&mut reads, &catalog_dict)?;
         catalog_dict.remove("Outlines");
         if count > 0 {
@@ -965,20 +998,37 @@ fn objects(reads: &mut Reads<'_>, catalog: &Dict) -> Result<Vec<u32>> {
     Ok(out.into_vec())
 }
 
+enum ItemEdit {
+    Text,
+    Style,
+}
+
 fn edit_item(
     transaction: &mut Transaction,
     budget: &Budget,
     id: (u32, u16),
-    text: bool,
-    change: impl FnOnce(&mut Dict, &Arc<Version>, &Budget) -> Result<()>,
+    edit: ItemEdit,
+    change: impl FnOnce(&mut Dict, &Arc<Version>) -> Result<()>,
 ) -> Result<()> {
     with_savepoint(transaction, |transaction| {
         let before = transaction.snapshot();
         let mut reads = Reads::new(&before, budget);
         let mut dict = item(&mut reads, id)?.ok_or_else(|| stale(id))?;
-        change(&mut dict, &before, budget)?;
-        if text {
-            walk(&mut reads, Some((id, &dict)))?;
+        change(&mut dict, &before)?;
+        match edit {
+            ItemEdit::Text => {
+                walk(&mut reads, Some((id, &dict)))?;
+            }
+            ItemEdit::Style => {
+                if (dict.get("C").is_some() || dict.get("F").is_some())
+                    && header_needs_style_version(&before)
+                {
+                    let (mut catalog, object) = writable_catalog(&mut reads)?;
+                    if raise_style_version(&mut reads, &mut catalog)? {
+                        transaction.write(object, &Value::Dict(catalog), budget)?;
+                    }
+                }
+            }
         }
         transaction.write(id.0, &Value::Dict(dict), budget)?;
         Ok(())
@@ -993,7 +1043,7 @@ pub fn outline_set_title(
     title: &str,
 ) -> Result<()> {
     Input::default().charge(title, "title")?;
-    edit_item(transaction, budget, id, true, |dict, _, budget| {
+    edit_item(transaction, budget, id, ItemEdit::Text, |dict, _| {
         memory(budget, title.len().saturating_mul(3))?;
         #[expect(
             clippy::disallowed_methods,
@@ -1017,7 +1067,7 @@ pub fn outline_set_target(
     target: &Target,
 ) -> Result<()> {
     Input::default().target(target)?;
-    edit_item(transaction, budget, id, true, |dict, version, budget| {
+    edit_item(transaction, budget, id, ItemEdit::Text, |dict, version| {
         let index = PageIndex::memoized(draft_pages, version, budget)?;
         for text in [&target.4, &target.5].into_iter().flatten() {
             memory(budget, text.len().saturating_mul(3))?;
@@ -1046,7 +1096,7 @@ pub fn outline_set_style(
     flags: Option<u32>,
     flag: Option<(u32, bool)>,
 ) -> Result<()> {
-    edit_item(transaction, budget, id, false, |dict, version, budget| {
+    edit_item(transaction, budget, id, ItemEdit::Style, |dict, version| {
         if flag.is_none() {
             memory(budget, 3 * size_of::<Value>())?;
             match color.map(color_value).transpose()? {
