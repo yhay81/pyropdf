@@ -275,6 +275,7 @@ method and property of its classes with its full description.
 
 - [`Attachment`](attachments.md#attachment): A handle on one embedded file of a document, as `doc.attachments[name]` returns it.
 - [`Attachments`](attachments.md#attachments_1): The embedded files of a document, keyed by name, as `doc.attachments` returns them.
+- [`RelatedFile`](attachments.md#relatedfile): A related filename and its indirect embedded-file stream (ISO 32000-2, 7.11.4.2).
 
 ## [Collections](collections.md)
 

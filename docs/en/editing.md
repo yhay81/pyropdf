@@ -400,6 +400,8 @@ values (including `CollectionSubitem` display prefixes), and `doc.collection`
 configures a portable collection's schema, sort order, colors, split pane,
 custom `Navigator`, and `CollectionFolder` hierarchy.
 
+Each embedded file can also identify related files. Assign a mapping to `att.related_files` using the filename keys present under its `/EF` dictionary (`F` or `UF`). Each sequence retains its order. Multiple names can share one stream. The same property is available on `annotation.file`.
+
 ```python
 import pyropdf
 from pyropdf import (
@@ -415,6 +417,8 @@ from pyropdf import (
 
 with pyropdf.open("input.pdf") as doc:
     att = doc.attachments.add("data.csv", b"a,b\n1,2\n", description="Source data")
+    legend = doc.objects.add_stream(b"units: metres", {"Type": pyropdf.Name("EmbeddedFile")})
+    att.related_files = {"F": [pyropdf.RelatedFile(filename="legend.txt", stream=doc.objects[legend])]}
     att.collection_item = {
         "Department": "Finance",
         "Total": CollectionSubitem(42, "$"),
