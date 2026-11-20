@@ -1259,6 +1259,9 @@ def check_radio_group(doc: pyropdf.Document) -> None:
     group = doc.form[FIELD]
     assert group.type is pyropdf.FieldType.RADIO
     assert group.obj["DA"].text == "0 g"
+    assert (group.obj["FT"], group.obj["Ff"]) == (pyropdf.Name("Btn"), 49152)
+    assert sum(obj == group.obj for obj in doc.catalog["AcroForm"]["Fields"]) == 1
+    assert all("DA" not in widget.obj for widget in group.widgets)
     assert [widget.on_state for widget in group.widgets] == ["Basic", "Pro"]
     assert all(widget.obj["Parent"] == group.obj and widget.page == doc.pages[-1] for widget in group.widgets)
     assert [widget.xref for widget in group.widgets] == [obj.xref for obj in doc.pages[-1].obj["Annots"]]
@@ -1399,6 +1402,9 @@ def prepare_canvas_resources(doc: pyropdf.Document) -> None:
 def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
     target = doc.pages[-1]
     layer = next(layer for layer in doc.layers if layer.name == MARKER)
+    archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
+    alpha = 1.0 if archival_one else 0.5
+    mode = pyropdf.BlendMode.NORMAL if archival_one else pyropdf.BlendMode.MULTIPLY
     with pyropdf.Document() as source:
         page = source.pages.new((40, 40))
         with page.draw() as canvas:
@@ -1406,8 +1412,8 @@ def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
         with (
             target.draw() as canvas,
             canvas.layer(layer),
-            canvas.opacity(0.5),
-            canvas.blend(pyropdf.BlendMode.MULTIPLY),
+            canvas.opacity(alpha),
+            canvas.blend(mode),
         ):
             canvas.page((10, 10, 50, 50), page)
     return {target.xref}
@@ -1419,12 +1425,17 @@ def check_canvas_resources(doc: pyropdf.Document) -> None:
     resources = page.obj["Resources"]
     assert layer.xref in [obj.xref for obj in resources["Properties"].values()]
     states = list(resources["ExtGState"].values())
-    assert any(state.get("ca") == 0.5 for state in states)
-    assert any(state.get("BM") == "Multiply" for state in states)
+    archival_one = (doc.profiles.pdfa or "").startswith("PDF/A-1")
+    assert any(state.get("ca") == (1 if archival_one else 0.5) for state in states)
+    assert any(state.get("BM") == ("Normal" if archival_one else "Multiply") for state in states)
     assert any(obj.get("Subtype") == "Form" for obj in resources["XObject"].values())
     red, green, blue = page.pixmap(dpi=72, background=(255, 255, 255)).pixel(20, 20)
     assert red == 255
-    assert 125 <= green == blue <= 130
+    assert green == blue
+    if archival_one:
+        assert green == 0
+    else:
+        assert 125 <= green <= 130
 
 
 def prepare_tagged_drawing(doc: pyropdf.Document) -> None:

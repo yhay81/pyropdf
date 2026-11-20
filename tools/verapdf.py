@@ -90,7 +90,10 @@ for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     edit_rules = {"action_triggers": {"6.6.1-3" if part == "1" else "6.4.1-1"}}
     if part == "1":
         edit_rules.update(
-            annotation_relations={"6.5.3-2"}, file_specification={"6.1.11-1", "6.5.2-1"}, optional_content={"6.1.13-1"}
+            annotation_relations={"6.5.3-2"},
+            canvas_resources={"6.1.13-1", "6.4-3"},
+            file_specification={"6.1.11-1", "6.5.2-1"},
+            optional_content={"6.1.13-1"},
         )
         edit_rules.update({key: {"6.9-2"} for key in SIGNATURE_FIELDS})
     else:
@@ -184,7 +187,15 @@ PADES_LEVEL = 2
 # against an extension-only predicate. Check its verdict AND the extension
 # profile on the identical bytes; a new failure in either run fails CI.
 for source_path, profile in FIXTURES.items():
-    model = "arlington2.0" + ("+ISO_19005_3" if profile in EXTENSIONS else "")
+    extension = "+ISO_19005_3" if profile in EXTENSIONS else ""
+    version = "2.0" if profile.startswith("4") or profile == "ua2" else "1.4" if profile.startswith("1") else "1.7"
+    # AnnotWidget/Parent links to generic Field in the pinned model. The same
+    # parent qualifies as FieldBtnRadio from AcroForm/Fields; the raw field
+    # flags, parent links and default appearance are checked on each save.
+    expect(
+        source_path.stem, "arlington" + version + extension, {"radio_groups": {"Field-1", "Field-Ff-Bitmask-9"}}, "#879"
+    )
+    model = "arlington2.0" + extension
     expect(source_path.stem, model, {"security_store": {"VRI-OCSP-Array-9"}}, "#883")
     if profile.startswith("4") or profile == "ua2":
         expect(source_path.stem, model, {"sign_revision": {"Signature-SubFilter-Name-ETSI.CAdES.detached-27"}}, "#883")
