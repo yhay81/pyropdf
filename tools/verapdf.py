@@ -76,6 +76,7 @@ for source in ("pdfua-2", DUAL):
     expect(source, "ua2", {"add_attachment": {"8.14.1-1"}, "write_attachment": {"8.14.1-1"}}, "#848")
     expect(source, "ua2", {"delete_page": {"8.2.5.2-1"}}, "#848")
 
+
 def language_saves(directory: Path) -> dict[Path, str]:
     """Write the UA-1 catalog language loss and a control with explicit structure and metadata languages."""
     source = ROOT / "tests/assets/pdfua/pdfua-1.pdf"
