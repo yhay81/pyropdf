@@ -335,19 +335,51 @@ def test_a_stale_coverage_page_fails_the_check(tmp_path: Path) -> None:
 
 
 SCOPE = """name = "Test claim"
+revision = "0123456789abcdef0123456789abcdef01234567"
 pdf-versions = ["2.0"]
-errata = "2024-12-01"
+errata = "{reviewed}"
 extensions = []
 profiles = []
 tools = ["qpdf"]
 """
 
 
-def claim(root: Path, scope: str) -> subprocess.CompletedProcess[str]:
-    """Run the claim check of ``scope`` on a repository root."""
+REVISION = "0123456789abcdef0123456789abcdef01234567"
+CHECKS = ("preservation", "consistency", "qpdf", "pikepdf", "poppler", "pyhanko", "verapdf", "arlington", "pdfjs")
+
+
+def record_evidence(root: Path) -> dict:
+    spec_map = json.loads((root / MAP).read_bytes())
+    tests = {
+        test: "passed"
+        for feature in spec_map["features"]
+        for dim in DIMENSIONS
+        for test in feature[dim].get("tests", [])
+    }
+    for test in (
+        "tests/test_preservation.py::test_an_edit_and_a_save_keep_every_untouched_object[full]",
+        "tests/test_consistency.py::test_an_edit_and_a_save_add_no_qpdf_finding[full]",
+        "tests/test_consistency.py::test_pikepdf_reads_every_saved_document[full]",
+        "tests/test_font_subset_poppler.py::test_cff_subset_after_repeated_saves_matches_poppler",
+        "tests/test_verify.py::test_pyhanko_signatures_verify[one]",
+    ):
+        tests[test] = "passed"
+    return {
+        "revision": REVISION,
+        "map_sha256": hashlib.sha256((root / MAP).read_bytes()).hexdigest(),
+        "tests": tests,
+        "checks": dict.fromkeys(CHECKS, "passed"),
+    }
+
+
+def claim(root: Path, scope: str, evidence: dict | None = None) -> subprocess.CompletedProcess[str]:
+    """Run the claim on the named map with recorded observations."""
     path = root / "scope.toml"
-    path.write_text(SCOPE + scope, encoding="utf-8")
-    command = [sys.executable, str(CLAIM), str(path), "--root", str(root)]
+    dated = SCOPE.format(reviewed=json.loads((root / MAP).read_bytes())["inventory"]["reviewed"])
+    path.write_text(dated + scope, encoding="utf-8")
+    results = root / "release-evidence.json"
+    results.write_text(json.dumps(record_evidence(root) if evidence is None else evidence))
+    command = [sys.executable, str(CLAIM), str(path), "--root", str(root), "--evidence", str(results)]
     return subprocess.run(command, capture_output=True, check=False, text=True)  # noqa: S603 - fixed arguments
 
 
@@ -378,5 +410,144 @@ def test_a_non_goal_blocks_a_claim_unless_the_scope_excludes_it(tmp_path: Path) 
     assert "- lzw-filter create is non-goal that the scope does not declare as an exclusion" in blocked.stdout
     excluded = "".join(f'{dimension} = "Out of this claim."\n' for dimension in DIMENSIONS)
     held = claim(root, f'clauses = []\nfeatures = ["lzw-filter"]\n\n[exclusions.lzw-filter]\n{excluded}')
-    assert held.returncode == 0, held.stdout
+    assert held.returncode == 1, held.stdout
+    assert "no applicable dimensions" in held.stdout
     assert "- lzw-filter create (non-goal): Out of this claim." in held.stdout
+
+
+def test_a_claim_rejects_empty_scopes_and_invalid_exclusions(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    assert claim(root, "clauses = []").returncode != 0
+    for cell, reason in (
+        ("lzw-filter.read", "Other filter"),
+        ("standard-security-handler.reed", "Typo"),
+        ("standard-security-handler.read", " "),
+    ):
+        result = claim(root, f'clauses = ["7.6.4"]\n[exclusions]\n{cell} = "{reason}"')
+        assert result.returncode != 0, result.stdout
+        assert "exclusion" in result.stderr
+
+
+def test_a_claim_requires_the_named_tests_and_validators_at_the_revision(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    scope = 'features = ["standard-security-handler"]'
+    original = record_evidence(root)
+    test = next(test for test in original["tests"] if "test_every_standard_handler_reads_with_both_passwords" in test)
+    for outcome in ("failed", "skipped", None):
+        data = record_evidence(root)
+        del data["tests"][test]
+        if outcome:
+            data["tests"][test + "[revision-6]"] = outcome
+        result = claim(root, scope, data)
+        assert result.returncode != 0
+        assert f"standard-security-handler read lacks passing tests: {test}" in result.stdout
+    for check in CHECKS:
+        data = record_evidence(root)
+        del data["checks"][check]
+        result = claim(root, scope, data)
+        assert result.returncode != 0
+        assert f"{check}: no passing evidence" in result.stdout
+    # A claimed harness verdict cannot outweigh the captured skipped case.
+    data = record_evidence(root)
+    data["tests"]["tests/test_consistency.py::test_an_edit_and_a_save_add_no_qpdf_finding[full]"] = "skipped"
+    result = claim(root, scope, data)
+    assert result.returncode != 0
+    assert "qpdf: no passing evidence" in result.stdout
+    for key in ("revision", "map_sha256"):
+        result = claim(root, scope, original | {key: "0" * len(original[key])})
+        assert result.returncode != 0
+        assert "evidence" in result.stderr
+
+
+def test_release_evidence_keeps_each_pytest_parameter_and_failed_teardown(tmp_path: Path) -> None:
+    report = tmp_path / "junit.xml"
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()  # noqa: S607
+    report.write_text(
+        f'<testsuites><testsuite name="pyropdf-{revision}"><testcase classname="tests.test_read" name="test_field[a]"/>'
+        '<testcase classname="tests.test_read" name="test_field[b]"><skipped/></testcase>'
+        '<testcase classname="tests.test_read" name="test_field[a]"><error/></testcase>'
+        "</testsuite></testsuites>"
+    )
+    path = tmp_path / "results.json"
+    run = subprocess.run(  # noqa: S603 - repository script and known arguments
+        [
+            sys.executable,
+            str(CLAIM.with_name("release_evidence.py")),
+            str(report),
+            str(path),
+            "--verapdf",
+            "failure",
+            "--pdfjs",
+            "skipped",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert run.returncode == 0, run.stderr
+    recorded = json.loads(path.read_bytes())
+    assert recorded["tests"] == {
+        "tests/test_read.py::test_field[a]": "failed",
+        "tests/test_read.py::test_field[b]": "skipped",
+    }
+    assert recorded["checks"]["consistency"] == "incomplete"
+    assert recorded["checks"]["verapdf"] == "failure"
+    assert recorded["checks"]["pdfjs"] == "skipped"
+    report.write_text(report.read_text().replace(revision, "0" * 40))
+    stale = subprocess.run(run.args, capture_output=True, text=True, check=False)  # noqa: S603
+    assert stale.returncode != 0
+    assert "expected revision" in stale.stderr
+
+
+def test_release_exceptions_require_a_decision_and_never_approve_a_claim(tmp_path: Path) -> None:
+    root = copy_root(tmp_path)
+    spec_map = json.loads((root / MAP).read_bytes())
+    feature = next(f for f in spec_map["features"] if f["feature"] == "standard-security-handler")
+    spec_map["features"] = [feature]
+    feature["edit"].update(missing="A remaining edit.", issue=257)
+    decisions = root / "evidence/releases/v1.0.0/decisions.toml"
+    decisions.parent.mkdir(parents=True)
+    evidence = root / "results.json"
+    command = [
+        sys.executable,
+        str(CLAIM),
+        "--root",
+        str(root),
+        "--release",
+        "v1.0.0",
+        "--revision",
+        REVISION,
+        "--evidence",
+        str(evidence),
+    ]
+
+    def run(status: str) -> subprocess.CompletedProcess[str]:
+        feature["edit"]["status"] = status
+        (root / MAP).write_text(json.dumps(spec_map))
+        evidence.write_text(json.dumps(record_evidence(root)))
+        return subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603
+
+    assert run("partial").returncode != 0
+    decisions.write_text(
+        'release = "v1.0.0"\n[exceptions.standard-security-handler.edit]\n'
+        'decision = "https://github.com/yhay81/pyropdf/issues/257#issuecomment-123"\n'
+        'limitation = "The recorded limitation."\n'
+    )
+    for status in ("partial", "non-goal"):
+        result = run(status)
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "The recorded limitation." in result.stdout
+        result = claim(root, 'features = ["standard-security-handler"]')
+        assert result.returncode != 0
+        assert f"standard-security-handler edit is {status}" in result.stdout
+        result = claim(
+            root,
+            'features = ["standard-security-handler"]\n[exclusions.standard-security-handler]\nedit="Outside scope"',
+        )
+        assert result.returncode == 0
+        assert "4 of 4" in result.stdout
+        assert "1 excluded" in result.stdout
+    for status in ("engine", "planned"):
+        result = run(status)
+        assert result.returncode != 0
+        assert f"standard-security-handler edit is {status}" in result.stdout
