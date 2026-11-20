@@ -76,6 +76,7 @@ from pyropdf._sanitize import SanitizeReport, sanitize
 from pyropdf._signing import DEFAULT_RESERVE
 from pyropdf._signing import sign as _sign
 from pyropdf._signing import signatures as _signatures
+from pyropdf._structure import StructureTree, _delete_structure_tree
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
 if TYPE_CHECKING:
@@ -199,6 +200,23 @@ class Document:
     @outline.deleter
     def outline(self) -> None:
         _write_outline(self, ())
+
+    @property
+    def structure(self) -> StructureTree:
+        """Return the logical structure tree as its top-level :class:`StructureElement` handles.
+
+        Each element exposes its hierarchy, marked-content items, and
+        accessibility attributes, and ``doc.structure.role_map`` reads and
+        edits ``/RoleMap``. ``del doc.structure`` removes ``/StructTreeRoot``
+        and frees unreferenced structure objects in one transaction.
+        """
+        self._ensure_open()
+        return StructureTree(self)
+
+    @structure.deleter
+    def structure(self) -> None:
+        self._ensure_open()
+        _delete_structure_tree(self)
 
     @property
     def fallback_fonts(self) -> FallbackFonts:

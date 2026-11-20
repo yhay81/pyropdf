@@ -147,6 +147,14 @@ from pyropdf._recolor import RecolorReport, RecolorTarget, Unconverted
 from pyropdf._revisions import Revision
 from pyropdf._sanitize import SanitizeReport
 from pyropdf._signing import Signature, SignatureVerification, Signer, Timestamper
+from pyropdf._structure import (
+    MarkedContentReference,
+    ObjectReference,
+    RoleMap,
+    StructureChildren,
+    StructureElement,
+    StructureTree,
+)
 from pyropdf._tables import Table, TableDiagnostics
 from pyropdf._targets import Destination, Launch, NamedAction, RemoteDestination, Target
 from pyropdf._text import Block, Char, Chars, Layout, Line, Span, Unmapped, Word
@@ -315,6 +323,7 @@ __all__ = [
     "MalformedPdfError",
     "MarkInfo",
     "MarkedContent",
+    "MarkedContentReference",
     "MarkupRects",
     "Matrix",
     "Metadata",
@@ -323,6 +332,7 @@ __all__ = [
     "NamedAction",
     "Note",
     "NoteIcon",
+    "ObjectReference",
     "Objects",
     "OcrEngine",
     "OcrError",
@@ -369,6 +379,7 @@ __all__ = [
     "Rect",
     "RemoteDestination",
     "Revision",
+    "RoleMap",
     "SanitizeReport",
     "ScriptTrigger",
     "Scripts",
@@ -400,6 +411,9 @@ __all__ = [
     "Stroke",
     "StructuralDefect",
     "StructuralReport",
+    "StructureChildren",
+    "StructureElement",
+    "StructureTree",
     "SubsetFont",
     "Table",
     "TableDiagnostics",

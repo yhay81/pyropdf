@@ -265,6 +265,30 @@ with pyropdf.open("input.pdf") as doc:
     print([item.title for item in doc.outline])
 ```
 
+## Structure and accessibility
+
+`doc.structure` exposes the logical structure tree as its top-level
+`StructureElement` handles, `walk()` visits every element in pre-order, and
+`doc.structure.role_map` reads and edits `/RoleMap`. Each element's `role`,
+`title`, `language` (a BCP 47 tag), `alt`, `actual_text`, `expanded` (`/E`
+abbreviation expansion), and `page` are assignable and deletable, and
+`children` and `move()` reorder or reparent elements while keeping `/P`, `/K`,
+`/ParentTree`, and `/IDTree` consistent.
+
+```python
+import pyropdf
+from pyropdf import TagRole
+
+with pyropdf.open("input.pdf") as doc:
+    doc.structure.role_map["Callout"] = TagRole.NOTE
+    root = doc.structure.add("Document")
+    heading = root.children.add(TagRole.HEADING_1, page=0, title="Summary")
+    abbr = heading.children.add(TagRole.SPAN, expanded="portable document format")
+    note = root.children.add("Callout", page=0, language="en-US", alt="Payment terms")
+    print([elem.standard_role for elem in doc.structure.walk()])
+    print(abbr.expanded, note.language, note.alt)
+```
+
 ## Attachments
 
 ```python

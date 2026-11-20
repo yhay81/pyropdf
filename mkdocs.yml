@@ -85,6 +85,7 @@ nav:
       - Links and destinations: api/links-and-destinations.md
       - Forms and widgets: api/forms-and-widgets.md
       - Outline: api/outline.md
+      - Structure: api/structure.md
       - Attachments: api/attachments.md
       - History and changes: api/history-and-changes.md
       - Encryption: api/encryption.md

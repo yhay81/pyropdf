@@ -1414,6 +1414,7 @@ class Canvas:
         lang: str | None = None,
         title: str | None = None,
         actual_text: str | None = None,
+        expanded: str | None = None,
         scope: TableHeaderScope | str | None = None,
         numbering: ListNumbering | str | None = None,
     ) -> AbstractContextManager[None]:
@@ -1424,11 +1425,12 @@ class Canvas:
         structure, as is everything drawn outside any tag scope of a
         document that already has a structure tree. ``alt`` is the
         alternate description that figures and formulas need, ``title`` the
-        element's title, ``lang`` its BCP 47 language, and ``actual_text``
-        the text that replaces its content for extraction and assistive
-        technology. ``scope`` says what a :attr:`TagRole.TABLE_HEADER` cell
-        heads, and ``numbering`` how a :attr:`TagRole.LIST` numbers its
-        items; other roles take neither.
+        element's title, ``lang`` its BCP 47 language, ``actual_text`` the
+        text that replaces its content for extraction and assistive
+        technology, and ``expanded`` the expanded form of an abbreviation
+        (``/E``, ISO 32000-2 section 14.9.5). ``scope`` says what a
+        :attr:`TagRole.TABLE_HEADER` cell heads, and ``numbering`` how a
+        :attr:`TagRole.LIST` numbers its items; other roles take neither.
 
         The elements join the document's structure tree, created when it
         has none, under its ``Document`` element when the root holds that
@@ -1445,6 +1447,7 @@ class Canvas:
             lang=lang,
             title=title,
             actual_text=actual_text,
+            expanded=expanded,
             scope=scope,
             numbering=numbering,
         )

@@ -1141,10 +1141,8 @@ objects = []
 clause = "14.7"
 description = "The structure tree, its elements, parent tree, attributes, and class map."
 objects = ["StructTreeRoot", "StructElem", "MarkedContentReference", "ObjectReference", "ClassMap", "RoleMap", "StructureAttributesDict", "UserProperty"]
-read = { status = "partial", missing = "Page operations and structural checks read structure trees, parent trees, ID trees, and role and class maps, without a public structure-tree reader.", issue = 256, milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "Page import, copy, and deletion resolve MCIDs, object references, and role and class maps, without structure-driven text extraction.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Canvas tags create structure trees, elements, parent trees, and list and table attributes, without creating `ClassMap`, `RoleMap`, `ObjectReference`, or `UserProperty`.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Canvas tags and page import, copy, and deletion update structure trees, parent trees, ID trees, and role and class maps, without general element editing.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Structure trees, elements, parent trees, role maps, and list and table attributes are created, without creating `ClassMap`, `ObjectReference`, or `UserProperty`.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.structure-namespaces]
 clause = "14.7.4"
@@ -1155,19 +1153,14 @@ objects = ["Namespace", "RoleMapNS"]
 clause = "14.8"
 description = "Tagged PDF: the mark information and the standard structure types and attributes."
 objects = ["MarkInfo"]
-read = { status = "partial", missing = "Structural checks and page operations read `MarkInfo` and standard structure types, without a public tagged-PDF reader.", issue = 256, milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "Profile checks and page operations interpret `MarkInfo` and standard roles, without structure-driven text extraction.", issue = 256, milestone = "Phase 4: Specification" }
 create = { status = "partial", missing = "Canvas tags create `MarkInfo` and standard block, list, table, inline, figure, and artifact structures, without full standard attribute coverage.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Canvas tags and page operations update `MarkInfo` and tagged elements, without general tagged-PDF editing.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.accessibility]
 clause = "14.9"
 description = "Natural language, alternate descriptions, replacement text, and abbreviations."
 objects = []
-read = { status = "partial", missing = "`/ActualText`, `/Alt`, and catalog `/Lang` are read and checked, without `/E` abbreviation expansion.", issue = 256, milestone = "Phase 4: Specification" }
 interpret = { status = "partial", missing = "Text extraction and profile checks interpret `/ActualText` and `/Lang`, without `/E` abbreviation expansion.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Shaped text clusters write `/ActualText` and figure tags write `/Alt`, without writing `/E` abbreviations.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Content cleaning and page operations keep or prune `/ActualText` and `/Alt`, without editing `/E` abbreviations.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.web-capture]
 clause = "14.10"
