@@ -508,7 +508,9 @@ def check_flattened_widgets(doc: pyropdf.Document) -> None:
 
 
 def prepare_related_files(doc: pyropdf.Document) -> None:
-    doc.attachments.add("pyropdf-related-owner", b"owner", filename="drawing.dat")
+    owner = doc.attachments.add("pyropdf-related-owner", b"owner", filename="drawing.dat")
+    previous = doc.objects[doc.objects.add_stream(b"previous", {"Type": pyropdf.Name("EmbeddedFile")})]
+    owner.related_files = {"F": [pyropdf.RelatedFile(filename="previous.dat", stream=previous)]}
 
 
 def set_related_files(doc: pyropdf.Document) -> set[int]:
@@ -516,9 +518,14 @@ def set_related_files(doc: pyropdf.Document) -> set[int]:
 
     found = _lookup(doc, "pyropdf-related-owner")
     assert found is not None
-    touched = {number(found.filespec)}
-    stream = doc.objects[doc.objects.add_stream(b"legend", {"Type": pyropdf.Name("EmbeddedFile")})]
+    rf = found.filespec["RF"]
+    pairs = rf["F"]
+    assert pairs.xref is not None
+    touched = {number(found.filespec), number(rf), pairs.xref, number(pairs[1])}
     owner = doc.attachments["pyropdf-related-owner"]
+    del owner.related_files
+    assert not owner.related_files
+    stream = doc.objects[doc.objects.add_stream(b"legend", {"Type": pyropdf.Name("EmbeddedFile")})]
     owner.related_files = {"F": [pyropdf.RelatedFile(filename="legend.dat", stream=stream)]}
     return touched
 
@@ -532,7 +539,6 @@ def check_related_files(doc: pyropdf.Document) -> None:
 
 
 NEW_EDITS = {
-    "related_files": Edit(prepare=prepare_related_files, apply=set_related_files, check=check_related_files),
     "canvas_path": Edit(apply=canvas_path, check=check_path),
     "canvas_text": Edit(apply=canvas_text, check=check_text),
     "canvas_image": Edit(apply=canvas_image, check=check_image),
@@ -1887,6 +1893,7 @@ FAMILY_EDITS = {
     "page_records": Edit(prepare=prepare_page_records, apply=edit_page_records, check=check_page_records),
     "radio_groups": Edit(prepare=prepare_radio_group, apply=edit_radio_group, check=check_radio_group),
     "recolor": Edit(prepare=prepare_recolor, apply=edit_recolor, check=check_recolor, affected_pages=last_page),
+    "related_files": Edit(prepare=prepare_related_files, apply=set_related_files, check=check_related_files),
     "remove_rotation": Edit(prepare=prepare_rotated_page, apply=remove_rotation, check=check_rotation_removed),
     "replace_text": Edit(
         prepare=prepare_text_replacement, apply=edit_page_text, check=check_page_text, affected_pages=last_page

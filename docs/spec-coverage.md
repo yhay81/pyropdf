@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 32 | 64 | 735 |
-| interpret | 1 | 13 | 0 | 29 | 686 | 102 |
-| create | 0 | 0 | 2 | 640 | 101 | 88 |
-| edit | 0 | 0 | 0 | 660 | 88 | 83 |
-| preserve | 0 | 0 | 0 | 17 | 684 | 130 |
+| read | 0 | 0 | 0 | 32 | 63 | 736 |
+| interpret | 1 | 13 | 0 | 29 | 685 | 103 |
+| create | 0 | 0 | 2 | 640 | 100 | 89 |
+| edit | 0 | 0 | 0 | 660 | 87 | 84 |
+| preserve | 0 | 0 | 0 | 17 | 683 | 131 |
 
 ## Clauses
 
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-3,002 unfinished cells in 831 features: 1 engine, 1,378 partial, 1,623 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,997 unfinished cells in 831 features: 1 engine, 1,378 partial, 1,618 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 

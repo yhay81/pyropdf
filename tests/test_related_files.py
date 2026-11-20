@@ -72,7 +72,10 @@ def test_editing_shared_rf_retains_unknown_entries_and_live_referrers() -> None:
         del a.related_files
         assert not a.related_files
         assert first["RF"]["Private"]["Label"] == b"untouched"
-        assert first["RF"].xref != old_rf
+        private_rf = first["RF"].xref
+        assert private_rf != old_rf
+        del a.related_files
+        assert first["RF"].xref == private_rf
         assert second["RF"].xref == old_rf
         assert b.related_files["F"][0].stream.read() == b"shared"
         del doc.attachments["a"]
@@ -129,6 +132,9 @@ def test_keys_must_match_the_embedded_file_and_stream_kind() -> None:
         with pytest.raises(ValueError, match="not an embedded file"):
             a.related_files = {"F": [item]}
         assert "RF" not in fs
+        fs["RF"] = {"F": doc.objects[doc.objects.add([b"linked", stream])]}
+        with pytest.raises(pyropdf.PdfError, match="not an embedded file"):
+            _ = a.related_files
         fs["RF"] = {"F": doc.objects[doc.objects.add([b"dangling name"])]}
         with pytest.raises(pyropdf.PdfError, match="filename/stream pairs"):
             _ = a.related_files

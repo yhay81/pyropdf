@@ -93,7 +93,9 @@ Read the ordered related-file pairs for each embedded filename key (F or UF).
 
 Assign a mapping to replace these pairs. Delete the property to
 remove the standard relationships. Shared streams remain accessible
-to their other owners.
+to their other owners. Each key accepts up to 4,096 pairs, and the
+combined filenames can occupy up to 1 MiB. Exceeding either limit
+raises `LimitError` with code `embedded_file_input_size`.
 
 Settable.
 

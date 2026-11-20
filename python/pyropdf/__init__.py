@@ -254,6 +254,7 @@ _PUBLIC_MODULE_EXPORTS = (
     Profiles,
     ReadingDirection,
     Real,
+    RelatedFile,
     Revision,
     Sound,
     SoundEncoding,

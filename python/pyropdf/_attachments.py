@@ -340,6 +340,9 @@ def _read_related(filespec: object) -> Mapping[str, tuple[RelatedFile, ...]]:
                 if not isinstance(filename, String) or not isinstance(stream, Stream) or not stream.is_indirect:
                     msg = f"/RF/{key} contains an invalid filename/stream pair"
                     raise PdfError(msg)
+                if stream.get("Type") not in (None, "EmbeddedFile"):
+                    msg = f"/RF/{key} refers to a stream that is not an embedded file"
+                    raise PdfError(msg)
                 total_bytes += len(filename)
                 if total_bytes > _MAX_INPUT_TEXT_SIZE:
                     msg = "related filenames exceed the attachment input size limit"
@@ -421,7 +424,7 @@ def _write_related(document: Document, filespec: object, value: Mapping[str, Seq
     if rf is not None and (not isinstance(rf, Dictionary) or isinstance(rf, Stream)):
         msg = "file specification /RF must be a dictionary"
         raise PdfError(msg)
-    if not replacements and rf is None:
+    if not replacements and (rf is None or all(key not in rf for key in _RELATED_KEYS)):
         return
     retired = _related_xrefs(rf)
     # Copy even an indirect /RF: another file specification may share it.
@@ -618,7 +621,9 @@ class Attachment:
 
         Assign a mapping to replace these pairs. Delete the property to
         remove the standard relationships. Shared streams remain accessible
-        to their other owners.
+        to their other owners. Each key accepts up to 4,096 pairs, and the
+        combined filenames can occupy up to 1 MiB. Exceeding either limit
+        raises :class:`LimitError` with code ``embedded_file_input_size``.
         """
         return _read_related(self._filespec())
 
