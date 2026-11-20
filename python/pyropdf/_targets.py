@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
 from pyropdf._geometry import Point
+from pyropdf._presentations import TransitionAction
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -108,8 +109,8 @@ class NamedAction:
 
 
 #: Where a link leads: a place in this document or in another file, a file
-#: to open, a viewer action, or a URI as a string.
-Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | str
+#: to open, a viewer or transition action, or a URI as a string.
+Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | TransitionAction | str
 
 
 def _destination(page: int, point: tuple[float, float] | None, zoom: float | None) -> Destination:
@@ -137,7 +138,7 @@ def _target_from_core(target: _Target) -> Target | None:
 def _target_to_core(target: object, page_count: int) -> _Target:
     """Return the core's tuple for a target, validating its page."""
     match target:
-        case None:
+        case None | TransitionAction():
             return ("none", None, None, None, None, None)
         case Destination(page=page, point=point, zoom=zoom):
             if page >= page_count:
@@ -154,8 +155,8 @@ def _target_to_core(target: object, page_count: int) -> _Target:
             return ("named", None, None, None, None, name)
         case _:
             msg = (
-                "a target is a Destination, RemoteDestination, Launch, NamedAction, URI string, or None: "
-                f"{type(target).__name__}"
+                "a target is a Destination, RemoteDestination, Launch, NamedAction, "
+                f"TransitionAction, URI string, or None: {type(target).__name__}"
             )
             raise TypeError(msg)
 

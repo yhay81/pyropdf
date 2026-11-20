@@ -31,7 +31,7 @@ mod tests;
 mod text;
 
 pub use glyphs::used_glyphs;
-pub use images::{DecodedImage, page_image};
+pub use images::{DecodedImage, page_image, page_thumbnail};
 pub use model::{
     BBox, ClipTuple, ContentItem, ContentSink, Contexts, FontTuple, GlyphStyle, GlyphsTuple,
     GroupTuple, ImageFormatTuple, ImageTuple, ItemContextTuple, ItemKinds, MarkTuple, PageContent,

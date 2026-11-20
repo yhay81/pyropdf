@@ -29,6 +29,22 @@ from pyropdf._ocr import (
 from pyropdf._operations import _DEFAULT_MAX_CONTENT_SIZE, Operations, _from_core
 from pyropdf._page_labels import _label, _read_page_labels
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix, _validate_bool
+from pyropdf._presentations import (
+    NavigationStep,
+    Transition,
+    _delete_navigation_steps,
+    _delete_page_duration,
+    _delete_page_thumbnail,
+    _delete_page_transition,
+    _read_navigation_steps,
+    _read_page_duration,
+    _read_page_thumbnail,
+    _read_page_transition,
+    _write_navigation_steps,
+    _write_page_duration,
+    _write_page_thumbnail,
+    _write_page_transition,
+)
 from pyropdf._recolor import RecolorReport, RecolorTarget, recolor
 from pyropdf._tables import Table, build_tables
 from pyropdf._text import (
@@ -242,6 +258,82 @@ class Page:
     def label(self) -> str:
         """Return the page's label from ``doc.page_labels``, or ``""`` when no range covers it."""
         return _label(_read_page_labels(self._document), self.index)
+
+    @property
+    def duration(self) -> float | None:
+        """Return the page's presentation display duration in seconds (``/Dur``), or ``None`` when absent.
+
+        Assigning a non-negative finite number sets ``/Dur`` in one transaction;
+        ``del page.duration`` removes it.
+        """
+        return _read_page_duration(self)
+
+    @duration.setter
+    def duration(self, duration: float) -> None:
+        _write_page_duration(self, duration)
+
+    @duration.deleter
+    def duration(self) -> None:
+        _delete_page_duration(self)
+
+    @property
+    def transition(self) -> Transition | None:
+        """Return the page's presentation :class:`Transition` (``/Trans``), or ``None`` when absent.
+
+        Assigning a :class:`Transition` writes ``/Trans`` in one transaction,
+        promoting the catalog version to PDF 1.5 when the style or options need
+        it; ``del page.transition`` removes it.
+        """
+        return _read_page_transition(self)
+
+    @transition.setter
+    def transition(self, transition: Transition) -> None:
+        _write_page_transition(self, transition)
+
+    @transition.deleter
+    def transition(self) -> None:
+        _delete_page_transition(self)
+
+    @property
+    def navigation_steps(self) -> tuple[NavigationStep, ...]:
+        """Return the page's sub-page presentation sequence (``/PresSteps``) as :class:`NavigationStep` records.
+
+        Reads walk the ``NavNode`` ``/Next`` chain iteratively up to 4,096 steps
+        with cycle detection. Assigning an iterable of :class:`NavigationStep`
+        records writes indirect ``NavNode`` dictionaries linked with ``/Next``
+        and ``/Prev`` in one transaction (or removes ``/PresSteps`` when empty)
+        and frees unreferenced retired nodes; ``del page.navigation_steps``
+        removes ``/PresSteps`` and frees unreferenced nodes.
+        """
+        return _read_navigation_steps(self)
+
+    @navigation_steps.setter
+    def navigation_steps(self, steps: Iterable[NavigationStep]) -> None:
+        _write_navigation_steps(self, steps)
+
+    @navigation_steps.deleter
+    def navigation_steps(self) -> None:
+        _delete_navigation_steps(self)
+
+    @property
+    def thumbnail(self) -> Pixmap | None:
+        """Return the page's embedded thumbnail image (``/Thumb``) decoded via hayro, or ``None``.
+
+        Assigning a :class:`Pixmap` writes an indirect Flate-compressed
+        ``DeviceGray`` or ``DeviceRGB`` thumbnail stream (flattening alpha onto
+        white) in one transaction and frees any unreferenced retired thumbnail
+        stream; ``del page.thumbnail`` removes ``/Thumb`` and frees its stream
+        when unreferenced.
+        """
+        return _read_page_thumbnail(self)
+
+    @thumbnail.setter
+    def thumbnail(self, pixmap: Pixmap) -> None:
+        _write_page_thumbnail(self, pixmap)
+
+    @thumbnail.deleter
+    def thumbnail(self) -> None:
+        _delete_page_thumbnail(self)
 
     @property
     def rotation(self) -> int:

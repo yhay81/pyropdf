@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING, overload
 from pyropdf import _core
 from pyropdf._content import Color
 from pyropdf._errors import LimitError, StaleObjectError
-from pyropdf._objects import Dictionary
+from pyropdf._metadata import _require_version
+from pyropdf._objects import Dictionary, _catalog
+from pyropdf._presentations import TransitionAction, _read_transition_action, _transition_action_dict
 from pyropdf._targets import Destination, Target, _target_from_core, _target_to_core
 
 if TYPE_CHECKING:
@@ -115,6 +117,13 @@ def _rgb(color: Color | None) -> tuple[float, float, float] | None:
     return None if color is None else (color.red, color.green, color.blue)
 
 
+def _resolve_outline_target(document: Document, item_id: tuple[int, int], raw: _Target) -> Target | None:
+    resolved = _target_from_core(raw)
+    if resolved is not None or not item_id[0]:
+        return resolved
+    return _read_transition_action(Dictionary(document, item_id))
+
+
 class OutlineItem:
     """A handle on one item of the outline, as ``doc.outline`` yields it.
 
@@ -175,10 +184,18 @@ class OutlineItem:
         reads as ``None``, and a named destination reads as the
         :class:`Destination` that it names.
         """
-        return _target_from_core(self._read()[2])
+        return _resolve_outline_target(self._document, self._id, self._read()[2])
 
     @destination.setter
     def destination(self, target: Target | None) -> None:
+        if isinstance(target, TransitionAction):
+            action_dict, minimum = _transition_action_dict(target)
+            document = self._document
+            with document.transaction("outline target"):
+                _core.outline_set_target(self._core(), self._id, ("none", None, None, None, None, None))
+                _require_version(document, _catalog(document), minimum)
+                Dictionary(document, self._id)["A"] = action_dict
+            return
         core = self._core()
         _core.outline_set_target(core, self._id, _target(target, _core.page_count(core)))
 
@@ -245,7 +262,7 @@ class OutlineItem:
         return OutlineEntry(
             level,
             title,
-            _target_from_core(target),
+            _resolve_outline_target(self._document, self._id, target),
             color=None if color is None else Color(*color),
             bold=bool(flags & _BOLD),
             italic=bool(flags & _ITALIC),
@@ -330,13 +347,13 @@ class Outline(Sequence[OutlineItem]):
             OutlineEntry(
                 level,
                 title,
-                _target_from_core(target),
+                _resolve_outline_target(self._document, item_id, target),
                 color=None if color is None else Color(*color),
                 bold=bool(flags & _BOLD),
                 italic=bool(flags & _ITALIC),
                 is_open=count > 0,
             )
-            for _, level, title, target, color, flags, count in entries
+            for item_id, level, title, target, color, flags, count in entries
         ]
 
     def __repr__(self) -> str:
@@ -361,6 +378,7 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         raise LimitError(code, msg)
     page_count = _core.page_count(core)
     specs = []
+    transition_actions: list[tuple[int, dict[str, object]]] = []
     previous_level = 0
     characters = 0
     for index, entry in enumerate(items):
@@ -370,13 +388,26 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         if entry.level > previous_level + 1:
             msg = f"outline item {index} has level {entry.level}; levels start at 1 and grow by at most one"
             raise ValueError(msg)
+        if isinstance(entry.destination, TransitionAction):
+            action_dict, _ = _transition_action_dict(entry.destination)
+            transition_actions.append((index, action_dict))
         target = _target(entry.destination, page_count)
         characters += len(entry.title) + sum(len(text) for text in target[4:] if text is not None)
         _input_size(characters)
         flags = (_BOLD if entry.bold else 0) | (_ITALIC if entry.italic else 0)
         specs.append((entry.level, entry.title, target, _rgb(entry.color), flags, entry.is_open))
         previous_level = entry.level
-    _core.outline_write(core, specs)
+    if not transition_actions:
+        _core.outline_write(core, specs)
+        return
+    with document.transaction("outline"):
+        _core.outline_write(core, specs)
+        _require_version(document, _catalog(document), (1, 5))
+        written = _core.outline_entries(core)
+        for index, action_dict in transition_actions:
+            item_id = written[index][0]
+            if item_id[0]:
+                Dictionary(document, item_id)["A"] = action_dict
 
 
 # The package re-exports these names; reprs, pickles, and documentation name them.

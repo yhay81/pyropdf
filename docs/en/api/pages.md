@@ -8,6 +8,23 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 # Pages
 
+## `NavigationStep`
+
+```python
+NavigationStep(
+    *,
+    next_action: Target | None = None,
+    previous_action: Target | None = None,
+    duration: float | None = None,
+)
+```
+
+One sub-page navigation step of a page's presentation sequence (`NavNode`, ISO 32000-2 Table 166).
+
+`next_action` runs when advancing forward (`/NA`), `previous_action`
+when stepping backward (`/PA`), and `duration` sets how many seconds the
+viewer waits before advancing automatically (`/Dur`).
+
 ## `Page`
 
 ```python
@@ -113,6 +130,66 @@ Page.label: str
 ```
 
 The page's label from `doc.page_labels`, or `""` when no range covers it.
+
+### `Page.duration`
+
+```python
+Page.duration: float | None
+```
+
+The page's presentation display duration in seconds (`/Dur`), or `None` when absent.
+
+Assigning a non-negative finite number sets `/Dur` in one transaction;
+`del page.duration` removes it.
+
+Settable.
+
+### `Page.transition`
+
+```python
+Page.transition: Transition | None
+```
+
+The page's presentation `Transition` (`/Trans`), or `None` when absent.
+
+Assigning a `Transition` writes `/Trans` in one transaction,
+promoting the catalog version to PDF 1.5 when the style or options need
+it; `del page.transition` removes it.
+
+Settable.
+
+### `Page.navigation_steps`
+
+```python
+Page.navigation_steps: tuple[NavigationStep, ...]
+```
+
+The page's sub-page presentation sequence (`/PresSteps`) as `NavigationStep` records.
+
+Reads walk the `NavNode` `/Next` chain iteratively up to 4,096 steps
+with cycle detection. Assigning an iterable of `NavigationStep`
+records writes indirect `NavNode` dictionaries linked with `/Next`
+and `/Prev` in one transaction (or removes `/PresSteps` when empty)
+and frees unreferenced retired nodes; `del page.navigation_steps`
+removes `/PresSteps` and frees unreferenced nodes.
+
+Settable.
+
+### `Page.thumbnail`
+
+```python
+Page.thumbnail: Pixmap | None
+```
+
+The page's embedded thumbnail image (`/Thumb`) decoded via hayro, or `None`.
+
+Assigning a `Pixmap` writes an indirect Flate-compressed
+`DeviceGray` or `DeviceRGB` thumbnail stream (flattening alpha onto
+white) in one transaction and frees any unreferenced retired thumbnail
+stream; `del page.thumbnail` removes `/Thumb` and frees its stream
+when unreferenced.
+
+Settable.
 
 ### `Page.rotation`
 
@@ -997,3 +1074,53 @@ Pages.move(index: int, to: int)
 ```
 
 Move page `index` so that it ends at index `to`, in one transaction.
+
+## `Transition`
+
+```python
+Transition(
+    *,
+    style: TransitionStyle = TransitionStyle.REPLACE,
+    duration: float | None = None,
+    dimension: TransitionDimension | None = None,
+    motion: TransitionMotion | None = None,
+    direction: int | Literal['none'] | None = None,
+    scale: float | None = None,
+    rectangular: bool | None = None,
+)
+```
+
+How a viewer transitions to a page during a presentation (`/Trans`, ISO 32000-2 Table 165).
+
+Optional parameters apply only to the styles for which ISO 32000-2 defines
+them: `dimension` on `Split` and `Blinds`; `motion` on `Split`,
+`Box`, and `Fly`; `direction` on `Wipe`, `Glitter`, `Fly`,
+`Push`, `Cover`, and `Uncover` (with `"none"` only on `Fly` when
+`scale` is set and not `1.0`); and `scale` and `rectangular` on
+`Fly`. Incompatible combinations raise `ValueError`.
+
+## `TransitionAction`
+
+```python
+TransitionAction(transition: Transition)
+```
+
+An action that updates the display using a `Transition` (`/S /Trans`, ISO 32000-2 Table 219).
+
+## `TransitionDimension`
+
+Axis along which a `Split` or `Blinds` transition runs (`/Dm`, ISO 32000-2 Table 165).
+
+Members: `HORIZONTAL`, `VERTICAL`.
+
+## `TransitionMotion`
+
+Direction of motion for `Split`, `Box`, or `Fly` transitions (`/M`, ISO 32000-2 Table 165).
+
+Members: `INWARD`, `OUTWARD`.
+
+## `TransitionStyle`
+
+Visual style of a page transition (`/S`, ISO 32000-2 Table 165).
+
+Members: `SPLIT`, `BLINDS`, `BOX`, `WIPE`, `DISSOLVE`, `GLITTER`, `REPLACE`, `FLY`, `PUSH`, `COVER`, `UNCOVER`, `FADE`.

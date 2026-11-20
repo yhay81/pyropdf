@@ -9,7 +9,9 @@ from pyropdf import _core
 from pyropdf._annotations import _rect
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Rect
-from pyropdf._objects import Dictionary
+from pyropdf._metadata import _require_version
+from pyropdf._objects import Dictionary, _catalog
+from pyropdf._presentations import TransitionAction, _read_transition_action, _transition_action_dict
 from pyropdf._targets import Destination, Target, _destination, _target_from_core, _target_to_core
 
 if TYPE_CHECKING:
@@ -24,7 +26,10 @@ _MAX_LINK_INPUT_TEXT_SIZE = 1024 * 1024
 def _link_target(target: object, page: Page) -> _Target:
     """Return the core's tuple for a link target, with its texts bounded."""
     if target is None:
-        msg = "a link needs a target: a Destination, RemoteDestination, Launch, NamedAction, or URI string"
+        msg = (
+            "a link needs a target: a Destination, RemoteDestination, Launch, NamedAction, "
+            "TransitionAction, or URI string"
+        )
         raise TypeError(msg)
     spec = _target_to_core(target, len(page._document.pages))  # noqa: SLF001
     texts = ("Link", spec[4] or "", spec[5] or "")
@@ -106,13 +111,32 @@ class Link:
     def rect(self, rect: Sequence[float]) -> None:
         self._edit(_rect(rect), None)
 
+    def _resolve_target(self, raw: _Target) -> Target | None:
+        resolved = _target_from_core(raw)
+        if resolved is not None:
+            return resolved
+        holder = (
+            Dictionary(self._page._document, self._id)  # noqa: SLF001
+            if self._id[0]
+            else self._page.obj["Annots"][self._index]
+        )
+        return _read_transition_action(holder)
+
     @property
     def target(self) -> Target | None:
         """Return where the link leads, or ``None`` for an action that pyropdf does not read."""
-        return _target_from_core(self._read()[3])
+        return self._resolve_target(self._read()[3])
 
     @target.setter
     def target(self, target: Target) -> None:
+        if isinstance(target, TransitionAction):
+            action_dict, minimum = _transition_action_dict(target)
+            document = self._page._document  # noqa: SLF001
+            with document.transaction("link target"):
+                self._edit(None, ("none", None, None, None, None, None))
+                _require_version(document, _catalog(document), minimum)
+                Dictionary(document, self._id)["A"] = action_dict
+            return
         self._edit(None, _link_target(target, self._page))
 
     def __eq__(self, other: object) -> bool:
@@ -132,9 +156,10 @@ class Link:
         """Return ``Link(rect=..., target=...)``, or a note for a stale handle."""
         try:
             _, _, rect, target = self._read()
+            resolved = self._resolve_target(target)
         except (StaleObjectError, StalePageError):
             return "<stale Link>"
-        return f"Link(rect={Rect(*rect)!r}, target={_target_from_core(target)!r})"
+        return f"Link(rect={Rect(*rect)!r}, target={resolved!r})"
 
 
 def _entries(page: Page) -> list[_Link]:
@@ -196,13 +221,29 @@ class Links(Sequence[Link]):
         """Add a link over ``rect``, in display coordinates, that leads to ``target``, and return it.
 
         ``target`` is a URI string, a :class:`Destination` in this document, a
-        :class:`RemoteDestination`, a :class:`Launch`, or a
-        :class:`NamedAction`. The link draws no border. Its texts share a
-        1 MiB budget, checked before any change with
+        :class:`RemoteDestination`, a :class:`Launch`, a :class:`NamedAction`,
+        or a :class:`TransitionAction`. The link draws no border. Its texts
+        share a 1 MiB budget, checked before any change with
         ``LimitError.code == "annotation_input_size"``.
         """
         page = self._page
         area = _rect(rect)
+        if isinstance(target, TransitionAction):
+            action_dict, minimum = _transition_action_dict(target)
+            document = page._document  # noqa: SLF001
+            with document.transaction("link"):
+                result = _core.link_add(
+                    document._core(),  # noqa: SLF001
+                    page._number,  # noqa: SLF001
+                    page._generation,  # noqa: SLF001
+                    area,
+                    ("none", None, None, None, None, None),
+                )
+                if result is None:
+                    raise page._stale()  # noqa: SLF001
+                _require_version(document, _catalog(document), minimum)
+                Dictionary(document, result)["A"] = action_dict
+            return Link(page, result, 0)
         spec = _link_target(target, page)
         result = _core.link_add(page._document._core(), page._number, page._generation, area, spec)  # noqa: SLF001
         if result is None:

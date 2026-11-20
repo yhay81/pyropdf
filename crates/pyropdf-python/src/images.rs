@@ -5,12 +5,58 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use pyropdf_engine::bridge::Bridged;
 use pyropdf_engine::extract::{self, DecodedImage, Error};
 use pyropdf_engine::pixmap::images as engine_images;
+use pyropdf_store::budget::Budget;
+use pyropdf_store::memo::Reads;
+use pyropdf_store::pages::{MAX_CHAIN, PageIndex};
+use pyropdf_store::value::{Name, Reference, Stream, Value};
+use pyropdf_store::version::Version;
 
 use crate::document::_Document;
 use crate::errors::{PdfError, StaleObjectError, limit_error, store_error};
 use crate::pixmap::{Pixmap, bridge_error, decode_error};
+
+fn map_extract_error(error: Error) -> PyErr {
+    match error {
+        Error::Limit(refusal) => limit_error(&refusal),
+        Error::NoPage(_) | Error::Allocation(_) => PdfError::new_err(error.to_string()),
+    }
+}
+
+fn resolve_thumb_state(
+    version: &Version,
+    value: Option<&Value>,
+    budget: &Budget,
+) -> pyropdf_store::Result<Option<(u32, bool)>> {
+    let mut current = match value {
+        Some(Value::Reference(reference)) => *reference,
+        _ => return Ok(None),
+    };
+    for _ in 0..MAX_CHAIN {
+        let Some(object) = version
+            .get(current.number(), budget)?
+            .filter(|object| object.generation() == current.generation())
+        else {
+            return Ok(None);
+        };
+        match object.value().as_ref() {
+            Value::Reference(next) => current = *next,
+            Value::Stream(stream) => {
+                return match stream.dict().get("Subtype") {
+                    None => Ok(Some((current.number(), false))),
+                    Some(Value::Name(name)) if name.as_bytes() == b"Image" => {
+                        Ok(Some((current.number(), true)))
+                    }
+                    _ => Ok(None),
+                };
+            }
+            _ => return Ok(None),
+        }
+    }
+    Ok(None)
+}
 
 /// Returns image `ordinal` of the page whose object is `number` and
 /// `generation`, counted as `Page.content()` with `annotations` counts its
@@ -30,7 +76,7 @@ pub fn page_image(
         let image = py.detach(
             || -> PyResult<Option<(pyropdf_engine::pixmap::Layout, Vec<u8>)>> {
                 let at = index
-                    .index_of(pyropdf_store::value::Reference::new(number, generation))
+                    .index_of(Reference::new(number, generation))
                     .ok_or_else(|| {
                         StaleObjectError::new_err(format!(
                             "page object {number} {generation} is no longer a page of the document"
@@ -41,19 +87,112 @@ pub fn page_image(
                     .get(&version, &index, &budget)
                     .map_err(|e| bridge_error(&e))?;
                 let decoded: Option<DecodedImage> =
-                    extract::page_image(&bridged, at, ordinal, annotations, &budget).map_err(
-                        |e| match e {
-                            Error::Limit(refusal) => limit_error(&refusal),
-                            Error::NoPage(_) | Error::Allocation(_) => {
-                                PdfError::new_err(e.to_string())
-                            }
-                        },
-                    )?;
+                    extract::page_image(&bridged, at, ordinal, annotations, &budget)
+                        .map_err(map_extract_error)?;
                 decoded
                     .map(|img| engine_images::interleave_image(img).map_err(PdfError::new_err))
                     .transpose()
             },
         )?;
+        Ok(image.map(|(layout, data)| {
+            Pixmap::from_samples(layout.width, layout.height, layout.gray, layout.alpha, data)
+        }))
+    })?
+}
+
+/// Decodes the `/Thumb` thumbnail stream of the page whose object is `number`
+/// and `generation` through hayro with the GIL released; `None` when absent or
+/// unreadable.
+#[pyfunction]
+pub fn thumbnail_image(
+    py: Python<'_>,
+    document: &_Document,
+    number: u32,
+    generation: u16,
+) -> PyResult<Option<Pixmap>> {
+    crate::errors::boundary(|| {
+        let (version, index, budget) = crate::pages::index(document)?;
+        let at = index
+            .index_of(Reference::new(number, generation))
+            .ok_or_else(|| {
+                StaleObjectError::new_err(format!(
+                    "page object {number} {generation} is no longer a page of the document"
+                ))
+            })?;
+        let Some((thumb_number, has_subtype)) =
+            resolve_thumb_state(&version, index.pages()[at].dict().get("Thumb"), &budget)
+                .map_err(|e| store_error(&e))?
+        else {
+            return Ok(None);
+        };
+        let image = if has_subtype {
+            py.detach(
+                || -> PyResult<Option<(pyropdf_engine::pixmap::Layout, Vec<u8>)>> {
+                    let bridged = document
+                        .bridge
+                        .get(&version, &index, &budget)
+                        .map_err(|e| bridge_error(&e))?;
+                    let decoded = extract::page_thumbnail(&bridged, at, &budget)
+                        .map_err(map_extract_error)?;
+                    decoded
+                        .map(|img| engine_images::interleave_image(img).map_err(PdfError::new_err))
+                        .transpose()
+                },
+            )?
+        } else {
+            let Some((scratch_version, scratch_pages)) =
+                document.scratch(py, |transaction, scratch_budget| {
+                    let Some(object) = transaction
+                        .version()
+                        .get(thumb_number, scratch_budget)
+                        .map_err(|e| store_error(&e))?
+                    else {
+                        return Ok(None);
+                    };
+                    let Value::Stream(stream) = object.value().as_ref() else {
+                        return Ok(None);
+                    };
+                    let mut dict = stream.dict().clone();
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "inserts only the fixed /Subtype key"
+                    )]
+                    dict.insert(Name::from("Subtype"), Value::Name(Name::from("Image")));
+                    let tagged = Stream::new(dict, stream.data().clone());
+                    transaction
+                        .write(
+                            thumb_number,
+                            &Value::Stream(Box::new(tagged)),
+                            scratch_budget,
+                        )
+                        .map_err(|e| store_error(&e))?;
+                    let snapshot = transaction.snapshot();
+                    let pages = PageIndex::build(&mut Reads::new(&snapshot, scratch_budget))
+                        .map_err(|e| store_error(&e))?;
+                    Ok(Some((snapshot, pages)))
+                })?
+            else {
+                return Ok(None);
+            };
+            py.detach(
+                || -> PyResult<Option<(pyropdf_engine::pixmap::Layout, Vec<u8>)>> {
+                    let Some(scratch_at) =
+                        scratch_pages.index_of(Reference::new(number, generation))
+                    else {
+                        return Err(StaleObjectError::new_err(format!(
+                            "page object {number} {generation} is no longer a page of the document"
+                        )));
+                    };
+                    let bridged = Bridged::new(&scratch_version, &scratch_pages, &budget)
+                        .map_err(|e| bridge_error(&e))?;
+                    let decoded = extract::page_thumbnail(&bridged, scratch_at, &budget)
+                        .map_err(map_extract_error)?;
+                    decoded
+                        .map(|img| engine_images::interleave_image(img).map_err(PdfError::new_err))
+                        .transpose()
+                },
+            )?
+        };
         Ok(image.map(|(layout, data)| {
             Pixmap::from_samples(layout.width, layout.height, layout.gray, layout.alpha, data)
         }))
