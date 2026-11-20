@@ -629,7 +629,15 @@ def public_members(cls: type) -> Iterator[str]:
 def public_operations() -> set[tuple[str, str]]:
     """Find arbitrary new method names as well as new setters and deleters."""
     types = {name: getattr(pyropdf, name) for name in pyropdf.__all__}
-    types["typed.View"] = pyropdf.typed.View
+    typed = pyropdf.typed
+    typed_exports = set(vars(typed)["__all__"])
+    # The module exposes the generated classes through dir() and __getattr__.
+    # Each inherits View's four mutations until it introduces its own writer.
+    for name in dir(typed):
+        if not name.startswith("_"):
+            entry = getattr(typed, name)
+            if name in typed_exports or (isinstance(entry, type) and issubclass(entry, typed.View)):
+                types[f"typed.{name}"] = entry
     exported = {cls for cls in types.values() if isinstance(cls, type)}
     methods = {
         (owner, op)
@@ -639,7 +647,18 @@ def public_operations() -> set[tuple[str, str]]:
         if base is cls or (base not in exported and base.__module__.startswith("pyropdf"))
         for op in public_members(base)
     }
-    return methods | {("pyropdf", name) for name, entry in types.items() if inspect.isroutine(entry)}
+    for name, entry in types.items():
+        if inspect.isroutine(entry):
+            module, _, member = name.rpartition(".")
+            methods.add((module or "pyropdf", member))
+    return methods
+
+
+def test_a_typed_view_override_needs_its_own_classification(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pyropdf.typed.Catalog, "__setitem__", pyropdf.typed.View.__setitem__)
+    operations = public_operations()
+    assert ("typed.Catalog", "__setitem__") in operations
+    assert ("typed.PageObject", "__setitem__") not in operations
 
 
 def test_native_read_only_descriptors_reject_assignment() -> None:
