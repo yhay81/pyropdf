@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+import pikepdf
 import pytest
 
 import pyropdf
@@ -303,6 +305,7 @@ def test_measurement_validation_errors() -> None:
 
 
 @pytest.mark.spec("measurement", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.spec("geospatial", "read", "create", "preserve")
 def test_geospatial_measure_full_decimal_precision_and_point_data_preservation(tmp_path: Path) -> None:
     lat0 = Decimal("35.6812361234567890123456789")
     lon0 = Decimal("139.7671249876543210987654321")
@@ -406,6 +409,42 @@ def test_geospatial_measure_full_decimal_precision_and_point_data_preservation(t
         after_inc.pages[0].viewports = ()
         assert after_inc.pages[0].viewports == ()
         assert "VP" not in after_inc.pages[0].obj
+
+
+@pytest.mark.spec("geospatial", "read", "interpret", "create", "edit", "preserve")
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+def test_projected_viewport_registration_keeps_matching_local_and_ground_points(*, incremental: bool) -> None:
+    # West/east are eastings; south/north are northings, in EPSG:32654.
+    local = ("0", "0", "1", "0", "1", "1", "0", "1")
+    ground = ("400000", "3950000", "400100", "3950000", "400100", "3950050", "400000", "3950050")
+    projection = CoordinateSystem("projected", epsg=32654)
+    with pyropdf.open(_pdf_14()) as source:
+        page = source.pages[0]
+        page.viewports = [Viewport((10, 20, 110, 70), measure=GeospatialMeasure(projection, ground, lpts=local))]
+        source.catalog["PrivateSurvey"] = b"keep"
+        base = source.to_bytes()
+
+    corrected = (*ground[:4], "400101.125", *ground[5:])
+    with pyropdf.open(base) as doc:
+        [viewport] = doc.pages[0].viewports
+        assert isinstance(viewport.measure, GeospatialMeasure)
+        assert viewport.measure.gcs == projection
+        assert viewport.measure.lpts == tuple(map(Decimal, local))
+        assert viewport.measure.gpts == tuple(map(Decimal, ground))
+        with pytest.raises(ValueError, match="must match"):
+            GeospatialMeasure(projection, corrected, lpts=local[:-2])
+        assert doc.to_bytes(incremental=True) == base
+        doc.pages[0].viewports = [Viewport(viewport.bbox, measure=GeospatialMeasure(projection, corrected, lpts=local))]
+        saved = doc.to_bytes(incremental=incremental)
+
+    with pikepdf.open(io.BytesIO(saved)) as independent:
+        [vp] = independent.pages[0].obj.VP
+        assert list(vp.BBox) == [10, 330, 110, 380]
+        assert str(vp.Measure.GCS.Type) == "/PROJCS"
+        assert vp.Measure.GCS.EPSG == 32654
+        assert list(vp.Measure.LPTS) == list(map(Decimal, local))
+        assert list(vp.Measure.GPTS) == list(map(Decimal, corrected))
+        assert bytes(independent.Root.PrivateSurvey) == b"keep"
 
 
 @pytest.mark.spec("document-requirements", "read", "interpret", "create", "edit", "preserve")

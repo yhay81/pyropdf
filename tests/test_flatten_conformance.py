@@ -64,6 +64,7 @@ def test_flatten_untagged_annotation_on_pdfua_marks_artifact_and_clears_stale_cl
 
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.spec("non-interactive-forms", "preserve")
 def test_flatten_untagged_widget_on_pdfua_marks_artifact_preserves_text_and_clears_claim(*, incremental: bool) -> None:
     with pyropdf.open(PDFUA) as doc:
         before_text = doc.pages[0].text()
@@ -198,6 +199,7 @@ def _prepare_tagged_widget_pdf() -> tuple[bytes, int, int]:
 
 
 @pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.spec("non-interactive-forms", "preserve")
 def test_flatten_tagged_widget_converts_objr_to_mcr_and_preserves_other_pages(*, incremental: bool) -> None:
     prepared, form_elem_xref, hidden_elem_xref = _prepare_tagged_widget_pdf()
 
