@@ -41,6 +41,12 @@ MUTATIONS = (
         "timestamp",
     ),
     ("catalog_entry", "Name and scalar dictionary entries rewrite their owner.", "Dictionary", "__setitem__"),
+    (
+        "geospatial_registration",
+        "Replace only the owner's registration, retaining independent controls and shared dictionaries.",
+        "Dictionary",
+        "geospatial_measure=",
+    ),
     ("delete_entry", "Removing a dictionary key preserves its siblings.", "Dictionary", "__delitem__"),
     (
         "array_insert_delete",
@@ -610,6 +616,7 @@ READ_ONLY = {
     "Revision": "open",
     "Signature": "verify",
     "Signer": "from_pem from_pkcs12 callback",
+    "Dictionary": "geospatial_point",
     "Stream": "read",
     "StructureTree": "resolve_role walk",
     "Table": "markdown",
