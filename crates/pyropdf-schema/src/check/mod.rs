@@ -437,7 +437,11 @@ impl<'g, G: Graph> Walk<'g, G> {
             let Ok(at) = key.name.parse::<usize>() else {
                 continue;
             };
-            if at >= items.len() && key.required == Condition::Always && self.introduced(key) {
+            if at >= items.len()
+                && key.required == Condition::Always
+                && !key.deprecated.is_some_and(|dep| self.version >= dep)
+                && self.introduced(array, key)? == Some(true)
+            {
                 let message = format!("element {at} is required");
                 self.defect(object, path, described, key, DefectKind::Required, message);
             }
@@ -455,11 +459,21 @@ impl<'g, G: Graph> Walk<'g, G> {
         Ok(())
     }
 
-    /// Whether the file's version has the key at all.
-    fn introduced(&self, key: &Key) -> bool {
+    /// Whether the file's version and declared extensions introduce `key`.
+    fn introduced(&mut self, holder: &G::Value, key: &Key) -> Result<Option<bool>, G::Error> {
         match key.since {
-            Since::Version(since) => since <= self.version,
-            Since::When(_) => true,
+            Since::Version(since) => Ok(Some(since <= self.version)),
+            Since::When(predicate) => {
+                let scope = self.scope(holder, None);
+                let decided = match parse(predicate) {
+                    Some(expr) => scope.eval_since(&expr)?.truth(),
+                    None => None,
+                };
+                if decided.is_none() {
+                    self.report.unchecked += 1;
+                }
+                Ok(decided)
+            }
         }
     }
 
@@ -471,7 +485,10 @@ impl<'g, G: Graph> Walk<'g, G> {
         key: &Key,
         path: &str,
     ) -> Result<(), G::Error> {
-        if !self.introduced(key) {
+        if key.deprecated.is_some_and(|dep| self.version >= dep) {
+            return Ok(());
+        }
+        if self.introduced(dict, key)? != Some(true) {
             return Ok(());
         }
         let required = match key.required {
@@ -549,11 +566,13 @@ impl<'g, G: Graph> Walk<'g, G> {
         if view == View::Null {
             return Ok(());
         }
-        if let Since::Version(since) = key.since
-            && since > self.version
-        {
+        if self.introduced(holder, key)? == Some(false) {
+            let needed = match key.since {
+                Since::Version(since) => format!("PDF {since}"),
+                Since::When(predicate) => predicate.to_owned(),
+            };
             let message = format!(
-                "/{} is PDF {since}; the file is PDF {}",
+                "/{} is {needed}; the file is PDF {}",
                 key.name, self.version
             );
             self.defect(object, path, described, key, DefectKind::Version, message);
@@ -749,11 +768,22 @@ impl<'g, G: Graph> Walk<'g, G> {
     /// How many keys that `described` always requires a dictionary lacks,
     /// leaving out the keys it may inherit.
     fn missing(&self, described: &Object, dict: &G::Value) -> usize {
+        let scope = self.scope(dict, None);
         let lacks = |key: &&Key| {
+            let active = match key.since {
+                Since::Version(since) => since <= self.version,
+                Since::When(predicate) => {
+                    parse(predicate)
+                        .and_then(|expr| scope.eval_since(&expr).ok())
+                        .and_then(|val| val.truth())
+                        == Some(true)
+                }
+            };
             key.required == Condition::Always
                 && !key.inheritable
                 && !key.name.ends_with('*')
-                && self.introduced(key)
+                && !key.deprecated.is_some_and(|dep| self.version >= dep)
+                && active
                 && self.graph.get(dict, key.name.as_bytes()).is_none()
         };
         described.keys.iter().filter(lacks).count()
@@ -1288,6 +1318,9 @@ fn admits<G: Graph>(
     entry: &str,
     view: &View<'_>,
 ) -> Result<Admit, G::Error> {
+    if entry == "*" {
+        return Ok(Admit::Yes);
+    }
     if !entry.starts_with("fn:") {
         return admits_expr(scope, &Expr::Word(entry), view);
     }
@@ -1324,6 +1357,10 @@ fn admits_expr<G: Graph>(
                 "fn:SinceVersion" => gate.map(|at| scope.version >= at),
                 "fn:BeforeVersion" => gate.map(|at| scope.version < at),
                 "fn:IsPDFVersion" => gate.map(|at| scope.version == at),
+                "fn:Extension" => match args[0].text() {
+                    Some(ext_name) => scope.extension(ext_name)?,
+                    None => None,
+                },
                 _ => Some(true),
             };
             Ok(match open {

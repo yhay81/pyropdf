@@ -9,6 +9,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import TYPE_CHECKING, Literal, overload
 
 from pyropdf import _core
+from pyropdf._collections import _has_named_pages, _prune_named_pages_for_removed_pages
 from pyropdf._errors import LimitError
 from pyropdf._images import _J2K_SIGNATURE, _JP2_SIGNATURE, _PNG_SIGNATURE, add_image
 from pyropdf._page import Page
@@ -161,7 +162,12 @@ class Pages(Sequence[Page]):
         return found
 
     def __delitem__(self, index: int | slice) -> None:
-        """Delete page ``index``, or the pages of a slice, in one transaction."""
+        """Delete page ``index``, or the pages of a slice, in one transaction.
+
+        Links, outline destinations, named destinations, named pages, and
+        article thread beads that refer to a removed page are pruned in the
+        same transaction.
+        """
         doc = self._document._core()  # noqa: SLF001
         objects = _core.page_objects(doc)
         if isinstance(index, slice):
@@ -171,10 +177,15 @@ class Pages(Sequence[Page]):
         else:
             removed = {_resolve(index, len(objects))}
         kept = [obj for at, obj in enumerate(objects) if at not in removed]
-        if _has_catalog_threads(self._document):
+        has_threads = _has_catalog_threads(self._document)
+        has_named = _has_named_pages(self._document)
+        if has_threads or has_named:
             removed_pairs = {objects[at] for at in removed}
             with self._document.transaction("pages"):
-                _prune_threads_for_removed_pages(self._document, removed_pairs)
+                if has_threads:
+                    _prune_threads_for_removed_pages(self._document, removed_pairs)
+                if has_named:
+                    _prune_named_pages_for_removed_pages(self._document, removed_pairs)
                 _core.set_pages(doc, kept)
             return
         _core.set_pages(doc, kept)
@@ -302,12 +313,16 @@ class Pages(Sequence[Page]):
             seen.add(at)
         order = [objects[at] for at in chosen]
         removed_pairs = {obj for at, obj in enumerate(objects) if at not in seen}
-        if _has_catalog_threads(self._document) and (removed_pairs or any(copies)):
+        has_threads = _has_catalog_threads(self._document)
+        has_named = bool(removed_pairs) and _has_named_pages(self._document)
+        if (has_threads and (removed_pairs or any(copies))) or has_named:
             with self._document.transaction("pages"):
-                if removed_pairs:
+                if removed_pairs and has_threads:
                     _prune_threads_for_removed_pages(self._document, removed_pairs)
+                if has_named:
+                    _prune_named_pages_for_removed_pages(self._document, removed_pairs)
                 _core.set_pages(doc, order, copies)
-                if any(copies):
+                if has_threads and any(copies):
                     after = _core.page_objects(doc)
                     _strip_copied_page_beads(
                         self._document,

@@ -252,6 +252,21 @@ method and property of its classes with its full description.
 - [`Attachment`](attachments.md#attachment): A handle on one embedded file of a document, as `doc.attachments[name]` returns it.
 - [`Attachments`](attachments.md#attachments_1): The embedded files of a document, keyed by name, as `doc.attachments` returns them.
 
+## [Collections](collections.md)
+
+- [`Collection`](collections.md#collection): A portable collection dictionary on `Document.collection` (`Collection`, ISO 32000-2 Table 153).
+- [`CollectionColors`](collections.md#collectioncolors): RGB interface colors of a portable collection (`CollectionColors`, ISO 32000-2 Table 157, PDF 2.0).
+- [`CollectionField`](collections.md#collectionfield): One schema column of a portable collection (`CollectionField`, ISO 32000-2 Table 155).
+- [`CollectionFieldKind`](collections.md#collectionfieldkind): Data type or file-property binding of a `CollectionField` (`/Subtype`, ISO 32000-2 Table 155).
+- [`CollectionFolder`](collections.md#collectionfolder): A folder node in a portable collection hierarchy (`CollectionFolder`, ISO 32000-2 Table 159, PDF 2.0).
+- [`CollectionSortKey`](collections.md#collectionsortkey): One sort column of a portable collection (`CollectionSort`, ISO 32000-2 Table 156).
+- [`CollectionSplit`](collections.md#collectionsplit): Window split configuration of a portable collection (`CollectionSplit`, ISO 32000-2 Table 158, PDF 2.0).
+- [`CollectionSplitDirection`](collections.md#collectionsplitdirection): How a viewer splits its window between the collection navigator and document preview (Table 158).
+- [`CollectionSubitem`](collections.md#collectionsubitem): A collection item value paired with a display prefix (`CollectionSubitem`, ISO 32000-2 Table 47).
+- [`CollectionView`](collections.md#collectionview): Initial view of a portable collection (`/View`, ISO 32000-2 Table 153).
+- [`NamedPages`](collections.md#namedpages): The document's `/Names /Pages` name tree as a live mutable mapping (ISO 32000-2 Table 32).
+- [`Navigator`](collections.md#navigator): Navigator presentation of a portable collection (`Navigator`, ISO 32000-2 Table 160, PDF 2.0).
+
 ## [History and changes](history-and-changes.md)
 
 - [`ChangeReport`](history-and-changes.md#changereport): What the edits since opening invalidate, for a save that is incremental or not.

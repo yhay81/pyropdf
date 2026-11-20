@@ -357,9 +357,9 @@ objects = []
 clause = "7.7.4"
 description = "The name dictionary: the name trees of destinations, attachments, scripts, and other named objects."
 objects = ["Name"]
-interpret = { status = "partial", missing = "Destination and embedded-file name trees are resolved, without Appearance, Pages, Templates, IDS, URLS, or Renditions trees.", issue = 256, milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Attachments create `/Names` entries for embedded files, without high-level creation for other `/Names` trees.", issue = 256, milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Attachments, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, and scripts, without high-level APIs for other trees.", issue = 256, milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Destination, embedded-file, and page name trees are resolved, without Appearance, Templates, IDS, URLS, or Renditions trees.", issue = 256, milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Attachments and named pages create `/Names` entries for embedded files and pages, without high-level creation for other `/Names` trees.", issue = 256, milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Attachments, named pages, page cleanup, and sanitize edit `/Names` entries for destinations, embedded files, pages, and scripts, without high-level APIs for other trees.", issue = 256, milestone = "Phase 4: Specification" }
 
 [features.content-streams]
 clause = "7.8"

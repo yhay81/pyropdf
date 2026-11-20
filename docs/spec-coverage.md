@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 19 | 63 | 719 |
-| interpret | 1 | 13 | 0 | 14 | 687 | 86 |
-| create | 0 | 0 | 0 | 642 | 89 | 70 |
-| edit | 0 | 0 | 0 | 649 | 87 | 65 |
-| preserve | 0 | 0 | 0 | 6 | 683 | 112 |
+| read | 0 | 0 | 0 | 19 | 60 | 722 |
+| interpret | 1 | 13 | 0 | 14 | 684 | 89 |
+| create | 0 | 0 | 0 | 642 | 86 | 73 |
+| edit | 0 | 0 | 0 | 649 | 84 | 68 |
+| preserve | 0 | 0 | 0 | 6 | 680 | 115 |
 
 ## Clauses
 
@@ -53,7 +53,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.11 | File specifications | `file-specifications` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 7.11.4.2 | Related files arrays | `related-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 7.11.6 | Collection items | `collection-items` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -107,8 +107,8 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.2 | Viewer preferences | `viewer-preferences` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.3.2 | Destinations | `destinations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.3.3 | Document outline | `outline` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.3.5 | Collections | `collections` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.3.6 | Navigators | `navigators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.3.5 | Collections | `collections` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.3.6 | Navigators | `navigators` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.2 | Page labels | `page-labels` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.3 | Articles | `articles` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.4 | Presentations | `presentations` | 1 done | 1 done | 1 done | 1 done | 1 done |

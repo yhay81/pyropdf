@@ -19,6 +19,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from pyropdf import _core
+from pyropdf._collections import (
+    CollectionSubitem,
+    _collection_item_dict,
+    _collection_item_xrefs,
+    _read_collection_item,
+    _validate_collection_item,
+)
 from pyropdf._errors import LimitError, PdfError, StaleObjectError
 from pyropdf._limits import _validate_optional_positive_int
 from pyropdf._objects import Array, Dictionary, Name, Stream, String, _encode, _encode_text_string
@@ -271,13 +278,14 @@ def _file(filespec: object) -> Stream | None:
 
 
 def _objects(filespec: object) -> list[int]:
-    """Return the objects of a file specification and of the embedded files that its ``/EF`` holds."""
+    """Return the objects of a file specification and of the embedded files and collection item it holds."""
     if not isinstance(filespec, Dictionary):
         return []
     numbers = [] if filespec.xref is None else [filespec.xref]
     files = filespec.get("EF")
     if isinstance(files, Dictionary):
         numbers.extend(stream.xref for key in files if isinstance(stream := files[key], Stream) and stream.xref)
+    numbers.extend(_collection_item_xrefs(filespec.get("CI")))
     return numbers
 
 
@@ -435,6 +443,52 @@ class Attachment:
     @modified.deleter
     def modified(self) -> None:
         self._edit_file({"modified": None})
+
+    @property
+    def collection_item(self) -> Mapping[str, str | int | float | CollectionSubitem] | None:
+        """Return the portable collection item values (``/CI``), or ``None``; assignable and deletable.
+
+        Assigning a mapping writes an indirect ``CollectionItem`` dictionary in
+        one transaction (promoting older documents to PDF 1.7), and ``del``
+        removes ``/CI`` and frees unreferenced retired objects.
+        """
+        filespec = self._filespec()
+        if not isinstance(filespec, Dictionary):
+            return None
+        return _read_collection_item(filespec.get("CI"))
+
+    @collection_item.setter
+    def collection_item(
+        self,
+        item: Mapping[str, str | int | float | datetime | CollectionSubitem],
+    ) -> None:
+        checked = _validate_collection_item(item, error_code="embedded_file_input_size")
+        entries = _collection_item_dict(checked)
+        with self._document.transaction("attachment collection item"):
+            filespec = self._filespec()
+            if not isinstance(filespec, Dictionary):
+                msg = f"the attachment {self._name!r} has a file specification that is not a dictionary"
+                raise PdfError(msg)
+            _require(self._document, _UF_VERSION)
+            retired = _collection_item_xrefs(filespec.get("CI"))
+            ci_xref = self._document.objects.add(entries)
+            filespec["CI"] = self._document.objects[ci_xref]
+            if retired:
+                _core.object_free_unreferenced(self._document._core(), sorted(set(retired)))  # noqa: SLF001
+
+    @collection_item.deleter
+    def collection_item(self) -> None:
+        filespec = self._filespec()
+        if not isinstance(filespec, Dictionary) or "CI" not in filespec:
+            return
+        with self._document.transaction("attachment collection item"):
+            filespec = self._filespec()
+            if not isinstance(filespec, Dictionary) or "CI" not in filespec:
+                return
+            retired = _collection_item_xrefs(filespec.get("CI"))
+            del filespec["CI"]
+            if retired:
+                _core.object_free_unreferenced(self._document._core(), sorted(set(retired)))  # noqa: SLF001
 
     def read(self, *, max_size: int | None = _DEFAULT_MAX_EMBEDDED_FILE_SIZE) -> bytes:
         """Return the decoded bytes of the attachment's embedded file stream.
