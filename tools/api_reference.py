@@ -55,7 +55,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Annotations", ("_annotations",)),
     ("Links and destinations", ("_links", "_targets")),
     ("Actions and triggers", ("_actions",)),
-    ("Forms and widgets", ("_form", "_widgets")),
+    ("Forms and widgets", ("_form", "_widgets", "_fdf")),
     ("Outline", ("_outline",)),
     ("Threads", ("_threads",)),
     ("Structure", ("_structure",)),

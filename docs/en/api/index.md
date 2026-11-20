@@ -227,6 +227,7 @@ method and property of its classes with its full description.
 
 - [`CheckBox`](forms-and-widgets.md#checkbox): A check box, as `page.widgets.add` takes it.
 - [`ComboBox`](forms-and-widgets.md#combobox): A drop-down choice field, as `page.widgets.add` takes it.
+- [`FdfData`](forms-and-widgets.md#fdfdata): Form field values and target-document metadata read by `parse_fdf` or `parse_xfdf`.
 - [`Field`](forms-and-widgets.md#field): A handle on one terminal form field, as `doc.form[name]` returns it.
 - [`FieldChoice`](forms-and-widgets.md#fieldchoice): One option of a choice field's `/Opt`.
 - [`FieldFlags`](forms-and-widgets.md#fieldflags_1): The field flags of `/Ff` (ISO 32000-2 Tables 227, 229, 231, and 233).
@@ -234,6 +235,8 @@ method and property of its classes with its full description.
 - [`FieldType`](forms-and-widgets.md#fieldtype_1): The kind of a form field, from its `/FT` and the flags that refine it.
 - [`Form`](forms-and-widgets.md#form): The terminal fields of a document's interactive form, as `doc.form` returns them.
 - [`ListBox`](forms-and-widgets.md#listbox): A list of choices, as `page.widgets.add` takes it.
+- [`parse_fdf`](forms-and-widgets.md#parse_fdf): Parse an FDF file or byte buffer into `FdfData` (ISO 32000-2 section 12.7.8).
+- [`parse_xfdf`](forms-and-widgets.md#parse_xfdf): Parse an XFDF file, XML string, or byte buffer into `FdfData` (ISO 19444-1).
 - [`PushButton`](forms-and-widgets.md#pushbutton): A pushbutton, which holds no value, as `page.widgets.add` takes it.
 - [`RadioButton`](forms-and-widgets.md#radiobutton): One button of a radio group, as `page.widgets.add` takes it.
 - [`Scripts`](forms-and-widgets.md#scripts): The JavaScript of a field or widget by trigger, as `field.scripts` and `widget.scripts` return them.
