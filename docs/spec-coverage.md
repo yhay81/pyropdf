@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 17 | 55 | 729 |
-| interpret | 1 | 13 | 0 | 14 | 677 | 96 |
-| create | 0 | 0 | 0 | 640 | 81 | 80 |
-| edit | 0 | 0 | 0 | 647 | 79 | 75 |
-| preserve | 0 | 0 | 0 | 4 | 675 | 122 |
+| read | 0 | 0 | 0 | 17 | 50 | 734 |
+| interpret | 1 | 13 | 0 | 14 | 672 | 101 |
+| create | 0 | 0 | 0 | 640 | 76 | 85 |
+| edit | 0 | 0 | 0 | 647 | 74 | 80 |
+| preserve | 0 | 0 | 0 | 4 | 670 | 127 |
 
 ## Clauses
 
@@ -164,11 +164,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.7.8 | Forms data format | `fdf` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 partial |
 | 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
-| 12.8.2 | Transform methods | `signature-transforms` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.8.4.3 | Document security store | `document-security-store` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.8.6 | Permissions | `permissions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.8.7 | Legal content attestations | `legal-attestations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.8.2 | Transform methods | `signature-transforms` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.8.4.3 | Document security store | `document-security-store` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.8.5 | Document timestamp dictionary | `document-timestamps` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.8.6 | Permissions | `permissions` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.8.7 | Legal content attestations | `legal-attestations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.9 | Measurement properties | `measurement` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.10 | Document requirements | `document-requirements` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 13.2 | Multimedia | `renditions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |

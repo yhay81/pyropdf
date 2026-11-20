@@ -524,6 +524,57 @@ with pyropdf.open("input.pdf") as doc:
     del doc.viewer_preferences
 ```
 
+## 署名構造と暗号化ペイロードのラッパー {#signature-structures}
+
+[署名](versions.md#signing)そのものに加えて、`doc.sign` と `doc.prepare_signature` は
+DocMDP 証明権限（`DocMdpPermission`、`doc.certification` と `sig.doc_mdp` で読み取り）と
+FieldMDP フィールドロック（`FieldLock` と `FieldMdpAction`、`field.lock` と
+`sig.field_locks` で読み取り）を設定します。`doc.security_store` は文書セキュリティストア
+（`/DSS` および `vri_key` をキーとする `/VRI`）を重複排除された間接ストリームの
+`SecurityStore` として読み書きし、増分保存でも既存の署名を壊しません。
+`doc.timestamp(timestamper)` は RFC 3161 の `/DocTimeStamp`（`sig.is_timestamp`）を追記し、
+`doc.legal_attestation` は `Catalog["Legal"]`（`LegalAttestation`）を編集します。また
+独自の暗号化ハンドラ向けに、`wrap_encrypted_payload` は PDF 2.0 の非暗号化ラッパー文書
+（ISO 32000-2 §7.6.7）を作成し、`doc.encrypted_payload` が `EncryptedPayload` として読み戻します。
+
+```python
+import pyropdf
+from pyropdf import (
+    DocMdpPermission,
+    EncryptedPayload,
+    Encryption,
+    FieldLock,
+    FieldMdpAction,
+    LegalAttestation,
+    SecurityStore,
+    TextField,
+    ValidationInfo,
+    vri_key,
+    wrap_encrypted_payload,
+)
+
+with pyropdf.open("input.pdf") as doc:
+    doc.pages[0].widgets.add(TextField("amount", (72, 300, 220, 324)))
+    doc.prepare_signature(
+        "author_sig",
+        doc_mdp=DocMdpPermission.FORM_FILLING_AND_SIGNATURES,
+        field_lock=FieldLock(FieldMdpAction.INCLUDE, ("amount",)),
+        reason="請求書の証明",
+    )
+    doc.legal_attestation = LegalAttestation(annotations=0, optional_content=False)
+    doc.security_store = SecurityStore(
+        vri={vri_key(b"cms-contents"): ValidationInfo(created="D:20260101000000Z")},
+    )
+    assert doc.form["author_sig"].lock == FieldLock(FieldMdpAction.INCLUDE, ("amount",))
+    locked_bytes = doc.to_bytes(
+        encryption=Encryption(user_password="reader", owner_password="owner"),
+    )
+
+with wrap_encrypted_payload(EncryptedPayload(locked_bytes, filename="invoice.pdf")) as wrapper:
+    assert wrapper.encrypted_payload is not None
+    print(wrapper.encrypted_payload.filename, wrapper.encrypted_payload.subtype)
+```
+
 ## サニタイズ {#sanitizing}
 
 `doc.sanitize(path)` は JavaScript・アクション・添付ファイル・メタデータ・コメント・不可視テキスト・

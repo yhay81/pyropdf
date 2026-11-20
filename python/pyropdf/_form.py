@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from pyropdf._document import Document
     from pyropdf._fdf import FdfData
     from pyropdf._limits import DocumentLimits
+    from pyropdf._signature_structures import FieldLock
 
 _DEFAULT_MAX_XFDF_SIZE = 16 * 1024 * 1024
 
@@ -526,6 +527,25 @@ class Field:
                 return isinstance(value, Dictionary)
             node = node.get("Parent")
         return False
+
+    @property
+    def lock(self) -> FieldLock | None:
+        """Return or set a signature field's ``/Lock`` :class:`FieldLock` (PDF 1.5), or ``None``; ``del`` removes it."""
+        from pyropdf._signature_structures import read_field_lock  # noqa: PLC0415
+
+        return read_field_lock(self)
+
+    @lock.setter
+    def lock(self, lock: FieldLock | None) -> None:
+        from pyropdf._signature_structures import write_field_lock  # noqa: PLC0415
+
+        write_field_lock(self, lock)
+
+    @lock.deleter
+    def lock(self) -> None:
+        from pyropdf._signature_structures import delete_field_lock  # noqa: PLC0415
+
+        delete_field_lock(self)
 
     @property
     def widgets(self) -> list[Widget]:

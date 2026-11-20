@@ -821,6 +821,71 @@ The signed signature fields of the opened file, in field order.
 Each `Signature` verifies against the bytes that the document
 was opened from: edits since then are not part of any revision.
 
+### `Document.certification`
+
+```python
+Document.certification: DocMdpPermission | None
+```
+
+The author certification permission from `Catalog['Perms']['DocMDP']`, or `None`.
+
+### `Document.security_store`
+
+```python
+Document.security_store: SecurityStore | None
+```
+
+The Document Security Store `Catalog['DSS']` (PDF 2.0), or `None`; `del` removes it.
+
+Assigning a `SecurityStore` writes DER certificates, OCSP
+responses, CRLs, and per-signature `/VRI` entries as deduplicated
+indirect Flate streams in one transaction, keeping earlier signatures
+intact across `save(incremental=True)`.
+
+Settable.
+
+### `Document.legal_attestation`
+
+```python
+Document.legal_attestation: LegalAttestation | None
+```
+
+`Catalog['Legal']` (PDF 1.5), or `None` when absent; `del` removes it.
+
+Settable.
+
+### `Document.encrypted_payload`
+
+```python
+Document.encrypted_payload: EncryptedPayload | None
+```
+
+The `EncryptedPayload` of a PDF 2.0 unencrypted wrapper document (§7.6.7), or `None`.
+
+### `Document.prepare_signature`
+
+```python
+Document.prepare_signature(
+    field: str,
+    *,
+    doc_mdp: DocMdpPermission | None = None,
+    field_lock: FieldLock | None = None,
+    is_timestamp: bool = False,
+    reason: str | None = None,
+    location: str | None = None,
+    contact: str | None = None,
+    reserve: int = 16384,
+) -> int
+```
+
+Prepare an unsigned signature field for an external signer in one transaction and return its `xref`.
+
+Creates an invisible signature field `field` on the first page when
+none exists, writes `/Lock` for `field_lock` and `/SV` seed values
+for `doc_mdp`, `is_timestamp`, and `reason`, and returns the field
+dictionary's object number so external signers such as pyHanko (or a
+subsequent `sign` call) can fill it cleanly.
+
 ### `Document.sign`
 
 ```python
@@ -829,6 +894,8 @@ Document.sign(
     signer: Signer,
     *,
     timestamper: Timestamper | None = None,
+    doc_mdp: DocMdpPermission | None = None,
+    field_lock: FieldLock | None = None,
     reason: str | None = None,
     location: str | None = None,
     contact: str | None = None,
@@ -845,7 +912,9 @@ so earlier signatures stay intact, and the CMS signature of
 `signer` covers every byte but its own (ETSI EN 319 142-1). The
 signature dictionary's `/M` is the current time, and `reason`,
 `location`, and `contact` become `/Reason`, `/Location`, and
-`/ContactInfo`.
+`/ContactInfo`. `doc_mdp` certifies an unsigned document with a
+`DocMDP` transform and `Catalog['Perms']['DocMDP']`, and
+`field_lock` records a `FieldMDP` transform.
 
 `timestamper` receives the digest of the signature value and the
 name of its hash algorithm, and returns an RFC 3161 time-stamp token
@@ -862,6 +931,25 @@ Signing runs as one transaction, which other threads' edits wait
 for. Signing inside a transaction raises `PdfError`, as does
 a callback that edits the document. An encrypted document raises
 `ValueError`.
+
+### `Document.timestamp`
+
+```python
+Document.timestamp(
+    timestamper: Timestamper,
+    *,
+    field: str = 'DocTimeStamp',
+    reserve: int = 16384,
+) -> bytes
+```
+
+Append an RFC 3161 `/DocTimeStamp` revision to the document and return its bytes (ISO 32000-2 §12.8.5).
+
+`timestamper` receives the SHA-256 digest of the signed byte ranges
+and `"sha256"`, and returns the DER of an RFC 3161 `TimeStampToken`
+stamping that digest; pyropdf makes no network access. Afterwards the
+document reads the timestamped revision and earlier signatures remain
+intact.
 
 ### `Document.render`
 

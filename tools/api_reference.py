@@ -63,7 +63,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Collections", ("_collections",)),
     ("History and changes", ("_history", "_changes", "_revisions")),
     ("Encryption", ("_encryption",)),
-    ("Signing", ("_signing",)),
+    ("Signing", ("_signing", "_signature_structures")),
     ("Limits and errors", ("_limits", "_limit_codes", "_errors")),
     ("Content operations", ("_operations",)),
     ("Objects", ("_objects",)),

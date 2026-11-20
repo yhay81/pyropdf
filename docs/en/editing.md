@@ -545,6 +545,60 @@ with pyropdf.open("input.pdf") as doc:
     del doc.viewer_preferences
 ```
 
+## Signature structures and encrypted wrappers {#signature-structures}
+
+Beyond [signing](versions.md#signing) itself, `doc.sign` and
+`doc.prepare_signature` configure DocMDP certification permissions
+(`DocMdpPermission`, read back via `doc.certification` and `sig.doc_mdp`) and
+FieldMDP field locks (`FieldLock` and `FieldMdpAction`, read back via
+`field.lock` and `sig.field_locks`). `doc.security_store` reads and writes the
+Document Security Store (`/DSS` and `/VRI` keyed by `vri_key`) as a
+`SecurityStore` of deduplicated indirect streams without invalidating earlier
+signatures on incremental saves, `doc.timestamp(timestamper)` appends an RFC
+3161 `/DocTimeStamp` (`sig.is_timestamp`), and `doc.legal_attestation` edits
+`Catalog["Legal"]` (`LegalAttestation`). For proprietary cryptographic
+handlers, `wrap_encrypted_payload` builds a PDF 2.0 unencrypted wrapper
+document (ISO 32000-2 §7.6.7) that `doc.encrypted_payload` reads back as an
+`EncryptedPayload`.
+
+```python
+import pyropdf
+from pyropdf import (
+    DocMdpPermission,
+    EncryptedPayload,
+    Encryption,
+    FieldLock,
+    FieldMdpAction,
+    LegalAttestation,
+    SecurityStore,
+    TextField,
+    ValidationInfo,
+    vri_key,
+    wrap_encrypted_payload,
+)
+
+with pyropdf.open("input.pdf") as doc:
+    doc.pages[0].widgets.add(TextField("amount", (72, 300, 220, 324)))
+    doc.prepare_signature(
+        "author_sig",
+        doc_mdp=DocMdpPermission.FORM_FILLING_AND_SIGNATURES,
+        field_lock=FieldLock(FieldMdpAction.INCLUDE, ("amount",)),
+        reason="Certified invoice",
+    )
+    doc.legal_attestation = LegalAttestation(annotations=0, optional_content=False)
+    doc.security_store = SecurityStore(
+        vri={vri_key(b"cms-contents"): ValidationInfo(created="D:20260101000000Z")},
+    )
+    assert doc.form["author_sig"].lock == FieldLock(FieldMdpAction.INCLUDE, ("amount",))
+    locked_bytes = doc.to_bytes(
+        encryption=Encryption(user_password="reader", owner_password="owner"),
+    )
+
+with wrap_encrypted_payload(EncryptedPayload(locked_bytes, filename="invoice.pdf")) as wrapper:
+    assert wrapper.encrypted_payload is not None
+    print(wrapper.encrypted_payload.filename, wrapper.encrypted_payload.subtype)
+```
+
 ## Sanitizing
 
 `doc.sanitize(path)` removes JavaScript, actions, attachments, metadata,
