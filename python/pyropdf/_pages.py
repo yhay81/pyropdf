@@ -13,6 +13,11 @@ from pyropdf._errors import LimitError
 from pyropdf._images import _J2K_SIGNATURE, _JP2_SIGNATURE, _PNG_SIGNATURE, add_image
 from pyropdf._page import Page
 from pyropdf._page_labels import _label, _read_page_labels
+from pyropdf._threads import (
+    _has_catalog_threads,
+    _prune_threads_for_removed_pages,
+    _strip_copied_page_beads,
+)
 
 if TYPE_CHECKING:
     from PIL.Image import Image as PillowImage
@@ -165,7 +170,14 @@ class Pages(Sequence[Page]):
                 return
         else:
             removed = {_resolve(index, len(objects))}
-        _core.set_pages(doc, [obj for at, obj in enumerate(objects) if at not in removed])
+        kept = [obj for at, obj in enumerate(objects) if at not in removed]
+        if _has_catalog_threads(self._document):
+            removed_pairs = {objects[at] for at in removed}
+            with self._document.transaction("pages"):
+                _prune_threads_for_removed_pages(self._document, removed_pairs)
+                _core.set_pages(doc, kept)
+            return
+        _core.set_pages(doc, kept)
 
     def new(self, size: tuple[float, float] = _A4, *, index: int | None = None) -> Page:
         """Add a blank page of ``size`` points, A4 by default, where ``list.insert`` would put it.
@@ -261,6 +273,12 @@ class Pages(Sequence[Page]):
             return
         order = [*objects[:at], *chosen, *objects[at:]]
         copies = [False] * at + [True] * len(chosen) + [False] * (count - at)
+        if _has_catalog_threads(self._document):
+            with self._document.transaction("pages"):
+                _core.set_pages(doc, order, copies)
+                after = _core.page_objects(doc)
+                _strip_copied_page_beads(self._document, after[at : at + len(chosen)])
+            return
         _core.set_pages(doc, order, copies)
 
     def extend(self, pages: Page | Iterable[Page]) -> None:
@@ -282,7 +300,21 @@ class Pages(Sequence[Page]):
         for at in chosen:
             copies.append(at in seen)
             seen.add(at)
-        _core.set_pages(doc, [objects[at] for at in chosen], copies)
+        order = [objects[at] for at in chosen]
+        removed_pairs = {obj for at, obj in enumerate(objects) if at not in seen}
+        if _has_catalog_threads(self._document) and (removed_pairs or any(copies)):
+            with self._document.transaction("pages"):
+                if removed_pairs:
+                    _prune_threads_for_removed_pages(self._document, removed_pairs)
+                _core.set_pages(doc, order, copies)
+                if any(copies):
+                    after = _core.page_objects(doc)
+                    _strip_copied_page_beads(
+                        self._document,
+                        [after[pos] for pos, is_copy in enumerate(copies) if is_copy],
+                    )
+            return
+        _core.set_pages(doc, order, copies)
 
     def move(self, index: int, to: int) -> None:
         """Move page ``index`` so that it ends at index ``to``, in one transaction."""

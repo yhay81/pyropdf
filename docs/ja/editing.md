@@ -253,6 +253,33 @@ with pyropdf.open("input.pdf") as doc:
     print([item.title for item in doc.outline])
 ```
 
+## 記事スレッド {#article-threads}
+
+`doc.threads` は文書の記事スレッド（`/Threads`）を `Thread` ハンドルの列として返します。
+各スレッドはページの表示座標で `rect` を持つ `Bead` ハンドルの順序付きリング（`beads`）と、
+`/I` 情報辞書のプロパティ（`title`、`author`、`subject`、`keywords`、`created`、`modified`）を持ちます。
+`ThreadAction` を使うと、リンク、しおり、プレゼンテーションのナビゲーションステップから
+スレッドや特定のビーズへ移動できます。
+
+```python
+import pyropdf
+from pyropdf import BeadSpecification, OutlineEntry, ThreadAction
+
+with pyropdf.open("input.pdf") as doc:
+    article = doc.threads.add(
+        [
+            BeadSpecification(0, (36, 72, 260, 400)),
+            BeadSpecification(1, (36, 72, 260, 400)),
+        ],
+        title="巻頭特集",
+        author="編集部",
+    )
+    article.beads.add(1, (280, 72, 500, 400))
+    doc.pages[0].links.add((36, 40, 180, 60), ThreadAction(0, 1))
+    doc.outline = [OutlineEntry(1, "巻頭特集を読む", ThreadAction("巻頭特集"))]
+    print(article.title, len(article.beads), doc.pages[0].links[-1].target)
+```
+
 ## 構造ツリーとアクセシビリティ {#structure-and-accessibility}
 
 `doc.structure` は論理構造ツリーの最上位要素を `StructureElement` ハンドルの列として返し、

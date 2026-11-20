@@ -15,6 +15,7 @@ from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, _catalog
 from pyropdf._presentations import TransitionAction, _read_transition_action, _transition_action_dict
 from pyropdf._targets import Destination, Target, _target_from_core, _target_to_core
+from pyropdf._threads import ThreadAction, _read_thread_action, _thread_action_dict
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _OutlineItem, _Target
@@ -121,7 +122,8 @@ def _resolve_outline_target(document: Document, item_id: tuple[int, int], raw: _
     resolved = _target_from_core(raw)
     if resolved is not None or not item_id[0]:
         return resolved
-    return _read_transition_action(Dictionary(document, item_id))
+    holder = Dictionary(document, item_id)
+    return _read_transition_action(holder) or _read_thread_action(document, holder)
 
 
 class OutlineItem:
@@ -188,11 +190,16 @@ class OutlineItem:
 
     @destination.setter
     def destination(self, target: Target | None) -> None:
-        if isinstance(target, TransitionAction):
-            action_dict, minimum = _transition_action_dict(target)
+        if isinstance(target, (TransitionAction, ThreadAction)):
             document = self._document
+            core = self._core()
+            _target(target, _core.page_count(core))
+            if isinstance(target, ThreadAction):
+                action_dict, minimum = _thread_action_dict(document, target)
+            else:
+                action_dict, minimum = _transition_action_dict(target)
             with document.transaction("outline target"):
-                _core.outline_set_target(self._core(), self._id, ("none", None, None, None, None, None))
+                _core.outline_set_target(core, self._id, ("none", None, None, None, None, None))
                 _require_version(document, _catalog(document), minimum)
                 Dictionary(document, self._id)["A"] = action_dict
             return
@@ -361,6 +368,17 @@ class Outline(Sequence[OutlineItem]):
         return f"Outline({self._items()!r})"
 
 
+def _custom_outline_action(
+    document: Document,
+    destination: Target | None,
+) -> tuple[dict[str, object], tuple[int, int]] | None:
+    if isinstance(destination, TransitionAction):
+        return _transition_action_dict(destination)
+    if isinstance(destination, ThreadAction):
+        return _thread_action_dict(document, destination)
+    return None
+
+
 def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
     """Replace the outline with ``entries``, all validated before any change.
 
@@ -378,7 +396,8 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         raise LimitError(code, msg)
     page_count = _core.page_count(core)
     specs = []
-    transition_actions: list[tuple[int, dict[str, object]]] = []
+    custom_actions: list[tuple[int, dict[str, object]]] = []
+    min_version = (1, 0)
     previous_level = 0
     characters = 0
     for index, entry in enumerate(items):
@@ -388,23 +407,25 @@ def _write_outline(document: Document, entries: Iterable[OutlineEntry]) -> None:
         if entry.level > previous_level + 1:
             msg = f"outline item {index} has level {entry.level}; levels start at 1 and grow by at most one"
             raise ValueError(msg)
-        if isinstance(entry.destination, TransitionAction):
-            action_dict, _ = _transition_action_dict(entry.destination)
-            transition_actions.append((index, action_dict))
         target = _target(entry.destination, page_count)
         characters += len(entry.title) + sum(len(text) for text in target[4:] if text is not None)
         _input_size(characters)
+        custom = _custom_outline_action(document, entry.destination)
+        if custom is not None:
+            action_dict, required = custom
+            custom_actions.append((index, action_dict))
+            min_version = max(min_version, required)
         flags = (_BOLD if entry.bold else 0) | (_ITALIC if entry.italic else 0)
         specs.append((entry.level, entry.title, target, _rgb(entry.color), flags, entry.is_open))
         previous_level = entry.level
-    if not transition_actions:
+    if not custom_actions:
         _core.outline_write(core, specs)
         return
     with document.transaction("outline"):
         _core.outline_write(core, specs)
-        _require_version(document, _catalog(document), (1, 5))
+        _require_version(document, _catalog(document), min_version)
         written = _core.outline_entries(core)
-        for index, action_dict in transition_actions:
+        for index, action_dict in custom_actions:
             item_id = written[index][0]
             if item_id[0]:
                 Dictionary(document, item_id)["A"] = action_dict

@@ -265,6 +265,34 @@ with pyropdf.open("input.pdf") as doc:
     print([item.title for item in doc.outline])
 ```
 
+## Article threads
+
+`doc.threads` exposes the document's article threads (`/Threads`) as a
+sequence of `Thread` handles. Each thread holds an ordered `Beads` ring of
+`Bead` handles whose `rect` is in its page's display coordinates, plus `/I`
+metadata properties (`title`, `author`, `subject`, `keywords`, `created`,
+`modified`). A `ThreadAction` navigates to a thread or a specific bead from a
+link, an outline item, or a presentation navigation step.
+
+```python
+import pyropdf
+from pyropdf import BeadSpecification, OutlineEntry, ThreadAction
+
+with pyropdf.open("input.pdf") as doc:
+    article = doc.threads.add(
+        [
+            BeadSpecification(0, (36, 72, 260, 400)),
+            BeadSpecification(1, (36, 72, 260, 400)),
+        ],
+        title="Cover Story",
+        author="Editorial",
+    )
+    article.beads.add(1, (280, 72, 500, 400))
+    doc.pages[0].links.add((36, 40, 180, 60), ThreadAction(0, 1))
+    doc.outline = [OutlineEntry(1, "Read Cover Story", ThreadAction("Cover Story"))]
+    print(article.title, len(article.beads), doc.pages[0].links[-1].target)
+```
+
 ## Structure and accessibility
 
 `doc.structure` exposes the logical structure tree as its top-level

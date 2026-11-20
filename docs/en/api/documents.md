@@ -104,6 +104,19 @@ accessibility attributes, and `doc.structure.role_map` reads and
 edits `/RoleMap`. `del doc.structure` removes `/StructTreeRoot`
 and frees unreferenced structure objects in one transaction.
 
+### `Document.threads`
+
+```python
+Document.threads: Threads
+```
+
+The article threads as a live `Threads` sequence.
+
+Each `Thread` exposes its `Thread.beads` ring and its
+information dictionary entries. `del doc.threads` removes
+`/Threads` from the catalog, clears pages' `/B` bead arrays, and
+frees unreferenced thread and bead objects in one transaction.
+
 ### `Document.fallback_fonts`
 
 ```python

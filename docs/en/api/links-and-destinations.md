@@ -194,9 +194,9 @@ Add a link over `rect`, in display coordinates, that leads to `target`, and retu
 
 `target` is a URI string, a `Destination` in this document, a
 `RemoteDestination`, a `Launch`, a `NamedAction`,
-or a `TransitionAction`. The link draws no border. Its texts
-share a 1 MiB budget, checked before any change with
-`LimitError.code == "annotation_input_size"`.
+a `TransitionAction`, or a `ThreadAction`. The link draws
+no border. Its texts share a 1 MiB budget, checked before any change
+with `LimitError.code == "annotation_input_size"`.
 
 ## `NamedAction`
 
@@ -226,9 +226,10 @@ Target: TypeAlias = (
     | Launch
     | NamedAction
     | TransitionAction
+    | ThreadAction
     | str
 )
 ```
 
 Where a link leads: a place in this document or in another file, a file
-to open, a viewer or transition action, or a URI as a string.
+to open, a viewer, transition, or thread action, or a URI as a string.
