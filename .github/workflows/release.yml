@@ -16,6 +16,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      pyodide_only:
+        description: "Verify only the Pyodide wheel"
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -43,6 +48,7 @@ jobs:
           test "v${package_version}" = "${GITHUB_REF_NAME}"
 
   build-wheels:
+    if: ${{ !inputs.pyodide_only }}
     name: wheel (${{ matrix.platform.target }})
     needs: verify
     runs-on: ${{ matrix.platform.runner }}
@@ -93,6 +99,7 @@ jobs:
           path: dist
 
   build-free-threaded-wheels:
+    if: ${{ !inputs.pyodide_only }}
     name: free-threaded wheel (${{ matrix.python.tag }}, ${{ matrix.platform.target }})
     needs: verify
     runs-on: ${{ matrix.platform.runner }}
@@ -141,7 +148,39 @@ jobs:
           name: free-threaded-wheels-${{ matrix.python.tag }}-${{ matrix.platform.target }}
           path: dist
 
+  build-pyodide-wheel:
+    name: Pyodide wheel
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14.2"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.13.0"
+      - name: Build and smoke-test the installed Pyodide wheel
+        run: bash tools/build_pyodide.sh
+      - name: Attest Pyodide wheel build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.whl
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: wheels-pyodide
+          path: dist/*.whl
+
   build-sdist:
+    if: ${{ !inputs.pyodide_only }}
     name: sdist
     needs: verify
     runs-on: ubuntu-latest
@@ -177,8 +216,8 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-wheels, build-free-threaded-wheels, build-sdist]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, build-sdist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi

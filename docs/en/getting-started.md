@@ -51,6 +51,25 @@ The `jp`, `ko`, `zh-cn`, and `zh-tw` extras install the faces that render
 Japanese, Korean, and Chinese fonts that a document does not embed; see
 [Rendering](rendering.md#fonts-that-a-document-does-not-embed).
 
+## Pyodide
+
+The release workflow builds the core wheel for Pyodide 314.0.6 (CPython
+3.14, Emscripten 5.0.3, `pyemscripten_2026_0_wasm32`). Download
+`wheels-pyodide` from a successful release dry run, extract its wheel,
+and install the wheel in a matching Pyodide virtual environment:
+
+```bash
+path/to/pyodide-venv/bin/pip install ./pyropdf-*-pyemscripten_2026_0_wasm32.whl
+```
+
+On Linux with Python 3.14.2, Node.js 24 and the repository's Rust
+toolchain, `bash tools/build_pyodide.sh` reproduces the build and runs
+the installed extension in Pyodide. The test uses PDF bytes and a single
+thread for extraction, rendering and editing. OCR models and CJK fonts
+remain optional downloads. The separate
+[Cloudflare Workers check](https://github.com/yhay81/pyropdf/issues/857)
+tracks deployment in that runtime.
+
 ## Open and close
 
 `pyropdf.open` takes a path or the bytes of a document. A document is a

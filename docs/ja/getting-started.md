@@ -50,6 +50,23 @@ wheel は Linux・macOS・Windows の CPython 3.11〜3.15 に対応し、free-th
 `jp`・`ko`・`zh-cn`・`zh-tw` の extra は、文書が埋め込んでいない日本語・韓国語・中国語の
 フォントを描く書体を入れます。[描画](rendering.md#fonts-that-a-document-does-not-embed)を参照してください。
 
+## Pyodide
+
+リリースワークフローは Pyodide 314.0.6（CPython 3.14、Emscripten 5.0.3、
+`pyemscripten_2026_0_wasm32`）向けの wheel をビルドします。
+リリースのドライランが成功したら、成果物 `wheels-pyodide` をダウンロードして展開し、
+同じバージョンの Pyodide 仮想環境にインストールできます。
+
+```bash
+path/to/pyodide-venv/bin/pip install ./pyropdf-*-pyemscripten_2026_0_wasm32.whl
+```
+
+Linux に Python 3.14.2、Node.js 24、このリポジトリ指定の Rust を用意すると、
+`bash tools/build_pyodide.sh` でビルドと実行確認を再現できます。テストでは
+PDF のバイト列を読み込み、単一スレッドでテキスト抽出・描画・編集を確認します。
+OCR モデルと CJK フォントは必要に応じて別途インストールします。
+Cloudflare Workers 上の動作確認は [#857](https://github.com/yhay81/pyropdf/issues/857) で追跡しています。
+
 ## 開いて閉じる
 
 `pyropdf.open` はパスか文書のバイト列を受け取ります。文書は context manager で、
