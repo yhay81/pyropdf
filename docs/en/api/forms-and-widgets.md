@@ -58,6 +58,19 @@ A drop-down choice field, as `page.widgets.add` takes it.
 `FieldFlags.EDIT` also takes typed text. The value is drawn as in a
 `TextField`.
 
+## `FdfData`
+
+```python
+FdfData(
+    *,
+    fields: Mapping[str, str | tuple[str, ...] | None],
+    file: str | None = None,
+    id: tuple[bytes, bytes] | None = None,
+)
+```
+
+Form field values and target-document metadata read by `parse_fdf` or `parse_xfdf`.
+
 ## `Field`
 
 ```python
@@ -341,6 +354,88 @@ assignment.
 
 Settable.
 
+### `Form.to_fdf`
+
+```python
+Form.to_fdf(
+    *,
+    fields: Iterable[str] | None = None,
+    include_empty: bool = True,
+    file: str | None = None,
+) -> bytes
+```
+
+Export the form's field values as `%FDF-1.2` bytes (ISO 32000-2 section 12.7.8).
+
+Dotted field names become nested `/Kids` hierarchies, button states
+stay PDF names (such as `/Yes` and `/Off`), multi-select list boxes
+write string arrays, and the trailer's `/ID` is included when present.
+`fields` restricts export to the named fields (raising
+`KeyError` for an unknown name), `include_empty=False` omits
+fields with `None` or an empty string or selection, and `file` sets
+`/F`. Pushbutton and signature fields are skipped.
+
+### `Form.import_fdf`
+
+```python
+Form.import_fdf(
+    source: FdfData | str | os.PathLike[str] | bytes | bytearray | memoryview,
+    /,
+    *,
+    limits: DocumentLimits | None = None,
+) -> list[str]
+```
+
+Import field values from an FDF file, byte buffer, or `FdfData` in one undoable transaction.
+
+Matching terminal text, check box, radio button, combo box, and list
+box fields are updated and their widget appearances settled (using
+`font` when set); `None` clears `/V` and resets the field's
+widgets, and `"Off"` turns buttons off. Unknown names, pushbuttons,
+and signature fields are skipped. Returns the sorted names of the
+updated fields; on error, nothing changes.
+
+### `Form.to_xfdf`
+
+```python
+Form.to_xfdf(
+    *,
+    fields: Iterable[str] | None = None,
+    include_empty: bool = True,
+    file: str | None = None,
+) -> str
+```
+
+Export the form's field values as an XFDF XML string (ISO 19444-1).
+
+Dotted field names become nested `<field name="...">` elements,
+multi-select list boxes emit multiple `<value>` elements, `file`
+sets `<f href="..."/>`, and the trailer's `/ID` is hex-encoded in
+`<ids/>` when present. `fields` restricts export to the named
+fields (raising `KeyError` for an unknown name), and
+`include_empty=False` omits fields with `None` or an empty string
+or selection. Pushbutton and signature fields are skipped.
+
+### `Form.import_xfdf`
+
+```python
+Form.import_xfdf(
+    source: FdfData | str | os.PathLike[str] | bytes | bytearray | memoryview,
+    /,
+    *,
+    max_size: int | None = 16777216,
+) -> list[str]
+```
+
+Import field values from an XFDF file, XML string, byte buffer, or `FdfData` in one transaction.
+
+A `str` whose first non-whitespace character is `"<"` is parsed as
+XML text, and any other `str` or `os.PathLike` as a file path,
+bounded by `max_size` (16 MiB by default; `LimitError` code
+`form_field_input_size`). Matching fillable fields and their widget
+appearances are updated atomically, returning the sorted names of the
+updated fields.
+
 ### `Form.__getitem__`
 
 ```python
@@ -403,6 +498,46 @@ A list of choices, as `page.widgets.add` takes it.
 
 The fields are those of `ComboBox`; `FieldFlags.MULTI_SELECT`
 lets the user select several.
+
+## `parse_fdf`
+
+```python
+parse_fdf(
+    source: str | os.PathLike[str] | bytes | bytearray | memoryview,
+    /,
+    *,
+    limits: DocumentLimits | None = None,
+) -> FdfData
+```
+
+Parse an FDF file or byte buffer into `FdfData` (ISO 32000-2 section 12.7.8).
+
+`source` is a file path or a bytes-like buffer. Both cross-reference-indexed
+and cross-reference-less FDF files are read through `pyropdf-store` and
+`hayro-syntax` under `limits`, capping the field hierarchy at 32 levels,
+4,096 fields, and 1 MiB of UTF-8 text. Invalid headers, missing `/Root /FDF`
+dictionaries, and cyclic `/Kids` graphs raise `MalformedPdfError`.
+
+## `parse_xfdf`
+
+```python
+parse_xfdf(
+    source: str | os.PathLike[str] | bytes | bytearray | memoryview,
+    /,
+    *,
+    max_size: int | None = 16777216,
+) -> FdfData
+```
+
+Parse an XFDF file, XML string, or byte buffer into `FdfData` (ISO 19444-1).
+
+A `str` whose first non-whitespace character is `"<"` is parsed as XML
+text; any other non-empty `str` or `os.PathLike` is read as a file
+path. `max_size` bounds the input at 16 MiB by default with
+`LimitError` code `form_field_input_size` (`None` lifts the raw
+byte bound while keeping the 1 MiB decoded field-text cap, 32-level depth
+limit, and 4,096-field cap). `<!DOCTYPE` and `<!ENTITY` declarations
+are rejected with `MalformedPdfError`.
 
 ## `PushButton`
 

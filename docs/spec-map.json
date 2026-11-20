@@ -197,31 +197,31 @@
   },
   "coverage": {
     "read": {
-      "done": 728,
+      "done": 729,
       "partial": 17,
-      "planned": 56
+      "planned": 55
     },
     "interpret": {
-      "done": 95,
+      "done": 96,
       "engine": 1,
       "n/a": 13,
       "partial": 14,
-      "planned": 678
+      "planned": 677
     },
     "create": {
-      "done": 79,
+      "done": 80,
       "partial": 640,
-      "planned": 82
+      "planned": 81
     },
     "edit": {
-      "done": 74,
+      "done": 75,
       "partial": 647,
-      "planned": 80
+      "planned": 79
     },
     "preserve": {
-      "done": 121,
+      "done": 122,
       "partial": 4,
-      "planned": 676
+      "planned": 675
     }
   },
   "features": [
@@ -983,7 +983,7 @@
     {"feature": "choice-fields", "clause": "12.7.5.4", "description": "Choice fields: list boxes and combo boxes.", "objects": ["FieldChoice"], "read": {"status": "done", "tests": ["tests/test_acroform.py::test_field_choices_read_options_and_pairs"]}, "interpret": {"status": "done", "tests": ["tests/test_acroform.py::test_fill_choice_field_generates_appearance"]}, "create": {"status": "done", "tests": ["tests/test_field_creation.py::test_every_kind_of_field_is_created_with_its_widget"]}, "edit": {"status": "done", "tests": ["tests/test_acroform.py::test_fill_choice_field_generates_appearance", "tests/test_field_properties.py::test_flags_and_choices_are_assignable"]}, "preserve": {"status": "done", "tests": ["tests/test_acroform.py::test_choice_options_inherit_through_a_parent_alias"]}},
     {"feature": "signature-fields", "clause": "12.7.5.5", "description": "Signature fields, their locks, and seed values.", "objects": ["FieldSig", "SigFieldLock", "SigFieldSeedValue", "CertSeedValue"], "read": {"status": "partial", "missing": "Signature fields and their values are read, without field lock (`/Lock`) or seed value (`/SV`) dictionaries.", "issue": 256, "milestone": "Phase 4: Specification", "tests": ["tests/test_verify.py::test_pyropdf_signatures_verify"]}, "interpret": {"status": "partial", "missing": "Signature fields are verified and checked for byte-range changes, without evaluating `/Lock` or `/SV` constraints.", "issue": 256, "milestone": "Phase 4: Specification", "tests": ["tests/test_verify.py::test_pyropdf_signatures_verify"]}, "create": {"status": "partial", "missing": "Signing creates signature fields and widgets, without writing `/Lock` or `/SV` dictionaries.", "issue": 256, "milestone": "Phase 4: Specification", "tests": ["tests/test_signing.py::test_a_p256_signature_validates_over_the_entire_file"]}, "edit": {"status": "partial", "missing": "Signing fills existing unsigned signature fields, without enforcing `/Lock` or `/SV` dictionaries.", "issue": 256, "milestone": "Phase 4: Specification", "tests": ["tests/test_signing.py::test_an_existing_signature_field_is_filled"]}, "preserve": {"status": "done", "tests": ["tests/test_signing.py::test_earlier_signatures_stay_valid_after_a_second"]}},
     {"feature": "form-actions", "clause": "12.7.6", "description": "Submit-form, reset-form, and import-data actions.", "objects": ["ActionSubmitForm", "ActionResetForm", "ActionImportData"], "read": {"status": "done", "tests": ["tests/test_actions.py::test_all_new_actions_round_trip_across_target_sites_and_saves"]}, "interpret": {"status": "done", "tests": ["tests/test_actions.py::test_all_new_actions_round_trip_across_target_sites_and_saves"]}, "create": {"status": "done", "tests": ["tests/test_actions.py::test_all_new_actions_round_trip_across_target_sites_and_saves"]}, "edit": {"status": "done", "tests": ["tests/test_actions.py::test_all_new_actions_round_trip_across_target_sites_and_saves"]}, "preserve": {"status": "done", "tests": ["tests/test_actions.py::test_all_new_actions_round_trip_across_target_sites_and_saves"]}},
-    {"feature": "fdf", "clause": "12.7.8", "description": "Forms Data Format files.", "objects": [], "read": {"status": "planned", "milestone": "Phase 4: Specification"}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification"}},
+    {"feature": "fdf", "clause": "12.7.8", "description": "Forms Data Format files.", "objects": [], "read": {"status": "done", "tests": ["tests/test_fdf.py::test_fdf_export_and_parse_preserve_exact_xref_offsets_and_hierarchy", "tests/test_fdf.py::test_parse_fdf_reads_xrefless_files_streams_filespecs_and_widget_kids", "tests/test_fdf.py::test_xfdf_export_parse_and_round_trip_with_fdf"]}, "interpret": {"status": "done", "tests": ["tests/test_fdf.py::test_fdf_export_and_parse_preserve_exact_xref_offsets_and_hierarchy", "tests/test_fdf.py::test_parse_fdf_reads_xrefless_files_streams_filespecs_and_widget_kids", "tests/test_fdf.py::test_xfdf_export_parse_and_round_trip_with_fdf"]}, "create": {"status": "done", "tests": ["tests/test_fdf.py::test_fdf_export_and_parse_preserve_exact_xref_offsets_and_hierarchy", "tests/test_fdf.py::test_xfdf_export_parse_and_round_trip_with_fdf"]}, "edit": {"status": "done", "tests": ["tests/test_fdf.py::test_import_applies_atomically_with_undo_redo_and_preserves_untouched_objects", "tests/test_fdf.py::test_clearing_buttons_and_embedded_font_import_keep_pdf20_conformance"]}, "preserve": {"status": "done", "tests": ["tests/test_fdf.py::test_import_applies_atomically_with_undo_redo_and_preserves_untouched_objects", "tests/test_fdf.py::test_clearing_buttons_and_embedded_font_import_keep_pdf20_conformance"]}},
     {"feature": "non-interactive-forms", "clause": "12.7.9", "description": "Forms flattened into page content.", "objects": [], "read": {"status": "done", "tests": ["tests/test_flatten.py::test_flattening_keeps_what_rendering_shows"]}, "interpret": {"status": "done", "tests": ["tests/test_flatten.py::test_flattening_keeps_what_rendering_shows"]}, "create": {"status": "done", "tests": ["tests/test_flatten.py::test_flattening_keeps_what_rendering_shows"]}, "edit": {"status": "done", "tests": ["tests/test_flatten.py::test_flattening_keeps_what_rendering_shows"]}, "preserve": {"status": "partial", "missing": "Flattening preserves visual appearance and remaining fields, while tagged structure preservation is tracked in #800.", "issue": 800, "milestone": "Phase 4: Specification", "tests": ["tests/test_flatten.py::test_a_page_flattens_alone_and_its_widgets_leave_their_fields"]}},
     {"feature": "digital-signatures", "clause": "12.8", "description": "Signature dictionaries, byte ranges, and their PKCS#7 and CAdES encodings.", "objects": ["Signature", "SignatureBuildPropDict", "SignatureBuildDataDict", "SignatureBuildDataAppDict", "SignatureBuildDataSigQDict"], "read": {"status": "done", "tests": ["tests/test_changes.py::test_corpus_signatures_are_reported", "tests/test_verify.py::test_pyropdf_signatures_verify"]}, "interpret": {"status": "done", "tests": ["tests/test_changes.py::test_editing_an_object_inside_a_signed_range_reports_the_signature_field", "tests/test_verify.py::test_pyropdf_signatures_verify"]}, "create": {"status": "partial", "missing": "Incremental CAdES and PKCS#7 signing with RSA, ECDSA, callbacks, and RFC 3161 timestamps works, without `/Prop_Build` dictionaries.", "issue": 256, "milestone": "Phase 4: Specification", "tests": ["tests/test_signing.py::test_a_p256_signature_validates_over_the_entire_file"]}, "edit": {"status": "partial", "missing": "Signing fills existing signature fields and appends incremental signatures, without `/Prop_Build` dictionaries.", "issue": 256, "milestone": "Phase 4: Specification", "tests": ["tests/test_signing.py::test_an_existing_signature_field_is_filled"]}, "preserve": {"status": "done", "tests": ["tests/test_signing.py::test_earlier_signatures_stay_valid_after_a_second"]}},
     {"feature": "signature-transforms", "clause": "12.8.2", "description": "Certification and field locking: DocMDP, FieldMDP, and UR transforms.", "objects": ["SignatureReferenceDocMDP", "SignatureReferenceFieldMDP", "SignatureReferenceUR", "SignatureReferenceIdentity", "DocMDPTransformParameters", "FieldMDPTransformParameters", "URTransformParameters", "MDPDict"], "read": {"status": "planned", "milestone": "Phase 4: Specification"}, "interpret": {"status": "planned", "milestone": "Phase 4: Specification"}, "create": {"status": "planned", "milestone": "Phase 4: Specification"}, "edit": {"status": "planned", "milestone": "Phase 4: Specification"}, "preserve": {"status": "planned", "milestone": "Phase 4: Specification"}},

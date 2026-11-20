@@ -239,6 +239,30 @@ with pyropdf.open("input.pdf") as doc:
     print({name: field.value for name, field in doc.form.items()})
 ```
 
+`doc.form.to_fdf()` と `doc.form.to_xfdf()` は FDF（ISO 32000-2 §12.7.8）および
+XFDF（ISO 19444-1）でフィールド値を書き出し、`parse_fdf()` と `parse_xfdf()` は
+`FdfData` として読み取り、`doc.form.import_fdf()` と `doc.form.import_xfdf()` は
+一致するフィールドを 1 回の取り消し可能なトランザクションで反映します。
+
+```python
+import pyropdf
+
+with pyropdf.Document() as source, pyropdf.Document() as target:
+    for doc in (source, target):
+        page = doc.pages.new((400, 200))
+        page.widgets.add(pyropdf.TextField("name", (40, 40, 240, 64)))
+        page.widgets.add(pyropdf.CheckBox("agree", (40, 80, 58, 98)))
+    source.form["name"].value = "山田 花子"
+    source.form["agree"].value = True
+
+    fdf = source.form.to_fdf(file="form.pdf")
+    assert pyropdf.parse_fdf(fdf).fields["name"] == "山田 花子"
+    assert target.form.import_fdf(fdf) == ["agree", "name"]
+
+    xfdf = target.form.to_xfdf(include_empty=False)
+    assert pyropdf.parse_xfdf(xfdf).fields == {"agree": "Yes", "name": "山田 花子"}
+```
+
 ## アクション・スクリプト・トリガー {#actions-and-triggers}
 
 リンク、しおり、プレゼンテーションステップ、`doc.open_action`、`page.triggers`、

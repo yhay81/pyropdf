@@ -128,6 +128,7 @@ from pyropdf._errors import (
     StalePageError,
 )
 from pyropdf._fallback_fonts import FallbackFont, FallbackFonts
+from pyropdf._fdf import FdfData, parse_fdf, parse_xfdf
 from pyropdf._fonts import Font, FontInfo, FontProgram, StandardFontName, SubsetFont
 from pyropdf._form import (
     CheckBox,
@@ -338,6 +339,7 @@ __all__ = [
     "Encryption",
     "FallbackFont",
     "FallbackFonts",
+    "FdfData",
     "Field",
     "FieldChoice",
     "FieldFlags",
@@ -523,7 +525,9 @@ __all__ = [
     "Word",
     "__version__",
     "open",
+    "parse_fdf",
     "parse_pdf_date",
+    "parse_xfdf",
     "pdf_date",
     "probe",
     "typed",

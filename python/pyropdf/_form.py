@@ -23,8 +23,14 @@ from pyropdf._page import Page
 from pyropdf._widgets import Widget
 
 if TYPE_CHECKING:
+    import os
+
     from pyropdf._core import _Document
     from pyropdf._document import Document
+    from pyropdf._fdf import FdfData
+    from pyropdf._limits import DocumentLimits
+
+_DEFAULT_MAX_XFDF_SIZE = 16 * 1024 * 1024
 
 #: The deepest field tree that the core's walk reads.
 _MAX_FIELD_DEPTH = 64
@@ -720,6 +726,100 @@ class Form(Mapping[str, Field]):
             msg = f"need_appearances is a bool: {value!r}"
             raise TypeError(msg)
         _core.form_set_need_appearances(self._core(), value)
+
+    def to_fdf(
+        self,
+        *,
+        fields: Iterable[str] | None = None,
+        include_empty: bool = True,
+        file: str | None = None,
+    ) -> bytes:
+        """Export the form's field values as ``%FDF-1.2`` bytes (ISO 32000-2 section 12.7.8).
+
+        Dotted field names become nested ``/Kids`` hierarchies, button states
+        stay PDF names (such as ``/Yes`` and ``/Off``), multi-select list boxes
+        write string arrays, and the trailer's ``/ID`` is included when present.
+        ``fields`` restricts export to the named fields (raising
+        :class:`KeyError` for an unknown name), ``include_empty=False`` omits
+        fields with ``None`` or an empty string or selection, and ``file`` sets
+        ``/F``. Pushbutton and signature fields are skipped.
+        """
+        from pyropdf._fdf import _export_fdf  # noqa: PLC0415
+
+        return _export_fdf(self, fields=fields, include_empty=include_empty, file=file)
+
+    def import_fdf(
+        self,
+        source: FdfData | str | os.PathLike[str] | bytes | bytearray | memoryview,
+        /,
+        *,
+        limits: DocumentLimits | None = None,
+    ) -> list[str]:
+        """Import field values from an FDF file, byte buffer, or :class:`FdfData` in one undoable transaction.
+
+        Matching terminal text, check box, radio button, combo box, and list
+        box fields are updated and their widget appearances settled (using
+        :attr:`font` when set); ``None`` clears ``/V`` and resets the field's
+        widgets, and ``"Off"`` turns buttons off. Unknown names, pushbuttons,
+        and signature fields are skipped. Returns the sorted names of the
+        updated fields; on error, nothing changes.
+        """
+        from pyropdf._document import _resolve_limits  # noqa: PLC0415
+        from pyropdf._fdf import FdfData, _apply_form_data, parse_fdf  # noqa: PLC0415
+
+        if isinstance(source, FdfData):
+            _resolve_limits(limits)
+            data = source
+        else:
+            data = parse_fdf(source, limits=limits)
+        return _apply_form_data(self, data, "import fdf")
+
+    def to_xfdf(
+        self,
+        *,
+        fields: Iterable[str] | None = None,
+        include_empty: bool = True,
+        file: str | None = None,
+    ) -> str:
+        """Export the form's field values as an XFDF XML string (ISO 19444-1).
+
+        Dotted field names become nested ``<field name="...">`` elements,
+        multi-select list boxes emit multiple ``<value>`` elements, ``file``
+        sets ``<f href="..."/>``, and the trailer's ``/ID`` is hex-encoded in
+        ``<ids/>`` when present. ``fields`` restricts export to the named
+        fields (raising :class:`KeyError` for an unknown name), and
+        ``include_empty=False`` omits fields with ``None`` or an empty string
+        or selection. Pushbutton and signature fields are skipped.
+        """
+        from pyropdf._fdf import _export_xfdf  # noqa: PLC0415
+
+        return _export_xfdf(self, fields=fields, include_empty=include_empty, file=file)
+
+    def import_xfdf(
+        self,
+        source: FdfData | str | os.PathLike[str] | bytes | bytearray | memoryview,
+        /,
+        *,
+        max_size: int | None = _DEFAULT_MAX_XFDF_SIZE,
+    ) -> list[str]:
+        """Import field values from an XFDF file, XML string, byte buffer, or :class:`FdfData` in one transaction.
+
+        A ``str`` whose first non-whitespace character is ``"<"`` is parsed as
+        XML text, and any other ``str`` or :class:`os.PathLike` as a file path,
+        bounded by ``max_size`` (16 MiB by default; :class:`LimitError` code
+        ``form_field_input_size``). Matching fillable fields and their widget
+        appearances are updated atomically, returning the sorted names of the
+        updated fields.
+        """
+        from pyropdf._fdf import FdfData, _apply_form_data, parse_xfdf  # noqa: PLC0415
+        from pyropdf._limits import _validate_optional_positive_int  # noqa: PLC0415
+
+        if isinstance(source, FdfData):
+            _validate_optional_positive_int("max_size", max_size)
+            data = source
+        else:
+            data = parse_xfdf(source, max_size=max_size)
+        return _apply_form_data(self, data, "import xfdf")
 
     def __getitem__(self, name: str) -> Field:
         """Return the field named ``name``; another name raises :class:`KeyError`."""

@@ -251,6 +251,30 @@ with pyropdf.open("input.pdf") as doc:
     print({name: field.value for name, field in doc.form.items()})
 ```
 
+`doc.form.to_fdf()` and `doc.form.to_xfdf()` export field values in FDF
+(ISO 32000-2 §12.7.8) and XFDF (ISO 19444-1), `parse_fdf()` and
+`parse_xfdf()` inspect them as `FdfData`, and `doc.form.import_fdf()` and
+`doc.form.import_xfdf()` apply matching fields in one undoable transaction:
+
+```python
+import pyropdf
+
+with pyropdf.Document() as source, pyropdf.Document() as target:
+    for doc in (source, target):
+        page = doc.pages.new((400, 200))
+        page.widgets.add(pyropdf.TextField("name", (40, 40, 240, 64)))
+        page.widgets.add(pyropdf.CheckBox("agree", (40, 80, 58, 98)))
+    source.form["name"].value = "Ada Lovelace"
+    source.form["agree"].value = True
+
+    fdf = source.form.to_fdf(file="form.pdf")
+    assert pyropdf.parse_fdf(fdf).fields["name"] == "Ada Lovelace"
+    assert target.form.import_fdf(fdf) == ["agree", "name"]
+
+    xfdf = target.form.to_xfdf(include_empty=False)
+    assert pyropdf.parse_xfdf(xfdf).fields == {"agree": "Yes", "name": "Ada Lovelace"}
+```
+
 ## Actions, scripts, and triggers {#actions-and-triggers}
 
 Links, outline items, presentation steps, `doc.open_action`, `page.triggers`,
