@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 34 | 62 | 735 |
-| interpret | 1 | 13 | 0 | 30 | 684 | 103 |
-| create | 0 | 0 | 2 | 642 | 99 | 88 |
-| edit | 0 | 0 | 0 | 662 | 86 | 83 |
-| preserve | 0 | 0 | 0 | 17 | 682 | 132 |
+| read | 0 | 0 | 0 | 34 | 61 | 736 |
+| interpret | 1 | 13 | 0 | 30 | 683 | 104 |
+| create | 0 | 0 | 2 | 642 | 98 | 89 |
+| edit | 0 | 0 | 0 | 662 | 85 | 84 |
+| preserve | 0 | 0 | 0 | 17 | 681 | 133 |
 
 ## Clauses
 
@@ -53,7 +53,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.10.5 | Type 4 PostScript calculator functions | `calculator-functions` | 1 done | 1 done | 1 planned | 1 planned | 1 planned |
 | 7.11 | File specifications | `file-specifications` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.4 | Embedded file streams | `embedded-files` | 1 done | 1 planned | 1 done | 1 done | 1 done |
-| 7.11.4.2 | Related files arrays | `related-files` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 7.11.4.2 | Related files arrays | `related-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 8.3 | Coordinate transformations | `coordinate-systems` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,999 unfinished cells in 831 features: 1 engine, 1,385 partial, 1,613 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,994 unfinished cells in 831 features: 1 engine, 1,385 partial, 1,608 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -399,8 +399,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
     - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
-- [#859](https://github.com/yhay81/pyropdf/issues/859) Expose and preserve related-file arrays on file specifications. Resolve and preserve RF arrays on file specifications, including edits to related targets.
-    - read, interpret, create, edit, preserve — `related-files`.
 - [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
     - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
 - [#909](https://github.com/yhay81/pyropdf/issues/909) Verify private names, compatibility sections and legacy procedure-set resources. Exercise registered/private names and prefix collisions, BX/EX compatibility sections and effective PDF version, and reading/editing/preserving legacy ProcSet arrays under their creation exclusion.

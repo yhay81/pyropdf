@@ -54,7 +54,7 @@ from pyropdf._annotations import (
     StrikeOut,
     Underline,
 )
-from pyropdf._attachments import Attachment, Attachments
+from pyropdf._attachments import Attachment, Attachments, RelatedFile
 from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, PathInput, TableHeaderScope, TagRole, TextFit
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange, SignaturePermission
 from pyropdf._check import DefectKind, StructuralDefect, StructuralReport
@@ -254,6 +254,7 @@ _PUBLIC_MODULE_EXPORTS = (
     Profiles,
     ReadingDirection,
     Real,
+    RelatedFile,
     Revision,
     Sound,
     SoundEncoding,
@@ -497,6 +498,7 @@ __all__ = [
     "RecolorTarget",
     "Rect",
     "RectilinearMeasure",
+    "RelatedFile",
     "RemoteDestination",
     "RequirementHandler",
     "RequirementType",

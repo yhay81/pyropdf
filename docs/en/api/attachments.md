@@ -83,6 +83,22 @@ The modification date (`/Params /ModDate`) as stored, or `None`; assignable and 
 
 Settable.
 
+### `Attachment.related_files`
+
+```python
+Attachment.related_files: Mapping[str, tuple[RelatedFile, ...]]
+```
+
+Read the ordered related-file pairs for each embedded filename key (F or UF).
+
+Assign a mapping to replace these pairs. Delete the property to
+remove the standard relationships. Shared streams remain accessible
+to their other owners. Each key accepts up to 4,096 pairs, and the
+combined filenames can occupy up to 1 MiB. Exceeding either limit
+raises `LimitError` with code `embedded_file_input_size`.
+
+Settable.
+
 ### `Attachment.collection_item`
 
 ```python
@@ -212,3 +228,14 @@ On a document that claims PDF/A-3 or PDF/A-4, the embedded file gets
 the MIME type `application/octet-stream` as `/Subtype` and a
 `/ModDate`, the file specification `/AFRelationship
 /Unspecified`, and the catalog's `/AF` lists it.
+
+## `RelatedFile`
+
+```python
+RelatedFile(*, filename: str | bytes, stream: Stream)
+```
+
+A related filename and its indirect embedded-file stream (ISO 32000-2, 7.11.4.2).
+
+A text filename is encoded as a PDF text string. A byte filename retains
+its original bytes. The stream handle refers to its existing object.

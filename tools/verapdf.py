@@ -81,7 +81,7 @@ def expect(
 # operation, profile, mode and rule. In particular, a full save invalidates
 # an existing signature, while an incremental save must keep its byte range.
 SIGNATURE_FIELDS = ("signature_field", "sign_revision", "timestamp_revision")
-ATTACHMENT_EDITS = ("add_attachment", "write_attachment", "collection_item")
+ATTACHMENT_EDITS = ("add_attachment", "write_attachment", "collection_item", "related_files")
 for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
     source = source_path.stem
     part = profile[0]
