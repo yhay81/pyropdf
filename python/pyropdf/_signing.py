@@ -16,7 +16,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 from pyropdf import _core
-from pyropdf._collections import _require_collection_version
 from pyropdf._core import _Signer
 from pyropdf._errors import PdfError
 from pyropdf._fallback_fonts import _set_fallback
@@ -35,6 +34,8 @@ from pyropdf._signature_structures import (
     read_certification,
     read_doc_mdp_from_sig,
     read_field_locks_from_sig,
+    require_signature_pdf20,
+    signature_operation,
     write_perms_doc_mdp,
 )
 
@@ -433,32 +434,31 @@ def timestamp(
     core = document._core()  # noqa: SLF001
     _core.begin_signing(core)
     try:
-        _require_collection_version(document, _catalog(document), (2, 0))
-        entries: dict[str, Any] = {
-            "Type": Name("DocTimeStamp"),
-            "Filter": Name("Adobe.PPKLite"),
-            "SubFilter": Name("ETSI.RFC3161"),
-            "V": 0,
-            "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
-            "Contents": b"0" * (2 * reserve),
-        }
-        sig_obj = document.objects[document.objects.add(entries)]
-        _signature_field(document, field, sig_obj)
-        incremental_args = (True, None, None, False, None, False, False, None, False, False, False, False)
-        saved_bytes = bytes(core.to_bytes(*incremental_args))
-        stamped = _fill_timestamp(
-            saved_bytes,
-            reserve,
-            timestamper,
-            lambda: bytes(core.to_bytes(*incremental_args)) == saved_bytes,
-        )
-        max_history = document.history.max_size
-        new_core = _core._Document.open_buffer(stamped, document._limits, None)  # noqa: SLF001
-        _core.set_history_limit(new_core, max_history)
-    except BaseException:
-        _core.end_transaction(core, False)  # noqa: FBT003 - the core's flag
-        raise
-    _core.end_transaction(core, False)  # noqa: FBT003 - release the previous base's transaction lock.
+        with signature_operation(document, "timestamp"):
+            require_signature_pdf20(document, _catalog(document), "/DocTimeStamp")
+            entries: dict[str, Any] = {
+                "Type": Name("DocTimeStamp"),
+                "Filter": Name("Adobe.PPKLite"),
+                "SubFilter": Name("ETSI.RFC3161"),
+                "V": 0,
+                "ByteRange": list(_BYTE_RANGE_PLACEHOLDER),
+                "Contents": b"0" * (2 * reserve),
+            }
+            sig_obj = document.objects[document.objects.add(entries)]
+            _signature_field(document, field, sig_obj)
+            incremental_args = (True, None, None, False, None, False, False, None, False, False, False, False)
+            saved_bytes = bytes(core.to_bytes(*incremental_args))
+            stamped = _fill_timestamp(
+                saved_bytes,
+                reserve,
+                timestamper,
+                lambda: bytes(core.to_bytes(*incremental_args)) == saved_bytes,
+            )
+            max_history = document.history.max_size
+            new_core = _core._Document.open_buffer(stamped, document._limits, None)  # noqa: SLF001
+            _core.set_history_limit(new_core, max_history)
+    finally:
+        _core.end_transaction(core, False)  # noqa: FBT003 - release the previous base's transaction lock.
     fallback = document._fallback  # noqa: SLF001
     document._doc = new_core  # noqa: SLF001
     document._drawn = None  # noqa: SLF001
