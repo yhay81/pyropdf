@@ -1,0 +1,3143 @@
+{
+ "release": "v0.3.1",
+ "release_revision": "384023dc1e13521b677dbb42f3f22ab6aa590ce2",
+ "corpus_revision": "4ac61ce4fc4164a2ec014d8c3fb2ad34dfcba804",
+ "corpus": {
+  "bill-hr815.pdf": "0ced1efb0610dbb34ab437f16c53362a847b4fb69b3025b1c876a872611b9939",
+  "bunka-kokugo-series-019-p4.pdf": "f8d9d89a8b738ac2fc3108d01d1974ca413d3fa8dd32d4f812f075e3337ab9a3",
+  "f1040.pdf": "3d31c226df0d189ced80e039d01cf0f8820c1019681a0f0ca6264de277b7e982",
+  "mhlw-doc.pdf": "a5b743a648e983ac4a48522281cb1fe49786a11903a57fbb17120d5d83c61f0a",
+  "nics-background-checks-2015-11.pdf": "4f0ae6e017b0e97de211da8fd97316e55bd927af5740d6ce95e1b7b1539f9407",
+  "patent-us223898.pdf": "e6f4d7747a8af8451d81aa3d5fe564aed5c8091091cb408c752b8a3cd7c28764",
+  "pdf20-simple.pdf": "296d2a0b2ce19b606f29265694f194a754fbc61783982b5b8d730e8637482236",
+  "pdfium-jpx-lzw.pdf": "ba14897a4139944e56674fefe176a56f29326e69ff2baf3e07ba096b520def78",
+  "pdfium-links-highlights-annots.pdf": "d6b813376c52b326a0eac798d215eb135054ba77fdaa2c059f99e57d6726ac9f",
+  "pdfium-ocg-invisible.pdf": "cd8a567bc9d7c595b6dd9545ab2885c0246744ce638179ed5c938d91352589f9",
+  "pdfium-smask-blend.pdf": "9947d9c15d853823cedc1e87378dea89a665570e4f233b7a0ba215e5859134ab",
+  "pdfium-type3.pdf": "dc213b3d2952f06517ac487d9892b11628f4b5bedc2ad8278a4c05c1b40be8f6",
+  "senate-expenditures.pdf": "16921f0fc9b2c6039b23b694e0317917118ad7dd2b3a95a88518b7e144df527c",
+  "usrguide.pdf": "79ce884d013bea5c13479385a7bd7a819fdbc138c49cbc0d7805e36f401e19f2",
+  "wdl6812-manuscript.pdf": "da04b715cd876a00f79728faed5501e0697e4e0783201470a7f20eec67bd6e85"
+ },
+ "labels": {
+  "bill-hr815-p1": "649911d40b3239f83549a851a6061c686d93ec55cdee58f1192b0fc403ae1812",
+  "f1040-p1": "a1d3b0601abe4689c67a736fd3667e80c8be8758ef799ee5781653f6af77157e",
+  "mhlw-doc-p1": "0ef425b030341d0beec3370f764f2d9ddfa396ff08eeed8fa5be813df4db6e68",
+  "mhlw-doc-p2": "dfe40a0ba8c25bdf7c5599822b5ea0a9a8e3d3bedccae0b5a4aeb848d74ac977",
+  "nics-background-checks-2015-11-p1": "62d8cc1e5e08dc5ac5de121b83f9d815985f8be75888de4b36d9aa05d74504e8",
+  "patent-us223898-p2": "933b6c9e03fc8155d08e759587f2099a97ce51e3c4e0ba478d9a795750a12f06",
+  "usrguide-p2": "e04b63c0cc980203078d0b4cc32df29d6e44404267b0a5e4913cf23eb69f2ad1"
+ },
+ "task_map_sha256": "f32df8074572a43f1ed507c49b32bd686349574dfea7637cfe99866c9c782f83",
+ "constraints_sha256": "e61048d1212373c640919e7460dfc30330d99b0740950fffeee1868a3ecb3929",
+ "scripts": {
+  "bench.py": "98f39c6f55bcf201dd184aa85a4ce8ad4e2a8a2c9063f022ced632c9d29dd177",
+  "quality.py": "cec168bbbde29a292b268fab5b760863804cbeb4ce0465dd6a913af5505f0ae5",
+  "release.py": "ca62ee2098a77c0b0c356665ad0e670f3bc564e294822346e8a009c5aa786fdc",
+  "release_delta.py": "b97379557edeba9e0cc452e9dfaa2742267bb5eb4afa216258434e573f59de0d",
+  "release_report.py": "cec57a10b64bac4a93555d7af12ebc79a18e1faf29c09523d16befaa8931f2ce",
+  "release_worker.py": "d641b6405f8c9e5c88dfde4ceebd06f36b9026c4f3c19ae512e7f62b8c7c151c"
+ },
+ "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+ "machine": "arm64",
+ "python": "3.13.18",
+ "settings": {
+  "runs": 5,
+  "timeout_s": 300,
+  "search": "the",
+  "operations": [
+   "open",
+   "text",
+   "words",
+   "search",
+   "render_72",
+   "render_144",
+   "save"
+  ]
+ },
+ "artifacts": {
+  "pymupdf": {
+   "wheel": "pymupdf-2.1-cp311-abi3-macosx_11_0_arm64.whl",
+   "sha256": "1bb2284bde6067f05f83961ea678480060870dc966ad520bcf97da0b0eccf40c",
+   "version": "2.1"
+  },
+  "pyropdf": {
+   "wheel": "pyropdf-0.3.1-cp311-abi3-macosx_11_0_arm64.whl",
+   "sha256": "1944b462a91c9fbc7fdb972eef66491d0d7383814970f4aa625a404940deb9c1",
+   "version": "0.3.1"
+  }
+ },
+ "engines": {
+  "pymupdf": {
+   "engine": "PyMuPDF 2.1 (MuPDF 1.28.6)",
+   "installed": {
+    "PyYAML": "6.0.3",
+    "flatbuffers": "25.12.19",
+    "networkx": "3.7",
+    "numpy": "2.5.5",
+    "onnxruntime": "1.32.0",
+    "packaging": "26.3",
+    "pip": "26.2.2",
+    "protobuf": "7.36.2",
+    "psutil": "7.2.2",
+    "pymupdf": "2.1",
+    "pymupdf4llm": "2.1",
+    "pymupdf_layout": "2.1",
+    "tabulate": "0.10.0"
+   },
+   "surface": {
+    "Annot": "(annot)",
+    "Annot.apn_bbox": "property",
+    "Annot.apn_matrix": "property",
+    "Annot.blendmode": "property",
+    "Annot.border": "property",
+    "Annot.clean_contents": "(self, sanitize=1)",
+    "Annot.colors": "property",
+    "Annot.delete_responses": "(self)",
+    "Annot.file_info": "property",
+    "Annot.flags": "property",
+    "Annot.get_file": "(self)",
+    "Annot.get_oc": "(self)",
+    "Annot.get_parent": "(self)",
+    "Annot.get_pixmap": "(self, matrix=None, dpi=None, colorspace=None, alpha=0)",
+    "Annot.get_sound": "(self)",
+    "Annot.get_text": "(self, *args, **kwargs)",
+    "Annot.get_textbox": "(self, *args, **kwargs)",
+    "Annot.get_textpage": "(self, clip=None, flags=0)",
+    "Annot.has_popup": "property",
+    "Annot.info": "property",
+    "Annot.irt_xref": "property",
+    "Annot.is_open": "property",
+    "Annot.language": "property",
+    "Annot.line_ends": "property",
+    "Annot.next": "property",
+    "Annot.opacity": "property",
+    "Annot.popup_rect": "property",
+    "Annot.popup_xref": "property",
+    "Annot.rect": "property",
+    "Annot.rect_delta": "property",
+    "Annot.rotation": "property",
+    "Annot.set_apn_bbox": "(self, bbox)",
+    "Annot.set_apn_matrix": "(self, matrix)",
+    "Annot.set_blendmode": "(self, blend_mode)",
+    "Annot.set_border": "(self, border=None, width=-1, style=None, dashes=None, clouds=-1)",
+    "Annot.set_colors": "(self, colors=None, stroke=None, fill=None)",
+    "Annot.set_flags": "(self, flags)",
+    "Annot.set_info": "(self, info=None, content=None, title=None, creationDate=None, modDate=None, subject=None)",
+    "Annot.set_irt_xref": "(self, xref)",
+    "Annot.set_language": "(self, language=None)",
+    "Annot.set_line_ends": "(self, start, end)",
+    "Annot.set_name": "(self, name)",
+    "Annot.set_oc": "(self, oc=0)",
+    "Annot.set_opacity": "(self, opacity)",
+    "Annot.set_open": "(self, is_open)",
+    "Annot.set_popup": "(self, rect)",
+    "Annot.set_rect": "(self, rect)",
+    "Annot.set_rotation": "(self, rotate=0)",
+    "Annot.type": "property",
+    "Annot.update": "(self, blend_mode: 'OptStr' = None, opacity: 'OptFloat' = None, fontsize: 'float' = 0, fontname: 'OptStr' = None, text_color: 'OptSeq' = None, border_color: 'OptSeq' = None, fill_color: 'OptSeq' = None, cross_out: 'bool' = True, rotate: 'int' = -1)",
+    "Annot.update_file": "(self, buffer_=None, filename=None, ufilename=None, desc=None)",
+    "Annot.vertices": "property",
+    "Annot.xref": "property",
+    "Colorspace": "(type_)",
+    "Colorspace.n": "property",
+    "Colorspace.name": "property",
+    "DisplayList": "(*args)",
+    "DisplayList.get_pixmap": "(self, matrix=None, colorspace=None, alpha=0, clip=None)",
+    "DisplayList.get_textpage": "(self, flags=3)",
+    "DisplayList.rect": "property",
+    "DisplayList.run": "(self, dw, m, area)",
+    "Document": "(filename=None, stream=None, filetype=None, rect=None, width=0, height=0, fontsize=11, archive=None)",
+    "Document.FormFonts": "property",
+    "Document.add_layer": "(self, name, creator=None, on=None)",
+    "Document.add_ocg": "(self, name, config=-1, on=1, intent=None, usage=None)",
+    "Document.apply_css": "(self, css: 'str', append: 'bool' = True)",
+    "Document.authenticate": "(self, password)",
+    "Document.bake": "(self, *, annots: 'bool' = True, widgets: 'bool' = True) -> 'None'",
+    "Document.can_save_incrementally": "(self)",
+    "Document.chapter_count": "property",
+    "Document.chapter_page_count": "(self, chapter)",
+    "Document.close": "(self)",
+    "Document.convert_to_pdf": "(self, from_page=0, to_page=-1, rotate=0)",
+    "Document.copy_page": "(self, pno: 'int', to: 'int' = -1)",
+    "Document.del_toc_item": "(self, idx: 'int') -> 'None'",
+    "Document.del_xml_metadata": "(self)",
+    "Document.delete_page": "(self, pno: 'int' = -1)",
+    "Document.delete_pages": "(self, *args, **kw)",
+    "Document.embfile_add": "(self, name: 'str', buffer_: 'ByteString', filename: 'OptStr' = None, ufilename: 'OptStr' = None, desc: 'OptStr' = None) -> 'None'",
+    "Document.embfile_count": "(self) -> 'int'",
+    "Document.embfile_del": "(self, item: 'typing.Union[int, str]')",
+    "Document.embfile_get": "(self, item: 'typing.Union[int, str]') -> 'bytes'",
+    "Document.embfile_info": "(self, item: 'typing.Union[int, str]') -> 'dict'",
+    "Document.embfile_names": "(self) -> 'list'",
+    "Document.embfile_upd": "(self, item: 'typing.Union[int, str]', buffer_: 'OptBytes' = None, filename: 'OptStr' = None, ufilename: 'OptStr' = None, desc: 'OptStr' = None) -> 'None'",
+    "Document.extract_font": "(self, xref=0, info_only=0, named=None)",
+    "Document.extract_image": "(self, xref)",
+    "Document.ez_save": "(self, filename, garbage=3, clean=False, deflate=True, deflate_images=True, deflate_fonts=True, incremental=False, ascii=False, expand=False, linear=False, pretty=False, encryption=1, permissions=4095, owner_pw=None, user_pw=None, no_new_id=True, preserve_metadata=1, use_objstms=1, compression_effort=0, raise_on_repair=False, reproducible=False)",
+    "Document.find_bookmark": "(self, bm)",
+    "Document.fullcopy_page": "(self, pno, to=-1)",
+    "Document.get_char_widths": "(doc: \"'Document'\", xref: 'int', limit: 'int' = 256, idx: 'int' = 0, fontdict: 'OptDict' = None) -> 'list'",
+    "Document.get_layer": "(self, config=-1)",
+    "Document.get_layers": "(self)",
+    "Document.get_new_xref": "(self)",
+    "Document.get_oc": "(doc: \"'Document'\", xref: 'int') -> 'int'",
+    "Document.get_ocgs": "(self)",
+    "Document.get_ocmd": "(doc: \"'Document'\", xref: 'int') -> 'dict'",
+    "Document.get_outline_xrefs": "(self)",
+    "Document.get_page_fonts": "(self, pno: 'int', full: 'bool' = False) -> 'list'",
+    "Document.get_page_images": "(self, pno: 'int', full: 'bool' = False) -> 'list'",
+    "Document.get_page_labels": "(self)",
+    "Document.get_page_numbers": "(doc, label, only_one=False)",
+    "Document.get_page_pixmap": "(doc: \"'Document'\", pno: 'int', *, matrix: 'matrix_like' = None, dpi=None, colorspace: 'Colorspace' = None, clip: 'rect_like' = None, alpha: 'bool' = False, annots: 'bool' = True) -> \"'Pixmap'\"",
+    "Document.get_page_text": "(doc: \"'Document'\", pno: 'int', option: 'str' = 'text', clip: 'rect_like' = None, flags: 'OptInt' = None, textpage: \"'TextPage'\" = None, sort: 'bool' = False) -> 'typing.Any'",
+    "Document.get_page_xobjects": "(self, pno: 'int') -> 'list'",
+    "Document.get_sigflags": "(self)",
+    "Document.get_toc": "(doc: \"'Document'\", simple: 'bool' = True) -> 'list'",
+    "Document.get_xml_metadata": "(self)",
+    "Document.has_annots": "(doc: \"'Document'\") -> 'bool'",
+    "Document.has_links": "(doc: \"'Document'\") -> 'bool'",
+    "Document.init_doc": "(self)",
+    "Document.insert_file": "(self, infile, from_page=-1, to_page=-1, start_at=-1, rotate=-1, links=True, annots=True, show_progress=0, final=1)",
+    "Document.insert_page": "(doc: \"'Document'\", pno: 'int', text: 'typing.Union[str, list, None]' = None, fontsize: 'float' = 11, width: 'float' = 595, height: 'float' = 842, fontname: 'str' = 'helv', fontfile: 'OptStr' = None, color: 'OptSeq' = (0,)) -> 'int'",
+    "Document.insert_pdf": "(self, docsrc, *, from_page=-1, to_page=-1, start_at=-1, rotate=-1, links=1, annots=1, widgets=1, join_duplicates=0, show_progress=0, final=1, _gmap=None)",
+    "Document.is_dirty": "property",
+    "Document.is_fast_webaccess": "property",
+    "Document.is_form_pdf": "property",
+    "Document.is_pdf": "property",
+    "Document.is_reflowable": "property",
+    "Document.is_repaired": "property",
+    "Document.is_stream": "(self, xref=0)",
+    "Document.journal_can_do": "(self)",
+    "Document.journal_enable": "(self)",
+    "Document.journal_is_enabled": "(self)",
+    "Document.journal_load": "(self, filename)",
+    "Document.journal_op_name": "(self, step)",
+    "Document.journal_position": "(self)",
+    "Document.journal_redo": "(self)",
+    "Document.journal_save": "(self, filename)",
+    "Document.journal_start_op": "(self, name=None)",
+    "Document.journal_stop_op": "(self)",
+    "Document.journal_undo": "(self)",
+    "Document.language": "property",
+    "Document.last_location": "property",
+    "Document.layer_ui_configs": "(self)",
+    "Document.layout": "(self, rect=None, width=0, height=0, fontsize=11)",
+    "Document.load_page": "(self, page_id)",
+    "Document.location_from_page_number": "(self, pno)",
+    "Document.make_bookmark": "(self, loc)",
+    "Document.markinfo": "property",
+    "Document.move_page": "(self, pno: 'int', to: 'int' = -1)",
+    "Document.name": "property",
+    "Document.need_appearances": "(self, value=None)",
+    "Document.needs_pass": "property",
+    "Document.new_page": "(doc: \"'Document'\", pno: 'int' = -1, width: 'float' = 595, height: 'float' = 842) -> 'Page'",
+    "Document.next_location": "(self, page_id)",
+    "Document.outline": "property",
+    "Document.page_annot_xrefs": "(self, n)",
+    "Document.page_count": "property",
+    "Document.page_count2": "member_descriptor",
+    "Document.page_cropbox": "(self, pno)",
+    "Document.page_number_from_location": "(self, page_id)",
+    "Document.page_xref": "(self, pno)",
+    "Document.pagelayout": "property",
+    "Document.pagemode": "property",
+    "Document.pages": "(self, start: 'OptInt' = None, stop: 'OptInt' = None, step: 'OptInt' = None) -> 'collections.abc.Iterable[Page]'",
+    "Document.pdf_catalog": "(self)",
+    "Document.pdf_trailer": "(self, compressed=0, ascii=0)",
+    "Document.permissions": "property",
+    "Document.prev_location": "(self, page_id)",
+    "Document.recolor": "(self, components=1)",
+    "Document.reload_page": "(self, page: 'Page') -> 'Page'",
+    "Document.repair": "(self)",
+    "Document.resolve_link": "(self, uri=None, chapters=0)",
+    "Document.resolve_names": "(self)",
+    "Document.rewrite_images": "(self, dpi_threshold=None, dpi_target=0, quality=0, lossy=True, lossless=True, bitonal=True, color=True, gray=True, set_to_gray=False, options=None)",
+    "Document.save": "(self, filename, garbage=0, clean=0, deflate=0, deflate_images=0, deflate_fonts=0, incremental=0, ascii=0, expand=0, linear=0, no_new_id=0, appearance=0, pretty=0, encryption=1, permissions=4095, owner_pw=None, user_pw=None, preserve_metadata=1, use_objstms=0, compression_effort=0, raise_on_repair=False, reproducible=False)",
+    "Document.saveIncr": "(self)",
+    "Document.save_snapshot": "(self, filename)",
+    "Document.scrub": "(doc: \"'Document'\", attached_files: 'bool' = True, clean_pages: 'bool' = True, embedded_files: 'bool' = True, hidden_text: 'bool' = True, javascript: 'bool' = True, metadata: 'bool' = True, redactions: 'bool' = True, redact_images: 'int' = 0, remove_links: 'bool' = True, reset_fields: 'bool' = True, reset_responses: 'bool' = True, thumbnails: 'bool' = True, xml_metadata: 'bool' = True) -> 'None'",
+    "Document.search_page_for": "(doc: \"'Document'\", pno: 'int', text: 'str', quads: 'bool' = False, clip: 'rect_like' = None, flags: 'int' = None, textpage: \"'TextPage'\" = None) -> 'list'",
+    "Document.select": "(self, pyliste)",
+    "Document.set_language": "(self, language=None)",
+    "Document.set_layer": "(self, config, basestate=None, on=None, off=None, rbgroups=None, locked=None)",
+    "Document.set_layer_ui_config": "(self, number, action=0)",
+    "Document.set_markinfo": "(self, markinfo: 'dict') -> 'bool'",
+    "Document.set_metadata": "(doc: \"'Document'\", m: 'dict' = None) -> 'None'",
+    "Document.set_oc": "(doc: \"'Document'\", xref: 'int', oc: 'int') -> 'None'",
+    "Document.set_ocmd": "(doc: \"'Document'\", xref: 'int' = 0, ocgs: 'typing.Union[list, None]' = None, policy: 'OptStr' = None, ve: 'typing.Union[list, None]' = None) -> 'int'",
+    "Document.set_page_labels": "(doc, labels)",
+    "Document.set_pagelayout": "(self, pagelayout: 'str')",
+    "Document.set_pagemode": "(self, pagemode: 'str')",
+    "Document.set_toc": "(doc: \"'Document'\", toc: 'list', collapse: 'int' = 1) -> 'int'",
+    "Document.set_toc_item": "(doc: \"'Document'\", idx: 'int', dest_dict: 'OptDict' = None, kind: 'OptInt' = None, pno: 'OptInt' = None, uri: 'OptStr' = None, title: 'OptStr' = None, to: 'point_like' = None, filename: 'OptStr' = None, zoom: 'float' = 0) -> 'None'",
+    "Document.set_xml_metadata": "(self, metadata)",
+    "Document.subset_fonts": "(doc: \"'Document'\", verbose: 'bool' = False, fallback: 'bool' = False) -> 'OptInt'",
+    "Document.switch_layer": "(self, config, as_default=0)",
+    "Document.this": "member_descriptor",
+    "Document.this_is_pdf": "member_descriptor",
+    "Document.to_chunks": "(*args, **kwargs)",
+    "Document.to_json": "(*args, **kwargs)",
+    "Document.to_markdown": "(*args, **kwargs)",
+    "Document.to_text": "(*args, **kwargs)",
+    "Document.tobytes": "(self, *args, **kwargs)",
+    "Document.update_object": "(self, xref, text, page=None)",
+    "Document.update_stream": "(self, xref=0, stream=None, new=1, compress=1)",
+    "Document.version_count": "property",
+    "Document.write": "(self, garbage=False, clean=False, deflate=False, deflate_images=False, deflate_fonts=False, incremental=False, ascii=False, expand=False, linear=False, no_new_id=False, appearance=False, pretty=False, encryption=1, permissions=4095, owner_pw=None, user_pw=None, preserve_metadata=1, use_objstms=0, compression_effort=0, raise_on_repair=False, reproducible=False)",
+    "Document.xref": "property",
+    "Document.xref_copy": "(doc: \"'Document'\", source: 'int', target: 'int', *, keep: 'list' = None) -> 'None'",
+    "Document.xref_get_key": "(self, xref, key)",
+    "Document.xref_get_keys": "(self, xref)",
+    "Document.xref_is_font": "(self, xref)",
+    "Document.xref_is_image": "(self, xref)",
+    "Document.xref_is_stream": "(self, xref=0)",
+    "Document.xref_is_xobject": "(self, xref)",
+    "Document.xref_length": "(self)",
+    "Document.xref_object": "(self, xref, compressed=0, ascii=0)",
+    "Document.xref_set_key": "(self, xref, key, value)",
+    "Document.xref_stream": "(self, xref)",
+    "Document.xref_stream_raw": "(self, xref)",
+    "Document.xref_xml_metadata": "(self)",
+    "DocumentWriter": "(path, options='')",
+    "DocumentWriter.begin_page": "(self, mediabox)",
+    "DocumentWriter.close": "(self)",
+    "DocumentWriter.end_page": "(self)",
+    "Font": "(fontname=None, fontfile=None, fontbuffer=None, script=0, language=None, ordering=-1, is_bold=0, is_italic=0, is_serif=0, embed=1)",
+    "Font.ascender": "property",
+    "Font.bbox": "property",
+    "Font.buffer": "property",
+    "Font.char_lengths": "(self, text, fontsize=11, language=None, script=0, wmode=0, small_caps=0)",
+    "Font.descender": "property",
+    "Font.flags": "property",
+    "Font.glyph_advance": "(self, chr_, language=None, script=0, wmode=0, small_caps=0)",
+    "Font.glyph_bbox": "(self, char, language=None, script=0, small_caps=0)",
+    "Font.glyph_count": "property",
+    "Font.glyph_name_to_unicode": "(self, name)",
+    "Font.has_glyph": "(self, chr, language=None, script=0, fallback=0, small_caps=0)",
+    "Font.is_bold": "property",
+    "Font.is_italic": "property",
+    "Font.is_monospaced": "property",
+    "Font.is_serif": "property",
+    "Font.is_writable": "property",
+    "Font.name": "property",
+    "Font.text_length": "(self, text, fontsize=11, language=None, script=0, wmode=0, small_caps=0)",
+    "Font.unicode_to_glyph_name": "(self, ch)",
+    "Font.valid_codepoints": "(self)",
+    "Link": "(this)",
+    "Link.border": "property",
+    "Link.colors": "property",
+    "Link.dest": "property",
+    "Link.flags": "property",
+    "Link.is_external": "property",
+    "Link.next": "property",
+    "Link.page": "int",
+    "Link.rect": "property",
+    "Link.set_border": "(self, border=None, width=0, dashes=None, style=None)",
+    "Link.set_colors": "(self, colors=None, stroke=None, fill=None)",
+    "Link.set_flags": "(self, flags)",
+    "Link.uri": "property",
+    "Outline": "(ol)",
+    "Outline.dest": "property",
+    "Outline.destination": "(self, document)",
+    "Outline.down": "property",
+    "Outline.is_external": "property",
+    "Outline.is_open": "property",
+    "Outline.next": "property",
+    "Outline.page": "property",
+    "Outline.this": "member_descriptor",
+    "Outline.title": "property",
+    "Outline.uri": "property",
+    "Outline.x": "property",
+    "Outline.y": "property",
+    "Page": "(page, document)",
+    "Page.add_caret_annot": "(self, point: 'point_like') -> 'Annot'",
+    "Page.add_circle_annot": "(self, rect: 'rect_like') -> 'Annot'",
+    "Page.add_file_annot": "(self, point: 'point_like', buffer_: 'ByteString', filename: 'str', ufilename: 'OptStr' = None, desc: 'OptStr' = None, icon: 'OptStr' = None) -> 'Annot'",
+    "Page.add_freetext_annot": "(self, rect: 'rect_like', text: 'str', *, fontsize: 'float' = 11, fontname: 'OptStr' = None, text_color: 'OptSeq' = None, fill_color: 'OptSeq' = None, border_color: 'OptSeq' = None, border_width: 'float' = 0, dashes: 'OptSeq' = None, callout: 'OptSeq' = None, line_end: 'int' = 4, opacity: 'float' = 1, align: 'int' = 0, rotate: 'int' = 0, richtext=False, style=None) -> 'Annot'",
+    "Page.add_highlight_annot": "(self, quads=None, start=None, stop=None, clip=None) -> 'Annot'",
+    "Page.add_ink_annot": "(self, handwriting: 'list') -> 'Annot'",
+    "Page.add_line_annot": "(self, p1: 'point_like', p2: 'point_like') -> 'Annot'",
+    "Page.add_polygon_annot": "(self, points: 'list') -> 'Annot'",
+    "Page.add_polyline_annot": "(self, points: 'list') -> 'Annot'",
+    "Page.add_rect_annot": "(self, rect: 'rect_like') -> 'Annot'",
+    "Page.add_redact_annot": "(self, quad, text: 'OptStr' = None, fontname: 'OptStr' = None, fontsize: 'float' = 11, align: 'int' = 0, fill: 'OptSeq' = None, text_color: 'OptSeq' = None, cross_out: 'bool' = True) -> 'Annot'",
+    "Page.add_squiggly_annot": "(self, quads=None, start=None, stop=None, clip=None) -> 'Annot'",
+    "Page.add_stamp_annot": "(self, rect: 'rect_like', stamp=0) -> 'Annot'",
+    "Page.add_strikeout_annot": "(self, quads=None, start=None, stop=None, clip=None) -> 'Annot'",
+    "Page.add_text_annot": "(self, point: 'point_like', text: 'str', icon: 'str' = 'Note') -> 'Annot'",
+    "Page.add_underline_annot": "(self, quads=None, start=None, stop=None, clip=None) -> 'Annot'",
+    "Page.add_widget": "(self, widget: 'Widget') -> 'Annot'",
+    "Page.annot_names": "(self)",
+    "Page.annot_xrefs": "(self)",
+    "Page.annots": "(self, types=None)",
+    "Page.apply_redactions": "(page: \"'Page'\", images: 'int' = 2, graphics: 'int' = 1, text: 'int' = 0) -> 'bool'",
+    "Page.artbox": "property",
+    "Page.bleedbox": "property",
+    "Page.bound": "(self)",
+    "Page.clean_contents": "(self, sanitize=1)",
+    "Page.clip_to_rect": "(self, rect)",
+    "Page.cluster_drawings": "(self, clip=None, drawings=None, x_tolerance: 'float' = 3, y_tolerance: 'float' = 3, final_filter: 'bool' = True) -> 'list'",
+    "Page.cropbox": "property",
+    "Page.cropbox_position": "property",
+    "Page.delete_annot": "(self, annot)",
+    "Page.delete_image": "(page: \"'Page'\", xref: 'int')",
+    "Page.delete_link": "(self, linkdict)",
+    "Page.delete_widget": "(self, widget: 'Widget') -> 'Widget'",
+    "Page.derotation_matrix": "property",
+    "Page.draw_bezier": "(page: \"'Page'\", p1: 'point_like', p2: 'point_like', p3: 'point_like', p4: 'point_like', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, width: 'float' = 1, morph: 'OptStr' = None, closePath: 'bool' = False, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_circle": "(page: \"'Page'\", center: 'point_like', radius: 'float', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, morph: 'OptSeq' = None, dashes: 'OptStr' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_curve": "(page: \"'Page'\", p1: 'point_like', p2: 'point_like', p3: 'point_like', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, width: 'float' = 1, morph: 'OptSeq' = None, closePath: 'bool' = False, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_line": "(page: \"'Page'\", p1: 'point_like', p2: 'point_like', color: 'OptSeq' = (0,), dashes: 'OptStr' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, morph: 'OptSeq' = None, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc=0) -> 'Point'",
+    "Page.draw_oval": "(page: \"'Page'\", rect: 'typing.Union[rect_like, quad_like]', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, morph: 'OptSeq' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_polyline": "(page: \"'Page'\", points: 'list', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, width: 'float' = 1, morph: 'OptSeq' = None, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, closePath: 'bool' = False, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_quad": "(page: \"'Page'\", quad: 'quad_like', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, morph: 'OptSeq' = None, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_rect": "(page: \"'Page'\", rect: 'rect_like', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, morph: 'OptSeq' = None, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0, radius=None) -> 'Point'",
+    "Page.draw_sector": "(page: \"'Page'\", center: 'point_like', point: 'point_like', beta: 'float', color: 'OptSeq' = (0,), fill: 'OptSeq' = None, dashes: 'OptStr' = None, fullSector: 'bool' = True, morph: 'OptSeq' = None, width: 'float' = 1, closePath: 'bool' = False, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_squiggle": "(page: \"'Page'\", p1: 'point_like', p2: 'point_like', breadth: 'float' = 2, color: 'OptSeq' = (0,), dashes: 'OptStr' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, morph: 'OptSeq' = None, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.draw_zigzag": "(page: \"'Page'\", p1: 'point_like', p2: 'point_like', breadth: 'float' = 2, color: 'OptSeq' = (0,), dashes: 'OptStr' = None, width: 'float' = 1, lineCap: 'int' = 0, lineJoin: 'int' = 0, overlay: 'bool' = True, morph: 'OptSeq' = None, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'Point'",
+    "Page.extend_textpage": "(self, tpage, flags=0, matrix=None)",
+    "Page.find_tables": "(self, **kwargs)",
+    "Page.first_annot": "property",
+    "Page.first_link": "property",
+    "Page.first_widget": "property",
+    "Page.get_bboxlog": "(self, layers=None)",
+    "Page.get_cdrawings": "(self, extended=None, callback=None, method=None)",
+    "Page.get_contents": "(self)",
+    "Page.get_displaylist": "(self, annots=1)",
+    "Page.get_drawings": "(self, extended: 'bool' = False) -> 'list'",
+    "Page.get_fonts": "(self, full=False)",
+    "Page.get_image_bbox": "(self, name, transform=0)",
+    "Page.get_image_info": "(page: \"'Page'\", hashes: 'bool' = False, xrefs: 'bool' = False) -> 'list'",
+    "Page.get_image_rects": "(page: \"'Page'\", name, transform=False) -> 'list'",
+    "Page.get_images": "(self, full=False)",
+    "Page.get_label": "(page)",
+    "Page.get_layout": "(self, **kwargs)",
+    "Page.get_links": "(page: \"'Page'\") -> 'list'",
+    "Page.get_oc_items": "(self) -> 'list'",
+    "Page.get_pixmap": "(page: \"'Page'\", *, matrix: 'matrix_like' = IdentityMatrix(1.0, 0.0, 0.0, 1.0, 0.0, 0.0), dpi=None, colorspace: 'Colorspace' = None, clip: 'rect_like' = None, alpha: 'bool' = False, annots: 'bool' = True) -> \"'Pixmap'\"",
+    "Page.get_svg_image": "(self, matrix=None, text_as_path=1)",
+    "Page.get_text": "(self, *args, **kwargs)",
+    "Page.get_text_blocks": "(self, *args, **kwargs)",
+    "Page.get_text_selection": "(self, *args, **kwargs)",
+    "Page.get_text_words": "(self, *args, **kwargs)",
+    "Page.get_textbox": "(page: 'Page', rect: 'rect_like', textpage=None) -> 'str'",
+    "Page.get_textpage": "(self, clip: 'rect_like' = None, flags: 'int' = 0, matrix=None) -> \"'TextPage'\"",
+    "Page.get_textpage_ocr": "(self, *args, **kwargs)",
+    "Page.get_texttrace": "(self)",
+    "Page.get_xobjects": "(self)",
+    "Page.insert_font": "(self, fontname='helv', fontfile=None, fontbuffer=None, set_simple=False, wmode=0, encoding=0)",
+    "Page.insert_htmlbox": "(page, rect, text, *, css=None, scale_low=0, archive=None, rotate=0, oc=0, opacity=1, overlay=True, _scale_word_width=True, _verbose=False) -> 'tuple'",
+    "Page.insert_image": "(page, rect, *, alpha=-1, filename=None, height=0, keep_proportion=True, mask=None, oc=0, overlay=True, pixmap=None, rotate=0, stream=None, width=0, xref=0)",
+    "Page.insert_link": "(page: \"'Page'\", lnk: 'dict', mark: 'bool' = True) -> 'None'",
+    "Page.insert_text": "(page: \"'Page'\", point: 'point_like', text: 'typing.Union[str, list]', *, fontsize: 'float' = 11, lineheight: 'OptFloat' = None, fontname: 'str' = 'helv', fontfile: 'OptStr' = None, set_simple: 'int' = 0, encoding: 'int' = 0, color: 'OptSeq' = None, fill: 'OptSeq' = None, border_width: 'float' = 0.05, miter_limit: 'float' = 1, render_mode: 'int' = 0, rotate: 'int' = 0, morph: 'OptSeq' = None, overlay: 'bool' = True, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0)",
+    "Page.insert_textbox": "(page: \"'Page'\", rect: 'rect_like', buffer: 'typing.Union[str, list]', *, align: 'int' = 0, border_width: 'float' = 0.05, color: 'OptSeq' = None, encoding: 'int' = 0, expandtabs: 'int' = 1, fill_opacity: 'float' = 1, fill: 'OptSeq' = None, fontfile: 'OptStr' = None, fontname: 'str' = 'helv', fontsize: 'float' = 11, lineheight: 'OptFloat' = None, miter_limit: 'float' = 1, morph: 'OptSeq' = None, oc: 'int' = 0, overlay: 'bool' = True, render_mode: 'int' = 0, rotate: 'int' = 0, set_simple: 'int' = 0, stroke_opacity: 'float' = 1) -> 'float'",
+    "Page.is_wrapped": "property",
+    "Page.language": "property",
+    "Page.layout_information": "NoneType",
+    "Page.links": "(self, kinds=None)",
+    "Page.load_annot": "(self, ident: 'typing.Union[str, int]') -> 'Annot'",
+    "Page.load_links": "(self)",
+    "Page.load_widget": "(self, xref)",
+    "Page.mediabox": "property",
+    "Page.mediabox_size": "property",
+    "Page.new_shape": "(self)",
+    "Page.read_contents": "(self)",
+    "Page.recolor": "(self, components=1)",
+    "Page.rect": "property",
+    "Page.refresh": "(self)",
+    "Page.remove_rotation": "(self)",
+    "Page.repair_flat_rbgs": "(self)",
+    "Page.replace_image": "(page: \"'Page'\", xref: 'int', *, filename=None, pixmap=None, stream=None)",
+    "Page.rotation": "property",
+    "Page.rotation_matrix": "property",
+    "Page.run": "(self, dw, m)",
+    "Page.search_for": "(page, text, *, clip=None, quads=False, flags=None, textpage=None) -> 'list'",
+    "Page.set_artbox": "(self, rect)",
+    "Page.set_bleedbox": "(self, rect)",
+    "Page.set_contents": "(self, xref)",
+    "Page.set_cropbox": "(self, rect)",
+    "Page.set_language": "(self, language=None)",
+    "Page.set_mediabox": "(self, rect)",
+    "Page.set_rotation": "(self, rotation)",
+    "Page.set_trimbox": "(self, rect)",
+    "Page.show_pdf_page": "(page, rect, docsrc, pno=0, keep_proportion=True, overlay=True, oc=0, rotate=0, clip=None) -> 'int'",
+    "Page.transformation_matrix": "property",
+    "Page.trimbox": "property",
+    "Page.update_link": "(page: \"'Page'\", lnk: 'dict') -> 'None'",
+    "Page.widgets": "(self, types=None)",
+    "Page.wrap_contents": "(self)",
+    "Page.write_text": "(page: \"'Page'\", rect=None, writers=None, overlay=True, color=None, opacity=None, keep_proportion=True, rotate=0, oc=0) -> 'None'",
+    "Page.xref": "property",
+    "Pixmap": "(*args)",
+    "Pixmap.FLIP_LEFT_RIGHT": "int",
+    "Pixmap.FLIP_TOP_BOTTOM": "int",
+    "Pixmap.ROTATE_180": "int",
+    "Pixmap.ROTATE_270": "int",
+    "Pixmap.ROTATE_90": "int",
+    "Pixmap.alpha": "property",
+    "Pixmap.clear_with": "(self, value=None, bbox=None)",
+    "Pixmap.color_count": "(self, colors=0, clip=None)",
+    "Pixmap.color_topusage": "(self, clip=None)",
+    "Pixmap.colorspace": "property",
+    "Pixmap.copy": "(self, src, bbox)",
+    "Pixmap.digest": "property",
+    "Pixmap.flip_rotate": "(self, mode: 'int') -> 'Pixmap'",
+    "Pixmap.gamma_with": "(self, gamma)",
+    "Pixmap.h": "property",
+    "Pixmap.height": "property",
+    "Pixmap.invert_irect": "(self, bbox=None)",
+    "Pixmap.irect": "property",
+    "Pixmap.is_monochrome": "property",
+    "Pixmap.is_unicolor": "property",
+    "Pixmap.n": "property",
+    "Pixmap.pdfocr_save": "(self, filename, compress=1, language=None, tessdata=None)",
+    "Pixmap.pdfocr_tobytes": "(self, compress=True, language='eng', tessdata=None)",
+    "Pixmap.pil_image": "(self)",
+    "Pixmap.pil_save": "(self, *args, **kwargs)",
+    "Pixmap.pil_tobytes": "(self, *args, **kwargs)",
+    "Pixmap.pixel": "(self, x, y)",
+    "Pixmap.samples": "property",
+    "Pixmap.samples_mv": "property",
+    "Pixmap.samples_ptr": "property",
+    "Pixmap.save": "(self, filename, output=None, jpg_quality=95)",
+    "Pixmap.set_alpha": "(self, alphavalues=None, premultiply=1, opaque=None, matte=None)",
+    "Pixmap.set_dpi": "(self, xres, yres)",
+    "Pixmap.set_origin": "(self, x, y)",
+    "Pixmap.set_pixel": "(self, x, y, color)",
+    "Pixmap.set_rect": "(self, bbox, color)",
+    "Pixmap.shrink": "(self, factor)",
+    "Pixmap.size": "property",
+    "Pixmap.stride": "property",
+    "Pixmap.tint_with": "(self, black, white)",
+    "Pixmap.tobytes": "(self, output='png', jpg_quality=95)",
+    "Pixmap.w": "property",
+    "Pixmap.warp": "(self, quad, width, height)",
+    "Pixmap.width": "property",
+    "Pixmap.x": "property",
+    "Pixmap.xres": "property",
+    "Pixmap.y": "property",
+    "Pixmap.yres": "property",
+    "Shape": "(page: 'Page')",
+    "Shape.commit": "(self, overlay: 'bool' = True) -> 'None'",
+    "Shape.draw_bezier": "(self, p1: 'point_like', p2: 'point_like', p3: 'point_like', p4: 'point_like') -> 'Point'",
+    "Shape.draw_circle": "(self, center: 'point_like', radius: 'float') -> 'Point'",
+    "Shape.draw_curve": "(self, p1: 'point_like', p2: 'point_like', p3: 'point_like') -> 'Point'",
+    "Shape.draw_line": "(self, p1: 'point_like', p2: 'point_like') -> 'Point'",
+    "Shape.draw_oval": "(self, tetra: 'typing.Union[quad_like, rect_like]') -> 'Point'",
+    "Shape.draw_polyline": "(self, points: 'list') -> 'Point'",
+    "Shape.draw_quad": "(self, quad: 'quad_like') -> 'Point'",
+    "Shape.draw_rect": "(self, rect: 'rect_like', *, radius=None) -> 'Point'",
+    "Shape.draw_sector": "(self, center: 'point_like', point: 'point_like', beta: 'float', fullSector: 'bool' = True) -> 'Point'",
+    "Shape.draw_squiggle": "(self, p1: 'point_like', p2: 'point_like', breadth=2) -> 'Point'",
+    "Shape.draw_zigzag": "(self, p1: 'point_like', p2: 'point_like', breadth: 'float' = 2) -> 'Point'",
+    "Shape.finish": "(self, width: 'float' = 1, color: 'OptSeq' = (0,), fill: 'OptSeq' = None, lineCap: 'int' = 0, lineJoin: 'int' = 0, dashes: 'OptStr' = None, even_odd: 'bool' = False, morph: 'OptSeq' = None, closePath: 'bool' = True, fill_opacity: 'float' = 1, stroke_opacity: 'float' = 1, oc: 'int' = 0) -> 'None'",
+    "Shape.horizontal_angle": "(C, P)",
+    "Shape.insert_text": "(self, point: 'point_like', buffer: 'typing.Union[str, list]', *, fontsize: 'float' = 11, lineheight: 'OptFloat' = None, fontname: 'str' = 'helv', fontfile: 'OptStr' = None, set_simple: 'bool' = 0, encoding: 'int' = 0, color: 'OptSeq' = None, fill: 'OptSeq' = None, render_mode: 'int' = 0, border_width: 'float' = 0.05, miter_limit: 'float' = 1, rotate: 'int' = 0, morph: 'OptSeq' = None, stroke_opacity: 'float' = 1, fill_opacity: 'float' = 1, oc: 'int' = 0) -> 'int'",
+    "Shape.insert_textbox": "(self, rect: 'rect_like', buffer: 'typing.Union[str, list]', *, align: 'int' = 0, border_width: 'float' = 0.05, color: 'OptSeq' = None, encoding: 'int' = 0, expandtabs: 'int' = 1, fill_opacity: 'float' = 1, fill: 'OptSeq' = None, fontfile: 'OptStr' = None, fontname: 'OptStr' = 'helv', fontsize: 'float' = 11, lineheight: 'OptFloat' = None, miter_limit: 'float' = 1, morph: 'OptSeq' = None, oc: 'int' = 0, render_mode: 'int' = 0, rotate: 'int' = 0, set_simple: 'bool' = 0, stroke_opacity: 'float' = 1) -> 'float'",
+    "Shape.updateRect": "(self, x)",
+    "TextPage": "(*args)",
+    "TextPage.extractBLOCKS": "(self)",
+    "TextPage.extractDICT": "(self, cb=None, sort=False) -> 'dict'",
+    "TextPage.extractHTML": "(self) -> 'str'",
+    "TextPage.extractIMGINFO": "(self, hashes=0)",
+    "TextPage.extractJSON": "(self, cb=None, sort=False) -> 'str'",
+    "TextPage.extractRAWDICT": "(self, cb=None, sort=False) -> 'dict'",
+    "TextPage.extractRAWJSON": "(self, cb=None, sort=False) -> 'str'",
+    "TextPage.extractSelection": "(self, pointa, pointb)",
+    "TextPage.extractTEXT": "(self, sort=False) -> 'str'",
+    "TextPage.extractText": "(self, sort=False) -> 'str'",
+    "TextPage.extractTextbox": "(self, rect)",
+    "TextPage.extractWORDS": "(self, delimiters=None)",
+    "TextPage.extractXHTML": "(self) -> 'str'",
+    "TextPage.extractXML": "(self) -> 'str'",
+    "TextPage.poolsize": "(self)",
+    "TextPage.rect": "property",
+    "TextPage.search": "(self, needle, hit_max=0, quads=1)",
+    "TextWriter": "(page_rect, opacity=1, color=None)",
+    "TextWriter.append": "(self, pos, text, font=None, fontsize=11, language=None, right_to_left=0, small_caps=0)",
+    "TextWriter.appendv": "(self, pos, text, font=None, fontsize=11, language=None, small_caps=False)",
+    "TextWriter.clean_rtl": "(self, text)",
+    "TextWriter.fill_textbox": "(writer: \"'TextWriter'\", rect: 'rect_like', text: 'typing.Union[str, list]', pos: 'point_like' = None, font: 'typing.Optional[Font]' = None, fontsize: 'float' = 11, lineheight: 'OptFloat' = None, align: 'int' = 0, warn: 'bool' = None, right_to_left: 'bool' = False, small_caps: 'bool' = False) -> 'tuple'",
+    "TextWriter.write_text": "(self, page, color=None, opacity=-1, overlay=1, morph=None, matrix=None, render_mode=0, oc=0)",
+    "Widget": "()",
+    "Widget.button_states": "(self)",
+    "Widget.next": "property",
+    "Widget.on_state": "(self)",
+    "Widget.reset": "(self)",
+    "Widget.update": "(self, sync_flags=False)"
+   },
+   "probes": {
+    "page_label_prefixes": {
+     "values": [
+      "a/(b)\\",
+      "付/(A)\\"
+     ],
+     "passed": true
+    },
+    "glyph_height_under_scale": {
+     "scales": [
+      [
+       1,
+       1
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       1,
+       0.5
+      ],
+      [
+       1,
+       2
+      ]
+     ],
+     "heights": [
+      20.0,
+      20.0,
+      20.0,
+      10.0,
+      40.00000190734863
+     ],
+     "passed": true
+    }
+   },
+   "timing": {
+    "bill-hr815.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.691625,
+       0.427375,
+       0.39,
+       0.365625,
+       0.360416
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       298.054125,
+       293.294834,
+       292.831333,
+       293.68625,
+       292.790709
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       543.108459,
+       537.820667,
+       538.829667,
+       540.558833,
+       541.490417
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       410.807459,
+       411.304208,
+       411.086042,
+       411.350667,
+       419.505667
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       110.592417,
+       100.989625,
+       96.543458,
+       94.759916,
+       93.712042
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       215.76525,
+       187.564125,
+       183.237875,
+       178.692167,
+       179.92925
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       6.058625,
+       5.862083,
+       5.895,
+       5.853166,
+       5.822833
+      ]
+     }
+    },
+    "bunka-kokugo-series-019-p4.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.716958,
+       0.560416,
+       0.497708,
+       0.48,
+       0.46075
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.262917,
+       0.1205,
+       0.102333,
+       0.096333,
+       0.095333
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.091375,
+       0.083667,
+       0.078958,
+       0.075792,
+       0.079084
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.086041,
+       0.075125,
+       0.07325,
+       0.074584,
+       0.07425
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       37.540625,
+       37.448,
+       37.18175,
+       36.803917,
+       37.648583
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       53.046792,
+       52.41175,
+       52.871,
+       52.001709,
+       52.142792
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.372542,
+       0.225417,
+       0.213875,
+       0.231666,
+       0.219917
+      ]
+     }
+    },
+    "f1040.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.642667,
+       0.410125,
+       0.377584,
+       0.349958,
+       0.473292
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       32.002834,
+       30.467666,
+       30.718167,
+       31.709958,
+       30.6345
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       38.877375,
+       38.356708,
+       38.558625,
+       38.611709,
+       38.767542
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       33.174958,
+       32.493708,
+       32.859,
+       32.466375,
+       32.688583
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       37.87175,
+       35.098583,
+       35.691041,
+       34.984083,
+       34.991041
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       40.125208,
+       38.482833,
+       38.877834,
+       38.882125,
+       38.980459
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       31.907459,
+       31.590583,
+       31.57075,
+       31.76425,
+       31.986875
+      ]
+     }
+    },
+    "mhlw-doc.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       1.014084,
+       0.784084,
+       0.871375,
+       0.864417,
+       0.781458
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       11.886958,
+       8.334833,
+       8.452541,
+       8.77775,
+       8.744916
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       9.526,
+       9.296208,
+       9.357375,
+       9.263375,
+       9.226666
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       8.125125,
+       8.015292,
+       7.789542,
+       8.092584,
+       8.165
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       11.506208,
+       10.32225,
+       10.993,
+       10.94325,
+       10.749833
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       15.229167,
+       13.813583,
+       13.187,
+       13.982709,
+       13.6655
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       2.101,
+       1.915875,
+       1.92625,
+       1.886125,
+       1.90875
+      ]
+     }
+    },
+    "nics-background-checks-2015-11.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.650625,
+       0.415542,
+       0.382875,
+       0.388917,
+       0.373791
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       13.59575,
+       7.35975,
+       7.204959,
+       7.490584,
+       7.208
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       11.341625,
+       11.80125,
+       11.500208,
+       11.737125,
+       11.332
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       8.365792,
+       8.193209,
+       8.119709,
+       8.184,
+       7.8325
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       9.106417,
+       6.143041,
+       5.883542,
+       5.730708,
+       5.750333
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       8.533,
+       7.95775,
+       7.534458,
+       7.694167,
+       8.047042
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.723792,
+       0.565041,
+       0.5325,
+       0.633167,
+       0.605375
+      ]
+     }
+    },
+    "patent-us223898.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.586166,
+       0.361625,
+       0.341791,
+       0.335292,
+       0.33375
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       11.861417,
+       11.123958,
+       11.3865,
+       10.902916,
+       10.647125
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       20.260459,
+       19.906125,
+       19.388125,
+       20.020166,
+       19.3835
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       14.677083,
+       14.886041,
+       14.665208,
+       14.473042,
+       14.988292
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       58.087458,
+       57.967792,
+       57.903834,
+       58.060375,
+       57.395875
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       100.7285,
+       98.930459,
+       99.169042,
+       99.60775,
+       99.36875
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       1.315458,
+       1.112834,
+       1.086917,
+       1.124583,
+       1.143041
+      ]
+     }
+    },
+    "pdf20-simple.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.775542,
+       0.55375,
+       0.530292,
+       0.526,
+       0.520958
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       3.582833,
+       0.521417,
+       0.45825,
+       0.43625,
+       0.441958
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.423,
+       0.426208,
+       0.436125,
+       0.433083,
+       0.415167
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.400125,
+       0.396167,
+       0.402,
+       0.387958,
+       0.4015
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.636709,
+       0.47425,
+       0.461791,
+       0.434875,
+       0.447333
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.95375,
+       0.82075,
+       0.719834,
+       0.722333,
+       0.680916
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.298834,
+       0.217375,
+       0.209,
+       0.200791,
+       0.196333
+      ]
+     }
+    },
+    "pdfium-jpx-lzw.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.802208,
+       0.5765,
+       0.5595,
+       0.540083,
+       0.538875
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.395209,
+       0.120375,
+       0.0995,
+       0.091416,
+       0.088167
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.070333,
+       0.065459,
+       0.068375,
+       0.064417,
+       0.0635
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.069291,
+       0.067208,
+       0.063125,
+       0.064166,
+       0.062709
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       5.903459,
+       5.287042,
+       5.119709,
+       5.22275,
+       5.079709
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       15.329542,
+       14.803792,
+       14.705,
+       14.897166,
+       14.65475
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.276917,
+       0.176166,
+       0.15275,
+       0.148333,
+       0.148042
+      ]
+     }
+    },
+    "pdfium-links-highlights-annots.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.796792,
+       0.640542,
+       0.558833,
+       0.541,
+       0.543583
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       3.989917,
+       0.684209,
+       0.584709,
+       0.567417,
+       0.5735
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.608333,
+       0.612,
+       0.595166,
+       0.623709,
+       0.590958
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.519208,
+       0.5175,
+       0.510334,
+       0.508208,
+       0.489667
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       1.163458,
+       0.882875,
+       0.806042,
+       0.825833,
+       0.789208
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       2.243583,
+       1.3695,
+       1.361708,
+       1.34725,
+       1.341208
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.41025,
+       0.274833,
+       0.2485,
+       0.250875,
+       0.240875
+      ]
+     }
+    },
+    "pdfium-ocg-invisible.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.799083,
+       0.579833,
+       0.548708,
+       0.551,
+       0.542083
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.226292,
+       0.1055,
+       0.083666,
+       0.078208,
+       0.076042
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.061792,
+       0.058208,
+       0.054042,
+       0.05425,
+       0.05675
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.060042,
+       0.054375,
+       0.052333,
+       0.054541,
+       0.051209
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       2.876458,
+       0.132042,
+       0.095833,
+       0.084458,
+       0.082583
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.137958,
+       0.102958,
+       0.1,
+       0.095667,
+       0.095125
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.297125,
+       0.214166,
+       0.186375,
+       0.178333,
+       0.180417
+      ]
+     }
+    },
+    "pdfium-smask-blend.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.776625,
+       0.586834,
+       0.565041,
+       0.5475,
+       0.5485
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.254625,
+       0.130375,
+       0.113458,
+       0.109083,
+       0.100166
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.087083,
+       0.081416,
+       0.080208,
+       0.083375,
+       0.079584
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.084792,
+       0.079291,
+       0.077667,
+       0.078708,
+       0.075625
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       3.002292,
+       0.214708,
+       0.192166,
+       0.183958,
+       0.179125
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.505333,
+       0.404583,
+       0.411958,
+       0.411792,
+       0.406
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.319292,
+       0.216791,
+       0.205042,
+       0.19575,
+       0.192792
+      ]
+     }
+    },
+    "pdfium-type3.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.796291,
+       0.592667,
+       0.557041,
+       0.535458,
+       0.549917
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       3.226834,
+       0.150125,
+       0.112708,
+       0.098625,
+       0.099875
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.089292,
+       0.079917,
+       0.074583,
+       0.084708,
+       0.078084
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.078417,
+       0.071542,
+       0.066167,
+       0.068125,
+       0.066583
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.200584,
+       0.116208,
+       0.105625,
+       0.095625,
+       0.094208
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.148625,
+       0.116916,
+       0.111208,
+       0.10925,
+       0.109083
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.287833,
+       0.178,
+       0.1855,
+       0.166125,
+       0.15975
+      ]
+     }
+    },
+    "senate-expenditures.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.582334,
+       0.369125,
+       0.345375,
+       0.34075,
+       0.3465
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       10.045958,
+       6.659542,
+       6.62275,
+       6.550125,
+       6.4795
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       9.92075,
+       10.035791,
+       9.901709,
+       10.044708,
+       9.903917
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       5.575375,
+       5.517458,
+       5.579292,
+       5.435917,
+       5.561709
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       5.304292,
+       5.038625,
+       4.954667,
+       4.954875,
+       4.94
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       6.062291,
+       5.414542,
+       5.413084,
+       5.37225,
+       5.204375
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.476709,
+       0.36875,
+       0.342,
+       0.336417,
+       0.34225
+      ]
+     }
+    },
+    "usrguide.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       1.442625,
+       1.135875,
+       1.121875,
+       1.091792,
+       1.067584
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       87.043458,
+       63.0695,
+       63.073917,
+       62.673416,
+       62.636375
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       108.448958,
+       105.497083,
+       105.489292,
+       105.667792,
+       106.253916
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       81.425458,
+       81.82375,
+       81.200042,
+       81.538708,
+       81.123709
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       41.744958,
+       38.625375,
+       38.253709,
+       38.431709,
+       38.139584
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       60.786,
+       50.679375,
+       51.7665,
+       52.078708,
+       51.664167
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       5.732,
+       5.5645,
+       5.541083,
+       5.518541,
+       5.421458
+      ]
+     }
+    },
+    "wdl6812-manuscript.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.558792,
+       0.334125,
+       0.306792,
+       0.302709,
+       0.296375
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.903458,
+       0.635875,
+       0.607542,
+       0.606666,
+       0.61125
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.58675,
+       0.56475,
+       0.561292,
+       0.562375,
+       0.551917
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.557833,
+       0.556208,
+       0.565,
+       0.559291,
+       0.616
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       30.906584,
+       27.41925,
+       27.404708,
+       27.42375,
+       27.305583
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       47.249084,
+       46.612583,
+       46.979667,
+       46.396917,
+       47.123625
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.629416,
+       0.476125,
+       0.469584,
+       0.473458,
+       0.451
+      ]
+     }
+    }
+   },
+   "quality": {
+    "bill-hr815-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 12,
+      "found": 12,
+      "in_order": 11,
+      "pairs": 11,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7696636635958106,
+      "failures": []
+     }
+    },
+    "f1040-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 18,
+      "found": 18,
+      "in_order": 17,
+      "pairs": 17,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7226689284713306,
+      "failures": []
+     }
+    },
+    "mhlw-doc-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 11,
+      "found": 11,
+      "in_order": 9,
+      "pairs": 10,
+      "missing": [],
+      "inversions": [
+       [
+        "（第１回労働基準法における「労働者」に関する研究会資料３－１を更新）",
+        "裁判例資料の作成方法"
+       ]
+      ]
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.9021853557927958,
+      "failures": []
+     }
+    },
+    "mhlw-doc-p2": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 5,
+      "found": 5,
+      "in_order": 4,
+      "pairs": 4,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 0,
+      "placed": 0,
+      "mean_iou": null,
+      "failures": []
+     }
+    },
+    "nics-background-checks-2015-11-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 11,
+      "found": 11,
+      "in_order": 9,
+      "pairs": 10,
+      "missing": [],
+      "inversions": [
+       [
+        "November - 2015",
+        "Alabama"
+       ]
+      ]
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7252504641041074,
+      "failures": []
+     },
+     "table": {
+      "columns": 25,
+      "rows": 3,
+      "rows_found": 1,
+      "cells": 75,
+      "cells_right": 14,
+      "expected_columns": 25
+     }
+    },
+    "patent-us223898-p2": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 9,
+      "found": 9,
+      "in_order": 7,
+      "pairs": 8,
+      "missing": [],
+      "inversions": [
+       [
+        "he lar, the lealing-wires must be of largn",
+        "dimensions and good conductors, and a glas"
+       ]
+      ]
+     },
+     "words": {
+      "words": 0,
+      "placed": 0,
+      "mean_iou": null,
+      "failures": []
+     }
+    },
+    "usrguide-p2": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 12,
+      "found": 12,
+      "in_order": 11,
+      "pairs": 11,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7121361639264393,
+      "failures": []
+     }
+    }
+   }
+  },
+  "pyropdf": {
+   "engine": "pyropdf 0.3.1",
+   "installed": {
+    "pip": "26.2.2",
+    "pyropdf": "0.3.1"
+   },
+   "probes": {
+    "page_label_prefixes": {
+     "values": [
+      "a/(b)\\",
+      "付/(A)\\"
+     ],
+     "passed": true
+    },
+    "glyph_height_under_scale": {
+     "scales": [
+      [
+       1,
+       1
+      ],
+      [
+       0.5,
+       1
+      ],
+      [
+       2,
+       1
+      ],
+      [
+       1,
+       0.5
+      ],
+      [
+       1,
+       2
+      ]
+     ],
+     "heights": [
+      20.0,
+      20.0,
+      20.0,
+      10.0,
+      40.0
+     ],
+     "passed": true
+    }
+   },
+   "timing": {
+    "bill-hr815.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.433625,
+       0.120459,
+       0.105792,
+       0.09525,
+       0.093458
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       118.493084,
+       117.986583,
+       118.29325,
+       117.333917,
+       117.604166
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       190.971125,
+       188.412458,
+       194.931875,
+       189.8765,
+       187.532709
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       120.285125,
+       120.465875,
+       119.838042,
+       120.380375,
+       119.737458
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       408.005583,
+       398.952667,
+       397.8425,
+       400.995459,
+       400.027375
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       726.975708,
+       689.629083,
+       694.116458,
+       690.949916,
+       693.375333
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.992416,
+       0.904792,
+       0.8965,
+       0.904833,
+       0.897667
+      ]
+     }
+    },
+    "bunka-kokugo-series-019-p4.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.363334,
+       0.0675,
+       0.047292,
+       0.046792,
+       0.047875
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.268416,
+       0.068875,
+       0.057958,
+       0.053209,
+       0.055625
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.064083,
+       0.048,
+       0.045459,
+       0.044667,
+       0.042167
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.05475,
+       0.042417,
+       0.037084,
+       0.037333,
+       0.03675
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       7.824583,
+       7.485417,
+       7.292875,
+       7.155458,
+       7.318417
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       12.711667,
+       11.936125,
+       11.942167,
+       11.960792,
+       11.734542
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.296208,
+       0.235084,
+       0.225375,
+       0.218875,
+       0.227417
+      ]
+     }
+    },
+    "f1040.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.715709,
+       0.357458,
+       0.315625,
+       0.302042,
+       0.300833
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       10.514792,
+       9.725,
+       9.550625,
+       9.576459,
+       9.461792
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       12.752625,
+       14.66575,
+       12.687166,
+       12.409,
+       13.04275
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       7.37825,
+       7.393334,
+       7.359,
+       7.126792,
+       7.355416
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       12.891958,
+       12.95475,
+       12.476291,
+       12.639875,
+       12.588833
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       17.859916,
+       15.836917,
+       17.064708,
+       16.55425,
+       16.6365
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       2.985792,
+       3.09425,
+       3.007958,
+       3.009125,
+       2.97375
+      ]
+     }
+    },
+    "mhlw-doc.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.463125,
+       0.104959,
+       0.085708,
+       0.082833,
+       0.071959
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       7.782875,
+       7.254542,
+       7.264833,
+       7.471209,
+       7.47325
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       7.913,
+       7.473083,
+       7.54275,
+       7.400667,
+       7.481917
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       7.198625,
+       7.30325,
+       7.178459,
+       7.175833,
+       7.330542
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       6.7665,
+       6.414958,
+       6.555542,
+       6.293916,
+       6.325333
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       9.889416,
+       8.894333,
+       8.718125,
+       8.98275,
+       9.147833
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.778584,
+       0.726209,
+       0.760666,
+       0.726375,
+       0.723209
+      ]
+     }
+    },
+    "nics-background-checks-2015-11.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.322667,
+       0.061917,
+       0.046292,
+       0.043708,
+       0.041
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       3.969666,
+       3.2815,
+       3.259666,
+       3.158542,
+       3.184125
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       5.223833,
+       4.889208,
+       6.010417,
+       4.930583,
+       4.833166
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       3.10625,
+       3.070416,
+       3.122959,
+       3.229916,
+       3.220833
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       6.456792,
+       6.348,
+       6.277625,
+       6.183,
+       6.384833
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       9.54225,
+       8.601833,
+       8.756333,
+       8.818667,
+       8.868833
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.22525,
+       0.187292,
+       0.178875,
+       0.176917,
+       0.175875
+      ]
+     }
+    },
+    "patent-us223898.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.348834,
+       0.078959,
+       0.07275,
+       0.056875,
+       0.053292
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       8.527834,
+       7.203834,
+       7.389167,
+       7.448291,
+       7.914375
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       10.4795,
+       10.919459,
+       10.397834,
+       9.807,
+       10.23175
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       7.719375,
+       7.60075,
+       7.425958,
+       7.750292,
+       7.754417
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       21.0835,
+       19.872166,
+       20.38675,
+       20.670417,
+       21.287208
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       32.528542,
+       29.352417,
+       29.767042,
+       29.478333,
+       29.66875
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.604542,
+       0.574792,
+       0.551417,
+       0.559208,
+       0.556625
+      ]
+     }
+    },
+    "pdf20-simple.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.316417,
+       0.049916,
+       0.03675,
+       0.03175,
+       0.03
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.3495,
+       0.121125,
+       0.097959,
+       0.092792,
+       0.085334
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.110666,
+       0.090417,
+       0.083916,
+       0.081625,
+       0.082375
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.070792,
+       0.066084,
+       0.063958,
+       0.060917,
+       0.060417
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.360333,
+       0.190625,
+       0.182083,
+       0.173958,
+       0.169333
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.896875,
+       0.470041,
+       0.528542,
+       0.522667,
+       0.530333
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.042083,
+       0.024125,
+       0.021417,
+       0.02,
+       0.019792
+      ]
+     }
+    },
+    "pdfium-jpx-lzw.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.28825,
+       0.044041,
+       0.035167,
+       0.030083,
+       0.027542
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.16975,
+       0.04,
+       0.030667,
+       0.026209,
+       0.027417
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.033708,
+       0.024416,
+       0.025333,
+       0.023875,
+       0.023458
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.027541,
+       0.02,
+       0.01975,
+       0.017833,
+       0.0175
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       4.39025,
+       4.076375,
+       3.475916,
+       3.463333,
+       3.395583
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       5.544125,
+       4.947125,
+       4.647,
+       4.652583,
+       4.712625
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.041166,
+       0.0185,
+       0.012084,
+       0.01075,
+       0.010459
+      ]
+     }
+    },
+    "pdfium-links-highlights-annots.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.2725,
+       0.045708,
+       0.03375,
+       0.030167,
+       0.0295
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.381125,
+       0.161042,
+       0.134083,
+       0.123083,
+       0.117584
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.164833,
+       0.1355,
+       0.147,
+       0.129,
+       0.124958
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.10175,
+       0.093417,
+       0.092875,
+       0.088625,
+       0.088
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.78775,
+       0.395917,
+       0.363,
+       0.355709,
+       0.347
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       1.742334,
+       0.940916,
+       0.888167,
+       0.879208,
+       0.8575
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.045333,
+       0.024,
+       0.018833,
+       0.017625,
+       0.019
+      ]
+     }
+    },
+    "pdfium-ocg-invisible.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.343959,
+       0.049583,
+       0.037833,
+       0.035792,
+       0.029083
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.227167,
+       0.053042,
+       0.042083,
+       0.036,
+       0.032584
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.04525,
+       0.036958,
+       0.032042,
+       0.029417,
+       0.031167
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.033375,
+       0.025125,
+       0.022708,
+       0.022416,
+       0.023
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.107958,
+       0.051125,
+       0.045,
+       0.044625,
+       0.041625
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.131333,
+       0.077583,
+       0.079583,
+       0.075125,
+       0.075917
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.037,
+       0.015792,
+       0.012875,
+       0.011792,
+       0.011375
+      ]
+     }
+    },
+    "pdfium-smask-blend.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.289583,
+       0.047417,
+       0.033041,
+       0.027375,
+       0.029833
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.215333,
+       0.064666,
+       0.053209,
+       0.045,
+       0.042875
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.052708,
+       0.040916,
+       0.038708,
+       0.044875,
+       0.037459
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.037167,
+       0.030583,
+       0.029042,
+       0.026042,
+       0.026083
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.186458,
+       0.113791,
+       0.105709,
+       0.106417,
+       0.101333
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.321416,
+       0.262458,
+       0.259,
+       0.253208,
+       0.251167
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.034167,
+       0.018,
+       0.015417,
+       0.016166,
+       0.016084
+      ]
+     }
+    },
+    "pdfium-type3.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.280667,
+       0.052375,
+       0.037459,
+       0.0285,
+       0.027958
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.301208,
+       0.061792,
+       0.047833,
+       0.041125,
+       0.038667
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.197042,
+       0.036958,
+       0.036,
+       0.031709,
+       0.032709
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.041625,
+       0.027959,
+       0.024458,
+       0.023708,
+       0.023292
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       0.178333,
+       0.070667,
+       0.05925,
+       0.059625,
+       0.05725
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       0.1315,
+       0.087875,
+       0.086708,
+       0.08325,
+       0.085
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.03075,
+       0.014167,
+       0.012166,
+       0.011208,
+       0.010875
+      ]
+     }
+    },
+    "senate-expenditures.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.324458,
+       0.063083,
+       0.043083,
+       0.0405,
+       0.037542
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       3.076791,
+       2.615209,
+       2.408708,
+       2.417542,
+       2.863541
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       3.397208,
+       3.143,
+       3.56725,
+       3.3285,
+       3.218334
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       2.503709,
+       2.453375,
+       2.435167,
+       2.483041,
+       2.443791
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       9.1395,
+       5.329625,
+       5.099875,
+       5.37425,
+       5.305209
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       8.134292,
+       7.125041,
+       7.703084,
+       7.5455,
+       7.670958
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.148292,
+       0.117709,
+       0.111542,
+       0.106875,
+       0.106041
+      ]
+     }
+    },
+    "usrguide.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.493042,
+       0.14925,
+       0.120583,
+       0.106417,
+       0.107625
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       69.279,
+       62.539792,
+       63.67525,
+       62.324666,
+       65.053417
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       80.676541,
+       78.881291,
+       78.043708,
+       77.612417,
+       78.992542
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       62.155292,
+       62.300208,
+       63.071125,
+       62.997208,
+       64.220958
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       87.102458,
+       84.748083,
+       92.426959,
+       84.976709,
+       81.671291
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       135.770791,
+       125.735375,
+       128.7495,
+       125.2815,
+       128.579667
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       1.490209,
+       1.41975,
+       1.443541,
+       1.45225,
+       1.429791
+      ]
+     }
+    },
+    "wdl6812-manuscript.pdf": {
+     "open": {
+      "status": "ok",
+      "samples_ms": [
+       0.361917,
+       0.08425,
+       0.06475,
+       0.063959,
+       0.058417
+      ]
+     },
+     "text": {
+      "status": "ok",
+      "samples_ms": [
+       0.281458,
+       0.101167,
+       0.077625,
+       0.072834,
+       0.068166
+      ]
+     },
+     "words": {
+      "status": "ok",
+      "samples_ms": [
+       0.08175,
+       0.066584,
+       0.06675,
+       0.071333,
+       0.073875
+      ]
+     },
+     "search": {
+      "status": "ok",
+      "samples_ms": [
+       0.060708,
+       0.048167,
+       0.048125,
+       0.045833,
+       0.046
+      ]
+     },
+     "render_72": {
+      "status": "ok",
+      "samples_ms": [
+       18.1375,
+       17.661875,
+       17.420708,
+       17.119417,
+       17.663084
+      ]
+     },
+     "render_144": {
+      "status": "ok",
+      "samples_ms": [
+       21.286458,
+       21.12925,
+       20.511125,
+       20.92875,
+       21.293625
+      ]
+     },
+     "save": {
+      "status": "ok",
+      "samples_ms": [
+       0.663833,
+       0.633125,
+       0.621125,
+       0.619834,
+       0.617167
+      ]
+     }
+    }
+   },
+   "quality": {
+    "bill-hr815-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 12,
+      "found": 12,
+      "in_order": 11,
+      "pairs": 11,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7638324356154542,
+      "failures": []
+     }
+    },
+    "f1040-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 18,
+      "found": 18,
+      "in_order": 17,
+      "pairs": 17,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.8380673715856836,
+      "failures": []
+     }
+    },
+    "mhlw-doc-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 11,
+      "found": 11,
+      "in_order": 10,
+      "pairs": 10,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.8186421232600222,
+      "failures": []
+     }
+    },
+    "mhlw-doc-p2": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 5,
+      "found": 5,
+      "in_order": 4,
+      "pairs": 4,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 0,
+      "placed": 0,
+      "mean_iou": null,
+      "failures": []
+     }
+    },
+    "nics-background-checks-2015-11-p1": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 11,
+      "found": 11,
+      "in_order": 10,
+      "pairs": 10,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7251057889289286,
+      "failures": []
+     },
+     "table": {
+      "columns": 25,
+      "rows": 3,
+      "rows_found": 3,
+      "cells": 75,
+      "cells_right": 75,
+      "expected_columns": 25
+     }
+    },
+    "patent-us223898-p2": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 9,
+      "found": 9,
+      "in_order": 8,
+      "pairs": 8,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 0,
+      "placed": 0,
+      "mean_iou": null,
+      "failures": []
+     }
+    },
+    "usrguide-p2": {
+     "status": "ok",
+     "anchors": {
+      "anchors": 12,
+      "found": 12,
+      "in_order": 11,
+      "pairs": 11,
+      "missing": [],
+      "inversions": []
+     },
+     "words": {
+      "words": 6,
+      "placed": 6,
+      "mean_iou": 0.7082563107386122,
+      "failures": []
+     }
+    }
+   }
+  }
+ },
+ "previous_baseline": "2.0",
+ "previous_release": null,
+ "previous_report_sha256": "37ed911274913804d12e37df683d4d922a56b6342710f20f9705749397526e6f",
+ "previous_probes": {
+  "glyph_height_under_scale": {
+   "heights": [
+    20.0,
+    10.0,
+    40.0,
+    20.0,
+    20.0
+   ],
+   "passed": false,
+   "scales": [
+    [
+     1,
+     1
+    ],
+    [
+     0.5,
+     1
+    ],
+    [
+     2,
+     1
+    ],
+    [
+     1,
+     0.5
+    ],
+    [
+     1,
+     2
+    ]
+   ]
+  },
+  "page_label_prefixes": {
+   "passed": false,
+   "values": [
+    "a",
+    "<FEFF4ED8002F002800410029005C>"
+   ]
+  }
+ },
+ "surface_delta": {},
+ "surface_count": 479
+}

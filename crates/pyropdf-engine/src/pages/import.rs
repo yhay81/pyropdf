@@ -46,6 +46,8 @@ pub struct Along<'a> {
 
 /// What an import copied.
 pub struct Imported {
+    /// Whether the copied graph contains an opaque PRC model stream.
+    pub contains_prc: bool,
     /// The new pages, in order.
     pub pages: Vec<Reference>,
     /// The copy of each of [`Along::objects`], or null.
@@ -71,11 +73,28 @@ pub fn import(
     root: Reference,
     budget: &Budget,
 ) -> Result<Imported> {
+    // An action can reach a media annotation from a different page. Copying
+    // only its dictionary would leave the target outside the page tree.
+    let mut listed = BudgetVec::new(budget);
+    for (_, page) in &pages {
+        if let Some(Value::Array(items)) = super::resolve(source, page.get("Annots"), budget)? {
+            budget.check(LimitCode::AnnotationCount, items.len() as u64)?;
+            for item in items.iter() {
+                budget.poll()?;
+                if let Value::Reference(reference) = item {
+                    listed.try_push(*reference)?;
+                }
+            }
+        }
+    }
+    listed.sort_unstable();
     let mut walk = Walk {
         source,
         overrides,
         edited: BudgetVec::new(budget),
         keys: Keys::Strip,
+        listed: &listed,
+        contains_prc: false,
         numbers: Charged::new(budget),
         pending: BudgetVec::new(budget),
         budget,
@@ -142,6 +161,7 @@ pub fn import(
     let mut copies = copies.into_vec();
     copies.sort_unstable();
     Ok(Imported {
+        contains_prc: walk.contains_prc,
         pages: added.into_vec(),
         objects: objects.into_vec(),
         found: found.into_vec(),
@@ -174,6 +194,8 @@ pub fn copy_resource_graph(
             overrides: &[],
             edited: BudgetVec::new(budget),
             keys: Keys::Preserve,
+            listed: &[],
+            contains_prc: false,
             numbers: Charged::new(budget),
             pending: BudgetVec::new(budget),
             budget,
@@ -250,6 +272,8 @@ struct Walk<'s, 'b> {
     overrides: &'s [(Reference, Option<Value>)],
     edited: BudgetVec<'b, (Reference, Value)>,
     keys: Keys,
+    listed: &'s [Reference],
+    contains_prc: bool,
     numbers: Charged<'b, Reference, Reference>,
     pending: BudgetVec<'b, (Reference, Reference)>,
     budget: &'b Budget,
@@ -312,11 +336,23 @@ impl Walk<'_, '_> {
             let Some(value) = self.object(reference)? else {
                 return Ok(Value::Null);
             };
+            if let Value::Stream(stream) = &value
+                && matches!(stream.dict().get("Subtype"), Some(Value::Name(name)) if name.as_bytes() == b"PRC")
+            {
+                self.contains_prc = true;
+            }
             let dict = match &value {
                 Value::Dict(dict) => Some(dict),
                 Value::Stream(stream) => Some(stream.dict()),
                 _ => None,
             };
+            if dict.is_some_and(crate::annotations::is_media_annotation)
+                && self.listed.binary_search(&reference).is_err()
+            {
+                return Err(Error::malformed(
+                    "the import selection omits a referenced multimedia annotation",
+                ));
+            }
             if let Some(Value::Name(kind)) = dict.and_then(|dict| dict.get("Type"))
                 && matches!(kind.as_bytes(), b"Page" | b"Pages" | b"Catalog")
             {
@@ -473,6 +509,8 @@ mod tests {
             overrides: &[],
             edited: BudgetVec::new(&budget),
             keys: Keys::Strip,
+            listed: &[],
+            contains_prc: false,
             numbers: Charged::new(&budget),
             pending: BudgetVec::new(&budget),
             budget: &budget,

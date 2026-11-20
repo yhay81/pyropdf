@@ -222,6 +222,9 @@ Target: TypeAlias = (
     Destination
     | RemoteDestination
     | EmbeddedDestination
+    | GoTo3DView
+    | RenditionAction
+    | RichMediaExecute
     | Launch
     | NamedAction
     | TransitionAction

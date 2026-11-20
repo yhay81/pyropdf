@@ -387,18 +387,40 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations."
 
-[families.multimedia]
+[families.rendition-criteria]
 tracker = 256
-issue = 862
-title = "Expose multimedia, rendition and 3D relationships as editable PDF data"
-features = [
-    "sound-annotations", "movie-annotations", "screen-annotations", "projection-annotations",
-    "rich-annotations", "sound-actions", "movie-actions", "rendition-actions", "goto-3d-view-actions",
-    "rich-media-execute-actions", "renditions", "sounds", "movies", "alternate-presentations", "3d-artwork",
-    "rich-media",
-]
+issue = 912
+title = "Author selector renditions, clip sections and player criteria"
+features = ["renditions"]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Resolve and edit media as stored data, including streams, actions, named views and legacy relationships under the deprecation policy."
+behavior = "Author selector alternatives, clip offsets, player requirements and criteria. Round-trip the linked media and unsupported keys."
+
+[families.3d-scene-settings]
+tracker = 256
+issue = 913
+title = "Author 3D scene settings and dimensional measurements as PDF data"
+features = ["3d-artwork"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+behavior = "Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing."
+
+[families.rich-media-settings]
+tracker = 256
+issue = 914
+title = "Author multi-asset RichMedia configurations, activation and presentation settings"
+features = ["rich-annotations", "rich-media"]
+dimensions = ["read", "interpret", "create", "edit", "preserve"]
+behavior = "Bind multiple assets and instances to configurations and round-trip activation, presentation and animation settings."
+
+[families.legacy-media]
+tracker = 256
+issue = 915
+title = "Complete existing legacy movie, sound and alternate-presentation relationship editing"
+features = [
+    "sound-annotations", "movie-annotations", "sound-actions", "movie-actions", "sounds", "movies",
+    "alternate-presentations",
+]
+dimensions = ["read", "interpret", "edit", "preserve"]
+behavior = "Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files."
 
 [families.prepress]
 tracker = 256
