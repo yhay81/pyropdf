@@ -141,8 +141,9 @@ LIMIT_CODES: Final[Mapping[LimitCode, str]] = MappingProxyType(
         "content_element_count": (
             "`Page.content`, `Page.paths`, or `Page.images` reads more glyphs, path and clip segments, dash lengths, "
             "and items than `max_elements` (or `Document.subset_fonts` counts more than 262,144 elements), `Canvas` "
-            "holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, or "
-            "`Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image."
+            "holds more than 1,048,576 path points or gradient stops or repeats a gradient more than 4,096 cycles, "
+            "`Pages.new_from_image` reads more than 4,096 frames or 256 million pixels of one image, or "
+            "`Document.image_for_output` reads an image with more than 4,096 alternate entries."
         ),
         "text_glyph_count": (
             "`Page.text`, `Page.words`, `Page.layout`, or `Document.text` collects more glyphs of one page than the "

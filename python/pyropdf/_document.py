@@ -52,7 +52,7 @@ from pyropdf._fonts import (
 )
 from pyropdf._form import Form
 from pyropdf._history import History, Transaction
-from pyropdf._images import ImageRewriteReport, remove_image, replace_image, rewrite_images
+from pyropdf._images import ImageRewriteReport, image_for_output, remove_image, replace_image, rewrite_images
 from pyropdf._layers import Layers
 from pyropdf._limits import DocumentLimits, _validate_optional_positive_int
 from pyropdf._links import Destinations
@@ -89,7 +89,7 @@ from pyropdf._metadata import (
     write_viewer_preferences,
     write_xmp,
 )
-from pyropdf._objects import Dictionary, Objects, _catalog, _trailer
+from pyropdf._objects import Dictionary, Objects, Stream, _catalog, _trailer
 from pyropdf._outline import Outline, OutlineEntry, _write_outline
 from pyropdf._page import _clip_box, _ExportPage, _render_scale
 from pyropdf._page_labels import PageLabelRange, _read_page_labels, _write_page_labels
@@ -480,6 +480,16 @@ class Document:
         """
         self._ensure_open()
         return _profiles(self)
+
+    def image_for_output(self, xref: int, /, *, printing: bool = False) -> Stream | None:
+        """Return the image stream selected for display or print, or ``None`` for a hidden base image.
+
+        This reads the current layer configuration and the ordered ``/Alternates``
+        entries using the corrected ISO 32000-2 §8.9.5.4 selection rules. The
+        returned stream can be inspected or edited through its Arlington view.
+        Page rendering currently uses the base image for alternate-only visibility.
+        """
+        return image_for_output(self, xref, printing=printing)
 
     def replace_image(self, xref: int, data: bytes) -> None:
         """Replace image object ``xref`` with JPEG, JPEG 2000, or PNG ``data``, in one transaction.

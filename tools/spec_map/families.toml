@@ -119,15 +119,15 @@ features = [
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Read and edit RV/DS field data, mask displayed password glyphs, and inspect, edit/remove and preserve existing XFA packets under the recorded creation exclusion. Verify field values and appearances independently."
 
-[families.image-resources]
+[families.alternate-image-rendering]
 tracker = 250
-issue = 900
-title = "Support alternate image resources, masks and reference XObjects through rewriting"
-features = [
-    "images", "image-masks", "reference-xobjects",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read and rewrite image alternates, masks and reference XObject relationships, verifying selection, unchanged resource bytes, and output without fetching or executing external content."
+issue = 947
+parent = 7
+kind = "upstream"
+title = "Select visible alternate image XObjects in hayro rendering and content devices"
+features = ["images"]
+dimensions = ["interpret"]
+behavior = "Apply the alternate image choice during painting and report the chosen stream as the content item's source. The consumer can already resolve display and print alternatives in the stored data."
 
 [families.redaction]
 tracker = 250
