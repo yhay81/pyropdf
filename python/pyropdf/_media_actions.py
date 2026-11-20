@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import math
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
@@ -13,6 +14,8 @@ from pyropdf._media import _MAX_ITEMS, _MAX_TEXT, _base_or_extension, _bounded, 
 from pyropdf._objects import Array, Dictionary, Name, Stream, String
 
 if TYPE_CHECKING:
+    from collections.abc import Generator, Iterator
+
     from pyropdf._document import Document
 
 
@@ -58,6 +61,27 @@ class RenditionAction:
         elif self.script is not None and not isinstance(self.script, Stream):
             msg = "script must be a string or stream"
             raise TypeError(msg)
+
+    @property
+    def media_candidates(self) -> tuple[typed.RenditionMedia, ...]:
+        """Return media renditions in depth-first selector preference order.
+
+        Shared candidates keep their positions. Player capabilities and playback
+        conditions are available on the typed dictionaries and are not evaluated.
+        """
+        if self.rendition is None:
+            return ()
+        return _candidates(self.rendition)
+
+    @contextmanager
+    def edit_rendition(self) -> Generator[typed.RenditionMedia | typed.RenditionSelector, None, None]:
+        """Edit the live rendition tree in one undo step, validating it before commit."""
+        if self.rendition is None:
+            msg = "the action has no rendition to edit"
+            raise ValueError(msg)
+        with self.rendition.obj._document.transaction("edit rendition"):  # noqa: SLF001
+            yield self.rendition
+            _candidates(self.rendition)
 
 
 def _target_number(value: int | None) -> None:
@@ -232,6 +256,107 @@ def _has_instance(obj: Dictionary, instance: Dictionary) -> bool:
     return False
 
 
+def _dictionary(value: object, description: str) -> Dictionary:
+    if not isinstance(value, Dictionary) or isinstance(value, Stream):
+        msg = f"{description} must be a dictionary"
+        raise TypeError(msg)
+    return value
+
+
+def _check_offset(value: object) -> None:
+    offset = _dictionary(value, "media offset")
+    kind = offset.get("S")
+    if kind == "T":
+        span = _dictionary(offset.get("T"), "media offset timespan")
+        seconds = span.get("V")
+        if span.get("S") == "S" and type(seconds) is not bool and isinstance(seconds, (int, float)) and seconds >= 0:
+            return
+    elif kind == "F":
+        frame = offset.get("F")
+        if type(frame) is int and frame >= 0:
+            return
+    elif kind == "M" and isinstance(offset.get("M"), String):
+        return
+    msg = "a media offset requires nonnegative seconds, a nonnegative frame number or a marker string"
+    raise ValueError(msg)
+
+
+def _check_section_bounds(node: Dictionary) -> None:
+    for key in ("MH", "BE"):
+        limits = node.get(key)
+        if limits is not None:
+            interval = _dictionary(limits, "media clip section limits")
+            for bound in ("B", "E"):
+                offset = interval.get(bound)
+                if offset is not None:
+                    _check_offset(offset)
+
+
+def _children(node: Dictionary, *, clip: bool) -> Iterator[tuple[Dictionary, bool]]:
+    subtype = node.get("S")
+    if not clip and subtype == "SR":
+        choices = node.get("R")
+        if not isinstance(choices, Array):
+            msg = "a selector rendition requires an array of renditions"
+            raise ValueError(msg)
+        _bounded(choices)
+        for child in choices:
+            yield _dictionary(child, "selector candidate"), False
+    elif not clip and subtype == "MR":
+        child = node.get("C")
+        if child is not None:
+            yield _dictionary(child, "media clip"), True
+        elif not isinstance(node.get("P"), Dictionary):
+            msg = "a media rendition requires a clip or play parameters"
+            raise ValueError(msg)
+    elif clip and subtype == "MCS":
+        _check_section_bounds(node)
+        yield _dictionary(node.get("D"), "next-level media clip"), True
+    elif not (clip and subtype == "MCD"):
+        msg = "expected a media clip subtype" if clip else "expected a rendition subtype"
+        raise ValueError(msg)
+
+
+def _candidates(root: typed.RenditionMedia | typed.RenditionSelector) -> tuple[typed.RenditionMedia, ...]:
+    def read(budget: _core._OperationBudget) -> tuple[typed.RenditionMedia, ...]:
+        active: set[Dictionary] = set()
+        leaves: list[typed.RenditionMedia] = []
+        stack: list[tuple[Dictionary | None, Iterator[tuple[Dictionary, bool]], int]] = [
+            (None, iter(((root.obj, False),)), 0)
+        ]
+        count = 0
+        while stack:
+            parent, children, charge = stack[-1]
+            edge = next(children, None)
+            if edge is None:
+                stack.pop()
+                if parent is not None:
+                    active.remove(parent)
+                    budget.release("memory_size", charge)
+                continue
+            node, clip = edge
+            count += 1
+            if count > _MAX_ITEMS:
+                msg = "rendition relationships exceed 4096 entries"
+                code = "annotation_count"
+                raise LimitError(code, msg)
+            if node in active:
+                msg = "cycle in rendition selectors or media clip sections"
+                raise ValueError(msg)
+            # The iterator visits one sibling at a time. Include the direct
+            # object's path in the retained handle charge.
+            charge = 512 + 8 * len(node._path)  # noqa: SLF001
+            budget.charge("memory_size", charge)
+            if not clip and node.get("S") == "MR":
+                budget.charge("memory_size", 160 + 8 * len(node._path))  # noqa: SLF001
+                leaves.append(typed.RenditionMedia(node))
+            active.add(node)
+            stack.append((node, _children(node, clip=clip), charge))
+        return tuple(leaves)
+
+    return _core.read_operation(root.obj._core(), read)  # noqa: SLF001
+
+
 def _rendition_dict(doc: Document, action: RenditionAction) -> dict[str, object]:
     entries: dict[str, object] = {"S": Name("Rendition")}
     if action.annotation is not None:
@@ -241,6 +366,7 @@ def _rendition_dict(doc: Document, action: RenditionAction) -> dict[str, object]
         if required != action.rendition.S:
             msg = "rendition dictionary has the wrong subtype"
             raise ValueError(msg)
+        _candidates(action.rendition)
         entries["R"] = action.rendition.obj
     if action.operation is not None:
         entries["OP"] = int(action.operation)

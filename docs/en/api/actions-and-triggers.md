@@ -450,6 +450,25 @@ RenditionAction(
 
 A Screen target, optional rendition, operation and inert script.
 
+### `RenditionAction.media_candidates`
+
+```python
+RenditionAction.media_candidates: tuple[typed.RenditionMedia, ...]
+```
+
+Media renditions in depth-first selector preference order.
+
+Shared candidates keep their positions. Player capabilities and playback
+conditions are available on the typed dictionaries and are not evaluated.
+
+### `RenditionAction.edit_rendition`
+
+```python
+RenditionAction.edit_rendition() -> Generator[typed.RenditionMedia | typed.RenditionSelector, None, None]
+```
+
+Edit the live rendition tree in one undo step, validating it before commit.
+
 ## `RenditionOperation`
 
 The operation requested of a viewer by a rendition action.
