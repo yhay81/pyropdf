@@ -134,3 +134,11 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
                 for test in row[dimension]["tests"]
                 if "::test_profile_structure_and_page_rotation" in test
             )
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_dual_claim_screen_has_distinct_accessibility_and_archival_rules(*, incremental: bool) -> None:
+    mode = "incremental" if incremental else "full"
+    name = f"pdfua-2-pdfa-4-add_screen-{mode}.pdf"
+    assert VERAPDF.EXPECTED[f"ua2 {name}"] == ("#848", {"8.9.2.4.12-1", "8.9.3.3-1"})
+    assert VERAPDF.EXPECTED[f"4 {name}"] == ("#848", {"6.3.1-1", "6.3.2-1", "6.6.1-1", "6.9-2", "6.9-3", "6.9-4"})
