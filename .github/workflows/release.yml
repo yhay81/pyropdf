@@ -1,7 +1,7 @@
 # Release CI: build wheels for every platform and publish on a v* tag.
 # `workflow_dispatch` builds and smoke-tests everything without publishing.
 # macOS and Windows minutes cost several times Linux minutes, so this runs
-# only on tags and by hand, never on pull requests.
+# only on tags and by hand. Worker smoke changes also run the Linux WASM job on PRs.
 #
 # Publishing requires a Trusted Publisher configured on PyPI:
 #   PyPI → project pyropdf → Publishing → GitHub
@@ -15,10 +15,18 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "tools/build_pyodide.sh"
+      - "tools/pyodide-build-requirements.txt"
+      - "tools/smoke_artifact.py"
+      - "tools/smoke_worker.py"
+      - "tools/cloudflare/**"
   workflow_dispatch:
     inputs:
       pyodide_only:
-        description: "Verify only the Pyodide wheel"
+        description: "Verify the Pyodide wheel in Node and local Cloudflare Workers"
         type: boolean
         default: false
 
@@ -48,7 +56,7 @@ jobs:
           test "v${package_version}" = "${GITHUB_REF_NAME}"
 
   build-wheels:
-    if: ${{ !inputs.pyodide_only }}
+    if: github.event_name != 'pull_request' && !inputs.pyodide_only
     name: wheel (${{ matrix.platform.target }})
     needs: verify
     runs-on: ${{ matrix.platform.runner }}
@@ -99,7 +107,7 @@ jobs:
           path: dist
 
   build-free-threaded-wheels:
-    if: ${{ !inputs.pyodide_only }}
+    if: github.event_name != 'pull_request' && !inputs.pyodide_only
     name: free-threaded wheel (${{ matrix.python.tag }}, ${{ matrix.platform.target }})
     needs: verify
     runs-on: ${{ matrix.platform.runner }}
@@ -149,15 +157,12 @@ jobs:
           path: dist
 
   build-pyodide-wheel:
-    name: Pyodide wheel
+    name: Pyodide and Workers wheel
     needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
-      artifact-metadata: write
-      attestations: write
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -170,17 +175,39 @@ jobs:
           node-version: "24.13.0"
       - name: Build and smoke-test the installed Pyodide wheel
         run: bash tools/build_pyodide.sh
-      - name: Attest Pyodide wheel build provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          subject-path: dist/*.whl
+          version: "0.13.9"
+          enable-cache: false
+      - name: Verify requests through local Cloudflare workerd
+        run: bash tools/cloudflare/smoke.sh local dist/*-pyemscripten_2026_0_wasm32.whl
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: wheels-pyodide
           path: dist/*.whl
 
+  attest-pyodide-wheel:
+    name: Attest the verified Pyodide and Workers wheel
+    if: github.event_name != 'pull_request'
+    needs: build-pyodide-wheel
+    runs-on: ubuntu-latest
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-pyodide
+          path: dist
+      - name: Attest Pyodide wheel build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.whl
+
   build-sdist:
-    if: ${{ !inputs.pyodide_only }}
+    if: github.event_name != 'pull_request' && !inputs.pyodide_only
     name: sdist
     needs: verify
     runs-on: ubuntu-latest
@@ -217,7 +244,7 @@ jobs:
   publish:
     name: Publish to PyPI
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, build-sdist]
+    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, attest-pyodide-wheel, build-sdist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi

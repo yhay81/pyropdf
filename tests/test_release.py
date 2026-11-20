@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import runpy
 import tomllib
@@ -33,10 +34,27 @@ def test_every_action_of_the_release_is_pinned_by_commit() -> None:
 def test_release_requires_the_installed_pyodide_wheel() -> None:
     (job,) = re.findall(r"\n  build-pyodide-wheel:\n(.*?)(?=\n  \S)", WORKFLOW, flags=re.DOTALL)
     (publish,) = re.findall(r"\n  publish:\n(.*?)(?=\n  \S)", WORKFLOW, flags=re.DOTALL)
-    assert job.index("bash tools/build_pyodide.sh") < job.index("actions/upload-artifact")
+    assert (
+        job.index("bash tools/build_pyodide.sh")
+        < job.index("bash tools/cloudflare/smoke.sh local dist/")
+        < job.index("actions/upload-artifact")
+    )
+    assert "CLOUDFLARE" not in job
+    assert "id-token: write" not in job
     (dependencies,) = re.findall(r"needs:.*", publish)
     assert "build-pyodide-wheel" in dependencies
+    assert "attest-pyodide-wheel" in dependencies
     assert "if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')" in publish
+
+
+def test_private_workers_fixture_has_no_public_route() -> None:
+    config = json.loads((ROOT / "tools/cloudflare/wrangler.jsonc").read_text(encoding="utf-8"))
+    assert config["workers_dev"] is False
+    assert config["preview_urls"] is False
+    assert not config.get("routes")
+    assert not config.get("route")
+    assert config["compatibility_flags"] == ["python_workers"]
+    assert (ROOT / "tools/cloudflare" / config["main"]).is_file()
 
 
 def test_installed_artifact_smoke_exercises_the_public_contract() -> None:
