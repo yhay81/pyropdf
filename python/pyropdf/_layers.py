@@ -386,16 +386,20 @@ class Layers(Sequence[Layer]):
         if not isinstance(oc, Dictionary):
             msg = f"oc must be a Dictionary or None: {type(oc).__name__}"
             raise TypeError(msg)
-        off = self._off()
-        if oc.get("Type") != "OCMD":
-            return oc.get("Type") != "OCG" or oc.xref not in off
-        expression = oc.get("VE")
-        if isinstance(expression, Array):
-            return _evaluate(expression, off)
-        groups = oc.get("OCGs")
-        members = [groups] if isinstance(groups, Dictionary) else list(groups) if isinstance(groups, Array) else []
-        states = [member.xref not in off for member in members if isinstance(member, Dictionary)]
-        return _policy(oc.get("P"), states)
+        return _visible_with_state(oc, self._off())
+
+
+def _visible_with_state(oc: Dictionary, off: set[int]) -> bool:
+    """Evaluate a selector using group states already read for the current operation."""
+    if oc.get("Type") != "OCMD":
+        return oc.get("Type") != "OCG" or oc.xref not in off
+    expression = oc.get("VE")
+    if isinstance(expression, Array):
+        return _evaluate(expression, off)
+    groups = oc.get("OCGs")
+    members = [groups] if isinstance(groups, Dictionary) else list(groups) if isinstance(groups, Array) else []
+    states = [member.xref not in off for member in members if isinstance(member, Dictionary)]
+    return _policy(oc.get("P"), states)
 
 
 def _policy(policy: object, states: list[bool]) -> bool:

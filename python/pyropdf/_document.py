@@ -40,6 +40,7 @@ from pyropdf._collections import (
 )
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
+from pyropdf._core import read_operation as _read_operation
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._fallback_fonts import FallbackFonts, _replace_fallback_fonts, _set_fallback
@@ -489,7 +490,10 @@ class Document:
         returned stream can be inspected or edited through its Arlington view.
         Page rendering currently uses the base image for alternate-only visibility.
         """
-        return image_for_output(self, xref, printing=printing)
+        if not isinstance(printing, bool):
+            msg = f"printing must be a bool: {printing!r}"
+            raise TypeError(msg)
+        return _read_operation(self._core(), lambda _budget: image_for_output(self, xref, printing=printing))
 
     def replace_image(self, xref: int, data: bytes) -> None:
         """Replace image object ``xref`` with JPEG, JPEG 2000, or PNG ``data``, in one transaction.

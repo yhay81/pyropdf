@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from pyropdf import _core
 from pyropdf._errors import LimitError, PdfError
+from pyropdf._layers import _visible_with_state
 from pyropdf._objects import Array, Dictionary, Name, Stream
 from pyropdf._operations import InlineImage, Operation, Operations
 from pyropdf._xobjects import (
@@ -213,9 +214,6 @@ def _alternate_image(entry: Dictionary) -> Stream:
 
 
 def image_for_output(document: Document, xref: int, *, printing: bool) -> Stream | None:
-    if not isinstance(printing, bool):
-        msg = f"printing must be a bool: {printing!r}"
-        raise TypeError(msg)
     base = _image_stream(document, xref)
     if isinstance(oc := base.get("OC"), Dictionary):
         return base if document.layers.visible(oc) else None
@@ -227,13 +225,13 @@ def image_for_output(document: Document, xref: int, *, printing: bool) -> Stream
         for entry in alternates:
             if isinstance(entry, Dictionary) and entry.get("DefaultForPrinting") is True:
                 return _alternate_image(entry)
+    off = None
     for entry in alternates:
-        if (
-            isinstance(entry, Dictionary)
-            and isinstance(oc := entry.get("OC"), Dictionary)
-            and document.layers.visible(oc)
-        ):
-            return _alternate_image(entry)
+        if isinstance(entry, Dictionary) and isinstance(oc := entry.get("OC"), Dictionary):
+            if off is None:
+                off = document.layers._off()  # noqa: SLF001 - read the default configuration once per selection.
+            if _visible_with_state(oc, off):
+                return _alternate_image(entry)
     return base
 
 

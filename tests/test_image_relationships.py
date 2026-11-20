@@ -261,3 +261,27 @@ def test_bulk_resampling_preserves_the_alternate_stream_and_print_selector(*, in
         assert alt.DefaultForPrinting
         assert alt.Image.read_raw_bytes() == stored
         assert alt.Image.read_bytes() == _BLUE
+
+
+def test_selection_charges_one_budget_across_the_alternate_list() -> None:
+    with pyropdf.open(_source()) as doc:
+        base = _resources(doc)["Base"]
+        alternate = base["Alternates"][0]["Image"]
+        base["Alternates"] = [
+            doc.objects[doc.objects.add({"Image": alternate, "DefaultForPrinting": index == 95})] for index in range(96)
+        ]
+        number = base.xref
+        data = doc.to_bytes()
+    with pyropdf.open(data) as doc:
+        selected = doc.image_for_output(number, printing=True)
+        assert selected is not None
+        assert selected.read() == _GREEN
+    limits = pyropdf.DocumentLimits(max_memory_size=32_000)
+    with pyropdf.open(data, limits=limits) as doc:
+        # Every individual entry fits, even the last one.
+        assert _resources(doc)["Base"]["Alternates"][-1]["DefaultForPrinting"] is True
+    with pyropdf.open(data, limits=limits) as doc:
+        with pytest.raises(pyropdf.LimitError) as caught:
+            doc.image_for_output(number, printing=True)
+        assert caught.value.code == "memory_size"
+        assert not doc.history.steps
