@@ -682,10 +682,10 @@ flags are those that the encryption grants the user password.
 ### `Document.unlock`
 
 ```python
-Document.unlock(password: str) -> Access
+Document.unlock(password: str | RecipientCredential) -> Access
 ```
 
-Unlock the document with a password and return the access that it grants.
+Unlock with a password or a `RecipientCredential` and return its access.
 
 The owner password grants `Access.OWNER` and the user password
 `Access.USER`; a password that matches neither raises
@@ -703,7 +703,7 @@ Document.save(
     /,
     *,
     incremental: bool = False,
-    encryption: Encryption | None = None,
+    encryption: Encryption | RecipientEncryption | None = None,
     prune: bool = False,
     compress: bool = False,
     compression_level: int = 6,
@@ -806,7 +806,7 @@ whether an opened file is linearized.
 Document.to_bytes(
     *,
     incremental: bool = False,
-    encryption: Encryption | None = None,
+    encryption: Encryption | RecipientEncryption | None = None,
     max_size: int | None = 536870912,
     prune: bool = False,
     compress: bool = False,
@@ -1256,6 +1256,7 @@ open(
     /,
     *,
     password: str | None = None,
+    credential: RecipientCredential | None = None,
     limits: DocumentLimits | None = None,
 ) -> Document
 ```
@@ -1266,6 +1267,8 @@ A document with an empty user password decrypts on its own; any other
 encrypted document needs `password`, or `Document.unlock` after
 opening, and refuses to read its objects until then. A wrong password
 raises `PasswordError`. Passwords are capped at 127 UTF-8 bytes.
+
+Use `credential` for an RSA recipient-encrypted PDF.
 
 Opening reads the cross-reference data only; `bytes` are read in place,
 without a copy, and other buffers are copied. `limits` bounds the work,
@@ -1296,13 +1299,15 @@ probe(
     /,
     *,
     password: str | None = None,
+    credential: RecipientCredential | None = None,
     max_file_size: int | None = None,
 ) -> Probe
 ```
 
 Read the page count, version, encryption, and metadata without loading the whole document.
 
-This suits scanning many files. `max_file_size` refuses larger input
+Use `credential` for a recipient-encrypted PDF. This suits scanning many files.
+`max_file_size` refuses larger input
 before parsing with `LimitError` code `file_size`; `None`, the
 default, leaves it unbounded. The metadata text is capped at 1 MiB, and
 passwords at 127 UTF-8 bytes; a wrong password raises `PasswordError`.

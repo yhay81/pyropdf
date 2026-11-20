@@ -40,7 +40,16 @@ from pyropdf._collections import (
 )
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
-from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
+from pyropdf._encryption import (
+    Access,
+    Encryption,
+    Permissions,
+    RecipientCredential,
+    RecipientEncryption,
+    _encryption_arg,
+    _open_credentials,
+    _password_bytes,
+)
 from pyropdf._errors import DocumentClosedError, PdfError
 from pyropdf._fallback_fonts import FallbackFonts, _replace_fallback_fonts, _set_fallback
 from pyropdf._fonts import (
@@ -943,8 +952,8 @@ class Document:
         _, _, _, flags, _ = _core.security_state(self._doc)
         return Permissions((flags or 0) & Permissions.ALL)
 
-    def unlock(self, password: str) -> Access:
-        """Unlock the document with a password and return the access that it grants.
+    def unlock(self, password: str | RecipientCredential) -> Access:
+        """Unlock with a password or a :class:`RecipientCredential` and return its access.
 
         The owner password grants :attr:`Access.OWNER` and the user password
         :attr:`Access.USER`; a password that matches neither raises
@@ -955,7 +964,11 @@ class Document:
         capped at 127 UTF-8 bytes.
         """
         self._ensure_open()
-        opened = _core.unlock(self._doc, _password_bytes(password))
+        if isinstance(password, RecipientCredential):
+            secret, recipient = _open_credentials(None, password)
+        else:
+            secret, recipient = _password_bytes(password), None
+        opened = _core.unlock(self._doc, secret, recipient)
         access = Access.OWNER if opened == "owner" else Access.USER
         if self._access is None or access > self._access:
             self._access = access
@@ -967,7 +980,7 @@ class Document:
         /,
         *,
         incremental: bool = False,
-        encryption: Encryption | None = None,
+        encryption: Encryption | RecipientEncryption | None = None,
         prune: bool = False,
         compress: bool = False,
         compression_level: int = 6,
@@ -1083,7 +1096,7 @@ class Document:
         self,
         *,
         incremental: bool = False,
-        encryption: Encryption | None = None,
+        encryption: Encryption | RecipientEncryption | None = None,
         max_size: int | None = _DEFAULT_MAX_PDF_OUTPUT_SIZE,
         prune: bool = False,
         compress: bool = False,
@@ -1783,6 +1796,7 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
     /,
     *,
     password: str | None = None,
+    credential: RecipientCredential | None = None,
     limits: DocumentLimits | None = None,
 ) -> Document:
     """Open a PDF from a file path or from the bytes of a document.
@@ -1792,6 +1806,8 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
     opening, and refuses to read its objects until then. A wrong password
     raises :class:`PasswordError`. Passwords are capped at 127 UTF-8 bytes.
 
+    Use ``credential`` for an RSA recipient-encrypted PDF.
+
     Opening reads the cross-reference data only; ``bytes`` are read in place,
     without a copy, and other buffers are copied. ``limits`` bounds the work,
     and :meth:`DocumentLimits.web` also reads every object at open. Input that is not a readable PDF, including empty
@@ -1799,15 +1815,15 @@ def open(  # noqa: A001 - the package's entry point, pyropdf.open.
     :class:`FileNotFoundError`.
     """
     path, data = _open_source(source)
-    secret = None if password is None else _password_bytes(password)
+    secret, recipient = _open_credentials(password, credential)
     resolved = _resolve_limits(limits)
     document = Document.__new__(Document)
     if data is not None:
         buffer = data
-        document._setup(lambda lim: _Document.open_buffer(buffer, lim, secret), resolved)  # noqa: SLF001
+        document._setup(lambda lim: _Document.open_buffer(buffer, lim, secret, recipient), resolved)  # noqa: SLF001
     elif path is not None:
         file = path
-        document._setup(lambda lim: _Document.open_path(file, lim, secret), resolved)  # noqa: SLF001
+        document._setup(lambda lim: _Document.open_path(file, lim, secret, recipient), resolved)  # noqa: SLF001
     return document
 
 
@@ -1835,19 +1851,21 @@ def probe(
     /,
     *,
     password: str | None = None,
+    credential: RecipientCredential | None = None,
     max_file_size: int | None = None,
 ) -> Probe:
     """Read the page count, version, encryption, and metadata without loading the whole document.
 
-    This suits scanning many files. ``max_file_size`` refuses larger input
+    Use ``credential`` for a recipient-encrypted PDF. This suits scanning many files.
+    ``max_file_size`` refuses larger input
     before parsing with :class:`LimitError` code ``file_size``; ``None``, the
     default, leaves it unbounded. The metadata text is capped at 1 MiB, and
     passwords at 127 UTF-8 bytes; a wrong password raises :class:`PasswordError`.
     """
     path, data = _open_source(source)
     _validate_optional_positive_int("max_file_size", max_file_size)
-    secret = None if password is None else _password_bytes(password)
-    page_count, version, encrypted, repaired, raw = _probe(path, data, max_file_size, secret)
+    secret, recipient = _open_credentials(password, credential)
+    page_count, version, encrypted, repaired, raw = _probe(path, data, max_file_size, secret, recipient)
     return Probe(
         page_count=page_count,
         version=version,

@@ -237,13 +237,13 @@ fn a_save_that_keeps_the_encryption_copies_untouched_encrypted_bytes() {
 }
 
 fn encryption(aes256: bool) -> Encryption {
-    Encryption {
+    Encryption::Password(crate::security::PasswordEncryption {
         user: b"userpw".to_vec(),
         owner: b"ownerpw".to_vec(),
         permissions: 0b1111_0000_1100,
         aes256,
         random: core::array::from_fn(|i| (i * 37 + 11) as u8),
-    }
+    })
 }
 
 fn qpdf() -> Option<PathBuf> {
