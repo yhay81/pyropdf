@@ -50,7 +50,11 @@ UNTAGGED_RULES = {
 
 DUAL = "pdfua-2-pdfa-4"
 UA2_ANNOTATIONS = {
-    edit: ({"8.10.2.3-1", "8.9.3.3-1"} if edit.endswith("field") else {"8.9.2.3-1", "8.9.3.3-1"})
+    edit: (
+        {"8.10.2.3-1", "8.9.3.3-1"}
+        if edit in {"add_field", "fill_field", "import_form_data"}
+        else {"8.9.2.3-1", "8.9.3.3-1"}
+    )
     for edit in UNTAGGED_RULES
 }
 
@@ -59,23 +63,89 @@ UA2_ANNOTATIONS = {
 EXPECTED: dict[str, tuple[str, set[str]]] = {}
 
 
-def expect(source: str, flavour: str, edits: dict[str, set[str]], issue: str) -> None:
-    """Record both saves of the named operations under one source and profile."""
+def expect(
+    source: str,
+    flavour: str,
+    edits: dict[str, set[str]],
+    issue: str,
+    *,
+    modes: tuple[str, ...] = ("full", "incremental"),
+) -> None:
+    """Record the named operations and save modes under one source and profile."""
     for edit, rules in edits.items():
-        for mode in ("full", "incremental"):
+        for mode in modes:
             EXPECTED[f"{flavour} {source}-{edit}-{mode}.pdf"] = (issue, rules)
 
 
-for variant in ("1a", "1b", "2a", "2b", "2u", "4"):
-    rules = {"1": {"6.1.11-1", "6.1.11-2"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[variant[0]]
-    expect(f"pdfa-{variant}", variant, {"add_attachment": rules, "write_attachment": rules}, "#301")
-expect(DUAL, "4", {"add_attachment": {"6.9-3"}, "write_attachment": {"6.9-3"}}, "#301")
+# Latent profile consequences tracked in #848 are constrained to the exact
+# operation, profile, mode and rule. In particular, a full save invalidates
+# an existing signature, while an incremental save must keep its byte range.
+SIGNATURE_FIELDS = ("signature_field", "sign_revision", "timestamp_revision")
+ATTACHMENT_EDITS = ("add_attachment", "write_attachment", "collection_item")
+for source_path, profile in [*FIXTURES.items(), (Path(DUAL), "4")]:
+    source = source_path.stem
+    part = profile[0]
+    if part not in "1234":
+        continue
+    edit_rules = {"action_triggers": {"6.6.1-3" if part == "1" else "6.4.1-1"}}
+    if part == "1":
+        edit_rules.update(
+            annotation_relations={"6.5.3-2"}, file_specification={"6.1.11-1", "6.5.2-1"}, optional_content={"6.1.13-1"}
+        )
+        edit_rules.update({key: {"6.9-2"} for key in SIGNATURE_FIELDS})
+    else:
+        edit_rules["page_records"] = {"6.11-2" if part == "4" else "6.10-2"}
+    if part == "2":
+        edit_rules["file_specification"] = {"6.8-5"}
+    if profile == "4":
+        edit_rules["file_specification"] = {"6.3.1-1", "6.9-3"}
+    if profile == "4e":
+        edit_rules["file_specification"] = {"6.3.1-1"}
+    expect(source, profile, edit_rules, "#848")
+    if part in "12" or profile == "4":
+        attachment_rules = {"1": {"6.1.11-1", "6.1.11-2"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[part]
+        expect(source, profile, dict.fromkeys(ATTACHMENT_EDITS, attachment_rules), "#301")
+    if part in "23":
+        expect(
+            source,
+            profile,
+            {key: {"6.4.3-1"} for key in ("sign_revision", "timestamp_revision")},
+            "#848",
+            modes=("full",),
+        )
+
 expect("pdfua-1", "ua1", UNTAGGED_RULES, "#794")
 expect("pdfua-1", "ua1", {"remove-language": {"7.2-22", "7.2-33"}}, "#847")
+expect(
+    "pdfua-1",
+    "ua1",
+    {
+        "action_triggers": UNTAGGED_RULES["add_field"],
+        "annotation_relations": {"7.18.1-1", "7.18.1-2", "7.18.3-1"},
+        "file_specification": UNTAGGED_RULES["add_annotation"],
+        "ocr_layer": {"7.1-3"},
+        "radio_groups": {"7.18.1-3", "7.18.3-1", "7.18.4-1"},
+        **{key: {"7.18.1-2", "7.18.3-1", "7.18.5-1", "7.18.5-2"} for key in ("page_copies", "remove_rotation")},
+        **{key: {"7.18.3-1"} for key in SIGNATURE_FIELDS},
+    },
+    "#848",
+)
 for source in ("pdfua-2", DUAL):
-    expect(source, "ua2", UA2_ANNOTATIONS, "#848")
-    expect(source, "ua2", {"add_attachment": {"8.14.1-1"}, "write_attachment": {"8.14.1-1"}}, "#848")
-    expect(source, "ua2", {"delete_page": {"8.2.5.2-1"}}, "#848")
+    expect(
+        source,
+        "ua2",
+        {
+            **UA2_ANNOTATIONS,
+            **{key: {"8.14.1-1"} for key in ATTACHMENT_EDITS},
+            **dict.fromkeys((*SIGNATURE_FIELDS, "action_triggers", "radio_groups"), UA2_ANNOTATIONS["add_field"]),
+            **dict.fromkeys(("annotation_relations", "file_specification"), UA2_ANNOTATIONS["add_annotation"]),
+            **{key: {"8.2.5.20-1", "8.9.3.3-1"} for key in ("page_copies", "remove_rotation")},
+            **{key: {"8.8-1"} for key in ("outline", "shared_action_trigger")},
+            "delete_page": {"8.2.5.2-1", "Table 5. StructTreeRoot-Document-1"},
+            "ocr_layer": {"8.2.2-1"},
+        },
+        "#848",
+    )
 
 
 def language_saves(directory: Path) -> dict[Path, str]:
@@ -108,6 +178,16 @@ def language_saves(directory: Path) -> dict[Path, str]:
 
 #: Arlington extensions of the PDF version for each fixture.
 EXTENSIONS = dict.fromkeys(("3a", "3b", "3u"), "ISO_19005_3")
+PADES_LEVEL = 2
+
+# The pinned base 2.0 model evaluates these two standard PAdES features
+# against an extension-only predicate. Check its verdict AND the extension
+# profile on the identical bytes; a new failure in either run fails CI.
+for source_path, profile in FIXTURES.items():
+    model = "arlington2.0" + ("+ISO_19005_3" if profile in EXTENSIONS else "")
+    expect(source_path.stem, model, {"security_store": {"VRI-OCSP-Array-9"}}, "#883")
+    if profile.startswith("4") or profile == "ua2":
+        expect(source_path.stem, model, {"sign_revision": {"Signature-SubFilter-Name-ETSI.CAdES.detached-27"}}, "#883")
 
 
 def saves(directory: Path) -> dict[Path, str]:
@@ -123,6 +203,8 @@ def saves(directory: Path) -> dict[Path, str]:
                 mode = "incremental" if incremental else "full"
                 path = directory / f"{source.stem}-{edit}-{mode}.pdf"
                 path.write_bytes(doc.to_bytes(incremental=incremental))
+                with pyropdf.open(path) as reopened:
+                    case.check(reopened)
                 out[path] = flavour
     return out
 
@@ -146,6 +228,13 @@ def arlington(path: Path, flavour: str) -> str:
         header = source.read(8)[5:8].decode("ascii")
     with pyropdf.open(path) as doc:
         declared = doc.catalog.get("Version")
+        extensions = doc.catalog.get("Extensions")
+        pades = extensions.get("ETSI_PAdES") if isinstance(extensions, pyropdf.Dictionary) else None
+        declares_pades = (
+            isinstance(pades, pyropdf.Dictionary)
+            and pades.get("BaseVersion") == pyropdf.Name("1.7")
+            and pades.get("ExtensionLevel") == PADES_LEVEL
+        )
     # Valid PDF version names are ordered by their one-digit components.
     effective = (
         max(header, str(declared))
@@ -153,7 +242,10 @@ def arlington(path: Path, flavour: str) -> str:
         else header
     )
     version = "arlington" + effective
-    return f"{version}+{EXTENSIONS[flavour]}" if flavour in EXTENSIONS else version
+    names = [EXTENSIONS[flavour]] if flavour in EXTENSIONS else []
+    if declares_pades:
+        names.append("ETSI_PAdES")
+    return f"{version}+{','.join(names)}" if names else version
 
 
 def by_flavour(files: dict[Path, str]) -> dict[str, list[Path]]:
@@ -185,7 +277,7 @@ def validate(jar: Path, flavour: str, paths: list[Path]) -> dict[str, bool]:
         verdict, _, rest = line.partition(" ")
         # The Arlington profiles report a deviation from the model as DEVIATION.
         if verdict in {"PASS", "FAIL", "DEVIATION"}:
-            verdicts[Path(rest.split(" ")[0]).name] = verdict == "PASS"
+            verdicts[Path(rest.rpartition(" ")[0]).name] = verdict == "PASS"
     missing = [path.name for path in paths if path.name not in verdicts]
     if missing:
         sys.stderr.write(f"{result.stdout}\n{result.stderr}\n")
@@ -201,26 +293,51 @@ def details(jar: Path, flavour: str, path: Path) -> str:
     return result.stdout
 
 
+def detailed_reports(jar: Path, flavour: str, paths: list[Path]) -> dict[Path, str]:
+    """Read exact rule IDs for a group in one validator invocation."""
+    if not paths:
+        return {}
+    if len(paths) == 1:
+        path = paths[0]
+        return {path: details(jar, flavour, path)}
+    command = [*cli(jar, flavour), "-v", *map(str, paths)]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)  # noqa: S603 - test corpus paths.
+    reports: dict[Path, list[str]] = {}
+    current: list[str] | None = None
+    for line in result.stdout.splitlines():
+        if line.startswith(("PASS ", "FAIL ", "DEVIATION ")):
+            # The text header ends with its flavour; paths may contain spaces.
+            source = Path(line.partition(" ")[2].rpartition(" ")[0])
+            current = reports.setdefault(source, [])
+        if current is not None:
+            current.append(line)
+    if set(reports) != set(paths):
+        msg = f"incomplete verbose {flavour} report: {result.stderr}"
+        raise ValueError(msg)
+    return {path: "\n".join(lines) for path, lines in reports.items()}
+
+
 def failed_rules(report: str) -> set[str]:
-    """Read the rule identifiers from a verbose veraPDF text report."""
-    return set(re.findall(r"^\s+FAIL (\S+)\s*$", report, re.MULTILINE))
+    """Read numeric, ISO table, and Arlington rule identifiers, including spaces."""
+    return set(re.findall(r"^[ \t]+(?:FAIL|DEVIATION) ([^\r\n]+)$", report, re.MULTILINE))
 
 
 def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
-    """Validate ``files`` under their flavours; print each verdict and return the unexpected ones."""
+    """Verify the verdict and the complete failed-rule set under each flavour."""
     failures = []
     for flavour, paths in by_flavour(files).items():
         verdicts = validate(jar, flavour, paths)
+        reports = detailed_reports(jar, flavour, [path for path in paths if not verdicts[path.name]])
         for path in paths:
             accepted = verdicts[path.name]
             key = f"{flavour} {path.name}"
             expected = EXPECTED.get(key)
             note = f" ({expected[0]})" if expected else ""
             sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
-            if accepted == bool(expected) or (expected and failed_rules(details(jar, flavour, path)) != expected[1]):
+            report = reports.get(path, "")
+            if accepted == bool(expected) or (expected and failed_rules(report) != expected[1]):
                 failures.append((flavour, path))
-    for flavour, path in failures:
-        sys.stdout.write(f"\nunexpected verdict for {path.name} under {flavour}:\n{details(jar, flavour, path)}\n")
+                sys.stdout.write(f"unexpected verdict for {key}\n{report}\n")
     return failures
 
 
@@ -273,9 +390,14 @@ def main() -> int:
         failures += run(args.jar.resolve(), dual_archival(files))
         failures += controls(args.jar.resolve(), Path(directory))
         if args.arlington:
-            failures += run(
-                args.arlington.resolve(), {path: arlington(path, flavour) for path, flavour in files.items()}
-            )
+            models = {path: arlington(path, flavour) for path, flavour in files.items()}
+            failures += run(args.arlington.resolve(), models)
+            pades = {
+                path: model + ("," if "+" in model else "+") + "ETSI_PAdES"
+                for path, model in models.items()
+                if EXPECTED.get(f"{model} {path.name}", ("", set()))[0] == "#883"
+            }
+            failures += run(args.arlington.resolve(), pades)
     return 1 if failures else 0
 
 

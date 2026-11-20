@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from test_preservation import EDITS
+from test_preservation_operations import nothing
 
 import pyropdf
 
@@ -25,6 +26,18 @@ if TYPE_CHECKING:
 # Each line groups only operations with the stated dependency. An '=' suffix
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
+    (
+        "sign_revision",
+        "Adopt the signed incremental revision, binding the field and its byte ranges.",
+        "Document",
+        "sign",
+    ),
+    (
+        "timestamp_revision",
+        "Adopt the RFC 3161 timestamp revision and verify its byte-range imprint.",
+        "Document",
+        "timestamp",
+    ),
     ("catalog_entry", "Name and scalar dictionary entries rewrite their owner.", "Dictionary", "__setitem__"),
     ("delete_entry", "Removing a dictionary key preserves its siblings.", "Dictionary", "__delitem__"),
     (
@@ -576,7 +589,7 @@ READ_ONLY = {
 
 EXTERNAL = {
     "CancellationToken": "cancel",
-    "Document": "unlock save sign timestamp close __enter__ __exit__ fallback_fonts= del:fallback_fonts",
+    "Document": "unlock save close __enter__ __exit__ fallback_fonts= del:fallback_fonts",
     "FallbackFonts": "__setitem__ __delitem__",
     "History": "max_size= clear",
     "OcrEngine": "recognize",
@@ -586,7 +599,7 @@ EXTERNAL = {
 
 def public_members(cls: type) -> Iterator[str]:
     """Yield public call sites and writable property accessors defined on a public type."""
-    protocols = {"__setitem__", "__delitem__", "__enter__", "__exit__"}
+    protocols = {"__setitem__", "__delitem__", "__enter__", "__exit__", "__iadd__", "__imul__", "__ior__"}
     if cls is pyropdf.typed.View:
         protocols.update(("__setattr__", "__delattr__"))
     for name, member in vars(cls).items():
@@ -626,12 +639,13 @@ def test_every_public_operation_has_a_classification() -> None:
 
 
 def test_each_mutation_names_an_executable_save_case() -> None:
-    missing = {case for case, _, _, _ in MUTATIONS if case not in EDITS}
+    missing = {case for case, _, _, _ in MUTATIONS if case not in EDITS or case == "none"}
     assert not missing, sorted(missing)
     for case, dependencies, owner, names in MUTATIONS:
         assert dependencies.strip(), owner
         assert names.split(), owner
         assert callable(EDITS[case].apply), (owner, names, case)
+        assert EDITS[case].check is not nothing, (owner, names, case)
 
 
 def test_collection_mixins_still_delegate_to_classified_primitives() -> None:

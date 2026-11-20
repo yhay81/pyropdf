@@ -134,3 +134,14 @@ def test_the_profile_map_names_only_the_matching_parameter_case() -> None:
                 for test in row[dimension]["tests"]
                 if "::test_profile_structure_and_page_rotation" in test
             )
+
+
+def test_verapdf_rules_include_full_iso_table_names_and_model_deviations() -> None:
+    report = (
+        "FAIL output.pdf ua2\n"
+        "  FAIL 8.2.5.2-1\n"
+        "  FAIL Table 5. StructTreeRoot-Document-1\n"
+        "DEVIATION other.pdf arlington2.0\n"
+        "  DEVIATION VRI-OCSP-Array-9\n"
+    )
+    assert VERAPDF.failed_rules(report) == {"8.2.5.2-1", "Table 5. StructTreeRoot-Document-1", "VRI-OCSP-Array-9"}

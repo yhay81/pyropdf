@@ -23,6 +23,8 @@ from pyropdf import Color, Dictionary, Font, Square, TextField
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
+    from test_signature_structures import LocalPki
+
 
 def nothing(doc: pyropdf.Document) -> None:
     """Leave a case that needs no preparation or additional assertions alone."""
@@ -974,8 +976,15 @@ def check_replies(doc: pyropdf.Document) -> None:
 
 
 def prepare_embedded_note(doc: pyropdf.Document) -> None:
-    item = doc.pages[0].annotations.add(pyropdf.FileAttachment((10, 10), b"before", filename="source.txt"))
+    item = doc.pages[0].annotations.add(
+        pyropdf.FileAttachment((10, 10), b"before", filename="source.txt", contents=MARKER)
+    )
     item.name = MARKER
+    spec = item.obj["FS"]
+    spec["EF"]["F"]["Subtype"] = pyropdf.Name("text/plain")
+    if pdf_version(doc) >= (2, 0) or (doc.profiles.pdfa or "").startswith("PDF/A-3"):
+        spec["AFRelationship"] = pyropdf.Name("Data")
+        doc.catalog["AF"] = [*doc.catalog.get("AF", []), spec]
 
 
 def edit_embedded_note(doc: pyropdf.Document) -> set[int]:
@@ -992,6 +1001,8 @@ def edit_embedded_note(doc: pyropdf.Document) -> set[int]:
     file.description = MARKER
     file.created = "D:20250101000000Z"
     del file.modified
+    assert file.modified is None
+    file.modified = "D:20250202000000Z"
     return touched
 
 
@@ -1000,7 +1011,12 @@ def check_embedded_note(doc: pyropdf.Document) -> None:
     assert file is not None
     assert (file.filename, file.description, file.read()) == ("changed.txt", MARKER, b"changed bytes")
     assert file.created == "D:20250101000000Z"
-    assert file.modified is None
+    assert file.modified == "D:20250202000000Z"
+    spec = annotation(doc).obj["FS"]
+    assert spec["EF"]["F"]["Subtype"] == pyropdf.Name("text/plain")
+    if "AFRelationship" in spec:
+        assert spec["AFRelationship"] == pyropdf.Name("Data")
+        assert any(entry == spec for entry in doc.catalog["AF"])
 
 
 def prepare_collection_item(doc: pyropdf.Document) -> None:
@@ -1123,16 +1139,43 @@ def check_signature(doc: pyropdf.Document) -> None:
     assert field.value is None
 
 
+def promotion_conflicts(doc: pyropdf.Document) -> set[str]:
+    """Check the old objects under 2.0, independently of the mutation under test."""
+    if pdf_version(doc) >= (2, 0):
+        return set()
+    with pyropdf.open(doc.to_bytes(incremental=True)) as promoted:
+        before = {(d.xref, d.path, d.kind, d.clause) for d in promoted.check().defects}
+        promoted.catalog["Version"] = pyropdf.Name("2.0")
+        if "ID" not in promoted.trailer:
+            promoted.trailer["ID"] = [b"16-byte-test-id!", b"16-byte-test-id!"]
+        after = {(d.xref, d.path, d.kind, d.clause) for d in promoted.check().defects}
+    return {clause for _, _, _, clause in after - before}
+
+
 def edit_security_store(doc: pyropdf.Document) -> set[int]:
     # A DER OCSPResponse containing the protocol's unauthorized response status.
     ocsp = bytes.fromhex("30030a0106")
     key = pyropdf.vri_key(b"archived signature")
     info = pyropdf.ValidationInfo(ocsps=(ocsp,))
-    doc.security_store = pyropdf.SecurityStore(ocsps=(ocsp,), vri={key: info})
+    store = pyropdf.SecurityStore(ocsps=(ocsp,), vri={key: info})
+    conflicts = promotion_conflicts(doc)
+    if conflicts:
+        before = doc.to_bytes(incremental=True)
+        position = doc.history.position
+        with pytest.raises(pyropdf.PdfError, match="cannot promote") as caught:
+            doc.security_store = store
+        assert any(clause in str(caught.value) for clause in conflicts)
+        assert doc.history.position == position
+        assert doc.to_bytes(incremental=True) == before
+        return set()
+    doc.security_store = store
     return {number(doc.catalog)}
 
 
 def check_security_store(doc: pyropdf.Document) -> None:
+    if "DSS" not in doc.catalog:
+        assert promotion_conflicts(doc)
+        return
     dss = doc.catalog["DSS"]
     key = pyropdf.vri_key(b"archived signature")
     stream = dss["OCSPs"][0]
@@ -1260,6 +1303,7 @@ def edit_radio_group(doc: pyropdf.Document) -> set[int]:
 def check_radio_group(doc: pyropdf.Document) -> None:
     group = doc.form[FIELD]
     assert group.type is pyropdf.FieldType.RADIO
+    assert group.obj["DA"].text == "0 g"
     assert [widget.on_state for widget in group.widgets] == ["Basic", "Pro"]
     assert all(widget.obj["Parent"] == group.obj and widget.page == doc.pages[-1] for widget in group.widgets)
     assert [widget.xref for widget in group.widgets] == [obj.xref for obj in doc.pages[-1].obj["Annots"]]
@@ -1592,6 +1636,8 @@ def prepare_text_replacement(doc: pyropdf.Document) -> None:
     root = Path(__file__).parent / "assets" / "real_world"
     with pyropdf.open(root / "bill-hr815.pdf") as source:
         font = source.objects[354]  # Embedded New Century Schoolbook Roman.
+        if pdf_version(doc) >= (2, 0):
+            del font["FontDescriptor"]["CharSet"]  # Deprecated in PDF 2.0.
         page = source.pages.new((200, 100))
         page.obj["Resources"] = {"Font": {"Sample": font}}
         page.obj["Contents"] = source.objects[
@@ -1686,7 +1732,11 @@ def prepare_font_subset(doc: pyropdf.Document) -> None:
     # program is a candidate when assessing the operation's write set.
     doc.subset_fonts()
     with pyropdf.open(font_source()[0]) as source:
-        doc.pages.extend([source.pages[-1]])
+        page = source.pages[-1]
+        if pdf_version(doc) >= (2, 0):
+            descriptor = page.obj["Resources"]["Font"]["PyroF1"]["DescendantFonts"][0]["FontDescriptor"]
+            del descriptor["CIDSet"]  # Required by PDF/A-1, deprecated in PDF 2.0.
+        doc.pages.extend([page])
 
 
 def subset_font(doc: pyropdf.Document) -> set[int]:
@@ -1760,4 +1810,81 @@ FAMILY_EDITS.update(
     rewrite_images=Edit(
         prepare=prepare_image_rewrite, apply=rewrite_image, check=check_rewritten_image, affected_pages=two_last_pages
     ),
+)
+
+
+@cache
+def local_pki() -> LocalPki:
+    from cryptography import x509  # noqa: PLC0415 - signing is a development-only oracle.
+    from cryptography.hazmat.primitives.asymmetric import ec  # noqa: PLC0415
+    from cryptography.x509.oid import NameOID  # noqa: PLC0415
+    from test_signature_structures import LocalPki, _issue_cert  # noqa: PLC0415
+
+    ca = ec.generate_private_key(ec.SECP256R1())
+    issuer = (ca, x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, MARKER)]))
+    signer = ec.generate_private_key(ec.SECP256R1())
+    tsa = ec.generate_private_key(ec.SECP256R1())
+    return LocalPki(
+        root=_issue_cert(MARKER, ca.public_key(), issuer, ca=True),
+        signer_key=signer,
+        signer_cert=_issue_cert("Signer", signer.public_key(), issuer),
+        tsa_key=tsa,
+        tsa_cert=_issue_cert("Time authority", tsa.public_key(), issuer, tsa=True),
+    )
+
+
+def sign_revision(doc: pyropdf.Document) -> set[int]:
+    field = doc.form[FIELD]
+    touched = {field.xref} | indirect_numbers(doc.catalog["AcroForm"])
+    if pdf_version(doc) < (2, 0) or not doc.catalog["AcroForm"].is_indirect:
+        touched.add(number(doc.catalog))
+    signed = doc.sign(FIELD, local_pki().signer, reason=MARKER, reserve=4096)
+    assert doc.to_bytes(incremental=True) == signed
+    assert next(sig for sig in doc.signatures if sig.field == FIELD).verify(local_pki().trust)
+    assert any(change.field == FIELD for change in doc.changes(incremental=False).signatures)
+    assert all(change.field != FIELD for change in doc.changes(incremental=True).signatures)
+    return touched
+
+
+def check_signed_revision(doc: pyropdf.Document) -> None:
+    signature = next(sig for sig in doc.signatures if sig.field == FIELD)
+    assert not signature.is_timestamp
+    assert doc.form[FIELD].obj["V"]["Reason"].text == MARKER
+    assert len(signature.byte_range) == 4
+
+
+def timestamp_revision(doc: pyropdf.Document) -> set[int]:
+    field = doc.form[FIELD]
+    touched = {field.xref, number(doc.catalog)} | indirect_numbers(doc.catalog["AcroForm"])
+    conflicts = promotion_conflicts(doc)
+    if conflicts:
+        before = doc.to_bytes(incremental=True)
+        position = doc.history.position
+        with pytest.raises(pyropdf.PdfError, match="cannot promote") as caught:
+            doc.timestamp(local_pki().timestamper, field=FIELD, reserve=4096)
+        assert any(clause in str(caught.value) for clause in conflicts)
+        assert doc.history.position == position
+        assert doc.to_bytes(incremental=True) == before
+        return set()
+    stamped = doc.timestamp(local_pki().timestamper, field=FIELD, reserve=4096)
+    assert doc.to_bytes(incremental=True) == stamped
+    assert any(change.field == FIELD for change in doc.changes(incremental=False).signatures)
+    assert all(change.field != FIELD for change in doc.changes(incremental=True).signatures)
+    assert next(sig for sig in doc.signatures if sig.field == FIELD).verify(local_pki().trust)
+    return touched
+
+
+def check_timestamp(doc: pyropdf.Document) -> None:
+    if not any(sig.field == FIELD for sig in doc.signatures):
+        assert promotion_conflicts(doc)
+        return
+    stamp = next(sig for sig in doc.signatures if sig.field == FIELD)
+    assert stamp.is_timestamp
+    assert doc.form[FIELD].obj["V"]["SubFilter"] == pyropdf.Name("ETSI.RFC3161")
+    assert len(stamp.byte_range) == 4
+
+
+FAMILY_EDITS.update(
+    sign_revision=Edit(prepare=prepare_signature, apply=sign_revision, check=check_signed_revision),
+    timestamp_revision=Edit(prepare=prepare_signature, apply=timestamp_revision, check=check_timestamp),
 )
