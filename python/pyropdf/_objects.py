@@ -28,6 +28,7 @@ from pyropdf._limits import _validate_optional_positive_int
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from pyropdf import typed
     from pyropdf._core import _Document as _CoreDocument
     from pyropdf._document import Document
 
@@ -310,6 +311,11 @@ class Dictionary(_Handle, MutableMapping[str, Any]):
         """Write ``value`` under ``key``."""
         self._set(_key(key), value)
 
+    def _copy_direct(self, key: str, source: Dictionary) -> None:
+        """Copy the dictionary into this entry, retaining its original values and references."""
+        encoded = _encode(self._document, source, 1, top_level=True)
+        _core.object_set(self._core(), self._root, list(self._path), _key(key), encoded)
+
     def __delitem__(self, key: str) -> None:
         """Remove ``key``."""
         self._delete(_key(key))
@@ -330,6 +336,40 @@ class Stream(Dictionary):
     """A PDF stream: its dictionary, plus :meth:`read` and :meth:`write`."""
 
     __slots__ = ()
+
+    @property
+    def opi(self) -> typed.OPIVersion13Dict | typed.OPIVersion20Dict | None:
+        """The existing OPI proxy description on an image or Form.
+
+        The version selects the live Arlington view of the file specification
+        and stored image parameters. OPI 2.0 requires a Form. Image masks
+        ignore OPI. No source file is opened.
+        """
+        from pyropdf import typed  # noqa: PLC0415
+        from pyropdf._errors import PdfError  # noqa: PLC0415
+        from pyropdf._prepress import _dictionary  # noqa: PLC0415
+
+        subtype = self.get("Subtype")
+        if subtype not in ("Form", "Image") or (subtype == "Image" and self.get("ImageMask") is True):
+            return None
+        if (entry := self.get("OPI")) is None:
+            return None
+        obj = _dictionary(entry, "OPI")
+        legacy, newer = obj.get("1.3"), obj.get("2.0")
+        if legacy is not None and newer is None:
+            view = typed.OPIVersion13Dict(_dictionary(legacy, "1.3"))
+            version = 1.3
+        elif newer is not None and legacy is None and subtype == "Form":
+            view = typed.OPIVersion20Dict(_dictionary(newer, "2.0"))
+            version = 2.0
+        else:
+            msg = "an OPI proxy requires one version dictionary; OPI 2.0 requires a Form"
+            raise PdfError(msg)
+        if view.Version != version:
+            msg = "OPI dictionary key disagrees with its /Version"
+            raise PdfError(msg)
+        _ = view.F
+        return view
 
     def read(self, *, decode: bool = True, max_size: int | None = _DEFAULT_MAX_STREAM_DATA_SIZE) -> bytes:
         """Return the stream data, decoded through its filters unless ``decode`` is false.

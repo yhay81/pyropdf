@@ -83,6 +83,14 @@ MUTATIONS = (
     ("add_attachment", "Insert a file specification in the embedded-files name tree.", "Attachments", "add"),
     ("delete_attachment", "Prune the name tree and release unreferenced streams.", "Attachments", "__delitem__"),
     ("write_attachment", "Replace the embedded stream; update size and checksum.", "Attachment", "write"),
+    (
+        "prepress",
+        "Keep ordered plate memberships and local boundary guidelines.",
+        "Page",
+        "separations= del:separations box_styles= del:box_styles",
+    ),
+    ("prepress", "Store the print Form and parent page in a printer's mark or watermark.", "Annotations", "add"),
+    ("prepress", "Keep fixed placement local to its watermark.", "Annotation", "fixed_print= del:fixed_print"),
     ("add_annotation", "Create the annotation, page Annots entry and appearance.", "Annotations", "add"),
     (
         "add_screen",

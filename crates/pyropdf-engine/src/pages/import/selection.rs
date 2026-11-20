@@ -69,6 +69,15 @@ pub fn import_pages(
     for &(reference, entry) in &selected {
         budget.poll()?;
         let mut dict = page_dict(source.version, reference, budget)?;
+        crate::pages::require_complete_separations(source.version, &dict, &imported, budget)?;
+        for (key, minimum) in [
+            ("SeparationInfo", PdfVersion(1, 3)),
+            ("BoxColorInfo", PdfVersion(1, 4)),
+        ] {
+            if dict.get(key).is_some_and(|v| !matches!(v, Value::Null)) {
+                links.media_version = links.media_version.max(Some(minimum));
+            }
+        }
         materialize(&mut dict, entry, root.dict(), budget)?;
         if let Some(annots) = links.annots(&dict)? {
             if annots.is_empty() {
@@ -318,8 +327,8 @@ impl Links<'_, '_> {
                 kept.try_push(item)?;
                 continue;
             };
-            if crate::annotations::is_media_annotation(&annotation)
-                && let Some(Value::Name(name)) = annotation.get("Subtype")
+            if let Some(Value::Name(name)) = annotation.get("Subtype")
+                && crate::annotations::is_linked_annotation(&annotation)
             {
                 let minimum = subtype_version(name.as_bytes());
                 // Preserve the edition of a 3D scene: its view, measurement

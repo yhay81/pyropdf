@@ -393,6 +393,18 @@ Stream.__contains__(key: object) -> bool
 
 Return whether `key` is present, without resolving its value.
 
+### `Stream.opi`
+
+```python
+Stream.opi: typed.OPIVersion13Dict | typed.OPIVersion20Dict | None
+```
+
+The existing OPI proxy description on an image or Form.
+
+The version selects the live Arlington view of the file specification
+and stored image parameters. OPI 2.0 requires a Form. Image masks
+ignore OPI. No source file is opened.
+
 ### `Stream.read`
 
 ```python

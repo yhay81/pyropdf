@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 44 | 44 | 743 |
-| interpret | 1 | 13 | 0 | 40 | 664 | 113 |
-| create | 0 | 0 | 9 | 645 | 80 | 97 |
-| edit | 0 | 0 | 0 | 671 | 67 | 93 |
-| preserve | 0 | 0 | 0 | 28 | 664 | 139 |
+| read | 0 | 0 | 0 | 43 | 38 | 751 |
+| interpret | 1 | 13 | 0 | 40 | 658 | 120 |
+| create | 0 | 0 | 12 | 645 | 74 | 101 |
+| edit | 0 | 0 | 0 | 670 | 61 | 101 |
+| preserve | 0 | 0 | 0 | 28 | 658 | 146 |
 
 ## Clauses
 
@@ -136,9 +136,9 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.5.6.17 | Movie annotations | `movie-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 12.5.6.18 | Screen annotations | `screen-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.19 | Widget annotations | `widget-annotations` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
-| 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.21 | Trap network annotations | `trap-network-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.22 | Watermark annotations | `watermark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.5.6.21 | Trap network annotations | `trap-network-annotations` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 12.5.6.22 | Watermark annotations | `watermark-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.24 | Projection annotations | `projection-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
@@ -195,11 +195,12 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
 | 14.9 | Accessibility support | `accessibility` | 1 done | 1 partial | 1 done | 1 done | 1 done |
 | 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
-| 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.11.2 | Page boundaries | `page-boundaries` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 14.11.3 | Printer's marks | `printer-marks` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.11.5 | Output intents | `output-intents` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
-| 14.11.6 | Trapping support | `trapping` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 14.11.7 | Open prepress interface | `opi` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.11.6 | Trapping support | `trapping` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
+| 14.11.7 | Open prepress interface | `opi` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | Annex D | PDF character tables | `character-tables` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
@@ -224,7 +225,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,948 unfinished cells in 831 features: 1 engine, 1,428 partial, 1,519 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,916 unfinished cells in 832 features: 1 engine, 1,426 partial, 1,489 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -399,9 +400,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
     - read, interpret, create, edit, preserve — `rich-annotations`, `rich-media`.
 - [#915](https://github.com/yhay81/pyropdf/issues/915) Complete existing legacy movie, sound and alternate-presentation relationship editing. Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.
     - read, interpret, edit, preserve — `sound-annotations`, `movie-annotations`, `sound-actions`, `movie-actions`, `sounds`, `movies`, `alternate-presentations`.
-- [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
-    - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
-    - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
 - [#863](https://github.com/yhay81/pyropdf/issues/863) Support STEP and glTF assets in RichMedia annotations under the published PDF 2.0 extensions. Read, author and verify STEP and glTF asset relationships against the published extensions.
     - read, interpret, create, edit, preserve — `step-rich-media`, `gltf-rich-media`.
 - [#860](https://github.com/yhay81/pyropdf/issues/860) Read, edit and preserve Web Capture content sets and their indexes. Read, edit and round-trip captured content sets and their indexes.
@@ -543,7 +541,7 @@ Within one month of publication, compare the official catalogues and the PDF Ass
 | 14.8 | clause | `tagged-pdf` | Express standard logical roles, attributes and artifacts in tagged content. |
 | 14.9 | clause | `accessibility` | Provide alternate text, language and replacement text. |
 | 14.10 | clause | `web-capture` | Associate captured web resources with a document. |
-| 14.11 | clause | `page-boundaries`, `separation-dictionaries`, `output-intents`, `trapping`, `opi` | Describe production geometry, colour and other press data. |
+| 14.11 | clause | `page-boundaries`, `printer-marks`, `separation-dictionaries`, `output-intents`, `trapping`, `opi` | Describe production geometry, colour and other press data. |
 | 14.12 | clause | `document-parts` | Group pages and attach document-part metadata. |
 | 14.13 | clause | `associated-files` | Relate files to documents and objects with a declared relationship. |
 | Annex A | informative annex | — | Informative operator index repeats the operators defined in their respective clauses. |
@@ -1004,10 +1002,13 @@ before a test can be cited for that specific correction. The register gives no a
 - `xref-streams` interpret: n/a, 7.5.8: cross-reference streams index indirect objects in the file, whose resolution Read covers.
 - `sound-annotations` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
 - `movie-annotations` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `trap-network-annotations` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.
 - `sound-actions` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
 - `movie-actions` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
 - `sounds` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
 - `movies` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
 - `alternate-presentations` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `trapping` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.
+- `opi` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.
 - `procedure-sets` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.
 - `xfa` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.

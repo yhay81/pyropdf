@@ -15,7 +15,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
-from pyropdf import _core
+from pyropdf import _core, typed
 from pyropdf._actions import (
     _SCREEN_TRIGGERS,
     ActionTriggers,
@@ -43,6 +43,16 @@ from pyropdf._media import (
 )
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
+from pyropdf._prepress import (
+    FixedPrint,
+    PrinterMark,
+    Watermark,
+    _edit,
+    add_print,
+    fixed_print,
+    print_appearance,
+    write_fixed_print,
+)
 from pyropdf._profiles import pdfa_claim
 from pyropdf._text import _DEFAULT_MAX_TEXT_GLYPHS, _DEFAULT_MAX_TEXT_SIZE, Unmapped, _warn_skipped, text_options
 
@@ -1358,6 +1368,32 @@ class Annotation:
         return text
 
     @property
+    def print_appearance(
+        self,
+    ) -> typed.XObjectFormPrinterMark | typed.XObjectFormTrapNet | typed.XObjectFormType1 | None:
+        """The active normal printer's mark, trap network or watermark Form.
+
+        For a state dictionary this selects /AS. The Form view exposes
+        resources, mark style and colorants or trapping process and regions.
+        """
+        return print_appearance(self.obj)
+
+    @property
+    def fixed_print(self) -> FixedPrint | None:
+        """The watermark placement matrix and translation fractions on the target print media."""
+        return fixed_print(self.obj)
+
+    @fixed_print.setter
+    def fixed_print(self, placement: FixedPrint) -> None:
+        with _edit(self.page.document, "watermark placement"):
+            write_fixed_print(self.obj, placement)
+
+    @fixed_print.deleter
+    def fixed_print(self) -> None:
+        with _edit(self.page.document, "watermark placement"):
+            write_fixed_print(self.obj, None)
+
+    @property
     def media(self) -> MediaAnnotation | None:
         """Return the live Arlington view for Screen, 3D, RichMedia, Projection, Sound or Movie.
 
@@ -2378,6 +2414,8 @@ AnnotationSpecification: TypeAlias = (
     | FreeText
     | Stamp
     | MediaSpecification
+    | PrinterMark
+    | Watermark
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -2459,6 +2497,8 @@ class Annotations(Sequence[Annotation]):
         The annotation is drawn when its transaction commits, or before a
         read in the transaction, so that every viewer draws it alike.
         """
+        if isinstance(specification, (PrinterMark, Watermark)):
+            return Annotation(self._page, add_print(self._page, specification), 0)
         if isinstance(specification, (Screen, ThreeD, RichMedia, ProjectionAnnotation)):
             return Annotation(self._page, add_media(self._page, specification), 0)
         if not isinstance(specification, _SPECIFICATIONS):
