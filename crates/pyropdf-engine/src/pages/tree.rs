@@ -164,6 +164,39 @@ struct Pages<'p> {
     added: &'p [Reference],
 }
 
+/// List multimedia targets on pages that leave, so an action on a retained
+/// page cannot keep the target detached from the page tree.
+fn media_targets<'b>(
+    before: &Version,
+    removed: &[u32],
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, u32>> {
+    let mut targets = BudgetVec::new(budget);
+    for &number in removed {
+        let Some(object) = before.get(number, budget)? else {
+            continue;
+        };
+        let Value::Dict(page) = object.value().as_ref() else {
+            continue;
+        };
+        let Some(Value::Array(annots)) = resolve(before, page.get("Annots"), budget)? else {
+            continue;
+        };
+        budget.check(LimitCode::AnnotationCount, annots.len() as u64)?;
+        for entry in annots.iter() {
+            budget.poll()?;
+            if let Value::Reference(reference) = entry
+                && let Some(target) = target(before, *reference, budget)?
+                && let Value::Dict(dict) = target.as_ref()
+                && crate::annotations::is_media_annotation(dict)
+            {
+                targets.try_push(reference.number())?;
+            }
+        }
+    }
+    Ok(targets)
+}
+
 /// Runs the rules for the removed pages, writes the page tree with the new
 /// order and the page labels that follow the pages, and frees what the
 /// removed pages and the labels before leave unreferenced.
@@ -219,7 +252,16 @@ fn remove_pages(
     if let Some(labels) = &labels {
         candidates.try_extend_from_slice(labels.nodes())?;
     }
-    refs::free_unreferenced(references, transaction, removed, &candidates, budget)?;
+    let targets = media_targets(&before, removed, budget)?;
+    let freed = refs::free_unreferenced(references, transaction, removed, &candidates, budget)?;
+    if targets
+        .iter()
+        .any(|number| freed.binary_search(number).is_err())
+    {
+        return Err(PageError::Value(
+            "a retained object still references a multimedia annotation on a removed page".into(),
+        ));
+    }
     Ok(())
 }
 

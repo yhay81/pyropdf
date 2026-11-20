@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal, NamedTuple, NoReturn, TypeAlias, Type
 from pyropdf import _core
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Point
+from pyropdf._media_actions import GoTo3DView, RenditionAction, RichMediaExecute, media_action_dict, read_media_action
 from pyropdf._metadata import _require_version
 from pyropdf._objects import (
     Array,
@@ -646,6 +647,9 @@ def _is_custom_target(target: object) -> bool:
     return isinstance(
         target,
         (
+            GoTo3DView,
+            RenditionAction,
+            RichMediaExecute,
             TransitionAction,
             ThreadAction,
             JavaScriptAction,
@@ -659,9 +663,15 @@ def _is_custom_target(target: object) -> bool:
     )
 
 
-def _custom_target_budget_text(target: object) -> str | None:
+def _custom_target_budget_text(target: object) -> str | None:  # noqa: PLR0911 - one branch per action.
     """Return representative non-script text of a custom action for aggregate link, outline, or step UTF-8 checks."""
     match target:
+        case GoTo3DView(view=str(view)):
+            return view
+        case RichMediaExecute(command=command, arguments=arg):
+            return command + (arg if isinstance(arg, str) else "")
+        case RenditionAction(script=str(script)):
+            return script
         case EmbeddedDestination(name=name, file=file):
             parts = [p for p in (name, file) if p is not None]
             return "".join(parts) or None
@@ -833,7 +843,7 @@ def _import_data_action_dict(action: ImportDataAction) -> tuple[dict[str, object
     )
 
 
-def _custom_target_action_dict(  # noqa: PLR0911 - dispatches one branch per custom action class.
+def _custom_target_action_dict(  # noqa: C901, PLR0911 - dispatches one branch per custom action class.
     document: Document,
     target: object,
 ) -> tuple[dict[str, object], tuple[int, int]]:
@@ -842,6 +852,8 @@ def _custom_target_action_dict(  # noqa: PLR0911 - dispatches one branch per cus
     from pyropdf._threads import ThreadAction, _thread_action_dict  # noqa: PLC0415
 
     match target:
+        case GoTo3DView() | RenditionAction() | RichMediaExecute():
+            return media_action_dict(document, target)
         case TransitionAction():
             return _transition_action_dict(target)
         case ThreadAction():
@@ -1169,6 +1181,9 @@ def _read_js_action_dict(action: Dictionary) -> JavaScriptAction | None:
 _STATELESS_ACTION_READERS: dict[str, Callable[[Dictionary], Target | None]] = {
     "JavaScript": _read_js_action_dict,
     "GoToE": _read_gotoe_action,
+    "GoTo3DView": read_media_action,
+    "RichMediaExecute": read_media_action,
+    "Rendition": read_media_action,
     "Hide": _read_hide_action,
     "SetOCGState": _read_set_ocg_state_action,
     "SubmitForm": _read_submit_form_action,

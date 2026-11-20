@@ -837,12 +837,23 @@ objects = ["AnnotFileAttachment"]
 clause = "12.5.6.16"
 description = "Sound annotations."
 objects = ["AnnotSound"]
-edit = { status = "partial", missing = "Common annotation properties of sound annotations are edited and sanitize removes them, without replacing `/Sound` streams or creating sound annotations.", milestone = "Phase 4: Specification" }
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "External sound and compression parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-annotations]
 clause = "12.5.6.17"
 description = "Movie annotations."
 objects = ["AnnotMovie", "Movie", "MovieActivation"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Movie activation timing and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.screen-annotations]
 clause = "12.5.6.18"
@@ -886,6 +897,11 @@ objects = ["AnnotProjection", "ExDataProjection"]
 clause = "12.5.6.25"
 description = "3D and RichMedia annotations."
 objects = ["Annot3D", "AnnotRichMedia"]
+read = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Multi-asset RichMedia annotations and their active presentation and configuration settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.trigger-events]
 clause = "12.6.3"
@@ -937,11 +953,23 @@ edit = { status = "partial", missing = "Links, outline items, and sanitize edit 
 clause = "12.6.4.9"
 description = "Sound actions."
 objects = ["ActionSound"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Action sound encodings and external sound parameters need dedicated round-trip evidence.", milestone = "Phase 4: Specification" }
 
 [features.movie-actions]
 clause = "12.6.4.10"
 description = "Movie actions."
 objects = ["ActionMovie"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Title-based action targets and their retargeting need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.hide-actions]
 clause = "12.6.4.11"
@@ -1085,31 +1113,64 @@ objects = ["RequirementsHandler"]
 clause = "13.2"
 description = "Renditions, media clips, play and screen parameters, and media players."
 objects = ["RenditionMedia", "RenditionSelector", "MediaClipData", "MediaClipSection", "MediaPlayParameters", "MediaScreenParameters", "MediaPlayers", "MediaPlayerInfo", "MediaCriteria"]
+read = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Selector alternatives, clip section offsets, player criteria and parameter negotiation need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.sounds]
 clause = "13.3"
 description = "Sound objects."
 objects = ["SoundObject"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "External sound and compression parameters need dedicated interpretation and edit evidence.", milestone = "Phase 4: Specification" }
 
 [features.movies]
 clause = "13.4"
 description = "Movie dictionaries."
 objects = []
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Movie activation timing, file specifications and poster variants need dedicated editing and round-trip tests.", milestone = "Phase 4: Specification" }
 
 [features.alternate-presentations]
 clause = "13.5"
 description = "Alternate presentations: slide shows."
 objects = ["SlideShow"]
+deprecated = true
+create = { status = "non-goal", decision = "#256", reason = "Creation of deprecated multimedia objects is excluded by the specification completion milestone." }
+read = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Multi-level slide and resource name trees and reference-safe resource renaming need dedicated evidence.", milestone = "Phase 4: Specification" }
 
 [features.3d-artwork]
 clause = "13.6"
 description = "3D streams, views, nodes, lighting, and render modes."
 objects = ["3DStream", "3DView", "3DNode", "3DActivation", "3DLightingScheme", "3DRenderMode", "3DBackground", "3DCrossSection", "3DReference"]
+read = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.rich-media]
 clause = "13.7"
 description = "Rich media content, configurations, instances, and settings."
 objects = ["RichMediaSettings", "RichMediaInstance", "RichMediaPresentation", "RichMediaParams"]
+read = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Multi-level asset trees, multiple configurations, activation, presentation and animation settings need dedicated relationship tests.", milestone = "Phase 4: Specification" }
 
 [features.document-info]
 clause = "14.3.3"
