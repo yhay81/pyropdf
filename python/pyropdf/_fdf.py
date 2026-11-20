@@ -1117,27 +1117,25 @@ def _apply_form_data(form: Form, data: FdfData, step_name: str) -> list[str]:
     """Apply matching fillable fields of ``data`` to ``form`` in one atomic undoable operation."""
     document = form._document  # noqa: SLF001
     core = _unlocked(document)
-    targets: list[tuple[str, Field, str | tuple[str, ...] | None]] = []
-    for name in form:
-        if name not in data.fields:
-            continue
-        field_handle = form[name]
-        if field_handle.type not in _EXPORTABLE_TYPES:
-            continue
-        targets.append((name, field_handle, data.fields[name]))
-
-    if not targets:
-        return []
-
     operation = _core.begin_operation(core, step_name)
+    updated: list[str] = []
     try:
-        for _, field_handle, raw_value in targets:
-            _apply_field_value(document, field_handle, raw_value)
+        for name in form:
+            if name not in data.fields:
+                continue
+            field_handle = form[name]
+            if field_handle.type not in _EXPORTABLE_TYPES:
+                continue
+            _apply_field_value(document, field_handle, data.fields[name])
+            updated.append(name)
+        if updated:
+            _core.end_transaction(core, True)  # noqa: FBT003
+        else:
+            _core.abort_canvas(core, operation)
     except BaseException:
         _core.abort_canvas(core, operation)
         raise
-    _core.end_transaction(core, True)  # noqa: FBT003 - the core's commit flag.
-    return [name for name, _, _ in targets]
+    return updated
 
 
 for _public in (FdfData, parse_fdf, parse_xfdf):
