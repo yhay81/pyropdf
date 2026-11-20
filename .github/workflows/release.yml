@@ -50,6 +50,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check comparison coverage on a mixed-outcome fixture
+        run: python3 -m unittest discover -s evidence/pymupdf-comparison -p test_release_comparison.py
       - name: Verify tag matches the package version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -270,10 +272,56 @@ jobs:
           name: sdist
           path: dist
 
+  compare-release:
+    name: Compare the release artifacts
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13.18"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wheels-x86_64-unknown-linux-gnu
+          path: dist
+      - name: Compare the release wheel with the current PyMuPDF wheel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous="$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD^)"
+          archive="comparison-${previous}.zip"
+          assets="$(gh release view "$previous" --json assets --jq '.assets[].name')"
+          if grep -Fxq "$archive" <<< "$assets"; then
+            gh release download "$previous" -p "$archive" -D "$RUNNER_TEMP"
+            unzip -p "$RUNNER_TEMP/$archive" comparison/observations.json > "$RUNNER_TEMP/previous.json"
+            previous_report="$RUNNER_TEMP/previous.json"
+          else
+            previous_report="evidence/pymupdf-comparison/releases/${previous}-darwin-arm64/observations.json"
+          fi
+          python -m pip download --only-binary=:all: --no-deps --dest "$RUNNER_TEMP/oracle" pymupdf
+          python evidence/pymupdf-comparison/release.py "$GITHUB_REF_NAME" \
+            dist/pyropdf-*-abi3-manylinux*x86_64.whl "$RUNNER_TEMP"/oracle/pymupdf-*.whl "$RUNNER_TEMP/comparison" \
+            --previous-report "$previous_report"
+          mkdir -p release
+          python -m zipfile -c "release/comparison-${GITHUB_REF_NAME}.zip" "$RUNNER_TEMP/comparison"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-comparison
+          path: release/comparison-*.zip
+          if-no-files-found: error
+
   publish:
     name: Publish to PyPI
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, attest-pyodide-wheel, build-sdist]
+    needs: [build-wheels, build-free-threaded-wheels, build-pyodide-wheel, attest-pyodide-wheel, build-sdist, compare-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: pypi
@@ -285,6 +333,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          pattern: "{*wheels-*,sdist}"
           merge-multiple: true
           path: dist
       - run: mkdir -p release

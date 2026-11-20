@@ -1,5 +1,7 @@
 # PDF capabilities: PyMuPDF 2.0 and pyropdf main
 
+The [release comparisons](README.md#release-comparisons) identify actual wheels, updated task coverage and measured results.
+
 This is an inventory of *capabilities*, not a claim of API or output parity.
 It compares PyMuPDF 2.0 (released 2026-10-19) with pyropdf main at
 [`d06091e27d931fb8f766d2548675a8fdfbcb2677`](https://github.com/yhay81/pyropdf/commit/d06091e27d931fb8f766d2548675a8fdfbcb2677),
