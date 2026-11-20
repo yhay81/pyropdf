@@ -464,10 +464,14 @@ conditions are available on the typed dictionaries and are not evaluated.
 ### `RenditionAction.edit_rendition`
 
 ```python
-RenditionAction.edit_rendition() -> Generator[typed.RenditionMedia | typed.RenditionSelector, None, None]
+RenditionAction.edit_rendition() -> AbstractContextManager[typed.RenditionMedia | typed.RenditionSelector]
 ```
 
 Edit the live rendition tree in one undo step, validating it before commit.
+
+The context yields the typed rendition. For a selector, its R array
+retains preference order. Media clip section MH and BE dictionaries
+carry their required and best-effort offsets separately.
 
 ## `RenditionOperation`
 

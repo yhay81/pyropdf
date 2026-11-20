@@ -15,6 +15,7 @@ from pyropdf._objects import Array, Dictionary, Name, Stream, String
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterator
+    from contextlib import AbstractContextManager
 
     from pyropdf._document import Document
 
@@ -73,15 +74,26 @@ class RenditionAction:
             return ()
         return _candidates(self.rendition)
 
-    @contextmanager
-    def edit_rendition(self) -> Generator[typed.RenditionMedia | typed.RenditionSelector, None, None]:
-        """Edit the live rendition tree in one undo step, validating it before commit."""
+    def edit_rendition(self) -> AbstractContextManager[typed.RenditionMedia | typed.RenditionSelector]:
+        """Edit the live rendition tree in one undo step, validating it before commit.
+
+        The context yields the typed rendition. For a selector, its R array
+        retains preference order. Media clip section MH and BE dictionaries
+        carry their required and best-effort offsets separately.
+        """
         if self.rendition is None:
             msg = "the action has no rendition to edit"
             raise ValueError(msg)
-        with self.rendition.obj._document.transaction("edit rendition"):  # noqa: SLF001
-            yield self.rendition
-            _candidates(self.rendition)
+        return _edit_rendition(self.rendition)
+
+
+@contextmanager
+def _edit_rendition(
+    root: typed.RenditionMedia | typed.RenditionSelector,
+) -> Generator[typed.RenditionMedia | typed.RenditionSelector, None, None]:
+    with root.obj._document.transaction("edit rendition"):  # noqa: SLF001
+        yield root
+        _candidates(root)
 
 
 def _target_number(value: int | None) -> None:
