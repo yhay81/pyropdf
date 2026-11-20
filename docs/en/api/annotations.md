@@ -388,6 +388,27 @@ options; an appearance that draws no text, or a hidden annotation,
 gives `""`. `/Contents` is not read; `contents` returns
 it.
 
+### `Annotation.media`
+
+```python
+Annotation.media: MediaAnnotation | None
+```
+
+The live Arlington view for Screen, 3D, RichMedia, Projection, Sound or Movie.
+
+For example, `annotation.media.RichMediaContent.Configurations[0]`
+yields a configuration whose `Instances[0].Asset` is the shared
+file specification. Edit its name or use the embedded file stream's
+`read()` and `write()` methods. A 3D annotation exposes its model
+through `annotation.media["3DD"]`. Its `VA` array contains the named
+views, whose `MA` entries point to measurements. The Projection
+annotation's `ExData.M3DREF` links to the same measurement.
+
+Existing Sound and Movie annotations use the same Arlington views.
+`annotation.sound()` also returns sound samples and their metadata.
+Legacy movie and sound actions and embedded slide shows can be edited
+through `typed.ActionMovie`, `typed.ActionSound` and `typed.SlideShow`.
+
 ### `Annotation.file`
 
 ```python
@@ -529,7 +550,9 @@ The annotations of a page other than links and form widgets, as `page.annotation
 
 The sequence lists them in `/Annots` order and reads the page on every
 access; popups belong to the annotation that names them and are not
-listed. `del page.annotations[i]` removes one, with its popup.
+listed. `del page.annotations[i]` removes one, with its popup. Deletion
+of a media annotation refuses while another live object still targets
+it. Remove the external action or measurement link first.
 
 Reads reject more than 4,096 annotations or 1 MiB of annotation text per
 page.
@@ -596,6 +619,7 @@ AnnotationSpecification: TypeAlias = (
     | FileAttachment
     | FreeText
     | Stamp
+    | MediaSpecification
 )
 ```
 
@@ -826,6 +850,34 @@ MarkupRects: TypeAlias = Sequence[float] | Quad | Iterable[Sequence[float] | Qua
 
 Rectangles or quads that text markup covers: one, or a sequence of them.
 
+## `MediaAsset`
+
+```python
+MediaAsset(*, filename: str, content_type: str, data: bytes)
+```
+
+An embedded media file shared by its file specification and media instances.
+
+## `MediaKind`
+
+Base-standard RichMedia configuration and instance subtypes.
+
+Members: `THREE_D`, `SOUND`, `VIDEO`.
+
+## `ModelFormat`
+
+Embedded base-standard 3D stream formats.
+
+Members: `U3D`, `PRC`.
+
+## `ModelView`
+
+```python
+ModelView(*, name: str, measurements: tuple[Measure, ...] = ())
+```
+
+A named 3D view with optional links to existing 3D measurements.
+
 ## `Note`
 
 ```python
@@ -897,6 +949,41 @@ An open line through two or more display points, as `page.annotations.add` takes
 
 The fields are those of `LineAnnotation`, with `line_endings` at
 the first and last points; one annotation holds at most 65,536 points.
+
+## `ProjectionAnnotation`
+
+```python
+ProjectionAnnotation(*, rect: Rect, measurement: Measure)
+```
+
+A projection annotation that links back to a 3D measurement.
+
+## `RichMedia`
+
+```python
+RichMedia(
+    *,
+    rect: Rect,
+    kind: MediaKind,
+    asset: MediaAsset,
+    views: tuple[ModelView, ...] = (),
+)
+```
+
+A RichMedia annotation with a named asset, configuration, instance and optional 3D views.
+
+The asset name tree and instance reference the same file specification.
+Use the annotation's live Arlington view to inspect its configurations,
+rename one, and read or replace its embedded stream. A viewer can use
+the stored data for playback.
+
+## `Screen`
+
+```python
+Screen(*, rect: Rect, asset: MediaAsset | None = None)
+```
+
+A Screen annotation with an optional media clip and its rendition action.
 
 ## `Sound`
 
@@ -1011,6 +1098,24 @@ A line through text, as `page.annotations.add` takes it.
 
 The fields are those of `Highlight`; `color` draws a one-point
 line through the middle of each rectangle.
+
+## `ThreeD`
+
+```python
+ThreeD(
+    *,
+    rect: Rect,
+    format: ModelFormat,
+    data: bytes,
+    views: tuple[ModelView, ...] = (),
+)
+```
+
+A 3D annotation whose stream holds an opaque U3D or PRC asset.
+
+Each named view is stored once. Supply existing measurement views to
+share the same geometry with a projection annotation. Viewers handle
+3D rendering. pyropdf preserves the model bytes across edits.
 
 ## `Underline`
 

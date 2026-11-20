@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 32 | 65 | 734 |
-| interpret | 1 | 13 | 0 | 29 | 687 | 101 |
-| create | 0 | 0 | 2 | 640 | 102 | 87 |
-| edit | 0 | 0 | 0 | 660 | 89 | 82 |
-| preserve | 0 | 0 | 0 | 17 | 685 | 129 |
+| read | 0 | 0 | 0 | 43 | 51 | 737 |
+| interpret | 1 | 13 | 0 | 40 | 671 | 106 |
+| create | 0 | 0 | 9 | 644 | 86 | 92 |
+| edit | 0 | 0 | 0 | 670 | 74 | 87 |
+| preserve | 0 | 0 | 0 | 28 | 671 | 132 |
 
 ## Clauses
 
@@ -132,16 +132,16 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.5.6.13 | Ink annotations | `ink-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.14 | Popup annotations | `popup-annotations` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.5.6.15 | File attachment annotations | `file-attachment-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.5.6.16 | Sound annotations | `sound-annotations` | 1 done | 1 planned | 1 planned | 1 partial | 1 done |
-| 12.5.6.17 | Movie annotations | `movie-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.18 | Screen annotations | `screen-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.5.6.16 | Sound annotations | `sound-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.5.6.17 | Movie annotations | `movie-annotations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.5.6.18 | Screen annotations | `screen-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.6.19 | Widget annotations | `widget-annotations` | 1 partial | 1 done | 1 partial | 1 partial | 1 done |
 | 12.5.6.20 | Printer's mark annotations | `printer-mark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.21 | Trap network annotations | `trap-network-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.22 | Watermark annotations | `watermark-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.24 | Projection annotations | `projection-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.5.6.24 | Projection annotations | `projection-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
+| 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 12.6.3 | Trigger events | `trigger-events` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.2 | Go-To actions | `goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.3 | Remote Go-To actions | `remote-goto-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
@@ -150,16 +150,16 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.6.4.6 | Launch actions | `launch-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.8 | URI actions | `uri-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
-| 12.6.4.9 | Sound actions | `sound-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.6.4.10 | Movie actions | `movie-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.9 | Sound actions | `sound-actions` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 12.6.4.10 | Movie actions | `movie-actions` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 12.6.4.11 | Hide actions | `hide-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.14 | Rendition actions | `rendition-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.14 | Rendition actions | `rendition-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.15 | Transition actions | `transition-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.16 | Go-To-3D-view actions | `goto-3d-view-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.16 | Go-To-3D-view actions | `goto-3d-view-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.3 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.4.3 | Variable text | `variable-text` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.5.2 | Button fields | `button-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -178,12 +178,12 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.9 | Measurement properties | `measurement` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.10 | Geospatial coordinates | `geospatial` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.11 | Document requirements | `document-requirements` | 1 done | 1 done | 1 done | 1 done | 1 done |
-| 13.2 | Multimedia | `renditions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 13.3 | Sounds | `sounds` | 1 done | 1 planned | 1 planned | 1 planned | 1 done |
-| 13.4 | Movies | `movies` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 13.5 | Alternate presentations | `alternate-presentations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 13.6 | 3D artwork | `3d-artwork` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 13.7 | Rich media | `rich-media` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 13.2 | Multimedia | `renditions` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 13.4 | Movies | `movies` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 13.5 | Alternate presentations | `alternate-presentations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
+| 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 13.7 | Rich media | `rich-media` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 planned | 1 planned | 1 non-goal | 1 planned | 1 planned |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | 14.3.3 | Document information dictionary | `document-info` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-3,007 unfinished cells in 831 features: 1 engine, 1,378 partial, 1,628 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,979 unfinished cells in 831 features: 1 engine, 1,425 partial, 1,553 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -395,9 +395,14 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 - [#839](https://github.com/yhay81/pyropdf/issues/839) Expose developer extensions, associated files, page-piece dictionaries, document parts, and structure namespaces. Expose and edit extension, associated-file, page-piece, document-part and namespace relationships through bounded store operations.
     - read, interpret, create, edit — `developer-extensions`, `page-piece`, `associated-files`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
-- [#862](https://github.com/yhay81/pyropdf/issues/862) Expose multimedia, rendition and 3D relationships as editable PDF data. Resolve and edit media as stored data, including streams, actions, named views and legacy relationships under the deprecation policy.
-    - read, preserve — `movie-annotations`, `screen-annotations`, `projection-annotations`, `rich-annotations`, `sound-actions`, `movie-actions`, `rendition-actions`, `goto-3d-view-actions`, `rich-media-execute-actions`, `renditions`, `movies`, `alternate-presentations`, `3d-artwork`, `rich-media`.
-    - interpret, create, edit — `sound-annotations`, `movie-annotations`, `screen-annotations`, `projection-annotations`, `rich-annotations`, `sound-actions`, `movie-actions`, `rendition-actions`, `goto-3d-view-actions`, `rich-media-execute-actions`, `renditions`, `sounds`, `movies`, `alternate-presentations`, `3d-artwork`, `rich-media`.
+- [#912](https://github.com/yhay81/pyropdf/issues/912) Author selector renditions, clip sections and player criteria. Author selector alternatives, clip offsets, player requirements and criteria. Round-trip the linked media and unsupported keys.
+    - read, interpret, create, edit, preserve — `renditions`.
+- [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
+    - read, interpret, create, edit, preserve — `3d-artwork`.
+- [#914](https://github.com/yhay81/pyropdf/issues/914) Author multi-asset RichMedia configurations, activation and presentation settings. Bind multiple assets and instances to configurations and round-trip activation, presentation and animation settings.
+    - read, interpret, create, edit, preserve — `rich-annotations`, `rich-media`.
+- [#915](https://github.com/yhay81/pyropdf/issues/915) Complete existing legacy movie, sound and alternate-presentation relationship editing. Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.
+    - read, interpret, edit, preserve — `sound-annotations`, `movie-annotations`, `sound-actions`, `movie-actions`, `sounds`, `movies`, `alternate-presentations`.
 - [#861](https://github.com/yhay81/pyropdf/issues/861) Complete prepress dictionaries and print annotation relationships. Resolve box colour, separations, trapping, OPI and print annotation relationships and preserve or edit them under the edition policy.
     - read, edit — `page-boundaries`, `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
     - interpret, create, preserve — `separation-dictionaries`, `trapping`, `opi`, `printer-mark-annotations`, `trap-network-annotations`, `watermark-annotations`.
@@ -1006,5 +1011,12 @@ before a test can be cited for that specific correction. The register gives no a
 - `xref-table` interpret: n/a, 7.5.4: the cross-reference table indexes indirect objects in the file, whose resolution Read covers.
 - `object-streams` interpret: n/a, 7.5.7: object streams store indirect objects in compressed form, whose unpacking Read covers.
 - `xref-streams` interpret: n/a, 7.5.8: cross-reference streams index indirect objects in the file, whose resolution Read covers.
+- `sound-annotations` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `movie-annotations` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `sound-actions` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `movie-actions` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `sounds` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `movies` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
+- `alternate-presentations` create: non-goal, #256: Creation of deprecated multimedia objects is excluded by the specification completion milestone.
 - `procedure-sets` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.
 - `xfa` create: non-goal, #256: Creation of deprecated features is excluded by the specification completion milestone.

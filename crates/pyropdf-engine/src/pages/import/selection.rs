@@ -10,6 +10,7 @@ use pyropdf_store::refs::{self, Edits, Rule};
 use pyropdf_store::value::{Array, Dict, Name, Reference, Value};
 use pyropdf_store::version::{Transaction, Version};
 
+use crate::annotations::version::{PdfVersion, effective_version, subtype_version};
 use crate::forms;
 use crate::navigation::{self, Destination, Lead, LeadReader, NamedDestinations, lead, read};
 use crate::pages::tree::{INHERITABLE, Root, rewrite_with};
@@ -33,7 +34,7 @@ pub fn import_pages(
     pages: impl IntoIterator<Item = Reference>,
     at: usize,
     budget: &Budget,
-) -> Result<()> {
+) -> Result<Option<(PdfVersion, u32, bool)>> {
     let view = transaction.snapshot();
     let index = PageIndex::memoized(pages_memo, &view, budget)?;
     let root = Root::read(&view, budget)?;
@@ -60,6 +61,7 @@ pub fn import_pages(
         imported: &imported,
         reads: Reads::new(source.version, budget),
         named: None,
+        media_version: None,
         overrides: BudgetVec::new(budget),
     };
     let mut prepared = BudgetVec::new(budget);
@@ -151,7 +153,12 @@ pub fn import_pages(
             &imported.copies,
             budget,
         )?;
-        Ok(())
+        // The page roots are allocated before any object reachable from
+        // them. The binding can validate only this import's new objects.
+        Ok(links
+            .media_version
+            .zip(imported.pages.first().map(|page| page.number()))
+            .map(|(version, first)| (version, first, imported.contains_prc)))
     })
 }
 
@@ -286,6 +293,7 @@ struct Links<'a, 'b> {
     imported: &'a [u32],
     reads: Reads<'b>,
     named: Option<Arc<NamedDestinations>>,
+    media_version: Option<PdfVersion>,
     /// The link objects that lead elsewhere once imported, or go.
     overrides: BudgetVec<'b, (Reference, Option<Value>)>,
 }
@@ -310,6 +318,19 @@ impl Links<'_, '_> {
                 kept.try_push(item)?;
                 continue;
             };
+            if crate::annotations::is_media_annotation(&annotation)
+                && let Some(Value::Name(name)) = annotation.get("Subtype")
+            {
+                let minimum = subtype_version(name.as_bytes());
+                // Preserve the edition of a 3D scene: its view, measurement
+                // and model format may each require a later edition.
+                let required = if name.as_bytes() == b"3D" {
+                    minimum.max(effective_version(self.source.version, budget)?)
+                } else {
+                    minimum
+                };
+                self.media_version = self.media_version.max(Some(required));
+            }
             let link = matches!(
                 self.resolved(annotation.get("Subtype"))?,
                 Some(Value::Name(subtype)) if subtype.as_bytes() == b"Link"

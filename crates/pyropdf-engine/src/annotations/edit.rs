@@ -6,7 +6,7 @@ use pyropdf_store::LimitExceeded;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode};
 use pyropdf_store::memo::Memo;
 use pyropdf_store::pages::{PageIndex, PageTree};
-use pyropdf_store::refs::copy_for_edit;
+use pyropdf_store::refs::{self, copy_for_edit};
 use pyropdf_store::save::deflate;
 use pyropdf_store::settle::Structure;
 use pyropdf_store::value::{Array, Bytes, Dict, Name, PdfString, Reference, Stream, Value};
@@ -1147,13 +1147,28 @@ impl PageAnnots<'_> {
         transaction: &mut Transaction,
         handles: &[(u32, (u32, u16))],
     ) -> Result<()> {
+        self.remove_with_references(transaction, handles, &refs::Cache::new())
+    }
+
+    /// Uses the document's reverse-reference cache to refuse detaching media
+    /// targets while an action or measurement outside the removal still uses them.
+    pub fn remove_with_references(
+        &self,
+        transaction: &mut Transaction,
+        handles: &[(u32, (u32, u16))],
+        references: &refs::Cache,
+    ) -> Result<()> {
         let budget = self.budget;
+        let mut media = BudgetVec::new(budget);
         budget.check(LimitCode::AnnotationCount, handles.len() as u64)?;
         let mut positions = BudgetVec::new(budget);
         for &(index, id) in handles {
             let (position, dict) = self.find(index, id)?;
             budget.poll()?;
             positions.try_push(position)?;
+            if id.0 != 0 && super::is_media_annotation(&dict) {
+                media.try_push(id.0)?;
+            }
             if let Some(Value::Reference(popup)) = dict.get("Popup")
                 && let Some(position) = self
                     .items
@@ -1185,7 +1200,20 @@ impl PageAnnots<'_> {
                 kept.try_push(copy_for_edit(item, budget)?)?;
             }
         }
-        self.write_items(transaction, Array::from(kept.into_vec()), budget)
+        self.write_items(transaction, Array::from(kept.into_vec()), budget)?;
+        if !media.is_empty() {
+            let index = references.in_transaction(transaction, budget)?;
+            let unused = refs::unreferenced(&index, &[], &media, budget)?;
+            if media.iter().any(|n| unused.binary_search(n).is_err()) {
+                return Err(AnnotationError::Value(
+                    "the multimedia annotation is still referenced; remove its action or measurement link first".into(),
+                ));
+            }
+            for &number in unused.iter() {
+                transaction.free(number, budget)?;
+            }
+        }
+        Ok(())
     }
 }
 
