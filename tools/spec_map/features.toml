@@ -597,10 +597,7 @@ objects = ["Reference"]
 clause = "8.11"
 description = "Optional content groups, memberships, configurations, and their usage."
 objects = ["OptContentGroup", "OptContentMembership", "OptContentConfig", "OptContentProperties", "OptContentUsage", "OptContentUsageApplication"]
-read = { status = "partial", missing = "Optional content groups, configurations, memberships, and visibility expressions are read, without `/Usage` dictionaries.", milestone = "Phase 4: Specification" }
 interpret = { status = "engine", upstream = 372 }
-create = { status = "partial", missing = "Canvas creates optional content groups and membership dictionaries, without `/Usage` or `/AS` usage application dictionaries.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Layer states and configurations are switched, without editing `/Usage` or `/AS` dictionaries.", milestone = "Phase 4: Specification" }
 
 [features.text-state]
 clause = "9.3"
