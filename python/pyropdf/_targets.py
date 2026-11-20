@@ -6,6 +6,17 @@ import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
+from pyropdf._actions import (
+    EmbeddedDestination,
+    HideAction,
+    ImportDataAction,
+    JavaScriptAction,
+    ResetFormAction,
+    SetLayerStateAction,
+    SubmitFormAction,
+    _custom_target_budget_text,
+    _is_custom_target,
+)
 from pyropdf._geometry import Point
 from pyropdf._presentations import TransitionAction
 from pyropdf._threads import ThreadAction
@@ -109,9 +120,24 @@ class NamedAction:
         _text(self.name, "name")
 
 
-#: Where a link leads: a place in this document or in another file, a file
-#: to open, a viewer, transition, or thread action, or a URI as a string.
-Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | TransitionAction | ThreadAction | str
+#: Where a link or trigger leads: a destination, a file to open, a viewer,
+#: transition, thread, script, hide, layer-state, or form action, or a URI string.
+Target: TypeAlias = (
+    Destination
+    | RemoteDestination
+    | EmbeddedDestination
+    | Launch
+    | NamedAction
+    | TransitionAction
+    | ThreadAction
+    | JavaScriptAction
+    | HideAction
+    | SetLayerStateAction
+    | SubmitFormAction
+    | ResetFormAction
+    | ImportDataAction
+    | str
+)
 
 
 def _destination(page: int, point: tuple[float, float] | None, zoom: float | None) -> Destination:
@@ -139,10 +165,12 @@ def _target_from_core(target: _Target) -> Target | None:
 def _target_to_core(target: object, page_count: int) -> _Target:  # noqa: PLR0911
     """Return the core's tuple for a target, validating its page."""
     match target:
-        case None | TransitionAction():
+        case None:
             return ("none", None, None, None, None, None)
         case ThreadAction(thread=thread, file=file):
             return ("none", None, None, None, file, thread if isinstance(thread, str) else None)
+        case _ if _is_custom_target(target):
+            return ("none", None, None, None, _custom_target_budget_text(target), None)
         case Destination(page=page, point=point, zoom=zoom):
             if page >= page_count:
                 msg = f"destination page {page} is out of range (0..{page_count - 1})"
@@ -158,8 +186,10 @@ def _target_to_core(target: object, page_count: int) -> _Target:  # noqa: PLR091
             return ("named", None, None, None, None, name)
         case _:
             msg = (
-                "a target is a Destination, RemoteDestination, Launch, NamedAction, "
-                f"TransitionAction, ThreadAction, URI string, or None: {type(target).__name__}"
+                "a target is a Destination, RemoteDestination, EmbeddedDestination, Launch, "
+                "NamedAction, TransitionAction, ThreadAction, JavaScriptAction, HideAction, "
+                "SetLayerStateAction, SubmitFormAction, ResetFormAction, ImportDataAction, "
+                f"URI string, or None: {type(target).__name__}"
             )
             raise TypeError(msg)
 

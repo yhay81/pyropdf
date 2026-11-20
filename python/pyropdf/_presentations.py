@@ -460,40 +460,11 @@ def _goto_action_dict(document: Document, page_idx: int, point: Point | None, zo
     return {"Type": Name("Action"), "S": Name("GoTo"), "D": [target_page.obj, Name("XYZ"), left, top, checked_zoom]}
 
 
-def _action_dict_for_target(document: Document, target: Target) -> dict[str, object]:  # noqa: PLR0911
-    """Build an action dictionary for ``/NA`` or ``/PA`` on a ``NavNode``."""
-    from pyropdf._targets import (  # noqa: PLC0415 - _targets imports TransitionAction from this module.
-        Destination,
-        Launch,
-        NamedAction,
-        RemoteDestination,
-    )
-    from pyropdf._threads import (  # noqa: PLC0415 - _threads imports helpers from this module.
-        ThreadAction,
-        _thread_action_dict,
-    )
+def _action_dict_for_target(document: Document, target: Target) -> tuple[dict[str, object], tuple[int, int]]:
+    """Build an action dictionary and its minimum PDF version for ``/NA`` or ``/PA`` on a ``NavNode``."""
+    from pyropdf._actions import _target_action_dict  # noqa: PLC0415
 
-    match target:
-        case TransitionAction():
-            action_dict, _ = _transition_action_dict(target)
-            return action_dict
-        case ThreadAction():
-            action_dict, _ = _thread_action_dict(document, target)
-            return action_dict
-        case Destination(page=page_idx, point=point, zoom=zoom):
-            return _goto_action_dict(document, page_idx, point, zoom)
-        case str():
-            return {"Type": Name("Action"), "S": Name("URI"), "URI": target.encode("utf-8")}
-        case RemoteDestination(file=file, page=page_idx, name=name):
-            remote_dest: object = name.encode("utf-8") if name else [page_idx, Name("Fit")]
-            return {"Type": Name("Action"), "S": Name("GoToR"), "F": file, "D": remote_dest}
-        case Launch(file=file):
-            return {"Type": Name("Action"), "S": Name("Launch"), "F": file}
-        case NamedAction(name=name):
-            return {"Type": Name("Action"), "S": Name("Named"), "N": Name(name)}
-        case _:
-            msg = f"unsupported target: {target!r}"
-            raise TypeError(msg)
+    return _target_action_dict(document, target)
 
 
 def _read_file_spec(value: object) -> str | None:
@@ -625,8 +596,8 @@ class _ActionReadContext:
         return None
 
     def read_action(self, action_obj: object) -> Target | None:  # noqa: PLR0911
+        from pyropdf._actions import _read_custom_action_dict  # noqa: PLC0415
         from pyropdf._targets import Launch, NamedAction  # noqa: PLC0415 - _targets imports TransitionAction.
-        from pyropdf._threads import _read_thread_action_dict  # noqa: PLC0415
 
         if not _is_dict(action_obj):
             return None
@@ -635,11 +606,6 @@ class _ActionReadContext:
         if not isinstance(kind, Name):
             return None
         match str(kind):
-            case "Trans":
-                trans = _read_transition(action.get("Trans"))
-                return None if trans is None else TransitionAction(trans)
-            case "Thread":
-                return _read_thread_action_dict(self._document, action, thread_index_map=self._thread_map())
             case "URI":
                 uri = action.get("URI")
                 return bytes(uri).decode("utf-8", "replace") if isinstance(uri, String) and len(uri) > 0 else None
@@ -654,7 +620,7 @@ class _ActionReadContext:
             case "GoTo":
                 return self._read_goto(action)
             case _:
-                return None
+                return _read_custom_action_dict(self._document, action, thread_index_map=self._thread_map())
 
 
 def _indirect_xref(obj: object) -> int | None:
@@ -827,15 +793,19 @@ def _validate_steps_iterable(steps: Iterable[NavigationStep], page_count: int) -
     return items
 
 
-def _write_nav_chain(document: Document, items: list[NavigationStep]) -> int:
-    prepared = [
-        (
-            None if step.next_action is None else _action_dict_for_target(document, step.next_action),
-            None if step.previous_action is None else _action_dict_for_target(document, step.previous_action),
-            step.duration,
-        )
-        for step in items
-    ]
+def _write_nav_chain(document: Document, items: list[NavigationStep]) -> tuple[int, tuple[int, int]]:
+    minimum = (1, 5)
+    prepared: list[tuple[dict[str, object] | None, dict[str, object] | None, float | None]] = []
+    for step in items:
+        na: dict[str, object] | None = None
+        pa: dict[str, object] | None = None
+        if step.next_action is not None:
+            na, req = _action_dict_for_target(document, step.next_action)
+            minimum = max(minimum, req)
+        if step.previous_action is not None:
+            pa, req = _action_dict_for_target(document, step.previous_action)
+            minimum = max(minimum, req)
+        prepared.append((na, pa, step.duration))
     xrefs = [document.objects.add({"Type": Name("NavNode")}) for _ in prepared]
     for index, (na, pa, dur) in enumerate(prepared):
         node_dict: dict[str, object] = {"Type": Name("NavNode")}
@@ -850,7 +820,7 @@ def _write_nav_chain(document: Document, items: list[NavigationStep]) -> int:
         if dur is not None:
             node_dict["Dur"] = dur
         document.objects[xrefs[index]] = node_dict
-    return xrefs[0]
+    return xrefs[0], minimum
 
 
 def _write_navigation_steps(page: Page, steps: Iterable[NavigationStep]) -> None:
@@ -869,8 +839,8 @@ def _write_navigation_steps(page: Page, steps: Iterable[NavigationStep]) -> None
             if "PresSteps" in page.obj:
                 del page.obj["PresSteps"]
         else:
-            _require_version(document, _catalog(document), (1, 5))
-            first_xref = _write_nav_chain(document, items)
+            first_xref, minimum = _write_nav_chain(document, items)
+            _require_version(document, _catalog(document), minimum)
             page.obj["PresSteps"] = document.objects[first_xref]
         if candidates:
             _core.object_free_unreferenced(document._core(), candidates)  # noqa: SLF001

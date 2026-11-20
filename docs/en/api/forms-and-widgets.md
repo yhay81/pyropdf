@@ -622,6 +622,20 @@ Widget.scripts: Scripts
 
 The widget's JavaScript by trigger: focus, blur, enter, exit, down, up, and activate.
 
+### `Widget.triggers`
+
+```python
+Widget.triggers: ActionTriggers
+```
+
+The widget's actions by `AnnotationTrigger` over `/AA` and `/A`.
+
+Assigning a mapping replaces the widget triggers in one transaction
+while keeping field-level `/K`, `/F`, `/V`, and `/C` entries,
+and `del widget.triggers` removes them.
+
+Settable.
+
 ### `Widget.field`
 
 ```python

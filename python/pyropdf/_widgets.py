@@ -7,10 +7,12 @@ its widget's object, and the position where it last found it in the page's
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, cast, overload
 
 from pyropdf import _core
+from pyropdf._actions import _WIDGET_TRIGGERS as _ACTION_WIDGET_TRIGGERS
+from pyropdf._actions import ActionTriggers, AnnotationTrigger
 from pyropdf._annotations import (
     _BORDER_STYLE_NAMES,
     _BORDER_STYLES,
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
     from pyropdf._fonts import StandardFontName
     from pyropdf._form import Field, FieldSpecification, Scripts
     from pyropdf._page import Page
+    from pyropdf._targets import Target
 
 
 class Widget:
@@ -104,6 +107,33 @@ class Widget:
 
         self._read()
         return Scripts(self._page._document, lambda: self.obj, _WIDGET_TRIGGERS)  # noqa: SLF001
+
+    @property
+    def triggers(self) -> ActionTriggers:
+        """Return the widget's actions by :class:`AnnotationTrigger` over ``/AA`` and ``/A``.
+
+        Assigning a mapping replaces the widget triggers in one transaction
+        while keeping field-level ``/K``, ``/F``, ``/V``, and ``/C`` entries,
+        and ``del widget.triggers`` removes them.
+        """
+        self._read()
+        return ActionTriggers(
+            self._page._document,  # noqa: SLF001
+            lambda: self.obj,
+            _ACTION_WIDGET_TRIGGERS,
+            base_version=(1, 2),
+        )
+
+    @triggers.setter
+    def triggers(
+        self,
+        triggers: Mapping[AnnotationTrigger, Target] | Iterable[tuple[AnnotationTrigger, Target]],
+    ) -> None:
+        self.triggers._replace(triggers)
+
+    @triggers.deleter
+    def triggers(self) -> None:
+        self.triggers.clear()
 
     @property
     def field(self) -> Field | None:

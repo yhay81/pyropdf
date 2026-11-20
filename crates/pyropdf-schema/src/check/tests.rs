@@ -511,3 +511,41 @@ fn pdf20_navigator_skips_deprecated_extension_keys_and_pdf17_checks_adbe_extn3()
     assert!(ext_clauses.contains(&(DefectKind::Required, "Navigator/APIVersion")));
     assert!(ext_clauses.contains(&(DefectKind::Required, "Navigator/Resources")));
 }
+
+#[test]
+fn single_quoted_string_possible_values_are_admitted() {
+    let mut ok_objs = valid();
+    ok_objs[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "OpenAction",
+            V::Dict(vec![
+                ("Type", V::Name("Action")),
+                ("S", V::Name("SubmitForm")),
+                ("F", V::Str(b"https://example.test/submit")),
+                ("CharSet", V::Str(b"utf-8")),
+            ]),
+        ),
+    ]);
+    assert_eq!(check(&doc(ok_objs)).unwrap().defects, vec![]);
+
+    let mut bad_objs = valid();
+    bad_objs[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "OpenAction",
+            V::Dict(vec![
+                ("Type", V::Name("Action")),
+                ("S", V::Name("SubmitForm")),
+                ("F", V::Str(b"https://example.test/submit")),
+                ("CharSet", V::Str(b"latin-1")),
+            ]),
+        ),
+    ]);
+    let bad_report = check(&doc(bad_objs)).unwrap();
+    assert_eq!(bad_report.defects.len(), 1);
+    assert_eq!(bad_report.defects[0].kind, DefectKind::Value);
+    assert_eq!(bad_report.defects[0].clause, "ActionSubmitForm/CharSet");
+}

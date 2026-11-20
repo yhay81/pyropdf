@@ -175,6 +175,19 @@ removes `/PresSteps` and frees unreferenced nodes.
 
 Settable.
 
+### `Page.triggers`
+
+```python
+Page.triggers: PageTriggers
+```
+
+The page's `/AA` additional actions as a live `PageTriggers` mutable mapping.
+
+Assigning a mapping replaces `Page['AA']` in one transaction, and
+`del page.triggers` removes it.
+
+Settable.
+
 ### `Page.thumbnail`
 
 ```python

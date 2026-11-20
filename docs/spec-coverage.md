@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 19 | 60 | 722 |
-| interpret | 1 | 13 | 0 | 14 | 684 | 89 |
-| create | 0 | 0 | 0 | 642 | 86 | 73 |
-| edit | 0 | 0 | 0 | 649 | 84 | 68 |
-| preserve | 0 | 0 | 0 | 6 | 680 | 115 |
+| read | 0 | 0 | 0 | 17 | 56 | 728 |
+| interpret | 1 | 13 | 0 | 14 | 678 | 95 |
+| create | 0 | 0 | 0 | 640 | 82 | 79 |
+| edit | 0 | 0 | 0 | 647 | 80 | 74 |
+| preserve | 0 | 0 | 0 | 4 | 676 | 121 |
 
 ## Clauses
 
@@ -136,23 +136,23 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.5.6.23 | Redaction annotations | `redaction-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.24 | Projection annotations | `projection-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.5.6.25 | 3D and RichMedia annotations | `rich-annotations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.6.3 | Trigger events | `trigger-events` | 1 partial | 1 planned | 1 partial | 1 partial | 1 partial |
+| 12.6.3 | Trigger events | `trigger-events` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.2 | Go-To actions | `goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.3 | Remote Go-To actions | `remote-goto-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
-| 12.6.4.4 | Embedded Go-To actions | `embedded-goto-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.4 | Embedded Go-To actions | `embedded-goto-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.5 | Go-To-DPart actions | `goto-dpart-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.6 | Launch actions | `launch-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | 12.6.4.7 | Thread actions | `thread-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.8 | URI actions | `uri-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | 12.6.4.9 | Sound actions | `sound-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.10 | Movie actions | `movie-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.6.4.11 | Hide actions | `hide-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.11 | Hide actions | `hide-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
-| 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.14 | Rendition actions | `rendition-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.15 | Transition actions | `transition-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.16 | Go-To-3D-view actions | `goto-3d-view-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 partial |
+| 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.7.2 | Interactive form dictionary | `interactive-form` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.4.3 | Variable text | `variable-text` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
@@ -160,7 +160,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.7.5.3 | Text fields | `text-fields` | 1 done | 1 partial | 1 partial | 1 partial | 1 done |
 | 12.7.5.4 | Choice fields | `choice-fields` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.5.5 | Signature fields | `signature-fields` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
-| 12.7.6 | Form actions | `form-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.7.6 | Form actions | `form-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.7.8 | Forms data format | `fdf` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.7.9 | Non-interactive forms | `non-interactive-forms` | 1 done | 1 done | 1 done | 1 done | 1 partial |
 | 12.8 | Digital signatures | `digital-signatures` | 1 done | 1 done | 1 partial | 1 partial | 1 done |

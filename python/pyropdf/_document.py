@@ -14,6 +14,18 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal
 
 from pyropdf import _chunks, _core, _markdown
+from pyropdf._actions import (
+    DocumentScripts,
+    DocumentTrigger,
+    DocumentTriggers,
+    _delete_document_scripts,
+    _delete_document_triggers,
+    _delete_open_action,
+    _read_open_action,
+    _replace_document_scripts,
+    _replace_document_triggers,
+    _write_open_action,
+)
 from pyropdf._attachments import Attachments
 from pyropdf._changes import changes as _changes
 from pyropdf._check import structural_check as _structural_check
@@ -105,6 +117,7 @@ if TYPE_CHECKING:
     from pyropdf._profiles import Profiles
     from pyropdf._revisions import Revision
     from pyropdf._signing import Signature, Signer, Timestamper
+    from pyropdf._targets import Target
 
 _DEFAULT_MAX_PDF_OUTPUT_SIZE = 512 * 1024 * 1024
 _DEFAULT_MAX_RENDER_BATCH_SIZE = 512 * 1024 * 1024
@@ -216,6 +229,67 @@ class Document:
     def named_pages(self) -> None:
         self._ensure_open()
         _delete_named_pages(self)
+
+    @property
+    def open_action(self) -> Target | None:
+        """Return or set the catalog's ``/OpenAction`` destination or action, or ``None`` when absent.
+
+        Assigning writes a destination array or action dictionary in one
+        transaction, and ``del doc.open_action`` removes ``/OpenAction``.
+        """
+        self._ensure_open()
+        return _read_open_action(self)
+
+    @open_action.setter
+    def open_action(self, action: Target | None) -> None:
+        self._ensure_open()
+        _write_open_action(self, action)
+
+    @open_action.deleter
+    def open_action(self) -> None:
+        self._ensure_open()
+        _delete_open_action(self)
+
+    @property
+    def scripts(self) -> DocumentScripts:
+        """Return the ``/Names /JavaScript`` name tree as a live :class:`DocumentScripts` mutable mapping.
+
+        Assigning a mapping replaces the tree in one transaction, and
+        ``del doc.scripts`` removes ``/Names /JavaScript`` and frees retired
+        nodes. pyropdf never runs the scripts.
+        """
+        self._ensure_open()
+        return DocumentScripts(self)
+
+    @scripts.setter
+    def scripts(self, scripts: Mapping[str, str] | Iterable[tuple[str, str]]) -> None:
+        self._ensure_open()
+        _replace_document_scripts(self, scripts)
+
+    @scripts.deleter
+    def scripts(self) -> None:
+        self._ensure_open()
+        _delete_document_scripts(self)
+
+    @property
+    def triggers(self) -> DocumentTriggers:
+        """Return the catalog's ``/AA`` scripts as a live :class:`DocumentTriggers` mutable mapping.
+
+        Assigning a mapping replaces ``Catalog['AA']`` in one transaction, and
+        ``del doc.triggers`` removes it.
+        """
+        self._ensure_open()
+        return DocumentTriggers(self)
+
+    @triggers.setter
+    def triggers(self, triggers: Mapping[DocumentTrigger, str] | Iterable[tuple[DocumentTrigger, str]]) -> None:
+        self._ensure_open()
+        _replace_document_triggers(self, triggers)
+
+    @triggers.deleter
+    def triggers(self) -> None:
+        self._ensure_open()
+        _delete_document_triggers(self)
 
     @property
     def objects(self) -> Objects:

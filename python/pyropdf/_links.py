@@ -6,14 +6,17 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, overload
 
 from pyropdf import _core
+from pyropdf._actions import (
+    _custom_target_action_dict,
+    _is_custom_target,
+    _read_custom_holder_action,
+)
 from pyropdf._annotations import _rect
 from pyropdf._errors import LimitError, StaleObjectError, StalePageError
 from pyropdf._geometry import Rect
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, _catalog
-from pyropdf._presentations import TransitionAction, _read_transition_action, _transition_action_dict
 from pyropdf._targets import Destination, Target, _destination, _target_from_core, _target_to_core
-from pyropdf._threads import ThreadAction, _read_thread_action, _thread_action_dict
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _Link, _Target
@@ -51,12 +54,12 @@ class Link:
     ``rect`` is the area that follows the link, in the page's display
     coordinates, and ``target`` where it leads; assigning either edits the
     annotation. ``target`` is ``None`` for an action that pyropdf does not
-    read, such as JavaScript. A handle reads the document on every access and
-    names the link's object, so it finds the link again after an edit moved
-    it; one stored as a direct dictionary in ``/Annots`` is found by its
-    position. A handle raises :class:`StaleObjectError` while the link is not
-    on its page, and :class:`StalePageError` while the page is gone; it works
-    again if undo restores them.
+    read, such as a movie or 3D action. A handle reads the document on every
+    access and names the link's object, so it finds the link again after an
+    edit moved it; one stored as a direct dictionary in ``/Annots`` is found by
+    its position. A handle raises :class:`StaleObjectError` while the link is
+    not on its page, and :class:`StalePageError` while the page is gone; it
+    works again if undo restores them.
     """
 
     __slots__ = ("_id", "_index", "_page")
@@ -121,7 +124,7 @@ class Link:
             if self._id[0]
             else self._page.obj["Annots"][self._index]
         )
-        return _read_transition_action(holder) or _read_thread_action(self._page._document, holder)  # noqa: SLF001
+        return _read_custom_holder_action(self._page._document, holder)  # noqa: SLF001
 
     @property
     def target(self) -> Target | None:
@@ -130,13 +133,10 @@ class Link:
 
     @target.setter
     def target(self, target: Target) -> None:
-        if isinstance(target, (TransitionAction, ThreadAction)):
+        if _is_custom_target(target):
             document = self._page._document  # noqa: SLF001
-            if isinstance(target, ThreadAction):
-                _link_target(target, self._page)
-                action_dict, minimum = _thread_action_dict(document, target)
-            else:
-                action_dict, minimum = _transition_action_dict(target)
+            _link_target(target, self._page)
+            action_dict, minimum = _custom_target_action_dict(document, target)
             with document.transaction("link target"):
                 self._edit(None, ("none", None, None, None, None, None))
                 _require_version(document, _catalog(document), minimum)
@@ -225,21 +225,16 @@ class Links(Sequence[Link]):
     def add(self, rect: Sequence[float], target: Target) -> Link:
         """Add a link over ``rect``, in display coordinates, that leads to ``target``, and return it.
 
-        ``target`` is a URI string, a :class:`Destination` in this document, a
-        :class:`RemoteDestination`, a :class:`Launch`, a :class:`NamedAction`,
-        a :class:`TransitionAction`, or a :class:`ThreadAction`. The link draws
-        no border. Its texts share a 1 MiB budget, checked before any change
-        with ``LimitError.code == "annotation_input_size"``.
+        ``target`` is any :data:`Target` destination, URI string, or action. The
+        link draws no border. Its non-script texts share a 1 MiB budget, checked
+        before any change with ``LimitError.code == "annotation_input_size"``.
         """
         page = self._page
         area = _rect(rect)
-        if isinstance(target, (TransitionAction, ThreadAction)):
+        if _is_custom_target(target):
             document = page._document  # noqa: SLF001
-            if isinstance(target, ThreadAction):
-                _link_target(target, page)
-                action_dict, minimum = _thread_action_dict(document, target)
-            else:
-                action_dict, minimum = _transition_action_dict(target)
+            _link_target(target, page)
+            action_dict, minimum = _custom_target_action_dict(document, target)
             with document.transaction("link"):
                 result = _core.link_add(
                     document._core(),  # noqa: SLF001

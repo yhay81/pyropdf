@@ -11,11 +11,19 @@ from __future__ import annotations
 import enum
 import math
 import time
-from collections.abc import Callable, Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast, overload
 
 from pyropdf import _core
+from pyropdf._actions import (
+    _SCREEN_TRIGGERS,
+    ActionTriggers,
+    AnnotationTrigger,
+    _delete_screen_action,
+    _read_screen_action,
+    _write_screen_action,
+)
 from pyropdf._canvas import _cache
 from pyropdf._content import BlendMode, Color
 from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObjectError, StalePageError
@@ -31,6 +39,7 @@ if TYPE_CHECKING:
     from pyropdf._core import Pixmap, _Annotation, _Document
     from pyropdf._document import Document
     from pyropdf._page import Page
+    from pyropdf._targets import Target
 
 #: The UTF-8 bytes of the texts that one edit writes (``annotation_input_size``).
 _MAX_ANNOTATION_INPUT_TEXT_SIZE = 1024 * 1024
@@ -1140,6 +1149,50 @@ class Annotation:
     @language.deleter
     def language(self) -> None:
         self._set(clear=["language"])
+
+    @property
+    def action(self) -> Target | None:
+        """Return or set the activation action ``/A`` of a ``Screen`` annotation, or ``None``.
+
+        Non-``Screen`` annotations return ``None`` and refuse mutations with
+        :class:`ValueError`. ``del annotation.action`` removes ``/A``.
+        """
+        return _read_screen_action(self._page._document, self.obj)  # noqa: SLF001
+
+    @action.setter
+    def action(self, target: Target | None) -> None:
+        _write_screen_action(self._page._document, lambda: self.obj, target)  # noqa: SLF001
+
+    @action.deleter
+    def action(self) -> None:
+        _delete_screen_action(self._page._document, lambda: self.obj)  # noqa: SLF001
+
+    @property
+    def triggers(self) -> ActionTriggers:
+        """Return the ``/AA`` additional actions of a ``Screen`` annotation as :class:`ActionTriggers`.
+
+        Non-``Screen`` annotations return an empty mapping and refuse mutations
+        with :class:`ValueError`. ``del annotation.triggers`` removes ``/AA``.
+        """
+        self._read()
+        return ActionTriggers(
+            self._page._document,  # noqa: SLF001
+            lambda: self.obj,
+            _SCREEN_TRIGGERS,
+            base_version=(1, 5),
+            writable=lambda: self.obj.get("Subtype") == "Screen",
+        )
+
+    @triggers.setter
+    def triggers(
+        self,
+        triggers: Mapping[AnnotationTrigger, Target] | Iterable[tuple[AnnotationTrigger, Target]],
+    ) -> None:
+        self.triggers._replace(triggers)
+
+    @triggers.deleter
+    def triggers(self) -> None:
+        self.triggers.clear()
 
     @property
     def popup_rect(self) -> Rect | None:

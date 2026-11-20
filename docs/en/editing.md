@@ -251,6 +251,57 @@ with pyropdf.open("input.pdf") as doc:
     print({name: field.value for name, field in doc.form.items()})
 ```
 
+## Actions, scripts, and triggers {#actions-and-triggers}
+
+Links, outline items, presentation steps, `doc.open_action`, `page.triggers`,
+`widget.triggers`, and `Screen` annotations (`annotation.action` and
+`annotation.triggers`) share the `Target` action union, including
+`EmbeddedDestination`, `HideAction`, `SetLayerStateAction`, `JavaScriptAction`,
+`SubmitFormAction`, `ResetFormAction`, and `ImportDataAction`. Document-level
+scripts live in `doc.scripts` (`/Names /JavaScript`) and catalog lifecycle
+scripts in `doc.triggers` (`Catalog["AA"]`); pyropdf never runs scripts.
+
+```python
+import pyropdf
+from pyropdf import (
+    AnnotationTrigger,
+    Destination,
+    DocumentTrigger,
+    EmbeddedDestination,
+    EmbeddedTarget,
+    HideAction,
+    NamedAction,
+    PageTrigger,
+    PushButton,
+    ResetFormAction,
+    SubmitFormAction,
+    SubmitFormFlags,
+    TextField,
+)
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    page.widgets.add(TextField("email", (72, 300, 260, 324)))
+    send = page.widgets.add(PushButton("send", (270, 300, 340, 324), caption="Send"))
+    doc.open_action = Destination(0)
+    doc.scripts["init"] = "var ready = true;"
+    doc.triggers[DocumentTrigger.WILL_SAVE] = "console.println('saving');"
+    page.triggers[PageTrigger.OPEN] = NamedAction("FirstPage")
+    send.triggers[AnnotationTrigger.ACTIVATE] = SubmitFormAction(
+        "https://example.com/submit",
+        fields=("email",),
+        flags=SubmitFormFlags.EXPORT_FORMAT,
+    )
+    send.triggers[AnnotationTrigger.DOWN] = HideAction("email", hide=False)
+    page.links.add(
+        (72, 340, 220, 358),
+        EmbeddedDestination(page=0, target=EmbeddedTarget(embedded_file="attachment.pdf")),
+    )
+    page.links.add((230, 340, 340, 358), ResetFormAction(("email",)))
+    assert not pyropdf.open(doc.to_bytes()).check()
+    print(doc.open_action, list(doc.scripts), send.triggers[AnnotationTrigger.ACTIVATE].url)
+```
+
 ## Outline
 
 ```python

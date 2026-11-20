@@ -54,6 +54,7 @@ SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Rendering", ("_pixmap",)),
     ("Annotations", ("_annotations",)),
     ("Links and destinations", ("_links", "_targets")),
+    ("Actions and triggers", ("_actions",)),
     ("Forms and widgets", ("_form", "_widgets")),
     ("Outline", ("_outline",)),
     ("Threads", ("_threads",)),

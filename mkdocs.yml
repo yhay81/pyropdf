@@ -83,6 +83,7 @@ nav:
       - Rendering: api/rendering.md
       - Annotations: api/annotations.md
       - Links and destinations: api/links-and-destinations.md
+      - Actions and triggers: api/actions-and-triggers.md
       - Forms and widgets: api/forms-and-widgets.md
       - Outline: api/outline.md
       - Threads: api/threads.md

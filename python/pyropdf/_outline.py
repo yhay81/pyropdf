@@ -9,13 +9,16 @@ from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, overload
 
 from pyropdf import _core
+from pyropdf._actions import (
+    _custom_target_action_dict,
+    _is_custom_target,
+    _read_custom_holder_action,
+)
 from pyropdf._content import Color
 from pyropdf._errors import LimitError, StaleObjectError
 from pyropdf._metadata import _require_version
 from pyropdf._objects import Dictionary, _catalog
-from pyropdf._presentations import TransitionAction, _read_transition_action, _transition_action_dict
 from pyropdf._targets import Destination, Target, _target_from_core, _target_to_core
-from pyropdf._threads import ThreadAction, _read_thread_action, _thread_action_dict
 
 if TYPE_CHECKING:
     from pyropdf._core import _Document, _OutlineItem, _Target
@@ -123,7 +126,7 @@ def _resolve_outline_target(document: Document, item_id: tuple[int, int], raw: _
     if resolved is not None or not item_id[0]:
         return resolved
     holder = Dictionary(document, item_id)
-    return _read_transition_action(holder) or _read_thread_action(document, holder)
+    return _read_custom_holder_action(document, holder)
 
 
 class OutlineItem:
@@ -190,14 +193,11 @@ class OutlineItem:
 
     @destination.setter
     def destination(self, target: Target | None) -> None:
-        if isinstance(target, (TransitionAction, ThreadAction)):
+        if _is_custom_target(target):
             document = self._document
             core = self._core()
             _target(target, _core.page_count(core))
-            if isinstance(target, ThreadAction):
-                action_dict, minimum = _thread_action_dict(document, target)
-            else:
-                action_dict, minimum = _transition_action_dict(target)
+            action_dict, minimum = _custom_target_action_dict(document, target)
             with document.transaction("outline target"):
                 _core.outline_set_target(core, self._id, ("none", None, None, None, None, None))
                 _require_version(document, _catalog(document), minimum)
@@ -372,10 +372,8 @@ def _custom_outline_action(
     document: Document,
     destination: Target | None,
 ) -> tuple[dict[str, object], tuple[int, int]] | None:
-    if isinstance(destination, TransitionAction):
-        return _transition_action_dict(destination)
-    if isinstance(destination, ThreadAction):
-        return _thread_action_dict(document, destination)
+    if _is_custom_target(destination):
+        return _custom_target_action_dict(document, destination)
     return None
 
 

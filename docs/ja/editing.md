@@ -239,6 +239,56 @@ with pyropdf.open("input.pdf") as doc:
     print({name: field.value for name, field in doc.form.items()})
 ```
 
+## アクション・スクリプト・トリガー {#actions-and-triggers}
+
+リンク、しおり、プレゼンテーションステップ、`doc.open_action`、`page.triggers`、
+`widget.triggers`、`Screen` 注釈（`annotation.action` と `annotation.triggers`）はすべて
+`Target` アクション型（`EmbeddedDestination`、`HideAction`、`SetLayerStateAction`、
+`JavaScriptAction`、`SubmitFormAction`、`ResetFormAction`、`ImportDataAction` を含む）を共有します。
+文書レベルのスクリプトは `doc.scripts`（`/Names /JavaScript`）、カタログの追加アクションは
+`doc.triggers`（`Catalog["AA"]`）で読み書きでき、pyropdf がスクリプトを実行することはありません。
+
+```python
+import pyropdf
+from pyropdf import (
+    AnnotationTrigger,
+    Destination,
+    DocumentTrigger,
+    EmbeddedDestination,
+    EmbeddedTarget,
+    HideAction,
+    NamedAction,
+    PageTrigger,
+    PushButton,
+    ResetFormAction,
+    SubmitFormAction,
+    SubmitFormFlags,
+    TextField,
+)
+
+with pyropdf.open("input.pdf") as doc:
+    page = doc.pages[0]
+    page.widgets.add(TextField("email", (72, 300, 260, 324)))
+    send = page.widgets.add(PushButton("send", (270, 300, 340, 324), caption="Send"))
+    doc.open_action = Destination(0)
+    doc.scripts["init"] = "var ready = true;"
+    doc.triggers[DocumentTrigger.WILL_SAVE] = "console.println('saving');"
+    page.triggers[PageTrigger.OPEN] = NamedAction("FirstPage")
+    send.triggers[AnnotationTrigger.ACTIVATE] = SubmitFormAction(
+        "https://example.com/submit",
+        fields=("email",),
+        flags=SubmitFormFlags.EXPORT_FORMAT,
+    )
+    send.triggers[AnnotationTrigger.DOWN] = HideAction("email", hide=False)
+    page.links.add(
+        (72, 340, 220, 358),
+        EmbeddedDestination(page=0, target=EmbeddedTarget(embedded_file="attachment.pdf")),
+    )
+    page.links.add((230, 340, 340, 358), ResetFormAction(("email",)))
+    assert not pyropdf.open(doc.to_bytes()).check()
+    print(doc.open_action, list(doc.scripts), send.triggers[AnnotationTrigger.ACTIVATE].url)
+```
+
 ## しおり
 
 ```python

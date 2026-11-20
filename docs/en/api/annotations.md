@@ -268,6 +268,32 @@ The BCP 47 language of the annotation's text, `/Lang`; `del` removes it.
 
 Settable.
 
+### `Annotation.action`
+
+```python
+Annotation.action: Target | None
+```
+
+The activation action `/A` of a `Screen` annotation, or `None`.
+
+Non-`Screen` annotations return `None` and refuse mutations with
+`ValueError`. `del annotation.action` removes `/A`.
+
+Settable.
+
+### `Annotation.triggers`
+
+```python
+Annotation.triggers: ActionTriggers
+```
+
+The `/AA` additional actions of a `Screen` annotation as `ActionTriggers`.
+
+Non-`Screen` annotations return an empty mapping and refuse mutations
+with `ValueError`. `del annotation.triggers` removes `/AA`.
+
+Settable.
+
 ### `Annotation.popup_rect`
 
 ```python
