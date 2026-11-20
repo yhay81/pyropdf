@@ -17,6 +17,15 @@ from pyropdf import _chunks, _core, _markdown
 from pyropdf._attachments import Attachments
 from pyropdf._changes import changes as _changes
 from pyropdf._check import structural_check as _structural_check
+from pyropdf._collections import (
+    Collection,
+    NamedPages,
+    _delete_named_pages,
+    _replace_named_pages,
+    delete_collection,
+    read_collection,
+    write_collection,
+)
 from pyropdf._core import _Document
 from pyropdf._core import probe as _probe
 from pyropdf._encryption import Access, Encryption, Permissions, _encryption_arg, _password_bytes
@@ -92,6 +101,7 @@ if TYPE_CHECKING:
     from pyropdf._chunks import Chunk
     from pyropdf._fallback_fonts import FallbackFont, _FontPackage
     from pyropdf._fonts import Font
+    from pyropdf._page import Page
     from pyropdf._profiles import Profiles
     from pyropdf._revisions import Revision
     from pyropdf._signing import Signature, Signer, Timestamper
@@ -159,6 +169,53 @@ class Document:
         """Return the embedded files, a mapping of :class:`Attachment` handles by name."""
         self._ensure_open()
         return Attachments(self)
+
+    @property
+    def collection(self) -> Collection | None:
+        """Return the portable collection (``/Collection``), or ``None``; assignable and deletable.
+
+        Assigning a :class:`Collection` writes the schema, initial document,
+        view, sort order, colors, split settings, indirect :class:`Navigator`,
+        and indirect :class:`CollectionFolder` hierarchy in one transaction,
+        promoting the catalog's ``/Version`` to ``1.7`` or ``2.0`` as required.
+        ``del doc.collection`` removes ``/Collection`` and frees unreferenced
+        retired objects.
+        """
+        self._ensure_open()
+        return read_collection(self)
+
+    @collection.setter
+    def collection(self, collection: Collection) -> None:
+        self._ensure_open()
+        write_collection(self, collection)
+
+    @collection.deleter
+    def collection(self) -> None:
+        self._ensure_open()
+        delete_collection(self)
+
+    @property
+    def named_pages(self) -> NamedPages:
+        """Return the ``/Names /Pages`` name tree as a live :class:`NamedPages` mutable mapping.
+
+        Assigning a mapping of ``name -> Page | int`` replaces the tree in one
+        transaction, and ``del doc.named_pages`` removes ``/Names /Pages`` and
+        frees retired ``/Kids`` nodes. Deleting or selecting pages in
+        ``doc.pages`` prunes entries naming removed pages in the same
+        transaction.
+        """
+        self._ensure_open()
+        return NamedPages(self)
+
+    @named_pages.setter
+    def named_pages(self, pages: Mapping[str, Page | int] | Iterable[tuple[str, Page | int]]) -> None:
+        self._ensure_open()
+        _replace_named_pages(self, pages)
+
+    @named_pages.deleter
+    def named_pages(self) -> None:
+        self._ensure_open()
+        _delete_named_pages(self)
 
     @property
     def objects(self) -> Objects:

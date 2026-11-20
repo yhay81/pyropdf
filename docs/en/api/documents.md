@@ -51,6 +51,39 @@ Document.attachments: Attachments
 
 The embedded files, a mapping of `Attachment` handles by name.
 
+### `Document.collection`
+
+```python
+Document.collection: Collection | None
+```
+
+The portable collection (`/Collection`), or `None`; assignable and deletable.
+
+Assigning a `Collection` writes the schema, initial document,
+view, sort order, colors, split settings, indirect `Navigator`,
+and indirect `CollectionFolder` hierarchy in one transaction,
+promoting the catalog's `/Version` to `1.7` or `2.0` as required.
+`del doc.collection` removes `/Collection` and frees unreferenced
+retired objects.
+
+Settable.
+
+### `Document.named_pages`
+
+```python
+Document.named_pages: NamedPages
+```
+
+The `/Names /Pages` name tree as a live `NamedPages` mutable mapping.
+
+Assigning a mapping of `name -> Page | int` replaces the tree in one
+transaction, and `del doc.named_pages` removes `/Names /Pages` and
+frees retired `/Kids` nodes. Deleting or selecting pages in
+`doc.pages` prunes entries naming removed pages in the same
+transaction.
+
+Settable.
+
 ### `Document.objects`
 
 ```python

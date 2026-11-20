@@ -83,6 +83,20 @@ The modification date (`/Params /ModDate`) as stored, or `None`; assignable and 
 
 Settable.
 
+### `Attachment.collection_item`
+
+```python
+Attachment.collection_item: Mapping[str, str | int | float | CollectionSubitem] | None
+```
+
+The portable collection item values (`/CI`), or `None`; assignable and deletable.
+
+Assigning a mapping writes an indirect `CollectionItem` dictionary in
+one transaction (promoting older documents to PDF 1.7), and `del`
+removes `/CI` and frees unreferenced retired objects.
+
+Settable.
+
 ### `Attachment.read`
 
 ```python

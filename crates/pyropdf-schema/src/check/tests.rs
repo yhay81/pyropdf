@@ -9,12 +9,14 @@ use crate::Version;
 enum V {
     Int(i64),
     Name(&'static str),
+    Str(&'static [u8]),
     Array(Vec<V>),
     Dict(Vec<(&'static str, V)>),
     Ref(u32),
 }
 
 struct Doc {
+    version: Version,
     trailer: V,
     objects: Vec<Rc<V>>,
     visits: Cell<usize>,
@@ -27,7 +29,7 @@ impl Graph for Doc {
     type Error = ();
 
     fn version(&self) -> Version {
-        Version { major: 1, minor: 7 }
+        self.version
     }
 
     fn trailer(&self) -> &V {
@@ -42,6 +44,7 @@ impl Graph for Doc {
         match value {
             V::Int(value) => View::Integer(*value),
             V::Name(name) => View::Name(name.as_bytes()),
+            V::Str(bytes) => View::String(bytes),
             V::Array(items) => View::Array(items.len()),
             V::Dict(_) => View::Dictionary,
             V::Ref(number) => View::Reference(*number),
@@ -87,6 +90,7 @@ impl Graph for Doc {
 
 fn doc(objects: Vec<V>) -> Doc {
     Doc {
+        version: Version { major: 1, minor: 7 },
         trailer: V::Dict(vec![("Size", V::Int(9)), ("Root", V::Ref(1))]),
         objects: objects.into_iter().map(Rc::new).collect(),
         visits: Cell::new(0),
@@ -383,4 +387,127 @@ fn a_missing_appearance_state_is_found() {
         annotated(None),
         vec![(Some(4), "AS".into(), "AnnotSquare/AS".into())]
     );
+}
+
+#[test]
+fn pdf20_navigator_skips_deprecated_extension_keys_and_pdf17_checks_adbe_extn3() {
+    let mut pdf20_objs = valid();
+    pdf20_objs[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "Collection",
+            V::Dict(vec![
+                ("Type", V::Name("Collection")),
+                ("View", V::Name("C")),
+                ("Navigator", V::Ref(4)),
+            ]),
+        ),
+    ]);
+    pdf20_objs.push(V::Dict(vec![
+        ("Type", V::Name("Navigator")),
+        ("Layout", V::Name("CustomExtLayout")),
+    ]));
+    let mut pdf20 = doc(pdf20_objs);
+    pdf20.version = Version { major: 2, minor: 0 };
+    pdf20.trailer = V::Dict(vec![
+        ("Size", V::Int(9)),
+        ("Root", V::Ref(1)),
+        (
+            "ID",
+            V::Array(vec![
+                V::Str(b"0123456789abcdef"),
+                V::Str(b"0123456789abcdef"),
+            ]),
+        ),
+    ]);
+    assert_eq!(check(&pdf20).unwrap().defects, vec![]);
+
+    // In PDF 1.6 (below 1.7), fn:Extension(ADBE_Extn3,1.7) || 2.0 is decidedly false.
+    let mut pdf16_objs = valid();
+    pdf16_objs[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "Collection",
+            V::Dict(vec![
+                ("Type", V::Name("Collection")),
+                ("Navigator", V::Ref(4)),
+            ]),
+        ),
+    ]);
+    pdf16_objs.push(V::Dict(vec![("Layout", V::Name("FilmStrip"))]));
+    let mut pdf16 = doc(pdf16_objs);
+    pdf16.version = Version { major: 1, minor: 6 };
+    let pdf16_report = check(&pdf16).unwrap();
+    let pdf16_clauses: Vec<_> = pdf16_report
+        .defects
+        .iter()
+        .map(|d| (d.kind, d.clause.as_str()))
+        .collect();
+    assert!(
+        pdf16_clauses.contains(&(DefectKind::Version, "Collection/Navigator")),
+        "{pdf16_clauses:?}"
+    );
+
+    // In PDF 1.7 without ADBE_Extn3, Navigator's ADBE_Extn3-only required keys are not demanded;
+    // with ADBE_Extn3 declared in Catalog["Extensions"], they are checked as required.
+    let mut no_ext_objs = valid();
+    no_ext_objs[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "Collection",
+            V::Dict(vec![
+                ("Type", V::Name("Collection")),
+                ("View", V::Name("C")),
+                ("Navigator", V::Ref(4)),
+            ]),
+        ),
+    ]);
+    no_ext_objs.push(V::Dict(vec![]));
+    let no_ext_report = check(&doc(no_ext_objs)).unwrap();
+    let no_ext_clauses: Vec<_> = no_ext_report
+        .defects
+        .iter()
+        .map(|d| (d.kind, d.clause.as_str()))
+        .collect();
+    assert!(!no_ext_clauses.contains(&(DefectKind::Required, "Navigator/SWF")));
+
+    let mut ext_objs = valid();
+    ext_objs[1] = V::Dict(vec![
+        ("Type", V::Name("Catalog")),
+        ("Pages", V::Ref(2)),
+        (
+            "Extensions",
+            V::Dict(vec![(
+                "ADBE",
+                V::Dict(vec![
+                    ("BaseVersion", V::Name("1.7")),
+                    ("ExtensionLevel", V::Int(3)),
+                ]),
+            )]),
+        ),
+        (
+            "Collection",
+            V::Dict(vec![
+                ("Type", V::Name("Collection")),
+                ("View", V::Name("C")),
+                ("Navigator", V::Ref(4)),
+            ]),
+        ),
+    ]);
+    ext_objs.push(V::Dict(vec![]));
+    let ext_report = check(&doc(ext_objs)).unwrap();
+    let ext_clauses: Vec<_> = ext_report
+        .defects
+        .iter()
+        .map(|d| (d.kind, d.clause.as_str()))
+        .collect();
+    assert!(!ext_clauses.contains(&(DefectKind::Version, "Collection/Navigator")));
+    assert!(!ext_clauses.contains(&(DefectKind::Version, "Collection/View")));
+    assert!(ext_clauses.contains(&(DefectKind::Required, "Navigator/SWF")));
+    assert!(ext_clauses.contains(&(DefectKind::Required, "Navigator/ID")));
+    assert!(ext_clauses.contains(&(DefectKind::Required, "Navigator/APIVersion")));
+    assert!(ext_clauses.contains(&(DefectKind::Required, "Navigator/Resources")));
 }

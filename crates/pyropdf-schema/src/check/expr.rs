@@ -286,7 +286,38 @@ pub(super) fn scalar(view: &View<'_>) -> Val {
     }
 }
 
+/// Maximum number of entries inspected inside an `/Extensions` developer array.
+const MAX_EXTENSION_ENTRIES: usize = 64;
+
 impl<G: Graph> Scope<'_, '_, G> {
+    /// Evaluates a `SinceVersion` expression, where bare version words such as
+    /// `2.0` test `self.version >= 2.0`.
+    pub(super) fn eval_since(&self, expr: &Expr<'_>) -> Result<Val, G::Error> {
+        Ok(match expr {
+            Expr::Word(word) => match version(word) {
+                Some(gate) => Val::Bool(self.version >= gate),
+                None => self.eval(expr)?,
+            },
+            Expr::Call("fn:Eval", args) if args.len() == 1 => self.eval_since(&args[0])?,
+            Expr::Binary(op @ (Op::Or | Op::And), left, right) => {
+                let left = self.eval_since(left)?;
+                if *op == Op::And && left == Val::Bool(false) {
+                    return Ok(left);
+                }
+                if *op == Op::Or && left == Val::Bool(true) {
+                    return Ok(left);
+                }
+                let right = self.eval_since(right)?;
+                match (left.truth(), right.truth()) {
+                    (_, Some(value)) if value == (*op == Op::Or) => Val::Bool(value),
+                    (Some(_), Some(value)) => Val::Bool(value),
+                    _ => Val::Unknown,
+                }
+            }
+            _ => self.eval(expr)?,
+        })
+    }
+
     pub(super) fn eval(&self, expr: &Expr<'_>) -> Result<Val, G::Error> {
         Ok(match expr {
             Expr::Word("true") => Val::Bool(true),
@@ -389,6 +420,40 @@ impl<G: Graph> Scope<'_, '_, G> {
                         Val::Unknown => Val::Unknown,
                         _ => Val::Bool(true),
                     },
+                    _ => Val::Unknown,
+                }
+            }
+            ("fn:Extension", [ext, rest @ ..]) => {
+                let Some(ext_name) = ext.text() else {
+                    return Ok(Val::Unknown);
+                };
+                match rest {
+                    [] => match self.extension(ext_name)? {
+                        Some(active) => Val::Bool(active),
+                        None => Val::Unknown,
+                    },
+                    [second] => {
+                        if let Some(gate) = second.text().and_then(version) {
+                            if self.version < gate {
+                                Val::Bool(false)
+                            } else {
+                                match self.extension(ext_name)? {
+                                    Some(active) => Val::Bool(active),
+                                    None => Val::Unknown,
+                                }
+                            }
+                        } else {
+                            match self.extension(ext_name)? {
+                                Some(false) => Val::Bool(false),
+                                Some(true) => match self.eval(second)? {
+                                    Val::Bool(value) => Val::Bool(value),
+                                    Val::Unknown => Val::Unknown,
+                                    _ => Val::Bool(true),
+                                },
+                                None => Val::Unknown,
+                            }
+                        }
+                    }
                     _ => Val::Unknown,
                 }
             }
@@ -551,5 +616,153 @@ impl<G: Graph> Scope<'_, '_, G> {
         } else {
             self.walk(child, rest, then)
         }
+    }
+
+    /// Checks whether developer or ISO extension `name` is explicitly declared in
+    /// `Catalog["Extensions"]`, returning `None` when `/Extensions` does not
+    /// declare it (since PDF files may use extension features without a
+    /// `/Extensions` dictionary).
+    pub(super) fn extension(&self, name: &str) -> Result<Option<bool>, G::Error> {
+        let Some(root_raw) = self.graph.get(self.graph.trailer(), b"Root") else {
+            return Ok(None);
+        };
+        let mut root_owned = None;
+        let Some(catalog) = self.deref_once(root_raw, &mut root_owned)? else {
+            return Ok(None);
+        };
+        let Some(ext_raw) = self.graph.get(catalog, b"Extensions") else {
+            return Ok(None);
+        };
+        let mut ext_owned = None;
+        let Some(extensions) = self.deref_once(ext_raw, &mut ext_owned)? else {
+            return Ok(None);
+        };
+        if !matches!(self.graph.view(extensions), View::Dictionary) {
+            return Ok(None);
+        }
+        let declared = match name {
+            "ADBE_Extn3" => self.has_dev_extension(
+                extensions,
+                b"ADBE",
+                Some(Version { major: 1, minor: 7 }),
+                3,
+                false,
+            )?,
+            "ISO_21812" => self.has_dev_extension(extensions, b"GTSm", None, 1, true)?,
+            _ if name.starts_with("ISO_TS_") => {
+                let Ok(code) = name["ISO_TS_".len()..].parse::<i64>() else {
+                    return Ok(None);
+                };
+                self.has_dev_extension(
+                    extensions,
+                    b"ISO_",
+                    Some(Version { major: 2, minor: 0 }),
+                    code,
+                    true,
+                )?
+            }
+            _ => {
+                if let Some(raw_vendor) = self.graph.get(extensions, name.as_bytes()) {
+                    let mut vendor_owned = None;
+                    if let Some(vendor) = self.deref_once(raw_vendor, &mut vendor_owned)? {
+                        matches!(self.graph.view(vendor), View::Dictionary)
+                            || matches!(self.graph.view(vendor), View::Array(len) if len > 0)
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+        };
+        Ok(declared.then_some(true))
+    }
+
+    fn deref_once<'a>(
+        &self,
+        raw: &'a G::Value,
+        slot: &'a mut Option<G::Owned>,
+    ) -> Result<Option<&'a G::Value>, G::Error> {
+        if let View::Reference(number) = self.graph.view(raw) {
+            *slot = self.graph.resolve(number)?;
+            Ok(slot.as_deref())
+        } else {
+            Ok(Some(raw))
+        }
+    }
+
+    fn has_dev_extension(
+        &self,
+        extensions: &G::Value,
+        prefix: &[u8],
+        wanted_base: Option<Version>,
+        wanted_level: i64,
+        exact_level: bool,
+    ) -> Result<bool, G::Error> {
+        let Some(entry_raw) = self.graph.get(extensions, prefix) else {
+            return Ok(false);
+        };
+        let mut entry_owned = None;
+        let Some(entry) = self.deref_once(entry_raw, &mut entry_owned)? else {
+            return Ok(false);
+        };
+        match self.graph.view(entry) {
+            View::Dictionary => {
+                Ok(self.matches_dev_dict(entry, wanted_base, wanted_level, exact_level))
+            }
+            View::Array(_) => {
+                for item_raw in self
+                    .graph
+                    .elements(entry)
+                    .iter()
+                    .take(MAX_EXTENSION_ENTRIES)
+                {
+                    let mut item_owned = None;
+                    if let Some(item) = self.deref_once(item_raw, &mut item_owned)?
+                        && matches!(self.graph.view(item), View::Dictionary)
+                        && self.matches_dev_dict(item, wanted_base, wanted_level, exact_level)
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn matches_dev_dict(
+        &self,
+        dict: &G::Value,
+        wanted_base: Option<Version>,
+        wanted_level: i64,
+        exact_level: bool,
+    ) -> bool {
+        let Some(View::Integer(level)) = self
+            .graph
+            .get(dict, b"ExtensionLevel")
+            .map(|v| self.graph.view(v))
+        else {
+            return false;
+        };
+        let level_ok = if exact_level {
+            level == wanted_level
+        } else {
+            level >= wanted_level
+        };
+        if !level_ok {
+            return false;
+        }
+        let Some(wanted) = wanted_base else {
+            return true;
+        };
+        let Some(View::Name(base_bytes)) = self
+            .graph
+            .get(dict, b"BaseVersion")
+            .map(|v| self.graph.view(v))
+        else {
+            return false;
+        };
+        std::str::from_utf8(base_bytes).ok().and_then(version) == Some(wanted)
     }
 }

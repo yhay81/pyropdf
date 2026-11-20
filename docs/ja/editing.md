@@ -302,21 +302,52 @@ with pyropdf.open("input.pdf") as doc:
     print(abbr.expanded, note.language, note.alt)
 ```
 
-## 添付ファイル
+## 添付ファイルとポータブルコレクション {#attachments}
+
+`doc.attachments` は埋め込みファイル（`/Names /EmbeddedFiles`）を管理し、各添付ファイルの
+`collection_item` は `/CI` の `CollectionItem`（表示接頭辞付きの `CollectionSubitem` を含む）を
+読み書きします。`doc.collection` はポータブルコレクションのスキーマ・並び順・配色・画面分割・
+カスタム `Navigator`・`CollectionFolder` 階層を設定します。
 
 ```python
 import pyropdf
+from pyropdf import (
+    Collection,
+    CollectionField,
+    CollectionFieldKind,
+    CollectionFolder,
+    CollectionSortKey,
+    CollectionSubitem,
+    CollectionView,
+    Navigator,
+)
 
 with pyropdf.open("input.pdf") as doc:
-    doc.attachments.add("data.csv", b"a,b\n1,2\n", description="元データ")
-    print(doc.attachments["data.csv"].read())
+    att = doc.attachments.add("data.csv", b"a,b\n1,2\n", description="元データ")
+    att.collection_item = {
+        "Department": "Finance",
+        "Total": CollectionSubitem(42, "$"),
+    }
+    doc.collection = Collection(
+        view=CollectionView.CUSTOM,
+        initial_document="data.csv",
+        schema={
+            "Department": CollectionField(CollectionFieldKind.STRING, "Department", order=1),
+            "Total": CollectionField(CollectionFieldKind.NUMBER, "Total", order=2),
+        },
+        sort=(CollectionSortKey("Department"),),
+        navigator=Navigator("FilmStrip"),
+        root_folder=CollectionFolder(0, "Portfolio", children=(CollectionFolder(1, "Q1"),)),
+    )
+    print(doc.attachments["data.csv"].read(), doc.collection.navigator.layout)
 ```
 
-## ページラベル
+## ページラベルと名前付きページ {#page-labels}
 
 `doc.page_labels` は文書の `PageLabelRange` の列を、`page.label` は 1 ページのラベルを返します。
 リストを代入すると置き換わり、最初の範囲はページ 0 から始めます。ページの挿入・移動・削除の後も、
-各ページは同じラベルを保ちます。
+各ページは同じラベルを保ちます。`doc.named_pages` は `/Names /Pages` の文字列キーから
+`Page` ハンドルへの対応を読み書きし、削除されたページを指す項目は同じトランザクションで取り除きます。
 
 ```python
 import pyropdf
@@ -327,7 +358,9 @@ with pyropdf.open("input.pdf") as doc:
         PageLabelRange(0, PageLabelStyle.LOWER_ROMAN),   # i, ii, iii, ...
         PageLabelRange(1, prefix="A-"),                  # A-1, A-2, ...
     ]
-    print(doc.pages[1].label, doc.pages.labeled("A-1"))
+    doc.named_pages["summary"] = 0
+    doc.named_pages["appendix"] = doc.pages[1]
+    print(doc.pages[1].label, doc.pages.labeled("A-1"), doc.named_pages["appendix"].index)
 ```
 
 ## プレゼンテーションとサムネイル

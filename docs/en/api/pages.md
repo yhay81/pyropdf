@@ -988,6 +988,10 @@ Pages.__delitem__(index: int | slice)
 
 Delete page `index`, or the pages of a slice, in one transaction.
 
+Links, outline destinations, named destinations, named pages, and
+article thread beads that refer to a removed page are pruned in the
+same transaction.
+
 ### `Pages.new`
 
 ```python

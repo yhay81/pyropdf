@@ -39,6 +39,20 @@ from pyropdf._canvas import Canvas, ListNumbering, PathBuilder, PathInput, Table
 from pyropdf._changes import ChangeReport, ClaimChange, SignatureChange
 from pyropdf._check import DefectKind, StructuralDefect, StructuralReport
 from pyropdf._chunks import Chunk, Element, ElementKind
+from pyropdf._collections import (
+    Collection,
+    CollectionColors,
+    CollectionField,
+    CollectionFieldKind,
+    CollectionFolder,
+    CollectionSortKey,
+    CollectionSplit,
+    CollectionSplitDirection,
+    CollectionSubitem,
+    CollectionView,
+    NamedPages,
+    Navigator,
+)
 from pyropdf._content import (
     BlendMode,
     Clip,
@@ -266,6 +280,16 @@ __all__ = [
     "ClaimChange",
     "Clip",
     "ClosePath",
+    "Collection",
+    "CollectionColors",
+    "CollectionField",
+    "CollectionFieldKind",
+    "CollectionFolder",
+    "CollectionSortKey",
+    "CollectionSplit",
+    "CollectionSplitDirection",
+    "CollectionSubitem",
+    "CollectionView",
     "Color",
     "ColorStop",
     "Colorspace",
@@ -342,7 +366,9 @@ __all__ = [
     "MoveTo",
     "Name",
     "NamedAction",
+    "NamedPages",
     "NavigationStep",
+    "Navigator",
     "Note",
     "NoteIcon",
     "ObjectReference",

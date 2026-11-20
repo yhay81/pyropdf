@@ -317,22 +317,54 @@ with pyropdf.open("input.pdf") as doc:
     print(abbr.expanded, note.language, note.alt)
 ```
 
-## Attachments
+## Attachments and portable collections
+
+`doc.attachments` manages embedded files (`/Names /EmbeddedFiles`), each
+attachment's `collection_item` reads and writes its `/CI` `CollectionItem`
+values (including `CollectionSubitem` display prefixes), and `doc.collection`
+configures a portable collection's schema, sort order, colors, split pane,
+custom `Navigator`, and `CollectionFolder` hierarchy.
 
 ```python
 import pyropdf
+from pyropdf import (
+    Collection,
+    CollectionField,
+    CollectionFieldKind,
+    CollectionFolder,
+    CollectionSortKey,
+    CollectionSubitem,
+    CollectionView,
+    Navigator,
+)
 
 with pyropdf.open("input.pdf") as doc:
-    doc.attachments.add("data.csv", b"a,b\n1,2\n", description="Source data")
-    print(doc.attachments["data.csv"].read())
+    att = doc.attachments.add("data.csv", b"a,b\n1,2\n", description="Source data")
+    att.collection_item = {
+        "Department": "Finance",
+        "Total": CollectionSubitem(42, "$"),
+    }
+    doc.collection = Collection(
+        view=CollectionView.CUSTOM,
+        initial_document="data.csv",
+        schema={
+            "Department": CollectionField(CollectionFieldKind.STRING, "Department", order=1),
+            "Total": CollectionField(CollectionFieldKind.NUMBER, "Total", order=2),
+        },
+        sort=(CollectionSortKey("Department"),),
+        navigator=Navigator("FilmStrip"),
+        root_folder=CollectionFolder(0, "Portfolio", children=(CollectionFolder(1, "Q1"),)),
+    )
+    print(doc.attachments["data.csv"].read(), doc.collection.navigator.layout)
 ```
 
-## Page labels
+## Page labels and named pages
 
 `doc.page_labels` lists the `PageLabelRange` records of the document, and
 `page.label` gives one page's label. Assigning a list replaces them; the first
 range starts at page 0. Inserting, moving, and deleting pages keeps each
-page's label.
+page's label. `doc.named_pages` maps string keys in `/Names /Pages` to live
+`Page` handles, pruning entries automatically when pages are removed.
 
 ```python
 import pyropdf
@@ -343,7 +375,9 @@ with pyropdf.open("input.pdf") as doc:
         PageLabelRange(0, PageLabelStyle.LOWER_ROMAN),   # i, ii, iii, ...
         PageLabelRange(1, prefix="A-"),                  # A-1, A-2, ...
     ]
-    print(doc.pages[1].label, doc.pages.labeled("A-1"))
+    doc.named_pages["summary"] = 0
+    doc.named_pages["appendix"] = doc.pages[1]
+    print(doc.pages[1].label, doc.pages.labeled("A-1"), doc.named_pages["appendix"].index)
 ```
 
 ## Presentations and thumbnails
