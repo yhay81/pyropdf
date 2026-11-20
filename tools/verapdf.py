@@ -9,7 +9,7 @@ Each fixture of tests/assets/pdfa and tests/assets/pdfua is validated under
 its claimed flavour, as is each edit of the preservation harness's EDITS
 applied to it and saved in full and incrementally. With ``--arlington``,
 each of those files is also checked against the Arlington PDF Model of the
-PDF version in its header, with the extensions that its PDF/A part adds to
+effective PDF version, with the extensions that its PDF/A part adds to
 that version. A file that veraPDF rejects must be listed in
 ``EXPECTED`` with its exact rules and tracking issue; the script exits with status 1
 on a rejection that is not listed, and on a listed one that passes.
@@ -45,6 +45,7 @@ UNTAGGED_RULES = {
     "edit_annotation": {"7.18.1-1", "7.18.3-1"},
     "add_field": {"7.18.3-1", "7.18.4-1"},
     "fill_field": {"7.18.3-1", "7.18.4-1"},
+    "import_form_data": {"7.18.3-1", "7.18.4-1"},
 }
 
 DUAL = "pdfua-2-pdfa-4"
@@ -140,8 +141,18 @@ def check_claims(doc: pyropdf.Document, flavour: str, edit: str, *, incremental:
 
 
 def arlington(path: Path, flavour: str) -> str:
-    """Return the Arlington flavour of the PDF version in the header of ``path``, with ``flavour``'s extensions."""
-    version = "arlington" + path.read_bytes()[5:8].decode("ascii")
+    """Validate the effective version, including a catalog promotion in a later revision."""
+    with path.open("rb") as source:
+        header = source.read(8)[5:8].decode("ascii")
+    with pyropdf.open(path) as doc:
+        declared = doc.catalog.get("Version")
+    # Valid PDF version names are ordered by their one-digit components.
+    effective = (
+        max(header, str(declared))
+        if isinstance(declared, pyropdf.Name) and re.fullmatch(r"1\.[0-7]|2\.0", str(declared))
+        else header
+    )
+    version = "arlington" + effective
     return f"{version}+{EXTENSIONS[flavour]}" if flavour in EXTENSIONS else version
 
 

@@ -528,3 +528,379 @@ NEW_EDITS = {
     )
     for name, case in NEW_EDITS.items()
 }
+
+
+def prepare_viewer_preferences(doc: pyropdf.Document) -> None:
+    # Keep the existing PDF/UA display-title setting, and force the indirect
+    # replacement path without disturbing the original document's other objects.
+    doc.viewer_preferences = pyropdf.ViewerPreferences(display_title=True, hide_toolbar=False)
+    prefs = doc.catalog["ViewerPreferences"]
+    if not prefs.is_indirect:
+        doc.catalog["ViewerPreferences"] = doc.objects[doc.objects.add(dict(prefs))]
+
+
+def edit_viewer_preferences(doc: pyropdf.Document) -> set[int]:
+    prefs = doc.catalog["ViewerPreferences"]
+    doc.viewer_preferences = pyropdf.ViewerPreferences(display_title=True, hide_toolbar=True)
+    assert doc.catalog["ViewerPreferences"] == prefs
+    return {number(prefs)}
+
+
+def check_viewer_preferences(doc: pyropdf.Document) -> None:
+    assert doc.viewer_preferences == pyropdf.ViewerPreferences(display_title=True, hide_toolbar=True)
+    assert doc.catalog["ViewerPreferences"].is_indirect
+
+
+def prepare_structure(doc: pyropdf.Document) -> None:
+    # A tagged corpus document may already have a single Document element.
+    # Place the test container inside it to preserve its root and reading order.
+    parent = doc.structure[0] if doc.structure else doc.structure.add("Document")
+    container = parent.children.add(pyropdf.TagRole.DIV, title=MARKER)
+    container.children.add(pyropdf.TagRole.PARAGRAPH, title="first")
+    container.children.add(pyropdf.TagRole.PARAGRAPH, title="second")
+    role_map = doc.structure.role_map
+    assert "PreservationRole" not in role_map
+    role_map["PreservationRole"] = "P"
+    root = doc.structure.obj
+    assert root is not None
+    roles = root["RoleMap"]
+    if not roles.is_indirect:
+        root["RoleMap"] = doc.objects[doc.objects.add(dict(roles))]
+
+
+def edit_structure(doc: pyropdf.Document) -> set[int]:
+    container = doc.structure[0].children[-1]
+    root = doc.structure.obj
+    assert root is not None
+    touched = {number(root["RoleMap"]), container.xref, container.children[0].xref}
+    doc.structure.role_map.update(PreservationRole="Span")
+    elem = container.children[0]
+    elem.role = "PreservationRole"
+    elem.actual_text = MARKER
+    container.children.move(0, 1)
+    return touched
+
+
+def check_structure(doc: pyropdf.Document) -> None:
+    container = doc.structure[0].children[-1]
+    assert container.title == MARKER
+    assert [child.title for child in container.children] == ["second", "first"]
+    elem = container.children[-1]
+    assert elem.parent == container
+    assert elem.role == "PreservationRole"
+    assert elem.standard_role == "Span"
+    assert elem.actual_text == MARKER
+
+
+def prepare_actions(doc: pyropdf.Document) -> None:
+    # Two holders share the indirect action. Removing the page trigger must
+    # keep the action alive while the catalog still opens the same destination.
+    page = doc.pages[0]
+    dest = [page.obj, pyropdf.Name("Fit")]
+    action = doc.objects[doc.objects.add({"S": pyropdf.Name("GoTo"), "D": dest})]
+    doc.catalog["OpenAction"] = action
+    page.obj["AA"] = doc.objects[doc.objects.add({"O": action})]
+
+
+def edit_actions(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    shared = doc.catalog["OpenAction"]
+    touched = {page.xref, number(page.obj["AA"]), number(shared), number(doc.catalog)}
+    del page.triggers[pyropdf.PageTrigger.OPEN]
+    assert doc.catalog["OpenAction"] == shared
+    assert doc.open_action == pyropdf.Destination(0)
+    doc.open_action = pyropdf.Destination(0, zoom=1.25)
+    assert number(shared) not in doc.objects
+    return touched
+
+
+def check_actions(doc: pyropdf.Document) -> None:
+    assert doc.open_action == pyropdf.Destination(0, zoom=1.25)
+    assert "AA" not in doc.pages[0].obj
+
+
+def prepare_article(doc: pyropdf.Document) -> None:
+    thread = doc.threads.add(
+        [(0, (10, 10, 30, 30)), (0, (40, 40, 60, 60))], created="D:20250101", modified="D:20250102"
+    )
+    thread.obj["I"] = doc.objects[doc.objects.add(dict(thread.obj["I"]))]
+    page = doc.pages[0]
+    page.obj["B"] = doc.objects[doc.objects.add(list(page.obj["B"]))]
+
+
+def edit_article(doc: pyropdf.Document) -> set[int]:
+    thread = doc.threads[-1]
+    first, second = thread.beads
+    touched = {thread.xref, number(thread.obj["I"]), first.xref, second.xref, number(doc.pages[0].obj["B"])}
+    thread.modified = "D:20250103"
+    thread.beads.move(0, 1)
+    thread.beads[0].rect = (45, 45, 75, 75)
+    return touched
+
+
+def check_article(doc: pyropdf.Document) -> None:
+    thread = doc.threads[-1]
+    assert (thread.created, thread.modified) == ("D:20250101", "D:20250103")
+    first, second = thread.beads
+    assert tuple(first.rect) == pytest.approx((45, 45, 75, 75))
+    assert tuple(second.rect) == pytest.approx((10, 10, 30, 30))
+    assert thread.obj["F"] == first.obj
+    assert first.obj["T"] == thread.obj
+    assert second.obj.get("T", thread.obj) == thread.obj
+    assert first.obj["N"] == first.obj["V"] == second.obj
+    assert second.obj["N"] == second.obj["V"] == first.obj
+    beads = [item.xref for item in doc.pages[0].obj["B"] if item.xref in (first.xref, second.xref)]
+    assert beads == [first.xref, second.xref]
+
+
+def prepare_collection(doc: pyropdf.Document) -> None:
+    doc.collection = pyropdf.Collection(view=pyropdf.CollectionView.DETAILS)
+
+
+def edit_collection(doc: pyropdf.Document) -> set[int]:
+    previous = number(doc.catalog["Collection"])
+    doc.collection = pyropdf.Collection(view=pyropdf.CollectionView.TILE)
+    assert previous not in doc.objects
+    return {number(doc.catalog), previous}
+
+
+def check_collection(doc: pyropdf.Document) -> None:
+    assert doc.collection == pyropdf.Collection(view=pyropdf.CollectionView.TILE)
+    assert doc.catalog["Collection"].is_indirect
+
+
+def import_form_data(doc: pyropdf.Document) -> set[int]:
+    field = doc.form[FIELD]
+    touched = form_containers(doc, membership=False) | {field.xref}
+    for widget in field.widgets:
+        touched.update((widget.xref, number(widget.obj["AP"]["N"])))
+    doc.form.font = face()
+    # Exercise both public parsers, then their common atomic field/appearance
+    # update. Each operation must make its own observable change.
+    with pyropdf.Document() as source:
+        source.pages.new((200, 200))
+        source.pages[0].widgets.add(TextField(FIELD, (10, 50, 100, 70), value="office"))
+        payload = source.form.to_fdf()
+    assert doc.form.import_fdf(payload) == [FIELD]
+    assert field.value == "office"
+    xml = (
+        '<xfdf xmlns="http://ns.adobe.com/xfdf/"><fields>'
+        f'<field name="{FIELD}"><value>{DRAWN}</value></field></fields></xfdf>'
+    )
+    assert doc.form.import_xfdf(xml) == [FIELD]
+    return touched
+
+
+FAMILY_EDITS = {
+    "viewer_preferences": Edit(
+        prepare=prepare_viewer_preferences, apply=edit_viewer_preferences, check=check_viewer_preferences
+    ),
+    "structure_role_map": Edit(prepare=prepare_structure, apply=edit_structure, check=check_structure),
+    "shared_action_trigger": Edit(prepare=prepare_actions, apply=edit_actions, check=check_actions),
+    "article_beads": Edit(prepare=prepare_article, apply=edit_article, check=check_article),
+    "collection": Edit(prepare=prepare_collection, apply=edit_collection, check=check_collection),
+    "import_form_data": Edit(
+        prepare=prepare_field, apply=import_form_data, check=check_filled_field, affected_pages=first_page
+    ),
+}
+
+
+def prepare_named_pages(doc: pyropdf.Document) -> None:
+    doc.named_pages = {MARKER: 0, "sibling": 0}
+
+
+def edit_named_pages(doc: pyropdf.Document) -> set[int]:
+    names = doc.catalog["Names"]
+    touched = {number(names) if names.is_indirect else number(doc.catalog), number(names["Pages"])}
+    del doc.named_pages[MARKER]
+    doc.named_pages.update({MARKER + "-renamed": 0})
+    return touched
+
+
+def check_named_pages(doc: pyropdf.Document) -> None:
+    assert dict(doc.named_pages) == {MARKER + "-renamed": doc.pages[0], "sibling": doc.pages[0]}
+
+
+def prepare_outline(doc: pyropdf.Document) -> None:
+    doc.outline = [
+        pyropdf.OutlineEntry(1, MARKER, pyropdf.Destination(0), is_open=True),
+        pyropdf.OutlineEntry(2, "child", pyropdf.Destination(0)),
+    ]
+
+
+def edit_outline(doc: pyropdf.Document) -> set[int]:
+    parent = doc.outline[0]
+    root = doc.catalog["Outlines"]
+    touched = {number(root), parent.xref}
+    if pdf_version(doc) < (1, 4):
+        touched.add(number(doc.catalog))
+    parent.title = MARKER + "-edited"
+    parent.is_open = False
+    parent.italic = True
+    return touched
+
+
+def check_outline(doc: pyropdf.Document) -> None:
+    parent = doc.outline[0]
+    assert parent.title == MARKER + "-edited"
+    assert parent.italic
+    assert not parent.is_open
+    assert parent.obj["Count"] == -1
+    assert doc.catalog["Outlines"]["Count"] == 1
+    assert parent.obj["First"]["Title"].text == "child"
+
+
+def prepare_page_labels(doc: pyropdf.Document) -> None:
+    doc.page_labels = [pyropdf.PageLabelRange(0, prefix="before")]
+
+
+def edit_page_labels(doc: pyropdf.Document) -> set[int]:
+    root = doc.catalog["PageLabels"]
+    touched = {number(doc.catalog)}
+    if root.is_indirect:
+        touched.add(number(root))
+    touched.update(entry.xref for entry in root["Nums"] if isinstance(entry, Dictionary) and entry.xref is not None)
+    doc.page_labels = [pyropdf.PageLabelRange(0, prefix=MARKER)]
+    return touched
+
+
+def check_page_labels(doc: pyropdf.Document) -> None:
+    assert doc.page_labels == [pyropdf.PageLabelRange(0, prefix=MARKER)]
+    assert doc.pages[0].label == MARKER + "1"
+
+
+def restore_history(doc: pyropdf.Document) -> set[int]:
+    with pyropdf.open(doc.to_bytes(incremental=True)) as other:
+        with other.transaction("presentation"):
+            other.pages[0].duration = 17.125
+            other.page_layout = pyropdf.PageLayout.ONE_COLUMN
+        other.page_layout = pyropdf.PageLayout.TWO_COLUMN_LEFT
+        other.history.undo()
+        history = other.history.save()
+    doc.history.restore(history)
+    assert doc.history.can_redo
+    assert doc.history.can_undo
+    return {number(doc.catalog), doc.pages[0].xref}
+
+
+def check_history(doc: pyropdf.Document) -> None:
+    assert doc.pages[0].duration == 17.125
+    assert doc.page_layout is pyropdf.PageLayout.ONE_COLUMN
+
+
+def prepare_scripts(doc: pyropdf.Document) -> None:
+    doc.scripts = {MARKER: "void 0"}
+    doc.triggers = {pyropdf.DocumentTrigger.CLOSE: "void 1"}
+
+
+def remove_scripts(doc: pyropdf.Document) -> set[int]:
+    catalog = doc.catalog
+    names = catalog["Names"]
+    tree = names["JavaScript"]
+    touched = {number(catalog), number(tree)}
+    for item in (names, tree["Names"][1], catalog["AA"], catalog["AA"]["DC"]):
+        if item.is_indirect:
+            touched.add(number(item))
+    del doc.scripts[MARKER]
+    doc.triggers.clear()
+    return touched
+
+
+def check_scripts(doc: pyropdf.Document) -> None:
+    assert MARKER not in doc.scripts
+    assert pyropdf.DocumentTrigger.CLOSE not in doc.triggers
+    assert "AA" not in doc.catalog
+
+
+def prepare_structure_membership(doc: pyropdf.Document) -> None:
+    parent = doc.structure[0] if doc.structure else doc.structure.add("Document")
+    container = parent.children.add(pyropdf.TagRole.DIV, title=MARKER)
+    container.children.add(pyropdf.TagRole.PARAGRAPH, title="old")
+    container.children.add(pyropdf.TagRole.DIV, title="new")
+
+
+def change_structure_membership(doc: pyropdf.Document) -> set[int]:
+    container = doc.structure[0].children[-1]
+    old, new = container.children
+    touched = {container.xref, old.xref, new.xref}
+    old.move(parent=new)
+    assert new.children[0].xref == old.xref
+    new.children.add(pyropdf.TagRole.PARAGRAPH, title="surviving")
+    del new.children[0]
+    assert old.xref not in doc.objects
+    return touched
+
+
+def check_structure_membership(doc: pyropdf.Document) -> None:
+    container = doc.structure[0].children[-1]
+    assert [c.title for c in container.children] == ["new"]
+    assert [c.title for c in container.children[0].children] == ["surviving"]
+    assert container.children[0].children[0].parent == container.children[0]
+
+
+LINK_URI = "https://example.invalid/pyropdf-preservation-link"
+
+
+def prepare_links(doc: pyropdf.Document) -> None:
+    assert all(link.target != LINK_URI for link in doc.pages[0].links)
+    doc.pages[0].links.add((5, 5, 20, 20), LINK_URI)
+
+
+def change_links(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    link = page.links[-1]
+    xref = link.xref
+    touched = page_annotations(page) | {xref}
+    link.rect = (6, 7, 21, 23)
+    link.target = LINK_URI + "/edited"
+    assert tuple(link.rect) == pytest.approx((6, 7, 21, 23))
+    assert link.target == LINK_URI + "/edited"
+    del page.links[-1]
+    assert xref not in doc.objects
+    return touched
+
+
+def check_links(doc: pyropdf.Document) -> None:
+    assert all(link.target not in (LINK_URI, LINK_URI + "/edited") for link in doc.pages[0].links)
+
+
+def prepare_page_boxes(doc: pyropdf.Document) -> None:
+    doc.pages.new((200, 300))
+
+
+def edit_page_boxes(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    page.media_box = (0, 0, 240, 320)
+    page.crop_box = (10, 20, 180, 280)
+    page.art_box = (5, 6, 70, 80)
+    page.bleed_box = (1, 2, 130, 140)
+    page.trim_box = (2, 3, 120, 130)
+    return {page.xref}
+
+
+def check_page_boxes(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    assert tuple(page.rect) == (0, 0, 170, 260)
+    assert tuple(page.art_box) == (5, 6, 70, 80)
+    assert tuple(page.bleed_box) == (1, 2, 130, 140)
+    assert tuple(page.trim_box) == (2, 3, 120, 130)
+
+
+def last_page(doc: pyropdf.Document) -> set[int]:
+    return {doc.pages[-1].xref}
+
+
+FAMILY_EDITS.update(
+    named_pages=Edit(prepare=prepare_named_pages, apply=edit_named_pages, check=check_named_pages),
+    outline=Edit(prepare=prepare_outline, apply=edit_outline, check=check_outline),
+    page_labels=Edit(prepare=prepare_page_labels, apply=edit_page_labels, check=check_page_labels),
+    history_restore=Edit(apply=restore_history, check=check_history),
+    document_scripts=Edit(prepare=prepare_scripts, apply=remove_scripts, check=check_scripts),
+    structure_membership=Edit(
+        prepare=prepare_structure_membership, apply=change_structure_membership, check=check_structure_membership
+    ),
+    links=Edit(prepare=prepare_links, apply=change_links, check=check_links, affected_pages=first_page),
+    page_boxes=Edit(
+        prepare=prepare_page_boxes, apply=edit_page_boxes, check=check_page_boxes, affected_pages=last_page
+    ),
+)
