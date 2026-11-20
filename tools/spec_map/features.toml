@@ -363,7 +363,6 @@ preserve = { status = "partial", missing = "`Encryption.KEEP` and incremental sa
 clause = "7.7.2"
 description = "The catalog: the root of the document's objects and its document-level settings."
 objects = ["Catalog"]
-interpret = { status = "partial", missing = "Catalog version, language, profiles, form, outline, layers, and structure root are interpreted. The viewer layout and page mode implementation needs clause-level evidence.", milestone = "Phase 4: Specification" }
 
 [features.page-objects]
 clause = "7.7.3"
@@ -1042,7 +1041,6 @@ objects = []
 clause = "12.7.9"
 description = "Forms flattened into page content."
 objects = []
-preserve = { status = "partial", missing = "Flattening preserves visual appearance and remaining fields, while the tagged-structure regression from #800 still needs clause-level evidence.", milestone = "Phase 4: Specification" }
 
 [features.digital-signatures]
 clause = "12.8"
@@ -1401,6 +1399,10 @@ read = { status = "partial", missing = "`Document.profiles` reads PDF/VT claims,
 clause = "7.6.7"
 description = "An unencrypted outer PDF identifies and carries one encrypted document."
 objects = ["EncryptedPayload"]
+read = { status = "partial", missing = "The hidden collection selects the payload among multiple embedded files. Recognition still accepts a missing catalog AF membership or wrong AFRelationship.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "Reads the selected payload, cryptographic filter and encrypted bytes. Validate the selected specification against the catalog association.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Creates an unencrypted cover, hidden collection, EP and associated file. The name-tree identifier is derived from the supplied filename.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Replaces the selected encrypted bytes and description without disturbing unrelated attachments. Independent identifiers and cross-reference consistency still need verified edits.", milestone = "Phase 4: Specification" }
 
 [features.coordinate-systems]
 clause = "8.3"
@@ -1431,6 +1433,11 @@ objects = []
 clause = "12.10"
 description = "Relate positions on a PDF page to locations in a geographic coordinate system."
 objects = []
+read = { status = "partial", missing = "Viewport registrations expose decimal coordinates, CRS and point data. Image/form registrations and Geospatial3D control triples need owner-level reading.", milestone = "Phase 4: Specification" }
+interpret = { status = "partial", missing = "2D viewport local points resolve to their matching geographic or projected control values. Projected matrix precedence, geographic fallback and Geospatial3D controls need verification.", milestone = "Phase 4: Specification" }
+create = { status = "partial", missing = "Page viewports write typed 2D registrations. Required LPTS, image/form owners and Geospatial3D triples need verified creation.", milestone = "Phase 4: Specification" }
+edit = { status = "partial", missing = "Viewport control points can be replaced and invalid paired lengths refused. Enforce required LPTS and maintain the other registration owners.", milestone = "Phase 4: Specification" }
+preserve = { status = "partial", missing = "Exact viewport registration data survives full and incremental saving. Image/form and Geospatial3D registration references still need preservation evidence.", milestone = "Phase 4: Specification" }
 
 [features.procedure-sets]
 clause = "14.2"
