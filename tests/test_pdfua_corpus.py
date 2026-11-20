@@ -25,6 +25,6 @@ def test_each_fixture_is_what_the_generator_writes(name: str) -> None:
 def test_each_fixture_claims_its_part_and_passes_the_structural_check(name: str) -> None:
     doc = pyropdf.open(PDFUA / name)
     assert doc.profiles.pdfua == f"PDF/UA-{FLAVOURS[name][2].removeprefix('ua')}"
-    assert doc.profiles.pdfa is None
+    assert doc.profiles.pdfa == ("PDF/A-4" if name == "pdfua-2-pdfa-4.pdf" else None)
     assert doc.catalog["MarkInfo"]["Marked"] is True
     assert doc.check().defects == ()
