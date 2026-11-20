@@ -404,6 +404,7 @@ fonts, maps the character to a glyph of the font.
 
 ```python
 FontInfo(
+    *,
     xref: int | None,
     names: tuple[str, ...],
     base_font: str,
@@ -420,7 +421,7 @@ One font dictionary that a page's resources name, from `Page.fonts`.
 ## `FontProgram`
 
 ```python
-FontProgram(type: str, data: bytes)
+FontProgram(*, type: str, data: bytes)
 ```
 
 An embedded font program, from `Document.font_program`.
@@ -452,6 +453,7 @@ The PostScript names of the Standard 14 fonts (ISO 32000-2 section 9.6.2.2).
 
 ```python
 SubsetFont(
+    *,
     xref: int,
     name: str,
     glyphs: int,

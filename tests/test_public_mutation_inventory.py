@@ -587,7 +587,7 @@ READ_ONLY = {
     "History": "save",
     "Layers": "visible",
     "Layout": "to_dict to_html to_xml",
-    "Matrix": "norm planish",
+    "Matrix": "planish",
     "Operations": "parse to_bytes",
     "Outline": "walk entries",
     "OutlineItem": "to_entry",
@@ -601,11 +601,11 @@ READ_ONLY = {
         "pixel with_pixel fill color_count colors top_color from_bytes open to_pil to_bytes "
         "height channels stride resolution width alpha colorspace"
     ),
-    "Point": "norm distance_to",
+    "Point": "distance_to",
     "Quad": "morph",
     "Real": "to_decimal",
-    "Rect": "round contains intersects get_area norm normalized morph torect",
-    "IRect": "contains intersects get_area norm normalized morph torect",
+    "Rect": "round intersects area norm normalized morph torect",
+    "IRect": "intersects area norm normalized morph torect",
     "pyropdf": "open probe parse_fdf parse_xfdf parse_pdf_date pdf_date vri_key wrap_encrypted_payload",
     "Revision": "open",
     "Signature": "verify",

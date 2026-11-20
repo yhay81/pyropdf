@@ -66,7 +66,7 @@ _UNSEEN = -1
 KINDS = ("javascript", "actions", "attachments", "metadata", "comments", "hidden_text")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SanitizeReport:
     """What :meth:`Document.sanitize` removed, and what the result invalidates."""
 
@@ -76,6 +76,10 @@ class SanitizeReport:
     """The signatures and profile claims that the sanitized, fully saved document breaks."""
     dropped_claims: tuple[str, ...]
     """The PDF/A, PDF/UA, PDF/X, and PDF/VT claims that the document no longer makes, such as ``"PDF/A-2B"``."""
+
+    def __post_init__(self) -> None:
+        """Take a read-only snapshot of the supplied removed mapping."""
+        object.__setattr__(self, "removed", MappingProxyType(dict(self.removed)))
 
 
 def _dictionaries(document: Document) -> Iterator[Dictionary]:
@@ -382,9 +386,9 @@ def sanitize(  # noqa: PLR0913 - one switch per kind
             removed["hidden_text"] = _remove_hidden_text(document)
     kept = set(_claims(document))
     report = SanitizeReport(
-        MappingProxyType(removed),
-        document.changes(incremental=False),
-        tuple(claim for claim in claims if claim not in kept),
+        removed=removed,
+        changes=document.changes(incremental=False),
+        dropped_claims=tuple(claim for claim in claims if claim not in kept),
     )
     document.save(path, prune=unused)
     return report

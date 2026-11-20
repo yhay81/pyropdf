@@ -101,7 +101,7 @@ def test_physical_landmarks_agree_after_edit_and_rotation_removal(rotation: int,
         current = reopened.pages[0]
         (found,) = current.search("Mark")
         (highlight,) = [a for a in current.annotations if a.obj["Subtype"] == "Highlight"]
-        assert highlight.rect.contains(found)
+        assert found in highlight.rect
         assert tuple(found) == pytest.approx(tuple(hit), abs=0.01)
 
     check_saved()

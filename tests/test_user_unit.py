@@ -156,7 +156,7 @@ def test_a_search_hit_highlights_the_same_text_at_any_unit() -> None:
         hits = page.search("Hello")
         page.annotations.add(pyropdf.Highlight(hits))
         (annotation,) = page.annotations
-        assert annotation.rect.contains(hits[0])
+        assert hits[0] in annotation.rect
         quad_points.append([float(value) for value in annotation.obj["QuadPoints"]])
 
     assert quad_points[0] == pytest.approx(quad_points[1])
