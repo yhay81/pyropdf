@@ -570,10 +570,7 @@ from pyropdf import (
     FieldLock,
     FieldMdpAction,
     LegalAttestation,
-    SecurityStore,
     TextField,
-    ValidationInfo,
-    vri_key,
     wrap_encrypted_payload,
 )
 
@@ -586,9 +583,6 @@ with pyropdf.open("input.pdf") as doc:
         reason="Certified invoice",
     )
     doc.legal_attestation = LegalAttestation(annotations=0, optional_content=False)
-    doc.security_store = SecurityStore(
-        vri={vri_key(b"cms-contents"): ValidationInfo(created="D:20260101000000Z")},
-    )
     assert doc.form["author_sig"].lock == FieldLock(FieldMdpAction.INCLUDE, ("amount",))
     locked_bytes = doc.to_bytes(
         encryption=Encryption(user_password="reader", owner_password="owner"),
@@ -597,6 +591,20 @@ with pyropdf.open("input.pdf") as doc:
 with wrap_encrypted_payload(EncryptedPayload(locked_bytes, filename="invoice.pdf")) as wrapper:
     assert wrapper.encrypted_payload is not None
     print(wrapper.encrypted_payload.filename, wrapper.encrypted_payload.subtype)
+```
+
+A DSS requires PDF 2.0. When writing it to an older document would introduce a structural defect, the setter raises `PdfError` and preserves the original revision. This example uses sample signature contents on a fresh document. For an existing signature, pass its CMS contents to `vri_key` and save incrementally to preserve the signed revision.
+
+```python
+import pyropdf
+from pyropdf import SecurityStore, ValidationInfo, vri_key
+
+with pyropdf.Document() as doc:
+    doc.pages.new((612, 792))
+    key = vri_key(b"cms-contents")
+    info = ValidationInfo(created="D:20260101000000Z")
+    doc.security_store = SecurityStore(vri={key: info})
+    assert doc.security_store.vri[key] == info
 ```
 
 ## Viewports, geospatial measurements, and document requirements {#viewports-and-requirements}

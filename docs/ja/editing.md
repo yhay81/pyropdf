@@ -546,10 +546,7 @@ from pyropdf import (
     FieldLock,
     FieldMdpAction,
     LegalAttestation,
-    SecurityStore,
     TextField,
-    ValidationInfo,
-    vri_key,
     wrap_encrypted_payload,
 )
 
@@ -562,9 +559,6 @@ with pyropdf.open("input.pdf") as doc:
         reason="請求書の証明",
     )
     doc.legal_attestation = LegalAttestation(annotations=0, optional_content=False)
-    doc.security_store = SecurityStore(
-        vri={vri_key(b"cms-contents"): ValidationInfo(created="D:20260101000000Z")},
-    )
     assert doc.form["author_sig"].lock == FieldLock(FieldMdpAction.INCLUDE, ("amount",))
     locked_bytes = doc.to_bytes(
         encryption=Encryption(user_password="reader", owner_password="owner"),
@@ -573,6 +567,20 @@ with pyropdf.open("input.pdf") as doc:
 with wrap_encrypted_payload(EncryptedPayload(locked_bytes, filename="invoice.pdf")) as wrapper:
     assert wrapper.encrypted_payload is not None
     print(wrapper.encrypted_payload.filename, wrapper.encrypted_payload.subtype)
+```
+
+DSS には PDF 2.0 が必要です。古い PDF のバージョンを上げると構造上の欠陥が生じる場合、設定時に `PdfError` が発生し、元のリビジョンが保たれます。次の例では、新規文書にサンプルの署名データを使います。既存の署名には実際の CMS データを `vri_key` に渡し、署名対象のリビジョンを保つために差分保存します。
+
+```python
+import pyropdf
+from pyropdf import SecurityStore, ValidationInfo, vri_key
+
+with pyropdf.Document() as doc:
+    doc.pages.new((612, 792))
+    key = vri_key(b"cms-contents")
+    info = ValidationInfo(created="D:20260101000000Z")
+    doc.security_store = SecurityStore(vri={key: info})
+    assert doc.security_store.vri[key] == info
 ```
 
 ## ビューポート・地理空間計測・文書要件 {#viewports-and-requirements}
