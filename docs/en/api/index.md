@@ -181,7 +181,9 @@ method and property of its classes with its full description.
 - [`MediaAsset`](annotations.md#mediaasset): An embedded media file shared by its file specification and media instances.
 - [`MediaKind`](annotations.md#mediakind): Base-standard RichMedia configuration and instance subtypes.
 - [`ModelFormat`](annotations.md#modelformat): Embedded base-standard 3D stream formats.
-- [`ModelView`](annotations.md#modelview): A named 3D view with optional links to existing 3D measurements.
+- [`ModelMeasurement`](annotations.md#modelmeasurement): Geometry of one 3D measurement in model coordinates.
+- [`ModelMeasurementType`](annotations.md#modelmeasurementtype): Kinds of stored 3D measurements and markups (ISO 32000-2, Tables 326–331).
+- [`ModelView`](annotations.md#modelview): A named 3D view, its camera-to-world matrix, scene settings and measurements.
 - [`Note`](annotations.md#note): A note shown as an icon, as `page.annotations.add` takes it.
 - [`NoteIcon`](annotations.md#noteicon): The icon of a note, `/Name` (ISO 32000-2 §12.5.6.4).
 - [`Polygon`](annotations.md#polygon): A closed polygon through two or more display points, as `page.annotations.add` takes it.

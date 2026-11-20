@@ -1158,12 +1158,7 @@ preserve = { status = "partial", missing = "Multi-level slide and resource name 
 [features.3d-artwork]
 clause = "13.6"
 description = "3D streams, views, nodes, lighting, and render modes."
-objects = ["3DStream", "3DView", "3DNode", "3DActivation", "3DLightingScheme", "3DRenderMode", "3DBackground", "3DCrossSection", "3DReference"]
-read = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-interpret = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-create = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-edit = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
-preserve = { status = "partial", missing = "Camera, scene and activation settings and each dimensional measurement geometry need dedicated relationship tests.", milestone = "Phase 4: Specification" }
+objects = ["3DStream", "3DView", "3DNode", "3DActivation", "3DLightingScheme", "3DRenderMode", "3DBackground", "3DCrossSection", "3DReference", "3DMeasure3DC", "3DMeasureAD3", "3DMeasureLD3", "3DMeasurePD3", "3DMeasureRD3", "ExDataProjection"]
 
 [features.rich-media]
 clause = "13.7"

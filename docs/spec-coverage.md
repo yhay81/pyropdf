@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 44 | 44 | 743 |
-| interpret | 1 | 13 | 0 | 40 | 664 | 113 |
-| create | 0 | 0 | 9 | 645 | 80 | 97 |
-| edit | 0 | 0 | 0 | 671 | 67 | 93 |
-| preserve | 0 | 0 | 0 | 28 | 664 | 139 |
+| read | 0 | 0 | 0 | 43 | 44 | 744 |
+| interpret | 1 | 13 | 0 | 39 | 664 | 114 |
+| create | 0 | 0 | 9 | 644 | 80 | 98 |
+| edit | 0 | 0 | 0 | 670 | 67 | 94 |
+| preserve | 0 | 0 | 0 | 27 | 664 | 140 |
 
 ## Clauses
 
@@ -182,7 +182,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 13.3 | Sounds | `sounds` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 13.4 | Movies | `movies` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
 | 13.5 | Alternate presentations | `alternate-presentations` | 1 partial | 1 partial | 1 non-goal | 1 partial | 1 partial |
-| 13.6 | 3D artwork | `3d-artwork` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
+| 13.6 | 3D artwork | `3d-artwork` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 13.7 | Rich media | `rich-media` | 1 partial | 1 partial | 1 partial | 1 partial | 1 partial |
 | 14.2 | Legacy resource procedure sets | `procedure-sets` | 1 done | 1 done | 1 non-goal | 1 done | 1 done |
 | 14.3.2 | Metadata streams | `xmp-metadata` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,948 unfinished cells in 831 features: 1 engine, 1,428 partial, 1,519 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,943 unfinished cells in 831 features: 1 engine, 1,423 partial, 1,519 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -393,8 +393,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
     - preserve — `developer-extensions`, `page-piece`, `document-parts`, `goto-dpart-actions`, `structure-namespaces`, `namespace-inclusion`.
 - [#912](https://github.com/yhay81/pyropdf/issues/912) Author selector renditions, clip sections and player criteria. Author selector alternatives, clip offsets, player requirements and criteria. Round-trip the linked media and unsupported keys.
     - read, interpret, create, edit, preserve — `renditions`.
-- [#913](https://github.com/yhay81/pyropdf/issues/913) Author 3D scene settings and dimensional measurements as PDF data. Resolve scene, camera and activation settings and each dimensional measurement geometry. Verify view, stream and measurement references after editing.
-    - read, interpret, create, edit, preserve — `3d-artwork`.
 - [#914](https://github.com/yhay81/pyropdf/issues/914) Author multi-asset RichMedia configurations, activation and presentation settings. Bind multiple assets and instances to configurations and round-trip activation, presentation and animation settings.
     - read, interpret, create, edit, preserve — `rich-annotations`, `rich-media`.
 - [#915](https://github.com/yhay81/pyropdf/issues/915) Complete existing legacy movie, sound and alternate-presentation relationship editing. Resolve external sound parameters, movie posters, timing, title-based action targets and alternate-presentation name trees. Verify reference-safe edits in existing files.
