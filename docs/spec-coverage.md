@@ -56,7 +56,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 7.11.4.2 | Related files arrays | `related-files` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.11.6 | Collection items | `collection-items` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 7.12 | Extensions dictionary | `developer-extensions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 8.3 | Coordinate transformations | `coordinate-systems` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 8.3 | Coordinate transformations | `coordinate-systems` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.4 | Graphics state | `graphics-state` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.5 | Path construction and painting | `paths` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 8.6.4 | Device colour spaces | `device-color-spaces` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -367,8 +367,6 @@ Milestone [#254](https://github.com/yhay81/pyropdf/issues/254).
     - read, create, edit — `geospatial`, `unencrypted-wrapper`.
     - interpret — `document-catalog`, `geospatial`, `unencrypted-wrapper`.
     - preserve — `geospatial`, `unencrypted-wrapper`, `non-interactive-forms`.
-- [#851](https://github.com/yhay81/pyropdf/issues/851) Verify display-space coordinates across reading, editing and rendering on the same page. Verify display-space transformations at the reading, rendering and editing boundaries, including rotated, offset and scaled pages.
-    - read, interpret, create, edit, preserve — `coordinate-systems`.
 
 ### 255 Conformance
 

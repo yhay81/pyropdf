@@ -303,6 +303,7 @@ def test_scaled_page_boxes_follow_indirect_coordinates() -> None:
 
 
 @pytest.mark.parametrize("unit", [750, 30_000])
+@pytest.mark.spec("coordinate-systems", "create", "interpret", "preserve")
 def test_the_canvas_and_its_pattern_keep_the_inverse_unit(unit: int) -> None:
     gradient = pyropdf.LinearGradient(
         start=pyropdf.Point(10, 10),
