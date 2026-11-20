@@ -528,6 +528,7 @@ fn claims<'b>(
     };
     let xmp = metadata.decoded(budget)?;
     let opened_catalog_ver = catalog_declared_version(opened, budget)?;
+    let removed_annots = removed_annotations(opened, version, written, budget)?;
     for claim in read_claims(&xmp).into_iter().flatten() {
         // The written objects that break the claim, by reason, in the
         // order the reasons are first met.
@@ -537,6 +538,12 @@ fn claims<'b>(
             let Some(value) = object(version, number, budget)? else {
                 continue;
             };
+            if let Value::Dict(dict) = &*value
+                && is_annotation_dict(dict)
+                && is_removed_annotation(version, removed_annots.as_slice(), number, dict, budget)?
+            {
+                continue;
+            }
             let is_catalog = root_number == Some(number);
             for reason in breaks(claim, is_catalog, opened_catalog_ver, &value, budget)?
                 .into_iter()
@@ -865,6 +872,127 @@ fn is_untagged_annotation(dict: &Dict) -> bool {
     dict.get("Rect").is_some()
         && !matches!(subtype.as_bytes(), b"Popup")
         && dict.get("StructParent").is_none()
+}
+
+fn push_annot_refs(
+    items: &pyropdf_store::value::Array,
+    out: &mut BudgetVec<'_, u32>,
+) -> Result<()> {
+    for item in items.iter() {
+        if let Value::Reference(reference) = item {
+            out.try_push(reference.number())?;
+        }
+    }
+    Ok(())
+}
+
+fn page_annot_refs(
+    version: &Version,
+    page: &Dict,
+    out: &mut BudgetVec<'_, u32>,
+    budget: &Budget,
+) -> Result<()> {
+    let Some(annots) = page.get("Annots") else {
+        return Ok(());
+    };
+    let resolved_annots = resolved(version, annots, budget)?;
+    if let Some(Value::Array(items)) = resolved_annots.as_deref() {
+        push_annot_refs(items, out)?;
+    }
+    Ok(())
+}
+
+/// Returns sorted annotation object numbers that appeared in `/Annots` of
+/// edited pages or edited indirect `/Annots` arrays in `opened`, and no longer
+/// appear in those containers in `version`.
+fn removed_annotations<'b>(
+    opened: &Version,
+    version: &Version,
+    written: &[u32],
+    budget: &'b Budget,
+) -> Result<BudgetVec<'b, u32>> {
+    let mut was_listed = BudgetVec::new(budget);
+    let mut still_listed = BudgetVec::new(budget);
+    for &number in written {
+        budget.poll()?;
+        let Some(old_val) = object(opened, number, budget)? else {
+            continue;
+        };
+        match &*old_val {
+            Value::Dict(old_dict) if old_dict.get("Annots").is_some() => {
+                page_annot_refs(opened, old_dict, &mut was_listed, budget)?;
+                if let Some(new_val) = object(version, number, budget)?
+                    && let Value::Dict(new_dict) = &*new_val
+                {
+                    page_annot_refs(version, new_dict, &mut still_listed, budget)?;
+                }
+            }
+            Value::Array(old_items) => {
+                for item in old_items.iter() {
+                    if let Value::Reference(reference) = item
+                        && let Some(target) = object(opened, reference.number(), budget)?
+                        && let Value::Dict(dict) = &*target
+                        && is_annotation_dict(dict)
+                    {
+                        was_listed.try_push(reference.number())?;
+                    }
+                }
+                if let Some(new_val) = object(version, number, budget)?
+                    && let Value::Array(new_items) = &*new_val
+                {
+                    push_annot_refs(new_items, &mut still_listed)?;
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut kept = still_listed.into_vec();
+    kept.sort_unstable();
+    kept.dedup();
+    let mut removed_vec = was_listed.into_vec();
+    removed_vec.sort_unstable();
+    removed_vec.dedup();
+    let mut out = BudgetVec::new(budget);
+    for item in removed_vec {
+        if kept.binary_search(&item).is_err() {
+            out.try_push(item)?;
+        }
+    }
+    Ok(out)
+}
+
+/// Returns whether annotation `number` (`dict`) was removed from its page in
+/// `version`: either it left an edited `/Annots` list since `opened`, or its
+/// `/P` page no longer lists it in `/Annots`.
+fn is_removed_annotation(
+    version: &Version,
+    removed_annots: &[u32],
+    number: u32,
+    dict: &Dict,
+    budget: &Budget,
+) -> Result<bool> {
+    if removed_annots.binary_search(&number).is_ok() {
+        return Ok(true);
+    }
+    let Some(Value::Reference(page_ref)) = dict.get("P") else {
+        return Ok(false);
+    };
+    let Some(page_val) = object(version, page_ref.number(), budget)? else {
+        return Ok(true);
+    };
+    let Some(page_dict) = value_dict(&page_val) else {
+        return Ok(true);
+    };
+    let Some(annots) = page_dict.get("Annots") else {
+        return Ok(true);
+    };
+    let resolved_annots = resolved(version, annots, budget)?;
+    let Some(Value::Array(items)) = resolved_annots.as_deref() else {
+        return Ok(true);
+    };
+    Ok(!items
+        .iter()
+        .any(|item| matches!(item, Value::Reference(reference) if reference.number() == number)))
 }
 
 #[cfg(test)]

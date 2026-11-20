@@ -20,9 +20,11 @@ use pyropdf_store::Result;
 use pyropdf_store::budget::{Budget, BudgetVec, LimitCode, try_insert_map};
 use pyropdf_store::pages::{MAX_CHAIN, Page};
 use pyropdf_store::refs::{copy_dict_for_edit, copy_for_edit};
+use pyropdf_store::tree::{append_parent_tree_entry, number_tree_pairs};
 use pyropdf_store::value::{Array, Bytes, Dict, Name, Reference, Stream, Value};
-use pyropdf_store::version::Transaction;
+use pyropdf_store::version::{Transaction, Version};
 
+use crate::annotations::version::{DEFAULT_VERSION, PdfVersion, header_version, parse_version};
 use crate::annotations::{Reader, fmt, numbers_array};
 
 /// The annotation flag that hides an annotation (ISO 32000-2 Table 167).
@@ -48,6 +50,8 @@ pub struct Plan {
     keep: Vec<Value>,
     /// The entries whose appearances are drawn.
     drawn: Vec<Value>,
+    /// Every indirect annotation or widget taken off, by reference.
+    removed: Vec<Reference>,
     /// The widgets taken off, by reference.
     pub widgets: Vec<Reference>,
 }
@@ -59,9 +63,11 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
     let budget = reader.budget;
     let mut keep = BudgetVec::new(budget);
     let mut drawn = BudgetVec::new(budget);
+    let mut removed = BudgetVec::new(budget);
     let mut widgets = BudgetVec::new(budget);
     keep.try_reserve_exact(items.len())?;
     drawn.try_reserve_exact(items.len())?;
+    removed.try_reserve_exact(items.len())?;
     widgets.try_reserve_exact(items.len())?;
     let mut changed = false;
     let mut drawing = true;
@@ -88,10 +94,11 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
             continue;
         }
         changed = true;
-        if subtype == Some(b"Widget")
-            && let Value::Reference(reference) = item
-        {
-            widgets.try_push(*reference)?;
+        if let Value::Reference(reference) = item {
+            removed.try_push(*reference)?;
+            if subtype == Some(b"Widget") {
+                widgets.try_push(*reference)?;
+            }
         }
         let flags = match reader.entry(annotation, "F")?.as_deref() {
             Some(Value::Integer(flags)) => *flags,
@@ -104,6 +111,7 @@ pub fn plan(reader: &Reader<'_>, items: &Array, selection: Selection) -> Result<
     Ok(changed.then(|| Plan {
         keep: keep.into_vec(),
         drawn: drawn.into_vec(),
+        removed: removed.into_vec(),
         widgets: widgets.into_vec(),
     }))
 }
@@ -184,6 +192,10 @@ enum Source {
     Missing(Reference, Stream),
 }
 
+/// Structure-tree association of a flattened annotation (`StructElem`
+/// reference and its `/S` role bytes).
+type StructureTag = (Reference, Reference, Vec<u8>);
+
 /// Draws the appearances of `plan` into the content of page object
 /// `number`, `page`, through one form, and leaves in its `/Annots` only the
 /// entries that stay; those that are dictionaries are stored as objects, so
@@ -197,20 +209,30 @@ pub fn draw(
     missing: &mut Missing,
     budget: &Budget,
 ) -> Result<()> {
+    let page_ref = page.object().unwrap_or_else(|| Reference::new(number, 0));
+    let (tagged_doc, struct_parents) = structure_context(transaction.version(), &plan, budget)?;
     let mut placed = BudgetVec::new(budget);
     placed.try_reserve_exact(plan.drawn.len())?;
+    let mut drawn_refs = BudgetVec::new(budget);
+    drawn_refs.try_reserve_exact(plan.drawn.len())?;
     {
         let reader = Reader::new(transaction.version(), budget);
         for item in &plan.drawn {
-            if let Value::Reference(reference) = item
-                && let Some((dict, form)) = missing.forms.get(reference)
+            let item_ref = match item {
+                Value::Reference(reference) => Some(*reference),
+                _ => None,
+            };
+            if let Some(reference) = item_ref
+                && let Some((dict, form)) = missing.forms.get(&reference)
             {
                 if let Some(placement) = placement(&reader, dict, form.dict())? {
+                    let tag = resolve_structure_tag(&reader, &struct_parents, reference, dict)?;
                     let copied = Stream::new(
                         copy_dict_for_edit(form.dict(), budget)?,
                         form.data().clone(),
                     );
-                    placed.try_push((Source::Missing(*reference, copied), placement))?;
+                    drawn_refs.try_push(reference)?;
+                    placed.try_push((Source::Missing(reference, copied), placement, tag))?;
                 }
                 continue;
             }
@@ -227,6 +249,13 @@ pub fn draw(
             let Some(placement) = placement(&reader, annotation, stream.dict())? else {
                 continue;
             };
+            let tag = match item_ref {
+                Some(annot_ref) => {
+                    drawn_refs.try_push(annot_ref)?;
+                    resolve_structure_tag(&reader, &struct_parents, annot_ref, annotation)?
+                }
+                None => None,
+            };
             // `Do` draws only forms; an appearance stream without
             // `/Subtype` is one by its role.
             let retyped = if stream.dict().get("Subtype").is_none() {
@@ -240,14 +269,16 @@ pub fn draw(
             } else {
                 None
             };
-            placed.try_push((Source::Stream(reference, retyped), placement))?;
+            placed.try_push((Source::Stream(reference, retyped), placement, tag))?;
         }
     }
     let mut dict = copy_dict_for_edit(page.dict(), budget)?;
     let mut xobjects = Dict::new();
     let mut ops = BudgetVec::new(budget);
     let mut bounds: Option<[f64; 4]> = None;
-    for (index, (source, (matrix, rect))) in placed.into_vec().into_iter().enumerate() {
+    let mut mcid_owners = BudgetVec::new(budget);
+    let mut rewrites: BudgetVec<'_, (Reference, Reference, Option<i64>)> = BudgetVec::new(budget);
+    for (index, (source, (matrix, rect), tag)) in placed.into_vec().into_iter().enumerate() {
         let reference = match source {
             Source::Stream(reference, None) => reference,
             Source::Stream(reference, Some(stream)) => {
@@ -260,9 +291,22 @@ pub fn draw(
         };
         let name = format!("A{index}");
         let [a, b, c, d, e, f] = matrix.map(fmt);
-        ops.try_extend_from_slice(
-            format!("q {a} {b} {c} {d} {e} {f} cm /{name} Do Q\n").as_bytes(),
-        )?;
+        let invoke = format!("q {a} {b} {c} {d} {e} {f} cm /{name} Do Q\n");
+        if let Some((annot_ref, elem_ref, role)) = tag {
+            let mcid = i64::try_from(mcid_owners.len()).unwrap_or(i64::MAX);
+            mcid_owners.try_push(Value::Reference(elem_ref))?;
+            rewrites.try_push((elem_ref, annot_ref, Some(mcid)))?;
+            write_pdf_name(&mut ops, &role)?;
+            ops.try_extend_from_slice(format!(" << /MCID {mcid} >> BDC\n").as_bytes())?;
+            ops.try_extend_from_slice(invoke.as_bytes())?;
+            ops.try_extend_from_slice(b"EMC\n")?;
+        } else if tagged_doc {
+            ops.try_extend_from_slice(b"/Artifact BMC\n")?;
+            ops.try_extend_from_slice(invoke.as_bytes())?;
+            ops.try_extend_from_slice(b"EMC\n")?;
+        } else {
+            ops.try_extend_from_slice(invoke.as_bytes())?;
+        }
         budget.charge(
             LimitCode::MemorySize,
             (size_of::<(Name, Value)>() + name.len()) as u64,
@@ -282,15 +326,42 @@ pub fn draw(
             ],
         });
     }
+    if !struct_parents.is_empty() {
+        let reader = Reader::new(transaction.version(), budget);
+        for &removed_ref in &plan.removed {
+            if drawn_refs.as_slice().contains(&removed_ref) {
+                continue;
+            }
+            let removed_val = Value::Reference(removed_ref);
+            let resolved = reader.resolve(&removed_val)?;
+            if let Value::Dict(annotation) = &*resolved
+                && let Some((_, elem_ref, _)) =
+                    resolve_structure_tag(&reader, &struct_parents, removed_ref, annotation)?
+            {
+                rewrites.try_push((elem_ref, removed_ref, None))?;
+            }
+        }
+    }
+    let mut form_reference = None;
     if let Some(bounds) = bounds {
-        let form = add_stream(
+        let form_struct_parents = if mcid_owners.is_empty() {
+            None
+        } else {
+            Some(append_parent_tree_entry(
+                transaction,
+                Value::Array(Array::from(mcid_owners.into_vec())),
+                budget,
+            )?)
+        };
+        let allocated = add_stream_ref(
             transaction,
-            drawing_form(xobjects, &bounds),
+            drawing_form(xobjects, &bounds, form_struct_parents),
             ops.into_vec(),
             budget,
         )?;
+        form_reference = Some(allocated);
         let reader = Reader::new(transaction.version(), budget);
-        let (resources, name) = with_form(&reader, page.resources(), form)?;
+        let (resources, name) = with_form(&reader, page.resources(), Value::Reference(allocated))?;
         let contents = contents(&reader, budget, dict.get("Contents"))?;
         let mut array = BudgetVec::new(budget);
         if !contents.is_empty() {
@@ -327,6 +398,15 @@ pub fn draw(
         )]
         dict.insert(Name::from("Resources"), Value::Dict(resources));
     }
+    if !rewrites.is_empty() {
+        rewrite_structure_elements(
+            transaction,
+            page_ref,
+            form_reference,
+            rewrites.as_slice(),
+            budget,
+        )?;
+    }
     let mut keep = BudgetVec::new(budget);
     keep.try_reserve_exact(plan.keep.len())?;
     for item in plan.keep {
@@ -359,9 +439,9 @@ pub fn draw(
 /// appearances, `xobjects`, within `bounds`.
 #[expect(
     clippy::disallowed_methods,
-    reason = "each key is a constant, so the form holds four entries and its resources one"
+    reason = "each key is a constant, so the form holds five entries at most and its resources one"
 )]
-fn drawing_form(xobjects: Dict, bounds: &[f64; 4]) -> Dict {
+fn drawing_form(xobjects: Dict, bounds: &[f64; 4], struct_parents: Option<i64>) -> Dict {
     let mut resources = Dict::new();
     resources.insert(Name::from("XObject"), Value::Dict(xobjects));
     let mut form = Dict::new();
@@ -369,7 +449,24 @@ fn drawing_form(xobjects: Dict, bounds: &[f64; 4]) -> Dict {
     form.insert(Name::from("Subtype"), Value::Name(Name::from("Form")));
     form.insert(Name::from("BBox"), numbers_array(bounds));
     form.insert(Name::from("Resources"), Value::Dict(resources));
+    if let Some(key) = struct_parents {
+        form.insert(Name::from("StructParents"), Value::Integer(key));
+    }
     form
+}
+
+/// Writes a stream of `dict` and `data` as a new object and returns its
+/// reference.
+fn add_stream_ref(
+    transaction: &mut Transaction,
+    dict: Dict,
+    data: Vec<u8>,
+    budget: &Budget,
+) -> Result<Reference> {
+    let reference = transaction.allocate()?;
+    let stream = Stream::new(dict, Bytes::from(data));
+    transaction.write(reference.number(), &Value::from(stream), budget)?;
+    Ok(reference)
 }
 
 /// Writes a stream of `dict` and `data` as a new object and returns a
@@ -380,10 +477,12 @@ fn add_stream(
     data: Vec<u8>,
     budget: &Budget,
 ) -> Result<Value> {
-    let reference = transaction.allocate()?;
-    let stream = Stream::new(dict, Bytes::from(data));
-    transaction.write(reference.number(), &Value::from(stream), budget)?;
-    Ok(Value::Reference(reference))
+    Ok(Value::Reference(add_stream_ref(
+        transaction,
+        dict,
+        data,
+        budget,
+    )?))
 }
 
 /// Returns the page resources `resources` with the form `form` added under
@@ -570,4 +669,525 @@ fn placement(
         .iter()
         .all(|value| value.is_finite())
         .then_some((matrix, rect)))
+}
+
+/// Returns `(tagged_doc, struct_parents)` for `version`: whether the document
+/// has a structure tree or `/MarkInfo << /Marked true >>`, and—when at least
+/// one flattened/removed annotation carries `/StructParent`—the mapping from
+/// `/StructParent` integer keys to `StructElem` references in `/ParentTree`.
+fn structure_context(
+    version: &Version,
+    plan: &Plan,
+    budget: &Budget,
+) -> Result<(bool, HashMap<i64, Reference>)> {
+    let reader = Reader::new(version, budget);
+    let Some(root) = version.trailer().get("Root") else {
+        return Ok((false, HashMap::new()));
+    };
+    let catalog_resolved = reader.resolve(root)?;
+    let Value::Dict(catalog) = &*catalog_resolved else {
+        return Ok((false, HashMap::new()));
+    };
+    let struct_root = reader.entry(catalog, "StructTreeRoot")?;
+    let has_struct_tree = matches!(struct_root.as_deref(), Some(Value::Dict(_)));
+    let is_marked = matches!(
+        reader.entry(catalog, "MarkInfo")?.as_deref(),
+        Some(Value::Dict(mark_info)) if mark_info.get("Marked") == Some(&Value::Boolean(true))
+    );
+    let tagged_doc = has_struct_tree || is_marked;
+    let mut map = HashMap::new();
+    let Some(Value::Dict(struct_root)) = struct_root.as_deref() else {
+        return Ok((tagged_doc, map));
+    };
+    let mut any_struct_parent = false;
+    for &reference in &plan.removed {
+        let ref_val = Value::Reference(reference);
+        let resolved = reader.resolve(&ref_val)?;
+        if let Value::Dict(annot) = &*resolved
+            && matches!(reader.entry(annot, "StructParent")?.as_deref(), Some(Value::Integer(key)) if *key >= 0)
+        {
+            any_struct_parent = true;
+            break;
+        }
+    }
+    if !any_struct_parent {
+        return Ok((tagged_doc, map));
+    }
+    let Some(parent_tree) = struct_root.get("ParentTree") else {
+        return Ok((tagged_doc, map));
+    };
+    let mut pairs = BudgetVec::new(budget);
+    number_tree_pairs(version, parent_tree, &mut pairs, budget)?;
+    for (key, value) in pairs.into_vec() {
+        if let Value::Reference(elem_ref) = value {
+            try_insert_map(&mut map, key, elem_ref, budget)?;
+        }
+    }
+    Ok((tagged_doc, map))
+}
+
+/// Resolves the `StructElem` reference and `/S` role name of `annot_ref` when
+/// `annotation`'s `/StructParent` names a `StructElem` in `struct_parents`
+/// whose `/K` holds an `/OBJR` to `annot_ref`.
+fn resolve_structure_tag(
+    reader: &Reader<'_>,
+    struct_parents: &HashMap<i64, Reference>,
+    annot_ref: Reference,
+    annotation: &Dict,
+) -> Result<Option<StructureTag>> {
+    if struct_parents.is_empty() {
+        return Ok(None);
+    }
+    let sp_entry = reader.entry(annotation, "StructParent")?;
+    let Some(Value::Integer(key)) = sp_entry.as_deref() else {
+        return Ok(None);
+    };
+    let Some(&elem_ref) = struct_parents.get(key) else {
+        return Ok(None);
+    };
+    let elem_ref_val = Value::Reference(elem_ref);
+    let elem_val = reader.resolve(&elem_ref_val)?;
+    let Value::Dict(elem_dict) = &*elem_val else {
+        return Ok(None);
+    };
+    let role_entry = reader.entry(elem_dict, "S")?;
+    let Some(Value::Name(role)) = role_entry.as_deref() else {
+        return Ok(None);
+    };
+    if !elem_has_objr_for(reader, elem_dict, annot_ref)? {
+        return Ok(None);
+    }
+    let mut role_bytes = BudgetVec::new(reader.budget);
+    role_bytes.try_extend_from_slice(role.as_bytes())?;
+    Ok(Some((annot_ref, elem_ref, role_bytes.into_vec())))
+}
+
+fn is_objr_for(reader: &Reader<'_>, item: &Value, annot_ref: Reference) -> Result<bool> {
+    let resolved = reader.resolve(item)?;
+    let Value::Dict(dict) = &*resolved else {
+        return Ok(false);
+    };
+    let is_objr = matches!(
+        reader.entry(dict, "Type")?.as_deref(),
+        Some(Value::Name(kind)) if kind.as_bytes() == b"OBJR"
+    );
+    Ok(is_objr && dict.get("Obj") == Some(&Value::Reference(annot_ref)))
+}
+
+fn elem_has_objr_for(reader: &Reader<'_>, elem: &Dict, annot_ref: Reference) -> Result<bool> {
+    let Some(kids) = elem.get("K") else {
+        return Ok(false);
+    };
+    if is_objr_for(reader, kids, annot_ref)? {
+        return Ok(true);
+    }
+    let resolved = reader.resolve(kids)?;
+    let Value::Array(items) = &*resolved else {
+        return Ok(false);
+    };
+    for item in items.iter() {
+        if is_objr_for(reader, item, annot_ref)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Writes `bytes` as a PDF `/Name` token onto `out`, escaping whitespace,
+/// delimiters, `#`, and non-ASCII bytes as `#XX`.
+fn write_pdf_name(out: &mut BudgetVec<'_, u8>, bytes: &[u8]) -> Result<()> {
+    out.try_push(b'/')?;
+    for &byte in bytes {
+        let needs_escape = !(0x21..=0x7e).contains(&byte)
+            || matches!(
+                byte,
+                b'#' | b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+            );
+        if needs_escape {
+            let hex = format!("#{byte:02X}");
+            out.try_extend_from_slice(hex.as_bytes())?;
+        } else {
+            out.try_push(byte)?;
+        }
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "MCR dictionary holds four fixed keys"
+)]
+fn make_mcr(page_ref: Reference, form_ref: Reference, mcid: i64) -> Value {
+    let mut mcr = Dict::new();
+    mcr.insert(Name::from("Type"), Value::Name(Name::from("MCR")));
+    mcr.insert(Name::from("Pg"), Value::Reference(page_ref));
+    mcr.insert(Name::from("Stm"), Value::Reference(form_ref));
+    mcr.insert(Name::from("MCID"), Value::Integer(mcid));
+    Value::Dict(mcr)
+}
+
+/// Replaces `/OBJR` entries of flattened/removed annotations in their owning
+/// `StructElem` dictionaries with `/MCR` dictionaries pointing into `form_ref`
+/// (or removes them when the annotation was hidden and undrawn), and supplies
+/// `/O /PrintField /Role` on PDF 1.7+ `Form` structure elements that no longer
+/// have an interactive widget child (ISO 32000-1 Table 348, PDF/UA-1 §7.18.4).
+fn rewrite_structure_elements(
+    transaction: &mut Transaction,
+    page_ref: Reference,
+    form_ref: Option<Reference>,
+    rewrites: &[(Reference, Reference, Option<i64>)],
+    budget: &Budget,
+) -> Result<()> {
+    let mut elem_refs = BudgetVec::new(budget);
+    for &(elem_ref, _, _) in rewrites {
+        if !elem_refs.as_slice().contains(&elem_ref) {
+            elem_refs.try_push(elem_ref)?;
+        }
+    }
+    let allow_print_field = {
+        let reader = Reader::new(transaction.version(), budget);
+        pdf_version(transaction.version(), &reader)? >= PdfVersion(1, 7)
+    };
+    for elem_ref in elem_refs.into_vec() {
+        let elem_dict = {
+            let reader = Reader::new(transaction.version(), budget);
+            let elem_ref_val = Value::Reference(elem_ref);
+            let resolved = reader.resolve(&elem_ref_val)?;
+            let Value::Dict(dict) = &*resolved else {
+                continue;
+            };
+            copy_dict_for_edit(dict, budget)?
+        };
+        let Some(old_k) = elem_dict.get("K").cloned() else {
+            continue;
+        };
+        let (updated_k, print_role) = {
+            let reader = Reader::new(transaction.version(), budget);
+            let mut matched_single = None;
+            let mut widget_role = None;
+            for &(owner, annot_ref, mcid) in rewrites {
+                if owner == elem_ref {
+                    if widget_role.is_none() && allow_print_field {
+                        widget_role = print_field_role(&reader, annot_ref)?;
+                    }
+                    if matched_single.is_none() && is_objr_for(&reader, &old_k, annot_ref)? {
+                        matched_single = Some(mcid);
+                    }
+                }
+            }
+            let updated_k = if let Some(mcid) = matched_single {
+                mcid.zip(form_ref)
+                    .map(|(id, form)| make_mcr(page_ref, form, id))
+            } else {
+                let resolved_k = reader.resolve(&old_k)?;
+                if let Value::Array(items) = &*resolved_k {
+                    let mut new_items = BudgetVec::new(budget);
+                    new_items.try_reserve_exact(items.len())?;
+                    for item in items.iter() {
+                        let mut matched = None;
+                        for &(owner, annot_ref, mcid) in rewrites {
+                            if owner == elem_ref && is_objr_for(&reader, item, annot_ref)? {
+                                matched = Some(mcid);
+                                break;
+                            }
+                        }
+                        match matched {
+                            Some(Some(id)) => {
+                                if let Some(form) = form_ref {
+                                    new_items.try_push(make_mcr(page_ref, form, id))?;
+                                }
+                            }
+                            Some(None) => {}
+                            None => new_items.try_push(copy_for_edit(item, budget)?)?,
+                        }
+                    }
+                    Some(Value::Array(Array::from(new_items.into_vec())))
+                } else {
+                    Some(copy_for_edit(&old_k, budget)?)
+                }
+            };
+            let need_role = if let Some(role) = widget_role
+                && resolves_to_form_elem(transaction.version(), &reader, &elem_dict)?
+                && !has_widget_objr(&reader, updated_k.as_ref())?
+                && !has_print_field_role(&reader, elem_dict.get("A"))?
+            {
+                Some(role)
+            } else {
+                None
+            };
+            (updated_k, need_role)
+        };
+        let mut elem_dict = elem_dict;
+        let elem_a_modified = if let Some(role) = print_role {
+            let reader = Reader::new(transaction.version(), budget);
+            attach_print_field_role(&reader, &mut elem_dict, role, budget)?;
+            true
+        } else {
+            false
+        };
+        match updated_k {
+            Some(Value::Reference(_)) => {
+                if elem_a_modified {
+                    transaction.write(elem_ref.number(), &Value::Dict(elem_dict), budget)?;
+                }
+            }
+            Some(new_k) => {
+                if let Value::Reference(k_ref) = old_k
+                    && matches!(new_k, Value::Array(_))
+                {
+                    transaction.write(k_ref.number(), &new_k, budget)?;
+                    if elem_a_modified {
+                        transaction.write(elem_ref.number(), &Value::Dict(elem_dict), budget)?;
+                    }
+                } else {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "replaces the existing /K entry of the StructElem"
+                    )]
+                    elem_dict.insert(Name::from("K"), new_k);
+                    transaction.write(elem_ref.number(), &Value::Dict(elem_dict), budget)?;
+                }
+            }
+            None => {
+                elem_dict.remove("K");
+                transaction.write(elem_ref.number(), &Value::Dict(elem_dict), budget)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pdf_version(version: &Version, reader: &Reader<'_>) -> Result<PdfVersion> {
+    let mut effective = header_version(version).unwrap_or(DEFAULT_VERSION);
+    if let Some(root) = version.trailer().get("Root")
+        && let Value::Dict(catalog) = &*reader.resolve(root)?
+        && let Some(Value::Name(declared)) = reader.entry(catalog, "Version")?.as_deref()
+        && let Some(parsed) = parse_version(declared.as_bytes())
+    {
+        effective = effective.max(parsed);
+    }
+    Ok(effective)
+}
+
+fn resolves_to_form_elem(version: &Version, reader: &Reader<'_>, elem_dict: &Dict) -> Result<bool> {
+    let s_entry = reader.entry(elem_dict, "S")?;
+    let Some(Value::Name(initial)) = s_entry.as_deref() else {
+        return Ok(false);
+    };
+    if initial.as_bytes() == b"Form" {
+        return Ok(true);
+    }
+    let Some(root) = version.trailer().get("Root") else {
+        return Ok(false);
+    };
+    let catalog = reader.resolve(root)?;
+    let Value::Dict(catalog) = &*catalog else {
+        return Ok(false);
+    };
+    let struct_root = reader.entry(catalog, "StructTreeRoot")?;
+    let Some(Value::Dict(struct_root)) = struct_root.as_deref() else {
+        return Ok(false);
+    };
+    let role_map = reader.entry(struct_root, "RoleMap")?;
+    let Some(Value::Dict(role_map)) = role_map.as_deref() else {
+        return Ok(false);
+    };
+    let mut current = initial.clone();
+    for _ in 0..MAX_CHAIN {
+        let Some(entry) = role_map.get(current.as_bytes()) else {
+            return Ok(false);
+        };
+        let mapped = reader.resolve(entry)?;
+        let Value::Name(next) = &*mapped else {
+            return Ok(false);
+        };
+        if next.as_bytes() == b"Form" {
+            return Ok(true);
+        }
+        if next.as_bytes() == current.as_bytes() {
+            return Ok(false);
+        }
+        current = next.clone();
+    }
+    Ok(false)
+}
+
+fn print_field_role(reader: &Reader<'_>, annot_ref: Reference) -> Result<Option<&'static str>> {
+    let annot_val = Value::Reference(annot_ref);
+    let resolved = reader.resolve(&annot_val)?;
+    let Value::Dict(annot) = &*resolved else {
+        return Ok(None);
+    };
+    let is_widget = matches!(
+        reader.entry(annot, "Subtype")?.as_deref(),
+        Some(Value::Name(kind)) if kind.as_bytes() == b"Widget"
+    );
+    if !is_widget {
+        return Ok(None);
+    }
+    let mut is_btn = None;
+    let mut flags = None;
+    if let Some(Value::Name(ft)) = reader.entry(annot, "FT")?.as_deref() {
+        is_btn = Some(ft.as_bytes() == b"Btn");
+    }
+    if let Some(Value::Integer(ff)) = reader.entry(annot, "Ff")?.as_deref() {
+        flags = Some(*ff);
+    }
+    let mut next_parent = annot.get("Parent").cloned();
+    for _ in 0..super::MAX_PARENTS {
+        if is_btn.is_some() && flags.is_some() {
+            break;
+        }
+        let Some(parent_val) = next_parent else {
+            break;
+        };
+        let parent_resolved = reader.resolve(&parent_val)?;
+        let Value::Dict(parent) = &*parent_resolved else {
+            break;
+        };
+        if is_btn.is_none()
+            && let Some(Value::Name(ft)) = reader.entry(parent, "FT")?.as_deref()
+        {
+            is_btn = Some(ft.as_bytes() == b"Btn");
+        }
+        if flags.is_none()
+            && let Some(Value::Integer(ff)) = reader.entry(parent, "Ff")?.as_deref()
+        {
+            flags = Some(*ff);
+        }
+        next_parent = parent.get("Parent").cloned();
+    }
+    let ff = flags.unwrap_or(0);
+    let role = match is_btn {
+        Some(true) if (ff & (1 << 16)) != 0 => "pb",
+        Some(true) if (ff & (1 << 15)) != 0 => "rb",
+        Some(true) => "cb",
+        _ => "tv",
+    };
+    Ok(Some(role))
+}
+
+fn is_widget_objr_item(reader: &Reader<'_>, item: &Value) -> Result<bool> {
+    let resolved = reader.resolve(item)?;
+    let Value::Dict(dict) = &*resolved else {
+        return Ok(false);
+    };
+    let is_objr = matches!(
+        reader.entry(dict, "Type")?.as_deref(),
+        Some(Value::Name(kind)) if kind.as_bytes() == b"OBJR"
+    );
+    if !is_objr {
+        return Ok(false);
+    }
+    let Some(obj) = dict.get("Obj") else {
+        return Ok(false);
+    };
+    let target = reader.resolve(obj)?;
+    let Value::Dict(annot) = &*target else {
+        return Ok(false);
+    };
+    Ok(matches!(
+        reader.entry(annot, "Subtype")?.as_deref(),
+        Some(Value::Name(kind)) if kind.as_bytes() == b"Widget"
+    ))
+}
+
+fn has_widget_objr(reader: &Reader<'_>, k: Option<&Value>) -> Result<bool> {
+    let Some(k) = k else {
+        return Ok(false);
+    };
+    if is_widget_objr_item(reader, k)? {
+        return Ok(true);
+    }
+    let resolved = reader.resolve(k)?;
+    let Value::Array(items) = &*resolved else {
+        return Ok(false);
+    };
+    for item in items.iter() {
+        if is_widget_objr_item(reader, item)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_print_field_role_dict(reader: &Reader<'_>, item: &Value) -> Result<bool> {
+    let resolved = reader.resolve(item)?;
+    let dict = match &*resolved {
+        Value::Dict(dict) => dict,
+        Value::Stream(stream) => stream.dict(),
+        _ => return Ok(false),
+    };
+    let is_print_field = matches!(
+        reader.entry(dict, "O")?.as_deref(),
+        Some(Value::Name(owner)) if owner.as_bytes() == b"PrintField"
+    );
+    let has_role = matches!(reader.entry(dict, "Role")?.as_deref(), Some(Value::Name(_)));
+    Ok(is_print_field && has_role)
+}
+
+fn has_print_field_role(reader: &Reader<'_>, attr: Option<&Value>) -> Result<bool> {
+    let Some(attr) = attr else {
+        return Ok(false);
+    };
+    if is_print_field_role_dict(reader, attr)? {
+        return Ok(true);
+    }
+    let resolved = reader.resolve(attr)?;
+    let Value::Array(items) = &*resolved else {
+        return Ok(false);
+    };
+    for item in items.iter() {
+        if is_print_field_role_dict(reader, item)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "PrintField attribute dictionary holds two fixed keys"
+)]
+fn make_print_field_attr(role: &'static str) -> Value {
+    let mut dict = Dict::new();
+    dict.insert(Name::from("O"), Value::Name(Name::from("PrintField")));
+    dict.insert(Name::from("Role"), Value::Name(Name::from(role)));
+    Value::Dict(dict)
+}
+
+fn attach_print_field_role(
+    reader: &Reader<'_>,
+    elem_dict: &mut Dict,
+    role: &'static str,
+    budget: &Budget,
+) -> Result<()> {
+    let attr = make_print_field_attr(role);
+    let new_a = match elem_dict.get("A") {
+        None => attr,
+        Some(existing) => {
+            let resolved = reader.resolve(existing)?;
+            if let Value::Array(items) = &*resolved {
+                let mut merged = BudgetVec::new(budget);
+                merged.try_reserve_exact(items.len() + 1)?;
+                for item in items.iter() {
+                    merged.try_push(copy_for_edit(item, budget)?)?;
+                }
+                merged.try_push(attr)?;
+                Value::Array(Array::from(merged.into_vec()))
+            } else {
+                let mut pair = BudgetVec::new(budget);
+                pair.try_reserve_exact(2)?;
+                pair.try_push(copy_for_edit(existing, budget)?)?;
+                pair.try_push(attr)?;
+                Value::Array(Array::from(pair.into_vec()))
+            }
+        }
+    };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "sets or replaces the single /A entry on the StructElem"
+    )]
+    elem_dict.insert(Name::from("A"), new_a);
+    Ok(())
 }
