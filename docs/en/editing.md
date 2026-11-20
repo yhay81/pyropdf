@@ -318,6 +318,34 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.pages[1].label, doc.pages.labeled("A-1"))
 ```
 
+## Presentations and thumbnails
+
+`page.duration` sets how many seconds a viewer displays a page during a
+presentation before advancing, `page.transition` sets its `Transition` effect,
+and `page.navigation_steps` lists the sub-page `NavigationStep` sequence
+(`/PresSteps`). A `TransitionAction` triggers a transition from a navigation
+step, a link, or an outline item. `page.thumbnail` decodes or replaces the
+page's embedded `/Thumb` preview as a `Pixmap`; `del` removes any of them.
+
+```python
+import pyropdf
+from pyropdf import NavigationStep, Transition, TransitionAction, TransitionStyle
+
+with pyropdf.open("input.pdf") as doc:
+    slide = doc.pages[0]
+    slide.duration = 5.0
+    slide.transition = Transition(style=TransitionStyle.WIPE, duration=0.8, direction=0)
+    slide.navigation_steps = [
+        NavigationStep(
+            next_action=TransitionAction(Transition(style=TransitionStyle.FADE)),
+            duration=2.0,
+        ),
+    ]
+    slide.thumbnail = slide.pixmap(fit=96)
+    assert slide.thumbnail is not None
+    print(slide.transition.style, len(slide.navigation_steps), slide.thumbnail.width)
+```
+
 ## Layers
 
 `doc.layers` lists the optional content groups as `Layer` records, with their

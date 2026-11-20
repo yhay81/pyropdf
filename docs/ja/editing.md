@@ -303,6 +303,33 @@ with pyropdf.open("input.pdf") as doc:
     print(doc.pages[1].label, doc.pages.labeled("A-1"))
 ```
 
+## プレゼンテーションとサムネイル
+
+`page.duration` はプレゼンテーション中に自動的に次へ進むまでの表示秒数、`page.transition`
+はページ切り替えの `Transition` 効果、`page.navigation_steps` はページ内ナビゲーションの
+`NavigationStep` の列（`/PresSteps`）を表します。`TransitionAction` はナビゲーションステップ、
+リンク、しおりから切り替え効果を実行します。`page.thumbnail` はページに埋め込まれた `/Thumb`
+プレビューを `Pixmap` として読み書きし、いずれも `del` で削除できます。
+
+```python
+import pyropdf
+from pyropdf import NavigationStep, Transition, TransitionAction, TransitionStyle
+
+with pyropdf.open("input.pdf") as doc:
+    slide = doc.pages[0]
+    slide.duration = 5.0
+    slide.transition = Transition(style=TransitionStyle.WIPE, duration=0.8, direction=0)
+    slide.navigation_steps = [
+        NavigationStep(
+            next_action=TransitionAction(Transition(style=TransitionStyle.FADE)),
+            duration=2.0,
+        ),
+    ]
+    slide.thumbnail = slide.pixmap(fit=96)
+    assert slide.thumbnail is not None
+    print(slide.transition.style, len(slide.navigation_steps), slide.thumbnail.width)
+```
+
 ## レイヤー
 
 `doc.layers` はオプショナルコンテンツのグループを `Layer` の列として、名前と既定の構成で表示されるかどうかを返し、

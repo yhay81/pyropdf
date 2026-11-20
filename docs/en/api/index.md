@@ -76,8 +76,14 @@ method and property of its classes with its full description.
 
 ## [Pages](pages.md)
 
+- [`NavigationStep`](pages.md#navigationstep): One sub-page navigation step of a page's presentation sequence (`NavNode`, ISO 32000-2 Table 166).
 - [`Page`](pages.md#page): A page of a document, named by its page object.
 - [`Pages`](pages.md#pages_1): The pages of a document, in order.
+- [`Transition`](pages.md#transition): How a viewer transitions to a page during a presentation (`/Trans`, ISO 32000-2 Table 165).
+- [`TransitionAction`](pages.md#transitionaction): An action that updates the display using a `Transition` (`/S /Trans`, ISO 32000-2 Table 219).
+- [`TransitionDimension`](pages.md#transitiondimension): Axis along which a `Split` or `Blinds` transition runs (`/Dm`, ISO 32000-2 Table 165).
+- [`TransitionMotion`](pages.md#transitionmotion): Direction of motion for `Split`, `Box`, or `Fly` transitions (`/M`, ISO 32000-2 Table 165).
+- [`TransitionStyle`](pages.md#transitionstyle): Visual style of a page transition (`/S`, ISO 32000-2 Table 165).
 
 ## [Drawing](drawing.md)
 
@@ -194,7 +200,7 @@ method and property of its classes with its full description.
 - [`Links`](links-and-destinations.md#links): The link annotations of a page, in `/Annots` order, as `page.links` returns them.
 - [`NamedAction`](links-and-destinations.md#namedaction): A viewer action by name (ISO 32000-2 Table 213).
 - [`RemoteDestination`](links-and-destinations.md#remotedestination): A place in another PDF file: a zero-based page or a named destination.
-- [`Target`](links-and-destinations.md#target): Where a link leads: a place in this document or in another file, a file to open, a viewer action, or a URI as a string.
+- [`Target`](links-and-destinations.md#target): Where a link leads: a place in this document or in another file, a file to open, a viewer or transition action, or a URI as a string.
 
 ## [Forms and widgets](forms-and-widgets.md)
 

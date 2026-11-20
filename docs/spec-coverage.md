@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 19 | 67 | 715 |
-| interpret | 1 | 13 | 0 | 14 | 691 | 82 |
-| create | 0 | 0 | 0 | 642 | 93 | 66 |
-| edit | 0 | 0 | 0 | 649 | 91 | 61 |
-| preserve | 0 | 0 | 0 | 6 | 687 | 108 |
+| read | 0 | 0 | 0 | 19 | 65 | 717 |
+| interpret | 1 | 13 | 0 | 14 | 689 | 84 |
+| create | 0 | 0 | 0 | 642 | 91 | 68 |
+| edit | 0 | 0 | 0 | 649 | 89 | 63 |
+| preserve | 0 | 0 | 0 | 6 | 685 | 110 |
 
 ## Clauses
 
@@ -111,7 +111,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.3.6 | Navigators | `navigators` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.4.2 | Page labels | `page-labels` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.4.3 | Articles | `articles` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.4.4 | Presentations | `presentations` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.4.4 | Presentations | `presentations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.2 | Annotation dictionaries | `annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.5.5 | Appearance streams | `appearance-streams` | 1 done | 1 done | 1 partial | 1 partial | 1 done |
 | 12.5.6.4 | Text annotations | `text-annotations` | 1 done | 1 done | 1 done | 1 done | 1 done |
@@ -150,7 +150,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 12.6.4.12 | Named actions | `named-actions` | 1 done | 1 planned | 1 done | 1 done | 1 done |
 | 12.6.4.13 | Set-OCG-state actions | `set-ocg-state-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.14 | Rendition actions | `rendition-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
-| 12.6.4.15 | Transition actions | `transition-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 12.6.4.15 | Transition actions | `transition-actions` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 12.6.4.16 | Go-To-3D-view actions | `goto-3d-view-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 12.6.4.17 | ECMAScript actions | `ecmascript-actions` | 1 partial | 1 planned | 1 partial | 1 partial | 1 partial |
 | 12.6.4.18 | Rich media execute actions | `rich-media-execute-actions` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |

@@ -142,6 +142,14 @@ from pyropdf._page import Page
 from pyropdf._page_labels import PageLabelRange, PageLabelStyle
 from pyropdf._pages import Pages
 from pyropdf._pixmap import Colorspace, Pixmap
+from pyropdf._presentations import (
+    NavigationStep,
+    Transition,
+    TransitionAction,
+    TransitionDimension,
+    TransitionMotion,
+    TransitionStyle,
+)
 from pyropdf._profiles import OutputIntent, Profiles
 from pyropdf._recolor import RecolorReport, RecolorTarget, Unconverted
 from pyropdf._revisions import Revision
@@ -330,6 +338,7 @@ __all__ = [
     "MoveTo",
     "Name",
     "NamedAction",
+    "NavigationStep",
     "Note",
     "NoteIcon",
     "ObjectReference",
@@ -427,6 +436,11 @@ __all__ = [
     "TilingPattern",
     "Timestamper",
     "Transaction",
+    "Transition",
+    "TransitionAction",
+    "TransitionDimension",
+    "TransitionMotion",
+    "TransitionStyle",
     "TransparencyGroup",
     "Unconverted",
     "Underline",

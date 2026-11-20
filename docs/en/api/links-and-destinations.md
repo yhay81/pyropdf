@@ -193,9 +193,9 @@ Links.add(rect: Sequence[float], target: Target) -> Link
 Add a link over `rect`, in display coordinates, that leads to `target`, and return it.
 
 `target` is a URI string, a `Destination` in this document, a
-`RemoteDestination`, a `Launch`, or a
-`NamedAction`. The link draws no border. Its texts share a
-1 MiB budget, checked before any change with
+`RemoteDestination`, a `Launch`, a `NamedAction`,
+or a `TransitionAction`. The link draws no border. Its texts
+share a 1 MiB budget, checked before any change with
 `LimitError.code == "annotation_input_size"`.
 
 ## `NamedAction`
@@ -220,8 +220,15 @@ A place in another PDF file: a zero-based page or a named destination.
 ## `Target`
 
 ```python
-Target: TypeAlias = Destination | RemoteDestination | Launch | NamedAction | str
+Target: TypeAlias = (
+    Destination
+    | RemoteDestination
+    | Launch
+    | NamedAction
+    | TransitionAction
+    | str
+)
 ```
 
 Where a link leads: a place in this document or in another file, a file
-to open, a viewer action, or a URI as a string.
+to open, a viewer or transition action, or a URI as a string.
