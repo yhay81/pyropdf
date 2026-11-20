@@ -8,6 +8,7 @@ independently of differences observed afterwards.
 from __future__ import annotations
 
 import struct
+import tempfile
 import zlib
 from dataclasses import dataclass
 from functools import cache
@@ -89,19 +90,22 @@ def canvas_text(doc: pyropdf.Document) -> set[int]:
     return {number(page.obj)}
 
 
-def canvas_image(doc: pyropdf.Document) -> set[int]:
+def color_png() -> bytes:
     def chunk(kind: bytes, data: bytes) -> bytes:
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
 
-    png = (
+    return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(b"\0\x40\x80\xc0"))
         + chunk(b"IEND", b"")
     )
+
+
+def canvas_image(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[0]
     with page.draw() as canvas:
-        canvas.image((10, 10, 30, 30), png)
+        canvas.image((10, 10, 30, 30), color_png())
     return {number(page.obj)}
 
 
@@ -560,7 +564,7 @@ def prepare_structure(doc: pyropdf.Document) -> None:
     container.children.add(pyropdf.TagRole.PARAGRAPH, title="second")
     role_map = doc.structure.role_map
     assert "PreservationRole" not in role_map
-    role_map["PreservationRole"] = "P"
+    role_map["PreservationRole"] = "Span"
     root = doc.structure.obj
     assert root is not None
     roles = root["RoleMap"]
@@ -573,7 +577,7 @@ def edit_structure(doc: pyropdf.Document) -> set[int]:
     root = doc.structure.obj
     assert root is not None
     touched = {number(root["RoleMap"]), container.xref, container.children[0].xref}
-    doc.structure.role_map.update(PreservationRole="Span")
+    doc.structure.role_map.update(PreservationRole="P")
     elem = container.children[0]
     elem.role = "PreservationRole"
     elem.actual_text = MARKER
@@ -588,7 +592,7 @@ def check_structure(doc: pyropdf.Document) -> None:
     elem = container.children[-1]
     assert elem.parent == container
     assert elem.role == "PreservationRole"
-    assert elem.standard_role == "Span"
+    assert elem.standard_role == "P"
     assert elem.actual_text == MARKER
 
 
@@ -907,9 +911,7 @@ FAMILY_EDITS.update(
 
 
 def indirect_numbers(*values: object) -> set[int]:
-    return {
-        item.xref for item in values if isinstance(item, (Dictionary, pyropdf.Array)) and item.xref is not None
-    }
+    return {item.xref for item in values if isinstance(item, (Dictionary, pyropdf.Array)) and item.xref is not None}
 
 
 def prepare_widget_events(doc: pyropdf.Document) -> None:
@@ -950,6 +952,8 @@ def edit_replies(doc: pyropdf.Document) -> set[int]:
     page = doc.pages[0]
     question, reply = page.annotations[-2:]
     touched = page_annotations(page) | {question.xref, reply.xref}
+    if pdf_version(doc) < (1, 5):
+        touched.add(number(doc.catalog))
     reply.in_reply_to = question
     question.popup_rect = (24, 25, 64, 65)
     question.is_open = True
@@ -959,9 +963,11 @@ def edit_replies(doc: pyropdf.Document) -> set[int]:
 def check_replies(doc: pyropdf.Document) -> None:
     page = doc.pages[0]
     question, reply = page.annotations[-2:]
-    assert question.name == MARKER + "question" and reply.name == MARKER + "reply"
+    assert question.name == MARKER + "question"
+    assert reply.name == MARKER + "reply"
     assert reply.in_reply_to == question
-    assert question.is_open and question.popup_rect == pyropdf.Rect(24, 25, 64, 65)
+    assert question.is_open
+    assert question.popup_rect == pyropdf.Rect(24, 25, 64, 65)
     popup = question.obj["Popup"]
     assert popup["Parent"] == question.obj
     assert [entry.xref for entry in page.obj["Annots"]].count(popup.xref) == 1
@@ -979,6 +985,8 @@ def edit_embedded_note(doc: pyropdf.Document) -> set[int]:
     spec = item.obj["FS"]
     stream = spec["EF"]["F"]
     touched = {item.xref} | indirect_numbers(spec, stream, stream.get("Params"))
+    if pdf_version(doc) < (1, 6):
+        touched.add(number(doc.catalog))
     file.write(b"changed bytes")
     file.filename = "changed.txt"
     file.description = MARKER
@@ -991,7 +999,8 @@ def check_embedded_note(doc: pyropdf.Document) -> None:
     file = annotation(doc).file
     assert file is not None
     assert (file.filename, file.description, file.read()) == ("changed.txt", MARKER, b"changed bytes")
-    assert file.created == "D:20250101000000Z" and file.modified is None
+    assert file.created == "D:20250101000000Z"
+    assert file.modified is None
 
 
 def prepare_collection_item(doc: pyropdf.Document) -> None:
@@ -1016,7 +1025,7 @@ def check_collection_item(doc: pyropdf.Document) -> None:
 
 def prepare_bead_membership(doc: pyropdf.Document) -> None:
     doc.pages.new((181, 211))
-    doc.threads.add([(0, (5, 6, 15, 16)), (0, (20, 21, 30, 31))], title=MARKER)
+    doc.threads.add([(0, (5, 6, 15, 16)), (0, (20, 21, 30, 31))], created="D:20250101")
     page = doc.pages[0]
     page.obj["B"] = doc.objects[doc.objects.add(list(page.obj["B"]))]
 
@@ -1036,12 +1045,13 @@ def edit_bead_membership(doc: pyropdf.Document) -> set[int]:
 
 def check_bead_membership(doc: pyropdf.Document) -> None:
     thread = doc.threads[-1]
-    assert thread.title == MARKER
+    assert thread.created == "D:20250101"
     first, second = thread.beads
     other = doc.pages[-1]
     assert first.page == second.page == other
     assert (first.rect, second.rect) == (pyropdf.Rect(20, 21, 30, 31), pyropdf.Rect(41, 42, 51, 52))
-    assert thread.obj["F"] == first.obj and first.obj["T"] == thread.obj
+    assert thread.obj["F"] == first.obj
+    assert first.obj["T"] == thread.obj
     assert first.obj["N"] == first.obj["V"] == second.obj
     assert second.obj["N"] == second.obj["V"] == first.obj
     assert list(other.obj["B"]) == [first.obj, second.obj]
@@ -1049,23 +1059,26 @@ def check_bead_membership(doc: pyropdf.Document) -> None:
 
 
 def prepare_metadata(doc: pyropdf.Document) -> None:
-    if doc.xmp is None:
+    if not doc.xmp:
         from test_metadata import XMP  # noqa: PLC0415 - use the corpus's minimal valid XMP packet.
 
         doc.xmp = XMP
-    doc.metadata["title"] = MARKER + " before"
+    if doc.profiles.pdfa and doc.profiles.pdfa.startswith("PDF/A-4"):
+        # PDF/A-4 permits Info/ModDate only with a catalog PieceInfo entry.
+        doc.catalog["PieceInfo"] = {"Pyropdf": {"LastModified": "D:20250101000000Z"}}
+    doc.metadata["modified"] = "D:20250101000000Z"
 
 
 def edit_metadata(doc: pyropdf.Document) -> set[int]:
     touched = indirect_numbers(doc.trailer.get("Info"), doc.catalog.get("Metadata"))
-    doc.metadata["title"] = MARKER
+    doc.metadata["modified"] = "D:20250202000000Z"
     return touched
 
 
 def check_metadata(doc: pyropdf.Document) -> None:
-    assert doc.metadata["title"] == MARKER
-    assert doc.trailer["Info"]["Title"].text == MARKER
-    assert doc.xmp and f">{MARKER}<" in doc.xmp
+    assert doc.trailer["Info"]["ModDate"].text == "D:20250202000000Z"
+    assert doc.xmp
+    assert "2025-02-02T00:00:00" in doc.xmp
 
 
 def prepare_catalog_records(doc: pyropdf.Document) -> None:
@@ -1083,7 +1096,8 @@ def edit_catalog_records(doc: pyropdf.Document) -> set[int]:
 
 
 def check_catalog_records(doc: pyropdf.Document) -> None:
-    assert doc.requirements == () and "Requirements" not in doc.catalog
+    assert doc.requirements == ()
+    assert "Requirements" not in doc.catalog
     assert doc.legal_attestation == pyropdf.LegalAttestation(attestation=MARKER)
 
 
@@ -1095,6 +1109,8 @@ def prepare_signature(doc: pyropdf.Document) -> None:
 def edit_signature(doc: pyropdf.Document) -> set[int]:
     field = doc.form[FIELD]
     touched = {field.xref} | indirect_numbers(field.obj.get("SV"), field.obj["Lock"])
+    if pdf_version(doc) < (1, 7):
+        touched.add(number(doc.catalog))
     assert doc.prepare_signature(FIELD, field_lock=pyropdf.FieldLock(), reason=MARKER) == field.xref
     return touched
 
@@ -1103,7 +1119,8 @@ def check_signature(doc: pyropdf.Document) -> None:
     field = doc.form[FIELD]
     assert field.lock == pyropdf.FieldLock()
     assert [item.text for item in field.obj["SV"]["Reasons"]] == [MARKER]
-    assert field.widgets[0].page == doc.pages[0] and field.value is None
+    assert field.widgets[0].page == doc.pages[0]
+    assert field.value is None
 
 
 def edit_security_store(doc: pyropdf.Document) -> set[int]:
@@ -1119,14 +1136,18 @@ def check_security_store(doc: pyropdf.Document) -> None:
     dss = doc.catalog["DSS"]
     key = pyropdf.vri_key(b"archived signature")
     stream = dss["OCSPs"][0]
-    assert stream.xref and stream == dss["VRI"][key]["OCSP"][0]
+    assert stream.xref
+    assert stream == dss["VRI"][key]["OCSP"][0]
     assert stream.read() == bytes.fromhex("30030a0106")
-    assert doc.security_store and doc.security_store.vri[key].ocsps == doc.security_store.ocsps
+    assert doc.security_store
+    assert doc.security_store.vri[key].ocsps == doc.security_store.ocsps
 
 
 FAMILY_EDITS.update(
     action_triggers=Edit(prepare=prepare_widget_events, apply=edit_widget_events, check=check_widget_events),
-    annotation_relations=Edit(prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page),
+    annotation_relations=Edit(
+        prepare=prepare_replies, apply=edit_replies, check=check_replies, affected_pages=first_page
+    ),
     file_specification=Edit(prepare=prepare_embedded_note, apply=edit_embedded_note, check=check_embedded_note),
     collection_item=Edit(prepare=prepare_collection_item, apply=edit_collection_item, check=check_collection_item),
     article_membership=Edit(prepare=prepare_bead_membership, apply=edit_bead_membership, check=check_bead_membership),
@@ -1134,4 +1155,609 @@ FAMILY_EDITS.update(
     catalog_records=Edit(prepare=prepare_catalog_records, apply=edit_catalog_records, check=check_catalog_records),
     signature_field=Edit(prepare=prepare_signature, apply=edit_signature, check=check_signature),
     security_store=Edit(apply=edit_security_store, check=check_security_store),
+)
+
+
+def prepare_ocg(doc: pyropdf.Document) -> None:
+    group = doc.layers.add(MARKER, visible=True)
+    assert group.on
+    # A named default configuration is required by archival profiles.
+    config = doc.catalog["OCProperties"]["D"]
+    if "Name" not in config:
+        config["Name"] = "Default"
+
+
+def edit_ocg(doc: pyropdf.Document) -> set[int]:
+    group = next(layer for layer in doc.layers if layer.name == MARKER)
+    properties = doc.catalog["OCProperties"]
+    config = properties["D"]
+    owners = indirect_numbers(config) or indirect_numbers(properties) or {number(doc.catalog)}
+    doc.layers.switch(group.xref, on=False)
+    return owners
+
+
+def check_ocg(doc: pyropdf.Document) -> None:
+    group = next(layer for layer in doc.layers if layer.name == MARKER)
+    assert not group.on
+    config = doc.catalog["OCProperties"]["D"]
+    assert doc.objects[group.xref] in config["Order"]
+    assert doc.objects[group.xref] not in config.get("ON", ())
+    if config.get("BaseState") != "OFF":
+        assert doc.objects[group.xref] in config["OFF"]
+
+
+def prepare_page_records(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((160, 120))
+    page.duration = 12
+    page.transition = pyropdf.Transition(style=pyropdf.TransitionStyle.DISSOLVE)
+
+
+def edit_page_records(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    touched = {page.xref} | indirect_numbers(page.obj.get("Trans"))
+    if pdf_version(doc) < (1, 6):
+        touched.add(number(doc.catalog))
+    page.duration = 5
+    del page.transition
+    page.navigation_steps = (pyropdf.NavigationStep(next_action=pyropdf.Destination(0)),)
+    page.viewports = (pyropdf.Viewport((10, 12, 70, 82), name=MARKER),)
+    page.thumbnail = page.pixmap(dpi=18).fill((45, 75, 105))
+    return touched
+
+
+def check_page_records(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    assert page.duration == 5
+    assert page.transition is None
+    assert page.navigation_steps == (pyropdf.NavigationStep(next_action=pyropdf.Destination(0)),)
+    assert page.viewports == (pyropdf.Viewport((10, 12, 70, 82), name=MARKER),)
+    thumb = page.thumbnail
+    assert thumb
+    assert (thumb.width, thumb.height, thumb.pixel(0, 0)) == (40, 30, (45, 75, 105))
+
+
+def prepare_radio_group(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((160, 100))
+    appearance = doc.objects[
+        doc.objects.add_stream(
+            b"",
+            {"Type": pyropdf.Name("XObject"), "Subtype": pyropdf.Name("Form"), "BBox": [0, 0, 15, 15], "Resources": {}},
+        )
+    ]
+    widgets = []
+    for index, on in enumerate(("Basic", "Pro")):
+        left = 10 + 30 * index
+        xref = doc.objects.add(
+            {
+                "Type": pyropdf.Name("Annot"),
+                "Subtype": pyropdf.Name("Widget"),
+                "FT": pyropdf.Name("Btn"),
+                "Ff": 49152,
+                "DA": "0 g",
+                "T": FIELD,
+                "F": 4,
+                "P": page.obj,
+                "Rect": [left, 10, left + 15, 25],
+                "AS": pyropdf.Name("Off"),
+                "AP": {"N": {on: appearance, "Off": appearance}},
+            }
+        )
+        widgets.append(doc.objects[xref])
+    page.obj["Annots"] = widgets
+    if "AcroForm" not in doc.catalog:
+        doc.catalog["AcroForm"] = {"Fields": []}
+    form = doc.catalog["AcroForm"]
+    form["Fields"] = doc.objects[doc.objects.add([*form["Fields"], *widgets])]
+
+
+def edit_radio_group(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    touched = form_containers(doc) | {widget.xref for widget in page.widgets}
+    assert doc.form.repair_radio_groups() == 1
+    return touched
+
+
+def check_radio_group(doc: pyropdf.Document) -> None:
+    group = doc.form[FIELD]
+    assert group.type is pyropdf.FieldType.RADIO
+    assert [widget.on_state for widget in group.widgets] == ["Basic", "Pro"]
+    assert all(widget.obj["Parent"] == group.obj and widget.page == doc.pages[-1] for widget in group.widgets)
+    assert [widget.xref for widget in group.widgets] == [obj.xref for obj in doc.pages[-1].obj["Annots"]]
+
+
+def prepare_sanitize(doc: pyropdf.Document) -> None:
+    doc.open_action = pyropdf.JavaScriptAction("var preservation = 1;")
+
+
+def sanitize_actions(doc: pyropdf.Document) -> set[int]:
+    # The all-actions switch removes action-valued entries and event maps;
+    # PDFs may also contain direct annotations inside an indirect Annots array.
+    touched = {number(doc.catalog)}
+    dictionaries = [(doc.objects[xref], xref) for xref in doc.objects]
+    for page in doc.pages:
+        annots = page.obj.get("Annots")
+        if isinstance(annots, pyropdf.Array):
+            dictionaries.extend(
+                (item, annots.xref or page.xref)
+                for item in annots
+                if isinstance(item, Dictionary) and not item.is_indirect
+            )
+    for item, owner in dictionaries:
+        if not isinstance(item, Dictionary):
+            continue
+        events = item.get("AA")
+        if isinstance(events, Dictionary):
+            touched.update(indirect_numbers(events))
+            touched.add(owner)
+        if any(isinstance(item.get(key), Dictionary) for key in ("OpenAction", "A")):
+            touched.add(owner)
+    names = doc.catalog.get("Names")
+    if isinstance(names, Dictionary) and "JavaScript" in names:
+        touched.update(indirect_numbers(names))
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "sanitized.pdf"
+        report = doc.sanitize(
+            path,
+            javascript=False,
+            actions=True,
+            attachments=False,
+            metadata=False,
+            comments=False,
+            hidden_text=False,
+            unused=False,
+        )
+        assert report.removed["actions"] >= 1
+        with pyropdf.open(path) as saved:
+            check_sanitized(saved)
+    return touched
+
+
+def check_sanitized(doc: pyropdf.Document) -> None:
+    assert doc.open_action is None
+    assert not doc.scripts
+    assert not doc.triggers
+
+
+def prepare_rotated_page(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((120, 160))
+    page.rotation = 90
+    page.links.add((8, 10, 48, 30), LINK_URI)
+    with page.draw() as canvas:
+        canvas.rect((15, 18, 40, 48), fill=Color(0.25, 0.5, 0.75))
+
+
+def remove_rotation(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    touched = {page.xref, page.links[0].xref}
+    before = bytes(page.pixmap(dpi=36))
+    page.remove_rotation()
+    assert bytes(page.pixmap(dpi=36)) == before
+    return touched
+
+
+def check_rotation_removed(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    assert page.rotation == 0
+    assert tuple(page.rect) == (0, 0, 160, 120)
+    assert page.links[0].rect == pyropdf.Rect(8, 10, 48, 30)
+    assert page.links[0].target == LINK_URI
+    assert any(tuple(path.bbox) == pytest.approx((15, 18, 40, 48)) for path in page.paths())
+
+
+def prepare_to_clean(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((120, 100))
+    resources = {"ExtGState": {"Keep": {"LW": 2}, "Unused": {"LW": 3}}}
+    page.obj["Resources"] = doc.objects[doc.objects.add(resources)]
+    page.obj["Contents"] = doc.objects[doc.objects.add_stream(b"/Artifact BMC q  /Keep  gs  8 10 24 30 re S  Q EMC")]
+    # The unselected sibling keeps precisely the original resources and bytes.
+    other = doc.pages.new((120, 100))
+    other.obj["Resources"] = page.obj["Resources"]
+    other.obj["Contents"] = page.obj["Contents"]
+
+
+def clean_page(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    page.clean_contents()
+    return {page.xref}
+
+
+def check_clean_page(doc: pyropdf.Document) -> None:
+    original, page = doc.pages[-2:]
+    assert set(original.obj["Resources"]["ExtGState"]) == {"Keep", "Unused"}
+    assert set(page.obj["Resources"]["ExtGState"]) == {"Keep"}
+    assert page.obj["Contents"].read() != original.obj["Contents"].read()
+    assert bytes(page.pixmap(dpi=36)) == bytes(original.pixmap(dpi=36))
+
+
+def prepare_recolor(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((32, 32))
+    stream = doc.objects[doc.objects.add_stream(b"/Artifact BMC 1 0 0 rg 0 0 32 32 re f EMC")]
+    page.obj["Contents"] = stream
+    doc.pages.new((32, 32)).obj["Contents"] = stream
+
+
+def edit_recolor(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    result = page.recolor("gray")
+    assert result.pages == result.operations == 1
+    return {page.xref}
+
+
+def check_recolor(doc: pyropdf.Document) -> None:
+    original, page = doc.pages[-2:]
+    assert original.pixmap(dpi=72).pixel(10, 10) == (255, 0, 0)
+    pixel = page.pixmap(dpi=72).pixel(10, 10)
+    assert pixel[0] == pixel[1] == pixel[2]
+    assert 0 < pixel[0] < 255
+    assert [op.operator for op in page.operations] == ["BMC", "g", "re", "f", "EMC"]
+
+
+FAMILY_EDITS.update(
+    optional_content=Edit(prepare=prepare_ocg, apply=edit_ocg, check=check_ocg),
+    page_records=Edit(prepare=prepare_page_records, apply=edit_page_records, check=check_page_records),
+    radio_groups=Edit(prepare=prepare_radio_group, apply=edit_radio_group, check=check_radio_group),
+    sanitize=Edit(prepare=prepare_sanitize, apply=sanitize_actions, check=check_sanitized),
+    remove_rotation=Edit(prepare=prepare_rotated_page, apply=remove_rotation, check=check_rotation_removed),
+    clean_content=Edit(prepare=prepare_to_clean, apply=clean_page, check=check_clean_page),
+    recolor=Edit(prepare=prepare_recolor, apply=edit_recolor, check=check_recolor, affected_pages=last_page),
+)
+
+
+def prepare_canvas_resources(doc: pyropdf.Document) -> None:
+    prepare_ocg(doc)
+    doc.pages.new((100, 100))
+
+
+def edit_canvas_resources(doc: pyropdf.Document) -> set[int]:
+    target = doc.pages[-1]
+    layer = next(layer for layer in doc.layers if layer.name == MARKER)
+    with pyropdf.Document() as source:
+        page = source.pages.new((40, 40))
+        with page.draw() as canvas:
+            canvas.rect((0, 0, 40, 40), fill=Color(1, 0, 0))
+        with (
+            target.draw() as canvas,
+            canvas.layer(layer),
+            canvas.opacity(0.5),
+            canvas.blend(pyropdf.BlendMode.MULTIPLY),
+        ):
+            canvas.page((10, 10, 50, 50), page)
+    return {target.xref}
+
+
+def check_canvas_resources(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    layer = next(layer for layer in doc.layers if layer.name == MARKER)
+    resources = page.obj["Resources"]
+    assert layer.xref in [obj.xref for obj in resources["Properties"].values()]
+    states = list(resources["ExtGState"].values())
+    assert any(state.get("ca") == 0.5 for state in states)
+    assert any(state.get("BM") == "Multiply" for state in states)
+    assert any(obj.get("Subtype") == "Form" for obj in resources["XObject"].values())
+    red, green, blue = page.pixmap(dpi=72, background=(255, 255, 255)).pixel(20, 20)
+    assert red == 255
+    assert 125 <= green == blue <= 130
+
+
+def prepare_tagged_drawing(doc: pyropdf.Document) -> None:
+    if not doc.structure:
+        doc.structure.add("Document")
+
+
+def tagged_drawing(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[0]
+    root = doc.structure.obj
+    assert root is not None
+    touched = {page.xref} | _parent_tree_append_objects(doc, root)
+    parent = doc.structure[0]
+    if parent.role == "Document":
+        touched.update({parent.xref} | indirect_numbers(parent.obj.get("K")))
+    else:
+        touched.update(indirect_numbers(root.get("K")))
+    with page.draw() as canvas, canvas.tag(pyropdf.TagRole.FIGURE, alt=MARKER):
+        canvas.rect((10, 10, 30, 30), fill=Color(0, 0, 0))
+    return touched
+
+
+def check_tagged_drawing(doc: pyropdf.Document) -> None:
+    root = doc.structure.obj
+    assert root is not None
+    top = doc.structure[0]
+    elem = top.children[-1] if top.role == "Document" and top.children else doc.structure[-1]
+    assert elem.role == "Figure"
+    assert elem.alt == MARKER
+    assert elem.page == doc.pages[0]
+    kid = elem.obj["K"][0]
+    form, mcid = kid["Stm"], kid["MCID"]
+    assert f"/MCID {mcid}".encode() in form.read()
+    key = form["StructParents"]
+    _, leaf = _right_spine(root["ParentTree"])
+    nums = leaf["Nums"]
+    assert any(nums[i] == key and nums[i + 1][mcid] == elem.obj for i in range(0, len(nums), 2))
+
+
+def prepare_shared_image(doc: pyropdf.Document) -> None:
+    # Two new pages share one image identity; replacing it must update both.
+    stream_id = doc.objects.add_stream(
+        bytes([3, 5, 7]),
+        {
+            "Type": pyropdf.Name("XObject"),
+            "Subtype": pyropdf.Name("Image"),
+            "Width": 1,
+            "Height": 1,
+            "BitsPerComponent": 8,
+            "ColorSpace": pyropdf.Name("DeviceRGB"),
+        },
+    )
+    image = doc.objects[stream_id]
+    for _ in range(2):
+        page = doc.pages.new((32, 32))
+        page.obj["Resources"] = {"XObject": {"Sample": image}}
+        page.obj["Contents"] = doc.objects[doc.objects.add_stream(b"/Artifact BMC q 32 0 0 32 0 0 cm /Sample Do Q EMC")]
+
+
+def two_last_pages(doc: pyropdf.Document) -> set[int]:
+    return {page.xref for page in doc.pages[-2:]}
+
+
+def edit_shared_image(doc: pyropdf.Document) -> set[int]:
+    image = doc.pages[-1].obj["Resources"]["XObject"]["Sample"]
+    xref = number(image)
+    doc.replace_image(xref, color_png())
+    return {xref}
+
+
+def check_shared_image(doc: pyropdf.Document) -> None:
+    first, second = doc.pages[-2:]
+    assert first.obj["Resources"]["XObject"]["Sample"] == second.obj["Resources"]["XObject"]["Sample"]
+    for page in (first, second):
+        assert page.images()[0].pixmap().pixel(0, 0) == (64, 128, 192)
+        assert page.pixmap(dpi=72).pixel(16, 16) == (64, 128, 192)
+
+
+def flattened(doc: pyropdf.Document) -> set[int]:
+    """Return the page-tree objects that writing the page list rewrites."""
+    # Writing the page list flattens the page tree: it writes the root and
+    # every page that is not already the root's kid (#272 narrows what those
+    # pages keep).
+    root = doc.catalog["Pages"]
+    return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
+
+
+def page_labels(doc: pyropdf.Document) -> set[int]:
+    """Return the objects of the page label tree, which moving a page rewrites."""
+    # A structural edit writes the tree as one leaf whose ranges keep each
+    # page's label (#180), or the catalog when the tree is a direct value.
+    tree = doc.catalog.get("PageLabels")
+    if not isinstance(tree, Dictionary):
+        return set()
+    found = {number(doc.catalog)} if tree.xref is None else set()
+    pending = [tree]
+    while pending:
+        node = pending.pop()
+        if node.xref is not None:
+            found.add(node.xref)
+        kids = node.get("Kids")
+        if isinstance(kids, pyropdf.Array):
+            pending.extend(kid for kid in kids if isinstance(kid, Dictionary))
+        nums = node.get("Nums")
+        if isinstance(nums, pyropdf.Array):
+            found.update(label.xref for label in nums if isinstance(label, Dictionary) and label.xref is not None)
+    return found
+
+
+def new_page_image(doc: pyropdf.Document) -> set[int]:
+    touched = flattened(doc) | page_labels(doc)
+    doc.pages.new_from_image(color_png(), dpi=18)
+    return touched
+
+
+def check_new_image_page(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    assert tuple(page.rect) == (0, 0, 4, 4)
+    assert len(page.images()) == 1
+    assert page.pixmap(dpi=72).pixel(0, 0) == (64, 128, 192)
+
+
+def prepare_copy(doc: pyropdf.Document) -> None:
+    page = doc.pages.new((130, 170))
+    with page.draw() as canvas:
+        canvas.rect((10, 10, 30, 30), fill=Color(1, 0, 0))
+    page.links.add((6, 7, 40, 30), LINK_URI)
+
+
+def copy_page(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    touched = flattened(doc) | page_labels(doc)
+    doc.pages.extend([page])
+    doc.pages[-1].links[0].target = LINK_URI + "/copy"
+    return touched
+
+
+def check_page_copy(doc: pyropdf.Document) -> None:
+    assert len(doc.pages) >= 2
+    source, copy = doc.pages[-2:]
+    assert source.links
+    assert source.links[0].target == LINK_URI
+    assert copy.links[0].target == LINK_URI + "/copy"
+    assert copy.xref != source.xref
+    assert copy.links[0].xref != source.links[0].xref
+    assert list(copy.obj["Contents"]) == list(source.obj["Contents"])
+    assert bytes(copy.pixmap(dpi=36)) == bytes(source.pixmap(dpi=36))
+
+
+def prepare_text_replacement(doc: pyropdf.Document) -> None:
+    # Import a genuine embedded simple font with its widths and descriptor.
+    # A bare Standard 14 resource is insufficient in PDF 2.0.
+    root = Path(__file__).parent / "assets" / "real_world"
+    with pyropdf.open(root / "bill-hr815.pdf") as source:
+        font = source.objects[354]  # Embedded New Century Schoolbook Roman.
+        page = source.pages.new((200, 100))
+        page.obj["Resources"] = {"Font": {"Sample": font}}
+        page.obj["Contents"] = source.objects[
+            source.objects.add_stream(b"/Artifact BMC BT /Sample 12 Tf 10 60 Td (Original PDF) Tj ET EMC")
+        ]
+        doc.pages.extend([page])
+    page = doc.pages[-1]
+    other = doc.pages.new((200, 100))
+    other.obj["Resources"] = dict(page.obj["Resources"])
+    other.obj["Contents"] = page.obj["Contents"]
+
+
+def edit_page_text(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    assert page.replace_text("PDF", "ABC") == 1
+    return {page.xref}
+
+
+def check_page_text(doc: pyropdf.Document) -> None:
+    source, edited = doc.pages[-2:]
+    assert (source.text().strip(), edited.text().strip()) == ("Original PDF", "Original ABC")
+    assert source.obj["Contents"] != edited.obj["Contents"]
+
+
+def prepare_ocr(doc: pyropdf.Document) -> None:
+    doc.pages.new((160, 100))
+
+
+def edit_ocr(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    word = pyropdf.OcrWord(text=MARKER, bbox=pyropdf.Rect(10, 10, 125, 30), confidence=1)
+    assert page.apply_ocr(words=[word]) == [word]
+    return {page.xref}
+
+
+def check_ocr(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    assert page.text().strip() == MARKER
+    assert len(page.search(MARKER)) == 1
+    assert set(bytes(page.pixmap(dpi=36, background=(255, 255, 255)))) == {255}
+
+
+FAMILY_EDITS.update(
+    canvas_resources=Edit(
+        prepare=prepare_canvas_resources,
+        apply=edit_canvas_resources,
+        check=check_canvas_resources,
+        affected_pages=last_page,
+    ),
+    tagged_drawing=Edit(
+        prepare=prepare_tagged_drawing, apply=tagged_drawing, check=check_tagged_drawing, affected_pages=first_page
+    ),
+    image_stream=Edit(
+        prepare=prepare_shared_image, apply=edit_shared_image, check=check_shared_image, affected_pages=two_last_pages
+    ),
+    new_page_image=Edit(apply=new_page_image, check=check_new_image_page),
+    page_copies=Edit(prepare=prepare_copy, apply=copy_page, check=check_page_copy),
+    replace_text=Edit(
+        prepare=prepare_text_replacement, apply=edit_page_text, check=check_page_text, affected_pages=last_page
+    ),
+    ocr_layer=Edit(prepare=prepare_ocr, apply=edit_ocr, check=check_ocr, affected_pages=last_page),
+)
+
+
+@cache
+def font_source() -> tuple[bytes, int]:
+    # Generate a small embedded font with several glyphs, then leave only
+    # the first A on the page. The imported font now has real unused outlines.
+    with pyropdf.open(Path(__file__).parent / "assets/pdfa/pdfa-1b.pdf") as source:
+        page = source.pages.new((150, 100))
+        with page.draw() as canvas:
+            canvas.text(DRAWN, (10, 30), font=face(), size=12)
+        data = source.to_bytes()
+    with pyropdf.open(data) as source:
+        page = source.pages[-1]
+        program = source.font_program(page.fonts()[0])
+        assert program
+        page.operations = [
+            pyropdf.Operation("Tj", (op.operands[0][0],)) if op.operator == "TJ" else op for op in page.operations
+        ]
+        page.operations = [
+            pyropdf.Operation("BMC", (pyropdf.Name("Artifact"),)),
+            *page.operations,
+            pyropdf.Operation("EMC"),
+        ]
+        assert page.text().strip() == "A"
+        return source.to_bytes(), len(program.data)
+
+
+def prepare_font_subset(doc: pyropdf.Document) -> None:
+    # Settle any eligible source fonts first so that only the newly imported
+    # program is a candidate when assessing the operation's write set.
+    doc.subset_fonts()
+    with pyropdf.open(font_source()[0]) as source:
+        doc.pages.extend([source.pages[-1]])
+
+
+def subset_font(doc: pyropdf.Document) -> set[int]:
+    page = doc.pages[-1]
+    font = page.obj["Resources"]["Font"]["PyroF1"]
+    cid = font["DescendantFonts"][0]
+    descriptor = cid["FontDescriptor"]
+    stream = descriptor["FontFile3"]
+    report = doc.subset_fonts()
+    assert [entry.xref for entry in report] == [stream.xref]
+    assert report[0].kept < report[0].glyphs
+    assert report[0].size_after < report[0].size_before
+    return indirect_numbers(font, cid, descriptor, stream)
+
+
+def check_subset_font(doc: pyropdf.Document) -> None:
+    page = doc.pages[-1]
+    assert page.fonts()
+    program = doc.font_program(page.fonts()[0])
+    assert program
+    assert 0 < len(program.data) < font_source()[1]
+    assert page.text().strip() == "A"
+
+
+def prepare_image_rewrite(doc: pyropdf.Document) -> None:
+    # Both placements exceed 2,400 dpi. The larger placement sets the
+    # target sample count, while the ordinary corpus images stay untouched.
+    pixels = bytes(
+        (row * 17 + col * 19 + channel * 83) % 256 for row in range(64) for col in range(64) for channel in range(3)
+    )
+    image = doc.objects[
+        doc.objects.add_stream(
+            pixels,
+            {
+                "Type": pyropdf.Name("XObject"),
+                "Subtype": pyropdf.Name("Image"),
+                "Width": 64,
+                "Height": 64,
+                "ColorSpace": pyropdf.Name("DeviceRGB"),
+                "BitsPerComponent": 8,
+            },
+        )
+    ]
+    for size in ("0.5", "0.25"):
+        page = doc.pages.new((16, 16))
+        page.obj["Resources"] = {"XObject": {"Sample": image}}
+        page.obj["Contents"] = doc.objects[
+            doc.objects.add_stream(f"/Artifact BMC q {size} 0 0 {size} 0 0 cm /Sample Do Q EMC".encode())
+        ]
+
+
+def rewrite_image(doc: pyropdf.Document) -> set[int]:
+    image = doc.pages[-1].obj["Resources"]["XObject"]["Sample"]
+    report = doc.rewrite_images(dpi_threshold=2_400, dpi_target=2_304)
+    assert report.rewritten == 1
+    return {number(image)}
+
+
+def check_rewritten_image(doc: pyropdf.Document) -> None:
+    first, second = doc.pages[-2:]
+    image = first.obj["Resources"]["XObject"]["Sample"]
+    assert second.obj["Resources"]["XObject"]["Sample"] == image
+    assert (image["Width"], image["Height"]) == (16, 16)
+    decoded = image.read()
+    assert len(decoded) == 16 * 16 * 3
+    assert len(set(decoded)) > 16
+
+
+FAMILY_EDITS.update(
+    subset_fonts=Edit(prepare=prepare_font_subset, apply=subset_font, check=check_subset_font),
+    rewrite_images=Edit(
+        prepare=prepare_image_rewrite, apply=rewrite_image, check=check_rewritten_image, affected_pages=two_last_pages
+    ),
 )

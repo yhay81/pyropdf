@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 from corpus import ASSETS, NAMES
 from test_pages import build_raw_pdf
-from test_preservation_operations import FAMILY_EDITS, NEW_EDITS, Edit, face
+from test_preservation_operations import FAMILY_EDITS, NEW_EDITS, Edit, face, first_page, flattened, page_labels
 
 import pyropdf
 from pyropdf import Array, Dictionary, Name, Operation, Real, Stream, typed
@@ -71,15 +71,6 @@ def add_object(doc: pyropdf.Document) -> set[int]:
 def catalog_entry(doc: pyropdf.Document) -> set[int]:
     doc.catalog["PageMode"] = Name("UseThumbs")
     return {number(doc.catalog)}
-
-
-def flattened(doc: pyropdf.Document) -> set[int]:
-    """Return the page-tree objects that writing the page list rewrites."""
-    # Writing the page list flattens the page tree: it writes the root and
-    # every page that is not already the root's kid (#272 narrows what those
-    # pages keep).
-    root = doc.catalog["Pages"]
-    return {number(root)} | {number(page.obj) for page in doc.pages if page.obj.get("Parent") != root}
 
 
 def new_page(doc: pyropdf.Document) -> set[int]:
@@ -174,28 +165,6 @@ def rewrite_stream(doc: pyropdf.Document) -> set[int]:
     number = doc.objects.add_stream(b"q Q")
     doc.objects[number].write(b"q 1 0 0 1 0 0 cm Q")
     return set()
-
-
-def page_labels(doc: pyropdf.Document) -> set[int]:
-    """Return the objects of the page label tree, which moving a page rewrites."""
-    # A structural edit writes the tree as one leaf whose ranges keep each
-    # page's label (#180), or the catalog when the tree is a direct value.
-    tree = doc.catalog.get("PageLabels")
-    if not isinstance(tree, Dictionary):
-        return set()
-    found = {number(doc.catalog)} if tree.xref is None else set()
-    pending = [tree]
-    while pending:
-        node = pending.pop()
-        if node.xref is not None:
-            found.add(node.xref)
-        kids = node.get("Kids")
-        if isinstance(kids, Array):
-            pending.extend(kid for kid in kids if isinstance(kid, Dictionary))
-        nums = node.get("Nums")
-        if isinstance(nums, Array):
-            found.update(label.xref for label in nums if isinstance(label, Dictionary) and label.xref is not None)
-    return found
 
 
 def move_page(doc: pyropdf.Document) -> set[int]:
@@ -314,7 +283,8 @@ def newest_data_object(doc: pyropdf.Document) -> object:
 
 def check_object(doc: pyropdf.Document) -> None:
     obj = newest_data_object(doc)
-    assert isinstance(obj, Dictionary) and obj.get("Preserved") == Real("0.000001")
+    assert isinstance(obj, Dictionary)
+    assert obj.get("Preserved") == Real("0.000001")
 
 
 def check_catalog(doc: pyropdf.Document) -> None:
@@ -335,12 +305,14 @@ def check_page_moved(doc: pyropdf.Document) -> None:
 
 def check_replacement(doc: pyropdf.Document) -> None:
     obj = newest_data_object(doc)
-    assert isinstance(obj, Array) and plain(obj) == [plain(Real("3.125"))]
+    assert isinstance(obj, Array)
+    assert plain(obj) == [plain(Real("3.125"))]
 
 
 def check_stream(doc: pyropdf.Document) -> None:
     obj = newest_data_object(doc)
-    assert isinstance(obj, Stream) and obj.read() == b"q 1 0 0 1 0 0 cm Q"
+    assert isinstance(obj, Stream)
+    assert obj.read() == b"q 1 0 0 1 0 0 cm Q"
 
 
 def check_operations(doc: pyropdf.Document) -> None:
@@ -366,7 +338,8 @@ def check_entry_deleted(doc: pyropdf.Document) -> None:
 
 def check_array(doc: pyropdf.Document) -> None:
     obj = newest_data_object(doc)
-    assert isinstance(obj, Array) and list(obj) == [Real("0.1"), 1, 3]
+    assert isinstance(obj, Array)
+    assert list(obj) == [Real("0.1"), 1, 3]
 
 
 def check_layout(doc: pyropdf.Document) -> None:
@@ -377,27 +350,33 @@ def check_layout_deleted(doc: pyropdf.Document) -> None:
     assert "PageLayout" not in doc.catalog
 
 
-EDITS = {
-    "none": Edit(apply=lambda _: set()),
-    "rotate": Edit(prepare=prepare_rotation, apply=rotate, check=check_rotation),
-    "add_object": Edit(apply=add_object, check=check_object),
-    "catalog_entry": Edit(prepare=prepare_catalog, apply=catalog_entry, check=check_catalog),
-    "new_page": Edit(apply=new_page, check=check_new_page),
-    "delete_page": Edit(prepare=prepare_page_order, apply=delete_page, check=check_page_deleted),
-    "replace_object": Edit(apply=replace_object, check=check_replacement),
-    "rewrite_stream": Edit(apply=rewrite_stream, check=check_stream),
-    "move_page": Edit(prepare=prepare_page_order, apply=move_page, check=check_page_moved),
-    "assign_operations": Edit(apply=assign_operations, check=check_operations),
-    "add_attachment": Edit(apply=add_attachment, check=check_attachment),
-    "write_attachment": Edit(prepare=prepare_attachment, apply=write_attachment, check=check_rewritten_attachment),
-    "delete_attachment": Edit(prepare=prepare_attachment, apply=delete_attachment, check=check_attachment_deleted),
-    "delete_entry": Edit(prepare=prepare_catalog, apply=delete_entry, check=check_entry_deleted),
-    "array_insert_delete": Edit(apply=array_insert_delete, check=check_array),
-    "typed_set": Edit(prepare=prepare_layout, apply=typed_set, check=check_layout),
-    "typed_delete": Edit(prepare=prepare_layout, apply=typed_delete, check=check_layout_deleted),
-    "undo": Edit(prepare=prepare_catalog, apply=undo, check=check_catalog),
-    "redo": Edit(prepare=prepare_catalog, apply=redo, check=check_catalog),
-} | NEW_EDITS | FAMILY_EDITS
+EDITS = (
+    {
+        "none": Edit(apply=lambda _: set()),
+        "rotate": Edit(prepare=prepare_rotation, apply=rotate, check=check_rotation, affected_pages=first_page),
+        "add_object": Edit(apply=add_object, check=check_object),
+        "catalog_entry": Edit(prepare=prepare_catalog, apply=catalog_entry, check=check_catalog),
+        "new_page": Edit(apply=new_page, check=check_new_page),
+        "delete_page": Edit(
+            prepare=prepare_page_order, apply=delete_page, check=check_page_deleted, affected_pages=first_page
+        ),
+        "replace_object": Edit(apply=replace_object, check=check_replacement),
+        "rewrite_stream": Edit(apply=rewrite_stream, check=check_stream),
+        "move_page": Edit(prepare=prepare_page_order, apply=move_page, check=check_page_moved),
+        "assign_operations": Edit(apply=assign_operations, check=check_operations),
+        "add_attachment": Edit(apply=add_attachment, check=check_attachment),
+        "write_attachment": Edit(prepare=prepare_attachment, apply=write_attachment, check=check_rewritten_attachment),
+        "delete_attachment": Edit(prepare=prepare_attachment, apply=delete_attachment, check=check_attachment_deleted),
+        "delete_entry": Edit(prepare=prepare_catalog, apply=delete_entry, check=check_entry_deleted),
+        "array_insert_delete": Edit(apply=array_insert_delete, check=check_array),
+        "typed_set": Edit(prepare=prepare_layout, apply=typed_set, check=check_layout),
+        "typed_delete": Edit(prepare=prepare_layout, apply=typed_delete, check=check_layout_deleted),
+        "undo": Edit(prepare=prepare_catalog, apply=undo, check=check_catalog),
+        "redo": Edit(prepare=prepare_catalog, apply=redo, check=check_catalog),
+    }
+    | NEW_EDITS
+    | FAMILY_EDITS
+)
 
 
 def raw_objects(doc: pyropdf.Document) -> dict[int, tuple[int, bytes]]:
@@ -422,7 +401,7 @@ def test_an_edit_and_a_save_keep_every_untouched_object(name: str, edit: str, *,
     # A page outside the declared effect, found by object number after edits
     # move pages. Creating a field may also draw existing missing appearances.
     affected = case.affected_pages(doc)
-    candidates = [index for index in range(1, len(doc.pages)) if number(doc.pages[index].obj) not in affected]
+    candidates = [index for index in range(len(doc.pages)) if number(doc.pages[index].obj) not in affected]
     last = candidates[-1] if candidates else None
     untouched = number(doc.pages[last].obj) if last is not None else None
     state = page_state(doc, last) if last is not None else None
