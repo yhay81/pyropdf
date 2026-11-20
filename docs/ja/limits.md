@@ -45,6 +45,18 @@ with pyropdf.open("input.pdf", limits=limits) as doc:
         print(error.code)  # cancelled
 ```
 
+## 複数の処理をまとめた操作 {#composite-operations}
+
+| 操作 | 制限に達したときの動作 |
+| --- | --- |
+| `doc.structure.walk(max_elements=n)` | 要素が `n` 個を超えると `object_count` になります。走査が完了してからイテレータを返します。走査中はメモリ上限と取り消しも確認します。 |
+| `doc.open_action` | 埋め込み先をたどる各段階を一つの操作に計上します。メモリ超過は `memory_size`、取り消しは `cancelled` です。 |
+| `doc.form.import_fdf()`、`import_xfdf()` | ファイルやバイト列の読み込み時、FDF は `limits.max_file_size`（`file_size`）、XFDF は `max_size`（`form_field_input_size`）を確認します。どちらも対象欄の検索から書き込みまでを一つの操作として扱います。 |
+| `with page.draw()` | ブロック内のフォーム取り込みは、描画と同じ予算を使います。制限による例外でブロックを抜けると、描画とフォームの変更をまとめて破棄します。 |
+
+メモリや件数の上限で操作が終了した後は、新しい予算で次の操作を実行できます。
+取り消し済みのトークンを使う文書では、取り消し状態が続きます。
+
 ## 読み取りと描画 {#reading-and-rendering}
 
 `page.text()`、`page.words()`、`page.paths()`、`page.content()`、
@@ -65,6 +77,12 @@ with pyropdf.open("input.pdf", limits=limits) as doc:
 [ストリーム展開の制限 (#48)](https://github.com/yhay81/pyropdf/issues/48)、
 [インタプリタの予算と取り消し (#105)](https://github.com/yhay81/pyropdf/issues/105)、
 [内部データ構造の構築時の制限 (#15)](https://github.com/yhay81/pyropdf/issues/15) で追跡しています。
+
+パーサー内部の予算は [#573](https://github.com/yhay81/pyropdf/issues/573)、
+フォントの字形処理は [#580](https://github.com/yhay81/pyropdf/issues/580)、
+PNG 展開時のバッファは [#561](https://github.com/yhay81/pyropdf/issues/561) で追跡しています。
+解釈中の処理量の計測と取り消しは、エンジン側の対応を待つ方針です（[#678](https://github.com/yhay81/pyropdf/issues/678)）。
+内部データ構造の構築に関するリリース条件は [#243](https://github.com/yhay81/pyropdf/issues/243) にあります。
 
 ## アップロードされた PDF を別プロセスで読む {#reading-a-pdf-in-a-worker}
 

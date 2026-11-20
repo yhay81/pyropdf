@@ -16,6 +16,8 @@
 //! edits, its reads, its source reads and its commit all charge. The budget
 //! belongs to the thread that opened it, and ends with its transaction.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
@@ -23,7 +25,7 @@ use std::time::Duration;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use pyropdf_store::budget::{Budget, LimitCode, SharedBudget};
+use pyropdf_store::budget::{Budget, LimitCode, SharedBudget, try_insert_map};
 use pyropdf_store::settle::Scope;
 use pyropdf_store::version::{Document, RestoredHistory, Savepoint, Transaction, Version};
 
@@ -95,6 +97,7 @@ impl Open {
     fn budget(&self, document: &_Document) -> SharedBudget {
         self.operation
             .clone()
+            .or_else(|| read_budget(&document.history))
             .unwrap_or_else(|| document.fresh_budget().share())
     }
 
@@ -148,6 +151,67 @@ fn owned(open: &mut Option<Open>) -> Option<&mut Open> {
         .filter(|open| open.owner == thread::current().id())
 }
 
+// A composite read holds no writer lock. Each thread can read several
+// documents, each with its own operation. The callback borrows the document
+// until its entry is removed, so its address remains a valid identity.
+thread_local! {
+    static READS: RefCell<HashMap<*const State, SharedBudget>> = RefCell::default();
+}
+
+fn read_budget(state: &State) -> Option<SharedBudget> {
+    READS.with_borrow(|reads| reads.get(&std::ptr::from_ref(state)).cloned())
+}
+
+struct ReadScope<'a>(&'a State);
+
+impl Drop for ReadScope<'_> {
+    fn drop(&mut self) {
+        READS.with_borrow_mut(|reads| {
+            reads.remove(&std::ptr::from_ref(self.0));
+            if reads.is_empty() {
+                *reads = HashMap::default();
+            }
+        });
+    }
+}
+
+/// Run a binding's composite read under one operation, sharing any enclosing
+/// read or edit on this document. The scope ends even if the callback refuses.
+#[pyfunction]
+pub fn read_operation<'py>(
+    document: &_Document,
+    callback: &Bound<'py, PyAny>,
+) -> PyResult<Bound<'py, PyAny>> {
+    crate::errors::boundary(|| {
+        document.document()?;
+        let state = &*document.history;
+        let existing = state.operation();
+        let operation = existing
+            .clone()
+            .unwrap_or_else(|| document.fresh_budget().share());
+        operation.poll().map_err(|error| limit_error(&error))?;
+        let _scope = if existing.is_none() {
+            READS
+                .with_borrow_mut(|reads| {
+                    try_insert_map(
+                        reads,
+                        std::ptr::from_ref(state),
+                        operation.clone(),
+                        &operation,
+                    )
+                })
+                .map_err(|error| limit_error(&error))?;
+            Some(ReadScope(state))
+        } else {
+            None
+        };
+        callback.call1((OperationBudget {
+            operation,
+            history: Arc::downgrade(&document.history),
+        },))
+    })?
+}
+
 impl State {
     /// Forgets the open transaction and the step names.
     pub fn clear(&self) {
@@ -155,16 +219,16 @@ impl State {
         *lock(&self.steps) = Steps::default();
     }
 
-    /// Returns the canvas operation that this thread has open, if any.
+    /// Returns the innermost operation on this document for the current thread.
     pub(crate) fn operation(&self) -> Option<SharedBudget> {
-        owned(&mut lock(&self.open)).and_then(|open| open.operation.clone())
+        owned(&mut lock(&self.open))
+            .and_then(|open| open.operation.clone())
+            .or_else(|| read_budget(self))
     }
 }
 
-/// The private handle of one canvas operation, for the canvas code in
-/// Python and the calls it makes.
-///
-/// It refuses every use once its canvas has ended, or on another thread.
+/// A binding's handle to its current operation. It is usable only within
+/// that operation on the thread that started it.
 #[pyclass(frozen, name = "_OperationBudget", module = "pyropdf._core")]
 pub(crate) struct OperationBudget {
     pub(crate) operation: SharedBudget,
@@ -172,8 +236,7 @@ pub(crate) struct OperationBudget {
 }
 
 impl OperationBudget {
-    /// Refuses unless this is the innermost canvas operation of this
-    /// thread's open transaction.
+    /// Refuses unless this is the active operation for this document and thread.
     pub(crate) fn ensure_active(&self) -> PyResult<()> {
         let active = self
             .history
@@ -184,12 +247,12 @@ impl OperationBudget {
             Ok(())
         } else {
             Err(PyValueError::new_err(
-                "the canvas operation is not active on this thread",
+                "the operation is not active on this thread",
             ))
         }
     }
 
-    /// Returns whether this operation is the innermost canvas of `document`.
+    /// Returns whether this operation is active on `document`.
     pub(crate) fn is_active_on(&self, document: &_Document) -> bool {
         self.history
             .upgrade()
@@ -526,7 +589,11 @@ fn begin_with(
     {
         let mut guard = lock(&document.history.open);
         if let Some(open) = owned(&mut guard) {
-            let operation = match &open.operation {
+            let operation = match open
+                .operation
+                .clone()
+                .or_else(|| read_budget(&document.history))
+            {
                 Some(outer) => outer.constrained_by(&limits()),
                 None => {
                     let operation = limits().share();
@@ -539,7 +606,12 @@ fn begin_with(
             return Ok(handle(operation));
         }
     }
-    let operation = limits().share();
+    let operation = match read_budget(&document.history) {
+        Some(outer) => outer
+            .constrained_by(&limits())
+            .map_err(|error| limit_error(&error))?,
+        None => limits().share(),
+    };
     let (_, transaction) = document.on_current(py, |store| {
         loop {
             operation.poll()?;

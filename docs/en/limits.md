@@ -46,6 +46,18 @@ with pyropdf.open("input.pdf", limits=limits) as doc:
         print(error.code)  # cancelled
 ```
 
+## Composite operations
+
+| Operation | Where a refusal is reported |
+| --- | --- |
+| `doc.structure.walk(max_elements=n)` | The first element beyond `n` raises `object_count`. The walk returns its iterator only after it finishes. Traversal also observes `memory_size` and cancellation. |
+| `doc.open_action` | Reading an embedded destination charges its target hops to one operation. A memory refusal reports `memory_size` and cancellation reports `cancelled`. |
+| `doc.form.import_fdf()` and `import_xfdf()` | For encoded input, FDF checks `limits.max_file_size` (`file_size`) and XFDF checks `max_size` (`form_field_input_size`). Both discover and fill fields under one document operation. |
+| `with page.draw()` | An import nested in the canvas shares its remaining budget. If a refusal leaves the block, pending drawing and field edits are discarded together. |
+
+After a memory or count refusal, a subsequent operation gets a fresh budget.
+A cancelled token stays cancelled for documents that use it.
+
 ## Reading and rendering
 
 `page.text()`, `page.words()`, `page.paths()`, `page.content()`, and
@@ -67,6 +79,13 @@ output can take substantial work to interpret. Upstream work covers
 [bounded stream decoding (#48)](https://github.com/yhay81/pyropdf/issues/48),
 [interpreter budgets and cancellation (#105)](https://github.com/yhay81/pyropdf/issues/105),
 and [bounded construction (#15)](https://github.com/yhay81/pyropdf/issues/15).
+
+Parser-internal budgets are tracked in [#573](https://github.com/yhay81/pyropdf/issues/573),
+font shaping in [#580](https://github.com/yhay81/pyropdf/issues/580), and PNG
+decode buffers in [#561](https://github.com/yhay81/pyropdf/issues/561).
+The project awaits the engine's work counters and cancellation
+([#678](https://github.com/yhay81/pyropdf/issues/678)). The release condition
+for bounded construction remains [#243](https://github.com/yhay81/pyropdf/issues/243).
 
 ## Reading a PDF in a worker
 
