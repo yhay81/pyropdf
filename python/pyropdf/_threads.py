@@ -417,6 +417,36 @@ def _append_page_beads(document: Document, page_dict: Dictionary, bead_pairs: Se
         page_dict["B"] = new_refs
 
 
+def _order_page_beads(
+    document: Document,
+    page_dict: Dictionary,
+    ring: Sequence[tuple[int, int]],
+    *,
+    added: tuple[int, int] | None = None,
+) -> None:
+    """Fill this thread's slots in the page's /B array in ring order."""
+    entries = page_dict.get("B")
+    if not isinstance(entries, Array):
+        if added is not None:
+            page_dict["B"] = [Dictionary(document, added)]
+        return
+
+    members = set(ring)
+    slots: dict[tuple[int, int], int] = {}
+    for index, entry in enumerate(entries):
+        pair = _dict_id(entry)
+        if pair is not None and pair in members:
+            slots[pair] = index
+    if added is not None and added not in slots:
+        slots[added] = len(entries)
+        entries.append(Dictionary(document, added))
+
+    page_order = (pair for pair in ring if pair in slots)
+    for (previous, index), pair in zip(slots.items(), page_order, strict=True):
+        if previous != pair:
+            entries[index] = Dictionary(document, pair)
+
+
 def _remove_beads_from_page_dict(
     document: Document,
     page_dict: Dictionary,
@@ -622,7 +652,7 @@ class Bead:
     @page.setter
     def page(self, target: Page | int) -> None:
         new_page = _resolve_page_arg(self._document, target)
-        bead_dict, _ = self._resolved()
+        bead_dict, thread_id = self._resolved()
         old_page = self.page
         display_rect = _pdf_to_display_rect(self._document, old_page, bead_dict.get("R"))
         new_pdf_rect = _display_to_pdf_rect(self._document, new_page, display_rect)
@@ -630,7 +660,8 @@ class Bead:
             return
         with self._document.transaction("bead page"):
             old_b_xref = _remove_beads_from_page_dict(self._document, old_page.obj, {self._id[0]})
-            _append_page_beads(self._document, new_page.obj, [self._id])
+            ring = _thread_bead_ids(Dictionary(self._document, thread_id))
+            _order_page_beads(self._document, new_page.obj, ring, added=self._id)
             bead_dict["P"] = new_page.obj
             bead_dict["R"] = new_pdf_rect
             if old_b_xref is not None:
@@ -674,7 +705,11 @@ class Beads(Sequence[Bead]):
     Walks the circular ``/F`` -> ``/N`` bead ring iteratively up to 4,096 beads
     with cycle detection. :meth:`add`, :meth:`move`, and ``del thread.beads[i]``
     each update the ring, ``BeadFirst["T"]``, and pages' ``/B`` arrays in one
-    transaction. Deleting every bead of a thread raises :class:`ValueError`;
+    transaction. On a shared page, this thread fills its existing array slots in
+    reading order. Adding a bead to the page appends one slot. The entries of
+    other threads keep their relative order.
+
+    Deleting every bead of a thread raises :class:`ValueError`;
     remove the thread from ``doc.threads`` instead.
     """
 
@@ -737,7 +772,7 @@ class Beads(Sequence[Bead]):
             new_pair = (new_xref, new_obj.generation or 0)
             new_order = [*ring[:pos], new_pair, *ring[pos:]]
             _relink_bead_ring(document, self._thread._id, new_order)  # noqa: SLF001
-            _append_page_beads(document, target_page.obj, [new_pair])
+            _order_page_beads(document, target_page.obj, new_order, added=new_pair)
         return Bead(document, *new_pair)
 
     def move(self, index: int, to: int) -> None:
@@ -753,6 +788,9 @@ class Beads(Sequence[Bead]):
         document = self._thread.document
         with document.transaction("move bead"):
             _relink_bead_ring(document, self._thread._id, new_order)  # noqa: SLF001
+            page_dict = Dictionary(document, moved).get("P")
+            if isinstance(page_dict, Dictionary) and not isinstance(page_dict, Stream):
+                _order_page_beads(document, page_dict, new_order)
 
     def __delitem__(self, index: int | slice) -> None:
         """Remove one bead or a slice of beads from the thread, in one transaction."""

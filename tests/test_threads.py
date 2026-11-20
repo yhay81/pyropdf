@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from test_preservation import snapshot
 
 import pyropdf
 from pyropdf import (
@@ -201,6 +202,90 @@ def test_bead_ring_reordering_deletion_info_cleanup_and_save_round_trip(tmp_path
         assert (len(final.threads), "Threads" in final.catalog) == (0, False)
         del final.threads
         assert not final.check()
+
+
+@pytest.mark.spec("articles", "edit", "preserve")
+@pytest.mark.parametrize("indirect", [False, True])
+def test_bead_move_preserves_page_reading_order_and_action_targets(*, indirect: bool) -> None:
+    with pyropdf.Document() as original:
+        page = original.pages.new((200, 200))
+        original.threads.add([(page, (10, 10, 30, 30)), (page, (40, 40, 60, 60))])
+        page.links.add((10, 100, 30, 120), ThreadAction(0))
+        page.links.add((40, 100, 60, 120), ThreadAction(0, 0))
+        if indirect:
+            array_xref = original.objects.add(list(page.obj["B"]))
+            page.obj["B"] = original.objects[array_xref]
+        base = original.to_bytes()
+
+    with pyropdf.open(base) as doc:
+        page, article = doc.pages[0], doc.threads[0]
+        first, second = article.beads
+        before = snapshot(doc)
+        article.beads.move(0, 1)
+        assert list(page.obj["B"]) == [second.obj, first.obj] == [bead.obj for bead in article.beads]
+        assert page.links[0].target == ThreadAction(0)
+        assert page.links[1].target == ThreadAction(0, 1)
+        array = page.obj["B"]
+        assert array.is_indirect == indirect
+        if indirect:
+            assert array.xref == array_xref
+        after = snapshot(doc)
+        assert before.keys() == after.keys()
+        assert {xref for xref in before if before[xref] != after[xref]} == {
+            article.xref,
+            first.xref,
+            second.xref,
+            array.xref if indirect else page.xref,
+        }
+        doc.history.undo()
+        assert snapshot(doc) == before
+        doc.history.redo()
+        assert snapshot(doc) == after
+
+        for saved in (doc.to_bytes(), doc.to_bytes(incremental=True), doc.to_bytes(linearize=True)):
+            with pyropdf.open(saved) as reopened:
+                page, article = reopened.pages[0], reopened.threads[0]
+                second, first = article.beads
+                assert list(page.obj["B"]) == [second.obj, first.obj]
+                assert [second.rect, first.rect] == [Rect(40, 40, 60, 60), Rect(10, 10, 30, 30)]
+                assert page.obj["B"].is_indirect == indirect
+                assert page.links[0].obj["A"]["D"] == article.obj
+                assert page.links[1].obj["A"]["B"] == first.obj
+
+
+@pytest.mark.spec("articles", "edit", "preserve")
+def test_bead_edits_keep_other_threads_in_reading_order_on_shared_pages() -> None:
+    with pyropdf.Document() as doc:
+        left = doc.pages.new((200, 200))
+        right = doc.pages.new((200, 200))
+        rect = (10, 10, 30, 30)
+        article = doc.threads.add([(left, rect), (right, rect), (left, rect), (right, rect)])
+        a, b, c, d = article.beads
+        other = doc.threads.add([(left, rect), (right, rect), (left, rect)])
+        x, y, z = other.beads
+        left_array = doc.objects.add([x.obj, a.obj, z.obj, c.obj])
+        right_array = doc.objects.add([b.obj, y.obj, d.obj])
+        left.obj["B"] = doc.objects[left_array]
+        right.obj["B"] = doc.objects[right_array]
+
+        article.beads.move(0, 2)
+        assert list(article.beads) == [b, c, a, d]
+        assert list(left.obj["B"]) == [x.obj, c.obj, z.obj, a.obj]
+        assert list(right.obj["B"]) == [b.obj, y.obj, d.obj]
+
+        inserted = article.beads.add(left, rect, index=1)
+        assert list(left.obj["B"]) == [x.obj, inserted.obj, z.obj, c.obj, a.obj]
+        before = snapshot(doc)
+        b.page = left
+        assert list(left.obj["B"]) == [x.obj, b.obj, z.obj, inserted.obj, c.obj, a.obj]
+        assert list(right.obj["B"]) == [y.obj, d.obj]
+        assert (left.obj["B"].xref, right.obj["B"].xref) == (left_array, right_array)
+        after = snapshot(doc)
+        assert {xref for xref in before if before[xref] != after[xref]} == {b.xref, left_array, right_array}
+        doc.history.undo()
+        assert snapshot(doc) == before
+        doc.history.redo()
+        assert snapshot(doc) == after
 
 
 @pytest.mark.spec("articles", "read", "interpret", "create", "edit", "preserve")
