@@ -294,3 +294,51 @@ def test_a_closed_document_refuses_a_report() -> None:
     doc.close()
     with pytest.raises(pyropdf.DocumentClosedError):
         doc.changes(incremental=True)
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_preexisting_untagged_annotation_is_not_reported_again(*, incremental: bool) -> None:
+    with pyropdf.open(ASSETS.parent / "pdfua/pdfua-2.pdf") as source:
+        item = source.pages[0].annotations.add(pyropdf.Square((10, 10, 20, 20)))
+        number = item.xref
+        data = source.to_bytes()
+    with pyropdf.open(data) as doc:
+        doc.objects[number]["Contents"] = pyropdf.String(b"Edited")
+        assert doc.changes(incremental=incremental).claims == ()
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_xmp_edit_can_remove_just_one_of_two_profile_identifications(*, incremental: bool) -> None:
+    with pyropdf.open(ASSETS.parent / "pdfua/pdfua-2-pdfa-4.pdf") as doc:
+        metadata = doc.catalog["Metadata"]
+        metadata.write(metadata.read().replace(b"<pdfaid:part>4</pdfaid:part>", b""))
+        (loss,) = doc.changes(incremental=incremental).claims
+        assert (loss.claim, loss.objects) == ("PDF/A-4", (metadata.xref,))
+        assert "XMP" in loss.reason
+
+
+@pytest.mark.parametrize("incremental", [False, True])
+def test_a_removed_intent_does_not_break_a_device_independent_drawing(*, incremental: bool) -> None:
+    with pyropdf.open(ASSETS.parent / "pdfa/pdfa-2b.pdf") as source:
+        source.pages[0].obj["Contents"].write(b"")
+        data = source.to_bytes()
+    with pyropdf.open(data) as doc:
+        del doc.catalog["OutputIntents"]
+        assert doc.changes(incremental=incremental).claims == ()
+
+
+def test_profile_dependencies_share_the_document_operation_budget() -> None:
+    with pyropdf.open(ASSETS.parent / "pdfua/pdfua-2-pdfa-4.pdf") as source:
+        # A large tagged page stream is only decoded to determine whether the
+        # edited output intent was required. Opening and editing stay cheap.
+        stream = source.pages[0].obj["Contents"]
+        stream.write(stream.read() + b" " * 100_000)
+        data = source.to_bytes()
+    with pyropdf.open(data, limits=pyropdf.DocumentLimits(max_page_content_size=5000)) as doc:
+        del doc.catalog["OutputIntents"]
+        with pytest.raises(pyropdf.LimitError) as refusal:
+            doc.changes(incremental=True)
+        assert refusal.value.code == "page_content_size"
+        assert "OutputIntents" not in doc.catalog
+        doc.history.undo()
+        assert doc.changes(incremental=True).claims == ()

@@ -105,13 +105,38 @@ def test_deleting_annotations_or_widgets_clears_stale_claims(*, incremental: boo
         del doc.form["f1"]
         assert doc.changes(incremental=incremental).claims == ()
 
-    # 3. Annotation without /P in an opened file that is edited and then removed.
+    # 3. Lose the association of a tagged annotation without /P, then remove it.
+    # Its contents alone can change without introducing a new profile defect.
     with pyropdf.open(PDFUA) as seed:
-        annot_xref = seed.objects.add({"Type": Name("Annot"), "Subtype": Name("Square"), "Rect": [10, 10, 30, 30]})
-        seed.pages[0].obj["Annots"] = [seed.objects[annot_xref]]
+        page = seed.pages[0]
+        annotation = page.annotations.add(Square((10, 10, 30, 30), contents="square"))
+        annot_xref = annotation.xref
+        if "P" in annotation.obj:
+            del annotation.obj["P"]
+        root = seed.catalog["StructTreeRoot"]
+        parent = root["K"][0]
+        element = seed.objects[
+            seed.objects.add(
+                {
+                    "Type": Name("StructElem"),
+                    "S": Name("Annot"),
+                    "P": parent,
+                    "Pg": page.obj,
+                    "K": {"Type": Name("OBJR"), "Pg": page.obj, "Obj": annotation.obj},
+                }
+            )
+        ]
+        parent["K"].append(element)
+        key = root["ParentTreeNextKey"]
+        root["ParentTree"]["Nums"].extend([key, element])
+        root["ParentTreeNextKey"] = key + 1
+        annotation.obj["StructParent"] = key
         seeded = seed.to_bytes(incremental=True)
     with pyropdf.open(seeded) as doc2:
-        doc2.pages[0].annotations[0].contents = "edited"
+        annotation = doc2.pages[0].annotations[0]
+        annotation.contents = "edited"
+        assert doc2.changes(incremental=incremental).claims == ()
+        del annotation.obj["StructParent"]
         assert doc2.changes(incremental=incremental).claims[0].objects == (annot_xref,)
         del doc2.pages[0].annotations[0]
         assert doc2.changes(incremental=incremental).claims == ()

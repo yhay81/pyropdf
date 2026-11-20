@@ -1,16 +1,14 @@
 //! The change report (DESIGN.md section 10, as #157 decided): what the edits
 //! since opening invalidate before a save.
 //!
-//! The edits are the change set between the version that reads see and
-//! the first version of the document, so the report reads only the objects
-//! that the edits wrote. Signatures come from the field tree and `/Perms` of
-//! the opened file, and an edit touches one when the object it wrote lies in
-//! the signature's byte range of that file. Claims come from the XMP metadata
-//! that reads see, and each written object is checked for what the claim
-//! forbids; this is not a validation of the claim (Phase 3's structural
-//! check is).
+//! Signatures come from the opened file's field tree and catalog permissions.
+//! A change to a signed object or a full save can invalidate a signature.
+//! The XMP in the opened and current versions identifies the archival and
+//! accessibility claims. Compare edited values and their profile dependencies
+//! between these versions, including a claim removed with its metadata.
 
 mod permissions;
+mod profiles;
 
 pub use permissions::SignaturePermission;
 
@@ -179,6 +177,13 @@ pub fn report(version: &Version, incremental: bool, budget: &Budget) -> Result<C
         } else {
             Vec::new()
         };
+    let rewrites_signed_revision = if incremental || existing.is_empty() {
+        false
+    } else if written.is_empty() {
+        covers_revision(&opened, existing.as_slice())
+    } else {
+        covers_revision(&opened, signatures_of(version, budget)?.as_slice())
+    };
     for signature in existing.into_vec() {
         budget.poll()?;
         if !incremental {
@@ -215,11 +220,26 @@ pub fn report(version: &Version, incremental: bool, budget: &Budget) -> Result<C
         }
     }
 
-    let claims = claims(&opened, version, written, budget)?;
+    let claims = claims(&opened, version, written, rewrites_signed_revision, budget)?;
     Ok(ChangeReport {
         signatures: signatures.into_vec(),
         claims: claims.into_vec(),
         permissions,
+    })
+}
+
+/// The PDF/A byte-range rule concerns a signature retained in the output.
+fn covers_revision(opened: &Version, signatures: &[Signature]) -> bool {
+    let Some(index) = opened.base().file() else {
+        return false;
+    };
+    signatures.iter().any(|sig| {
+        let [(first, _), (second, length)] = sig.ranges;
+        first == 0
+            && second
+                .checked_add(length)
+                .and_then(|n| usize::try_from(n).ok())
+                .is_some_and(|end| index.revisions().iter().any(|rev| rev.end() == Some(end)))
     })
 }
 
@@ -254,7 +274,7 @@ fn object(version: &Version, number: u32, budget: &Budget) -> Result<Option<Arc<
 
 /// Returns `value`, or the object that it refers to.
 fn resolved<'a>(
-    version: &'a Version,
+    version: &Version,
     value: &'a Value,
     budget: &Budget,
 ) -> Result<Option<Resolved<'a>>> {
@@ -501,6 +521,10 @@ pub(crate) fn pdfa_part(
     Ok(property(&xmp, b"pdfaid:part").and_then(number))
 }
 
+const VERSION_A1: &str = "the edits use features newer than PDF 1.4, which PDF/A-1 forbids";
+const VERSION_A2: &str = "the edits use features newer than PDF 1.7, which PDF/A-2 forbids";
+const VERSION_A3: &str = "the edits use features newer than PDF 1.7, which PDF/A-3 forbids";
+
 fn catalog_declared_version(version: &Version, budget: &Budget) -> Result<Option<PdfVersion>> {
     let catalog_val = catalog(version, budget)?;
     let Some(dict) = catalog_val.as_deref().and_then(value_dict) else {
@@ -516,93 +540,211 @@ fn catalog_declared_version(version: &Version, budget: &Budget) -> Result<Option
     })
 }
 
-/// Returns the claims of the metadata that reads see that the written
-/// objects break.
+#[derive(Default)]
+struct Identification {
+    claims: [Option<Claim>; 2],
+    revision: [Option<u32>; 2],
+    stream: Option<u32>,
+}
+
+/// Read both identifications from the same decoded packet.
+fn version_claims(version: &Version, budget: &Budget) -> Result<Identification> {
+    let catalog_val = catalog(version, budget)?;
+    let Some(metadata) = catalog_val
+        .as_deref()
+        .and_then(value_dict)
+        .and_then(|dict| dict.get("Metadata"))
+    else {
+        return Ok(Identification::default());
+    };
+    let metadata_val = resolved(version, metadata, budget)?;
+    match metadata_val.as_deref() {
+        Some(Value::Stream(stream)) => {
+            let xmp = stream.decoded(budget)?;
+            Ok(Identification {
+                claims: read_claims(&xmp),
+                revision: [
+                    property(&xmp, b"pdfaid:rev").and_then(number),
+                    property(&xmp, b"pdfuaid:rev").and_then(number),
+                ],
+                stream: reference_number(Some(metadata)),
+            })
+        }
+        _ => Ok(Identification {
+            stream: reference_number(Some(metadata)),
+            ..Default::default()
+        }),
+    }
+}
+
+type Reasons<'b> = BudgetVec<'b, (&'static str, BudgetVec<'b, u32>)>;
+
+fn record<'b>(
+    found: &mut Reasons<'b>,
+    reason: &'static str,
+    number: Option<u32>,
+    budget: &'b Budget,
+) -> Result<()> {
+    if let Some((_, objects)) = found
+        .as_mut_slice()
+        .iter_mut()
+        .find(|(known, _)| *known == reason)
+    {
+        if let Some(number) = number
+            && objects.len() < MAX_NAMED
+            && !objects.contains(&number)
+        {
+            objects.try_push(number)?;
+        }
+    } else {
+        let mut objects = BudgetVec::new(budget);
+        if let Some(number) = number {
+            objects.try_push(number)?;
+        }
+        found.try_push((reason, objects))?;
+    }
+    Ok(())
+}
+
 fn claims<'b>(
     opened: &Version,
     version: &Version,
     written: &[u32],
+    rewrites_signature: bool,
     budget: &'b Budget,
 ) -> Result<BudgetVec<'b, ClaimChange>> {
     let mut out = BudgetVec::new(budget);
-    if written.is_empty() {
+    if written.is_empty() && !rewrites_signature {
         return Ok(out);
     }
-    let root_number = match version.trailer().get("Root") {
-        Some(Value::Reference(reference)) => Some(reference.number()),
-        _ => None,
-    };
-    let catalog_val = catalog(version, budget)?;
-    let metadata_val = match catalog_val
-        .as_deref()
-        .and_then(value_dict)
-        .and_then(|catalog| catalog.get("Metadata"))
-    {
-        Some(metadata) => resolved(version, metadata, budget)?,
-        None => None,
-    };
-    let Some(Value::Stream(metadata)) = metadata_val.as_deref() else {
+    let original = version_claims(opened, budget)?;
+    let current = version_claims(version, budget)?;
+    if original.claims == [None, None] && current.claims == [None, None] {
         return Ok(out);
+    }
+    let removed = removed_annotations(opened, version, written, budget)?;
+    let root = reference_number(version.trailer().get("Root"));
+    let metadata_owner = if original.stream == current.stream {
+        original.stream
+    } else {
+        root
     };
-    let xmp = metadata.decoded(budget)?;
-    let opened_catalog_ver = catalog_declared_version(opened, budget)?;
-    let removed_annots = removed_annotations(opened, version, written, budget)?;
-    for claim in read_claims(&xmp).into_iter().flatten() {
-        // The written objects that break the claim, by reason, in the
-        // order the reasons are first met.
-        let mut found: BudgetVec<'_, (&'static str, BudgetVec<'_, u32>)> = BudgetVec::new(budget);
-        for &number in written {
-            budget.poll()?;
-            let Some(value) = object(version, number, budget)? else {
-                continue;
-            };
-            if let Value::Dict(dict) = &*value
-                && is_annotation_dict(dict)
-                && is_removed_annotation(version, removed_annots.as_slice(), number, dict, budget)?
-            {
-                continue;
-            }
-            let is_catalog = root_number == Some(number);
-            let language_loss = if claim == Claim::Ua(1) && is_catalog {
-                lost_alt_language(opened, version, &value, budget)?
-                    .then_some("removing the catalog language leaves structure alternate text without a language")
+    for (index, (old, new)) in original.claims.into_iter().zip(current.claims).enumerate() {
+        for claim in old
+            .into_iter()
+            .filter(|claim| Some(*claim) != new)
+            .chain(new)
+        {
+            let mut found = Reasons::new(budget);
+            if new != Some(claim) {
+                record(
+                    &mut found,
+                    "the edits remove the required XMP profile identification",
+                    metadata_owner,
+                    budget,
+                )?;
             } else {
-                None
-            };
-            for reason in breaks(claim, is_catalog, opened_catalog_ver, &value, budget)?
-                .into_iter()
-                .flatten()
-                .chain(language_loss)
-            {
-                match found
-                    .as_mut_slice()
-                    .iter_mut()
-                    .find(|(known, _)| *known == reason)
+                if matches!(claim, Claim::Ua(2) | Claim::A(4, _))
+                    && original.revision[index].is_some()
+                    && current.revision[index].is_none()
                 {
-                    Some((_, objects)) if objects.len() < MAX_NAMED => objects.try_push(number)?,
-                    Some(_) => {}
-                    None => {
-                        let mut objects = BudgetVec::new(budget);
-                        objects.try_push(number)?;
-                        found.try_push((reason, objects))?;
+                    record(
+                        &mut found,
+                        "the XMP identification lost its required revision year",
+                        metadata_owner,
+                        budget,
+                    )?;
+                }
+                if matches!(claim, Claim::A(2 | 3, _)) && rewrites_signature {
+                    record(
+                        &mut found,
+                        "a full save rewrites the byte range covered by a signature",
+                        None,
+                        budget,
+                    )?;
+                }
+                for &number in written {
+                    budget.poll()?;
+                    let Some(value) = object(version, number, budget)? else {
+                        continue;
+                    };
+                    if let Value::Dict(dict) = &*value
+                        && is_annotation_dict(dict)
+                        && is_removed_annotation(version, removed.as_slice(), number, dict, budget)?
+                    {
+                        continue;
+                    }
+                    let previous = object(opened, number, budget)?;
+                    let is_catalog = Some(number) == root;
+                    let before = previous
+                        .as_deref()
+                        .map(|v| breaks(claim, v, budget))
+                        .transpose()?
+                        .unwrap_or([None; 4]);
+                    for reason in breaks(claim, &value, budget)?
+                        .into_iter()
+                        .flatten()
+                        .filter(|r| !before.contains(&Some(*r)))
+                    {
+                        record(&mut found, reason, Some(number), budget)?;
+                        // A promoted catalog also names the higher version needed by this annotation.
+                        if matches!(reason, VERSION_A1 | VERSION_A2 | VERSION_A3)
+                            && let Some(root) = root
+                            && written.contains(&root)
+                            && catalog_declared_version(version, budget)?
+                                > catalog_declared_version(opened, budget)?
+                        {
+                            record(&mut found, reason, Some(root), budget)?;
+                        }
+                    }
+                    profiles::object_changes(
+                        claim,
+                        (opened, version),
+                        number,
+                        previous.as_deref(),
+                        &value,
+                        &mut found,
+                        budget,
+                    )?;
+                    if claim == Claim::Ua(1)
+                        && is_catalog
+                        && lost_alt_language(opened, version, &value, budget)?
+                    {
+                        record(
+                            &mut found,
+                            "removing the catalog language leaves structure alternate text without a language",
+                            Some(number),
+                            budget,
+                        )?;
                     }
                 }
+                if !written.is_empty() {
+                    profiles::dependencies(claim, opened, version, written, &mut found, budget)?;
+                }
             }
-        }
-        for (reason, breaking) in found.into_vec() {
-            let claim_name = claim.name();
-            budget.charge(
-                LimitCode::MemorySize,
-                (claim_name.len() + reason.len()) as u64,
-            )?;
-            out.try_push(ClaimChange {
-                claim: claim_name,
-                reason: reason.to_owned(),
-                objects: breaking.into_vec(),
-            })?;
+            for (reason, mut breaking) in found.into_vec() {
+                breaking.as_mut_slice().sort_unstable();
+                let claim_name = claim.name();
+                budget.charge(
+                    LimitCode::MemorySize,
+                    (claim_name.len() + reason.len()) as u64,
+                )?;
+                out.try_push(ClaimChange {
+                    claim: claim_name,
+                    reason: reason.to_owned(),
+                    objects: breaking.into_vec(),
+                })?;
+            }
         }
     }
     Ok(out)
+}
+
+fn reference_number(value: Option<&Value>) -> Option<u32> {
+    match value {
+        Some(Value::Reference(r)) => Some(r.number()),
+        _ => None,
+    }
 }
 
 /// ISO 14289-1 §7.2: alternate text can inherit its language from a
@@ -784,13 +926,7 @@ fn number(bytes: &[u8]) -> Option<u32> {
 /// newer than 1.7, and PDF/A-2 and PDF/A-4 (other than PDF/A-4f) restrict
 /// embedded files to allowed PDF/A parts (ISO 19005-2 section 6.8, ISO 19005-4
 /// section 6.9). PDF/UA requires every annotation in the structure tree.
-fn breaks(
-    claim: Claim,
-    is_catalog: bool,
-    opened_catalog_ver: Option<PdfVersion>,
-    value: &Value,
-    budget: &Budget,
-) -> Result<[Option<&'static str>; 4]> {
+fn breaks(claim: Claim, value: &Value, budget: &Budget) -> Result<[Option<&'static str>; 4]> {
     let reasons = match claim {
         Claim::A(1, _) => [
             has_transparency(value, budget)?
@@ -799,26 +935,26 @@ fn breaks(
                 .then_some("the edits add an embedded file, which PDF/A-1 forbids"),
             is_pdfa_1_forbidden_annotation(value)
                 .then_some("the edits add an annotation type that PDF/A-1 forbids"),
-            exceeds_pdf_version(is_catalog, opened_catalog_ver, value, PdfVersion(1, 4), true)
-                .then_some("the edits use features newer than PDF 1.4, which PDF/A-1 forbids"),
+            exceeds_pdf_version(value, PdfVersion(1, 4), true)
+                .then_some(VERSION_A1),
         ],
         Claim::A(2, _) => [
             is_embedded_file_outside(value, &[1, 2], budget)?.then_some(
                 "the edits add an embedded file that is not PDF/A-1 or PDF/A-2, which PDF/A-2 forbids",
             ),
-            exceeds_pdf_version(is_catalog, opened_catalog_ver, value, PdfVersion(1, 7), false)
-                .then_some("the edits use features newer than PDF 1.7, which PDF/A-2 forbids"),
+            exceeds_pdf_version(value, PdfVersion(1, 7), false)
+                .then_some(VERSION_A2),
             None,
             None,
         ],
         Claim::A(3, _) => [
-            exceeds_pdf_version(is_catalog, opened_catalog_ver, value, PdfVersion(1, 7), false)
-                .then_some("the edits use features newer than PDF 1.7, which PDF/A-3 forbids"),
+            exceeds_pdf_version(value, PdfVersion(1, 7), false)
+                .then_some(VERSION_A3),
             None,
             None,
             None,
         ],
-        Claim::A(4, level) if level != b'F' => [
+        Claim::A(4, level) if !matches!(level, b'E' | b'F') => [
             is_embedded_file_outside(value, &[1, 2, 4], budget)?.then_some(
                 "the edits add an embedded file that is not PDF/A-1, PDF/A-2, or PDF/A-4, which PDF/A-4 forbids",
             ),
@@ -852,24 +988,10 @@ fn is_pdfa_1_forbidden_annotation(value: &Value) -> bool {
     )
 }
 
-fn exceeds_pdf_version(
-    is_catalog: bool,
-    opened_catalog_ver: Option<PdfVersion>,
-    value: &Value,
-    limit: PdfVersion,
-    skip_pdfa_1_forbidden: bool,
-) -> bool {
+fn exceeds_pdf_version(value: &Value, limit: PdfVersion, skip_pdfa_1_forbidden: bool) -> bool {
     let Value::Dict(dict) = value else {
         return false;
     };
-    if is_catalog
-        && let Some(Value::Name(declared)) = dict.get("Version")
-        && let Some(ver) = parse_version(declared.as_bytes())
-        && ver > limit
-        && opened_catalog_ver < Some(ver)
-    {
-        return true;
-    }
     if skip_pdfa_1_forbidden
         && matches!(
             dict.get("Subtype"),
