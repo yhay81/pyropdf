@@ -72,7 +72,7 @@ def _claiming(properties: str) -> pyropdf.Document:
 
 def test_an_unedited_document_reports_nothing_for_an_incremental_save() -> None:
     report = _signed().changes(incremental=True)
-    assert report == pyropdf.ChangeReport((), ())
+    assert report == pyropdf.ChangeReport(signatures=(), claims=())
     assert not report
     assert not pyropdf.Document().changes(incremental=False)
 

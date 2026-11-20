@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import inspect
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import FrozenInstanceError, is_dataclass
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, assert_type, get_args, get_overloads, get_type_hints
 
 import pytest
 
@@ -194,3 +195,195 @@ def test_generated_api_reference_documents_exports_without_stale_references() ->
         content = page.read_text(encoding="utf-8")
         violations.extend(f"{page.name}: {needle}" for needle in FORBIDDEN_DOC_PATTERNS if needle in content)
     assert violations == []
+
+
+# Specifications, path commands, and color values accept the object or operands
+# they describe. A result record names every field. This list records the public
+# positional contracts used by the drawing, form, navigation and editing guides.
+_POSITIONAL_VALUES = frozenset(
+    [
+        "BeadSpecification",
+        "Border",
+        "Caret",
+        "CheckBox",
+        "Circle",
+        "CollectionField",
+        "CollectionFolder",
+        "CollectionSortKey",
+        "CollectionSplit",
+        "CollectionSubitem",
+        "Color",
+        "ColorStop",
+        "ComboBox",
+        "CoordinateSystem",
+        "CurveTo",
+        "Destination",
+        "DocumentRequirement",
+        "EncryptedPayload",
+        "FieldChoice",
+        "FieldLock",
+        "FileAttachment",
+        "FreeText",
+        "GeospatialMeasure",
+        "HideAction",
+        "Highlight",
+        "ImportDataAction",
+        "Ink",
+        "InlineImage",
+        "JavaScriptAction",
+        "Launch",
+        "LayerMembership",
+        "LayerStateChange",
+        "LineAnnotation",
+        "LineTo",
+        "ListBox",
+        "MoveTo",
+        "NamedAction",
+        "Navigator",
+        "Note",
+        "NumberFormat",
+        "Operation",
+        "OutlineEntry",
+        "PageLabelRange",
+        "PointData",
+        "PolyLine",
+        "Polygon",
+        "PushButton",
+        "RadioButton",
+        "RectilinearMeasure",
+        "RemoteDestination",
+        "RequirementHandler",
+        "ResetFormAction",
+        "SetLayerStateAction",
+        "SignatureField",
+        "Square",
+        "Squiggly",
+        "Stamp",
+        "StrikeOut",
+        "SubmitFormAction",
+        "TextField",
+        "ThreadAction",
+        "TransitionAction",
+        "Underline",
+        "Viewport",
+    ]
+)
+
+
+def test_exported_dataclasses_distinguish_record_fields_from_positional_operands() -> None:
+    positional = set()
+    for name in pyropdf.__all__:
+        cls = getattr(pyropdf, name)
+        if not isinstance(cls, type) or not is_dataclass(cls):
+            continue
+        assert cls.__dataclass_params__.frozen, name
+        assert "__slots__" in vars(cls), name
+        if any(param.kind != inspect.Parameter.KEYWORD_ONLY for param in inspect.signature(cls).parameters.values()):
+            positional.add(name)
+    assert positional == _POSITIONAL_VALUES
+
+
+def test_live_views_follow_page_and_field_objects_through_edits_and_undo() -> None:
+    doc = pyropdf.Document()
+    pages, form = doc.pages, doc.form
+    first, second = pages.new(), pages.new()
+    assert_type(pages[-1], pyropdf.Page)
+    assert_type(pages[::-1], list[pyropdf.Page])
+    assert isinstance(pages, Sequence)
+    assert pages[::-1] == [second, first]
+    pages.move(-1, 0)
+    assert pages[-1] == first
+    with pytest.raises(IndexError):
+        _ = pages[-3]
+
+    widgets = first.widgets
+    spec = pyropdf.TextField("address", (1, 1, 20, 20))
+    with pytest.raises(FrozenInstanceError):
+        spec.name = "other"  # ty: ignore[invalid-assignment]
+    widget = widgets.add(spec)
+    field = assert_type(form["address"], pyropdf.Field)
+    assert isinstance(form, Mapping)
+    assert widgets[-1] == widget
+    assert widget.field == field
+    assert list(form.items()) == [("address", field)]
+    del form["address"]
+    assert not widgets
+    assert "address" not in form
+    with pytest.raises(KeyError):
+        _ = form["address"]
+    with pytest.raises(pyropdf.StaleObjectError):
+        _ = field.value
+    doc.history.undo()
+    assert form["address"] == field
+    assert widgets[-1] == widget
+
+    del pages[-1]
+    with pytest.raises(pyropdf.StalePageError):
+        _ = first.index
+    assert pages[:] == [second]
+    doc.history.undo()
+    assert pages[-1] == first
+
+
+def test_read_only_results_and_python_311_type_information() -> None:
+    metadata = {"title": "before"}
+    probe = pyropdf.Probe(page_count=0, version="2.0", needs_password=False, is_repaired=False, metadata=metadata)
+    removed = {"metadata": 1}
+    changes = pyropdf.ChangeReport(signatures=(), claims=())
+    sanitized = pyropdf.SanitizeReport(removed=removed, changes=changes, dropped_claims=())
+    metadata["title"] = "after"
+    removed["metadata"] = 2
+    assert probe.metadata == {"title": "before"}
+    assert sanitized.removed == {"metadata": 1}
+    for result in (probe.metadata, sanitized.removed):
+        with pytest.raises(TypeError):
+            result["new"] = 1  # ty: ignore[invalid-assignment]
+    doc = pyropdf.Document()
+    root = assert_type(pyropdf.typed.Catalog(doc.catalog).Pages, pyropdf.typed.PageTreeNodeRoot)
+    assert root.Count == len(doc.pages)
+    assert_type(doc.profiles, pyropdf.Profiles)
+    assert_type(doc.pdfa_claim, tuple[int, str] | None)
+    assert get_type_hints(pyropdf.Profiles)["output_intents"] == tuple[pyropdf.OutputIntent, ...]
+    assert pyropdf.TextField in get_args(pyropdf.FieldSpecification)
+    assert len(get_overloads(pyropdf.Pages.__getitem__)) == 2
+    with pytest.raises(FrozenInstanceError):
+        doc.profiles.pdfa = "PDF/A-4"  # ty: ignore[invalid-assignment]
+    with pytest.raises(TypeError):
+        pyropdf.Profiles(None, None, None, None, ())  # ty: ignore[too-many-positional-arguments, missing-argument]
+
+
+def test_operation_values_own_their_nested_inputs_and_parsed_bytes() -> None:
+    buffer = bytearray(b"x")
+    nested = [buffer]
+    params = {"A": nested}
+    operation = pyropdf.Operation("BDC", (pyropdf.Name("Span"), params))
+    inline = pyropdf.InlineImage({"W": 1, "H": 1, "BPC": 8, "CS": pyropdf.Name("G"), "Params": params}, b"x")
+    sequence = pyropdf.Operations([operation, inline])
+    encoded = sequence.to_bytes()
+    nested.clear()
+    buffer[0] = ord("y")
+    assert sequence[-1] == inline
+    assert operation.operands[1]["A"] == (b"x",)
+    assert inline.dictionary["Params"]["A"] == (b"x",)
+    for original in (sequence, pyropdf.Operations.parse(encoded)):
+        item = original[-1]
+        assert isinstance(item, pyropdf.InlineImage)
+        with pytest.raises(TypeError):
+            item.dictionary["Params"]["A"] = ()
+        with pytest.raises(TypeError):
+            del original[-1]  # ty: ignore[not-subscriptable]
+        assert original.to_bytes() == encoded
+
+
+def test_geometry_has_one_spelling_for_each_operation() -> None:
+    for rect in (pyropdf.Rect(1, 2, 3, 4), pyropdf.IRect(1, 2, 3, 4)):
+        assert rect.top_left in rect
+        for alias in ("tl", "tr", "bl", "br", "contains", "get_area", "irect"):
+            assert not hasattr(rect, alias)
+        with pytest.raises(TypeError):
+            rect.area("in")  # ty: ignore[too-many-positional-arguments]
+    for value in (pyropdf.Point(3, 4), pyropdf.Matrix.IDENTITY):
+        assert not hasattr(value, "norm")
+        assert abs(value) > 0
+    with pytest.raises(TypeError):
+        pyropdf.Point().distance_to((72, 0), "in")  # ty: ignore[too-many-positional-arguments]

@@ -65,7 +65,7 @@ _MAX_PAGE_ENTRIES = 65536
 _MAX_TREE_DEPTH = 64
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FontInfo:
     """One font dictionary that a page's resources name, from :meth:`Page.fonts`."""
 
@@ -88,7 +88,7 @@ class FontInfo:
     _font: Dictionary = field(init=False, repr=False, compare=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class FontProgram:
     """An embedded font program, from :meth:`Document.font_program`."""
 
@@ -98,7 +98,7 @@ class FontProgram:
     """The decoded program."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SubsetFont:
     """One font program that :meth:`Document.subset_fonts` subset."""
 
@@ -288,7 +288,7 @@ def font_program(document: Document, font: int | FontInfo) -> FontProgram | None
     data = stream.read()
     if kind == "pfa" and data[:2] == b"\x80\x01":
         kind = "pfb"
-    return FontProgram(kind, data)
+    return FontProgram(type=kind, data=data)
 
 
 def _xref(value: object) -> int | None:
@@ -487,7 +487,16 @@ def subset_fonts(document: Document) -> tuple[SubsetFont, ...]:
                         if isinstance(descendant, Dictionary):
                             _rename(descendant, "BaseFont", tag)
             name = program.descriptors[0].get("FontName")
-            report.append(SubsetFont(xref, str(name or ""), glyphs, kept, len(data), len(new)))
+            report.append(
+                SubsetFont(
+                    xref=xref,
+                    name=str(name or ""),
+                    glyphs=glyphs,
+                    kept=kept,
+                    size_before=len(data),
+                    size_after=len(new),
+                )
+            )
     return tuple(report)
 
 

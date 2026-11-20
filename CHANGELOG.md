@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- On `Rect` and `IRect`, use `top_left`, `top_right`, `bottom_left` and
+  `bottom_right` for the old `tl`, `tr`, `bl` and `br` corners, and
+  `value in rect` for `rect.contains(value)`. Use `rect.round()` for
+  `rect.irect`, and `abs(point)` / `abs(matrix)` for their `norm()`.
+  `rect.get_area("cm")` becomes `rect.area(unit="cm")`.
+  `point.distance_to(target, unit="cm")` also takes the unit by keyword (#850).
+- Result records now take keyword-only fields. For example, construct
+  `Profiles(pdfa=None, pdfua=None, pdfx=None, pdfvt=None, output_intents=())`.
+  This also applies to `OutputIntent`, checks and change reports, signature and
+  verification results, revisions, content and retrieval results, font and
+  image information, layer snapshots, textbox fit and recolor/sanitize reports.
+  The API reference lists the field names for each constructor (#850).
+- Content operations own their nested operands. Arrays are tuples, dictionaries
+  are read-only mappings and byte buffers are immutable bytes. To edit an
+  operand, construct a replacement operation and assign the resulting sequence
+  to `page.operations`. Directly constructed `Probe` and `SanitizeReport`
+  records also own read-only snapshots of their mappings (#850).
+
 ## 0.3.1 (2026-11-13)
 
 A patch release with fixes and additional public type exports. No public

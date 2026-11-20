@@ -152,6 +152,7 @@ as the interface allows.
 
 ```python
 Chunk(
+    *,
     index: int,
     text: str,
     elements: tuple[Element, ...],
@@ -229,7 +230,7 @@ A place on a gradient's line, and the color and alpha there.
 
 ```python
 class Content(Sequence[ContentItem])
-Content(items: tuple[ContentItem, ...])
+Content(*, items: tuple[ContentItem, ...])
 ```
 
 The items that a page paints, in paint order.
@@ -317,6 +318,7 @@ Draw a cubic Bézier curve to `to` with two control points.
 
 ```python
 Element(
+    *,
     kind: ElementKind,
     page: int,
     bbox: Rect,

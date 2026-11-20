@@ -90,7 +90,7 @@ def test_lines_polygons_and_ink_render_where_their_points_are(rotation: int) -> 
     assert ink.vertices is None
     assert line.strokes is None
     # The rectangle holds the line, its stroke, and its endings.
-    assert line.rect.contains((14, 14, 156, 26))
+    assert (14, 14, 156, 26) in line.rect
 
     pixmap = page.pixmap(dpi=72)
     assert _pixel(pixmap, 80, 20) == (0, 0, 255)
@@ -307,7 +307,7 @@ def test_points_and_endings_are_set_through_handles() -> None:
     assert line.line_endings == (LineEnding.CIRCLE, LineEnding.NONE)
     # The rectangle follows the points and the endings.
     assert line.rect != before
-    assert line.rect.contains((14, 94, 201, 106))
+    assert (14, 94, 201, 106) in line.rect
     assert len(ink.strokes or ()) == 2
     assert len(polygon.vertices or ()) == 2
     assert _pixel(page.pixmap(dpi=72), 100, 100) == (255, 0, 0)

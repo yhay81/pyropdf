@@ -81,6 +81,29 @@ class Name(str):
             raise ValueError(msg)
         return super().__new__(cls, name)
 
+    @property
+    def developer_prefix(self) -> str | None:
+        """Return the case-sensitive Annex E name prefix, or ``None`` for ordinary spelling.
+
+        ``XX`` is reserved for private, third-class names. A second-class
+        spelling uses four bytes containing or followed by an underscore or
+        colon. The prefix identifies the spelling; registration belongs to
+        the ISO PDF name registry. The containing dictionary can give a name
+        a more specific meaning.
+        """
+        if self.startswith("XX"):
+            return "XX"
+        # A PDF name is a byte string. Five characters suffice to inspect its
+        # first four bytes and a following delimiter, even for a long name.
+        prefix_size = 4
+        leading = _name_bytes(self[: prefix_size + 1])
+        prefix = leading[:prefix_size]
+        if len(prefix) == prefix_size and (
+            b"_" in prefix or b":" in prefix or leading.startswith((b"_", b":"), prefix_size)
+        ):
+            return _name_text(prefix)
+        return None
+
     def __repr__(self) -> str:
         """Return ``Name('Type')``."""
         return f"Name({str.__repr__(self)})"

@@ -999,6 +999,7 @@ A Screen annotation with an optional media clip and its rendition action.
 
 ```python
 Sound(
+    *,
     data: bytes,
     rate: float,
     channels: int,
