@@ -1,0 +1,55 @@
+Task	PyMuPDF task	Canonical pyropdf task and scope	Release tests	Gap
+Open, repair and probe	open, is_repaired	open, probe, is_repaired	document	-
+Insert, move, delete and select pages	insert_pdf, move_page, delete_pages, select	doc.pages	page_ops,page_batches	-
+Rotate and flatten	set_rotation, bake	page.rotation, page.flatten, doc.flatten	flatten,page_boxes	-
+Normalize rotation	remove_rotation	page.remove_rotation	remove_rotation	-
+Page boxes and labels	set_mediabox, get_page_labels, set_page_labels	page boxes, doc.page_labels, page.label	page_boxes,page_labels	-
+Metadata and outline	metadata, set_xml_metadata, set_toc	doc.metadata, doc.xmp, doc.outline	metadata,outline	-
+Layers and visibility	get_layers, set_layer, set_oc	doc.layers	layers	373: OCMD visibility expressions and annotation /OC require engine support
+Embedded files	embfile operations	doc.attachments	attachments	-
+Low-level objects	xref_object, update_object, update_stream	doc.objects, page.obj	objects,typed_views	-
+Undo and redo	journal undo, redo	doc.transaction, doc.history	history	-
+Persist undo history	journal_save, journal_load	doc.history.save and restore	history_persistence	-
+Text, words, blocks, characters and formats	get_text	page.text, words, chars and layout	layout_serializations,text	-
+Type 3 fallback	get_text	page.text(unmapped="type3_char_code") opts into a character-code heuristic	text	-
+Search and selection	search_for, get_text_selection	page.search and selection	search,text_selection	-
+Tables	find_tables	page.tables	tables,text_quality	-
+Markdown	to_markdown	doc.markdown, page.markdown	markdown	-
+Retrieval chunks and JSON	to_chunks, to_json	doc.to_chunks and to_json	document_chunks	-
+OCR and searchable text layer	get_textpage_ocr, pdfocr_tobytes	page.ocr and apply_ocr with optional model data	ocr_engine,ocr_layer	-
+Painted items and paths	get_drawings, get_texttrace	page.content, page.chars	content_model,text_provenance	104: provenance coverage for nested painted content
+Image placements and data	get_image_info, get_images, extract_image	page.content and page.images	images,content_model	-
+Page fonts and programs	get_fonts, extract_font	page.fonts and doc.font_program	page_fonts	-
+Annotation appearance and sound	get_pixmap, get_text, get_sound	annotation.pixmap, text and sound	annotation_appearances,annotation_sound	-
+Raster and SVG	get_pixmap, get_svg_image	page.pixmap and page.svg	pixmap,rendering_svg	-
+Selectable text in SVG	get_svg_image(text_as_path=False)	page.svg emits paths	rendering_svg	435: selectable text needs hayro-svg support
+CMYK raster output	get_pixmap(colorspace=csCMYK)	page.pixmap supports RGB and gray layouts	rendering_options	425: engine cannot supply CMYK raster samples
+Pixmap conversion and operations	invert, gamma, tint, scale	Pixmap.invert, gamma, tint, crop, scale, to_rgb and to_gray	pixmap_ops	-
+Pixmap transforms and pixels	flip_rotate, warp, pixel, set_pixel, set_rect	Pixmap.rotate, flip, warp, pixel, with_pixel and fill	pixmap_extra	-
+Pixmap image formats	Pixmap image input and output	Pixmap.from_bytes and to_bytes for documented formats	pixmap_formats	355: JPEG XR decoding has no maintained Rust implementation
+Rendering speed	get_pixmap	page.pixmap	pixmap	365: see the measured release ratios below
+Shapes, images and placed pages	Shape, insert_image, show_pdf_page	page.draw with paths, images and page placement	canvas,canvas_page_forms	-
+Draw text and use fonts	insert_text, insert_textbox, Font	Canvas.text with standard and embedded fonts	canvas_text,canvas_embedded	-
+Images to PDF	open(image).convert_to_pdf	doc.pages.new_from_image	image_pages	-
+Read and edit annotations	annots, Annot	page.annotations	annotation_edits,annotation_reading	-
+Create markup annotations	add_*_annot	page.annotations with markup, free text, stamps and attachments	annotation_markup,annotation_free_text,annotation_stamps,annotation_files	-
+Links	insert_link, update_link	page.links	links	-
+Form fields	widgets, add_widget, Widget.update	doc.form and widgets	acroform,field_creation,field_properties	-
+HTML layout	insert_htmlbox, Story	Excluded from PDF task scope by #355	-	-
+Incremental and full saves	save, saveIncr, deflate, use_objstms	doc.save and to_bytes with compression, object streams and deduplication	save_options	-
+Linearized files	save(linear=True), is_fast_webaccess	doc.save(linearize=True), doc.is_linearized	linearization	-
+Encryption	standard PDF security handlers	open(password=...) and save encryption options	encrypted	-
+Permanent redaction	add_redact_annot, apply_redactions	Content removal unavailable	-	362: permanent removal of text, images and vector paths
+Remove content outside a rectangle	clip_to_rect	Page cropping can hide content	-	420: permanent clipping of page content
+Clean streams and resources	clean_contents, save(clean=True)	page.clean_contents	clean_content	-
+Sanitize	scrub	doc.sanitize	sanitize	-
+Subset fonts	subset_fonts	doc.subset_fonts	font_subsetting	-
+Rewrite images	rewrite_images	doc.rewrite_images returns an unsupported-image report	rewrite_images	900: alternate images and mask cases need further coverage
+Recolor	Page.recolor, Document.recolor	page.recolor and doc.recolor	recolor	-
+Atomic transactions and changes	—	doc.transaction, doc.changes	changes,history	-
+Typed objects and structural checks	—	doc.objects and doc.check	typed_views,structural_check	-
+Sign	—	doc.sign	signing	-
+Verify signatures	—	doc.signatures and signature.verify	verify	-
+Bounded operations	—	Limits and typed refusals	limit_codes	15: full construction bounds await the upstream parser
+Conformance and structure-aware reading	—	Profile validation and structured reading are separate tasks	profiles,markdown	255: complete conformance-preserving editing
+Free-threaded Python and licensing	—	Free-threaded wheels and MIT license	threads,release	-

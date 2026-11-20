@@ -304,6 +304,14 @@ child hop names either `embedded_file` in `/Names /EmbeddedFiles`
 and `annotation` (`/A`). `next_target` chains up to 32 hops without
 recursion.
 
+## `GoTo3DView`
+
+```python
+GoTo3DView(*, annotation: int, view: ViewSelection)
+```
+
+Select a target's 3D view by index, internal name, PDF selector name, or view dictionary.
+
 ## `HideAction`
 
 ```python
@@ -428,6 +436,26 @@ PageTriggers.clear()
 
 Remove all page triggers in one transaction.
 
+## `RenditionAction`
+
+```python
+RenditionAction(
+    *,
+    annotation: int | None = None,
+    operation: RenditionOperation | None = None,
+    rendition: typed.RenditionMedia | typed.RenditionSelector | None = None,
+    script: str | Stream | None = None,
+)
+```
+
+A Screen target, optional rendition, operation and inert script.
+
+## `RenditionOperation`
+
+The operation requested of a viewer by a rendition action.
+
+Members: `PLAY`, `STOP`, `PAUSE`, `RESUME`, `PLAY_OR_RESUME`.
+
 ## `ResetFormAction`
 
 ```python
@@ -439,6 +467,20 @@ An action that resets form fields to their default values (`/S /ResetForm`, ISO 
 When `fields` is empty, every field in the document is reset; when
 `exclude` is `True` (`/Flags 1`), every field *except* `fields` is
 reset.
+
+## `RichMediaExecute`
+
+```python
+RichMediaExecute(
+    *,
+    annotation: int,
+    command: str,
+    instance: typed.RichMediaInstance | None = None,
+    arguments: CommandArgument | None = None,
+)
+```
+
+An inert command and optional arguments for an instance of a RichMedia annotation.
 
 ## `SetLayerStateAction`
 

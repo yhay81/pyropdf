@@ -72,3 +72,7 @@ Before 1.0, a minor release may remove or rename a public name or parameter
 in the same release without deprecated twins ([DESIGN.md](DESIGN.md) section
 10.1), and [CHANGELOG.md](CHANGELOG.md) names what replaces it and lists what
 each release holds.
+
+The [PyMuPDF release comparison](evidence/pymupdf-comparison/README.md#release-comparisons)
+records the wheel hashes, task coverage, raw timings, human-checked reading quality,
+and gaps. Tagged releases attach the report and observations as `comparison-vX.Y.Z.zip`.

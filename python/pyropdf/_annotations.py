@@ -31,6 +31,16 @@ from pyropdf._errors import LimitError, MalformedPdfError, PdfError, StaleObject
 from pyropdf._fonts import Font, add_glyphs, embedded_font
 from pyropdf._geometry import Point, Quad, Rect, _rect_components
 from pyropdf._limits import _validate_optional_positive_int
+from pyropdf._media import (
+    MediaAnnotation,
+    MediaSpecification,
+    ProjectionAnnotation,
+    RichMedia,
+    Screen,
+    ThreeD,
+    add_media,
+    media_annotation,
+)
 from pyropdf._objects import _DEFAULT_MAX_STREAM_DATA_SIZE, Dictionary, Name, Stream, String
 from pyropdf._pixmap import Colorspace, _render_background, _render_gray, _render_matrix
 from pyropdf._profiles import pdfa_claim
@@ -1347,6 +1357,25 @@ class Annotation:
         _warn_skipped(skipped)
         return text
 
+    @property
+    def media(self) -> MediaAnnotation | None:
+        """Return the live Arlington view for Screen, 3D, RichMedia, Projection, Sound or Movie.
+
+        For example, `annotation.media.RichMediaContent.Configurations[0]`
+        yields a configuration whose `Instances[0].Asset` is the shared
+        file specification. Edit its name or use the embedded file stream's
+        `read()` and `write()` methods. A 3D annotation exposes its model
+        through `annotation.media["3DD"]`. Its `VA` array contains the named
+        views, whose `MA` entries point to measurements. The Projection
+        annotation's `ExData.M3DREF` links to the same measurement.
+
+        Existing Sound and Movie annotations use the same Arlington views.
+        `annotation.sound()` also returns sound samples and their metadata.
+        Legacy movie and sound actions and embedded slide shows can be edited
+        through `typed.ActionMovie`, `typed.ActionSound` and `typed.SlideShow`.
+        """
+        return media_annotation(self.obj)
+
     def _filespec(self) -> Dictionary | None:
         """Return the file specification of a file attachment, ``/FS``, or ``None``."""
         if self.type is not AnnotationType.FILE_ATTACHMENT:
@@ -2348,6 +2377,7 @@ AnnotationSpecification: TypeAlias = (
     | FileAttachment
     | FreeText
     | Stamp
+    | MediaSpecification
 )
 _SPECIFICATIONS = (
     Highlight,
@@ -2381,7 +2411,9 @@ class Annotations(Sequence[Annotation]):
 
     The sequence lists them in ``/Annots`` order and reads the page on every
     access; popups belong to the annotation that names them and are not
-    listed. ``del page.annotations[i]`` removes one, with its popup.
+    listed. ``del page.annotations[i]`` removes one, with its popup. Deletion
+    of a media annotation refuses while another live object still targets
+    it. Remove the external action or measurement link first.
 
     Reads reject more than 4,096 annotations or 1 MiB of annotation text per
     page.
@@ -2427,6 +2459,8 @@ class Annotations(Sequence[Annotation]):
         The annotation is drawn when its transaction commits, or before a
         read in the transaction, so that every viewer draws it alike.
         """
+        if isinstance(specification, (Screen, ThreeD, RichMedia, ProjectionAnnotation)):
+            return Annotation(self._page, add_media(self._page, specification), 0)
         if not isinstance(specification, _SPECIFICATIONS):
             msg = f"page.annotations.add takes an annotation specification: {type(specification).__name__}"
             raise TypeError(msg)

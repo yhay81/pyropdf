@@ -647,7 +647,7 @@ pub fn import_pages(
     source: &_Document,
     pages: Vec<(u32, u16)>,
     at: usize,
-) -> PyResult<()> {
+) -> PyResult<Option<(u8, u8, u32, bool)>> {
     crate::errors::boundary(|| {
         // Pin the source before taking the destination's writer lock.
         // The import itself, including the source index, uses the edit budget.
@@ -677,6 +677,7 @@ pub fn import_pages(
                 at,
                 budget,
             )
+            .map(|media| media.map(|(version, first, prc)| (version.0, version.1, first, prc)))
             .map_err(page_error)
         })
     })?
