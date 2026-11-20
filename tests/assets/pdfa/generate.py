@@ -19,11 +19,15 @@ HERE = Path(__file__).resolve().parent
 
 #: Each file, its PDF header version, the XMP pdfaid properties, and veraPDF's flavour.
 FLAVOURS: dict[str, tuple[str, str, str]] = {
-    "pdfa-1b.pdf": ("1.4", "<pdfaid:part>1</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>", "1b"),
-    "pdfa-2b.pdf": ("1.7", "<pdfaid:part>2</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>", "2b"),
-    "pdfa-2u.pdf": ("1.7", "<pdfaid:part>2</pdfaid:part><pdfaid:conformance>U</pdfaid:conformance>", "2u"),
-    "pdfa-3b.pdf": ("1.7", "<pdfaid:part>3</pdfaid:part><pdfaid:conformance>B</pdfaid:conformance>", "3b"),
-    "pdfa-4.pdf": ("2.0", "<pdfaid:part>4</pdfaid:part><pdfaid:rev>2020</pdfaid:rev>", "4"),
+    f"pdfa-{part}{level.lower()}.pdf": (
+        version,
+        f"<pdfaid:part>{part}</pdfaid:part>"
+        + ("<pdfaid:rev>2020</pdfaid:rev>" if part == 4 else "")
+        + (f"<pdfaid:conformance>{level}</pdfaid:conformance>" if level else ""),
+        f"{part}{level.lower()}",
+    )
+    for part, version, levels in ((1, "1.4", "AB"), (2, "1.7", "ABU"), (3, "1.7", "ABU"), (4, "2.0", ("", "E", "F")))
+    for level in levels
 }
 
 
@@ -114,6 +118,40 @@ def write(version: str, claim: str) -> bytes:
         stream(b"/Type /Metadata /Subtype /XML", xmp(claim)),
         stream(b"/N 3", profile),
     ]
+    if "<pdfaid:conformance>A</pdfaid:conformance>" in claim:
+        objects[0] = objects[0][:-2] + b"/MarkInfo << /Marked true >> /Lang (en-US) /StructTreeRoot 7 0 R >>"
+        objects[2] = objects[2][:-2] + b"/StructParents 0 >>"
+        objects[3] = stream(b"", b"/Figure << /MCID 0 >> BDC " + content + b" EMC")
+        objects.extend(
+            [
+                b"<< /Type /StructTreeRoot /K [8 0 R] /ParentTree 10 0 R /ParentTreeNextKey 1 >>",
+                b"<< /Type /StructElem /S /Document /P 7 0 R /K [9 0 R] >>",
+                (
+                    b"<< /Type /StructElem /S /Figure /P 8 0 R /Pg 3 0 R /K 0"
+                    b" /Alt (A blue rectangle crossed by a red line.) >>"
+                ),
+                b"<< /Nums [0 [9 0 R]] >>",
+            ]
+        )
+    if "<pdfaid:conformance>F</pdfaid:conformance>" in claim:
+        objects[0] = objects[0][:-2] + b"/Names << /EmbeddedFiles << /Names [(legend) 7 0 R] >> >> /AF [7 0 R] >>"
+        objects.extend(
+            [
+                (
+                    b"<< /Type /Filespec /F (legend.txt) /UF (legend.txt) /Desc (Figure legend)"
+                    b" /AFRelationship /Supplement /EF << /F 8 0 R /UF 8 0 R >> >>"
+                ),
+                stream(
+                    b"/Type /EmbeddedFile /Subtype /text#2Fplain /Params << /ModDate (D:20260101000000Z) >>",
+                    b"Blue rectangle; red diagonal line.\n",
+                ),
+            ]
+        )
+    return serialize(version, objects)
+
+
+def serialize(version: str, objects: list[bytes]) -> bytes:
+    """Write an independent fixture using deterministic offsets and trailer identifiers."""
     out = bytearray(b"%PDF-" + version.encode() + b"\n%\xe2\xe3\xcf\xd3\n")
     offsets = []
     for number, body in enumerate(objects, start=1):

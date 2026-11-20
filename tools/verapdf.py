@@ -11,7 +11,7 @@ applied to it and saved in full and incrementally. With ``--arlington``,
 each of those files is also checked against the Arlington PDF Model of the
 PDF version in its header, with the extensions that its PDF/A part adds to
 that version. A file that veraPDF rejects must be listed in
-``REJECTED`` with the issue that tracks it; the script exits with status 1
+``EXPECTED`` with its exact rules and tracking issue; the script exits with status 1
 on a rejection that is not listed, and on a listed one that passes.
 """
 
@@ -47,29 +47,36 @@ UNTAGGED_RULES = {
     "fill_field": {"7.18.3-1", "7.18.4-1"},
 }
 
-#: Verdicts that differ from acceptance, by flavour and file name, with the issue that tracks each.
-REJECTED: dict[str, str] = {
-    # PDF/A-1 forbids embedded files, and PDF/A-2 and PDF/A-4 allow only
-    # embedded PDF/A files; doc.changes() reports these claims broken.
-    **{
-        f"{part} pdfa-{part}-{edit}_attachment-{mode}.pdf": "#301"
-        for part in ("1b", "2b", "2u", "4")
-        for edit in ("add", "write")
-        for mode in ("full", "incremental")
-    },
-    # These cases deliberately create an annotation without a structure tag.
-    # Require both the change report and the exact annotation-only rules below.
-    **{f"ua1 pdfua-1-{edit}-{mode}.pdf": "#794" for edit in UNTAGGED_RULES for mode in ("full", "incremental")},
+DUAL = "pdfua-2-pdfa-4"
+UA2_ANNOTATIONS = {
+    edit: ({"8.10.2.3-1", "8.9.3.3-1"} if edit.endswith("field") else {"8.9.2.3-1", "8.9.3.3-1"})
+    for edit in UNTAGGED_RULES
 }
 
-REJECTED_RULES = {
-    f"ua1 pdfua-1-{edit}-{mode}.pdf": rules
-    for edit, rules in UNTAGGED_RULES.items()
-    for mode in ("full", "incremental")
-}
+# Every expected rejection of an edit is scoped to the source, profile,
+# operation, save mode and exact failed rules. A new rule or a surprise pass fails CI.
+EXPECTED: dict[str, tuple[str, set[str]]] = {}
 
-#: The Arlington extensions that a PDF/A part adds to the PDF version it is based on, by flavour.
-EXTENSIONS = {"3b": "ISO_19005_3"}
+
+def expect(source: str, flavour: str, edits: dict[str, set[str]], issue: str) -> None:
+    """Record both saves of the named operations under one source and profile."""
+    for edit, rules in edits.items():
+        for mode in ("full", "incremental"):
+            EXPECTED[f"{flavour} {source}-{edit}-{mode}.pdf"] = (issue, rules)
+
+
+for variant in ("1a", "1b", "2a", "2b", "2u", "4"):
+    rules = {"1": {"6.1.11-1", "6.1.11-2"}, "2": {"6.8-5"}, "4": {"6.9-3"}}[variant[0]]
+    expect(f"pdfa-{variant}", variant, {"add_attachment": rules, "write_attachment": rules}, "#301")
+expect(DUAL, "4", {"add_attachment": {"6.9-3"}, "write_attachment": {"6.9-3"}}, "#301")
+expect("pdfua-1", "ua1", UNTAGGED_RULES, "#794")
+for source in ("pdfua-2", DUAL):
+    expect(source, "ua2", UA2_ANNOTATIONS, "#848")
+    expect(source, "ua2", {"add_attachment": {"8.14.1-1"}, "write_attachment": {"8.14.1-1"}}, "#848")
+    expect(source, "ua2", {"delete_page": {"8.2.5.2-1"}}, "#848")
+
+#: Arlington extensions of the PDF version for each fixture.
+EXTENSIONS = dict.fromkeys(("3a", "3b", "3u"), "ISO_19005_3")
 
 
 def saves(directory: Path) -> dict[Path, str]:
@@ -166,14 +173,49 @@ def run(jar: Path, files: dict[Path, str]) -> list[tuple[str, Path]]:
         for path in paths:
             accepted = verdicts[path.name]
             key = f"{flavour} {path.name}"
-            note = f" ({REJECTED[key]})" if key in REJECTED else ""
+            expected = EXPECTED.get(key)
+            note = f" ({expected[0]})" if expected else ""
             sys.stdout.write(f"{'PASS' if accepted else 'FAIL'} {key}{note}\n")
-            if accepted == (key in REJECTED) or (
-                key in REJECTED_RULES and failed_rules(details(jar, flavour, path)) != REJECTED_RULES[key]
-            ):
+            if accepted == bool(expected) or (expected and failed_rules(details(jar, flavour, path)) != expected[1]):
                 failures.append((flavour, path))
     for flavour, path in failures:
         sys.stdout.write(f"\nunexpected verdict for {path.name} under {flavour}:\n{details(jar, flavour, path)}\n")
+    return failures
+
+
+def dual_archival(files: dict[Path, str]) -> dict[Path, str]:
+    """Include the same source and every save in the independent PDF/A-4 run."""
+    return {path: "4" for path in files if path.stem == DUAL or path.stem.startswith(DUAL + "-")}
+
+
+def negative_control(source: Path, flavour: str) -> tuple[bytes, str]:
+    """Break one requirement, leaving the XMP claim, xref offsets and stream lengths intact."""
+    if flavour.startswith("ua"):
+        key = b"/Alt ("
+        rule = "7.3-1" if flavour == "ua1" else "8.2.5.28.2-1"
+    elif flavour == "4f":
+        key, rule = b"/EmbeddedFiles ", "6.9-5"
+    else:
+        key = b"/OutputIntents "
+        rule = "6.2.3.3-1" if flavour.startswith("1") else "6.2.4.3-2"
+    data = source.read_bytes()
+    if data.count(key) != 1:
+        msg = f"{source} needs exactly one {key!r} for its negative control"
+        raise ValueError(msg)
+    return data.replace(key, b"/Z" + key[2:]), rule
+
+
+def controls(jar: Path, directory: Path) -> list[tuple[str, Path]]:
+    """Require the targeted rule to fail under each explicitly selected profile."""
+    failures = []
+    for source, flavour in [*FIXTURES.items(), *dual_archival(FIXTURES).items()]:
+        data, rule = negative_control(source, flavour)
+        path = directory / f"{source.stem}-without-required-key-{flavour}.pdf"
+        path.write_bytes(data)
+        report = details(jar, flavour, path)
+        if not report.startswith(f"FAIL {path} ") or failed_rules(report) != {rule}:
+            sys.stderr.write(f"expected {flavour} {rule} for the negative control, got {report}\n")
+            failures.append((flavour, path))
     return failures
 
 
@@ -186,6 +228,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as directory:
         files = saves(Path(directory))
         failures = run(args.jar.resolve(), files)
+        failures += run(args.jar.resolve(), dual_archival(files))
+        failures += controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             failures += run(
                 args.arlington.resolve(), {path: arlington(path, flavour) for path, flavour in files.items()}
