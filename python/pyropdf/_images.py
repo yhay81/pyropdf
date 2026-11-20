@@ -70,7 +70,7 @@ _MARKER = 0xFF
 _APP14 = 0xEE
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StoredImage:
     """An image's data as the document stores it, for an image filter that a file format holds."""
 
@@ -87,7 +87,7 @@ class StoredImage:
         return _EXTENSIONS[self.filter]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PageImage:
     """One image that a page paints: its content item and its place among the page's images."""
 
@@ -134,13 +134,18 @@ class PageImage:
         parameters = stream.get("DecodeParms")
         if isinstance(parameters, Array):
             parameters = parameters[-1] if len(parameters) else None
-        return StoredImage(filter_name, data, parameters if isinstance(parameters, Dictionary) else None)
+        return StoredImage(
+            filter=filter_name, data=data, parameters=parameters if isinstance(parameters, Dictionary) else None
+        )
 
 
 def page_images(page: Page, *, annotations: bool) -> list[PageImage]:
     """Return the images that ``page`` paints, in paint order."""
     content = page.content(text_runs=False, paths=False, images=True, annotations=annotations)
-    return [PageImage(page, index, item, annotations) for index, item in enumerate(content.images)]
+    return [
+        PageImage(page=page, index=index, item=item, annotations=annotations)
+        for index, item in enumerate(content.images)
+    ]
 
 
 def _jpeg_frame(data: bytes) -> tuple[int, int, int, bool]:
@@ -275,7 +280,7 @@ def remove_image(document: Document, xref: int) -> None:
         _write_samples(document, stream, 1, 1, gray=True, color=b"\x00", alpha=b"\x00")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ImageRewriteReport:
     """What :meth:`Document.rewrite_images` did.
 
@@ -1403,7 +1408,7 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
     threshold, target = _rewrite_options(dpi_threshold, dpi_target, quality, {**selected, "set_to_gray": set_to_gray})
     _check_formats(lossless_format, bitonal_format)
     if threshold is None and quality is None and not set_to_gray:
-        return ImageRewriteReport(0, 0, 0, 0)
+        return ImageRewriteReport(considered=0, rewritten=0, bytes_before=0, bytes_after=0)
     options = _Options(threshold, target, quality, selected, set_to_gray, lossless_format, bitonal_format)
     tally = _Tally()
     inline: list[int] = []
@@ -1430,7 +1435,11 @@ def rewrite_images(  # noqa: PLR0913 - pymupdf's keyword arguments, and pyropdf'
                 )
         nested.write(document, options)
     return ImageRewriteReport(
-        tally.considered, tally.rewritten, tally.before, tally.after, tuple(tally.unsupported or ())
+        considered=tally.considered,
+        rewritten=tally.rewritten,
+        bytes_before=tally.before,
+        bytes_after=tally.after,
+        unsupported=tuple(tally.unsupported or ()),
     )
 
 

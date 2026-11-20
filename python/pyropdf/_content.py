@@ -562,7 +562,7 @@ class Image:
 ContentItem: TypeAlias = TextRun | Path | Image
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Content(Sequence[ContentItem]):
     """The items that a page paints, in paint order."""
 
@@ -1250,7 +1250,7 @@ def _content_from_core(raw: Any, document: Document | None = None) -> Content:  
             converted.append(converter.path(item))
         else:
             converted.append(converter.image(item))
-    return Content(tuple(converted))
+    return Content(items=tuple(converted))
 
 
 # The package re-exports these names; reprs, pickles, and documentation name it.

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from pyropdf._document import Document
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SignatureChange:
     """An opened signature affected by the save mode or edits to covered objects.
 
@@ -31,7 +31,7 @@ class SignatureChange:
         return bool(self.objects)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SignaturePermission:
     """A signed DocMDP or FieldMDP transform's verdict for one proposed edit.
 
@@ -50,7 +50,7 @@ class SignaturePermission:
     reason: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ClaimChange:
     """A PDF/A or PDF/UA claim of the metadata that the edits break.
 
@@ -68,7 +68,7 @@ class ClaimChange:
     objects: tuple[int, ...]
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ChangeReport:
     """What the edits since opening invalidate, for a save that is incremental or not."""
 
@@ -88,7 +88,24 @@ def changes(document: Document, *, incremental: bool) -> ChangeReport:
         raise TypeError(msg)
     signatures, claims, permissions = _core.changes(document._core(), incremental)  # noqa: SLF001
     return ChangeReport(
-        tuple(SignatureChange(name, xref, reason, tuple(objects)) for name, xref, reason, objects in signatures),
-        tuple(ClaimChange(name, reason, tuple(objects)) for name, _, reason, objects in claims),
-        tuple(SignaturePermission(*row) for row in permissions),
+        signatures=tuple(
+            SignatureChange(field=name, xref=xref, reason=reason, objects=tuple(objects))
+            for name, xref, reason, objects in signatures
+        ),
+        claims=tuple(
+            ClaimChange(claim=name, reason=reason, objects=tuple(objects)) for name, _, reason, objects in claims
+        ),
+        permissions=tuple(
+            SignaturePermission(
+                signature=name,
+                xref=xref,
+                transform=transform,
+                edit=edit,
+                object=number,
+                field=field,
+                permitted=permitted,
+                reason=reason,
+            )
+            for name, xref, transform, edit, number, field, permitted, reason in permissions
+        ),
     )

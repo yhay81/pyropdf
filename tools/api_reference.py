@@ -122,6 +122,7 @@ _CONTAINER_DUNDERS = frozenset(
 #: Dynamic-attribute and capsule dunders included only when explicitly documented.
 _DOCUMENTED_DUNDERS = frozenset(
     {
+        "__abs__",
         "__arrow_c_array__",
         "__arrow_c_schema__",
         "__delattr__",

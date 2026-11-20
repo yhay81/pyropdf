@@ -5,6 +5,36 @@ description: pyropdf の API の背後にあるモデル：表示座標、版、
 
 # 概念
 
+## 目的別の API
+
+| 目的 | Python の操作 | 対象と使い分け |
+| --- | --- | --- |
+| ファイルの概要を読む、編集を始める | `probe(source)`、`open(source)`、`Document()` | 概要だけなら `probe` を使います。既存ファイルの読み書きには `open`、空の文書の作成にはコンストラクターを使います。 |
+| ページを探す、移動する、複製する | `doc.pages[index]`、`pages.move`、`pages.insert`、`pages.extend` | インデックスは現在の位置です。移動するとハンドルは同じページを追います。挿入はページを複製し、別の文書からも取り込めます。ページラベルは表示用の文字列、名前付きページはカタログの項目です。 |
+| テキスト、レイアウト、描画順を読む | `page.text()`、`page.words()`、`page.layout()`、`page.content()` | 順に本文、単語と座標、行やスパン、描画順の項目を返します。`page.chars()` と `page.paths()` は列単位で参照できます。描画命令を編集するときは `page.operations` を使います。 |
+| 選択したページを検索用に書き出す | `doc.text(pages)`、`doc.markdown(pages)`、`doc.to_json(pages)`、`doc.to_chunks(pages)` | 同じバージョンのページから本文、Markdown、要素の JSON、区切り付きのチャンクを得られます。ページ内の位置を求めるには `page.search()` や `page.selection()` を使います。 |
+| ページへ描画する、注釈を付ける | `with page.draw() as canvas`、`page.annotations.add(spec)` | 描画はブロックの正常終了時にページのコンテンツへ書き込みます。注釈には独自の矩形と外観があります。リンクは `page.links.add(rect, target)` で作ります。 |
+| ページを描画する、画像を取り出す | `page.pixmap()`、`doc.render(pages)`、`page.svg()`、`page.images()` | それぞれ単一ページのピクセル、複数ページの描画、ベクター形式、個々の画像の配置を扱います。配置の `pixmap()` はデコード済みピクセル、`stored()` は格納された画像データを返します。共有画像の置換には xref を使います。 |
+| フォントを調べる、指定する | `page.fonts()`、`doc.font_program(font)`、`doc.fallback_fonts` | ページのフォント資源、埋め込みプログラム、代替フォントの設定を扱います。文字を描くフォントはキャンバスに渡します。 |
+| フォームの入力値や外観を変える | `doc.form[name].value`、`page.widgets[index]` | 値はフィールドが共有し、各ページの位置や外観はウィジェットが持ちます。`page.widgets.add(spec)` で新しく作れます。FDF/XFDF の読み込みは対応するフィールドへ値を反映します。 |
+| 埋め込みファイルを読む、置き換える | `doc.attachments[name]`、`annotation.file` | 前者はカタログの名前ツリーの項目、後者はページ上の注釈が指すファイルです。`doc.collection` はポートフォリオの表示方法を表します。現在、添付ファイルのハンドルは同じ名前で再登録されたファイルを参照します。 |
+| 文書内の移動先や読む順番を調べる | `doc.outline`、`doc.destinations`、`doc.threads`、`doc.structure` | しおり、名前付きの移動先、記事を構成する領域の順番、論理的な読み順をそれぞれ扱います。イベントのアクションは、その文書・ページ・注釈・フィールドで指定します。 |
+| メタデータを編集する、適合性を調べる | `doc.metadata`、`doc.xmp`、`doc.profiles`、`doc.check()` | Info の標準項目を編集すると対応する XMP の値にも反映されます。XML 自体は XMP で、適合宣言と出力インテントは profiles で読めます。構造検査は欠陥を報告します。規格への適合判定には外部の検証器を使います。 |
+| PDF/A の宣言を読む | `doc.profiles.pdfa`、`doc.pdfa_claim` | 表示や比較には大文字に統一した名前（例 `"PDF/A-2B"`）を使います。部番号と元の綴りが必要なときは組（例 `(2, "b")`）を使います。部番号 4 のみの宣言は `(4, "")`、宣言がなければどちらも `None` です。 |
+| PDF オブジェクトを調べる、機能を編集する | `doc.objects[xref]`、`typed.Catalog(doc.catalog)`、機能別のハンドル | 生の値は PDF の名前・文字列・参照を扱い、Arlington のビューはスキーマに従ってキーを解釈します。`field.value = text` などの機能別操作はウィジェットの外観など関連項目も更新します。 |
+| 図形や領域を測る | `rect.top_left`、`point in rect`、`rect.round()`、`rect.area(unit="cm")`、`page.viewports` | 矩形の座標は表示空間のポイントです。単位換算にはキーワード引数を使います。ビューポートは独自の座標系を持てる PDF の測定領域です。点や行列の大きさは `abs(point)`、`abs(matrix)` で得られます。 |
+| スキャン画像から文字を認識する | `page.ocr()`、`page.apply_ocr(words=words)` | 認識すると位置付きの単語が得られます。結果を適用すると文書に検索可能なテキストを追加します。画像を直接渡すときは `OcrEngine.recognize` を使います。 |
+| ページの外観を変える、情報を除去する | `page.recolor(target)`、`doc.rewrite_images()`、`page.clean_contents()`、`doc.flatten()`、`doc.sanitize(path)` | それぞれ色の変換、画像資源の書き換え、コンテンツストリームの整理、注釈のページへの描き込み、指定した情報の除去と保存を行います。ページ単位と文書単位の操作を選べます。 |
+| 表示条件を決める | `doc.layers`、`doc.viewer_preferences`、`page.transition`、`doc.requirements` | レイヤーの構成はコンテンツの表示・非表示を制御します。ほかの値はビューアーの設定、ページ切り替え効果、文書が要求する機能を表します。 |
+| アクセスと処理量を制御する | `open(source, password=..., limits=...)`、`doc.unlock(password)`、`doc.save(path, encryption=...)` | 開くときに資格情報を渡すか、開いた文書を後から解除できます。保存時に暗号化を指定します。`DocumentLimits` は文書操作、キーワード引数の `max_*` は個々の結果に上限を設けます。 |
+| 編集内容を確認し、署名・保存する | `doc.history`、`doc.revisions`、`doc.changes(incremental=True)`、`doc.signatures`、`doc.save(path)`、`doc.to_bytes()` | history は編集中の取り消し履歴、revisions はファイルに残る増分保存の世代です。changes は適合宣言と署名対象への影響を報告します。署名そのものも検証できます。保存先はファイルかバイト列を選びます。 |
+
+`pages`、`form`、`metadata` などのビューには後から行った編集も反映されます。
+シーケンスでは各 API に記載の範囲で負のインデックスやスライスを使えます。
+マッピングにないキーを参照すると `KeyError` になります。`Profiles` などの結果は
+フィールド名を持つ変更不能なレコードです。自分で組み立てるときはキーワード引数を使います。
+描画や作成の指定には `TextField("address", rect)` のように各シグネチャに従って引数を渡します。
+
 ## 表示座標 {#display-coordinates}
 
 API に出てくる矩形と点は、単語や検索結果の箱、注釈の矩形、`clip`、ページボックスのいずれも
