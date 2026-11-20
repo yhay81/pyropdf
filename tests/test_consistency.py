@@ -64,8 +64,8 @@ def qpdf_findings(path: Path) -> set[str]:
 @pytest.mark.parametrize("name", NAMES)
 def test_an_edit_and_a_save_add_no_structural_defect(name: str, edit: str, *, incremental: bool) -> None:
     source = (ASSETS / name).read_bytes()
-    doc = pyropdf.open(source)
-    EDITS[edit](doc)
+    doc = EDITS[edit].open(source)
+    EDITS[edit].apply(doc)
     assert defects(doc.to_bytes(incremental=incremental)) - defects(source) == set()
 
 
@@ -77,8 +77,8 @@ def test_an_edit_and_a_save_add_no_qpdf_finding(name: str, edit: str, *, increme
         if os.environ.get("PYROPDF_REQUIRE_QPDF") == "1":
             pytest.fail("PYROPDF_REQUIRE_QPDF=1, but qpdf is not on PATH")
         pytest.skip("qpdf is not on PATH")
-    doc = pyropdf.open(ASSETS / name)
-    EDITS[edit](doc)
+    doc = EDITS[edit].open(ASSETS / name)
+    EDITS[edit].apply(doc)
     saved = tmp_path / "saved.pdf"
     saved.write_bytes(doc.to_bytes(incremental=incremental))
     live = set(pyropdf.open(saved).objects)
@@ -102,8 +102,8 @@ def pikepdf_problems(source: Path | io.BytesIO) -> tuple[int, set[str]]:
 @pytest.mark.parametrize("edit", sorted(EDITS))
 @pytest.mark.parametrize("name", NAMES)
 def test_pikepdf_reads_every_saved_document(name: str, edit: str, *, incremental: bool) -> None:
-    doc = pyropdf.open(ASSETS / name)
-    EDITS[edit](doc)
+    doc = EDITS[edit].open(ASSETS / name)
+    EDITS[edit].apply(doc)
     pages, problems = pikepdf_problems(io.BytesIO(doc.to_bytes(incremental=incremental)))
     assert pages == len(doc.pages)
     assert problems - pikepdf_problems(ASSETS / name)[1] == set()
