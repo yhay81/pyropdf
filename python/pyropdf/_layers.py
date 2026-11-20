@@ -17,6 +17,7 @@ from itertools import islice
 from typing import TYPE_CHECKING, overload
 
 from pyropdf._errors import LimitError
+from pyropdf._metadata import _require_version
 from pyropdf._objects import Array, Dictionary, Name, String
 
 if TYPE_CHECKING:
@@ -290,6 +291,7 @@ class Layers(Sequence[Layer]):
         document = self._document
         with document.transaction("add layer"):
             catalog = document.catalog
+            _require_version(document, catalog, (1, 5))
             if self._properties() is None:
                 catalog["OCProperties"] = {}
             properties = catalog["OCProperties"]

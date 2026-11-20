@@ -105,6 +105,40 @@ def test_a_document_without_optional_content_has_no_layers() -> None:
         doc.layers.use(0)
 
 
+@pytest.mark.parametrize("incremental", [False, True], ids=["full", "incremental"])
+@pytest.mark.parametrize("draw", [False, True], ids=["group", "drawing"])
+def test_adding_a_layer_to_a_pdf_13_document(*, draw: bool, incremental: bool) -> None:
+    doc = pyropdf.open(CORPUS / "patent-us223898.pdf")
+    layer = doc.layers.add("Overlay")
+    assert doc.history.steps == ("add layer",)
+    if draw:
+        with doc.pages[0].draw() as canvas, canvas.layer(layer):
+            canvas.rect((10, 10, 20, 20), fill=pyropdf.Color(1, 0, 0))
+
+    saved = pyropdf.open(doc.to_bytes(incremental=incremental))
+    assert saved.catalog["Version"] == Name("1.5")
+    assert [group.xref for group in saved.layers] == [layer.xref]
+    assert not saved.check()
+    if draw:
+        assert saved.pages[0].obj["Resources"]["Properties"]["PyroL1"].xref == layer.xref
+        doc.history.undo()
+    doc.history.undo()
+    assert "OCProperties" not in doc.catalog
+    assert "Version" not in doc.catalog
+    assert not doc.history.can_undo
+
+
+def test_adding_a_layer_keeps_a_sufficient_header_or_catalog_version() -> None:
+    recent = pyropdf.Document()
+    recent.layers.add("Overlay")
+    assert "Version" not in recent.catalog
+
+    older = pyropdf.open(CORPUS / "patent-us223898.pdf")
+    older.catalog["Version"] = Name("1.7")
+    older.layers.add("Overlay")
+    assert older.catalog["Version"] == Name("1.7")
+
+
 def test_configurations_list_in_order() -> None:
     doc, (first, _, third) = layer_document()
     assert doc.layers.configs == [
