@@ -912,6 +912,7 @@ the first and last points; one annotation holds at most 65,536 points.
 
 ```python
 Sound(
+    *,
     data: bytes,
     rate: float,
     channels: int,

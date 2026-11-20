@@ -100,7 +100,7 @@ _ANNOTATION_COLORS = ("C", "IC")
 _APPEARANCE_COLORS = ("BC", "BG")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Unconverted:
     """A color that :meth:`Page.recolor` left as it was."""
 
@@ -114,7 +114,7 @@ class Unconverted:
     """What it is in particular, such as ``"Lab"`` or the image's name."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RecolorReport:
     """What :meth:`Page.recolor` or :meth:`Document.recolor` converted, and what it could not."""
 
@@ -256,12 +256,12 @@ def recolor(document: Document, target: object, indexes: Iterable[int]) -> Recol
     edits = [recoloring.page(all_pages[index]) for index in indexes]
     recoloring.write(edits)
     return RecolorReport(
-        target,  # ty: ignore[invalid-argument-type] - checked above.
-        len(edits),
-        recoloring.operations,
-        recoloring.images,
-        tuple(recoloring.unconverted),
-        recoloring.omitted,
+        target=target,  # ty: ignore[invalid-argument-type] - checked above.
+        pages=len(edits),
+        operations=recoloring.operations,
+        images=recoloring.images,
+        unconverted=tuple(recoloring.unconverted),
+        omitted=recoloring.omitted,
     )
 
 
@@ -300,7 +300,7 @@ class _Recoloring:
             self.omitted += 1
             return
         self.seen.add(key)
-        self.unconverted.append(Unconverted(self.page_index, kind, detail))  # ty: ignore[invalid-argument-type]
+        self.unconverted.append(Unconverted(page=self.page_index, kind=kind, detail=detail))  # ty: ignore[invalid-argument-type]
 
     def page(self, page: Page) -> _PageEdit:
         """Plan the recoloring of one page."""

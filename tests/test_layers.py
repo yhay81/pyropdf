@@ -74,9 +74,9 @@ def _blue(doc: pyropdf.Document) -> bool:
 def test_layers_list_names_and_states() -> None:
     doc, (first, second, third) = layer_document()
     assert list(doc.layers) == [
-        Layer(first, "Alpha", ("View",), on=True, locked=False),
-        Layer(second, "Boxes", ("View",), on=True, locked=False),
-        Layer(third, "Unused", ("View",), on=True, locked=True),
+        Layer(xref=first, name="Alpha", intent=("View",), on=True, locked=False),
+        Layer(xref=second, name="Boxes", intent=("View",), on=True, locked=False),
+        Layer(xref=third, name="Unused", intent=("View",), on=True, locked=True),
     ]
     assert len(doc.layers) == 3
     assert doc.layers[1].name == "Boxes"
@@ -85,8 +85,8 @@ def test_layers_list_names_and_states() -> None:
 
 def test_a_corpus_document_lists_its_layers_and_follows_a_switch() -> None:
     doc = pyropdf.open(CORPUS / "pdfium-ocg-invisible.pdf")
-    assert list(doc.layers) == [Layer(8, "Show Text", ("View",), on=False, locked=False)]
-    assert doc.layers.configs == [LayerConfig(0, "", "", "OFF", (), (), ())]
+    assert list(doc.layers) == [Layer(xref=8, name="Show Text", intent=("View",), on=False, locked=False)]
+    assert doc.layers.configs == [LayerConfig(index=0, name="", creator="", base_state="OFF", on=(), off=(), locked=())]
     hidden = bytes(doc.pages[0].pixmap(dpi=72))
     doc.layers.switch(8, on=True)
     assert doc.layers[0].on
@@ -142,9 +142,9 @@ def test_adding_a_layer_keeps_a_sufficient_header_or_catalog_version() -> None:
 def test_configurations_list_in_order() -> None:
     doc, (first, _, third) = layer_document()
     assert doc.layers.configs == [
-        LayerConfig(0, "Default", "", "ON", (), (), (third,)),
-        LayerConfig(1, "Print", "tests", "ON", (), (first,), ()),
-        LayerConfig(2, "Nothing", "", "OFF", (third,), (), ()),
+        LayerConfig(index=0, name="Default", creator="", base_state="ON", on=(), off=(), locked=(third,)),
+        LayerConfig(index=1, name="Print", creator="tests", base_state="ON", on=(), off=(first,), locked=()),
+        LayerConfig(index=2, name="Nothing", creator="", base_state="OFF", on=(third,), off=(), locked=()),
     ]
 
 

@@ -139,38 +139,6 @@ IRect.bottom_right: Point
 
 `(x1, y1)`.
 
-### `IRect.tl`
-
-```python
-IRect.tl: Point
-```
-
-`(x0, y0)`.
-
-### `IRect.tr`
-
-```python
-IRect.tr: Point
-```
-
-`(x1, y0)`.
-
-### `IRect.bl`
-
-```python
-IRect.bl: Point
-```
-
-`(x0, y1)`.
-
-### `IRect.br`
-
-```python
-IRect.br: Point
-```
-
-`(x1, y1)`.
-
 ### `IRect.quad`
 
 ```python
@@ -192,14 +160,6 @@ valid rectangle, or the bounding box of a quad, is inside when it
 lies within the edges, which count as inside. A number tests the
 coordinates, as for a tuple; any other value is not contained.
 
-### `IRect.contains`
-
-```python
-IRect.contains(x: object) -> bool
-```
-
-Return `x in self`.
-
 ### `IRect.intersects`
 
 ```python
@@ -208,10 +168,10 @@ IRect.intersects(r: Sequence[float]) -> bool
 
 Return whether both rectangles are finite and share some area.
 
-### `IRect.get_area`
+### `IRect.area`
 
 ```python
-IRect.get_area(unit: str = 'px') -> float
+IRect.area(*, unit: Literal['px', 'in', 'cm', 'mm'] = 'px') -> float
 ```
 
 Return `width * height` in `px` (PDF points), `in`, `cm`, or `mm` squared.
@@ -321,6 +281,14 @@ Matrix.e: float
 Matrix.f: float
 ```
 
+### `Matrix.__abs__`
+
+```python
+Matrix.__abs__() -> float
+```
+
+Return the Euclidean norm of all six coordinates.
+
 ### `Matrix.__bool__`
 
 ```python
@@ -328,14 +296,6 @@ Matrix.__bool__() -> bool
 ```
 
 Return whether any coordinate is nonzero.
-
-### `Matrix.norm`
-
-```python
-Matrix.norm() -> float
-```
-
-Return the Euclidean norm of all six coordinates.
 
 ### `Matrix.is_rectilinear`
 
@@ -383,6 +343,14 @@ Point.x: float
 Point.y: float
 ```
 
+### `Point.__abs__`
+
+```python
+Point.__abs__() -> float
+```
+
+Return the distance from the origin.
+
 ### `Point.__bool__`
 
 ```python
@@ -390,14 +358,6 @@ Point.__bool__() -> bool
 ```
 
 Return whether this point differs from the origin.
-
-### `Point.norm`
-
-```python
-Point.norm() -> float
-```
-
-Return the distance from the origin.
 
 ### `Point.unit`
 
@@ -418,7 +378,11 @@ The direction vector with nonnegative coordinates.
 ### `Point.distance_to`
 
 ```python
-Point.distance_to(x: Sequence[float], unit: str = 'px') -> float
+Point.distance_to(
+    x: Sequence[float],
+    *,
+    unit: Literal['px', 'in', 'cm', 'mm'] = 'px',
+) -> float
 ```
 
 Measure distance to a point or normalized rectangle.
@@ -546,6 +510,14 @@ Whether every corner is a right angle, turning as `Rect.quad` does.
 The sine of each corner's angle must be within 1e-5 of 1, so a
 mirror image of a rectangle's quad, or a quad with a zero-length
 edge, is not rectangular.
+
+### `Quad.__abs__`
+
+```python
+Quad.__abs__() -> float
+```
+
+Return `|ur - ul| * |ll - ul|`, the area of a rectangular quad, or 0 when empty.
 
 ### `Quad.__bool__`
 
@@ -710,38 +682,6 @@ Rect.bottom_right: Point
 
 `(x1, y1)`.
 
-### `Rect.tl`
-
-```python
-Rect.tl: Point
-```
-
-`(x0, y0)`.
-
-### `Rect.tr`
-
-```python
-Rect.tr: Point
-```
-
-`(x1, y0)`.
-
-### `Rect.bl`
-
-```python
-Rect.bl: Point
-```
-
-`(x0, y1)`.
-
-### `Rect.br`
-
-```python
-Rect.br: Point
-```
-
-`(x1, y1)`.
-
 ### `Rect.quad`
 
 ```python
@@ -763,14 +703,6 @@ valid rectangle, or the bounding box of a quad, is inside when it
 lies within the edges, which count as inside. A number tests the
 coordinates, as for a tuple; any other value is not contained.
 
-### `Rect.contains`
-
-```python
-Rect.contains(x: object) -> bool
-```
-
-Return `x in self`.
-
 ### `Rect.intersects`
 
 ```python
@@ -779,10 +711,10 @@ Rect.intersects(r: Sequence[float]) -> bool
 
 Return whether both rectangles are finite and share some area.
 
-### `Rect.get_area`
+### `Rect.area`
 
 ```python
-Rect.get_area(unit: str = 'px') -> float
+Rect.area(*, unit: Literal['px', 'in', 'cm', 'mm'] = 'px') -> float
 ```
 
 Return `width * height` in `px` (PDF points), `in`, `cm`, or `mm` squared.
@@ -819,6 +751,14 @@ Rect.torect(r: Sequence[float]) -> Matrix
 
 Return the matrix that maps this rectangle onto `r`.
 
+### `Rect.__abs__`
+
+```python
+Rect.__abs__() -> float
+```
+
+Return the area, or 0 for an empty or infinite rectangle.
+
 ### `Rect.__bool__`
 
 ```python
@@ -837,11 +777,3 @@ Return the smallest integer rectangle that covers this one.
 
 Each edge tolerates 0.001 of floating-point noise before it moves
 outward, and coordinates are clamped to `-2**24` through `2**24`.
-
-### `Rect.irect`
-
-```python
-Rect.irect: IRect
-```
-
-`round`.

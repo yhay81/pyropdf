@@ -310,7 +310,10 @@ def test_layer_copy_and_pickle_keep_value_behavior() -> None:
     assert repr(restored) == repr(layer)
 
     with page.draw() as canvas:
-        for saved in (restored, pyropdf.Layer(layer.xref, layer.name, layer.intent, layer.on, layer.locked)):
+        for saved in (
+            restored,
+            pyropdf.Layer(xref=layer.xref, name=layer.name, intent=layer.intent, on=layer.on, locked=layer.locked),
+        ):
             with pytest.raises(ValueError, match="this document"):
                 canvas.layer(saved)
         for duplicate in (copy.copy(layer), copy.deepcopy(layer)):

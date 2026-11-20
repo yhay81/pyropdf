@@ -12,6 +12,7 @@ not edit this file: change the docstring and run `uv run python tools/api_refere
 
 ```python
 RecolorReport(
+    *,
     target: RecolorTarget,
     pages: int,
     operations: int,
@@ -35,6 +36,7 @@ A target color space of `Page.recolor` and `Document.recolor`.
 
 ```python
 Unconverted(
+    *,
     page: int,
     kind: Literal['shading', 'pattern', 'colorspace', 'image', 'form'],
     detail: str,

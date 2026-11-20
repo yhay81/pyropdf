@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from pyropdf._limits import DocumentLimits
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Revision:
     """One incremental file revision of an opened PDF document.
 
@@ -79,7 +79,7 @@ def revisions(document: Document) -> tuple[Revision, ...]:
     items = _core.document_revisions(document._core())  # noqa: SLF001
     out: list[Revision] = []
     for index, (end, added, updated, freed) in enumerate(items):
-        rev = Revision(index, end, tuple(added), tuple(updated), tuple(freed))
+        rev = Revision(index=index, end=end, added=tuple(added), updated=tuple(updated), freed=tuple(freed))
         object.__setattr__(rev, "_document", document)
         out.append(rev)
     return tuple(out)
