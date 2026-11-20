@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 from cryptography import x509
@@ -582,6 +583,81 @@ def test_document_security_store_deduplication_and_signature_preservation(pki: L
         assert reopened3.security_store is not None
         assert set(reopened3.security_store.vri) == {sig1_key, other_key}
         assert reopened3.signatures[0].verify(pki.trust).modifications == "none"
+
+
+@pytest.mark.parametrize(
+    ("filename", "cause"),
+    [("bill-hr815.pdf", "object 378, FontType1/FirstChar"), ("f1040.pdf", "AnnotWidget/AP")],
+)
+def test_timestamp_promotion_refuses_before_contacting_authority(pki: LocalPki, filename: str, cause: str) -> None:
+    with pyropdf.open(DOCUMENT.with_name(filename)) as doc:
+        doc.prepare_signature("Archive")
+        signed = doc.sign("Author", pki.signer, reserve=4096)
+        doc.catalog["Lang"] = "en-GB"
+        doc.history.undo()
+        history = doc.history.save()
+        full = doc.to_bytes()
+        earlier = {sig.field: sig.verify(pki.trust) for sig in doc.signatures}
+        assert earlier["Author"]
+        authority = Mock(wraps=pki.timestamper)
+
+        with pytest.raises(PdfError, match=cause):
+            doc.prepare_signature("NewArchive", is_timestamp=True)
+        assert doc.history.save() == history
+        assert doc.to_bytes(incremental=True) == signed
+
+        with pytest.raises(PdfError, match=cause):
+            doc.timestamp(authority, field="Archive", reserve=4096)
+        authority.assert_not_called()
+        assert doc.history.save() == history
+        assert doc.to_bytes(incremental=True) == signed
+        assert doc.to_bytes() == full
+        assert not doc.form["Archive"].is_signed
+        assert "NewArchive" not in doc.form
+        assert {sig.field: sig.verify(pki.trust) for sig in doc.signatures} == earlier
+
+
+def test_timestamp_promotion_checks_share_one_object_budget(pki: LocalPki) -> None:
+    source = _pdf_with_version("1.7")
+    authority = Mock(wraps=pki.timestamper)
+    with pyropdf.open(source, limits=pyropdf.DocumentLimits(max_objects=5)) as doc:
+        assert doc.check().objects == 3
+        with pytest.raises(LimitError) as prepare_error:
+            doc.prepare_signature("Archive", is_timestamp=True)
+        assert prepare_error.value.code == "object_count"
+        with pytest.raises(LimitError) as timestamp_error:
+            doc.timestamp(authority, field="Archive")
+        assert timestamp_error.value.code == "object_count"
+        authority.assert_not_called()
+        assert doc.to_bytes(incremental=True) == source
+        assert doc.history.steps == ()
+
+
+@pytest.mark.parametrize("prepare", [True, False], ids=["prepare", "timestamp"])
+def test_compatible_legacy_timestamp_imprint_and_saves(pki: LocalPki, *, prepare: bool) -> None:
+    with pyropdf.open(_pdf_with_version("1.7")) as doc:
+        if prepare:
+            doc.prepare_signature("Archive", is_timestamp=True)
+            assert doc.check().version == "2.0"
+        authority = Mock(wraps=pki.timestamper)
+        stamped = doc.timestamp(authority, field="Archive", reserve=4096)
+        [stamp] = doc.signatures
+        start, first, second, length = stamp.byte_range
+        assert start == 0
+        assert second + length == len(stamped)
+        assert stamped[first : first + 1] == b"<"
+        assert stamped[second - 1 : second] == b">"
+        authority.assert_called_once_with(hashlib.sha256(stamped[:first] + stamped[second:]).digest(), "sha256")
+        assert doc.to_bytes(incremental=True) == stamped
+        for incremental in (True, False):
+            with pyropdf.open(doc.to_bytes(incremental=incremental)) as reopened:
+                report = reopened.check()
+                assert report.version == "2.0"
+                assert not report.defects
+                [saved] = reopened.signatures
+                assert saved.field == "Archive"
+                assert saved.is_timestamp
+                assert bool(saved.verify(pki.trust)) is incremental
 
 
 def _assert_timestamp_failure_modes(pki: LocalPki) -> None:
