@@ -150,6 +150,40 @@ for source in ("pdfua-2", DUAL):
     )
 
 
+def rich_media_saves(directory: Path) -> dict[Path, str]:
+    """Check the split asset tree and shared configurations with and without a named activation script."""
+    fixture = runpy.run_path(str(ROOT / "tests/test_rich_media_settings.py"))
+
+    files = {}
+    for scripts in (False, True):
+        with pyropdf.open(fixture["rich_settings_pdf"](scripts=scripts)) as doc:
+            fixture["edit_rich_fixture"](doc)
+            for incremental in (False, True):
+                mode = "incremental" if incremental else "full"
+                variant = "script" if scripts else "plain"
+                path = directory / f"rich-media-{variant}-{mode}.pdf"
+                doc.save(path, incremental=incremental)
+                files[path] = "arlington2.0"
+    with pyropdf.open(fixture["legacy_pdf"]()) as doc:
+        with doc.pages[0].annotations[0].edit_rich_media() as media:
+            params = media.RichMediaContent.Configurations[0].Instances[0].Params
+            if params is None:
+                msg = "the Adobe extension fixture needs its Flash instance parameters"
+                raise ValueError(msg)
+            params.FlashVars = "mode=stored"
+        for incremental in (False, True):
+            mode = "incremental" if incremental else "full"
+            path = directory / f"rich-media-legacy-{mode}.pdf"
+            doc.save(path, incremental=incremental)
+            files[path] = "arlington1.7+ADBE_Extn3"
+    return files
+
+
+# 1.28.2 rejects a script that is present in the asset tree. 1.30.4 accepts
+# these same named files and rejects a script whose final name is removed.
+expect("rich-media", "arlington2.0", {"script": {"ArrayOfIndirectFileSpecificationsEntry-Dictionary-9"}}, "#914")
+
+
 def language_saves(directory: Path) -> dict[Path, str]:
     """Write the UA-1 catalog language loss and a control with explicit structure and metadata languages."""
     source = ROOT / "tests/assets/pdfua/pdfua-1.pdf"
@@ -544,6 +578,23 @@ for source_path, variant in [*FIXTURES.items(), *dual_archival(FIXTURES).items()
     expect(source_path.stem, variant, {"add_screen": rules}, "#848")
 
 
+# The stored RichMedia case adds its instance file and an untagged annotation.
+# PDF/A-4e permits the annotation subtype. Base PDF/A-4 also restricts the file type.
+RICH_MEDIA_RULES = {
+    "1": {"6.1.11-1", "6.5.2-1", "6.5.3-2"},
+    "2": {"6.3.1-1", "6.3.2-1", "6.8-2", "6.8-5"},
+    "3": {"6.3.1-1", "6.3.2-1", "6.8-2", "6.8-3", "6.8-4"},
+    "4": {"6.3.1-1", "6.3.2-1", "6.9-2", "6.9-3", "6.9-4"},
+    "4e": {"6.3.2-1", "6.9-2", "6.9-4"},
+    "4f": {"6.3.1-1", "6.3.2-1", "6.9-2", "6.9-4"},
+    "ua1": {"7.11-1", "7.18.1-1", "7.18.1-2", "7.18.3-1"},
+    "ua2": {"8.9.2.4.19-2", "8.9.3.3-1"},
+}
+for source_path, variant in [*FIXTURES.items(), *dual_archival(FIXTURES).items()]:
+    key = variant if variant in RICH_MEDIA_RULES else variant[0]
+    expect(source_path.stem, variant, {"rich_media_settings": RICH_MEDIA_RULES[key]}, "#914")
+
+
 def pades_comparisons(models: dict[Path, str]) -> dict[Path, str]:
     """Check the same native 2.0 DSS and CAdES files under the PAdES extension."""
     suffixes = tuple(
@@ -605,6 +656,7 @@ def main() -> int:
         failures += controls(args.jar.resolve(), Path(directory))
         if args.arlington:
             models = {path: arlington(path, flavour) for path, flavour in files.items()}
+            models.update(rich_media_saves(Path(directory)))
             failures += run(args.arlington.resolve(), models)
             failures += run(args.arlington.resolve(), pades_comparisons(models))
     return 1 if failures else 0
