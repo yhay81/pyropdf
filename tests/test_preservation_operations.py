@@ -856,7 +856,7 @@ def change_links(doc: pyropdf.Document) -> set[int]:
     assert tuple(link.rect) == pytest.approx((6, 7, 21, 23))
     assert link.target == LINK_URI + "/edited"
     del page.links[-1]
-    assert xref not in doc.objects
+    assert all(item.xref != xref for item in page.obj.get("Annots", ()))
     return touched
 
 
