@@ -27,7 +27,7 @@ def _require(*, condition: bool, message: str) -> None:
 
 def _text_pdf() -> bytes:
     """Return a one-page document that draws the smoke text with Helvetica."""
-    stream = f"BT /F1 18 Tf 36 100 Td ({_TEXT}) Tj ET"
+    stream = f"q 1 0 0 rg 0 0 20 20 re f Q BT /F1 18 Tf 36 100 Td ({_TEXT}) Tj ET"
     objects = [
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -62,17 +62,39 @@ def _run_smoke() -> None:
             message="importing pyropdf enabled the GIL",
         )
 
-    with pyropdf.open(_text_pdf()) as doc:
+    source = _text_pdf()
+    try:
+        pyropdf.open(source, limits=pyropdf.DocumentLimits(max_file_size=1))
+    except pyropdf.LimitError as error:
+        _require(condition=error.code == "file_size", message=f"unexpected limit code {error.code}")
+    else:
+        msg = "the file size limit did not refuse the document"
+        raise RuntimeError(msg)
+
+    with pyropdf.open(source) as doc:
+        # This private native hook throws a single Rust panic inside the binding.
+        try:
+            doc._core()._test_panic()  # noqa: SLF001
+        except pyropdf.InternalError as error:
+            _require(condition="pyropdf injected method panic" in str(error), message="unwind lost its message")
+        else:
+            msg = "the binding did not propagate the injected panic"
+            raise RuntimeError(msg)
         page = doc.pages[0]
         _require(condition=_TEXT in page.text(), message="text extraction lost the smoke text")
-        png = page.pixmap().to_bytes("png")
+        pixmap = page.pixmap()
+        _require(condition=pixmap.pixel(10, 190) == (255, 0, 0), message="rendering lost the red square")
+        png = pixmap.to_bytes("png")
         _require(condition=png.startswith(_PNG_SIGNATURE), message="rendering did not produce a PNG")
-        doc.pages.new((200, 200))
-        data = doc.to_bytes()
-
-    with pyropdf.open(data) as reopened:
-        _require(condition=len(reopened.pages) == _SAVED_PAGES, message="the saved document has the wrong page count")
-        _require(condition=_TEXT in reopened.pages[0].text(), message="saving lost the smoke text")
+        with doc.transaction():
+            doc.pages.new((200, 200))
+        for incremental in (False, True):
+            data = doc.to_bytes(incremental=incremental)
+            if incremental:
+                _require(condition=data.startswith(source), message="incremental save lost the original prefix")
+            with pyropdf.open(data) as reopened:
+                _require(condition=len(reopened.pages) == _SAVED_PAGES, message="saving lost the page edit")
+                _require(condition=_TEXT in reopened.pages[0].text(), message="saving lost the smoke text")
 
     print(f"pyropdf {pyropdf.__version__} smoke test passed")  # noqa: T201
 

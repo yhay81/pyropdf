@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import runpy
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +28,19 @@ def test_every_action_of_the_release_is_pinned_by_commit() -> None:
     actions = re.findall(r"uses: (\S+)", WORKFLOW)
     assert actions
     assert [action for action in actions if not re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", action)] == []
+
+
+def test_release_requires_the_installed_pyodide_wheel() -> None:
+    (job,) = re.findall(r"\n  build-pyodide-wheel:\n(.*?)(?=\n  \S)", WORKFLOW, flags=re.DOTALL)
+    (publish,) = re.findall(r"\n  publish:\n(.*?)(?=\n  \S)", WORKFLOW, flags=re.DOTALL)
+    assert job.index("bash tools/build_pyodide.sh") < job.index("actions/upload-artifact")
+    (dependencies,) = re.findall(r"needs:.*", publish)
+    assert "build-pyodide-wheel" in dependencies
+
+
+def test_installed_artifact_smoke_exercises_the_public_contract() -> None:
+    smoke = runpy.run_path(str(ROOT / "tools" / "smoke_artifact.py"))
+    smoke["_run_smoke"]()
 
 
 def test_the_tag_is_checked_against_the_workspace_version() -> None:
