@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 17 | 48 | 736 |
-| interpret | 1 | 13 | 0 | 14 | 670 | 103 |
-| create | 0 | 0 | 0 | 640 | 74 | 87 |
-| edit | 0 | 0 | 0 | 647 | 72 | 82 |
-| preserve | 0 | 0 | 0 | 4 | 668 | 129 |
+| read | 0 | 0 | 0 | 32 | 48 | 734 |
+| interpret | 1 | 13 | 0 | 29 | 670 | 101 |
+| create | 0 | 0 | 0 | 640 | 87 | 87 |
+| edit | 0 | 0 | 0 | 660 | 72 | 82 |
+| preserve | 0 | 0 | 0 | 17 | 668 | 129 |
 
 ## Clauses
 
@@ -195,15 +195,36 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.12 | Document parts | `document-parts` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.13 | Associated files | `associated-files` | 1 partial | 1 planned | 1 partial | 1 partial | 1 done |
 | Annex F | Linearized PDF | `linearization` | 1 done | 1 done | 1 done | 1 done | 1 planned |
-| ISO 14289 | PDF/UA | `pdfua` | 1 done | 1 done | 1 planned | 1 partial | 1 partial |
+| ISO 14289 | PDF/UA | `pdfua`, `pdfua-1`, `pdfua-2` | 3 partial | 3 partial | 3 planned | 3 partial | 3 partial |
 | ISO 15930 | PDF/X | `pdfx` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO 16612 | PDF/VT | `pdfvt` | 1 partial | 1 planned | 1 planned | 1 planned | 1 planned |
-| ISO 19005 | PDF/A | `pdfa` | 1 done | 1 done | 1 planned | 1 partial | 1 partial |
+| ISO 19005 | PDF/A | `pdfa`, `pdfa-1a`, `pdfa-1b`, `pdfa-2a`, `pdfa-2b`, `pdfa-2u`, `pdfa-3a`, `pdfa-3b`, `pdfa-3u`, `pdfa-4`, `pdfa-4e`, `pdfa-4f` | 12 partial | 12 partial | 12 planned | 12 partial | 12 partial |
 | ISO/TS 32001 | Hash algorithms | `sha3-hashes` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32002 | Digital signature algorithms | `ecc-signatures` | 1 partial | 1 partial | 1 partial | 1 partial | 1 done |
 | ISO/TS 32003 | AES-GCM encryption | `aes-gcm` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32004 | Integrity protection | `integrity-protection` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | ISO/TS 32005 | Structure namespace inclusion | `namespace-inclusion` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+
+## PDF/A and PDF/UA profiles
+
+Each row refers to its own fixture and parameterized test in `docs/spec-map.json`.
+The machine and human checks are documented in the [corpus review](https://github.com/yhay81/pyropdf/blob/main/tests/assets/pdfua/README.md).
+
+| Profile | read | interpret | create | edit | preserve |
+| --- | --- | --- | --- | --- | --- |
+| `pdfa-1a` | partial | partial | planned | partial | partial |
+| `pdfa-1b` | partial | partial | planned | partial | partial |
+| `pdfa-2a` | partial | partial | planned | partial | partial |
+| `pdfa-2b` | partial | partial | planned | partial | partial |
+| `pdfa-2u` | partial | partial | planned | partial | partial |
+| `pdfa-3a` | partial | partial | planned | partial | partial |
+| `pdfa-3b` | partial | partial | planned | partial | partial |
+| `pdfa-3u` | partial | partial | planned | partial | partial |
+| `pdfa-4` | partial | partial | planned | partial | partial |
+| `pdfa-4e` | partial | partial | planned | partial | partial |
+| `pdfa-4f` | partial | partial | planned | partial | partial |
+| `pdfua-1` | partial | partial | planned | partial | partial |
+| `pdfua-2` | partial | partial | planned | partial | partial |
 
 ## Exclusions
 
