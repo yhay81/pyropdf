@@ -298,15 +298,13 @@ features = [
 dimensions = ["preserve"]
 behavior = "Build or reuse a reachable valid example for each descriptor and compare its keys, reference targets and stream bytes after an unrelated edit in both save modes. Reuse equivalent cases with explicit type-to-fixture coverage."
 
-[families.completed-implementation-evidence]
-tracker = 254
-issue = 894
-title = "Connect existing catalog, geometry, wrapper and flattening tests to their clause cells"
-features = [
-    "document-catalog", "geospatial", "unencrypted-wrapper", "non-interactive-forms",
-]
+[families.geospatial-registrations]
+tracker = 256
+issue = 930
+title = "Verify geographic and projected registration control points on their PDF owners"
+features = ["geospatial"]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Verify the current public APIs against the exact clause behavior, including tagged flattening, then mark only the matching parameterized tests. Add missing negative and save/reopen cases or record the precise residual."
+behavior = "Verify required 2D and 3D controls, projected matrix precedence, geographic fallback, and the image, form and Geospatial3D owners beyond ordinary page viewports."
 
 [families.display-space]
 tracker = 254

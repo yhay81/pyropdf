@@ -431,6 +431,16 @@ assigning `filename`, `description`, `created`, or `modified`
 edits the file specification at once. A handle raises
 `StaleObjectError` once its annotation no longer embeds a file.
 
+### `AnnotationFile.related_files`
+
+```python
+AnnotationFile.related_files: Mapping[str, tuple[RelatedFile, ...]]
+```
+
+Read, assign or delete the related-file pairs of the annotation's file specification.
+
+Settable.
+
 ### `AnnotationFile.filename`
 
 ```python
