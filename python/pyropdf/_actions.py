@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import itertools
 import math
+import sys
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, NamedTuple, NoReturn, TypeAlias, TypeGuard, cast
@@ -935,7 +936,7 @@ def _parse_embedded_hop_fields(
     return None
 
 
-def _read_embedded_target(raw_target: object) -> EmbeddedTarget | None:
+def _read_embedded_target(raw_target: object, operation: _core._OperationBudget) -> EmbeddedTarget | None:
     """Read a ``Target`` / ``TargetEmbedded`` chain iteratively up to 32 hops."""
     if not _is_dict(raw_target):
         return None
@@ -957,6 +958,9 @@ def _read_embedded_target(raw_target: object) -> EmbeddedTarget | None:
         fields = _parse_embedded_hop_fields(hop_dict)
         if fields is None:
             return None
+        # Keep the parsed values, the visited object ID and the resulting
+        # handle until this chain is complete.
+        operation.charge("memory_size", 256 + sum(sys.getsizeof(value) for value in fields))
         parsed_hops.append(fields)
         current = hop_dict.get("T")
 
@@ -1009,7 +1013,11 @@ def _read_gotoe_action(action: Dictionary) -> EmbeddedDestination | None:
         return None
     page_num, pt, zm, dest_name = dest_parts
     file = _read_file_spec(action.get("F")) if "F" in action else None
-    target = _read_embedded_target(action.get("T")) if "T" in action else None
+    target = (
+        _core.read_operation(action._core(), lambda operation: _read_embedded_target(action.get("T"), operation))  # noqa: SLF001
+        if "T" in action
+        else None
+    )
     if file is None and target is None:
         return None
     raw_nw = action.get("NewWindow")
@@ -1227,13 +1235,16 @@ def _collect_action_xrefs(action_obj: object) -> list[int]:
 def _read_open_action(document: Document) -> Target | None:
     from pyropdf._presentations import _ActionReadContext  # noqa: PLC0415
 
-    raw = _catalog(document).get("OpenAction")
-    if raw is None:
-        return None
-    ctx = _ActionReadContext(document)
-    if isinstance(raw, Array):
-        return ctx.explicit_destination(raw)
-    return ctx.read_action(raw)
+    def read(_operation: _core._OperationBudget) -> Target | None:
+        raw = _catalog(document).get("OpenAction")
+        if raw is None:
+            return None
+        ctx = _ActionReadContext(document)
+        if isinstance(raw, Array):
+            return ctx.explicit_destination(raw)
+        return ctx.read_action(raw)
+
+    return _core.read_operation(_unlocked(document), read)
 
 
 def _destination_array_for_open_action(document: Document, dest: Destination) -> list[object]:
