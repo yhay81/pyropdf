@@ -291,6 +291,7 @@ method and property of its classes with its full description.
 - [`CollectionView`](collections.md#collectionview): Initial view of a portable collection (`/View`, ISO 32000-2 Table 153).
 - [`NamedPages`](collections.md#namedpages): The document's `/Names /Pages` name tree as a live mutable mapping (ISO 32000-2 Table 32).
 - [`Navigator`](collections.md#navigator): Navigator presentation of a portable collection (`Navigator`, ISO 32000-2 Table 160, PDF 2.0).
+- [`WebCapture`](collections.md#webcapture): The stored Web Capture database. Index lookups return writable Arlington content-set views.
 
 ## [Measurement and requirements](measurement-and-requirements.md)
 

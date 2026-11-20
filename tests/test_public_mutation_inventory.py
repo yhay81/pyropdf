@@ -29,6 +29,12 @@ if TYPE_CHECKING:
 # denotes a property assignment and 'del:' denotes a property deletion.
 MUTATIONS = (
     (
+        "web_capture",
+        "Capture sets link both name trees, source locations and member identifiers.",
+        "WebCapture",
+        "add remove set_sources",
+    ),
+    (
         "sign_revision",
         "Adopt the signed incremental revision, binding the field and its byte ranges.",
         "Document",
@@ -600,6 +606,7 @@ READ_ONLY = {
     "Signer": "from_pem from_pkcs12 callback",
     "Stream": "read",
     "StructureTree": "resolve_role walk",
+    "WebCapture": "by_id by_url",
     "Table": "markdown",
 }
 

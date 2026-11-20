@@ -442,13 +442,3 @@ features = [
 ]
 dimensions = ["read", "interpret", "create", "edit", "preserve"]
 behavior = "Exercise registered/private names and prefix collisions, BX/EX compatibility sections and effective PDF version, and reading/editing/preserving legacy ProcSet arrays under their creation exclusion."
-
-[families.web-capture]
-tracker = 256
-issue = 860
-title = "Read, edit and preserve Web Capture content sets and their indexes"
-features = [
-    "web-capture",
-]
-dimensions = ["read", "interpret", "create", "edit", "preserve"]
-behavior = "Read, edit and round-trip captured content sets and their indexes."

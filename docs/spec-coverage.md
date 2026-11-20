@@ -8,11 +8,11 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 | Dimension | engine | n/a | non-goal | partial | planned | done |
 | --- | --- | --- | --- | --- | --- | --- |
-| read | 0 | 0 | 0 | 33 | 61 | 737 |
-| interpret | 1 | 13 | 0 | 29 | 683 | 105 |
-| create | 0 | 0 | 2 | 641 | 98 | 90 |
-| edit | 0 | 0 | 0 | 661 | 85 | 85 |
-| preserve | 0 | 0 | 0 | 17 | 681 | 133 |
+| read | 0 | 0 | 0 | 33 | 60 | 738 |
+| interpret | 1 | 13 | 0 | 29 | 682 | 106 |
+| create | 0 | 0 | 2 | 641 | 97 | 91 |
+| edit | 0 | 0 | 0 | 661 | 84 | 86 |
+| preserve | 0 | 0 | 0 | 17 | 680 | 134 |
 
 ## Clauses
 
@@ -194,7 +194,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 | 14.7.4 | Structure namespaces | `structure-namespaces` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.8 | Tagged PDF | `tagged-pdf` | 1 done | 1 partial | 1 partial | 1 done | 1 done |
 | 14.9 | Accessibility support | `accessibility` | 1 done | 1 partial | 1 done | 1 done | 1 done |
-| 14.10 | Web capture | `web-capture` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
+| 14.10 | Web capture | `web-capture` | 1 done | 1 done | 1 done | 1 done | 1 done |
 | 14.11.2 | Page boundaries | `page-boundaries` | 1 partial | 1 done | 1 done | 1 partial | 1 done |
 | 14.11.4 | Separation dictionaries | `separation-dictionaries` | 1 planned | 1 planned | 1 planned | 1 planned | 1 planned |
 | 14.11.5 | Output intents | `output-intents` | 1 done | 1 done | 1 planned | 1 planned | 1 done |
@@ -224,7 +224,7 @@ The map's Arlington objects, one feature each, appear in the totals only.
 
 ## Unfinished work by milestone
 
-2,990 unfinished cells in 831 features: 1 engine, 1,381 partial, 1,608 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
+2,985 unfinished cells in 831 features: 1 engine, 1,381 partial, 1,603 planned. Each cell names its family and issue in `docs/spec-map.json`. The `work` index lists the exact feature IDs for each dimension, including every standalone Arlington row.
 
 Find a feature in the JSON, follow its dimension's `issue`, and check that issue's blocked-by links. For example, `optional-content.interpret` leads to the upstream visibility task. Run `python3 tools/spec_map/generate.py --check --live-owners` to verify current tasks and list their open dependencies. Use `python3 tools/next_work.py` for current claims and ready work.
 
@@ -402,8 +402,6 @@ Milestone [#256](https://github.com/yhay81/pyropdf/issues/256).
 - [#909](https://github.com/yhay81/pyropdf/issues/909) Verify private names, compatibility sections and legacy procedure-set resources. Exercise registered/private names and prefix collisions, BX/EX compatibility sections and effective PDF version, and reading/editing/preserving legacy ProcSet arrays under their creation exclusion.
     - read, interpret, edit, preserve — `private-names`, `version-compatibility`, `procedure-sets`.
     - create — `private-names`, `version-compatibility`.
-- [#860](https://github.com/yhay81/pyropdf/issues/860) Read, edit and preserve Web Capture content sets and their indexes. Read, edit and round-trip captured content sets and their indexes.
-    - read, interpret, create, edit, preserve — `web-capture`.
 
 ## PDF/A and PDF/UA profiles
 
